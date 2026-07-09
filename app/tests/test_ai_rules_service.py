@@ -195,3 +195,81 @@ class TestSuggestField:
 
         with pytest.raises(AIResponseParseError):
             await service.suggest_field(field="dimension", context="ctx", user_email="a@x")
+
+
+class TestWriteSql:
+    async def test_returns_safe_predicate_and_polarity(self):
+        gateway = _gateway_returning(json.dumps({"predicate": "{{amount}} > 0", "polarity": "pass"}))
+        service = _service(gateway)
+
+        result = await service.write_sql(
+            description="amount must be positive", user_email="a@x", columns=["amount"]
+        )
+
+        assert result == {"predicate": "{{amount}} > 0", "polarity": "pass"}
+        assert gateway.query.call_args.kwargs["purpose"] == "write_sql"
+        # Declared slots are forwarded so the model reuses them as {{slot}}s.
+        assert "amount" in gateway.query.call_args.kwargs["messages"][-1]["content"]
+
+    async def test_unsafe_predicate_is_rejected(self):
+        gateway = _gateway_returning(json.dumps({"predicate": "DROP TABLE foo", "polarity": "pass"}))
+        service = _service(gateway)
+
+        with pytest.raises(ValueError):
+            await service.write_sql(description="d", user_email="a@x")
+
+    async def test_missing_predicate_raises_value_error(self):
+        gateway = _gateway_returning(json.dumps({"polarity": "pass"}))
+        service = _service(gateway)
+
+        with pytest.raises(ValueError):
+            await service.write_sql(description="d", user_email="a@x")
+
+    async def test_invalid_polarity_is_dropped(self):
+        gateway = _gateway_returning(json.dumps({"predicate": "{{x}} IS NOT NULL", "polarity": "MAYBE"}))
+        service = _service(gateway)
+
+        result = await service.write_sql(description="d", user_email="a@x")
+
+        assert result["polarity"] is None
+
+
+class TestImproveSql:
+    async def test_returns_safe_refined_predicate(self):
+        gateway = _gateway_returning(json.dumps({"predicate": "{{amount}} > 0 AND {{amount}} < 100", "polarity": "pass"}))
+        service = _service(gateway)
+
+        result = await service.improve_sql(
+            predicate="{{amount}} > 0", instruction="cap it at 100", user_email="a@x", columns=["amount"]
+        )
+
+        assert result["predicate"] == "{{amount}} > 0 AND {{amount}} < 100"
+        assert gateway.query.call_args.kwargs["purpose"] == "improve_sql"
+        content = gateway.query.call_args.kwargs["messages"][-1]["content"]
+        assert "cap it at 100" in content
+        assert "{{amount}} > 0" in content
+
+    async def test_unsafe_refinement_is_rejected(self):
+        gateway = _gateway_returning(json.dumps({"predicate": "1=1; DELETE FROM t"}))
+        service = _service(gateway)
+
+        with pytest.raises(ValueError):
+            await service.improve_sql(predicate="1=1", instruction="x", user_email="a@x")
+
+
+class TestExplainSql:
+    async def test_returns_explanation(self):
+        gateway = _gateway_returning(json.dumps({"explanation": "Amount is greater than zero."}))
+        service = _service(gateway)
+
+        text = await service.explain_sql(predicate="{{amount}} > 0", user_email="a@x")
+
+        assert text == "Amount is greater than zero."
+        assert gateway.query.call_args.kwargs["purpose"] == "explain_sql"
+
+    async def test_missing_explanation_raises_parse_error(self):
+        gateway = _gateway_returning(json.dumps({"nope": "x"}))
+        service = _service(gateway)
+
+        with pytest.raises(AIResponseParseError):
+            await service.explain_sql(predicate="{{amount}} > 0", user_email="a@x")

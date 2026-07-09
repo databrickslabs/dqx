@@ -130,6 +130,57 @@ class AiSuggestFieldOut(BaseModel):
     value: str
 
 
+class AiWriteSqlIn(BaseModel):
+    """Request body for AI-writing a SQL predicate for a rule from a natural-language description."""
+
+    description: str = Field(
+        min_length=1,
+        max_length=2000,
+        description="Natural language description of what the SQL predicate should check",
+    )
+    columns: list[str] | None = Field(
+        default=None,
+        max_length=200,
+        description="Declared reusable slot names ({{slot}}) the predicate may reference",
+    )
+    table_fqn: str | None = Field(default=None, description="Optional fully qualified table name for schema context")
+
+
+class AiImproveSqlIn(BaseModel):
+    """Request body for AI-improving an existing SQL predicate per a free-text instruction."""
+
+    predicate: str = Field(min_length=1, max_length=4000, description="The current SQL boolean predicate to refine")
+    instruction: str = Field(
+        min_length=1,
+        max_length=500,
+        description="How the predicate should be refined (e.g. 'tighten the null handling')",
+    )
+    columns: list[str] | None = Field(
+        default=None,
+        max_length=200,
+        description="Declared reusable slot names ({{slot}}) the predicate may reference",
+    )
+
+
+class AiSqlOut(BaseModel):
+    """An AI-written or -improved SQL predicate, validated safe before it leaves the server."""
+
+    predicate: str = Field(description="The SQL boolean predicate, referencing slots as {{slot}} placeholders")
+    polarity: str | None = Field(default=None, description="pass | fail — whether a TRUE predicate is a pass or fail")
+
+
+class AiExplainSqlIn(BaseModel):
+    """Request body for an AI plain-language explanation of a SQL predicate."""
+
+    predicate: str = Field(min_length=1, max_length=4000, description="The SQL boolean predicate to explain")
+
+
+class AiExplainSqlOut(BaseModel):
+    """A short, plain-language explanation of what a SQL predicate checks."""
+
+    explanation: str
+
+
 class GenerateRulesFromContractIn(BaseModel):
     """Request body for generating DQX rules from an ODCS v3.x contract."""
 

@@ -65,6 +65,25 @@ export interface AdhocRunIn {
 }
 
 /**
+ * Request body for an AI plain-language explanation of a SQL predicate.
+ */
+export interface AiExplainSqlIn {
+  /**
+   * The SQL boolean predicate to explain
+   * @minLength 1
+   * @maxLength 4000
+   */
+  predicate: string;
+}
+
+/**
+ * A short, plain-language explanation of what a SQL predicate checks.
+ */
+export interface AiExplainSqlOut {
+  explanation: string;
+}
+
+/**
  * Optional fully qualified table name for schema context
  */
 export type AiGenerateRuleInTableFqn = string | null;
@@ -125,6 +144,31 @@ export interface AiGenerateRuleOut {
   author_kind?: string;
 }
 
+/**
+ * Declared reusable slot names ({{slot}}) the predicate may reference
+ */
+export type AiImproveSqlInColumns = string[] | null;
+
+/**
+ * Request body for AI-improving an existing SQL predicate per a free-text instruction.
+ */
+export interface AiImproveSqlIn {
+  /**
+   * The current SQL boolean predicate to refine
+   * @minLength 1
+   * @maxLength 4000
+   */
+  predicate: string;
+  /**
+   * How the predicate should be refined (e.g. 'tighten the null handling')
+   * @minLength 1
+   * @maxLength 500
+   */
+  instruction: string;
+  /** Declared reusable slot names ({{slot}}) the predicate may reference */
+  columns?: AiImproveSqlInColumns;
+}
+
 export type AiSettingsInAiEnabled = boolean | null;
 
 export type AiSettingsInAiEndpointName = string | null;
@@ -173,6 +217,21 @@ export interface AiSettingsOut {
 }
 
 /**
+ * pass | fail — whether a TRUE predicate is a pass or fail
+ */
+export type AiSqlOutPolarity = string | null;
+
+/**
+ * An AI-written or -improved SQL predicate, validated safe before it leaves the server.
+ */
+export interface AiSqlOut {
+  /** The SQL boolean predicate, referencing slots as {{slot}} placeholders */
+  predicate: string;
+  /** pass | fail — whether a TRUE predicate is a pass or fail */
+  polarity?: AiSqlOutPolarity;
+}
+
+/**
  * Request body for an AI per-field suggestion (name/description/dimension/severity).
  */
 export interface AiSuggestFieldIn {
@@ -190,6 +249,32 @@ export interface AiSuggestFieldIn {
  */
 export interface AiSuggestFieldOut {
   value: string;
+}
+
+/**
+ * Declared reusable slot names ({{slot}}) the predicate may reference
+ */
+export type AiWriteSqlInColumns = string[] | null;
+
+/**
+ * Optional fully qualified table name for schema context
+ */
+export type AiWriteSqlInTableFqn = string | null;
+
+/**
+ * Request body for AI-writing a SQL predicate for a rule from a natural-language description.
+ */
+export interface AiWriteSqlIn {
+  /**
+   * Natural language description of what the SQL predicate should check
+   * @minLength 1
+   * @maxLength 2000
+   */
+  description: string;
+  /** Declared reusable slot names ({{slot}}) the predicate may reference */
+  columns?: AiWriteSqlInColumns;
+  /** Optional fully qualified table name for schema context */
+  table_fqn?: AiWriteSqlInTableFqn;
 }
 
 export type AnomalyConfigColumns = string[] | null;
@@ -8892,6 +8977,195 @@ export const useAiSuggestField = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getAiSuggestFieldMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Write a SQL predicate for a rule from a natural-language description (validated safe).
+ * @summary Ai Write Sql
+ */
+export const aiWriteSql = (
+    aiWriteSqlIn: AiWriteSqlIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AiSqlOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/ai/write-sql`,
+      aiWriteSqlIn,options
+    );
+  }
+
+
+
+export const getAiWriteSqlMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof aiWriteSql>>, TError,{data: AiWriteSqlIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof aiWriteSql>>, TError,{data: AiWriteSqlIn}, TContext> => {
+
+const mutationKey = ['aiWriteSql'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof aiWriteSql>>, {data: AiWriteSqlIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  aiWriteSql(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AiWriteSqlMutationResult = NonNullable<Awaited<ReturnType<typeof aiWriteSql>>>
+    export type AiWriteSqlMutationBody = AiWriteSqlIn
+    export type AiWriteSqlMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Ai Write Sql
+ */
+export const useAiWriteSql = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof aiWriteSql>>, TError,{data: AiWriteSqlIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof aiWriteSql>>,
+        TError,
+        {data: AiWriteSqlIn},
+        TContext
+      > => {
+
+      const mutationOptions = getAiWriteSqlMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Refine an existing SQL predicate per a free-text instruction (validated safe).
+ * @summary Ai Improve Sql
+ */
+export const aiImproveSql = (
+    aiImproveSqlIn: AiImproveSqlIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AiSqlOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/ai/improve-sql`,
+      aiImproveSqlIn,options
+    );
+  }
+
+
+
+export const getAiImproveSqlMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof aiImproveSql>>, TError,{data: AiImproveSqlIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof aiImproveSql>>, TError,{data: AiImproveSqlIn}, TContext> => {
+
+const mutationKey = ['aiImproveSql'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof aiImproveSql>>, {data: AiImproveSqlIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  aiImproveSql(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AiImproveSqlMutationResult = NonNullable<Awaited<ReturnType<typeof aiImproveSql>>>
+    export type AiImproveSqlMutationBody = AiImproveSqlIn
+    export type AiImproveSqlMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Ai Improve Sql
+ */
+export const useAiImproveSql = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof aiImproveSql>>, TError,{data: AiImproveSqlIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof aiImproveSql>>,
+        TError,
+        {data: AiImproveSqlIn},
+        TContext
+      > => {
+
+      const mutationOptions = getAiImproveSqlMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Explain a SQL predicate in plain language.
+ * @summary Ai Explain Sql
+ */
+export const aiExplainSql = (
+    aiExplainSqlIn: AiExplainSqlIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AiExplainSqlOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/ai/explain-sql`,
+      aiExplainSqlIn,options
+    );
+  }
+
+
+
+export const getAiExplainSqlMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof aiExplainSql>>, TError,{data: AiExplainSqlIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof aiExplainSql>>, TError,{data: AiExplainSqlIn}, TContext> => {
+
+const mutationKey = ['aiExplainSql'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof aiExplainSql>>, {data: AiExplainSqlIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  aiExplainSql(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AiExplainSqlMutationResult = NonNullable<Awaited<ReturnType<typeof aiExplainSql>>>
+    export type AiExplainSqlMutationBody = AiExplainSqlIn
+    export type AiExplainSqlMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Ai Explain Sql
+ */
+export const useAiExplainSql = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof aiExplainSql>>, TError,{data: AiExplainSqlIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof aiExplainSql>>,
+        TError,
+        {data: AiExplainSqlIn},
+        TContext
+      > => {
+
+      const mutationOptions = getAiExplainSqlMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

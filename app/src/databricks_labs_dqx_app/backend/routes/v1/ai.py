@@ -15,10 +15,15 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_u
 from databricks_labs_dqx_app.backend.dependencies import get_ai_rules_service, require_role
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
+    AiExplainSqlIn,
+    AiExplainSqlOut,
     AiGenerateRuleIn,
     AiGenerateRuleOut,
+    AiImproveSqlIn,
+    AiSqlOut,
     AiSuggestFieldIn,
     AiSuggestFieldOut,
+    AiWriteSqlIn,
 )
 from databricks_labs_dqx_app.backend.services.ai_gateway import (
     AIRateLimitExceededError,
@@ -96,3 +101,98 @@ async def ai_suggest_field(
         # See ai_generate_rule above — same OWASP LLM06 rationale.
         logger.error(f"Failed to generate AI field suggestion: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to generate AI field suggestion.")
+
+
+@router.post(
+    "/write-sql",
+    response_model=AiSqlOut,
+    operation_id="aiWriteSql",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+async def ai_write_sql(
+    body: AiWriteSqlIn,
+    service: Annotated[AiRulesService, Depends(get_ai_rules_service)],
+    user_email: Annotated[str, Depends(get_user_email)],
+) -> AiSqlOut:
+    """Write a SQL predicate for a rule from a natural-language description (validated safe)."""
+    try:
+        result = await service.write_sql(
+            description=body.description,
+            user_email=user_email,
+            columns=body.columns,
+            table_fqn=body.table_fqn,
+        )
+        return AiSqlOut(**result)
+    except AIUnavailableError as e:
+        raise HTTPException(status_code=503, detail=e.reason)
+    except AIRateLimitExceededError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+    except AIResponseParseError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        # See ai_generate_rule above — same OWASP LLM06 rationale.
+        logger.error(f"Failed to write AI SQL predicate: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to write AI SQL predicate.")
+
+
+@router.post(
+    "/improve-sql",
+    response_model=AiSqlOut,
+    operation_id="aiImproveSql",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+async def ai_improve_sql(
+    body: AiImproveSqlIn,
+    service: Annotated[AiRulesService, Depends(get_ai_rules_service)],
+    user_email: Annotated[str, Depends(get_user_email)],
+) -> AiSqlOut:
+    """Refine an existing SQL predicate per a free-text instruction (validated safe)."""
+    try:
+        result = await service.improve_sql(
+            predicate=body.predicate,
+            instruction=body.instruction,
+            user_email=user_email,
+            columns=body.columns,
+        )
+        return AiSqlOut(**result)
+    except AIUnavailableError as e:
+        raise HTTPException(status_code=503, detail=e.reason)
+    except AIRateLimitExceededError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+    except AIResponseParseError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        # See ai_generate_rule above — same OWASP LLM06 rationale.
+        logger.error(f"Failed to improve AI SQL predicate: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to improve AI SQL predicate.")
+
+
+@router.post(
+    "/explain-sql",
+    response_model=AiExplainSqlOut,
+    operation_id="aiExplainSql",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+async def ai_explain_sql(
+    body: AiExplainSqlIn,
+    service: Annotated[AiRulesService, Depends(get_ai_rules_service)],
+    user_email: Annotated[str, Depends(get_user_email)],
+) -> AiExplainSqlOut:
+    """Explain a SQL predicate in plain language."""
+    try:
+        explanation = await service.explain_sql(predicate=body.predicate, user_email=user_email)
+        return AiExplainSqlOut(explanation=explanation)
+    except AIUnavailableError as e:
+        raise HTTPException(status_code=503, detail=e.reason)
+    except AIRateLimitExceededError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+    except AIResponseParseError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        # See ai_generate_rule above — same OWASP LLM06 rationale.
+        logger.error(f"Failed to explain AI SQL predicate: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to explain AI SQL predicate.")

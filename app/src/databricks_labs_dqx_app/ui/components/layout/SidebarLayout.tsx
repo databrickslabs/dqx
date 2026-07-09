@@ -10,7 +10,6 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { ModeToggle } from "@/components/layout/mode-toggle";
-import { AIAssistantTrigger } from "@/components/AIAssistantProvider";
 import Logo from "@/components/layout/Logo";
 import HeaderUserMenu from "@/components/layout/HeaderUserMenu";
 import { InsightsDashboardHost } from "@/components/insights/InsightsDashboard";
@@ -41,7 +40,6 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
             <Logo />
           </div>
           <div className="flex items-center gap-1">
-            <AIAssistantTrigger />
             <ModeToggle />
             <HeaderUserMenu />
           </div>

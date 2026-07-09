@@ -16,8 +16,11 @@ import pytest
 from fastapi import HTTPException
 
 from databricks_labs_dqx_app.backend.models import (
+    AiExplainSqlIn,
     AiGenerateRuleIn,
+    AiImproveSqlIn,
     AiSuggestFieldIn,
+    AiWriteSqlIn,
     GenerateChecksIn,
 )
 from databricks_labs_dqx_app.backend.routes.v1 import ai as ai_routes
@@ -171,5 +174,113 @@ class TestAiSuggestFieldRoute:
                 AiSuggestFieldIn(field="dimension", context="ctx"), service=service, user_email="a@x"
             )
 
+        assert exc_info.value.status_code == 500
+        assert "secret-internal-detail" not in str(exc_info.value.detail)
+
+
+class TestAiWriteSqlRoute:
+    async def test_happy_path_returns_predicate(self):
+        service = _service()
+        service.write_sql = AsyncMock(return_value={"predicate": "{{amount}} > 0", "polarity": "pass"})
+
+        result = await ai_routes.ai_write_sql(
+            AiWriteSqlIn(description="amount positive", columns=["amount"]), service=service, user_email="a@x"
+        )
+
+        assert result.predicate == "{{amount}} > 0"
+        assert result.polarity == "pass"
+
+    async def test_unavailable_maps_to_503(self):
+        service = _service()
+        service.write_sql = AsyncMock(side_effect=AIUnavailableError("AI is off"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await ai_routes.ai_write_sql(AiWriteSqlIn(description="d"), service=service, user_email="a@x")
+        assert exc_info.value.status_code == 503
+
+    async def test_rate_limit_maps_to_429(self):
+        service = _service()
+        service.write_sql = AsyncMock(side_effect=AIRateLimitExceededError(30))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await ai_routes.ai_write_sql(AiWriteSqlIn(description="d"), service=service, user_email="a@x")
+        assert exc_info.value.status_code == 429
+
+    async def test_unsafe_sql_maps_to_422(self):
+        service = _service()
+        service.write_sql = AsyncMock(side_effect=ValueError("AI produced an unsafe SQL predicate."))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await ai_routes.ai_write_sql(AiWriteSqlIn(description="d"), service=service, user_email="a@x")
+        assert exc_info.value.status_code == 422
+
+    async def test_unexpected_error_maps_to_generic_500_without_leaking_details(self):
+        service = _service()
+        service.write_sql = AsyncMock(side_effect=RuntimeError("secret-internal-detail"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await ai_routes.ai_write_sql(AiWriteSqlIn(description="d"), service=service, user_email="a@x")
+        assert exc_info.value.status_code == 500
+        assert "secret-internal-detail" not in str(exc_info.value.detail)
+
+
+class TestAiImproveSqlRoute:
+    async def test_happy_path_returns_predicate(self):
+        service = _service()
+        service.improve_sql = AsyncMock(return_value={"predicate": "{{a}} > 0", "polarity": "fail"})
+
+        result = await ai_routes.ai_improve_sql(
+            AiImproveSqlIn(predicate="{{a}} >= 0", instruction="strict"), service=service, user_email="a@x"
+        )
+
+        assert result.predicate == "{{a}} > 0"
+        assert result.polarity == "fail"
+
+    async def test_parse_error_maps_to_502(self):
+        service = _service()
+        service.improve_sql = AsyncMock(side_effect=AIResponseParseError("bad json"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await ai_routes.ai_improve_sql(
+                AiImproveSqlIn(predicate="{{a}} > 0", instruction="x"), service=service, user_email="a@x"
+            )
+        assert exc_info.value.status_code == 502
+
+    async def test_unsafe_sql_maps_to_422(self):
+        service = _service()
+        service.improve_sql = AsyncMock(side_effect=ValueError("unsafe"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await ai_routes.ai_improve_sql(
+                AiImproveSqlIn(predicate="{{a}} > 0", instruction="x"), service=service, user_email="a@x"
+            )
+        assert exc_info.value.status_code == 422
+
+
+class TestAiExplainSqlRoute:
+    async def test_happy_path_returns_explanation(self):
+        service = _service()
+        service.explain_sql = AsyncMock(return_value="Amount is positive.")
+
+        result = await ai_routes.ai_explain_sql(
+            AiExplainSqlIn(predicate="{{amount}} > 0"), service=service, user_email="a@x"
+        )
+
+        assert result.explanation == "Amount is positive."
+
+    async def test_unavailable_maps_to_503(self):
+        service = _service()
+        service.explain_sql = AsyncMock(side_effect=AIUnavailableError("AI is off"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await ai_routes.ai_explain_sql(AiExplainSqlIn(predicate="{{a}} > 0"), service=service, user_email="a@x")
+        assert exc_info.value.status_code == 503
+
+    async def test_unexpected_error_maps_to_generic_500_without_leaking_details(self):
+        service = _service()
+        service.explain_sql = AsyncMock(side_effect=RuntimeError("secret-internal-detail"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await ai_routes.ai_explain_sql(AiExplainSqlIn(predicate="{{a}} > 0"), service=service, user_email="a@x")
         assert exc_info.value.status_code == 500
         assert "secret-internal-detail" not in str(exc_info.value.detail)

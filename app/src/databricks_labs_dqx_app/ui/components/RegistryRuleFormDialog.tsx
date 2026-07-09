@@ -40,6 +40,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertCircle,
+  Braces,
   Check,
   ChevronDown,
   FlaskConical,
@@ -105,6 +106,7 @@ import {
   type LabelColorDefinition,
 } from "@/components/RegistryRuleBadges";
 import {
+  buildDqxCheckJson,
   COLUMN_KINDS,
   deriveSlotsAndParameters,
   fnSupportsNegate,
@@ -112,7 +114,10 @@ import {
   nativeArguments,
   parseParamValue,
   paramValueToRaw,
+  type ParsedCheckDefinition,
 } from "@/lib/registry-rule-conversion";
+import { RegistryRuleFormJsonDialog } from "@/components/registry-rules/RegistryRuleFormJsonDialog";
+import { SqlAiAssistMenu } from "@/components/rules/SqlAiAssistMenu";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
@@ -932,6 +937,9 @@ export function RegistryRuleFormDialog({
   const [nameError, setNameError] = useState<string | null>(null);
   const [authorKind, setAuthorKind] = useState<CreateRegistryRuleInAuthorKind | undefined>(undefined);
   const [pendingNativeArgs, setPendingNativeArgs] = useState<Record<string, unknown> | null>(null);
+  // "As JSON" surface on the create form (item 11) — edits round-trip back into
+  // the form state below via `applyParsedToForm`.
+  const [jsonDialogOpen, setJsonDialogOpen] = useState(false);
 
   // AI — Build-with-AI (full-form generate) + per-field suggest.
   const aiAvailability = useAiAvailability();
@@ -1261,6 +1269,57 @@ export function RegistryRuleFormDialog({
     if (dimension) md[RESERVED_DIMENSION_KEY] = dimension;
     if (severity) md[RESERVED_SEVERITY_KEY] = severity;
     return md;
+  };
+
+  // Write a parsed "As JSON" edit (item 11) back into the form state. Mirrors
+  // the rehydrate branch, but sourced from `parseDqxCheckJson` rather than a
+  // stored rule — so editing the JSON is exactly equivalent to editing the
+  // visual fields. Native slot names are canonical (`{{column_N}}`) per the
+  // parser's documented caveat.
+  const applyParsedToForm = (parsed: ParsedCheckDefinition) => {
+    const def = parsed.definition;
+    const body = (def.body ?? {}) as Record<string, unknown>;
+    setMode(parsed.mode);
+    setPolarity(parsed.polarity ?? "pass");
+    setErrorMessage(def.error_message ?? "");
+    if (parsed.mode === "dqx_native") {
+      setFunctionName(String(body.function ?? ""));
+      const raw: Record<string, string> = {};
+      for (const p of def.parameters ?? []) raw[p.name] = paramValueToRaw(p.value);
+      setParamRawValues(raw);
+      setNativeSlots(def.slots ?? []);
+      setSqlPredicate("");
+      setSqlSlots([]);
+      setLowcodeAst(EMPTY_LOWCODE_AST);
+      setGroupBy("");
+    } else {
+      setFunctionName("");
+      setParamRawValues({});
+      setSqlPredicate(typeof body.predicate === "string" ? body.predicate : "");
+      setSqlSlots(def.slots ?? []);
+      if (parsed.mode === "lowcode") {
+        const storedAst = body.lowcode_ast;
+        setLowcodeAst(isV2Ast(storedAst) ? storedAst : EMPTY_LOWCODE_AST);
+        setGroupBy(typeof body.group_by === "string" ? body.group_by : "");
+      } else {
+        setLowcodeAst(EMPTY_LOWCODE_AST);
+        setGroupBy("");
+      }
+    }
+    const md = parsed.userMetadata;
+    setName(md[RESERVED_NAME_KEY] ?? "");
+    setDescription(md[RESERVED_DESCRIPTION_KEY] ?? "");
+    setDimension(md[RESERVED_DIMENSION_KEY] ?? "");
+    setSeverity(md[RESERVED_SEVERITY_KEY] ?? "");
+    const freeTags: Record<string, string> = {};
+    for (const [k, v] of Object.entries(md)) {
+      if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY) continue;
+      freeTags[k] = v;
+    }
+    setTags(freeTags);
+    // JSON is mostly the implementation body — land the steward there to review.
+    setPageTab("implementation");
+    toast.success(t("rulesRegistry.jsonAppliedToForm"));
   };
 
   const matchAllowedValue = (candidate: string, allowed: string[]): string | null =>
@@ -1824,7 +1883,26 @@ export function RegistryRuleFormDialog({
           it renders at the top of it rather than persistently across all
           tabs. */}
       <div className="space-y-2 pb-2">
-        <SectionHeader>{t("rulesRegistry.ruleTypeHeader")}</SectionHeader>
+        <SectionHeader
+          action={
+            // "As JSON" is offered while creating a new rule (item 11) — a saved
+            // rule's detail page exposes the equivalent via its "…" menu instead.
+            !readOnly && !isEditing ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                onClick={() => setJsonDialogOpen(true)}
+              >
+                <Braces className="h-3.5 w-3.5" />
+                {t("rulesRegistry.actionAsJson")}
+              </Button>
+            ) : undefined
+          }
+        >
+          {t("rulesRegistry.ruleTypeHeader")}
+        </SectionHeader>
         <ModeSegmentedSwitch value={mode} onChange={requestModeChange} disabled={readOnly} />
       </div>
 
@@ -2062,9 +2140,21 @@ export function RegistryRuleFormDialog({
             <PredicateEditorExplainer />
             {/* IF on its own line, more vertical breathing room before the
                 condition logic below it than the tight label-to-control gap
-                elsewhere (item 6). */}
+                elsewhere (item 6). The SQL AI assistants (write / improve /
+                explain — item 12) sit right-aligned on the IF row, directly
+                above the editor, matching dqlake's ImplementationTab layout. */}
             <div className="space-y-3">
-              <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
+                <SqlAiAssistMenu
+                  predicate={sqlPredicate}
+                  slots={sqlSlots}
+                  onPredicateReplace={setSqlPredicate}
+                  onPolarityChange={setPolarity}
+                  aiAvailability={aiAvailability}
+                  disabled={readOnly}
+                />
+              </div>
               <div className={cn(sqlError && "rounded-md ring-1 ring-red-400")}>
                 <PredicateEditor
                   value={sqlPredicate}
@@ -2297,6 +2387,25 @@ export function RegistryRuleFormDialog({
         <TabsContent value="test" className="pt-4">{testTabContent}</TabsContent>
         <TabsContent value="history" className="pt-4">{historyTabContent}</TabsContent>
       </Tabs>
+      {jsonDialogOpen && !readOnly && !isEditing && (
+        <RegistryRuleFormJsonDialog
+          open={jsonDialogOpen}
+          onOpenChange={setJsonDialogOpen}
+          checkJson={buildDqxCheckJson({
+            ...(sourceRule ?? {}),
+            mode,
+            definition: buildDefinition(),
+            polarity: polarityIsMeaningful ? polarity : null,
+            user_metadata: buildUserMetadata(),
+          } as RegistryRuleOut)}
+          currentDefinition={buildDefinition()}
+          currentUserMetadata={buildUserMetadata()}
+          currentMode={mode}
+          checkFunctions={checkFunctions}
+          onApply={applyParsedToForm}
+          aiAvailable={showAiBanner}
+        />
+      )}
     </div>
   );
 

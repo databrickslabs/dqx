@@ -5,7 +5,7 @@ import logging
 import re
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypedDict
 
 import yaml
 from databricks.sdk import WorkspaceClient
@@ -76,6 +76,59 @@ You are helping a data steward fill in one field of a data quality rule definiti
 rule's context, suggest a concise value for the field "{field}".
 
 Return ONLY a JSON object: {{"value": "<suggested value>"}}"""
+
+# --- SQL predicate authoring assistants (write / improve / explain) -------------
+# Ported from dqlake's AiAssistMenu backend (backend/routers/ai.py). Predicates are
+# DQX SQL boolean expressions authored in the Rules Registry SQL editor: reusable
+# columns are referenced as {{slot}} placeholders (a registry rule is table-agnostic),
+# and polarity is a separate PASS/FAIL switch. The returned predicate is always
+# re-validated with `is_sql_query_safe` server-side (AGENTS.md 11-SEC) before it can
+# reach the editor — never trust the model's SQL blindly.
+_WRITE_SQL_SYSTEM_TEMPLATE = """\
+You produce data-quality rule predicates for the DQX Rules Registry. Respond with ONLY a JSON \
+object: {{"predicate": "<sql boolean expression>", "polarity": "pass"|"fail"}}.
+
+Set "polarity" to "pass" if the predicate is TRUE when the row is VALID (the common case — \
+users typically describe what a good row looks like). Set it to "fail" only when the user \
+explicitly describes a failure condition (e.g. "flag rows where amount is negative" — the \
+predicate then describes the failing rows). When in doubt, choose "pass".
+
+Column reference rules:
+- Reference every column as a {{{{slot}}}} placeholder — never a bare column identifier. A \
+registry rule is table-agnostic, so columns are always placeholders.
+- Prefer the provided declared slot names as-is when they fit.
+
+Safety rules:
+- The predicate must be a single boolean SQL expression only — no SELECT, no semicolons, no \
+trailing punctuation, and no DDL/DML (DROP/DELETE/INSERT/UPDATE/CREATE/ALTER/TRUNCATE/MERGE/GRANT/REVOKE)."""
+
+_IMPROVE_SQL_SYSTEM_TEMPLATE = """\
+You refine a DQX SQL boolean predicate per the user's instruction. Respond with ONLY a JSON \
+object: {{"predicate": "<sql boolean expression>", "polarity": "pass"|"fail"}}.
+
+Keep every column reference as a {{{{slot}}}} placeholder; keep declared slot names unchanged. \
+Set "polarity" to "pass" when a TRUE predicate means the row is VALID (the common case), or \
+"fail" only when the user explicitly describes a failure condition; when in doubt choose "pass".
+
+Safety rules:
+- The predicate must be a single boolean SQL expression only — no SELECT, no semicolons, no \
+trailing punctuation, and no DDL/DML."""
+
+_EXPLAIN_SQL_SYSTEM_TEMPLATE = """\
+Explain a DQX SQL boolean predicate for a data steward in plain language. Aim for one sentence; \
+two at the absolute most. Declarative voice, plain language, no apologies, no preamble \
+("This rule…"), no markdown, no quotes. Describe what the predicate is checking — not how the \
+SQL is written. Treat {{{{slot}}}} placeholders as column names.
+
+Return ONLY a JSON object: {{"explanation": "<plain-language explanation>"}}"""
+
+
+class SqlPredicateResult(TypedDict):
+    """An AI-written SQL predicate plus an optional inferred PASS/FAIL polarity."""
+
+    predicate: str
+    polarity: str | None
+
 
 _VALID_DIMENSIONS = frozenset({"Validity", "Completeness", "Accuracy", "Consistency", "Uniqueness", "Timeliness"})
 _VALID_SEVERITIES = frozenset({"Low", "Medium", "High", "Critical"})
@@ -434,3 +487,126 @@ class AiRulesService:
         if not isinstance(value, str) or not value.strip():
             raise AIResponseParseError(f"AI did not return a usable suggestion for field '{field}'.")
         return value.strip()
+
+    # ------------------------------------------------------------------
+    # SQL predicate authoring assistants (write / improve / explain)
+    # ------------------------------------------------------------------
+
+    async def write_sql(
+        self,
+        description: str,
+        user_email: str,
+        columns: list[str] | None = None,
+        table_fqn: str | None = None,
+    ) -> SqlPredicateResult:
+        """Write a SQL predicate for a rule from a natural-language description.
+
+        Returns ``{"predicate": <str>, "polarity": "pass"|"fail"|None}``. The predicate is
+        always re-validated with :func:`is_sql_query_safe` before being returned.
+
+        Raises:
+            AIUnavailableError: AI is disabled or unconfigured.
+            AIRateLimitExceededError: caller is over their hourly quota.
+            AIResponseParseError: the model's response was not parsable JSON.
+            ValueError: the model returned no predicate, or an unsafe one.
+        """
+        schema_info = self._get_schema_info(table_fqn) if table_fqn else ""
+        context = self._build_sql_context(description, schema_info, columns)
+        content = await self._gateway.query(
+            user_email=user_email,
+            purpose="write_sql",
+            messages=[
+                {"role": "system", "content": _WRITE_SQL_SYSTEM_TEMPLATE},
+                {"role": "user", "content": context},
+            ],
+            max_tokens=conf.llm_max_tokens,
+        )
+        return self._parse_sql_predicate(content)
+
+    async def improve_sql(
+        self,
+        predicate: str,
+        instruction: str,
+        user_email: str,
+        columns: list[str] | None = None,
+    ) -> SqlPredicateResult:
+        """Refine an existing SQL predicate per a free-text instruction.
+
+        Returns ``{"predicate": <str>, "polarity": "pass"|"fail"|None}``. The refined
+        predicate is always re-validated with :func:`is_sql_query_safe` before being returned.
+
+        Raises:
+            AIUnavailableError: AI is disabled or unconfigured.
+            AIRateLimitExceededError: caller is over their hourly quota.
+            AIResponseParseError: the model's response was not parsable JSON.
+            ValueError: the model returned no predicate, or an unsafe one.
+        """
+        parts = [f"current_predicate: {predicate}", f"instruction: {instruction}"]
+        if columns:
+            parts.append(f"declared_columns: {json.dumps(columns)}")
+        content = await self._gateway.query(
+            user_email=user_email,
+            purpose="improve_sql",
+            messages=[
+                {"role": "system", "content": _IMPROVE_SQL_SYSTEM_TEMPLATE},
+                {"role": "user", "content": "\n".join(parts)},
+            ],
+            max_tokens=conf.llm_max_tokens,
+        )
+        return self._parse_sql_predicate(content)
+
+    async def explain_sql(self, predicate: str, user_email: str) -> str:
+        """Explain a SQL predicate in plain language.
+
+        The predicate is treated as untrusted data (never executed); only its meaning is
+        described. Returns a short plain-language string.
+
+        Raises:
+            AIUnavailableError: AI is disabled or unconfigured.
+            AIRateLimitExceededError: caller is over their hourly quota.
+            AIResponseParseError: the model returned no usable explanation.
+        """
+        content = await self._gateway.query(
+            user_email=user_email,
+            purpose="explain_sql",
+            messages=[
+                {"role": "system", "content": _EXPLAIN_SQL_SYSTEM_TEMPLATE},
+                {"role": "user", "content": predicate},
+            ],
+            max_tokens=512,
+        )
+        parsed = AIGateway.parse_json_object(content)
+        explanation = parsed.get("explanation")
+        if not isinstance(explanation, str) or not explanation.strip():
+            raise AIResponseParseError("AI did not return a usable explanation for this predicate.")
+        return explanation.strip()
+
+    @staticmethod
+    def _build_sql_context(description: str, schema_info: str, columns: list[str] | None) -> str:
+        parts = [f"description: {description}"]
+        if columns:
+            parts.append(f"declared_columns: {json.dumps(columns)}")
+        if schema_info:
+            parts.append(f"schema_info: {schema_info}")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _parse_sql_predicate(content: str) -> SqlPredicateResult:
+        """Parse and safety-validate a model-written SQL predicate response.
+
+        Raises:
+            AIResponseParseError: the response was not parsable JSON.
+            ValueError: no predicate was returned, or the predicate failed
+                :func:`is_sql_query_safe` (AGENTS.md 11-SEC — never surface unsafe AI SQL).
+        """
+        parsed = AIGateway.parse_json_object(content)
+        predicate = parsed.get("predicate")
+        if not isinstance(predicate, str) or not predicate.strip():
+            raise ValueError("AI did not return a SQL predicate.")
+        predicate = predicate.strip()
+        if not is_sql_query_safe(predicate):
+            logger.warning("AI-written SQL predicate rejected: unsafe SQL")
+            raise ValueError("AI produced an unsafe SQL predicate. Try rephrasing your request.")
+        polarity = parsed.get("polarity")
+        clean_polarity = polarity if isinstance(polarity, str) and polarity in _VALID_POLARITIES else None
+        return {"predicate": predicate, "polarity": clean_polarity}
