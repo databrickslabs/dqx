@@ -164,6 +164,17 @@ class TestSampleQuestions:
         assert ai_gateway.query.call_args.kwargs["max_tokens"] <= 400
 
     @pytest.mark.asyncio
+    async def test_leaked_column_identifier_discards_the_set(self, service, ai_gateway):
+        # Questions must paraphrase columns into everyday words; a snake_case
+        # identifier leaking through means the set is discarded (static fallback).
+        ai_gateway.query.return_value = _questions_json(
+            "What is the average cloud_cover_perc_avg for each day_flag?",
+            *_THREE_GOOD[:2],
+        )
+
+        assert await service.sample_questions("cat.sch.tbl", [_col("id")], "user@x") == []
+
+    @pytest.mark.asyncio
     async def test_disabled_gateway_returns_empty_without_model_call(self, service, ai_gateway):
         ai_gateway.is_enabled.return_value = False
 
