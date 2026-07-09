@@ -1949,8 +1949,8 @@
     "jumpToColumnLabel": "View {{column}} in the by-column view",
     "changeColumnTitle": "Change column",
     "changeColumnLabel": "Change column for {{column}}",
-    "tabViewData": "View Data",
     "viewData": {
+      "sectionTitle": "View Data",
       "description": "Showing first {{count}} rows only.",
       "loadFailed": "Couldn't load table data. Check the SQL warehouse and your access.",
       "queryFailed": "Couldn't run that query. Try rephrasing your question.",

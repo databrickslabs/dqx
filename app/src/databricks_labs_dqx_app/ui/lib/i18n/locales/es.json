@@ -1949,8 +1949,8 @@
     "jumpToColumnLabel": "Ver {{column}} en la vista por columna",
     "changeColumnTitle": "Cambiar columna",
     "changeColumnLabel": "Cambiar columna para {{column}}",
-    "tabViewData": "Ver datos",
     "viewData": {
+      "sectionTitle": "Ver datos",
       "description": "Mostrando solo las primeras {{count}} filas.",
       "loadFailed": "No se pudieron cargar los datos. Revisa el almacén SQL y tu acceso.",
       "queryFailed": "No se pudo ejecutar la consulta. Reformula tu pregunta.",

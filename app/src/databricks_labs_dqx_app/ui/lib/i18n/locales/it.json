@@ -1949,8 +1949,8 @@
     "jumpToColumnLabel": "Visualizza {{column}} nella vista per colonna",
     "changeColumnTitle": "Cambia colonna",
     "changeColumnLabel": "Cambia colonna per {{column}}",
-    "tabViewData": "Visualizza dati",
     "viewData": {
+      "sectionTitle": "Visualizza dati",
       "description": "Vengono mostrate solo le prime {{count}} righe.",
       "loadFailed": "Impossibile caricare i dati. Controlla il warehouse SQL e i tuoi accessi.",
       "queryFailed": "Impossibile eseguire la query. Riformula la domanda.",
