@@ -3,9 +3,9 @@
  *
  * Layout resurrected from main branch's old Run Rules → Table Selection
  * screen (`routes/_sidebar/runs.tsx`'s `ExecuteTab`/`RuleTable`, pre-Table-
- * Spaces): a filter toolbar (Group by / catalog / schema / an extra facet /
- * search / Select all / Clear) above one card per group, each card holding a
- * mini table of checkbox | table | count | status rows. Ported to this
+ * Spaces): a filter toolbar (a "select all" toggle / Group by / catalog /
+ * schema / an extra facet / search) above one card per group, each card
+ * holding a mini table of checkbox | table | count | status rows. Ported to this
  * dialog's actual data source — monitored tables, not approved rule sets —
  * so the extra facet is Steward (there's no label/severity concept on a
  * monitored table) and the "Rules" column shows `applied_rule_count`
@@ -28,17 +28,29 @@ import { useListMonitoredTablesSuspense, type MonitoredTableSummaryOut } from "@
 import selector from "@/lib/selector";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { cn } from "@/lib/utils";
 
-function TruncatedCell({ text, className }: { text: string; className?: string }) {
+/**
+ * Truncated single-line cell with a hover tooltip.
+ *
+ * The tooltip normally only appears when the displayed text overflows its
+ * box. When *fullText* is supplied and differs from the (possibly
+ * group-by-trimmed) displayed *text* — see item 22's FQN trimming — the
+ * tooltip always shows *fullText*, regardless of overflow, so the full FQN
+ * stays reachable even when the trimmed text fits comfortably.
+ */
+function TruncatedCell({ text, fullText, className }: { text: string; fullText?: string; className?: string }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [overflow, setOverflow] = useState(false);
+  const tooltipText = fullText ?? text;
+  const alwaysShowTooltip = fullText !== undefined && fullText !== text;
 
   const checkOverflow = () => {
     const el = ref.current;
@@ -53,13 +65,29 @@ function TruncatedCell({ text, className }: { text: string; className?: string }
           {text}
         </span>
       </TooltipTrigger>
-      {overflow && (
+      {(overflow || alwaysShowTooltip) && (
         <TooltipContent side="top" className="max-w-md text-wrap break-words text-left">
-          {text}
+          {tooltipText}
         </TooltipContent>
       )}
     </Tooltip>
   );
+}
+
+/**
+ * Trims a `catalog.schema.table` FQN to match the active group-by scope
+ * (item 22) — the group card / heading already carries the trimmed-off
+ * prefix, so repeating it in every row is noise:
+ *   - group=catalog  → "schema.table"
+ *   - group=schema   → "table"
+ *   - group=none     → full FQN unchanged
+ * Tolerates malformed FQNs by falling back to the full string.
+ */
+function trimFqnForGroup(fqn: string, groupBy: GroupMode): string {
+  if (groupBy === "none") return fqn;
+  const parts = fqn.split(".");
+  const trimmed = groupBy === "catalog" ? parts.slice(1).join(".") : parts.slice(2).join(".");
+  return trimmed || fqn;
 }
 
 /** Splits a `catalog.schema.table` FQN into its parts, tolerating malformed
@@ -165,18 +193,41 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
     onChange(next);
   }
 
-  function selectAll() {
-    const selectableKeys = filtered.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k));
-    onChange(new Set([...selected, ...selectableKeys]));
-  }
+  // All-selected state for the global toggle switch (item 19). A Switch is
+  // binary, so it reports "on" only when every currently-filtered,
+  // selectable row is selected — matching each group card's own
+  // checked/indeterminate logic, just scoped to the whole filtered set
+  // instead of one group. Flipping it on adds all filtered selectable rows
+  // to the existing selection (selections outside the current filter are
+  // left untouched); flipping it off clears the selection entirely, same as
+  // the old "Clear" button.
+  const allFilteredSelectableKeys = useMemo(
+    () => filtered.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k)),
+    [filtered, disabledKeys],
+  );
+  const allFilteredSelected =
+    allFilteredSelectableKeys.length > 0 && allFilteredSelectableKeys.every((k) => selected.has(k));
 
-  function clearAll() {
-    onChange(new Set());
+  function toggleSelectAll(checked: boolean) {
+    if (checked) {
+      onChange(new Set([...selected, ...allFilteredSelectableKeys]));
+    } else {
+      onChange(new Set());
+    }
   }
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <Switch
+            checked={allFilteredSelected}
+            onCheckedChange={toggleSelectAll}
+            aria-label={t("dataProducts.pickerSelectAllToggleAria")}
+          />
+          <span className="text-xs text-muted-foreground">{t("dataProducts.pickerSelectAll")}</span>
+        </div>
+
         <div className="flex items-center gap-1.5">
           <Layers className="h-3.5 w-3.5 text-muted-foreground" />
           <span className="text-xs text-muted-foreground">{t("dataProducts.pickerGroupByLabel")}</span>
@@ -203,6 +254,12 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
             </SelectContent>
           </Select>
         </div>
+
+        {/* Separator's own `data-[orientation=vertical]:h-full` utility
+            outranks a plain `h-6` in the generated stylesheet (equal
+            specificity, later source order) and `h-full` resolves to 0
+            against this row's auto height — force it with `!h-6`. */}
+        <Separator orientation="vertical" className="!h-6" />
 
         <Select value={catalogFilter} onValueChange={(v) => { setCatalogFilter(v); setSchemaFilter(ALL); }}>
           <SelectTrigger className="w-40 h-8 text-xs" aria-label={t("monitoredTables.colCatalog")}>
@@ -256,21 +313,6 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
           onChange={(e) => setSearch(e.target.value)}
           className="w-48 h-8 text-xs"
         />
-
-        <div className="flex items-center gap-1.5 ml-auto">
-          <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={selectAll}>
-            {t("dataProducts.pickerSelectAll")}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 text-xs"
-            onClick={clearAll}
-            disabled={selected.size === 0}
-          >
-            {t("dataProducts.pickerClear")}
-          </Button>
-        </div>
       </div>
 
       <div className="space-y-3 min-h-[20rem]">
@@ -346,13 +388,22 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
             const someSelected = selectableKeys.some((k) => selected.has(k));
             return (
               <div key={group} className="border rounded-lg overflow-hidden">
-                <div className="flex items-center gap-3 p-3 bg-muted/40 border-b">
-                  <Checkbox
-                    checked={allSelected ? true : someSelected ? "indeterminate" : false}
-                    onCheckedChange={() => toggleGroup(groupRows)}
-                    disabled={selectableKeys.length === 0}
-                    aria-label={t("dataProducts.pickerSelectGroupAria", { group })}
-                  />
+                {/* Item 21: clicking anywhere on the top bar toggles the
+                    group's selection, not just the checkbox — the checkbox
+                    stays independently clickable via stopPropagation below
+                    so it doesn't double-toggle. */}
+                <div
+                  className="flex items-center gap-3 p-3 bg-muted/40 border-b cursor-pointer hover:bg-muted/60"
+                  onClick={() => toggleGroup(groupRows)}
+                >
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                      onCheckedChange={() => toggleGroup(groupRows)}
+                      disabled={selectableKeys.length === 0}
+                      aria-label={t("dataProducts.pickerSelectGroupAria", { group })}
+                    />
+                  </span>
                   <div className="flex items-center gap-2">
                     {groupBy === "catalog" && <Database className="h-3.5 w-3.5 text-muted-foreground" />}
                     {groupBy === "schema" && <Layers className="h-3.5 w-3.5 text-muted-foreground" />}
@@ -403,7 +454,11 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
                           </TableCell>
                           <TableCell className="overflow-hidden">
                             <span className="inline-flex items-center gap-2 max-w-full">
-                              <TruncatedCell text={r.table.table_fqn} className="font-mono text-xs" />
+                              <TruncatedCell
+                                text={trimFqnForGroup(r.table.table_fqn, groupBy)}
+                                fullText={r.table.table_fqn}
+                                className="font-mono text-xs"
+                              />
                               {notReady && (
                                 <Badge variant="outline" className="text-[10px] shrink-0">
                                   {t("dataProducts.pickerNotReadyBadge")}

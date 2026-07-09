@@ -2081,7 +2081,7 @@
     "pickerAllGroup": "All tables",
     "pickerUnknownGroup": "Unknown",
     "pickerSelectAll": "Select all",
-    "pickerClear": "Clear",
+    "pickerSelectAllToggleAria": "Select all tables",
     "pickerSelectGroupAria": "Select all in {{group}}",
     "pickerGroupTablesCount_one": "{{count}} table",
     "pickerGroupTablesCount_other": "{{count}} tables",

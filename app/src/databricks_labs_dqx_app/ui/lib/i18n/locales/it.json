@@ -2081,7 +2081,7 @@
     "pickerAllGroup": "Tutte le tabelle",
     "pickerUnknownGroup": "Sconosciuto",
     "pickerSelectAll": "Seleziona tutto",
-    "pickerClear": "Cancella",
+    "pickerSelectAllToggleAria": "Seleziona tutte le tabelle",
     "pickerSelectGroupAria": "Seleziona tutto in {{group}}",
     "pickerGroupTablesCount_one": "{{count}} tabella",
     "pickerGroupTablesCount_other": "{{count}} tabelle",

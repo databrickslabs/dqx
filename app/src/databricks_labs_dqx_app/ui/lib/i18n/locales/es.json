@@ -2081,7 +2081,7 @@
     "pickerAllGroup": "Todas las tablas",
     "pickerUnknownGroup": "Desconocido",
     "pickerSelectAll": "Seleccionar todo",
-    "pickerClear": "Borrar",
+    "pickerSelectAllToggleAria": "Seleccionar todas las tablas",
     "pickerSelectGroupAria": "Seleccionar todo en {{group}}",
     "pickerGroupTablesCount_one": "{{count}} tabla",
     "pickerGroupTablesCount_other": "{{count}} tablas",
