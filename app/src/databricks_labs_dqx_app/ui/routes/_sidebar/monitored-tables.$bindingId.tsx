@@ -940,8 +940,9 @@ function RunTableAction({
 // at roughly the same height as the About section beside it: About renders
 // ten definition rows (text-xs, gap-y-2) plus the Unity Catalog link line,
 // and the schema table adds a header row and a pagination footer around its
-// compact (h-8) body rows. Eight body rows balances the two columns.
-const SCHEMA_PAGE_SIZE = 8;
+// compact (h-8) body rows. Six body rows lands the pagination footer level
+// with About's "Open in Unity Catalog" link line.
+const SCHEMA_PAGE_SIZE = 6;
 
 function AboutTab({
   table,

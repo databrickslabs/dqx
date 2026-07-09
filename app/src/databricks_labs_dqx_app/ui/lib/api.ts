@@ -3149,6 +3149,14 @@ export interface WorkspaceConfig {
   llm_config?: LLMConfig;
 }
 
+/**
+ * Workspace host for building deep links into the Databricks workspace UI.
+ */
+export interface WorkspaceHostOut {
+  /** Workspace host (e.g. 'https://e2-...cloud.databricks.com') used to build links into the workspace UI, such as Unity Catalog explorer pages. Empty string when unset (local dev). */
+  workspace_host?: string;
+}
+
 export type DeleteSchedule200 = {[key: string]: string};
 
 export type DeleteRoleMapping200 = {[key: string]: string};
@@ -5164,6 +5172,157 @@ export const useSaveCustomMetrics = <TError = AxiosError<HTTPValidationError>,
       return useMutation(mutationOptions, queryClient);
     }
     
+/**
+ * Return the workspace host (accessible by all authenticated users).
+
+Unlike the embedded-dashboard config, the host alone grants no data
+access — links built from it (e.g. Unity Catalog explorer) still
+enforce the caller's own workspace/UC permissions on arrival.
+ * @summary Get Workspace Host
+ */
+export const getWorkspaceHost = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<WorkspaceHostOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/config/workspace-host`,options
+    );
+  }
+
+
+
+
+export const getGetWorkspaceHostQueryKey = () => {
+    return [
+    `/api/v1/config/workspace-host`
+    ] as const;
+    }
+
+    
+export const getGetWorkspaceHostQueryOptions = <TData = Awaited<ReturnType<typeof getWorkspaceHost>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceHost>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWorkspaceHostQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorkspaceHost>>> = ({ signal }) => getWorkspaceHost({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceHost>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetWorkspaceHostQueryResult = NonNullable<Awaited<ReturnType<typeof getWorkspaceHost>>>
+export type GetWorkspaceHostQueryError = AxiosError<unknown>
+
+
+export function useGetWorkspaceHost<TData = Awaited<ReturnType<typeof getWorkspaceHost>>, TError = AxiosError<unknown>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceHost>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getWorkspaceHost>>,
+          TError,
+          Awaited<ReturnType<typeof getWorkspaceHost>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetWorkspaceHost<TData = Awaited<ReturnType<typeof getWorkspaceHost>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceHost>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getWorkspaceHost>>,
+          TError,
+          Awaited<ReturnType<typeof getWorkspaceHost>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetWorkspaceHost<TData = Awaited<ReturnType<typeof getWorkspaceHost>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceHost>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Workspace Host
+ */
+
+export function useGetWorkspaceHost<TData = Awaited<ReturnType<typeof getWorkspaceHost>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceHost>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetWorkspaceHostQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetWorkspaceHostSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getWorkspaceHost>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getWorkspaceHost>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWorkspaceHostQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorkspaceHost>>> = ({ signal }) => getWorkspaceHost({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getWorkspaceHost>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetWorkspaceHostSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getWorkspaceHost>>>
+export type GetWorkspaceHostSuspenseQueryError = AxiosError<unknown>
+
+
+export function useGetWorkspaceHostSuspense<TData = Awaited<ReturnType<typeof getWorkspaceHost>>, TError = AxiosError<unknown>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getWorkspaceHost>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetWorkspaceHostSuspense<TData = Awaited<ReturnType<typeof getWorkspaceHost>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getWorkspaceHost>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetWorkspaceHostSuspense<TData = Awaited<ReturnType<typeof getWorkspaceHost>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getWorkspaceHost>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Workspace Host
+ */
+
+export function useGetWorkspaceHostSuspense<TData = Awaited<ReturnType<typeof getWorkspaceHost>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getWorkspaceHost>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetWorkspaceHostSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
 /**
  * Return the current embedded-dashboard config.
 

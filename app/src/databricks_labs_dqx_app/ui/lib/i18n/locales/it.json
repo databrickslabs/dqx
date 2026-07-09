@@ -1949,7 +1949,7 @@
     "changeColumnTitle": "Cambia colonna",
     "changeColumnLabel": "Cambia colonna per {{column}}",
     "viewData": {
-      "sectionTitle": "Visualizza dati",
+      "sectionTitle": "Dati di esempio",
       "description": "Vengono mostrate solo le prime {{count}} righe.",
       "loadFailed": "Impossibile caricare i dati. Controlla il warehouse SQL e i tuoi accessi.",
       "queryFailed": "Impossibile eseguire la query. Riformula la domanda.",

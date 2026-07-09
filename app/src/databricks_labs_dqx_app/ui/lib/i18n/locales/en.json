@@ -1949,7 +1949,7 @@
     "changeColumnTitle": "Change column",
     "changeColumnLabel": "Change column for {{column}}",
     "viewData": {
-      "sectionTitle": "View Data",
+      "sectionTitle": "Sample Data",
       "description": "Showing first {{count}} rows only.",
       "loadFailed": "Couldn't load table data. Check the SQL warehouse and your access.",
       "queryFailed": "Couldn't run that query. Try rephrasing your question.",

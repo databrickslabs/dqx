@@ -1949,7 +1949,7 @@
     "changeColumnTitle": "Alterar coluna",
     "changeColumnLabel": "Alterar coluna de {{column}}",
     "viewData": {
-      "sectionTitle": "Ver dados",
+      "sectionTitle": "Dados de amostra",
       "description": "Mostrando apenas as primeiras {{count}} linhas.",
       "loadFailed": "Não foi possível carregar os dados. Verifique o warehouse SQL e seu acesso.",
       "queryFailed": "Não foi possível executar a consulta. Tente reformular a pergunta.",
