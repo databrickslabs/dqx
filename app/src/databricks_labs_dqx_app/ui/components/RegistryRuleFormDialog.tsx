@@ -63,6 +63,7 @@ import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
 import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
 import { GroupByField } from "@/components/rules/lowcode/GroupByField";
 import { ModeSwitchDialog, type ModeSwitchDirection } from "@/components/rules/lowcode/ModeSwitchDialog";
+import { RuleTestPanel } from "@/components/rules/test/RuleTestPanel";
 import { useJoinedColumns } from "@/hooks/useJoinedColumns";
 import {
   compileAstToSql,
@@ -2058,6 +2059,10 @@ export function RegistryRuleFormDialog({
     </div>
   );
 
+  // Effective SQL predicate to test: the typed predicate in SQL mode, the
+  // compiled AST in Low-Code mode (dqlake's draftForTest convention). DQX
+  // Native rules are not testable — they show the P19-D notice instead.
+  const testEffectivePredicate = mode === "sql" ? sqlPredicate.trim() : mode === "lowcode" ? lowcodePredicate : "";
   const testTabContent = (
     <div className="space-y-3 pt-2">
       {mode === "dqx_native" ? (
@@ -2066,15 +2071,12 @@ export function RegistryRuleFormDialog({
           <p className="text-xs text-muted-foreground">{t("rulesRegistry.testNotAvailableDqxNative")}</p>
         </div>
       ) : (
-        <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
-          <div className="flex items-start gap-3">
-            <FlaskConical className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
-            <p className="text-xs text-muted-foreground">{t("rulesRegistry.testComingSoon")}</p>
-          </div>
-          <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled>
-            {t("rulesRegistry.testRunButton")}
-          </Button>
-        </div>
+        <RuleTestPanel
+          predicate={testEffectivePredicate}
+          polarity={polarity}
+          slots={sqlSlots}
+          canTest={testEffectivePredicate.length > 0 && (mode !== "sql" || sqlError === null)}
+        />
       )}
     </div>
   );

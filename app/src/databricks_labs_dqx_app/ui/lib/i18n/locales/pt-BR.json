@@ -2151,5 +2151,32 @@
     "grantSaveFailed": "Falha ao salvar a permissão.",
     "grantRemoved": "Permissão removida.",
     "grantRemoveFailed": "Falha ao remover a permissão."
+  },
+  "ruleTest": {
+    "cellNumberPlaceholder": "número",
+    "cellDateLabel": "Valor de data",
+    "cellBooleanLabel": "Valor booleano",
+    "cellTextPlaceholder": "texto",
+    "deleteRow": "Excluir linha",
+    "addRow": "Adicionar linha",
+    "pickTable": "Escolher tabela",
+    "mapColumns": "Mapear colunas",
+    "manualTest": "Teste manual",
+    "tableTest": "Teste com tabela",
+    "generateData": "Gerar dados de teste",
+    "generateSuccess": "Dados de teste gerados",
+    "generateError": "Não foi possível gerar os dados de teste",
+    "aiDisabled": "Os recursos de IA estão indisponíveis no momento",
+    "waitingForWarehouse": "Aguardando o warehouse SQL",
+    "running": "Executando…",
+    "runTest": "Executar teste",
+    "runError": "Falha na execução do teste",
+    "noRows": "Nenhuma linha retornada para esta amostra.",
+    "truncatedNote": "Mostrando as primeiras {{count}} linhas; a avaliação foi executada sobre toda a amostra.",
+    "addDefinitionToTest": "Adicione uma definição de regra para testar.",
+    "randomSample": "Amostra aleatória",
+    "fullTable": "Tabela completa",
+    "records": "Registros",
+    "percent": "%"
   }
 }

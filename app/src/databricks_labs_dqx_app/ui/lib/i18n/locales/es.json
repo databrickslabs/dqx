@@ -2151,5 +2151,32 @@
     "grantSaveFailed": "No se pudo guardar el permiso.",
     "grantRemoved": "Permiso eliminado.",
     "grantRemoveFailed": "No se pudo eliminar el permiso."
+  },
+  "ruleTest": {
+    "cellNumberPlaceholder": "número",
+    "cellDateLabel": "Valor de fecha",
+    "cellBooleanLabel": "Valor booleano",
+    "cellTextPlaceholder": "texto",
+    "deleteRow": "Eliminar fila",
+    "addRow": "Añadir fila",
+    "pickTable": "Elegir tabla",
+    "mapColumns": "Asignar columnas",
+    "manualTest": "Prueba manual",
+    "tableTest": "Prueba con tabla",
+    "generateData": "Generar datos de prueba",
+    "generateSuccess": "Datos de prueba generados",
+    "generateError": "No se pudieron generar los datos de prueba",
+    "aiDisabled": "Las funciones de IA no están disponibles actualmente",
+    "waitingForWarehouse": "Esperando al almacén SQL",
+    "running": "Ejecutando…",
+    "runTest": "Ejecutar prueba",
+    "runError": "La ejecución de la prueba falló",
+    "noRows": "No se devolvieron filas para esta muestra.",
+    "truncatedNote": "Mostrando las primeras {{count}} filas; la evaluación se ejecutó sobre toda la muestra.",
+    "addDefinitionToTest": "Añade una definición de regla para probar.",
+    "randomSample": "Muestra aleatoria",
+    "fullTable": "Tabla completa",
+    "records": "Registros",
+    "percent": "%"
   }
 }

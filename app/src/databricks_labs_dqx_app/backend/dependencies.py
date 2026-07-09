@@ -42,6 +42,7 @@ from .services.rule_suggester import RuleSuggester
 from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
 from .services.compute_service import ComputeService, resolve_warehouse_id
+from .services.rule_test_service import RuleTestService
 from .services.table_data_service import TableDataService
 from .services.review_status_service import ReviewStatusService
 from .services.schedule_config_service import ScheduleConfigService
@@ -474,6 +475,19 @@ async def get_table_data_service(
     return TableDataService(sql=sql, ai_gateway=gateway)
 
 
+async def get_rule_test_service(
+    sql: Annotated[SqlExecutor, Depends(get_preview_sql_executor)],
+    gateway: Annotated[AIGateway, Depends(get_ai_gateway)],
+) -> RuleTestService:
+    """Create a RuleTestService for the Rules Registry Test tab (P22-E).
+
+    Shares the View Data OBO warehouse executor seam (``get_preview_sql_executor``
+    → configured warehouse, caller's UC perms) and the AI gateway used for
+    test-data generation.
+    """
+    return RuleTestService(sql=sql, ai_gateway=gateway)
+
+
 async def get_review_status_service(
     sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
@@ -797,6 +811,7 @@ __all__ = [
     "get_compute_service",
     "get_preview_sql_executor",
     "get_table_data_service",
+    "get_rule_test_service",
     "get_review_status_service",
     "get_schedule_config_service",
     "require_role",

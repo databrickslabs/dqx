@@ -59,6 +59,11 @@ export interface AddDataProductMemberIn {
   pinned_version?: AddDataProductMemberInPinnedVersion;
 }
 
+export interface AdhocRunIn {
+  columns: string[];
+  rows: unknown[][];
+}
+
 /**
  * Optional fully qualified table name for schema context
  */
@@ -1016,6 +1021,34 @@ export interface GenerateChecksOut {
   validation_errors?: string[];
 }
 
+export type GenerateDataInPolarity = typeof GenerateDataInPolarity[keyof typeof GenerateDataInPolarity];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const GenerateDataInPolarity = {
+  pass: 'pass',
+  fail: 'fail',
+} as const;
+
+export interface GenerateDataIn {
+  /** @minLength 1 */
+  predicate: string;
+  polarity?: GenerateDataInPolarity;
+  columns?: SlotIn[];
+  /**
+   * @minimum 5
+   * @maximum 20
+   */
+  row_count?: number;
+}
+
+export type GenerateDataOutRowsItemItem = string | null;
+
+export interface GenerateDataOut {
+  columns: string[];
+  rows: GenerateDataOutRowsItemItem[][];
+}
+
 /**
  * Request body for generating DQX rules from an ODCS v3.x contract.
  */
@@ -1502,6 +1535,16 @@ export interface OutputConfig {
 export interface PermissionsDefaultInheritOut {
   /** When true, new grants default to inheriting down the hierarchy */
   enabled: boolean;
+}
+
+export interface PrewarmIn {
+  start?: boolean;
+}
+
+export interface PrewarmOut {
+  warehouse_id: string;
+  state: string;
+  running: boolean;
 }
 
 /**
@@ -2055,6 +2098,60 @@ export interface RuleSlot {
   arg_key?: RuleSlotArgKey;
 }
 
+export type RuleTestRunInMode = typeof RuleTestRunInMode[keyof typeof RuleTestRunInMode];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RuleTestRunInMode = {
+  dqx_native: 'dqx_native',
+  lowcode: 'lowcode',
+  sql: 'sql',
+} as const;
+
+export type RuleTestRunInPolarity = typeof RuleTestRunInPolarity[keyof typeof RuleTestRunInPolarity];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RuleTestRunInPolarity = {
+  pass: 'pass',
+  fail: 'fail',
+} as const;
+
+export type RuleTestRunInSourceKind = typeof RuleTestRunInSourceKind[keyof typeof RuleTestRunInSourceKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RuleTestRunInSourceKind = {
+  adhoc: 'adhoc',
+  table: 'table',
+} as const;
+
+export type RuleTestRunInAdhoc = AdhocRunIn | null;
+
+export type RuleTestRunInTable = TableRunIn | null;
+
+export interface RuleTestRunIn {
+  mode: RuleTestRunInMode;
+  /** @minLength 1 */
+  predicate: string;
+  polarity?: RuleTestRunInPolarity;
+  slots?: SlotIn[];
+  source_kind: RuleTestRunInSourceKind;
+  adhoc?: RuleTestRunInAdhoc;
+  table?: RuleTestRunInTable;
+  /**
+   * @minimum 1
+   * @maximum 50000
+   */
+  display_cap?: number;
+}
+
+export interface RuleTestRunOut {
+  columns: string[];
+  rows: TestRowOut[];
+  truncated: boolean;
+}
+
 export type RulesRegistrySettingsInAutoUpgradeWithoutApproval = boolean | null;
 
 export type RulesRegistrySettingsInDefaultAutoUpgrade = boolean | null;
@@ -2513,6 +2610,11 @@ export interface SetStatusIn {
   expected_version?: SetStatusInExpectedVersion;
 }
 
+export interface SlotIn {
+  name: string;
+  family?: string;
+}
+
 /**
  * Response of ``POST /monitored-tables/{binding_id}/suggest-rules``.
 
@@ -2580,6 +2682,33 @@ export interface TableQueryIn {
   question: string;
 }
 
+export type TableRunInColumnMapping = {[key: string]: string};
+
+export type TableRunInSampleKind = typeof TableRunInSampleKind[keyof typeof TableRunInSampleKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const TableRunInSampleKind = {
+  records: 'records',
+  percent: 'percent',
+  full: 'full',
+} as const;
+
+export interface TableRunIn {
+  /**
+   * @minLength 1
+   * @maxLength 512
+   */
+  table_fqn: string;
+  column_mapping?: TableRunInColumnMapping;
+  sample_kind?: TableRunInSampleKind;
+  /**
+   * @minimum 1
+   * @maximum 10000000
+   */
+  sample_value?: number;
+}
+
 /**
  * Spark-DDL snapshot of a UC table's current column list.
 
@@ -2608,6 +2737,16 @@ export interface TableTagsOut {
   table_tags?: string[];
   /** Column name to list of tags mapping */
   column_tags?: TableTagsOutColumnTags;
+}
+
+export type TestRowOutCells = {[key: string]: string | null};
+
+export type TestRowOutRowIdx = number | null;
+
+export interface TestRowOut {
+  cells: TestRowOutCells;
+  passed: boolean;
+  row_idx?: TestRowOutRowIdx;
 }
 
 export interface TimezoneIn {
@@ -17557,6 +17696,195 @@ export const useQueryTableData = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getQueryTableDataMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Run a rule's SQL predicate against manual rows or a UC table sample.
+ * @summary Run Rule Test
+ */
+export const runRuleTest = (
+    ruleTestRunIn: RuleTestRunIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RuleTestRunOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/rule-tests/run`,
+      ruleTestRunIn,options
+    );
+  }
+
+
+
+export const getRunRuleTestMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runRuleTest>>, TError,{data: RuleTestRunIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof runRuleTest>>, TError,{data: RuleTestRunIn}, TContext> => {
+
+const mutationKey = ['runRuleTest'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runRuleTest>>, {data: RuleTestRunIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  runRuleTest(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunRuleTestMutationResult = NonNullable<Awaited<ReturnType<typeof runRuleTest>>>
+    export type RunRuleTestMutationBody = RuleTestRunIn
+    export type RunRuleTestMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Run Rule Test
+ */
+export const useRunRuleTest = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runRuleTest>>, TError,{data: RuleTestRunIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof runRuleTest>>,
+        TError,
+        {data: RuleTestRunIn},
+        TContext
+      > => {
+
+      const mutationOptions = getRunRuleTestMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Generate a passing/failing mix of manual test rows via the AI gateway.
+ * @summary Generate Rule Test Data
+ */
+export const generateRuleTestData = (
+    generateDataIn: GenerateDataIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<GenerateDataOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/rule-tests/generate-data`,
+      generateDataIn,options
+    );
+  }
+
+
+
+export const getGenerateRuleTestDataMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof generateRuleTestData>>, TError,{data: GenerateDataIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof generateRuleTestData>>, TError,{data: GenerateDataIn}, TContext> => {
+
+const mutationKey = ['generateRuleTestData'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof generateRuleTestData>>, {data: GenerateDataIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  generateRuleTestData(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type GenerateRuleTestDataMutationResult = NonNullable<Awaited<ReturnType<typeof generateRuleTestData>>>
+    export type GenerateRuleTestDataMutationBody = GenerateDataIn
+    export type GenerateRuleTestDataMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Generate Rule Test Data
+ */
+export const useGenerateRuleTestData = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof generateRuleTestData>>, TError,{data: GenerateDataIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof generateRuleTestData>>,
+        TError,
+        {data: GenerateDataIn},
+        TContext
+      > => {
+
+      const mutationOptions = getGenerateRuleTestDataMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Fire-and-forget start the configured SQL warehouse so the first run is warm.
+ * @summary Prewarm Rule Test Warehouse
+ */
+export const prewarmRuleTestWarehouse = (
+    prewarmIn: PrewarmIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<PrewarmOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/rule-tests/warehouse/prewarm`,
+      prewarmIn,options
+    );
+  }
+
+
+
+export const getPrewarmRuleTestWarehouseMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof prewarmRuleTestWarehouse>>, TError,{data: PrewarmIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof prewarmRuleTestWarehouse>>, TError,{data: PrewarmIn}, TContext> => {
+
+const mutationKey = ['prewarmRuleTestWarehouse'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof prewarmRuleTestWarehouse>>, {data: PrewarmIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  prewarmRuleTestWarehouse(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PrewarmRuleTestWarehouseMutationResult = NonNullable<Awaited<ReturnType<typeof prewarmRuleTestWarehouse>>>
+    export type PrewarmRuleTestWarehouseMutationBody = PrewarmIn
+    export type PrewarmRuleTestWarehouseMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Prewarm Rule Test Warehouse
+ */
+export const usePrewarmRuleTestWarehouse = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof prewarmRuleTestWarehouse>>, TError,{data: PrewarmIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof prewarmRuleTestWarehouse>>,
+        TError,
+        {data: PrewarmIn},
+        TContext
+      > => {
+
+      const mutationOptions = getPrewarmRuleTestWarehouseMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

@@ -2151,5 +2151,32 @@
     "grantSaveFailed": "Failed to save permission.",
     "grantRemoved": "Permission removed.",
     "grantRemoveFailed": "Failed to remove permission."
+  },
+  "ruleTest": {
+    "cellNumberPlaceholder": "number",
+    "cellDateLabel": "Date value",
+    "cellBooleanLabel": "Boolean value",
+    "cellTextPlaceholder": "text",
+    "deleteRow": "Delete row",
+    "addRow": "Add row",
+    "pickTable": "Pick table",
+    "mapColumns": "Map columns",
+    "manualTest": "Manual Test",
+    "tableTest": "Table Test",
+    "generateData": "Generate test data",
+    "generateSuccess": "Test data generated",
+    "generateError": "Couldn't generate test data",
+    "aiDisabled": "AI features are currently unavailable",
+    "waitingForWarehouse": "Waiting for warehouse",
+    "running": "Running…",
+    "runTest": "Run test",
+    "runError": "Test run failed",
+    "noRows": "No rows returned for this sample.",
+    "truncatedNote": "Showing the first {{count}} rows; evaluation ran over the full sample.",
+    "addDefinitionToTest": "Add a rule definition to test.",
+    "randomSample": "Random sample",
+    "fullTable": "Full table",
+    "records": "Records",
+    "percent": "%"
   }
 }
