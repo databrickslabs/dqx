@@ -28,6 +28,7 @@ import { ProductAboutTab } from "@/components/data-products/ProductAboutTab";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
 import { ProductTablesTab } from "@/components/data-products/ProductTablesTab";
 import { ProductRunsTab } from "@/components/data-products/ProductRunsTab";
+import { ProductSchedulingTab } from "@/components/data-products/ProductSchedulingTab";
 import { useEditProductState } from "@/components/data-products/useEditProductState";
 
 export const Route = createFileRoute("/_sidebar/table-spaces/$productId")({
@@ -168,6 +169,11 @@ function DataProductDetailPage() {
             runs: (
               <TabBoundary label={t("dataProducts.tabRuns")}>
                 <ProductRunsTab product={product} />
+              </TabBoundary>
+            ),
+            scheduling: (
+              <TabBoundary label={t("dataProducts.tabSchedule")}>
+                <ProductSchedulingTab editState={editState} canEdit={canEdit} />
               </TabBoundary>
             ),
           }}

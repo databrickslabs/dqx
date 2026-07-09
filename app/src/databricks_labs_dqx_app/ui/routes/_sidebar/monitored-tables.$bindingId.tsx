@@ -18,13 +18,6 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -47,7 +40,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   BarChart3,
-  CalendarClock,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -135,9 +127,9 @@ import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 
-// Schedule is NOT a tab (P23 item 13): it opens as a dialog from the header
-// ⋮ menu, mirroring the Rules Registry detail's menu-driven dialog surfaces.
-const DETAIL_TAB_KEYS = ["about", "view-data", "permissions", "profile", "apply-rules", "results"] as const;
+// Schedule is its own tab again (P25 item 1 reverted P23 item 13's move into
+// the header ⋮ menu), matching dqlake's binding detail tab strip.
+const DETAIL_TAB_KEYS = ["about", "view-data", "permissions", "profile", "apply-rules", "results", "schedule"] as const;
 type DetailTab = (typeof DETAIL_TAB_KEYS)[number];
 
 /** Client-side deadline for the AI suggest-rules request (prefetch + manual
@@ -309,7 +301,6 @@ function MonitoredTableDetailPage() {
   const deleteMutation = useDeleteMonitoredTable();
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
 
   const persistStagedRows = useCallback(
     () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
@@ -501,39 +492,33 @@ function MonitoredTableDetailPage() {
                   {...computeRunGating(baseline.length, stagedRows.length)}
                 />
               )}
-              {/* ⋮ menu (P23 item 13) — Schedule (dialog) + Delete (confirm),
-                  mirroring the Rules Registry detail's top-right menu. */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0"
-                    aria-label={t("monitoredTables.actionsMenuLabel")}
-                  >
-                    <MoreVertical className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setScheduleDialogOpen(true)} className="gap-2">
-                    <CalendarClock className="h-3.5 w-3.5" />
-                    {t("monitoredTables.actionSchedule")}
-                  </DropdownMenuItem>
-                  {perms.canCreateRules && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={() => setDeleteConfirmOpen(true)}
-                        variant="destructive"
-                        className="gap-2"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        {t("monitoredTables.actionDelete")}
-                      </DropdownMenuItem>
-                    </>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
+              {/* ⋮ menu — Delete (confirm) only. Schedule moved back to its
+                  own tab (P25 item 1 reverted P23 item 13), so the menu is
+                  editor-only and hidden for viewers. */}
+              {perms.canCreateRules && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      aria-label={t("monitoredTables.actionsMenuLabel")}
+                    >
+                      <MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onClick={() => setDeleteConfirmOpen(true)}
+                      variant="destructive"
+                      className="gap-2"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {t("monitoredTables.actionDelete")}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </div>
             {/* Approve/Reject sit on their own row BELOW the primary actions
                 (Save as draft / Submit for review / Run) so the review
@@ -617,8 +602,8 @@ function MonitoredTableDetailPage() {
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           {/* Tab order (P23 item 14): About, View Data, Permissions first,
-              then the working group (Profile, Apply Rules), then Results.
-              Schedule left the strip for the header ⋮ menu (item 13). */}
+              then the working group (Profile, Apply Rules), then Results and
+              Schedule (back in the strip per P25 item 1, as in dqlake). */}
           <TabsList>
             <TabsTrigger value="about" className="gap-1.5">
               <Info className="h-3.5 w-3.5" />
@@ -645,6 +630,10 @@ function MonitoredTableDetailPage() {
             <TabsTrigger value="results" className="gap-1.5">
               <ClipboardList className="h-3.5 w-3.5" />
               {t("monitoredTables.tabResults")}
+            </TabsTrigger>
+            <TabsTrigger value="schedule" className="gap-1.5">
+              <Clock className="h-3.5 w-3.5" />
+              {t("monitoredTables.tabSchedule")}
             </TabsTrigger>
           </TabsList>
 
@@ -685,22 +674,12 @@ function MonitoredTableDetailPage() {
           <TabsContent value="results">
             <ResultsTab tableFqn={table.table_fqn} status={table.status} />
           </TabsContent>
+
+          <TabsContent value="schedule">
+            <MonitoredTableSchedulingTab table={table} canEdit={perms.canCreateRules} />
+          </TabsContent>
         </Tabs>
       </div>
-
-      {/* Schedule dialog (P23 item 13) — the old Schedule tab's content,
-          opened from the header ⋮ menu. It keeps its own Save button:
-          schedule is operational config orthogonal to the applied-rules
-          draft/submit lifecycle. */}
-      <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>{t("monitoredTables.actionSchedule")}</DialogTitle>
-            <DialogDescription>{t("monitoredTables.scheduleDialogDescription")}</DialogDescription>
-          </DialogHeader>
-          <MonitoredTableSchedulingTab table={table} canEdit={perms.canCreateRules} />
-        </DialogContent>
-      </Dialog>
 
       <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <AlertDialogContent>
@@ -2174,13 +2153,17 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
             </Button>
           </div>
           <div className="flex flex-wrap gap-1.5">
+            {/* On hover the chips fill with the same purple AI gradient as
+                the Ask button (AI_BUTTON_BG / AI_GRADIENT_FROM_VIA_TO) —
+                hover: variants must be literal for Tailwind, so the
+                violet→fuchsia→pink stops are repeated here (P25 item 2). */}
             {suggestions.map((s) => (
               <button
                 key={s}
                 type="button"
                 onClick={() => runQuestion(s)}
                 disabled={queryMutation.isPending}
-                className="rounded-full border px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-50"
+                className="rounded-full border px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-gradient-to-r hover:from-violet-500 hover:via-fuchsia-500 hover:to-pink-500 hover:text-white hover:border-transparent disabled:pointer-events-none disabled:opacity-50"
               >
                 {s}
               </button>

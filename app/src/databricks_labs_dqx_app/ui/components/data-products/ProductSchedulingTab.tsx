@@ -1,11 +1,11 @@
-/** Table Space Schedule editor. Ported from dqlake's
+/** Table Space Schedule tab. Ported from dqlake's
  *  `components/products/ProductSchedulingTab.tsx`; now a thin wrapper over the
  *  shared `ScheduleEditor` (P21 item 14 extracted the empty-state + picker +
- *  remove composition so the monitored-table Schedule surface can reuse it).
- *  Hosted in the header ⋮ menu's Schedule dialog since P23 item 13 (it was a
- *  tab before). Buffers into `useEditProductState`'s flat
+ *  remove composition so the monitored-table Schedule tab can reuse it).
+ *  Back in the tab strip per P25 item 1 (P23 item 13 had moved it into the
+ *  header ⋮ menu's dialog). Buffers into `useEditProductState`'s flat
  *  `scheduleCron`/`scheduleTz` pair and reports raw-cron validity up so the
- *  Save buttons stay disabled until it's fixed.
+ *  header's Save buttons stay disabled until it's fixed.
  */
 import { useTranslation } from "react-i18next";
 import { ScheduleEditor } from "@/components/common/ScheduleEditor";

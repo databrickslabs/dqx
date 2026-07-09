@@ -1,7 +1,7 @@
-/** Monitored Table Schedule editor (P21 item 14). Hosted in the header ⋮
- *  menu's Schedule dialog since P23 item 13 (it was a tab before). Reuses the
+/** Monitored Table Schedule tab (P21 item 14; back in the tab strip per P25
+ *  item 1, reverting P23 item 13's move into the header ⋮ menu). Reuses the
  *  shared `ScheduleEditor` composition (empty-state → picker → remove) that
- *  the Table Space Schedule surface uses, but persists on its own: schedule is
+ *  the Table Space Schedule tab uses, but persists on its own: schedule is
  *  operational config orthogonal to the applied-rules draft/submit lifecycle,
  *  so it has a dedicated Save button (PATCH `/monitored-tables/{id}/schedule`)
  *  instead of riding the header's Save-as-draft. Only approved tables with a
@@ -63,7 +63,7 @@ export function MonitoredTableSchedulingTab({
   };
 
   return (
-    <div>
+    <div className="pt-4">
       <ScheduleEditor
         cron={cron}
         timezone={tz}

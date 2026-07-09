@@ -44,19 +44,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { CalendarClock, CheckCircle2, Clock, History, Loader2, MoreVertical, Play, Save, Send, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, History, Loader2, MoreVertical, Play, Save, Send, Trash2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ProductSchedulingTab } from "@/components/data-products/ProductSchedulingTab";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
 
 /**
@@ -302,7 +293,6 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const rejectMut = useRejectDataProduct({ mutation: { onError: () => {} } });
 
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [scheduleOpen, setScheduleOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [busyRun, setBusyRun] = useState(false);
   // Bridges the gap between a successful submit and the next 4s poll
@@ -524,13 +514,6 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                   </Tooltip>
                 </TooltipProvider>
               )}
-              {/* Schedule left the tab strip (P23 item 13): it opens as a
-                  dialog from here, mirroring how the Rules Registry detail's
-                  ⋮ items open dialog surfaces. */}
-              <DropdownMenuItem onSelect={() => setScheduleOpen(true)} className="gap-2">
-                <CalendarClock className="h-3.5 w-3.5" />
-                {t("dataProducts.scheduleAction")}
-              </DropdownMenuItem>
               <DropdownMenuItem onSelect={goToRuns} className="gap-2">
                 <History className="h-3.5 w-3.5" />
                 {t("dataProducts.tabRuns")}
@@ -599,36 +582,6 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      {/* Schedule dialog (P23 item 13) — hosts the same ScheduleEditor
-          composition the old Schedule tab did. Edits still buffer into
-          `useEditProductState` (schedule is part of the space's draft), so
-          the footer Save persists the draft exactly like the header's
-          Save-as-draft button. */}
-      <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>{t("dataProducts.scheduleAction")}</DialogTitle>
-            <DialogDescription>{t("dataProducts.scheduleDialogDescription")}</DialogDescription>
-          </DialogHeader>
-          <ProductSchedulingTab editState={editState} canEdit={canEdit} />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setScheduleOpen(false)}>
-              {t("common.close")}
-            </Button>
-            {canEdit && (
-              <Button
-                onClick={() => void editState.handleSaveDraft()}
-                disabled={!editState.canSave || editState.savePending}
-                className="gap-2"
-              >
-                {editState.savePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                {t("dataProducts.saveAsDraftButton")}
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

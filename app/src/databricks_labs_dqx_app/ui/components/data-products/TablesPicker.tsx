@@ -224,15 +224,14 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-1.5">
-          <Checkbox
-            checked={allFilteredSelected ? true : someFilteredSelected ? "indeterminate" : false}
-            onCheckedChange={() => toggleSelectAll(!allFilteredSelected)}
-            disabled={allFilteredSelectableKeys.length === 0}
-            aria-label={t("dataProducts.pickerSelectAllToggleAria")}
-          />
-          <span className="text-xs text-muted-foreground">{t("dataProducts.pickerSelectAll")}</span>
-        </div>
+        {/* Checkbox only — the "Select all" text label was dropped (P25
+            item 3d); the aria-label keeps it accessible. */}
+        <Checkbox
+          checked={allFilteredSelected ? true : someFilteredSelected ? "indeterminate" : false}
+          onCheckedChange={() => toggleSelectAll(!allFilteredSelected)}
+          disabled={allFilteredSelectableKeys.length === 0}
+          aria-label={t("dataProducts.pickerSelectAllToggleAria")}
+        />
 
         <div className="flex items-center gap-1.5">
           <Layers className="h-3.5 w-3.5 text-muted-foreground" />
@@ -320,6 +319,23 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
           onChange={(e) => setSearch(e.target.value)}
           className="w-48 h-8 text-xs"
         />
+
+        {/* Grouped mode's per-group mini header rows are gone (P25 item 3a);
+            the "#Rules"/"Status" column labels render once up here instead
+            (item 3b). Widths + padding mirror the group tables' colgroup
+            (100px right-aligned / 140px) so, right-aligned via ml-auto, the
+            labels sit over their columns. Flat mode keeps its own in-table
+            header, so these only show while grouping. */}
+        {groupBy !== "none" && (
+          <div className="ml-auto flex items-center shrink-0">
+            <span className="w-[100px] px-2 text-right text-xs font-medium text-muted-foreground">
+              {t("dataProducts.colRules")}
+            </span>
+            <span className="w-[140px] px-2 text-xs font-medium text-muted-foreground">
+              {t("dataProducts.colStatus")}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="space-y-3 min-h-[20rem]">
@@ -428,11 +444,16 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                     {groupBy === "catalog" && <Database className="h-3.5 w-3.5 text-muted-foreground" />}
                     {groupBy === "schema" && <Layers className="h-3.5 w-3.5 text-muted-foreground" />}
                     <span className="text-sm font-medium">{group}</span>
+                    {/* Count badge sits right next to the group name (P25
+                        item 3c) instead of pushed to the far edge. */}
+                    <Badge variant="secondary" className="text-xs">
+                      {t("dataProducts.pickerGroupTablesCount", { count: groupRows.length })}
+                    </Badge>
                   </div>
-                  <Badge variant="secondary" className="ml-auto text-xs">
-                    {t("dataProducts.pickerGroupTablesCount", { count: groupRows.length })}
-                  </Badge>
                 </div>
+                {/* No per-group header row (P25 item 3a) — the column labels
+                    live once in the toolbar above; the colgroup keeps the
+                    rows aligned with them. */}
                 <Table className="table-fixed w-full">
                   <colgroup>
                     <col style={{ width: 48 }} />
@@ -440,14 +461,6 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                     <col style={{ width: 100 }} />
                     <col style={{ width: 140 }} />
                   </colgroup>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead style={{ width: 48 }} className="text-center" />
-                      <TableHead>{t("monitoredTables.colTableName")}</TableHead>
-                      <TableHead className="text-right">{t("dataProducts.colRules")}</TableHead>
-                      <TableHead>{t("dataProducts.colStatus")}</TableHead>
-                    </TableRow>
-                  </TableHeader>
                   <TableBody>
                     {groupRows.map((r) => {
                       const key = r.table.binding_id;
