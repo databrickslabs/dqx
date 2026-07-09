@@ -103,6 +103,28 @@ def validate_fqn(fqn: str) -> str:
     return fqn
 
 
+def validate_identifier(name: str) -> str:
+    """Validate a single SQL identifier part (e.g. a column or slot name).
+
+    Applies the same per-part character allowlist as :func:`validate_fqn` —
+    rejecting backticks (the quoting delimiter), backslashes, and C0/C1 control
+    characters, and capping length at 255. That guarantees the name can be
+    backtick-quoted (via ``quote_fqn``-style doubling) without any break-out or
+    log-injection risk, and is the identifier-side counterpart to
+    :func:`escape_sql_string` for string literals.
+
+    Raises ValueError if the name is empty or contains a disallowed character.
+    Returns the name unchanged.
+    """
+    if not name or len(name) > _MAX_FQN_PART_LEN or not _FQN_PART_RE.match(name):
+        raise ValueError(
+            f"Invalid identifier: '{name}'. "
+            "Must be 1-255 characters and must not contain a backtick, "
+            "a backslash, or control characters."
+        )
+    return name
+
+
 def fqn_needs_quoting(fqn: str) -> bool:
     """Return whether a three-part FQN requires backtick-quoting.
 

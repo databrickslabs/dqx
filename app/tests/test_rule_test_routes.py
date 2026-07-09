@@ -65,6 +65,31 @@ class TestRun:
         svc.run_adhoc.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_advanced_lowcode_rejected_without_calling_service(self, svc):
+        # A low-code rule that folds joins/group-by into a dataset-level query
+        # can't be row-tested — the route 400s (belt-and-braces) rather than
+        # letting the service run a misleading row-only test.
+        body = _adhoc_body()
+        body.mode = "lowcode"
+        body.lowcode_advanced = True
+        with pytest.raises(HTTPException) as exc:
+            await run_rule_test(body, svc)
+        assert exc.value.status_code == 400
+        assert "joins or grouping" in exc.value.detail
+        svc.run_adhoc.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_simple_lowcode_is_testable(self, svc):
+        async def _run(**kwargs):
+            return TestRunResult(columns=["a"], rows=[TestRow(cells={"a": "5"}, passed=True, row_idx=0)], truncated=False)
+
+        svc.run_adhoc.side_effect = _run
+        body = _adhoc_body()
+        body.mode = "lowcode"
+        out = await run_rule_test(body, svc)
+        assert out.rows[0].passed is True
+
+    @pytest.mark.asyncio
     async def test_unsafe_predicate_maps_to_400(self, svc):
         async def _boom(**kwargs):
             raise UnsafeSqlQueryError("nope")

@@ -28,10 +28,11 @@ No SDK, no DB, no I/O — so they are exhaustively unit-tested.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn
+from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn, validate_identifier
 
 SampleKind = Literal["records", "percent", "full"]
 Polarity = Literal["pass", "fail"]
@@ -50,19 +51,30 @@ _FAMILY_SQL_TYPE: dict[str, str] = {
 PASSED_COL = "__passed"
 ROW_IDX_COL = "__row_idx"
 
+# C0/C1 control characters other than the common whitespace (\n, \r, \t), which
+# are re-emitted as Spark escape sequences by ``_lit``. These have no legitimate
+# use in a scalar test cell and are dropped for log-injection hygiene (CWE-117)
+# once the break-out vectors (quote / backslash) are already neutralised.
+_STRIP_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
 
 def _sql_type_for_family(family: str | None) -> str:
     return _FAMILY_SQL_TYPE.get((family or "").lower(), "STRING")
 
 
 def _q(identifier: str) -> str:
-    """Backtick-quote a Databricks identifier, doubling internal backticks.
+    """Validate then backtick-quote a Databricks identifier.
 
-    Every column/slot name that reaches the built SQL is quoted so a name
-    containing spaces, hyphens, or a reserved word can never break out of its
-    identifier position (defence in depth on top of the predicate's
-    ``is_sql_query_safe`` gate applied by the service).
+    Every column/slot name that reaches the built SQL is first validated with
+    ``validate_identifier`` (rejecting backticks, backslashes, and control
+    characters) and then backtick-quoted — doubling any residual backtick as
+    belt-and-braces, exactly as ``quote_fqn`` does for FQN parts. This closes
+    the identifier break-out vector for the ad-hoc VALUES/CTE header and the
+    real column names substituted in table mode, on top of the predicate's
+    ``is_sql_query_safe`` gate applied by the service. Raises ValueError on a
+    disallowed identifier (surfaced by the route as a 400).
     """
+    validate_identifier(identifier)
     return "`" + identifier.replace("`", "``") + "`"
 
 
@@ -151,14 +163,43 @@ class AdhocSource:
 
 
 def _lit(value: Any) -> str:
-    # Quote EVERY non-null value as a string literal so each VALUES column is
-    # uniformly STRING (mixing 5 and 'hi' in one column would be a type error).
-    # The per-family TRY_CAST does the real typing.
+    """Emit a single VALUES cell as a Databricks SQL literal.
+
+    NULL / boolean cells are emitted as typed tokens (``NULL`` / ``'true'`` /
+    ``'false'``) rather than by interpolating arbitrary user text. Every other
+    non-null value is quoted as a STRING literal so each VALUES column is
+    uniformly STRING (mixing ``5`` and ``'hi'`` in one column would be a type
+    error); the per-family ``TRY_CAST`` in ``_cast_col`` does the real typing.
+
+    Cell values are arbitrary user DATA (unlike FQNs, which ``validate_fqn``
+    already strips of backslashes/control chars upstream), so the string path
+    must close BOTH literal break-out vectors:
+
+    * single quotes are doubled (``''``) per Databricks' literal escaping;
+    * backslashes are doubled (``\\\\``). On the Databricks/Delta string-literal
+      path a backslash is itself an escape character, so a value ending in
+      ``\\`` would otherwise consume the closing quote and let the literal break
+      out — the P22-E trailing-backslash injection, where the NEXT cell would
+      splice as raw SQL. ``escape_sql_string`` (sql_utils) can skip this only
+      because ``validate_fqn`` rejects backslashes before it; here there is no
+      such upstream guard, so both quote AND backslash must be escaped.
+
+    Order matters: backslashes are doubled FIRST, then quotes, then the common
+    whitespace control chars are re-emitted as Spark escape sequences (their
+    single backslash is intentional and not re-doubled); any remaining C0/C1
+    control characters are dropped for log-injection hygiene. This is defence in
+    depth beneath the fully-assembled-query ``is_sql_query_safe`` gate the
+    service applies before execution.
+    """
     if value is None or value == "":
         return "NULL"
     if isinstance(value, bool):
         return "'true'" if value else "'false'"
-    return "'" + str(value).replace("'", "''") + "'"
+    text = str(value)
+    text = text.replace("\\", "\\\\").replace("'", "''")
+    text = text.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+    text = _STRIP_CONTROL_RE.sub("", text)
+    return "'" + text + "'"
 
 
 def _cast_col(families: dict[str, str], col: str) -> str:

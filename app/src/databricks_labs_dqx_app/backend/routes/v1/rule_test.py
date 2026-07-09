@@ -79,6 +79,12 @@ class RuleTestRunIn(BaseModel):
     adhoc: AdhocRunIn | None = None
     table: TableRunIn | None = None
     display_cap: int = Field(default=5000, ge=1, le=50_000)
+    # Set by the Low-Code editor when the rule folds joins and/or group-by into a
+    # dataset-level ``sql_query`` (see ``lib/lowcodeCompile.compileLowcodeBody``).
+    # Only the row predicate reaches this route, so testing such a rule would
+    # yield a MISLEADING verdict — the UI hides the test surface and the route
+    # rejects it (belt-and-braces) rather than silently testing the wrong thing.
+    lowcode_advanced: bool = False
 
 
 class TestRowOut(BaseModel):
@@ -109,6 +115,11 @@ async def run_rule_test(
     """Run a rule's SQL predicate against manual rows or a UC table sample."""
     if body.mode == "dqx_native":
         raise HTTPException(status_code=400, detail="Rule tests aren't available for DQX Native rules.")
+    if body.lowcode_advanced:
+        raise HTTPException(
+            status_code=400,
+            detail="Rule tests aren't available for rules with joins or grouping yet.",
+        )
     try:
         if body.source_kind == "adhoc":
             if body.adhoc is None:

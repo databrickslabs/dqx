@@ -94,6 +94,8 @@ export function RuleTestPanel({
   polarity,
   slots,
   canTest,
+  ruleMode = "sql",
+  lowcodeAdvanced = false,
 }: {
   /** Effective SQL predicate: raw in SQL mode, compiled AST in Low-Code mode. */
   predicate: string;
@@ -101,6 +103,12 @@ export function RuleTestPanel({
   slots: RuleSlot[];
   /** Whether there is a non-empty predicate to test against. */
   canTest: boolean;
+  /** Rule authoring mode — forwarded to the run route so it records the real mode. */
+  ruleMode?: "sql" | "lowcode";
+  /** True when a Low-Code rule folds joins/group-by into a dataset-level query;
+   *  forwarded so the route can reject a mis-testable rule (belt-and-braces —
+   *  the parent already hides the surface for these). */
+  lowcodeAdvanced?: boolean;
 }) {
   const { t } = useTranslation();
   const ai = useAiAvailability();
@@ -197,7 +205,7 @@ export function RuleTestPanel({
   };
 
   const onRun = () => {
-    const common = { mode: "sql" as const, predicate, polarity };
+    const common = { mode: ruleMode, predicate, polarity, lowcode_advanced: lowcodeAdvanced };
     if (mode === "adhoc") {
       runMutation.mutate(
         {

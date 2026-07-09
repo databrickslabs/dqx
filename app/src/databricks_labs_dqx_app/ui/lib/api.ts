@@ -2144,6 +2144,7 @@ export interface RuleTestRunIn {
    * @maximum 50000
    */
   display_cap?: number;
+  lowcode_advanced?: boolean;
 }
 
 export interface RuleTestRunOut {

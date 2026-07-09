@@ -1539,6 +1539,7 @@
     "tabHistory": "Histórico",
     "sharingStewardHelp": "O responsável é a pessoa ou grupo encarregado da qualidade e do ciclo de vida desta regra.",
     "testNotAvailableDqxNative": "Testes de regra ainda não estão disponíveis para regras DQX Native.",
+    "testNotAvailableAdvancedLowcode": "O teste ainda não está disponível para regras com junções ou agrupamentos.",
     "testComingSoon": "Testar esta regra com dados de amostra estará disponível em breve. Por enquanto, salve a regra e execute-a por meio de uma execução agendada ou manual para ver os resultados.",
     "testRunButton": "Executar teste",
     "historyVersion": "Versão",

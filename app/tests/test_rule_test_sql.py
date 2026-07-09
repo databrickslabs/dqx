@@ -26,8 +26,20 @@ class TestSubstituteSlots:
     def test_repeated_placeholder(self):
         assert substitute_slots("{{c}} = {{c}}", {"c": "x"}) == "`x` = `x`"
 
-    def test_doubles_internal_backtick(self):
-        assert substitute_slots("{{c}}", {"c": "we`ird"}) == "`we``ird`"
+    def test_rejects_backtick_in_column_identifier(self):
+        # A backtick is the quoting delimiter and is never a legitimate column
+        # name — validate_identifier rejects it rather than relying on doubling.
+        with pytest.raises(ValueError):
+            substitute_slots("{{c}}", {"c": "we`ird"})
+
+    def test_rejects_backslash_in_column_identifier(self):
+        with pytest.raises(ValueError):
+            substitute_slots("{{c}}", {"c": "col\\"})
+
+    def test_allows_exotic_but_safe_column_identifier(self):
+        # Spaces / hyphens / quotes are legitimate UC column characters and stay
+        # inside the backtick quoting unharmed.
+        assert substitute_slots("{{c}}", {"c": "my col-1"}) == "`my col-1`"
 
     def test_unmapped_placeholder_left_untouched(self):
         assert substitute_slots("{{a}} {{b}}", {"a": "x"}) == "`x` {{b}}"
@@ -123,6 +135,45 @@ class TestBuildAdhocSql:
         src = AdhocSource(columns=["a"], rows=[["O'Brien"]], families={"a": "text"}, column_mapping={"a": "a"})
         sql = build_adhoc_sql("{{a}} IS NOT NULL", "pass", src)
         assert "'O''Brien'" in sql
+
+    def test_trailing_backslash_is_doubled(self):
+        # P22-E SQL-injection PoC: a cell ending in a backslash must NOT be able
+        # to escape its own closing quote and splice the NEXT cell as raw SQL.
+        # A single trailing backslash is doubled, so the literal stays closed and
+        # the following cell is an inert quoted literal.
+        src = AdhocSource(
+            columns=["a", "b"],
+            rows=[["foo\\", "'); DROP TABLE t; --"]],
+            families={"a": "text", "b": "text"},
+            column_mapping={"a": "a", "b": "b"},
+        )
+        sql = build_adhoc_sql("{{a}} IS NOT NULL", "pass", src)
+        # backslash doubled → closing quote intact
+        assert r"'foo\\'" in sql
+        # the injection payload survives only as an escaped quoted literal
+        assert "'''); DROP TABLE t; --'" in sql
+
+    def test_quote_and_backslash_heavy_value(self):
+        src = AdhocSource(columns=["a"], rows=[["O'Brien\\"]], families={"a": "text"}, column_mapping={"a": "a"})
+        sql = build_adhoc_sql("{{a}} IS NOT NULL", "pass", src)
+        assert r"'O''Brien\\'" in sql
+
+    def test_control_chars_escaped_or_stripped(self):
+        src = AdhocSource(
+            columns=["a"],
+            rows=[["line1\nline2\ttab\x00\x07bell"]],
+            families={"a": "text"},
+            column_mapping={"a": "a"},
+        )
+        sql = build_adhoc_sql("{{a}} IS NOT NULL", "pass", src)
+        # newline/tab re-emitted as escape sequences; no raw control byte remains.
+        assert r"line1\nline2\ttab" in sql
+        assert "\x00" not in sql and "\x07" not in sql
+
+    def test_rejects_invalid_column_identifier(self):
+        src = AdhocSource(columns=["ev`il"], rows=[["1"]], families={}, column_mapping={"ev`il": "ev`il"})
+        with pytest.raises(ValueError):
+            build_adhoc_sql("{{ev`il}} IS NOT NULL", "pass", src)
 
 
 class TestParseResult:

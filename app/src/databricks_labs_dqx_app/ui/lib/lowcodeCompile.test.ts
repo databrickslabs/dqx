@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { compileAstToSql, compileJoinsToSql, compileLowcodeBody, pruneStaleGroupByRefs } from "./lowcodeCompile";
+import {
+  compileAstToSql,
+  compileJoinsToSql,
+  compileLowcodeBody,
+  lowcodeHasAdvancedShape,
+  pruneStaleGroupByRefs,
+} from "./lowcodeCompile";
 import type { LowcodeColumnRef } from "./lowcodeCompile";
 import type { AnyRow, JoinAst, LowcodeAstV2 } from "./lowcodeAst";
 
@@ -158,6 +164,31 @@ describe("compileLowcodeBody — folding", () => {
     const body = compileLowcodeBody(ast([row()], [{ join_type: "CROSS", target_table: "c.s.dim", keys: [] }]), "");
     expect(body.sql_query).toBe("SELECT (NOT ({{email}} IS NOT NULL)) AS condition FROM {{input_view}} CROSS JOIN c.s.dim");
     expect(body.merge_columns).toBeUndefined();
+  });
+});
+
+describe("lowcodeHasAdvancedShape — Test-tab gating", () => {
+  test("plain row predicate is NOT advanced (row-testable)", () => {
+    expect(lowcodeHasAdvancedShape(ast([row()]), "")).toBe(false);
+  });
+
+  test("group-by makes the rule advanced (not row-testable)", () => {
+    expect(lowcodeHasAdvancedShape(ast([row()]), "{{region}}")).toBe(true);
+  });
+
+  test("joins make the rule advanced (not row-testable)", () => {
+    const joins: JoinAst[] = [
+      { join_type: "LEFT", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "cid" }] },
+    ];
+    expect(lowcodeHasAdvancedShape(ast([row({ column_ref: "cid" })], joins), "")).toBe(true);
+  });
+
+  test("classification matches compileLowcodeBody's own sql_query shape", () => {
+    const joins: JoinAst[] = [
+      { join_type: "INNER", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "cid" }] },
+    ];
+    const advancedAst = ast([row({ column_ref: "cid" })], joins);
+    expect(lowcodeHasAdvancedShape(advancedAst, "")).toBe(compileLowcodeBody(advancedAst, "").sql_query !== undefined);
   });
 });
 

@@ -1539,6 +1539,7 @@
     "tabHistory": "History",
     "sharingStewardHelp": "The Steward is the person or group responsible for this rule's quality and lifecycle.",
     "testNotAvailableDqxNative": "Rule tests aren't available for DQX Native rules yet.",
+    "testNotAvailableAdvancedLowcode": "Testing isn't available for rules with joins or grouping yet.",
     "testComingSoon": "Testing this rule against sample data is coming soon. For now, save the rule and run it via a scheduled or manual run to see results.",
     "testRunButton": "Run test",
     "historyVersion": "Version",

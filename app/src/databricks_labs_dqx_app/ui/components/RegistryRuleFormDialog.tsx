@@ -69,6 +69,7 @@ import {
   compileAstToSql,
   compileJoinsToSql,
   compileLowcodeBody,
+  lowcodeHasAdvancedShape,
   slotFamilyToLowcode,
   type LowcodeColumnRef,
 } from "@/lib/lowcodeCompile";
@@ -1158,6 +1159,11 @@ export function RegistryRuleFormDialog({
   // Drives Low-Code's structural-validity gate the way `sqlPredicate` does
   // for SQL mode.
   const lowcodePredicate = mode === "lowcode" ? compileAstToSql(lowcodeAst).trim() : "";
+  // A Low-Code rule that folds joins and/or group-by into a dataset-level
+  // sql_query can't be row-tested (only the row predicate reaches the runner),
+  // so the Test tab hides its surface. Reuses compileLowcodeBody's own
+  // classification so the gate never drifts from what actually materializes.
+  const lowcodeAdvanced = mode === "lowcode" && lowcodeHasAdvancedShape(lowcodeAst, groupBy);
   const structurallyValid =
     mode === "dqx_native"
       ? functionName.trim().length > 0 && slotsHaveValidNames(nativeSlots)
@@ -2070,11 +2076,18 @@ export function RegistryRuleFormDialog({
           <FlaskConical className="h-4 w-4 text-muted-foreground shrink-0" />
           <p className="text-xs text-muted-foreground">{t("rulesRegistry.testNotAvailableDqxNative")}</p>
         </div>
+      ) : lowcodeAdvanced ? (
+        <div className="rounded-lg border bg-muted/30 p-4 flex items-center gap-3">
+          <FlaskConical className="h-4 w-4 text-muted-foreground shrink-0" />
+          <p className="text-xs text-muted-foreground">{t("rulesRegistry.testNotAvailableAdvancedLowcode")}</p>
+        </div>
       ) : (
         <RuleTestPanel
           predicate={testEffectivePredicate}
           polarity={polarity}
           slots={sqlSlots}
+          ruleMode={mode === "lowcode" ? "lowcode" : "sql"}
+          lowcodeAdvanced={lowcodeAdvanced}
           canTest={testEffectivePredicate.length > 0 && (mode !== "sql" || sqlError === null)}
         />
       )}

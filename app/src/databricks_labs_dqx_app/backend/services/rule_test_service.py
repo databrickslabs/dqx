@@ -80,9 +80,14 @@ class RuleTestService:
         return self._ai.is_enabled() and bool(self._ai.endpoint_name())
 
     async def run_adhoc(self, *, predicate: str, polarity: str, source: AdhocSource) -> TestRunResult:
-        """Evaluate *predicate* over the manual VALUES grid, per-row verdicts."""
+        """Evaluate *predicate* over the manual VALUES grid, per-row verdicts.
+
+        Both the AI-generated grid and hand-typed rows flow through here, so the
+        same safety gates cover every ad-hoc cell.
+        """
         self._guard_predicate(predicate, source.column_mapping)
         sql = build_adhoc_sql(predicate, polarity, source)
+        self._guard_assembled(sql)
         rows = await asyncio.to_thread(self._sql.query_dicts, sql)
         return parse_result(rows, display_cap=source.display_cap)
 
@@ -91,6 +96,7 @@ class RuleTestService:
         validate_fqn(source.table)
         self._guard_predicate(predicate, source.column_mapping)
         sql = build_table_sql(predicate, polarity, source)
+        self._guard_assembled(sql)
         rows = await asyncio.to_thread(self._sql.query_dicts, sql)
         return parse_result(rows, display_cap=source.display_cap)
 
@@ -147,6 +153,20 @@ class RuleTestService:
         substituted = substitute_slots(predicate, column_mapping)
         if not is_sql_query_safe(substituted):
             raise UnsafeSqlQueryError("The rule's SQL predicate contains prohibited statements and cannot be tested.")
+
+    @staticmethod
+    def _guard_assembled(sql: str) -> None:
+        """Re-run DQX's SQL-safety gate on the FULLY assembled query.
+
+        Defence in depth beyond ``_guard_predicate``: the pre-substitution
+        predicate check cannot see what the VALUES literals / slot substitution
+        expand to, so the final query — post-substitution, post-VALUES — is
+        re-validated here before it ever reaches the warehouse. Combined with
+        ``_lit``'s quote+backslash escaping this makes an injected statement in
+        an ad-hoc cell either a harmless quoted literal or an outright rejection.
+        """
+        if not is_sql_query_safe(sql):
+            raise UnsafeSqlQueryError("The assembled test query contains prohibited statements and cannot be run.")
 
     @staticmethod
     def _parse_generated(content: str, *, expected_columns: list[str]) -> GeneratedTestData:

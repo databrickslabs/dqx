@@ -59,6 +59,38 @@ class TestRunAdhoc:
             await service.run_adhoc(predicate="1=1; DROP TABLE x", polarity="pass", source=src)
         sql_executor_mock.query_dicts.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_assembled_query_gate_rejects_injected_keyword(self, service, sql_executor_mock):
+        # P22-E: a manual (or AI-generated) cell carrying a forbidden statement is
+        # neutralised into a quoted literal by _lit, and the fully-assembled-query
+        # is_sql_query_safe gate rejects it as belt-and-braces — nothing runs.
+        src = AdhocSource(
+            columns=["a", "b"],
+            rows=[["foo\\", "'); DROP TABLE t; --"]],
+            families={"a": "text", "b": "text"},
+            column_mapping={"a": "a", "b": "b"},
+        )
+        with pytest.raises(UnsafeSqlQueryError):
+            await service.run_adhoc(predicate="{{a}} IS NOT NULL", polarity="pass", source=src)
+        sql_executor_mock.query_dicts.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_injection_data_without_keyword_runs_as_harmless_literal(self, service, sql_executor_mock):
+        # A trailing-backslash + break-out attempt with no forbidden keyword passes
+        # the safety gate BUT is fully escaped: the payload can only ever appear as
+        # an inert quoted literal, never as executable SQL.
+        sql_executor_mock.query_dicts.return_value = [{"a": "x", "__row_idx": "0", "__passed": "true"}]
+        src = AdhocSource(
+            columns=["a", "b"],
+            rows=[["foo\\", "') OR 1=1 --"]],
+            families={"a": "text", "b": "text"},
+            column_mapping={"a": "a", "b": "b"},
+        )
+        await service.run_adhoc(predicate="{{a}} IS NOT NULL", polarity="pass", source=src)
+        sql = sql_executor_mock.query_dicts.call_args.args[0]
+        assert r"'foo\\'" in sql  # backslash doubled — literal stays closed
+        assert "''') OR 1=1 --'" in sql  # payload is a quoted literal, not raw SQL
+
 
 class TestRunTable:
     @pytest.mark.asyncio

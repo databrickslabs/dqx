@@ -322,6 +322,21 @@ export interface CompiledLowcodeBody {
  * the dataset-level single-row query. Polarity is NOT baked in — `render_check`'s
  * `negate` applies it, uniform with a hand-written sql-mode rule.
  */
+/**
+ * Whether a low-code rule folds joins and/or group-by into a dataset-level
+ * `sql_query` (rather than a plain row predicate). Derived from
+ * `compileLowcodeBody`'s own classification so the two can never drift.
+ *
+ * Only the row predicate is testable via the Rules Registry "Test" tab, so an
+ * advanced rule would produce a MISLEADING verdict (it tests the row predicate
+ * in isolation, ignoring the joins/grouping that define its real semantics).
+ * The Test tab therefore hides its surface for such rules, and the run route
+ * rejects them as belt-and-braces.
+ */
+export function lowcodeHasAdvancedShape(ast: LowcodeAstV2, groupBy: string): boolean {
+  return compileLowcodeBody(ast, groupBy).sql_query !== undefined;
+}
+
 export function compileLowcodeBody(ast: LowcodeAstV2, groupBy: string): CompiledLowcodeBody {
   const predicate = compileAstToSql(ast);
   const joinsSql = compileJoinsToSql(ast.joins);
