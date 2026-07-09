@@ -2154,6 +2154,7 @@
     "defaultNote": "(predeterminado)",
     "defaultGrantHint": "De forma predeterminada, el grupo de usuarios del área de trabajo puede ver y aplicar este objeto. Restríngelo o revócalo para limitar el acceso.",
     "addPermission": "Agregar permiso",
+    "grantPermission": "Conceder permiso",
     "editPermission": "Editar permiso",
     "removePermission": "Quitar permiso",
     "inheritToggleLabel": "Heredar a objetos secundarios",
@@ -2175,7 +2176,10 @@
     "grantSaved": "Permiso guardado.",
     "grantSaveFailed": "No se pudo guardar el permiso.",
     "grantRemoved": "Permiso eliminado.",
-    "grantRemoveFailed": "No se pudo eliminar el permiso."
+    "grantRemoveFailed": "No se pudo eliminar el permiso.",
+    "emptyStateRule": "Guarda la regla para aplicar permisos.",
+    "emptyStateTable": "Guarda la tabla para aplicar permisos.",
+    "emptyStateTableSpace": "Guarda el espacio de tablas para aplicar permisos."
   },
   "ruleTest": {
     "cellNumberPlaceholder": "número",

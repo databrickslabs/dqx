@@ -2154,6 +2154,7 @@
     "defaultNote": "(predefinito)",
     "defaultGrantHint": "Per impostazione predefinita, il gruppo utenti del workspace può visualizzare e applicare questo oggetto. Restringi o revoca per limitare l'accesso.",
     "addPermission": "Aggiungi autorizzazione",
+    "grantPermission": "Concedi autorizzazione",
     "editPermission": "Modifica autorizzazione",
     "removePermission": "Rimuovi autorizzazione",
     "inheritToggleLabel": "Eredita agli oggetti figli",
@@ -2175,7 +2176,10 @@
     "grantSaved": "Autorizzazione salvata.",
     "grantSaveFailed": "Impossibile salvare l'autorizzazione.",
     "grantRemoved": "Autorizzazione rimossa.",
-    "grantRemoveFailed": "Impossibile rimuovere l'autorizzazione."
+    "grantRemoveFailed": "Impossibile rimuovere l'autorizzazione.",
+    "emptyStateRule": "Salva la regola per applicare le autorizzazioni.",
+    "emptyStateTable": "Salva la tabella per applicare le autorizzazioni.",
+    "emptyStateTableSpace": "Salva lo spazio tabelle per applicare le autorizzazioni."
   },
   "ruleTest": {
     "cellNumberPlaceholder": "numero",

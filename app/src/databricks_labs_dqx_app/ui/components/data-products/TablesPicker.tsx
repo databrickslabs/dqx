@@ -256,9 +256,10 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
         </div>
 
         {/* Separator's own `data-[orientation=vertical]:h-full` utility
-            outranks a plain `h-6` in the generated stylesheet (equal
-            specificity, later source order) and `h-full` resolves to 0
-            against this row's auto height — force it with `!h-6`. */}
+            outranks a plain `h-6` because an attribute-selector variant has
+            higher specificity than a bare class, regardless of source order,
+            and `h-full` resolves to 0 against this row's auto height —
+            force it with `!h-6`. */}
         <Separator orientation="vertical" className="!h-6" />
 
         <Select value={catalogFilter} onValueChange={(v) => { setCatalogFilter(v); setSchemaFilter(ALL); }}>

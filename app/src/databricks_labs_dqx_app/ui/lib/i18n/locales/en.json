@@ -2154,6 +2154,7 @@
     "defaultNote": "(default)",
     "defaultGrantHint": "The workspace users group can view and apply this object by default. Narrow or revoke this to restrict access.",
     "addPermission": "Add permission",
+    "grantPermission": "Grant permission",
     "editPermission": "Edit permission",
     "removePermission": "Remove permission",
     "inheritToggleLabel": "Inherit to child objects",
@@ -2175,7 +2176,10 @@
     "grantSaved": "Permission saved.",
     "grantSaveFailed": "Failed to save permission.",
     "grantRemoved": "Permission removed.",
-    "grantRemoveFailed": "Failed to remove permission."
+    "grantRemoveFailed": "Failed to remove permission.",
+    "emptyStateRule": "Save the rule to apply permissions.",
+    "emptyStateTable": "Save the table to apply permissions.",
+    "emptyStateTableSpace": "Save the table space to apply permissions."
   },
   "ruleTest": {
     "cellNumberPlaceholder": "number",

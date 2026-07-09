@@ -2154,6 +2154,7 @@
     "defaultNote": "(padrão)",
     "defaultGrantHint": "Por padrão, o grupo de usuários do workspace pode visualizar e aplicar este objeto. Restrinja ou revogue para limitar o acesso.",
     "addPermission": "Adicionar permissão",
+    "grantPermission": "Conceder permissão",
     "editPermission": "Editar permissão",
     "removePermission": "Remover permissão",
     "inheritToggleLabel": "Herdar para objetos filhos",
@@ -2175,7 +2176,10 @@
     "grantSaved": "Permissão salva.",
     "grantSaveFailed": "Falha ao salvar a permissão.",
     "grantRemoved": "Permissão removida.",
-    "grantRemoveFailed": "Falha ao remover a permissão."
+    "grantRemoveFailed": "Falha ao remover a permissão.",
+    "emptyStateRule": "Salve a regra para aplicar permissões.",
+    "emptyStateTable": "Salve a tabela para aplicar permissões.",
+    "emptyStateTableSpace": "Salve o espaço de tabelas para aplicar permissões."
   },
   "ruleTest": {
     "cellNumberPlaceholder": "número",

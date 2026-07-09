@@ -8,12 +8,20 @@
  *  - the workspace users-group default grant (SELECT + APPLY), rendered like
  *    any grant, muted, and editable by grant-managers (narrow or revoke it);
  *  - the direct + inherited grants, inherited rows shown muted and locked;
- *  - an "Add permission" control (owners/admins/approvers only) that opens a
- *    dialog with a principal picker, privilege checkboxes, and an inherit
- *    toggle.
+ *  - a "Grant permission" control (owners/admins/approvers only) that opens a
+ *    dialog with a principal picker, privilege checkboxes, and (except for
+ *    registry rules — see below) an inherit toggle.
  *
- * Grants require a saved object id; when `objectId` is empty (e.g. a rule
- * still being created) only the Steward section renders.
+ * Grants require a saved object id — they key on `object_id`, which doesn't
+ * exist until the object is first saved. When `objectId` is empty (e.g. a
+ * rule/table/space still being created), the Permissions section renders an
+ * empty shell with a "save first" message instead of the grants table.
+ *
+ * Registry rules sit at the bottom of the object hierarchy — there's
+ * nothing beneath a rule to inherit a grant to — so the inherit toggle and
+ * the "Inheritance" column are omitted for `objectType === "registry_rule"`.
+ * The backend still accepts the `inherit` field for rules; this is a
+ * UI-only omission.
  */
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -42,7 +50,6 @@ import {
 } from "@/components/ui/dialog";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import {
-  KeyRound,
   Loader2,
   Pencil,
   Plus,
@@ -95,31 +102,33 @@ interface Props {
   stewardSuggestion?: { displayName: string; onPick: () => void } | null;
 }
 
+// Privilege tags render as the canonical Unity-Catalog-style grant
+// keywords (SELECT, MODIFY, APPLY, ALL PRIVILEGES) — full caps, monospaced
+// — rather than a humanized paraphrase, matching how grants render
+// everywhere else in the platform. Not translated: these are grant
+// keywords, not prose.
+const PRIVILEGE_TAG_CLASS = "font-mono text-[10px] uppercase tracking-wide";
+
+function privilegeTagLabel(p: string): string {
+  return p === PRIV_ALL ? "ALL PRIVILEGES" : p;
+}
+
 function PrivilegeBadges({ privileges }: { privileges: string[] }) {
-  const { t } = useTranslation();
   if (privileges.length === 0) {
     return <span className="text-xs text-muted-foreground">—</span>;
   }
   if (isAllPrivileges(privileges)) {
-    return <Badge variant="secondary">{t("permissions.allPrivileges")}</Badge>;
+    return (
+      <Badge variant="secondary" className={PRIVILEGE_TAG_CLASS}>
+        {privilegeTagLabel(PRIV_ALL)}
+      </Badge>
+    );
   }
-  const label = (p: string): string => {
-    switch (p) {
-      case PRIV_SELECT:
-        return t("permissions.view");
-      case PRIV_MODIFY:
-        return t("permissions.modify");
-      case PRIV_APPLY:
-        return t("permissions.apply");
-      default:
-        return p;
-    }
-  };
   return (
     <div className="flex flex-wrap gap-1">
       {privileges.map((p) => (
-        <Badge key={p} variant="outline" className="text-xs">
-          {label(p)}
+        <Badge key={p} variant="outline" className={PRIVILEGE_TAG_CLASS}>
+          {privilegeTagLabel(p)}
         </Badge>
       ))}
     </div>
@@ -167,6 +176,7 @@ function GrantDialog({
   onOpenChange,
   editing,
   defaultInherit,
+  showInherit,
   saving,
   onSave,
 }: {
@@ -174,6 +184,7 @@ function GrantDialog({
   onOpenChange: (open: boolean) => void;
   editing: ObjectGrantOut | null;
   defaultInherit: boolean;
+  showInherit: boolean;
   saving: boolean;
   onSave: (draft: GrantDraft) => void;
 }) {
@@ -220,7 +231,7 @@ function GrantDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {editing ? t("permissions.editPermission") : t("permissions.addPermission")}
+            {editing ? t("permissions.editPermission") : t("permissions.grantPermission")}
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
@@ -252,7 +263,7 @@ function GrantDialog({
                   checked={draft.view}
                   onCheckedChange={(c) => setDraft((d) => ({ ...d, view: c === true }))}
                 />
-                <span>{t("permissions.view")}</span>
+                <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_SELECT)}</span>
                 <span className="text-xs text-muted-foreground">{t("permissions.viewHint")}</span>
               </label>
               <label className="flex items-center gap-2 text-sm">
@@ -260,7 +271,7 @@ function GrantDialog({
                   checked={draft.modify}
                   onCheckedChange={(c) => setDraft((d) => ({ ...d, modify: c === true }))}
                 />
-                <span>{t("permissions.modify")}</span>
+                <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_MODIFY)}</span>
                 <span className="text-xs text-muted-foreground">{t("permissions.modifyHint")}</span>
               </label>
               <label className="flex items-center gap-2 text-sm">
@@ -268,25 +279,27 @@ function GrantDialog({
                   checked={draft.apply}
                   onCheckedChange={(c) => setDraft((d) => ({ ...d, apply: c === true }))}
                 />
-                <span>{t("permissions.apply")}</span>
+                <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_APPLY)}</span>
                 <span className="text-xs text-muted-foreground">{t("permissions.applyHint")}</span>
               </label>
             </div>
           </div>
 
-          <div className="flex items-center justify-between rounded-md border p-3">
-            <div className="space-y-0.5 pr-4">
-              <Label htmlFor="grant-inherit" className="text-sm">
-                {t("permissions.inheritToggleLabel")}
-              </Label>
-              <p className="text-[11px] text-muted-foreground">{t("permissions.inheritToggleHint")}</p>
+          {showInherit && (
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div className="space-y-0.5 pr-4">
+                <Label htmlFor="grant-inherit" className="text-sm">
+                  {t("permissions.inheritToggleLabel")}
+                </Label>
+                <p className="text-[11px] text-muted-foreground">{t("permissions.inheritToggleHint")}</p>
+              </div>
+              <Switch
+                id="grant-inherit"
+                checked={draft.inherit}
+                onCheckedChange={(c) => setDraft((d) => ({ ...d, inherit: c }))}
+              />
             </div>
-            <Switch
-              id="grant-inherit"
-              checked={draft.inherit}
-              onCheckedChange={(c) => setDraft((d) => ({ ...d, inherit: c }))}
-            />
-          </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
@@ -314,6 +327,17 @@ export function PermissionsTab({
   const { t } = useTranslation();
   const qc = useQueryClient();
   const hasObject = objectId.length > 0;
+  // Rules are the bottom of the object hierarchy — there's nothing beneath
+  // them to inherit grants to, so the inherit toggle and inheritance column
+  // are rule-specific UI omissions. The backend still accepts the `inherit`
+  // field on this object type; only the UI hides it here.
+  const isRule = objectType === "registry_rule";
+  const emptyStateKey =
+    objectType === "registry_rule"
+      ? "permissions.emptyStateRule"
+      : objectType === "monitored_table"
+        ? "permissions.emptyStateTable"
+        : "permissions.emptyStateTableSpace";
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ObjectGrantOut | null>(null);
@@ -409,17 +433,16 @@ export function PermissionsTab({
         </section>
       )}
 
-      {hasObject && (
+      {hasObject ? (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
-              <KeyRound className="h-4 w-4 text-muted-foreground" />
               <p className="text-sm font-medium leading-none">{t("permissions.title")}</p>
             </div>
             {canManage && (
               <Button size="sm" onClick={openAdd} className="gap-1.5">
                 <Plus className="h-3.5 w-3.5" />
-                {t("permissions.addPermission")}
+                {t("permissions.grantPermission")}
               </Button>
             )}
           </div>
@@ -437,7 +460,7 @@ export function PermissionsTab({
                   <TableRow>
                     <TableHead>{t("permissions.principal")}</TableHead>
                     <TableHead>{t("permissions.privileges")}</TableHead>
-                    <TableHead>{t("permissions.inheritance")}</TableHead>
+                    {!isRule && <TableHead>{t("permissions.inheritance")}</TableHead>}
                     <TableHead>{t("permissions.grantedBy")}</TableHead>
                     {canManage && <TableHead className="w-[80px] text-right" />}
                   </TableRow>
@@ -446,7 +469,7 @@ export function PermissionsTab({
                   {grants.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={canManage ? 5 : 4}
+                        colSpan={(isRule ? 3 : 4) + (canManage ? 1 : 0)}
                         className="text-center text-sm text-muted-foreground py-6"
                       >
                         {t("permissions.noGrants")}
@@ -485,19 +508,21 @@ export function PermissionsTab({
                           <TableCell>
                             <PrivilegeBadges privileges={grant.privileges ?? []} />
                           </TableCell>
-                          <TableCell>
-                            {inherited ? (
-                              <span className="text-xs text-muted-foreground italic">
-                                {t("permissions.inheritedFrom", {
-                                  type: grant.inherited_from_type ?? "",
-                                })}
-                              </span>
-                            ) : grant.inherit ? (
-                              <span className="text-xs">{t("permissions.inherits")}</span>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
+                          {!isRule && (
+                            <TableCell>
+                              {inherited ? (
+                                <span className="text-xs text-muted-foreground italic">
+                                  {t("permissions.inheritedFrom", {
+                                    type: grant.inherited_from_type ?? "",
+                                  })}
+                                </span>
+                              ) : grant.inherit ? (
+                                <span className="text-xs">{t("permissions.inherits")}</span>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                          )}
                           <TableCell>
                             <span className="text-xs text-muted-foreground">{grant.grantor ?? "—"}</span>
                           </TableCell>
@@ -545,6 +570,15 @@ export function PermissionsTab({
             </div>
           )}
         </section>
+      ) : (
+        <section className="space-y-3">
+          <div className="flex items-center gap-1.5">
+            <p className="text-sm font-medium leading-none">{t("permissions.title")}</p>
+          </div>
+          <div className="rounded-md border border-dashed py-10 text-center text-sm text-muted-foreground">
+            {t(emptyStateKey)}
+          </div>
+        </section>
       )}
 
       <GrantDialog
@@ -552,6 +586,7 @@ export function PermissionsTab({
         onOpenChange={setDialogOpen}
         editing={editing}
         defaultInherit={defaultInherit}
+        showInherit={!isRule}
         saving={setMut.isPending}
         onSave={handleSave}
       />
