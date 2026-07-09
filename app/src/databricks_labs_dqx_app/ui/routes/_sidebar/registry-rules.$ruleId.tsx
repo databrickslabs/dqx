@@ -28,7 +28,6 @@ import {
   AlertCircle,
   Braces,
   CheckCircle2,
-  Copy,
   Loader2,
   MoreVertical,
   RotateCcw,
@@ -40,10 +39,8 @@ import {
   useGetRegistryRuleSuspense,
   getGetRegistryRuleQueryKey,
   useDeleteRegistryRule,
-  useCreateRegistryRule,
   useApproveRegistryRule,
   useRejectRegistryRule,
-  type CreateRegistryRuleIn,
 } from "@/lib/api";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -124,7 +121,13 @@ function RegistryRuleDetailPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [applyModalOpen, setApplyModalOpen] = useState(false);
+  // Read-only view / "save as new draft" clone dialog (rule isn't editable
+  // in place — see `RegistryRuleJsonDialog`).
   const [jsonDialogOpen, setJsonDialogOpen] = useState(false);
+  // "As JSON" edit-in-place dialog — applies straight into the form below
+  // rather than persisting (P24-C item 11). Only meaningful when `canEdit`;
+  // drives `RegistryRuleFormDialog`'s controlled `jsonDialogOpen` prop.
+  const [formJsonDialogOpen, setFormJsonDialogOpen] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   // Set right before a successful save navigates us away, so the guard
   // doesn't fire a spurious "unsaved changes" prompt on our own redirect.
@@ -223,8 +226,10 @@ function RegistryRuleDetailPage() {
   // dq_rule_versions snapshot keeps serving everywhere until the revision is
   // re-submitted and re-approved as vN+1 — the rule reads "Modified since vN"
   // meanwhile. pending_approval / rejected / deprecated are not editable; for
-  // those (and any rule) the "Duplicate" menu action clones the rule into a
-  // fresh draft to author independently, without touching the original.
+  // those (and any rule) the "View / edit JSON" action can still clone the
+  // rule into a fresh draft to author independently, without touching the
+  // original (the standalone "Duplicate" menu item was removed — P24-C item
+  // 12 — the clone endpoint stays, reached only via that JSON flow now).
   const canEdit = (rule.status === "draft" || rule.status === "approved") && perms.canCreateRules;
   const canDuplicate = perms.canCreateRules;
   const name = getTag(rule, RESERVED_NAME_KEY) || rule.rule_id;
@@ -246,33 +251,17 @@ function RegistryRuleDetailPage() {
   // edit), so the actions menu is always shown once any menu item applies.
   const showActionsMenu = true;
 
-  const createMutation = useCreateRegistryRule();
-  const handleDuplicate = useCallback(() => {
-    const payload: CreateRegistryRuleIn = {
-      mode: rule.mode,
-      definition: rule.definition,
-      polarity: rule.polarity ?? null,
-      user_metadata: rule.user_metadata ?? {},
-      steward: rule.steward ?? null,
-      author_kind: rule.author_kind ?? "human",
-    };
-    createMutation.mutate(
-      { data: payload },
-      {
-        onSuccess: (resp) => {
-          toast.success(t("rulesRegistry.toastDuplicated"));
-          navigate({
-            to: "/registry-rules/$ruleId",
-            params: { ruleId: resp.data.rule.rule_id },
-            search: { tab: "about" },
-          });
-        },
-        onError: (err) => {
-          toast.error(extractApiError(err, t("rulesRegistry.saveFailed")), { duration: 6000 });
-        },
-      },
-    );
-  }, [createMutation, rule, navigate, t]);
+  // When editable in place, "View / edit JSON" opens the apply-to-form
+  // dialog hosted inside `RegistryRuleFormDialog` (P24-C item 11) — the user
+  // still saves via the normal Save/Submit buttons below. Otherwise it opens
+  // the read-only/"save as new draft" dialog.
+  const handleOpenJsonDialog = useCallback(() => {
+    if (canEdit) {
+      setFormJsonDialogOpen(true);
+    } else {
+      setJsonDialogOpen(true);
+    }
+  }, [canEdit]);
 
   return (
     <FadeIn>
@@ -345,24 +334,22 @@ function RegistryRuleDetailPage() {
                       {t("rulesRegistry.actionApplyToTables")}
                     </DropdownMenuItem>
                   )}
-                  {canDuplicate && (
-                    <DropdownMenuItem
-                      onClick={handleDuplicate}
-                      disabled={createMutation.isPending}
-                      className="gap-2"
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                      {t("rulesRegistry.actionDuplicate")}
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem onClick={() => setJsonDialogOpen(true)} className="gap-2">
+                  <DropdownMenuItem onClick={handleOpenJsonDialog} className="gap-2">
                     <Braces className="h-3.5 w-3.5" />
                     {t("rulesRegistry.actionViewJson")}
                   </DropdownMenuItem>
                   {canDelete && (
                     <DropdownMenuItem
                       onClick={() => setDeleteConfirmOpen(true)}
-                      className={cn("gap-2 text-destructive focus:text-destructive")}
+                      // `text-destructive`/`focus:text-destructive` render as dark
+                      // red-on-near-black in the dark theme — low contrast, hard to
+                      // read. `text-red-600 dark:text-red-400` is the app's
+                      // established convention for destructive text on a neutral
+                      // background (see RuleConfigCard.tsx) and keeps good contrast
+                      // in both themes.
+                      className={cn(
+                        "gap-2 text-red-600 dark:text-red-400 focus:text-red-700 dark:focus:text-red-300",
+                      )}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                       {t("rulesRegistry.actionDelete")}
@@ -390,6 +377,8 @@ function RegistryRuleDetailPage() {
           activeTab={tab as PageTab | undefined}
           onActiveTabChange={handleActiveTabChange}
           onDirtyChange={setIsDirty}
+          jsonDialogOpen={formJsonDialogOpen}
+          onJsonDialogOpenChange={setFormJsonDialogOpen}
         />
       </div>
 
@@ -406,8 +395,7 @@ function RegistryRuleDetailPage() {
         open={jsonDialogOpen}
         onOpenChange={setJsonDialogOpen}
         rule={rule}
-        canEdit={canEdit}
-        canEditAsNewDraft={!canEdit && canDuplicate}
+        editable={!canEdit && canDuplicate}
         onSaved={(newRuleId) => {
           justSavedRef.current = true;
           if (newRuleId && newRuleId !== rule.rule_id) {

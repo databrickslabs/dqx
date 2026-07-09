@@ -33,15 +33,20 @@ interface RegistryRuleFormJsonDialogProps {
   onApply: (parsed: ParsedCheckDefinition) => void;
   /** Whether the "or generate from a description" affordance is offered. */
   aiAvailable: boolean;
+  /** Dialog description copy — differs slightly for the create vs. edit-in-place caller. */
+  description: string;
 }
 
 /**
- * "As JSON" surface for the NEW-rule form (item 11). Unlike
- * {@link RegistryRuleJsonDialog} (which saves a persisted rule via the CRUD
- * endpoints), this operates purely on in-progress form state: the JSON is
- * derived from the current form via `buildDqxCheckJson`, and applying an edit
- * round-trips back INTO the form state via `parseDqxCheckJson` + the caller's
- * `onApply` — nothing is persisted until the user saves the form itself.
+ * "As JSON" surface for the rule form (item 11 originally; extended to
+ * editing an existing rule in P24-C item 11). Unlike
+ * {@link RegistryRuleJsonDialog} (which is now only used for the read-only
+ * view and the "save as new draft" clone flow, both of which persist via the
+ * CRUD endpoints), this operates purely on in-progress form state: the JSON
+ * is derived from the current form via `buildDqxCheckJson`, and applying an
+ * edit round-trips back INTO the form state via `parseDqxCheckJson` + the
+ * caller's `onApply` — nothing is persisted until the user saves the form
+ * itself (the normal Save/Submit buttons).
  *
  * Known caveat (carried over from `parseDqxCheckJson`): editing the raw JSON of
  * a `dqx_native` rule re-derives canonical `{{column_N}}` slot names from the
@@ -63,6 +68,7 @@ export function RegistryRuleFormJsonDialog({
   checkFunctions,
   onApply,
   aiAvailable,
+  description,
 }: RegistryRuleFormJsonDialogProps) {
   const { t } = useTranslation();
   const { setOpen: setAiAssistantOpen } = useAIAssistant();
@@ -95,7 +101,7 @@ export function RegistryRuleFormJsonDialog({
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t("rulesRegistry.jsonDialogTitle")}</DialogTitle>
-          <DialogDescription>{t("rulesRegistry.jsonDialogDescriptionCreate")}</DialogDescription>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
         <Textarea

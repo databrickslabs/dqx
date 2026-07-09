@@ -732,6 +732,14 @@ interface RegistryRuleFormDialogProps {
    * once saved/submitted.
    */
   onDirtyChange?: (dirty: boolean) => void;
+  /**
+   * Controls the "As JSON" dialog from outside the component — e.g. the
+   * routed detail page's "…" menu opens it (in apply-to-form mode, item 11)
+   * for an existing rule, since the inline "As JSON" button is only shown
+   * while creating. Falls back to internal state when omitted.
+   */
+  jsonDialogOpen?: boolean;
+  onJsonDialogOpenChange?: (open: boolean) => void;
 }
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -867,6 +875,8 @@ export function RegistryRuleFormDialog({
   activeTab: controlledActiveTab,
   onActiveTabChange,
   onDirtyChange,
+  jsonDialogOpen: controlledJsonDialogOpen,
+  onJsonDialogOpenChange,
 }: RegistryRuleFormDialogProps) {
   const { t } = useTranslation();
   const sourceRule = editingRule ?? viewingRule;
@@ -943,9 +953,20 @@ export function RegistryRuleFormDialog({
   const [nameError, setNameError] = useState<string | null>(null);
   const [authorKind, setAuthorKind] = useState<CreateRegistryRuleInAuthorKind | undefined>(undefined);
   const [pendingNativeArgs, setPendingNativeArgs] = useState<Record<string, unknown> | null>(null);
-  // "As JSON" surface on the create form (item 11) — edits round-trip back into
-  // the form state below via `applyParsedToForm`.
-  const [jsonDialogOpen, setJsonDialogOpen] = useState(false);
+  // "As JSON" surface (item 11, P24-C) — edits round-trip back into the form
+  // state below via `applyParsedToForm`, for both the create form and
+  // in-place editing of an existing rule. The open state can be driven
+  // externally (the routed detail page's "…" menu, for the editing case)
+  // since the inline trigger button is only rendered while creating.
+  const [internalJsonDialogOpen, setInternalJsonDialogOpen] = useState(false);
+  const jsonDialogOpen = controlledJsonDialogOpen ?? internalJsonDialogOpen;
+  const setJsonDialogOpen = useCallback(
+    (next: boolean) => {
+      setInternalJsonDialogOpen(next);
+      onJsonDialogOpenChange?.(next);
+    },
+    [onJsonDialogOpenChange],
+  );
 
   // AI — Build-with-AI (full-form generate) + per-field suggest.
   const aiAvailability = useAiAvailability();
@@ -2406,10 +2427,11 @@ export function RegistryRuleFormDialog({
         <TabsContent value="test" className="pt-4">{testTabContent}</TabsContent>
         <TabsContent value="history" className="pt-4">{historyTabContent}</TabsContent>
       </Tabs>
-      {jsonDialogOpen && !readOnly && !isEditing && (
+      {jsonDialogOpen && !readOnly && (
         <RegistryRuleFormJsonDialog
           open={jsonDialogOpen}
           onOpenChange={setJsonDialogOpen}
+          description={t("rulesRegistry.jsonDialogDescriptionApply")}
           checkJson={buildDqxCheckJson({
             ...(sourceRule ?? {}),
             mode,
