@@ -700,6 +700,34 @@ def _workspace_host() -> str:
     return host.rstrip("/")
 
 
+class WorkspaceHostOut(BaseModel):
+    """Workspace host for building deep links into the Databricks workspace UI."""
+
+    workspace_host: str = Field(
+        default="",
+        description=(
+            "Workspace host (e.g. 'https://e2-...cloud.databricks.com') used to build "
+            "links into the workspace UI, such as Unity Catalog explorer pages. "
+            "Empty string when unset (local dev)."
+        ),
+    )
+
+
+@router.get(
+    "/workspace-host",
+    response_model=WorkspaceHostOut,
+    operation_id="getWorkspaceHost",
+)
+def get_workspace_host() -> WorkspaceHostOut:
+    """Return the workspace host (accessible by all authenticated users).
+
+    Unlike the embedded-dashboard config, the host alone grants no data
+    access — links built from it (e.g. Unity Catalog explorer) still
+    enforce the caller's own workspace/UC permissions on arrival.
+    """
+    return WorkspaceHostOut(workspace_host=_workspace_host())
+
+
 @router.get(
     "/embedded-dashboard",
     response_model=EmbeddedDashboardOut,

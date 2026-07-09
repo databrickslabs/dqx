@@ -47,6 +47,7 @@ import {
   Clock,
   Columns3,
   Database,
+  ExternalLink,
   History,
   Info,
   KeyRound,
@@ -102,7 +103,7 @@ import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
-import { useLabelDefinitions } from "@/lib/api-custom";
+import { useLabelDefinitions, useWorkspaceHost } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
@@ -934,10 +935,13 @@ function RunTableAction({
 // About tab
 // ---------------------------------------------------------------------------
 
-// Schema card page size — matches the app's list-page convention
-// (Monitored Tables / Rules Registry lists paginate at 25 via the shared
-// `Pagination` footer).
-const SCHEMA_PAGE_SIZE = 25;
+// Schema section page size — deliberately small so the schema section lands
+// at roughly the same height as the About section beside it: About renders
+// ten definition rows (text-xs, gap-y-2) plus the Unity Catalog link line,
+// while each schema table row is ~1.4x taller (py-2 + badge), and the table
+// adds a header row and a pagination footer. Six body rows balances the two
+// columns.
+const SCHEMA_PAGE_SIZE = 6;
 
 function AboutTab({
   table,
@@ -976,61 +980,75 @@ function AboutTab({
     [filteredColumns, page],
   );
 
-  // Layout (P26 item 3): About and Schema sit side-by-side as equal-height
-  // cards (stacking on narrow widths), with the View Data content (preview
-  // grid + ask-a-question, formerly its own tab) below the row where the
-  // schema used to be.
+  // Layout (P26 item 3): About and Schema sit side-by-side as plain sections
+  // (stacking on narrow widths) — same heading treatment as the View Data
+  // section below — with the View Data content (preview grid +
+  // ask-a-question, formerly its own tab) below the row.
+  const workspaceHostQuery = useWorkspaceHost();
+  const ucExploreUrl = useMemo(() => {
+    const host = (workspaceHostQuery.data?.workspace_host ?? "").replace(/\/$/, "");
+    if (!host || parts.length !== 3) return null;
+    return `${host}/explore/data/${catalog}/${schema}/${tableName}`;
+  }, [workspaceHostQuery.data?.workspace_host, parts.length, catalog, schema, tableName]);
+
   return (
     <div className="space-y-6 pt-4">
-      <div className="grid gap-6 lg:grid-cols-2 items-stretch">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">{t("monitoredTables.aboutSectionTitle")}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <dl className="grid grid-cols-[160px_1fr] gap-x-4 gap-y-2 text-xs">
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutCatalog")}</dt>
-              <dd className="font-mono">{catalog ?? t("monitoredTables.aboutUnknown")}</dd>
+      <div className="grid gap-6 lg:grid-cols-2 items-start">
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold">{t("monitoredTables.aboutSectionTitle")}</h2>
+          <dl className="grid grid-cols-[160px_1fr] gap-x-4 gap-y-2 text-xs">
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutCatalog")}</dt>
+            <dd className="font-mono">{catalog ?? t("monitoredTables.aboutUnknown")}</dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutSchema")}</dt>
-              <dd className="font-mono">{schema ?? t("monitoredTables.aboutUnknown")}</dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutSchema")}</dt>
+            <dd className="font-mono">{schema ?? t("monitoredTables.aboutUnknown")}</dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutTableName")}</dt>
-              <dd className="font-mono">{tableName ?? t("monitoredTables.aboutUnknown")}</dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutTableName")}</dt>
+            <dd className="font-mono">{tableName ?? t("monitoredTables.aboutUnknown")}</dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutStatus")}</dt>
-              <dd>
-                <StatusBadge status={table.status} />
-              </dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutStatus")}</dt>
+            <dd>
+              <StatusBadge status={table.status} />
+            </dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutSteward")}</dt>
-              <dd>{table.steward || <span className="text-muted-foreground italic">{t("monitoredTables.aboutStewardNone")}</span>}</dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutSteward")}</dt>
+            <dd>{table.steward || <span className="text-muted-foreground italic">{t("monitoredTables.aboutStewardNone")}</span>}</dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutLastProfiled")}</dt>
-              <dd>{table.last_profiled_at ? formatDateShort(table.last_profiled_at) : t("monitoredTables.neverProfiled")}</dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutLastProfiled")}</dt>
+            <dd>{table.last_profiled_at ? formatDateShort(table.last_profiled_at) : t("monitoredTables.neverProfiled")}</dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutCreatedBy")}</dt>
-              <dd>{table.created_by || t("monitoredTables.aboutUnknown")}</dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutCreatedBy")}</dt>
+            <dd>{table.created_by || t("monitoredTables.aboutUnknown")}</dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutCreatedAt")}</dt>
-              <dd>{table.created_at ? formatDateShort(table.created_at) : t("monitoredTables.aboutUnknown")}</dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutCreatedAt")}</dt>
+            <dd>{table.created_at ? formatDateShort(table.created_at) : t("monitoredTables.aboutUnknown")}</dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutUpdatedBy")}</dt>
-              <dd>{table.updated_by || t("monitoredTables.aboutUnknown")}</dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutUpdatedBy")}</dt>
+            <dd>{table.updated_by || t("monitoredTables.aboutUnknown")}</dd>
 
-              <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutUpdatedAt")}</dt>
-              <dd>{table.updated_at ? formatDateShort(table.updated_at) : t("monitoredTables.aboutUnknown")}</dd>
-            </dl>
-          </CardContent>
-        </Card>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutUpdatedAt")}</dt>
+            <dd>{table.updated_at ? formatDateShort(table.updated_at) : t("monitoredTables.aboutUnknown")}</dd>
+          </dl>
+          {/* Deep link into the Unity Catalog explorer — mirrors dqlake's
+              BindingAboutTab (label, external-link icon, placement after the
+              definition list). Hidden when the host is unknown (local dev). */}
+          {ucExploreUrl && (
+            <a
+              href={ucExploreUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+            >
+              {t("monitoredTables.aboutOpenInUnityCatalog")} <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+        </section>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">
-              {t("monitoredTables.aboutSchemaSectionTitle", { count: columns.length })}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold">
+            {t("monitoredTables.aboutSchemaSectionTitle", { count: columns.length })}
+          </h2>
+          <div>
             {columnsQuery.isError ? (
               <div className="flex flex-col items-center justify-center py-10 text-center border border-dashed rounded-lg">
                 <AlertCircle className="h-8 w-8 text-destructive/30 mb-2" />
@@ -1040,17 +1058,17 @@ function AboutTab({
             ) : (
               <>
                 <div className="rounded-md border overflow-hidden">
-                  <table className="w-full text-sm">
+                  {/* table-fixed + truncate keeps every row a single fixed-height
+                      line — long names/types/comments ellipsize and stay
+                      recoverable on hover (tooltip / title). */}
+                  <table className="w-full text-sm table-fixed">
                     <thead className="bg-muted/30">
                       <tr>
-                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2">
+                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-[26%]">
                           {t("monitoredTables.aboutColColumn")}
                         </th>
-                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-24">
+                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-28">
                           {t("monitoredTables.aboutColType")}
-                        </th>
-                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-24">
-                          {t("monitoredTables.aboutColNullable")}
                         </th>
                         <th className="px-3 py-1.5">
                           <div className="flex items-center justify-between gap-3">
@@ -1072,43 +1090,49 @@ function AboutTab({
                     </thead>
                     <tbody>
                       {pagedColumns.map((c) => (
-                        <tr key={c.name} className="border-t">
-                          <td className="px-3 py-2 align-top">
+                        <tr key={c.name} className="border-t h-10">
+                          <td className="px-3 py-2 overflow-hidden">
                             <TooltipProvider delayDuration={300}>
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <button
                                     type="button"
                                     onClick={() => onColumnClick(c.name)}
-                                    className="font-mono text-xs text-left hover:underline hover:text-primary focus-visible:underline focus-visible:outline-none"
+                                    className="font-mono text-xs text-left hover:underline hover:text-primary focus-visible:underline focus-visible:outline-none block max-w-full truncate"
                                   >
                                     {c.name}
                                   </button>
                                 </TooltipTrigger>
-                                <TooltipContent>{t("monitoredTables.aboutColumnJumpTooltip")}</TooltipContent>
+                                <TooltipContent>
+                                  <span className="font-mono">{c.name}</span>
+                                  <span className="block">{t("monitoredTables.aboutColumnJumpTooltip")}</span>
+                                </TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
                           </td>
-                          <td className="px-3 py-2 align-top">
-                            <Badge variant="outline" className="text-[10px] font-mono">
-                              {c.type_name}
+                          <td className="px-3 py-2 overflow-hidden">
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] font-mono max-w-full"
+                              title={c.type_name}
+                            >
+                              <span className="truncate">{c.type_name}</span>
                             </Badge>
                           </td>
-                          <td className="px-3 py-2 align-top text-xs text-muted-foreground">
-                            {c.nullable === false ? "—" : "✓"}
-                          </td>
-                          <td className="px-3 py-2 align-top">
+                          <td className="px-3 py-2 overflow-hidden">
                             {c.comment ? (
-                              <span className="text-xs">{c.comment}</span>
+                              <span className="text-xs block truncate" title={c.comment}>
+                                {c.comment}
+                              </span>
                             ) : (
-                              <span className="text-muted-foreground italic text-xs">{t("monitoredTables.aboutNoDescription")}</span>
+                              <span className="text-muted-foreground text-xs">-</span>
                             )}
                           </td>
                         </tr>
                       ))}
                       {filteredColumns.length === 0 && (
                         <tr>
-                          <td colSpan={4} className="text-center text-muted-foreground py-6 text-sm">
+                          <td colSpan={3} className="text-center text-muted-foreground py-6 text-sm">
                             {t("monitoredTables.aboutNoMatchingColumns")}
                           </td>
                         </tr>
@@ -1125,8 +1149,8 @@ function AboutTab({
                 />
               </>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       </div>
 
       {/* View Data (P26 item 3) — relocated from its own tab into the About

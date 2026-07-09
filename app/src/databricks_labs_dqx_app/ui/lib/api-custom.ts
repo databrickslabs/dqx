@@ -1022,6 +1022,43 @@ export const useSaveRetentionSettings = <
 };
 
 // ---------------------------------------------------------------------------
+// Workspace host — used to build deep links into the Databricks workspace UI
+// (e.g. Unity Catalog explorer pages). Accessible to all authenticated users;
+// the linked pages enforce the caller's own permissions on arrival.
+// ---------------------------------------------------------------------------
+
+export interface WorkspaceHostOut {
+  workspace_host: string;
+}
+
+export const getWorkspaceHost = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<WorkspaceHostOut>> =>
+  axios.default.get("/api/v1/config/workspace-host", options);
+
+export const getWorkspaceHostQueryKey = () => ["workspace-host"] as const;
+
+export const useWorkspaceHost = <
+  TData = Awaited<ReturnType<typeof getWorkspaceHost>>["data"],
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceHost>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+): UseQueryResult<TData, TError> => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+  return useQuery({
+    queryKey: queryOptions?.queryKey ?? getWorkspaceHostQueryKey(),
+    queryFn: () => getWorkspaceHost(axiosOptions),
+    select: ((resp: Awaited<ReturnType<typeof getWorkspaceHost>>) => resp.data) as never,
+    // The host is fixed for the lifetime of the app container — cache hard.
+    staleTime: Infinity,
+    ...queryOptions,
+  }) as UseQueryResult<TData, TError>;
+};
+
+// ---------------------------------------------------------------------------
 // Embedded dashboard (Insights page). The dashboard ID can be set by an
 // admin via the Configuration page; when unset, the backend falls back to
 // the env-provided DQX_DEFAULT_DASHBOARD_ID (so the bundle can ship a
