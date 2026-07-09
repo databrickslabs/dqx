@@ -1781,8 +1781,9 @@ export function RegistryRuleFormDialog({
 
   // Permissions tab — a UC-style permissions surface (steward + per-principal
   // grants). The grants table needs a saved object id, so for a not-yet-created
-  // rule (create mode) `PermissionsTab` renders the steward picker only and
-  // omits the grants section (guarded on `objectId`).
+  // rule (create mode) `PermissionsTab` still renders the steward picker but
+  // replaces the grants table with an empty shell ("save first" message),
+  // guarded on `objectId`.
   const permissionsTabContent = (
     <div className="pt-2">
       <PermissionsTab

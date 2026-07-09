@@ -67,25 +67,17 @@ import {
 } from "@/lib/api";
 import { PrincipalPicker, type PickedPrincipal } from "@/components/permissions/PrincipalPicker";
 import { cn } from "@/lib/utils";
-
-const PRIV_SELECT = "SELECT";
-const PRIV_MODIFY = "MODIFY";
-const PRIV_APPLY = "APPLY";
-const PRIV_ALL = "ALL_PRIVILEGES";
-
-// The workspace users-group principal — the visible, manageable day-one
-// default (SELECT + APPLY) shown on every object, mirroring how `account
-// users` appears in Unity Catalog grants.
-const USERS_GROUP = "users";
-
-function isUsersGroupGrant(grant: ObjectGrantOut): boolean {
-  return grant.principal_id === USERS_GROUP || (grant.is_default ?? false);
-}
-
-function isAllPrivileges(privileges: string[]): boolean {
-  if (privileges.includes(PRIV_ALL)) return true;
-  return [PRIV_SELECT, PRIV_MODIFY, PRIV_APPLY].every((p) => privileges.includes(p));
-}
+import {
+  PRIV_SELECT,
+  PRIV_MODIFY,
+  PRIV_APPLY,
+  PRIV_ALL,
+  isUsersGroupGrant,
+  isAllPrivileges,
+  privilegeTagLabel,
+  grantsEmptyColSpan,
+  hasSavedObject,
+} from "@/components/permissions/permissions-utils";
 
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };
@@ -108,10 +100,6 @@ interface Props {
 // everywhere else in the platform. Not translated: these are grant
 // keywords, not prose.
 const PRIVILEGE_TAG_CLASS = "font-mono text-[10px] uppercase tracking-wide";
-
-function privilegeTagLabel(p: string): string {
-  return p === PRIV_ALL ? "ALL PRIVILEGES" : p;
-}
 
 function PrivilegeBadges({ privileges }: { privileges: string[] }) {
   if (privileges.length === 0) {
@@ -326,7 +314,7 @@ export function PermissionsTab({
 }: Props) {
   const { t } = useTranslation();
   const qc = useQueryClient();
-  const hasObject = objectId.length > 0;
+  const hasObject = hasSavedObject(objectId);
   // Rules are the bottom of the object hierarchy — there's nothing beneath
   // them to inherit grants to, so the inherit toggle and inheritance column
   // are rule-specific UI omissions. The backend still accepts the `inherit`
@@ -469,7 +457,7 @@ export function PermissionsTab({
                   {grants.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={(isRule ? 3 : 4) + (canManage ? 1 : 0)}
+                        colSpan={grantsEmptyColSpan(isRule, canManage)}
                         className="text-center text-sm text-muted-foreground py-6"
                       >
                         {t("permissions.noGrants")}
