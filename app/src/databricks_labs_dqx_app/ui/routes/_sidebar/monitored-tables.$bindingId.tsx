@@ -42,6 +42,7 @@ import {
   BarChart3,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   ClipboardList,
   Clock,
@@ -2133,6 +2134,9 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
   const [preview, setPreview] = useState<TableDataOut | null>(null);
   const [answer, setAnswer] = useState<TableDataOut | null>(null);
   const [question, setQuestion] = useState("");
+  // Generated-SQL disclosure — collapsed by default, and re-collapsed on
+  // every new answer so each ask starts from the compact one-line header.
+  const [sqlOpen, setSqlOpen] = useState(false);
   const loadedRef = useRef(false);
 
   const loadPreview = useCallback(() => {
@@ -2162,7 +2166,10 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
     queryMutation.mutate(
       { data: { table_fqn: tableFqn, question: trimmed } },
       {
-        onSuccess: (resp) => setAnswer(resp.data),
+        onSuccess: (resp) => {
+          setAnswer(resp.data);
+          setSqlOpen(false);
+        },
         onError: (err) => toast.error(extractApiError(err, t("monitoredTables.viewData.queryFailed")), { duration: 6000 }),
       },
     );
@@ -2215,16 +2222,6 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
-          {t("monitoredTables.viewData.description", { count: TableDataService_PREVIEW_LIMIT })}
-        </p>
-        <Button size="sm" variant="ghost" onClick={loadPreview} disabled={previewMutation.isPending} className="gap-1.5">
-          <RefreshCw className={`h-3.5 w-3.5 ${previewMutation.isPending ? "animate-spin" : ""}`} />
-          {t("common.refresh")}
-        </Button>
-      </div>
-
       {aiAvailable && (
         // Purple AI gradient motif — matches the Build-with-AI banner
         // conventions (RegistryRuleFormDialog's `buildWithAiBanner`):
@@ -2303,28 +2300,59 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
       {answer && (
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
-              {t("monitoredTables.viewData.generatedSqlLabel")}
-            </p>
+            {answer.generated_sql ? (
+              // Compact one-line disclosure header — collapsed by default,
+              // chevron rotates open exactly like AdvancedDisclosure's.
+              <button
+                type="button"
+                onClick={() => setSqlOpen((v) => !v)}
+                aria-expanded={sqlOpen}
+                className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground uppercase tracking-wide hover:text-foreground transition-colors"
+              >
+                <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", sqlOpen && "rotate-90")} aria-hidden />
+                {t("monitoredTables.viewData.generatedSqlLabel")}
+              </button>
+            ) : (
+              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+                {t("monitoredTables.viewData.generatedSqlLabel")}
+              </p>
+            )}
             <Button size="sm" variant="ghost" onClick={() => setAnswer(null)} className="gap-1.5 h-7 text-xs">
               <ArrowLeft className="h-3.5 w-3.5" />
               {t("monitoredTables.viewData.backToSample")}
             </Button>
           </div>
           {answer.generated_sql && (
-            <pre className="rounded-md border bg-muted/40 p-3 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap">
-              {answer.generated_sql}
-            </pre>
+            // grid-rows transition trick — same collapse mechanism as
+            // AdvancedDisclosure / RuleConfigCard, which animates both open
+            // AND closed; opacity fades along with the height sweep.
+            <div
+              className={cn(
+                "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+                sqlOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+              )}
+            >
+              <div className="min-h-0 overflow-hidden">
+                <pre className="rounded-md border bg-muted/40 p-3 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap">
+                  {answer.generated_sql}
+                </pre>
+              </div>
+            </div>
           )}
         </div>
       )}
 
       {active && (
-        <DataGrid
-          columns={active.columns}
-          rows={active.rows}
-          emptyLabel={t("monitoredTables.viewData.noRows")}
-        />
+        <div className="space-y-1.5">
+          <DataGrid
+            columns={active.columns}
+            rows={active.rows}
+            emptyLabel={t("monitoredTables.viewData.noRows")}
+          />
+          <p className="text-xs text-muted-foreground">
+            {t("monitoredTables.viewData.description", { count: TableDataService_PREVIEW_LIMIT })}
+          </p>
+        </div>
       )}
     </div>
   );
