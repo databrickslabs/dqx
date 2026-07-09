@@ -175,10 +175,10 @@ def _get_run_fields(
 # A run's lifecycle is: the app inserts a RUNNING placeholder (as the SP, which
 # always has write access) and the task runner later overwrites it with a
 # terminal row. When the task dies *before* writing its terminal result — an
-# import error, an OOM, an externally-killed run, or (as observed in
-# fe-sandbox) a PERMISSION_DENIED that also blocks the runner's own
-# error-result write — the placeholder is never flipped and Runs History shows
-# the run stuck on RUNNING forever, so failed runs never surface as FAILED.
+# import error, an OOM, an externally-killed run, or a PERMISSION_DENIED that
+# also blocks the runner's own error-result write — the placeholder is never
+# flipped and Runs History shows the run stuck on RUNNING forever, so failed
+# runs never surface as FAILED.
 #
 # The per-run status poll (``get_dry_run_status``) already reconciles, but only
 # for runs a client is actively polling. The listing endpoint reconciles here

@@ -407,9 +407,9 @@ def _write_requirements(dqx_wheel_name: str, app_wheel_name: str) -> None:
 def _assert_no_pypi_proxy_urls() -> None:
     """Fail loudly if any internal package-proxy host leaked into ``.build/``.
 
-    The Databricks Apps container's egress to the internal package proxies is
-    unreliable (``pypi-proxy.dev`` times out; ``pypi-proxy.cloud`` 404s on
-    wheel blobs). ``requirements.txt`` must therefore carry plain pinned names
+    The Databricks Apps container's egress to internal package-proxy hosts is
+    unreliable (requests time out or 404 on wheel blobs).
+    ``requirements.txt`` must therefore carry plain pinned names
     only, and no shipped file may reference a proxy host. If a future change
     reintroduces one (an index URL in a generated requirements/lock file,
     vendored metadata…), stop the build here rather than ship an app that

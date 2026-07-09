@@ -35,7 +35,7 @@ TanStack Router/Query + shadcn + orval hooks, i18next (4 locales), dqlake source
   `routeTree.gen.ts` via `make app-regen-api` only.
 - Verify per task: `make app-stop-dev` first, `make app-check` (0 errors), `make app-test`
   (full backend; baseline 1210 at plan time), `make app-test K=i18n`. UI tasks: browser-verify
-  on local dev (`make app-start-dev`, :9001) — this machine reaches fe-sandbox-dq-demo.
+  on local dev (`make app-start-dev`, :9001) — this machine reaches <your-profile>.
 - If lockfiles churn with internal-proxy URLs: `git checkout --` them.
 - Copy discipline: plain declarative product language; no exclamation marks, no AI-magic
   speak.
@@ -352,8 +352,8 @@ accumulated Minors triage. Fix round via ONE fixer if findings.
   7. Keyboard nav spot-checks (P16-E): function picker, column picker, multiselect.
 - Fix small breakages found (or dispatch a fixer for real bugs), re-run the failing flow.
 - Then redeploy: temp `run_as: user_name` edit → `UV_OFFLINE=1 make app-deploy
-  PROFILE=fe-sandbox-dq-demo TARGET=dev BUNDLE_VARS='--var=catalog_name=dqx
-  --var=sql_warehouse_id=e16296eaa74eef81
-  --var=dqx_service_principal_application_id=84dc3b65-1ad3-4298-abd5-07af01be0d70
+  PROFILE=<your-profile> TARGET=dev BUNDLE_VARS='--var=catalog_name=dqx
+  --var=sql_warehouse_id=<your-warehouse-id>
+  --var=dqx_service_principal_application_id=<your-sp-application-id>
   --var=lakebase_instance_name=dqx-studio-lakebase --var=admin_group=admins'` → revert edit →
   verify app RUNNING + smoke the deployed URL.
