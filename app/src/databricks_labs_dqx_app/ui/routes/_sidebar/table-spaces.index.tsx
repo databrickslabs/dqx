@@ -220,7 +220,13 @@ function DataProductsPage() {
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center text-center">
-                <Boxes className="h-10 w-10 text-muted-foreground/30 mb-3" />
+                {/* h-12 w-12 (48px), NOT h-10 w-10 (40px): lucide draws on a
+                    24px grid with 2px strokes, so 40px is a fractional 5/3
+                    scale — 3.33px strokes that land off the pixel grid and
+                    anti-alias into a soft, "blurry" glyph (P23 item 18).
+                    48px is an integer 2× (crisp 4px strokes), the same size
+                    the error empty-states already use. */}
+                <Boxes className="h-12 w-12 text-muted-foreground/30 mb-3" />
                 <p className="text-sm text-muted-foreground">
                   {hasActiveFilters
                     ? t("dataProducts.emptyState")

@@ -5,17 +5,19 @@
  * per the Data Products design spec (§6): the History tab is cut entirely
  * (no history model in DQX). Runs is dqlake-exact — it is NOT a visible tab;
  * it lives in the header's ⋮ menu (P21 item 29) and its content is still
- * reachable via `?tab=runs` deep links (the menu navigates there).
+ * reachable via `?tab=runs` deep links (the menu navigates there). Schedule
+ * left the strip too (P23 item 13) — it opens as a dialog from the same ⋮
+ * menu, so it has no tab key at all.
  *
- * Tab order: About | Sharing, Tables  ‖  Schedule
+ * Tab order: About | Sharing, Tables
  * `|` characters render as visible muted dividers inside the TabsList.
  */
 import { useTranslation } from "react-i18next";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { CalendarClock, History, Info, KeyRound, Table2, type LucideIcon } from "lucide-react";
+import { History, Info, KeyRound, Table2, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type ProductTabKey = "about" | "permissions" | "tables" | "runs" | "scheduling";
+export type ProductTabKey = "about" | "permissions" | "tables" | "runs";
 
 // Same icon-strip treatment as the Monitored Tables detail tab bar
 // (routes/_sidebar/monitored-tables.$bindingId.tsx) — gap-1.5 + h-3.5 w-3.5
@@ -25,7 +27,6 @@ const TAB_ICONS: Record<ProductTabKey, LucideIcon> = {
   permissions: KeyRound,
   tables: Table2,
   runs: History,
-  scheduling: CalendarClock,
 };
 
 interface Props {
@@ -38,7 +39,7 @@ interface Props {
 
 /** All valid tab keys, in display order. The detail route validates the
  *  `?tab=` search param against this list. */
-export const PRODUCT_TAB_KEYS: ProductTabKey[] = ["about", "permissions", "tables", "runs", "scheduling"];
+export const PRODUCT_TAB_KEYS: ProductTabKey[] = ["about", "permissions", "tables", "runs"];
 
 function Separator() {
   return (
@@ -48,13 +49,12 @@ function Separator() {
   );
 }
 
-// Groups define the visual separator layout:
-// [About] | [Sharing, Tables]  →gap→  [Schedule]
+// Groups define the visual separator layout: [About] | [Sharing, Tables]
 // Runs is intentionally absent from the strip — it lives in the header ⋮
-// menu (P21 item 29) and is still reachable by `?tab=runs`.
+// menu (P21 item 29) and is still reachable by `?tab=runs`. Schedule is
+// absent too (P23 item 13): it opens as a dialog from the same ⋮ menu.
 const GROUP_A: ProductTabKey[] = ["about"];
 const GROUP_B: ProductTabKey[] = ["permissions", "tables"];
-const RIGHT_TABS: ProductTabKey[] = ["scheduling"];
 
 function TabTrigger({ tabKey, label, disabled }: { tabKey: ProductTabKey; label: string; disabled: boolean }) {
   const Icon = TAB_ICONS[tabKey];
@@ -79,12 +79,11 @@ export function ProductTabsShell({ activeTab, onTabChange, disabledTabs = new Se
       permissions: t("dataProducts.tabPermissions"),
       tables: t("dataProducts.tabTables"),
       runs: t("dataProducts.tabRuns"),
-      scheduling: t("dataProducts.tabSchedule"),
     })[key];
 
   return (
     <Tabs value={activeTab} onValueChange={(v) => onTabChange(v as ProductTabKey)}>
-      <div className="w-full max-w-5xl flex items-center justify-between">
+      <div className="w-full max-w-5xl flex items-center">
         <TabsList className="inline-flex items-center h-auto p-1">
           {GROUP_A.map((key) => (
             <TabTrigger key={key} tabKey={key} label={labelFor(key)} disabled={disabledTabs.has(key)} />
@@ -93,12 +92,6 @@ export function ProductTabsShell({ activeTab, onTabChange, disabledTabs = new Se
           <Separator />
 
           {GROUP_B.map((key) => (
-            <TabTrigger key={key} tabKey={key} label={labelFor(key)} disabled={disabledTabs.has(key)} />
-          ))}
-        </TabsList>
-
-        <TabsList className="inline-flex items-center h-auto p-1">
-          {RIGHT_TABS.map((key) => (
             <TabTrigger key={key} tabKey={key} label={labelFor(key)} disabled={disabledTabs.has(key)} />
           ))}
         </TabsList>

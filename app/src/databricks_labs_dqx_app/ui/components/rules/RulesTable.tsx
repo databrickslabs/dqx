@@ -496,16 +496,18 @@ export function RulesTable({
                 })}
               </TableRow>
             ))}
-            {rows.length === 0 && emptyMessage && (
-              <TableRow>
-                <TableCell colSpan={orderedKeys.length} className="text-center text-muted-foreground py-16 px-2">
-                  {emptyMessage}
-                </TableCell>
-              </TableRow>
-            )}
           </TableBody>
         </Table>
       </div>
+      {/* Empty state renders OUTSIDE the overflow-x-auto container (P23
+          item 17): inside it, the state centered on the table's fixed
+          column-width sum and scrolled horizontally with the table instead
+          of sitting centered in the viewport. */}
+      {rows.length === 0 && emptyMessage && (
+        <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+          {emptyMessage}
+        </div>
+      )}
     </div>
   );
 }

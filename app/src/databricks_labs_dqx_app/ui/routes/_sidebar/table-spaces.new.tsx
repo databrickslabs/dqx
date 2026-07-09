@@ -22,7 +22,7 @@ export const Route = createFileRoute("/_sidebar/table-spaces/new")({
 // `ProductTabsShell` rather than a bespoke stand-in, matching dqlake's
 // `new.tsx` pattern of disabling tabs via `disabledTabs` instead of
 // re-approximating the strip.
-const NEW_PRODUCT_DISABLED_TABS = new Set<ProductTabKey>(["permissions", "tables", "runs", "scheduling"]);
+const NEW_PRODUCT_DISABLED_TABS = new Set<ProductTabKey>(["permissions", "tables", "runs"]);
 
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };
@@ -82,45 +82,53 @@ function NewDataProductPage() {
           </div>
         </div>
 
+        {/* The create form renders INSIDE the shell's About slot so the gap
+            between the tab strip and the first field is the shell's own
+            `mt-6` — identical to the existing-space detail page. Rendering
+            it as a sibling below an empty About TabsContent stacked that
+            `mt-6` with the form's own vertical padding and pushed the
+            content noticeably further down on this page only (P23 item 16). */}
         <ProductTabsShell activeTab="about" onTabChange={() => {}} disabledTabs={NEW_PRODUCT_DISABLED_TABS}>
-          {{ about: null }}
+          {{
+            about: (
+              <div className="space-y-6 max-w-xl">
+                <div className="flex flex-col gap-3">
+                  <Label htmlFor="dp-name">
+                    {t("dataProducts.nameLabel")} <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="dp-name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder={t("dataProducts.namePlaceholder")}
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleCreate();
+                    }}
+                  />
+                </div>
+                <div className="flex flex-col gap-3">
+                  <Label htmlFor="dp-desc">{t("dataProducts.descriptionLabel")}</Label>
+                  <Textarea
+                    id="dp-desc"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder={t("dataProducts.descriptionPlaceholder")}
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <Button onClick={handleCreate} disabled={!canSubmit}>
+                    {submitting ? t("dataProducts.creating") : t("dataProducts.createButton")}
+                  </Button>
+                  <Button type="button" variant="outline" asChild>
+                    <Link to="/table-spaces">{t("common.cancel")}</Link>
+                  </Button>
+                </div>
+              </div>
+            ),
+          }}
         </ProductTabsShell>
-
-        <div className="space-y-6 py-4 max-w-xl">
-          <div className="flex flex-col gap-3">
-            <Label htmlFor="dp-name">
-              {t("dataProducts.nameLabel")} <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              id="dp-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={t("dataProducts.namePlaceholder")}
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleCreate();
-              }}
-            />
-          </div>
-          <div className="flex flex-col gap-3">
-            <Label htmlFor="dp-desc">{t("dataProducts.descriptionLabel")}</Label>
-            <Textarea
-              id="dp-desc"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder={t("dataProducts.descriptionPlaceholder")}
-            />
-          </div>
-
-          <div className="flex gap-2">
-            <Button onClick={handleCreate} disabled={!canSubmit}>
-              {submitting ? t("dataProducts.creating") : t("dataProducts.createButton")}
-            </Button>
-            <Button type="button" variant="outline" asChild>
-              <Link to="/table-spaces">{t("common.cancel")}</Link>
-            </Button>
-          </div>
-        </div>
       </div>
     </FadeIn>
   );

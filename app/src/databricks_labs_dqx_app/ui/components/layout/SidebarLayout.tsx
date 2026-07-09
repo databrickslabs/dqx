@@ -63,7 +63,14 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
           <div className="flex items-center h-10 px-4 shrink-0">
             <SidebarTrigger className="-ml-1 cursor-pointer" />
           </div>
-          <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden">
+          {/* `scrollbar-gutter: stable` keeps the `max-w-7xl mx-auto` page
+              content in the SAME horizontal position whether or not the
+              vertical scrollbar is present. Without it, with classic
+              (non-overlay) scrollbars a tall tab (e.g. a Monitored Table's
+              About tab listing every column) summons the scrollbar, shrinks
+              this scroller, and `mx-auto` re-centers the content a few px
+              LEFT of its position on shorter sibling tabs (P23 item 15). */}
+          <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]">
             <div className={cn("flex flex-col gap-4 p-6 pt-0 max-w-7xl mx-auto min-w-0", onInsights && "hidden")}>
               <Outlet />
             </div>

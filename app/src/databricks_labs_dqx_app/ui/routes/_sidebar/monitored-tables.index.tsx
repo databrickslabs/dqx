@@ -443,7 +443,10 @@ function MonitoredTablesPage() {
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center text-center">
-                <Table2 className="h-10 w-10 text-muted-foreground/30 mb-3" />
+                {/* h-12 w-12: an integer 2× of lucide's 24px grid renders
+                    crisp 4px strokes; 40px (h-10) is a fractional 5/3 scale
+                    whose 3.33px strokes anti-alias soft (P23 item 18). */}
+                <Table2 className="h-12 w-12 text-muted-foreground/30 mb-3" />
                 <p className="text-sm text-muted-foreground">
                   {hasActiveFilters
                     ? t("monitoredTables.emptyState")

@@ -415,16 +415,16 @@ export function DataProductsTable({
                 })}
               </TableRow>
             ))}
-            {rows.length === 0 && emptyState && (
-              <TableRow>
-                <TableCell colSpan={visibleKeys.length} className="text-center py-16 px-2">
-                  {emptyState}
-                </TableCell>
-              </TableRow>
-            )}
           </TableBody>
         </Table>
       </div>
+      {/* Empty state renders OUTSIDE the overflow-x-auto container (P23
+          item 17): inside it, the state centered on the table's fixed
+          column-width sum and scrolled horizontally with the table instead
+          of sitting centered in the viewport. */}
+      {rows.length === 0 && emptyState && (
+        <div className="flex flex-col items-center justify-center py-16 text-center">{emptyState}</div>
+      )}
     </div>
   );
 }

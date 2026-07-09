@@ -18,6 +18,13 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -40,6 +47,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   BarChart3,
+  CalendarClock,
   CheckCircle2,
   ChevronDown,
   ClipboardList,
@@ -49,18 +57,21 @@ import {
   Info,
   KeyRound,
   Loader2,
+  MoreVertical,
   Play,
   Plus,
   RefreshCw,
   RotateCcw,
   Send,
   Sparkles,
+  Trash2,
   UploadCloud,
   X,
   XCircle,
 } from "lucide-react";
 import {
   useGetMonitoredTableSuspense,
+  useDeleteMonitoredTable,
   useGetMonitoredTableProfile,
   getGetMonitoredTableProfileQueryKey,
   useSubmitProfileRun,
@@ -122,7 +133,9 @@ import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 
-const DETAIL_TAB_KEYS = ["about", "permissions", "view-data", "profile", "apply-rules", "results", "schedule"] as const;
+// Schedule is NOT a tab (P23 item 13): it opens as a dialog from the header
+// ⋮ menu, mirroring the Rules Registry detail's menu-driven dialog surfaces.
+const DETAIL_TAB_KEYS = ["about", "view-data", "permissions", "profile", "apply-rules", "results"] as const;
 type DetailTab = (typeof DETAIL_TAB_KEYS)[number];
 
 /** Client-side deadline for the AI suggest-rules request (prefetch + manual
@@ -291,7 +304,10 @@ function MonitoredTableDetailPage() {
   const submitMutation = useSubmitMonitoredTable();
   const approveMutation = useApproveMonitoredTable();
   const rejectMutation = useRejectMonitoredTable();
+  const deleteMutation = useDeleteMonitoredTable();
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
 
   const persistStagedRows = useCallback(
     () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
@@ -370,11 +386,29 @@ function MonitoredTableDetailPage() {
     );
   };
 
+  // Delete the binding, then leave for the list. `justSavedRef` bypasses the
+  // unsaved-changes nav guard — staged edits on a just-deleted binding aren't
+  // worth a "discard changes?" prompt.
+  const handleDelete = () => {
+    deleteMutation.mutateAsync({ bindingId }).then(
+      () => {
+        toast.success(t("monitoredTables.toastDeleted"));
+        invalidateLifecycleQueries();
+        justSavedRef.current = true;
+        void navigate({ to: "/monitored-tables" });
+      },
+      (err: unknown) => {
+        toast.error(extractApiError(err, t("monitoredTables.toastDeleteFailed")), { duration: 6000 });
+      },
+    );
+  };
+
   const lifecycleBusy =
     saveMutation.isPending ||
     submitMutation.isPending ||
     approveMutation.isPending ||
-    rejectMutation.isPending;
+    rejectMutation.isPending ||
+    deleteMutation.isPending;
 
   // Nothing to resubmit: Save-as-draft is already disabled (no staged
   // edits) and this version is already approved, so "Submit for review"
@@ -495,6 +529,38 @@ function MonitoredTableDetailPage() {
                 onSaveDraft={saveDraft}
               />
             )}
+            {/* ⋮ menu (P23 item 13) — Schedule (dialog) + Delete (confirm),
+                mirroring the Rules Registry detail's top-right menu. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  aria-label={t("monitoredTables.actionsMenuLabel")}
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setScheduleDialogOpen(true)} className="gap-2">
+                  <CalendarClock className="h-3.5 w-3.5" />
+                  {t("monitoredTables.actionSchedule")}
+                </DropdownMenuItem>
+                {perms.canCreateRules && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setDeleteConfirmOpen(true)}
+                      className={cn("gap-2 text-destructive focus:text-destructive")}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {t("monitoredTables.actionDelete")}
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -541,18 +607,21 @@ function MonitoredTableDetailPage() {
         </AlertDialog>
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
+          {/* Tab order (P23 item 14): About, View Data, Permissions first,
+              then the working group (Profile, Apply Rules), then Results.
+              Schedule left the strip for the header ⋮ menu (item 13). */}
           <TabsList>
             <TabsTrigger value="about" className="gap-1.5">
               <Info className="h-3.5 w-3.5" />
               {t("monitoredTables.tabAbout")}
             </TabsTrigger>
-            <TabsTrigger value="permissions" className="gap-1.5">
-              <KeyRound className="h-3.5 w-3.5" />
-              {t("monitoredTables.tabPermissions")}
-            </TabsTrigger>
             <TabsTrigger value="view-data" className="gap-1.5">
               <Database className="h-3.5 w-3.5" />
               {t("monitoredTables.tabViewData")}
+            </TabsTrigger>
+            <TabsTrigger value="permissions" className="gap-1.5">
+              <KeyRound className="h-3.5 w-3.5" />
+              {t("monitoredTables.tabPermissions")}
             </TabsTrigger>
             <TabGroupDivider />
             <TabsTrigger value="profile" className="gap-1.5">
@@ -568,14 +637,14 @@ function MonitoredTableDetailPage() {
               <ClipboardList className="h-3.5 w-3.5" />
               {t("monitoredTables.tabResults")}
             </TabsTrigger>
-            <TabsTrigger value="schedule" className="gap-1.5">
-              <Clock className="h-3.5 w-3.5" />
-              {t("monitoredTables.tabSchedule")}
-            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="about">
             <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
+          </TabsContent>
+
+          <TabsContent value="view-data">
+            <ViewDataTab tableFqn={table.table_fqn} />
           </TabsContent>
 
           <TabsContent value="permissions">
@@ -586,10 +655,6 @@ function MonitoredTableDetailPage() {
               canEditSteward={false}
               steward={table.steward ?? ""}
             />
-          </TabsContent>
-
-          <TabsContent value="view-data">
-            <ViewDataTab tableFqn={table.table_fqn} />
           </TabsContent>
 
           <TabsContent value="profile">
@@ -611,12 +676,47 @@ function MonitoredTableDetailPage() {
           <TabsContent value="results">
             <ResultsTab tableFqn={table.table_fqn} status={table.status} />
           </TabsContent>
-
-          <TabsContent value="schedule">
-            <MonitoredTableSchedulingTab table={table} canEdit={perms.canCreateRules} />
-          </TabsContent>
         </Tabs>
       </div>
+
+      {/* Schedule dialog (P23 item 13) — the old Schedule tab's content,
+          opened from the header ⋮ menu. It keeps its own Save button:
+          schedule is operational config orthogonal to the applied-rules
+          draft/submit lifecycle. */}
+      <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{t("monitoredTables.actionSchedule")}</DialogTitle>
+            <DialogDescription>{t("monitoredTables.scheduleDialogDescription")}</DialogDescription>
+          </DialogHeader>
+          <MonitoredTableSchedulingTab table={table} canEdit={perms.canCreateRules} />
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("monitoredTables.deleteConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("monitoredTables.deleteConfirmDescription", { table: table.table_fqn })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              disabled={deleteMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                setDeleteConfirmOpen(false);
+                handleDelete();
+              }}
+            >
+              {t("monitoredTables.actionDelete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={blocker.status === "blocked"}>
         <AlertDialogContent>
