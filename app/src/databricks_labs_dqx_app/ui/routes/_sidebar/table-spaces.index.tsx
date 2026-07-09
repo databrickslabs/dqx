@@ -1,8 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useMemo, useState, Suspense } from "react";
 import { useTranslation } from "react-i18next";
-import { QueryErrorResetBoundary } from "@tanstack/react-query";
+import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
+import { toast } from "sonner";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { Pagination } from "@/components/Pagination";
@@ -14,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -21,9 +23,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { AlertCircle, Boxes, Loader2, Plus, RotateCcw, Search } from "lucide-react";
-import { useListDataProducts, type DataProductOut } from "@/lib/api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { AlertCircle, Boxes, CheckCircle2, Loader2, Plus, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
+import {
+  useListDataProducts,
+  useApproveDataProduct,
+  useRejectDataProduct,
+  useDeleteDataProduct,
+  getListDataProductsQueryKey,
+  getGetDataProductQueryKey,
+  type DataProductOut,
+} from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
+import { cn } from "@/lib/utils";
+
+function extractApiError(err: unknown, fallback: string): string {
+  const axErr = err as { response?: { data?: { detail?: string } } };
+  return axErr?.response?.data?.detail ?? fallback;
+}
 
 const PAGE_SIZE = 50;
 const ALL = "all";
@@ -74,6 +100,7 @@ function DataProductsPage() {
   const { t } = useTranslation();
   const perms = usePermissions();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   // Refetch on remount (e.g. navigating back from the create/detail page)
   // so a newly created product appears without a manual page reload —
@@ -153,6 +180,76 @@ function DataProductsPage() {
     navigate({ to: "/table-spaces/$productId", params: { productId: product.product_id } });
   };
 
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<DataProductOut | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DataProductOut | null>(null);
+
+  const approveMutation = useApproveDataProduct();
+  const rejectMutation = useRejectDataProduct();
+  const deleteMutation = useDeleteDataProduct();
+
+  const invalidateAfterChange = useCallback(
+    (productId: string) => {
+      queryClient.invalidateQueries({ queryKey: getGetDataProductQueryKey(productId) });
+      queryClient.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
+    },
+    [queryClient],
+  );
+
+  // Shared runner for the row-level approve/reject/delete actions — mirrors
+  // the Monitored Tables list page's `runRowAction`.
+  const runRowAction = useCallback(
+    (productId: string, mutate: () => Promise<unknown>, successMsg: string, errorMsg: string) => {
+      if (pendingId) return;
+      setPendingId(productId);
+      mutate()
+        .then(() => {
+          toast.success(successMsg);
+          invalidateAfterChange(productId);
+        })
+        .catch((err: unknown) => {
+          toast.error(extractApiError(err, errorMsg), { duration: 6000 });
+        })
+        .finally(() => setPendingId(null));
+    },
+    [pendingId, invalidateAfterChange],
+  );
+
+  const handleApprove = (product: DataProductOut) =>
+    runRowAction(
+      product.product_id,
+      () => approveMutation.mutateAsync({ productId: product.product_id }),
+      t("dataProducts.toastApproved"),
+      t("dataProducts.toastApproveFailed"),
+    );
+
+  // Reject is destructive (sends the space back to draft) so it is gated
+  // behind a confirm dialog, mirroring the detail header's reject button —
+  // the actual mutation only fires from `confirmReject` once confirmed.
+  const confirmReject = () => {
+    if (!rejectTarget) return;
+    const product = rejectTarget;
+    setRejectTarget(null);
+    runRowAction(
+      product.product_id,
+      () => rejectMutation.mutateAsync({ productId: product.product_id }),
+      t("dataProducts.toastRejected"),
+      t("dataProducts.toastRejectFailed"),
+    );
+  };
+
+  const confirmDelete = () => {
+    if (!deleteTarget) return;
+    const product = deleteTarget;
+    setDeleteTarget(null);
+    runRowAction(
+      product.product_id,
+      () => deleteMutation.mutateAsync({ productId: product.product_id }),
+      t("dataProducts.toastDeleted"),
+      t("dataProducts.toastDeleteFailed"),
+    );
+  };
+
   return (
     <FadeIn>
       <div className="space-y-6">
@@ -177,6 +274,65 @@ function DataProductsPage() {
           sortDir={sortDir}
           onHeaderClick={handleHeaderClick}
           onRowClick={openProduct}
+          pendingProductId={pendingId}
+          renderActions={
+            // Actions column stays visible for anyone who can approve OR
+            // create/delete — mirrors Monitored Tables overview's gating.
+            perms.canApproveRules || perms.canCreateRules
+              ? (product) => (
+                  <div className="flex items-center justify-end gap-1">
+                    {product.status === "pending_approval" && perms.canApproveRules && (
+                      <>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0 text-emerald-600"
+                              aria-label={t("dataProducts.approveAction")}
+                              onClick={() => handleApprove(product)}
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{t("dataProducts.approveAction")}</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0 text-destructive"
+                              aria-label={t("dataProducts.rejectAction")}
+                              onClick={() => setRejectTarget(product)}
+                            >
+                              <XCircle className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{t("dataProducts.rejectAction")}</TooltipContent>
+                        </Tooltip>
+                      </>
+                    )}
+                    {perms.canCreateRules && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 text-destructive"
+                            aria-label={t("dataProducts.actionDelete")}
+                            onClick={() => setDeleteTarget(product)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("dataProducts.actionDelete")}</TooltipContent>
+                      </Tooltip>
+                    )}
+                  </div>
+                )
+              : undefined
+          }
           toolbarExtra={
             <>
               <div className="relative w-56">
@@ -243,6 +399,40 @@ function DataProductsPage() {
           <Pagination page={page} totalItems={filtered.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
         )}
       </div>
+
+      {/* Reject is destructive — gate it behind a confirm dialog, mirroring
+          the Monitored Tables list page's reject confirm (P21-A lesson). */}
+      <AlertDialog open={rejectTarget !== null} onOpenChange={(open) => !open && setRejectTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("dataProducts.rejectConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("dataProducts.rejectConfirmDescription", { name: rejectTarget?.name ?? "" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction className={cn("bg-destructive text-white hover:bg-destructive/90")} onClick={confirmReject}>
+              {t("dataProducts.rejectAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("dataProducts.deleteConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("dataProducts.deleteConfirmDescription")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction className={cn("bg-destructive text-white hover:bg-destructive/90")} onClick={confirmDelete}>
+              {t("dataProducts.actionDelete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </FadeIn>
   );
 }

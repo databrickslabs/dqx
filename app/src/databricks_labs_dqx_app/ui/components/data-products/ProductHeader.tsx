@@ -259,6 +259,29 @@ function extractApiError(err: unknown, fallback: string): string {
   return axErr?.response?.data?.detail ?? fallback;
 }
 
+/** `vN` when the space's current state matches its last-approved snapshot;
+ *  "Modified since vN" when there are unpublished edits on top of an older
+ *  approved snapshot (`display_status === "modified"`); nothing at v0
+ *  (never approved). Mirrors the Monitored Table / Rules Registry detail
+ *  headers' version badge composition (P24 item 1). */
+function TableSpaceVersionBadge({ product }: { product: DataProductOut }) {
+  const { t } = useTranslation();
+  const version = product.version ?? 0;
+  if (version <= 0) return null;
+  if (product.display_status === "modified") {
+    return (
+      <Badge variant="outline" className="text-[10px] border-amber-500 text-amber-600">
+        {t("dataProducts.modifiedSinceVersion", { version })}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="secondary" className="font-mono text-[10px]">
+      {t("dataProducts.versionBadge", { version })}
+    </Badge>
+  );
+}
+
 interface Props {
   product: DataProductOut;
   canEdit: boolean;
@@ -408,9 +431,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-semibold">{product.name}</h1>
-          {product.status === "approved" && (
-            <Badge>{t("dataProducts.versionBadge", { version: product.version })}</Badge>
-          )}
+          <TableSpaceVersionBadge product={product} />
           {isPending && (
             <Badge variant="outline" className="border-amber-500 text-amber-600">
               {t("dataProducts.statusPendingApproval")}

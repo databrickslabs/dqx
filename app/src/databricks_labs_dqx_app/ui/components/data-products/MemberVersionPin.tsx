@@ -51,7 +51,7 @@ export function MemberVersionPin({ bindingVersion, pinnedVersion, onPinChange }:
   const label = !hasVersions
     ? t("dataProducts.pinLatest")
     : isPinned
-      ? t("dataProducts.versionBadge", { version: pinnedVersion })
+      ? t("dataProducts.pinnedVersioned", { version: pinnedVersion })
       : t("dataProducts.pinLatestVersioned", { version: bindingVersion });
 
   const badge = (

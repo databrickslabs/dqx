@@ -1989,39 +1989,39 @@ export function RegistryRuleFormDialog({
             <div className="space-y-3">
               <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
               <div className="max-w-sm">
-              <FunctionCombobox
-                value={functionName}
-                functions={checkFunctions}
-                onChange={(fn) => {
-                  // `sql_expression` / `sql_query` are technically selectable
-                  // dqx_native functions, but authoring a raw SQL predicate is
-                  // exactly what SQL mode is for — redirect there instead of
-                  // wiring them up as a native function selection, mirroring
-                  // how `applyAiProposal` resets the *other* mode's fields
-                  // when switching modes.
-                  if (fn === "sql_expression" || fn === "sql_query") {
-                    setMode("sql");
-                    setFunctionName("");
+                <FunctionCombobox
+                  value={functionName}
+                  functions={checkFunctions}
+                  onChange={(fn) => {
+                    // `sql_expression` / `sql_query` are technically selectable
+                    // dqx_native functions, but authoring a raw SQL predicate is
+                    // exactly what SQL mode is for — redirect there instead of
+                    // wiring them up as a native function selection, mirroring
+                    // how `applyAiProposal` resets the *other* mode's fields
+                    // when switching modes.
+                    if (fn === "sql_expression" || fn === "sql_query") {
+                      setMode("sql");
+                      setFunctionName("");
+                      setParamRawValues({});
+                      setNativeSlots([]);
+                      return;
+                    }
+                    setFunctionName(fn);
                     setParamRawValues({});
-                    setNativeSlots([]);
-                    return;
-                  }
-                  setFunctionName(fn);
-                  setParamRawValues({});
-                  // A freshly selected native function resets polarity to its
-                  // default ("pass" = the check's named assertion passing); the
-                  // switcher is only editable when the new function supports
-                  // `negate` (item 11).
-                  setPolarity("pass");
-                  // Arity is fixed by the function signature — switching
-                  // functions must fully replace the slot set (e.g.
-                  // is_not_null's 1 slot -> is_unique's many-cardinality
-                  // `columns` slot), not merge with whatever was there before.
-                  const nextFn = checkFunctions.find((f) => f.name === fn);
-                  setNativeSlots(deriveSlotsAndParameters(nextFn).slots);
-                }}
-                disabled={readOnly}
-              />
+                    // A freshly selected native function resets polarity to its
+                    // default ("pass" = the check's named assertion passing); the
+                    // switcher is only editable when the new function supports
+                    // `negate` (item 11).
+                    setPolarity("pass");
+                    // Arity is fixed by the function signature — switching
+                    // functions must fully replace the slot set (e.g.
+                    // is_not_null's 1 slot -> is_unique's many-cardinality
+                    // `columns` slot), not merge with whatever was there before.
+                    const nextFn = checkFunctions.find((f) => f.name === fn);
+                    setNativeSlots(deriveSlotsAndParameters(nextFn).slots);
+                  }}
+                  disabled={readOnly}
+                />
               </div>
             </div>
           </div>

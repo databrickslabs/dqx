@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -261,19 +261,32 @@ function VersionPinDropdown({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const displayVersion = pinnedVersion ?? latestVersion;
-  const label = pinnedVersion !== null ? t("monitoredTables.pinnedBadge") : t("monitoredTables.latestBadge");
-  const stale = pinnedVersion !== null && pinnedVersion < latestVersion;
+  // "Pinned (vN)" / "Latest (vN)" — matches MemberVersionPin's composition
+  // (P24 item 17); the version now lives inside the label itself instead of
+  // a separate "vN · " prefix, so there is only one place formatting it.
+  const label =
+    pinnedVersion !== null
+      ? t("monitoredTables.pinnedBadge", { version: pinnedVersion })
+      : t("monitoredTables.latestBadge", { version: latestVersion });
 
   // Fetch the rule's full version history lazily, only once the dropdown is
   // opened (not on every card render) — `enabled: open` plus React Query's
   // default caching means this fires once per rule per session, not once
   // per card mount, avoiding an N-request fan-out across a table with many
   // applied rules (P24 fix).
-  const { data: versions, isLoading } = useListRegistryRuleVersions(ruleId, {
+  const {
+    data: versions,
+    isLoading,
+    isError,
+    refetch,
+  } = useListRegistryRuleVersions(ruleId, {
     query: { enabled: open, ...selector<RegistryRuleVersionOut[]>().query },
   });
   const menu = buildVersionPinMenuModel((versions ?? []).map((v) => v.version), pinnedVersion, latestVersion);
+  // `menu.stale` is the same formula as the standalone `stale` this file used
+  // to compute locally — use the menu model's copy so there is exactly one
+  // source of truth (P24 rider b).
+  const stale = menu.stale;
 
   const badgeInner = (
     // FIXED width (not min-width) — regardless of "v1" vs "v12" or
@@ -287,9 +300,7 @@ function VersionPinDropdown({
         !readonly && "cursor-pointer hover:bg-muted/60",
       )}
     >
-      <span className="truncate">
-        v{displayVersion} &middot; {label}
-      </span>
+      <span className="truncate">{label}</span>
       {stale && <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" aria-hidden />}
       {!readonly && <span className="shrink-0" aria-hidden>&#x25BE;</span>}
     </Badge>
@@ -330,6 +341,20 @@ function VersionPinDropdown({
             <DropdownMenuItem disabled className="gap-2">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               <span>{t("monitoredTables.pinVersionsLoading")}</span>
+            </DropdownMenuItem>
+          ) : isError ? (
+            // Fetch failure previously rendered as a silent empty menu below
+            // "Follow latest" — no signal the history didn't load and no way
+            // to retry (P24 pin-fix review, rider a).
+            <DropdownMenuItem
+              className="gap-2 text-destructive focus:text-destructive"
+              onSelect={(e) => {
+                e.preventDefault();
+                void refetch();
+              }}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              <span>{t("monitoredTables.pinVersionsLoadFailed")}</span>
             </DropdownMenuItem>
           ) : (
             menu.entries.map((entry) => (

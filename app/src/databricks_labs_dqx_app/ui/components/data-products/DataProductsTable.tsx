@@ -10,11 +10,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Check, ChevronDown, ChevronUp, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
+import { STICKY_ACTIONS_HEAD_CLASS, STICKY_ACTIONS_CELL_CLASS } from "@/components/data-table/sticky-actions";
 import type { DataProductOut } from "@/lib/api";
 
 /** Column keys that carry a comparable value and can drive client sort.
@@ -24,6 +25,7 @@ export type DataProductsSortKey =
   | "name"
   | "description"
   | "status"
+  | "version"
   | "steward"
   | "tables"
   | "rules"
@@ -111,6 +113,19 @@ function DataProductStatusBadge({ status }: { status: string }) {
   }
 }
 
+/** The product's approved snapshot version badge ("vN"), or an em dash at
+ *  v0 (never approved) — Table Spaces parity with the Monitored Table /
+ *  Rules Registry overview "Version" column (P24 item 1). */
+function VersionCell({ version }: { version: number }) {
+  const { t } = useTranslation();
+  if (version <= 0) return <span className="text-muted-foreground">—</span>;
+  return (
+    <Badge variant="secondary" className="font-mono text-[10px]">
+      {t("dataProducts.versionBadge", { version })}
+    </Badge>
+  );
+}
+
 /** "# Tables" cell — runnable count, plus a localized "(N not ready)" hint
  *  when some members aren't yet approved/versioned. */
 function TablesCell({ product }: { product: DataProductOut }) {
@@ -183,6 +198,15 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     renderHeader: (label) => label,
     renderCell: (p) => <DataProductStatusBadge status={p.display_status} />,
   },
+  version: {
+    labelKey: "dataProducts.colVersion",
+    toggleable: true,
+    defaultVisible: true,
+    defaultWidth: 90,
+    sortable: true,
+    renderHeader: (label) => label,
+    renderCell: (p) => <VersionCell version={p.version ?? 0} />,
+  },
   steward: {
     labelKey: "dataProducts.colSteward",
     toggleable: true,
@@ -251,6 +275,8 @@ export function getDataProductsSortValue(key: DataProductsSortKey, p: DataProduc
       return (p.description ?? "").toLowerCase();
     case "status":
       return p.display_status ?? "";
+    case "version":
+      return p.version ?? 0;
     case "steward":
       return (p.steward ?? "").toLowerCase();
     case "tables":
@@ -270,6 +296,7 @@ const DEFAULT_ORDER: DataProductsSortKey[] = [
   "name",
   "description",
   "status",
+  "version",
   "steward",
   "tables",
   "rules",
@@ -287,6 +314,8 @@ export interface DataProductsTableProps {
   sortDir: "asc" | "desc";
   onHeaderClick: (key: DataProductsSortKey) => void;
   onRowClick: (row: DataProductOut) => void;
+  renderActions?: (row: DataProductOut) => ReactNode;
+  pendingProductId?: string | null;
   /** Rendered to the left of the "Edit Columns" trigger — the filter row. */
   toolbarExtra?: ReactNode;
   emptyState?: ReactNode;
@@ -307,6 +336,8 @@ export function DataProductsTable({
   sortDir,
   onHeaderClick,
   onRowClick,
+  renderActions,
+  pendingProductId,
   toolbarExtra,
   emptyState,
 }: DataProductsTableProps) {
@@ -326,12 +357,15 @@ export function DataProductsTable({
     columns: COLUMNS as Record<DataProductsSortKey, ColumnLayoutDef>,
   });
 
+  const hasActions = !!renderActions;
+
   function handleHeaderClick(key: DataProductsSortKey) {
     if (!COLUMNS[key].sortable) return;
     onHeaderClick(key);
   }
 
-  const totalWidth = visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0);
+  const totalWidth =
+    visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0) + (hasActions ? 96 : 0);
 
   return (
     <div className="space-y-4">
@@ -354,6 +388,7 @@ export function DataProductsTable({
             {visibleKeys.map((k) => (
               <col key={k} style={{ width: colWidths[k] ?? COLUMNS[k].defaultWidth }} />
             ))}
+            {hasActions && <col style={{ width: 96 }} />}
           </colgroup>
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
@@ -396,25 +431,49 @@ export function DataProductsTable({
                   </TableHead>
                 );
               })}
+              {hasActions && (
+                <TableHead
+                  className={cn("text-right text-xs font-medium px-2", STICKY_ACTIONS_HEAD_CLASS)}
+                  style={{ width: 96 }}
+                >
+                  {t("dataProducts.colActions")}
+                </TableHead>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((p) => (
-              <TableRow key={p.product_id} className="cursor-pointer" onClick={() => onRowClick(p)}>
-                {visibleKeys.map((k) => {
-                  const width = colWidths[k] ?? COLUMNS[k].defaultWidth;
-                  return (
+            {rows.map((p) => {
+              const busy = pendingProductId === p.product_id;
+              return (
+                <TableRow key={p.product_id} className="group cursor-pointer" onClick={() => onRowClick(p)}>
+                  {visibleKeys.map((k) => {
+                    const width = colWidths[k] ?? COLUMNS[k].defaultWidth;
+                    return (
+                      <TableCell
+                        key={k}
+                        style={{ width, minWidth: width, maxWidth: width }}
+                        className="overflow-hidden p-2 align-middle"
+                      >
+                        {COLUMNS[k].renderCell(p)}
+                      </TableCell>
+                    );
+                  })}
+                  {hasActions && (
                     <TableCell
-                      key={k}
-                      style={{ width, minWidth: width, maxWidth: width }}
-                      className="overflow-hidden p-2 align-middle"
+                      style={{ width: 96 }}
+                      className={cn("text-right p-2", STICKY_ACTIONS_CELL_CLASS)}
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      {COLUMNS[k].renderCell(p)}
+                      {busy ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground inline-block" />
+                      ) : (
+                        renderActions?.(p)
+                      )}
                     </TableCell>
-                  );
-                })}
-              </TableRow>
-            ))}
+                  )}
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </div>

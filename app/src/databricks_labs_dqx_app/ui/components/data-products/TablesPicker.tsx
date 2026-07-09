@@ -29,12 +29,12 @@ import selector from "@/lib/selector";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
+import { MemberVersionPin } from "@/components/data-products/MemberVersionPin";
 import { cn } from "@/lib/utils";
 
 /**
@@ -104,13 +104,18 @@ interface Props {
   disabledKeys?: Set<string>;
   /** Surface the loaded rows so the parent can read per-table metadata. */
   onRowsLoaded?: (rows: MonitoredTableSummaryOut[]) => void;
+  /** Per-table version pin choice keyed by binding_id (P24 item 16 — the
+   *  dialog's old standalone "Version to track" section, now rendered
+   *  inline per row instead). Absent/null = use latest. */
+  pins: Map<string, number | null>;
+  onPinChange: (bindingId: string, version: number | null) => void;
 }
 
 type GroupMode = "catalog" | "schema" | "none";
 
 const ALL = "ALL";
 
-export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }: Props) {
+export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, pins, onPinChange }: Props) {
   const { t } = useTranslation();
   const { data } = useListMonitoredTablesSuspense(undefined, { ...selector<MonitoredTableSummaryOut[]>() });
   const rows = data ?? [];
@@ -193,20 +198,20 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
     onChange(next);
   }
 
-  // All-selected state for the global toggle switch (item 19). A Switch is
-  // binary, so it reports "on" only when every currently-filtered,
-  // selectable row is selected — matching each group card's own
-  // checked/indeterminate logic, just scoped to the whole filtered set
-  // instead of one group. Flipping it on adds all filtered selectable rows
-  // to the existing selection (selections outside the current filter are
-  // left untouched); flipping it off clears the selection entirely, same as
-  // the old "Clear" button.
+  // All-selected state for the global "select all" toggle — now a tri-state
+  // Checkbox (P24 item 14, reversing P23-D item 19's Switch), matching each
+  // group card's own checked/indeterminate Checkbox, just scoped to the
+  // whole filtered set instead of one group. Checking it on adds all
+  // filtered selectable rows to the existing selection (selections outside
+  // the current filter are left untouched); unchecking it clears the
+  // selection entirely, same as the old "Clear" button.
   const allFilteredSelectableKeys = useMemo(
     () => filtered.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k)),
     [filtered, disabledKeys],
   );
   const allFilteredSelected =
     allFilteredSelectableKeys.length > 0 && allFilteredSelectableKeys.every((k) => selected.has(k));
+  const someFilteredSelected = allFilteredSelectableKeys.some((k) => selected.has(k));
 
   function toggleSelectAll(checked: boolean) {
     if (checked) {
@@ -220,9 +225,10 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
     <div className="space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-1.5">
-          <Switch
-            checked={allFilteredSelected}
-            onCheckedChange={toggleSelectAll}
+          <Checkbox
+            checked={allFilteredSelected ? true : someFilteredSelected ? "indeterminate" : false}
+            onCheckedChange={() => toggleSelectAll(!allFilteredSelected)}
+            disabled={allFilteredSelectableKeys.length === 0}
             aria-label={t("dataProducts.pickerSelectAllToggleAria")}
           />
           <span className="text-xs text-muted-foreground">{t("dataProducts.pickerSelectAll")}</span>
@@ -369,6 +375,19 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
                             {t("dataProducts.pickerNotReadyBadge")}
                           </Badge>
                         )}
+                        {/* Version pin, inline right after the table name —
+                            P24 item 16 (replaces the old standalone "Version
+                            to track" section). Shown once the row is
+                            checked, same reveal condition as "not ready". */}
+                        {!isDisabled && selected.has(key) && (
+                          <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <MemberVersionPin
+                              bindingVersion={r.table.version ?? 0}
+                              pinnedVersion={pins.get(key) ?? null}
+                              onPinChange={(v) => onPinChange(key, v)}
+                            />
+                          </span>
+                        )}
                       </span>
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-xs">
@@ -464,6 +483,19 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded }:
                                 <Badge variant="outline" className="text-[10px] shrink-0">
                                   {t("dataProducts.pickerNotReadyBadge")}
                                 </Badge>
+                              )}
+                              {/* Version pin, inline right after the table
+                                  name — P24 item 16. Shown once the row is
+                                  checked, same reveal condition as "not
+                                  ready". */}
+                              {!isDisabled && selected.has(key) && (
+                                <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                                  <MemberVersionPin
+                                    bindingVersion={r.table.version ?? 0}
+                                    pinnedVersion={pins.get(key) ?? null}
+                                    onPinChange={(v) => onPinChange(key, v)}
+                                  />
+                                </span>
                               )}
                             </span>
                           </TableCell>

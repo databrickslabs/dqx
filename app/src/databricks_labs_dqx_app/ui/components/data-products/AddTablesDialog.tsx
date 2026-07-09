@@ -16,7 +16,6 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type DataProductMemberOut, type MonitoredTableSummaryOut } from "@/lib/api";
-import { MemberVersionPin } from "@/components/data-products/MemberVersionPin";
 import { TablesPicker } from "@/components/data-products/TablesPicker";
 
 interface Props {
@@ -84,40 +83,27 @@ function Inner({ existingMembers, onOpenChange, onAdd }: Omit<Props, "open">) {
         <p className="text-xs text-muted-foreground">{t("dataProducts.addTablesDescription")}</p>
       </DialogHeader>
 
-      <div className="dq-scroll-visible flex-1 overflow-y-auto min-h-0 max-h-[60vh]">
+      {/* The picker's own scroll container uses the app's default themed
+          scrollbar (P24 item 15) — this dialog previously mixed that with a
+          separate "Version to track" list below using the loud always-
+          visible variant; unified on the subtler default now that the pin
+          renders inline per row instead (item 16). */}
+      <div className="flex-1 overflow-y-auto min-h-0 max-h-[60vh]">
         <TablesPicker
           selected={selected}
           onChange={setSelected}
           disabledKeys={existingMemberIds}
           onRowsLoaded={handleRowsLoaded}
+          pins={pins}
+          onPinChange={(bindingId, version) =>
+            setPins((prev) => {
+              const next = new Map(prev);
+              next.set(bindingId, version);
+              return next;
+            })
+          }
         />
       </div>
-
-      {count > 0 && (
-        <div className="border-t pt-3 space-y-1.5 max-h-[22vh] overflow-y-auto">
-          <p className="text-xs font-medium text-muted-foreground">{t("dataProducts.versionToTrackLabel")}</p>
-          {picks.map((bindingId) => {
-            const row = rowByBindingId.get(bindingId);
-            const fqn = row?.table.table_fqn ?? bindingId;
-            return (
-              <div key={bindingId} className="flex items-center justify-between gap-3">
-                <span className="font-mono text-xs truncate">{fqn}</span>
-                <MemberVersionPin
-                  bindingVersion={row?.table.version ?? 0}
-                  pinnedVersion={pins.get(bindingId) ?? null}
-                  onPinChange={(ver) =>
-                    setPins((prev) => {
-                      const next = new Map(prev);
-                      next.set(bindingId, ver);
-                      return next;
-                    })
-                  }
-                />
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       <DialogFooter className="flex-col sm:flex-row items-center gap-2 border-t pt-4 sm:justify-end">
         <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
@@ -138,8 +124,9 @@ export function AddTablesDialog({ existingMembers, open, onOpenChange, onAdd }: 
       <DialogContent
         className="!max-w-[min(90vw,1100px)] w-[min(90vw,1100px)] max-h-[85vh] flex flex-col gap-4 p-6"
         onInteractOutside={(e) => {
-          // The per-table "Version to track" pin (MemberVersionPin) is a
-          // Radix DropdownMenu whose menu renders in a popper portal that is
+          // The per-row version pin (MemberVersionPin, rendered inline next
+          // to each checked table's name — P24 item 16) is a Radix
+          // DropdownMenu whose menu renders in a popper portal that is
           // a sibling of — not a descendant of — this dialog's content. A
           // click on a menu item can therefore register as an interaction
           // *outside* the dialog and dismiss the whole dialog instead of
