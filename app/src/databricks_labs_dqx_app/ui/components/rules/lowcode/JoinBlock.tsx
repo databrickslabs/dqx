@@ -60,7 +60,7 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
     <div className="rounded-md border p-3 space-y-2 bg-muted/20">
       <div className="grid grid-cols-[120px_minmax(0,1.5fr)_minmax(0,1fr)_24px_minmax(0,1fr)_28px] gap-2 items-center">
         <Select value={join.join_type} onValueChange={(v) => onChange({ ...join, join_type: v as JoinType })}>
-          <SelectTrigger className="h-8 font-mono text-xs">
+          <SelectTrigger className="h-8 w-full font-mono text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -82,7 +82,7 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
               onValueChange={(v) => updateKey(0, { joined_column: v, column_ref: join.keys[0]?.column_ref ?? "" })}
               disabled={!join.target_table}
             >
-              <SelectTrigger className="h-8 font-mono text-xs">
+              <SelectTrigger className="h-8 w-full font-mono text-xs">
                 <SelectValue placeholder={t("rulesRegistry.lowcodeJoinedColumnPlaceholder")} />
               </SelectTrigger>
               <SelectContent>
@@ -98,7 +98,7 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
               value={join.keys[0]?.column_ref || ""}
               onValueChange={(v) => updateKey(0, { joined_column: join.keys[0]?.joined_column ?? "", column_ref: v })}
             >
-              <SelectTrigger className="h-8 font-mono text-xs">
+              <SelectTrigger className="h-8 w-full font-mono text-xs">
                 <SelectValue placeholder={t("rulesRegistry.lowcodeColumnRefPlaceholder")} />
               </SelectTrigger>
               <SelectContent>
@@ -133,7 +133,7 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
                 onValueChange={(v) => updateKey(i, { ...key, joined_column: v })}
                 disabled={!join.target_table}
               >
-                <SelectTrigger className="h-8 font-mono text-xs">
+                <SelectTrigger className="h-8 w-full font-mono text-xs">
                   <SelectValue placeholder={t("rulesRegistry.lowcodeJoinedColumnPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
@@ -146,7 +146,7 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
               </Select>
               <div className="text-center text-xs text-muted-foreground">=</div>
               <Select value={key.column_ref || ""} onValueChange={(v) => updateKey(i, { ...key, column_ref: v })}>
-                <SelectTrigger className="h-8 font-mono text-xs">
+                <SelectTrigger className="h-8 w-full font-mono text-xs">
                   <SelectValue placeholder={t("rulesRegistry.lowcodeColumnRefPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>

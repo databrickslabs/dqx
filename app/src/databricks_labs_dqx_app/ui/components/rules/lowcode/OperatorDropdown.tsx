@@ -39,7 +39,7 @@ export function OperatorDropdown({ value, family, onChange }: Props) {
 
   return (
     <Select value={value || ""} onValueChange={onChange}>
-      <SelectTrigger className="h-8 font-mono text-xs">
+      <SelectTrigger className="h-8 w-full font-mono text-xs">
         <SelectValue placeholder={t("rulesRegistry.lowcodeOperatorPlaceholder")} />
       </SelectTrigger>
       <SelectContent>

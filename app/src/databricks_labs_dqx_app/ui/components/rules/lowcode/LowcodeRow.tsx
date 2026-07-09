@@ -47,12 +47,18 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
       )}
     >
       {isFirst ? (
-        // The "IF" framing word is rendered once, above the whole builder
-        // (RegistryRuleFormDialog's `FramingWord`, item 18) — an empty
-        // spacer here just keeps this row's column grid aligned with the
-        // AND/OR-pill rows below it, instead of a second, smaller "IF"
-        // duplicating that label (item 23a).
-        <div className="h-8" />
+        // The "IF" framing word sits inline with this row, vertically
+        // centered against the condition controls next to it — matching
+        // dqlake's LowcodeRow (item 6). RegistryRuleFormDialog no longer
+        // renders a duplicate "IF" label above the builder for Low-Code
+        // mode (that framing word stays above the condition editor for the
+        // Native / SQL modes only, where there's no per-row grid to anchor
+        // to).
+        <div className="flex items-center h-8 pl-2 justify-self-start">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            {t("rulesRegistry.ifCondition")}
+          </span>
+        </div>
       ) : (
         <div className="flex items-center h-8 pr-2 justify-self-end">
           <div className="relative inline-grid grid-cols-2 p-0.5 rounded-full bg-muted">
@@ -83,7 +89,7 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
 
       {row.kind === "row" ? (
         <Select value={row.column_ref || ""} onValueChange={(v) => onChange({ ...row, column_ref: v } as AnyRow)}>
-          <SelectTrigger className="h-8 font-mono text-xs">
+          <SelectTrigger className="h-8 w-full font-mono text-xs">
             <SelectValue placeholder={t("rulesRegistry.lowcodeColumnPlaceholder")} />
           </SelectTrigger>
           <SelectContent>

@@ -27,7 +27,19 @@ export function AdvancedDisclosure({ defaultOpen = false, label, children }: Adv
         <ChevronRight className={cn("h-4 w-4 transition-transform", open && "rotate-90")} />
         {label}
       </button>
-      {open && <div className="px-4 pb-4 pt-4 border-t space-y-3">{children}</div>}
+      {/* grid-rows transition trick — same pattern as RuleConfigCard /
+          RulesByColumn's disclosures — animates both open AND closed, unlike
+          a plain `{open && <div>}` conditional render. */}
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows] duration-200 ease-out",
+          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+        )}
+      >
+        <div className="overflow-hidden">
+          <div className="px-4 pb-4 pt-4 border-t space-y-3">{children}</div>
+        </div>
+      </div>
     </div>
   );
 }

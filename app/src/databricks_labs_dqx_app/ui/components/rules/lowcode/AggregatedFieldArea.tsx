@@ -89,7 +89,7 @@ export function AggregatedFieldArea({ aggregate, column_ref, aggregate_param, de
           })
         }
       >
-        <SelectTrigger className="h-8 font-mono text-xs">
+        <SelectTrigger className="h-8 w-full font-mono text-xs">
           <SelectValue placeholder={t("rulesRegistry.lowcodeAggregatePlaceholder")} />
         </SelectTrigger>
         <SelectContent>
@@ -119,7 +119,7 @@ export function AggregatedFieldArea({ aggregate, column_ref, aggregate_param, de
         </SelectContent>
       </Select>
       <Select value={column_ref || ""} onValueChange={(v) => onChange({ aggregate, column_ref: v, aggregate_param })}>
-        <SelectTrigger className="h-8 font-mono text-xs">
+        <SelectTrigger className="h-8 w-full font-mono text-xs">
           <SelectValue placeholder={t("rulesRegistry.lowcodeColumnPlaceholder")} />
         </SelectTrigger>
         <SelectContent>

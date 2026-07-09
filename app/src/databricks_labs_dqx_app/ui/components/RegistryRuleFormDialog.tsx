@@ -73,7 +73,7 @@ import {
   slotFamilyToLowcode,
   type LowcodeColumnRef,
 } from "@/lib/lowcodeCompile";
-import { EMPTY_LOWCODE_AST, isV2Ast, type LowcodeAstV2 } from "@/lib/lowcodeAst";
+import { EMPTY_LOWCODE_AST, isV2Ast, type AnyRow, type LowcodeAstV2 } from "@/lib/lowcodeAst";
 import { cn } from "@/lib/utils";
 import type { LabelDefinition } from "@/lib/api-custom";
 import {
@@ -810,6 +810,19 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
  * to add the first slot by hand. Surfaces only in SQL / Low-Code mode; ignored
  * by native `buildDefinition`. */
 const seededFirstSlot = (): RuleSlot => ({ name: "column_1", family: "any", position: 0, cardinality: "one" });
+
+/** A new lowcode rule starts with one condition row already declared (same
+ * seeding precedent as {@link seededFirstSlot}) so the author lands on a
+ * ready-to-edit row instead of an empty builder with just "Add condition"
+ * buttons. Defaults the column ref to the first declared slot, matching
+ * `LowcodeBuilder`'s own `defaultColumnRef` fallback for added rows. */
+const seededFirstLowcodeRow = (columnRef: string): AnyRow => ({
+  kind: "row",
+  combinator: null,
+  column_ref: columnRef,
+  operator: "is null",
+  value: null,
+});
 
 /** Pristine defaults the "create new rule" hydration branch resets the form to — mirrors {@link snapshotFromRule}'s shape so an untouched new-rule form reads as clean (not dirty). */
 const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
@@ -1765,6 +1778,12 @@ export function RegistryRuleFormDialog({
         setSqlPredicate((prev) => prev || predicate);
       }
     }
+    // Landing in Low-Code with nothing translated over (e.g. from a blank SQL
+    // predicate) — seed the first condition row (item 7) rather than leaving
+    // an empty builder.
+    if (next === "lowcode" && lowcodeAst.rows.length === 0) {
+      setLowcodeAst((prev) => ({ ...prev, rows: [seededFirstLowcodeRow(lowcodeColumns[0]?.name ?? "column_1")] }));
+    }
     setMode(next);
     setModeSwitch(null);
   };
@@ -1785,6 +1804,11 @@ export function RegistryRuleFormDialog({
     if (mode === "dqx_native" && hasNativeContent) {
       setModeSwitch({ direction: next === "lowcode" ? "NATIVE_TO_LOWCODE" : "NATIVE_TO_SQL", next });
       return;
+    }
+    // New/blank rule switching straight into Low-Code (no content anywhere
+    // to guard) — seed the first condition row (item 7).
+    if (next === "lowcode" && lowcodeAst.rows.length === 0) {
+      setLowcodeAst((prev) => ({ ...prev, rows: [seededFirstLowcodeRow(lowcodeColumns[0]?.name ?? "column_1")] }));
     }
     setMode(next);
   };
@@ -1822,18 +1846,16 @@ export function RegistryRuleFormDialog({
         <div className="space-y-3">
           <div className="space-y-1.5">
             <Label className="text-xs">{t("rulesRegistry.conditionLabel")}</Label>
-            {/* IF on its own line, condition logic below it (item 18) —
-                consistent across all three modes rather than IF sitting
-                beside the condition editor. */}
-            <div className="space-y-1.5">
-              <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
-              <LowcodeBuilder
-                ast={lowcodeAst}
-                onChange={setLowcodeAst}
-                declaredColumns={lowcodeColumns}
-                readOnly={readOnly}
-              />
-            </div>
+            {/* Unlike Native/SQL, Low-Code renders "IF" inline with the first
+                condition row (vertically centered against it, item 6) rather
+                than as a standalone label above the builder — there's no
+                duplicate framing word to add here. */}
+            <LowcodeBuilder
+              ast={lowcodeAst}
+              onChange={setLowcodeAst}
+              declaredColumns={lowcodeColumns}
+              readOnly={readOnly}
+            />
           </div>
           {/* Advanced — group-by + joins, folded into the compiled SQL that
               actually runs (see lowcodeCompile.compileLowcodeBody). Placed
@@ -1873,8 +1895,10 @@ export function RegistryRuleFormDialog({
             <Label className="text-xs">
               {t("rulesRegistry.conditionLabel")} <span className="text-destructive">*</span>
             </Label>
-            {/* IF on its own line, condition logic below it (item 18). */}
-            <div className="space-y-1.5">
+            {/* IF on its own line, more vertical breathing room before the
+                condition logic below it than the tight label-to-control
+                gap elsewhere (item 6). */}
+            <div className="space-y-3">
               <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
               <FunctionCombobox
                 value={functionName}
@@ -2036,8 +2060,10 @@ export function RegistryRuleFormDialog({
               {t("rulesRegistry.conditionLabel")} <span className="text-destructive">*</span>
             </Label>
             <PredicateEditorExplainer />
-            {/* IF on its own line, condition logic below it (item 18). */}
-            <div className="space-y-1.5">
+            {/* IF on its own line, more vertical breathing room before the
+                condition logic below it than the tight label-to-control gap
+                elsewhere (item 6). */}
+            <div className="space-y-3">
               <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
               <div className={cn(sqlError && "rounded-md ring-1 ring-red-400")}>
                 <PredicateEditor

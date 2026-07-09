@@ -68,7 +68,7 @@ export function ValueCell({ operator, family, value, onChange }: Props) {
     const current = typeof value === "string" ? value : "";
     return (
       <Select value={current} onValueChange={(v) => onChange(v)}>
-        <SelectTrigger className="h-8 font-mono text-xs">
+        <SelectTrigger className="h-8 w-full font-mono text-xs">
           <SelectValue placeholder={t("rulesRegistry.lowcodeTypePlaceholder")} />
         </SelectTrigger>
         <SelectContent>
