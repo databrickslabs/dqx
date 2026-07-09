@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { MessageSquare, Sparkles, Wand2, X, Loader2 } from "lucide-react";
+import { MessageSquare, Sparkles, Wand2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -14,8 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { useAiWriteSql, useAiImproveSql, useAiExplainSql, type RuleSlot } from "@/lib/api";
 import { type AiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
-import { AI_GRADIENT_URL, AI_BANNER_BG, AI_BANNER_BORDER } from "@/lib/ai-style";
-import { cn } from "@/lib/utils";
+import { AI_GRADIENT_URL } from "@/lib/ai-style";
 
 type Polarity = "pass" | "fail";
 
@@ -45,9 +44,11 @@ function extractApiError(err: unknown, fallback: string): string {
  * (matching dqlake's ImplementationTab layout): three plain outline buttons with
  * gradient-stroked icons (the house AI motif). "Write with AI" and "Improve" open
  * a description modal and replace the predicate inline; "Explain" fires immediately
- * and shows a non-destructive explanation panel below the toolbar (DQX validates
- * the predicate, so — unlike dqlake — the explanation is never written back into
- * the editor text where a stray DDL keyword in prose could trip the save guard).
+ * and inserts the explanation as `-- ` comment lines at the TOP of the predicate,
+ * a blank line, then the logic (item 6). The comment is inert at runtime (Spark's
+ * lexer skips `--` lines) and every SQL-safety gate — the client keyword mirror and
+ * the app-side `is_sql_query_safe` calls — strips comments before scanning, so
+ * explanation prose that reads like a DDL keyword can never trip the save guard.
  *
  * Every AI-written predicate is re-validated with `is_sql_query_safe` server-side
  * before it can reach the editor (AGENTS.md 11-SEC). The whole toolbar is hidden
@@ -70,7 +71,6 @@ export function SqlAiAssistMenu({
   // Which description modal is open (write | improve), or null.
   const [modal, setModal] = useState<"write" | "improve" | null>(null);
   const [modalText, setModalText] = useState("");
-  const [explanation, setExplanation] = useState<string | null>(null);
 
   if (!aiAvailability.available || disabled) return null;
 
@@ -94,8 +94,17 @@ export function SqlAiAssistMenu({
   const applyResult = (result: { predicate: string; polarity?: string | null }, toastKey: string) => {
     onPredicateReplace(result.predicate);
     if (result.polarity === "pass" || result.polarity === "fail") onPolarityChange(result.polarity);
-    setExplanation(null);
     toast.success(t(toastKey));
+  };
+
+  // Strip a leading block of comment / blank lines so re-explaining replaces the
+  // previous explanation instead of stacking, and so the AI explains the real
+  // logic — not its own prior prose.
+  const stripLeadingComments = (sql: string): string => {
+    const lines = sql.split("\n");
+    let i = 0;
+    while (i < lines.length && (lines[i].trim() === "" || lines[i].trimStart().startsWith("--"))) i++;
+    return lines.slice(i).join("\n");
   };
 
   const submitModal = async () => {
@@ -121,10 +130,22 @@ export function SqlAiAssistMenu({
   };
 
   const handleExplain = async () => {
-    if (!hasPredicate) return;
+    // Explain the real logic (drop any prior explanation comment block).
+    const logic = stripLeadingComments(predicate).trim();
+    if (!logic) return;
     try {
-      const resp = await explainMutation.mutateAsync({ data: { predicate } });
-      setExplanation(resp.data.explanation);
+      const resp = await explainMutation.mutateAsync({ data: { predicate: logic } });
+      // Insert the explanation as `-- ` comment lines at the TOP of the
+      // predicate, a blank line, then the logic (item 6, replacing the old
+      // panel). Comments are inert at runtime (Spark's lexer skips them) and
+      // stripped before every SQL-safety scan, so prose that reads like a DDL
+      // keyword can't block a save.
+      const commented = resp.data.explanation
+        .split("\n")
+        .map((line) => (line.trim() ? `-- ${line.trim()}` : "--"))
+        .join("\n");
+      onPredicateReplace(`${commented}\n\n${logic}`);
+      toast.success(t("rulesRegistry.sqlAiExplainInserted"));
     } catch (err) {
       handleAiError(err, "rulesRegistry.sqlAiFailed");
     }
@@ -182,27 +203,6 @@ export function SqlAiAssistMenu({
           {t("rulesRegistry.sqlAiImprove")}
         </Button>
       </div>
-
-      {explanation !== null && (
-        <div
-          className={cn(
-            "flex items-start gap-2 rounded-md px-3 py-2 text-xs",
-            AI_BANNER_BG,
-            AI_BANNER_BORDER,
-          )}
-        >
-          <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0" stroke={AI_GRADIENT_URL} />
-          <p className="flex-1 leading-relaxed">{explanation}</p>
-          <button
-            type="button"
-            aria-label={t("rulesRegistry.sqlAiExplainDismiss")}
-            onClick={() => setExplanation(null)}
-            className="text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
 
       <Dialog open={modal !== null} onOpenChange={(next) => !next && setModal(null)}>
         <DialogContent className="sm:max-w-md">

@@ -8,6 +8,7 @@ import {
 } from "./lowcodeCompile";
 import type { LowcodeColumnRef } from "./lowcodeCompile";
 import type { AnyRow, JoinAst, LowcodeAstV2 } from "./lowcodeAst";
+import { OPERATORS_BY_FAMILY } from "./lowcodeOperators";
 
 // Unit tests for the low-code -> SQL compiler. This is the sole guard against
 // the class of bug that shipped the Advanced (joins / group-by) paths broken:
@@ -70,6 +71,54 @@ describe("operator SQL", () => {
     );
   });
 
+  // Full operator catalogue ported from dqlake (item 3): every operator each
+  // column family offers must compile to the exact SQL below. `left` is always
+  // the `{{c}}` slot ref. A regression in any one arm shows up here rather than
+  // only at run time.
+  const OPERATOR_SQL: Array<[string, unknown, string]> = [
+    // Comparison / equality (numeric, temporal, universal)
+    ["=", 3, "{{c}} = 3"],
+    ["!=", 3, "{{c}} != 3"],
+    [">", 3, "{{c}} > 3"],
+    [">=", 3, "{{c}} >= 3"],
+    ["<", 3, "{{c}} < 3"],
+    ["<=", 3, "{{c}} <= 3"],
+    // Text
+    ["equals", "x", "{{c}} = 'x'"],
+    ["not equals", "x", "{{c}} != 'x'"],
+    ["contains", "x", "{{c}} LIKE '%x%'"],
+    ["does not contain", "x", "{{c}} NOT LIKE '%x%'"],
+    ["starts with", "x", "{{c}} LIKE 'x%'"],
+    ["ends with", "x", "{{c}} LIKE '%x'"],
+    ["matches regex", "^a.*$", "{{c}} RLIKE '^a.*$'"],
+    ["has leading or trailing whitespace", null, "{{c}} != TRIM({{c}})"],
+    ["has no leading or trailing whitespace", null, "{{c}} = TRIM({{c}})"],
+    ["is a valid", "int", "TRY_CAST({{c}} AS INT) IS NOT NULL"],
+    ["is not a valid", "int", "TRY_CAST({{c}} AS INT) IS NULL"],
+    // Range / set
+    ["between", [1, 10], "{{c}} BETWEEN 1 AND 10"],
+    ["in", ["a", "b"], "{{c}} IN ('a', 'b')"],
+    ["not in", ["a", "b"], "{{c}} NOT IN ('a', 'b')"],
+    // Universal null checks
+    ["is null", null, "{{c}} IS NULL"],
+    ["is not null", null, "{{c}} IS NOT NULL"],
+    // Boolean
+    ["is true", null, "{{c}} = TRUE"],
+    ["is false", null, "{{c}} = FALSE"],
+    // Temporal
+    ["before", "2020-01-01", "{{c}} < '2020-01-01'"],
+    ["after", "2020-01-01", "{{c}} > '2020-01-01'"],
+    ["on or before", "2020-01-01", "{{c}} <= '2020-01-01'"],
+    ["on or after", "2020-01-01", "{{c}} >= '2020-01-01'"],
+    ["is in last", { number: 7, unit: "days" }, "{{c}} >= current_timestamp() - INTERVAL '7 days'"],
+  ];
+
+  for (const [operator, value, expected] of OPERATOR_SQL) {
+    test(`operator "${operator}" compiles to ${expected}`, () => {
+      expect(compileAstToSql(ast([row({ column_ref: "c", operator, value })]))).toBe(expected);
+    });
+  }
+
   test("aggregated row compiles the aggregate expression", () => {
     const agg: AnyRow = {
       kind: "aggregated",
@@ -80,6 +129,59 @@ describe("operator SQL", () => {
       value: 1,
     };
     expect(compileAstToSql(ast([agg]))).toBe("COUNT({{id}}) > 1");
+  });
+});
+
+// Locks the type-dependent catalogue ported from dqlake (item 3): each family
+// offers only its family-appropriate operator set, and every operator listed
+// has a compilation arm above. A drift here (added/removed/renamed operator)
+// fails loudly rather than silently shipping an operator the compiler can't
+// emit SQL for.
+describe("OPERATORS_BY_FAMILY — ported dqlake catalogue", () => {
+  test("each family exposes exactly the dqlake operator set", () => {
+    expect(OPERATORS_BY_FAMILY.NUMERIC).toEqual(["between", "=", "!=", ">=", ">", "<=", "<", "in", "not in"]);
+    expect(OPERATORS_BY_FAMILY.TEXTUAL).toEqual([
+      "equals",
+      "not equals",
+      "contains",
+      "does not contain",
+      "starts with",
+      "ends with",
+      "in",
+      "not in",
+      "matches regex",
+      "has leading or trailing whitespace",
+      "has no leading or trailing whitespace",
+      "is a valid",
+      "is not a valid",
+    ]);
+    expect(OPERATORS_BY_FAMILY.TEMPORAL).toEqual([
+      "on or after",
+      "on or before",
+      "after",
+      "before",
+      "between",
+      "is in last",
+      "=",
+      "!=",
+    ]);
+    expect(OPERATORS_BY_FAMILY.BOOLEAN).toEqual(["is true", "is false"]);
+    expect(OPERATORS_BY_FAMILY.ANY).toEqual(["is null", "is not null", "=", "!=", "in", "not in"]);
+  });
+
+  test("every catalogue operator compiles to non-empty SQL (no unhandled arm)", () => {
+    const sampleValue = (op: string): unknown => {
+      if (op === "between") return [1, 2];
+      if (op === "in" || op === "not in") return ["a"];
+      if (op === "is in last") return { number: 1, unit: "days" };
+      if (op === "is a valid" || op === "is not a valid") return "int";
+      return "x";
+    };
+    const all = new Set(Object.values(OPERATORS_BY_FAMILY).flat());
+    for (const op of all) {
+      const sql = compileAstToSql(ast([row({ column_ref: "c", operator: op, value: sampleValue(op) })]));
+      expect(sql.length, `operator "${op}" produced empty SQL`).toBeGreaterThan(0);
+    }
   });
 });
 

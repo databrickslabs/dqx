@@ -76,6 +76,7 @@ import {
 } from "@/lib/lowcodeCompile";
 import { EMPTY_LOWCODE_AST, isV2Ast, type AnyRow, type LowcodeAstV2 } from "@/lib/lowcodeAst";
 import { cn } from "@/lib/utils";
+import { stripSqlLineComments } from "@/lib/sqlComments";
 import type { LabelDefinition } from "@/lib/api-custom";
 import {
   useCreateRegistryRule,
@@ -143,8 +144,13 @@ const SQL_DDL_DML_PATTERN =
 
 function validateSqlPredicate(predicate: string, t: (key: string) => string): string | null {
   if (!predicate.trim()) return null;
-  if (predicate.includes(";")) return t("rulesCreateSql.querySemicolonError");
-  if (SQL_DDL_DML_PATTERN.test(predicate)) return t("rulesCreateSql.queryProhibitedError");
+  // Scan with comments removed (item 6): a leading `-- explanation` block (or
+  // any hand-typed comment) is inert at runtime, so its prose must not trip the
+  // keyword/semicolon guards. The stripper is quote-aware, so a `--`/`;` inside
+  // a string literal still counts as live SQL. Mirrors the app-side gates.
+  const scanned = stripSqlLineComments(predicate);
+  if (scanned.includes(";")) return t("rulesCreateSql.querySemicolonError");
+  if (SQL_DDL_DML_PATTERN.test(scanned)) return t("rulesCreateSql.queryProhibitedError");
   return null;
 }
 
@@ -1974,11 +1980,15 @@ export function RegistryRuleFormDialog({
             <Label className="text-xs">
               {t("rulesRegistry.conditionLabel")} <span className="text-destructive">*</span>
             </Label>
-            {/* IF on its own line, more vertical breathing room before the
-                condition logic below it than the tight label-to-control
-                gap elsewhere (item 6). */}
+            {/* IF on its own line with the same vertical breathing room before
+                the control as SQL mode (item 8) — `space-y-3` matches the SQL
+                editor's IF-to-editor gap. The function selector is content-
+                narrow (`max-w-sm`) rather than full dialog width — a check-
+                function name is short, so a full-width combobox over-emphasized
+                it (item 8). */}
             <div className="space-y-3">
               <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
+              <div className="max-w-sm">
               <FunctionCombobox
                 value={functionName}
                 functions={checkFunctions}
@@ -2012,6 +2022,7 @@ export function RegistryRuleFormDialog({
                 }}
                 disabled={readOnly}
               />
+              </div>
             </div>
           </div>
           {derivedParams.length > 0 && (
@@ -2138,7 +2149,6 @@ export function RegistryRuleFormDialog({
             <Label className="text-xs">
               {t("rulesRegistry.conditionLabel")} <span className="text-destructive">*</span>
             </Label>
-            <PredicateEditorExplainer />
             {/* IF on its own line, more vertical breathing room before the
                 condition logic below it than the tight label-to-control gap
                 elsewhere (item 6). The SQL AI assistants (write / improve /
@@ -2156,6 +2166,9 @@ export function RegistryRuleFormDialog({
                   disabled={readOnly}
                 />
               </div>
+              {/* The "reference columns as {{column_name}}" hint sits BELOW the
+                  IF text (item 7), directly above the editor it explains. */}
+              <PredicateEditorExplainer />
               <div className={cn(sqlError && "rounded-md ring-1 ring-red-400")}>
                 <PredicateEditor
                   value={sqlPredicate}
@@ -2366,6 +2379,11 @@ export function RegistryRuleFormDialog({
               <Shield className="h-3.5 w-3.5" />
               {t("rulesRegistry.tabPermissions")}
             </TabsTrigger>
+            {/* Muted vertical rule separating the metadata group (About /
+                Permissions) from Implementation (item 10) — same divider the
+                MT/TS tab shells use; `muted-foreground/40` stays visible over
+                TabsList's `bg-muted` in both themes. */}
+            <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
             <TabsTrigger value="implementation" className="gap-1.5">
               <Wrench className="h-3.5 w-3.5" />
               {t("rulesRegistry.tabImplementation")}

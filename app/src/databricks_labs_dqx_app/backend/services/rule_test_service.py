@@ -41,7 +41,7 @@ from databricks_labs_dqx_app.backend.rule_test_sql import (
     substitute_slots,
 )
 from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
-from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
+from databricks_labs_dqx_app.backend.sql_utils import strip_sql_line_comments, validate_fqn
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +151,10 @@ class RuleTestService:
     def _guard_predicate(predicate: str, column_mapping: dict[str, str]) -> None:
         """Reject a predicate that fails DQX's SQL-safety gate after substitution."""
         substituted = substitute_slots(predicate, column_mapping)
-        if not is_sql_query_safe(substituted):
+        # Scan with comments removed (item 6): a leading `-- explanation` block is
+        # inert at runtime and its prose must not trip the keyword scan. Quote-
+        # aware, so a `--` inside a string literal still counts as live SQL.
+        if not is_sql_query_safe(strip_sql_line_comments(substituted)):
             raise UnsafeSqlQueryError("The rule's SQL predicate contains prohibited statements and cannot be tested.")
 
     @staticmethod
@@ -165,7 +168,12 @@ class RuleTestService:
         ``_lit``'s quote+backslash escaping this makes an injected statement in
         an ad-hoc cell either a harmless quoted literal or an outright rejection.
         """
-        if not is_sql_query_safe(sql):
+        # The assembled query embeds the predicate, which may carry a leading
+        # `-- explanation` comment block (item 6). The newline terminating each
+        # comment line is preserved through assembly (str.replace substitution),
+        # so the live SQL after it still runs; strip comments here only so their
+        # prose can't trip this defence-in-depth keyword scan.
+        if not is_sql_query_safe(strip_sql_line_comments(sql)):
             raise UnsafeSqlQueryError("The assembled test query contains prohibited statements and cannot be run.")
 
     @staticmethod

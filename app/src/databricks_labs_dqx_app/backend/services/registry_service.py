@@ -40,7 +40,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_severity,
 )
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
 
 logger = logging.getLogger(__name__)
 
@@ -481,7 +481,12 @@ class RegistryService:
                         if isinstance(value, str) and value:
                             candidates.append(value)
         for candidate in candidates:
-            if not is_sql_query_safe(candidate):
+            # Scan with comments stripped: a rule predicate may carry a leading
+            # `-- explanation` block (SQL Explain, item 6) whose prose could
+            # otherwise trip the keyword scan. Comments are inert at runtime
+            # (Spark skips them), and the stripper is quote-aware so a `--`
+            # inside a string literal still counts as live SQL.
+            if not is_sql_query_safe(strip_sql_line_comments(candidate)):
                 raise UnsafeSqlQueryError(
                     "The rule's SQL contains prohibited statements (e.g. DROP, INSERT, UPDATE) and cannot be saved."
                 )

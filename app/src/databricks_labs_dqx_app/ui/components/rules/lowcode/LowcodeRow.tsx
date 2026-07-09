@@ -89,7 +89,11 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
 
       {row.kind === "row" ? (
         <Select value={row.column_ref || ""} onValueChange={(v) => onChange({ ...row, column_ref: v } as AnyRow)}>
-          <SelectTrigger className="h-8 w-full font-mono text-xs">
+          {/* Content-width (no `w-full`) so the picker sizes to its column
+              value rather than stretching to fill its grid track — matches
+              dqlake's LowcodeRow, de-justifying the condition builder (item 4,
+              partially reversing P23-A's `w-full` sweep on this control). */}
+          <SelectTrigger className="h-8 font-mono text-xs">
             <SelectValue placeholder={t("rulesRegistry.lowcodeColumnPlaceholder")} />
           </SelectTrigger>
           <SelectContent>

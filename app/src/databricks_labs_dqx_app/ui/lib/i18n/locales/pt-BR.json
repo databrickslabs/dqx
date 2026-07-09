@@ -1379,7 +1379,7 @@
     "sqlAiImproveDescription": "Descreva como refiná-lo.",
     "sqlAiImprovePlaceholder": "ex. reforçar o tratamento de valores nulos",
     "sqlAiSubmit": "Enviar",
-    "sqlAiExplainDismiss": "Dispensar",
+    "sqlAiExplainInserted": "Explicação adicionada como comentário acima da sua lógica.",
     "sqlAiWritten": "A IA escreveu um predicado — revise-o antes de salvar.",
     "sqlAiImproved": "A IA refinou o predicado — revise-o antes de salvar.",
     "sqlAiFailed": "A solicitação de IA falhou.",

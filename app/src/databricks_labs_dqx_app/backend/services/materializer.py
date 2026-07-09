@@ -82,7 +82,7 @@ from databricks_labs_dqx_app.backend.services.app_settings_service import AppSet
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +219,10 @@ def render_check(
         negate = version.polarity == "fail"
         if "sql_query" in body:
             query = _substitute_text(str(body.get("sql_query", "")), group, definition.slots)
-            if not is_sql_query_safe(query):
+            # Comments (e.g. a leading `-- explanation` block, item 6) are inert
+            # at runtime; strip them before the keyword scan so their prose can't
+            # trip it. The stored `query` keeps its comments for round-trip.
+            if not is_sql_query_safe(strip_sql_line_comments(query)):
                 raise UnsafeSqlQueryError(
                     "The registry rule's SQL query contains prohibited statements and cannot be materialized."
                 )
@@ -241,7 +244,11 @@ def render_check(
             is_tableless = not definition.slots
         else:
             expression = _substitute_text(str(body.get("predicate", "")), group, definition.slots)
-            if not is_sql_query_safe(expression):
+            # Comments (e.g. a leading `-- explanation` block, item 6) are inert
+            # at runtime — Spark's F.expr lexer skips `--` lines — so strip them
+            # before the keyword scan. The stored `expression` keeps its comments
+            # so the explanation survives to the applied rule and Spark ignores it.
+            if not is_sql_query_safe(strip_sql_line_comments(expression)):
                 raise UnsafeSqlQueryError(
                     "The registry rule's SQL predicate contains prohibited statements and cannot be materialized."
                 )

@@ -54,6 +54,77 @@ _SQL_CHECK_RE = re.compile(r"^__sql_check__/[a-zA-Z0-9_\-]+$")
 _SCHEDULE_NAME_RE = re.compile(r"^[a-zA-Z0-9_:\-]{1,64}$")
 
 
+_SQL_QUOTES = ("'", '"', "`")
+
+
+def strip_sql_line_comments(sql: str) -> str:
+    """Remove SQL comments from a predicate/query for a safety-keyword scan.
+
+    The SQL "Explain" affordance prepends the AI explanation to a rule
+    predicate as ``-- <line>`` comment lines. Those lines are inert at runtime
+    (Spark's SQL lexer skips ``--`` line and ``/* */`` block comments), but the
+    explanation *prose* can contain words that look like forbidden DDL/DML
+    keywords ("this deletes duplicates"). ``is_sql_query_safe`` scans the raw
+    text and would falsely reject such a predicate, so every app-side gate runs
+    the scan on the de-commented copy produced here.
+
+    Security: the stripper is quote-aware. A ``--`` / ``/* */`` inside a string
+    literal or a backtick-quoted identifier is NOT a comment and is preserved,
+    so a crafted ``'... --'`` can never hide a live forbidden keyword after a
+    fake comment marker from the scan while Spark still executes it. Block
+    comments are treated as NON-nesting (stop at the first ``*/``), which only
+    ever removes LESS than Spark would — never enough to hide live SQL. This
+    de-commented text is used ONLY for the safety scan; the stored predicate
+    keeps its comments so it round-trips and Spark strips them at runtime.
+
+    Args:
+        sql: The raw predicate or query text, possibly containing comments.
+
+    Returns:
+        The text with ``--`` line comments and ``/* */`` block comments removed
+        (comments outside string/identifier literals only); newlines preserved.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(sql)
+    while i < n:
+        ch = sql[i]
+        # Quoted region (string literal ' " or backtick identifier). Spark
+        # escapes an embedded quote by doubling it, so a doubled quote stays
+        # in-region.
+        if ch in _SQL_QUOTES:
+            quote = ch
+            out.append(ch)
+            i += 1
+            while i < n:
+                out.append(sql[i])
+                if sql[i] == quote:
+                    if i + 1 < n and sql[i + 1] == quote:
+                        out.append(sql[i + 1])
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                i += 1
+            continue
+        # Line comment `-- ...` -> drop to end of line, keep the newline.
+        if ch == "-" and i + 1 < n and sql[i + 1] == "-":
+            i += 2
+            while i < n and sql[i] != "\n":
+                i += 1
+            continue
+        # Block comment `/* ... */` (non-nesting) -> drop the whole span.
+        if ch == "/" and i + 1 < n and sql[i + 1] == "*":
+            i += 2
+            while i < n and not (sql[i] == "*" and i + 1 < n and sql[i + 1] == "/"):
+                i += 1
+            i += 2  # skip the closing */ (harmless if unterminated)
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def escape_sql_string(value: str) -> str:
     """Escape a value for embedding in a SQL single-quoted string literal.
 

@@ -1379,7 +1379,7 @@
     "sqlAiImproveDescription": "Descrivi come perfezionarlo.",
     "sqlAiImprovePlaceholder": "es. rafforza la gestione dei valori null",
     "sqlAiSubmit": "Invia",
-    "sqlAiExplainDismiss": "Ignora",
+    "sqlAiExplainInserted": "Spiegazione aggiunta come commento sopra la tua logica.",
     "sqlAiWritten": "L'IA ha scritto un predicato — controllalo prima di salvare.",
     "sqlAiImproved": "L'IA ha perfezionato il predicato — controllalo prima di salvare.",
     "sqlAiFailed": "Richiesta IA non riuscita.",

@@ -721,6 +721,36 @@ def test_col_sql_expression(spark):
     assertDataFrameEqual(actual, expected)
 
 
+def test_col_sql_expression_with_leading_comment(spark):
+    # Regression guard for the DQX Studio "SQL Explain" feature, which prepends
+    # the AI explanation to a rule predicate as `-- ...` comment lines (a blank
+    # line, then the logic). Spark's SQL lexer skips `--` line comments, so
+    # F.expr must evaluate a comment-prefixed expression identically to the bare
+    # expression AS LONG AS the terminating newline is preserved (it is — the
+    # app substitutes slots with str.replace, never collapsing whitespace). A
+    # comment whose prose contains a word like "delete" must not affect the
+    # result. If this ever fails, leading comments do NOT survive F.expr and the
+    # Studio must fall back to stripping comments before persisting.
+    test_df = spark.createDataFrame([["str1", 1, 1], ["str2", None, None], ["", 2, 3]], SCHEMA + ", c: string")
+
+    commented_expr = "-- delete stale rows where a is not str2\n-- second explanation line\n\na = 'str2'"
+    actual = test_df.select(
+        sql_expression(commented_expr, name="commented", msg="a is not str2"),
+    )
+
+    checked_schema = "commented: string"
+    expected = spark.createDataFrame(
+        [
+            ["a is not str2"],
+            [None],
+            ["a is not str2"],
+        ],
+        checked_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_col_sql_expression_long_name(spark):
     long_col_name = "a" * 300
     normalized_col_name = "a" * 255

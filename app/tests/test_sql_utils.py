@@ -4,15 +4,64 @@ from __future__ import annotations
 
 import pytest
 
+from databricks.labs.dqx.utils import is_sql_query_safe
+
 from databricks_labs_dqx_app.backend.sql_utils import (
     escape_sql_string,
     fqn_needs_quoting,
     quote_fqn,
+    strip_sql_line_comments,
     validate_entity_type,
     validate_fqn,
     validate_object_id,
     validate_schedule_name,
 )
+
+
+class TestStripSqlLineComments:
+    """The comment stripper feeds the app-side SQL-safety gates (item 6)."""
+
+    def test_leading_line_comment_removed_predicate_and_newline_kept(self):
+        assert strip_sql_line_comments("-- explanation\n{{email}} IS NOT NULL") == "\n{{email}} IS NOT NULL"
+
+    def test_multiple_leading_comment_lines_removed(self):
+        assert strip_sql_line_comments("-- one\n-- two\n\n{{a}} > 0") == "\n\n\n{{a}} > 0"
+
+    def test_comment_prose_with_forbidden_word_is_removed(self):
+        stripped = strip_sql_line_comments("-- this deletes and updates rows\n{{a}} > 0")
+        assert stripped == "\n{{a}} > 0"
+        # And the whole point: a comment-bearing predicate now passes the gate.
+        assert is_sql_query_safe(strip_sql_line_comments("-- delete old rows\n{{a}} > 0")) is True
+
+    def test_trailing_line_comment_removed(self):
+        assert strip_sql_line_comments("{{a}} > 0 -- note") == "{{a}} > 0 "
+
+    def test_block_comment_removed(self):
+        assert strip_sql_line_comments("{{a}} /* inline */ > 0") == "{{a}}  > 0"
+
+    def test_security_dashes_inside_string_literal_are_not_a_comment(self):
+        # ` OR DROP` after the string literal is live SQL and must survive so the
+        # keyword scan still rejects it.
+        sql = "{{a}} = 'a--b' OR DROP"
+        assert strip_sql_line_comments(sql) == sql
+        assert is_sql_query_safe(strip_sql_line_comments(sql)) is False
+
+    def test_security_doubled_quote_escape_keeps_string_region(self):
+        sql = "{{a}} = 'O''Brien -- x' AND {{b}} > 0"
+        assert strip_sql_line_comments(sql) == sql
+
+    def test_security_dashes_inside_backtick_identifier_not_a_comment(self):
+        sql = "`weird--col` > 0"
+        assert strip_sql_line_comments(sql) == sql
+
+    def test_live_keyword_after_comment_line_survives(self):
+        # The comment line is dropped but the next-line DROP remains -> rejected.
+        stripped = strip_sql_line_comments("-- comment\nDROP TABLE x")
+        assert stripped == "\nDROP TABLE x"
+        assert is_sql_query_safe(stripped) is False
+
+    def test_plain_predicate_unchanged(self):
+        assert strip_sql_line_comments("{{a}} BETWEEN 1 AND 10") == "{{a}} BETWEEN 1 AND 10"
 
 
 # ---------------------------------------------------------------------------

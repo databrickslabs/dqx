@@ -39,7 +39,10 @@ export function OperatorDropdown({ value, family, onChange }: Props) {
 
   return (
     <Select value={value || ""} onValueChange={onChange}>
-      <SelectTrigger className="h-8 w-full font-mono text-xs">
+      {/* Content-width (no `w-full`) per dqlake — the operator dropdown sizes
+          to its selected operator instead of filling its grid track, de-
+          justifying the condition builder (item 4). */}
+      <SelectTrigger className="h-8 font-mono text-xs">
         <SelectValue placeholder={t("rulesRegistry.lowcodeOperatorPlaceholder")} />
       </SelectTrigger>
       <SelectContent>

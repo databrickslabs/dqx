@@ -83,11 +83,11 @@ export function LowcodeBuilder({ ast, onChange, declaredColumns, readOnly }: Pro
         />
       ))}
       {!readOnly && (
-        // Buttons sit directly under the row stack; the divider below them
-        // separates this row-editing block from whatever follows (Advanced /
-        // "Then the row") instead of sitting between the rows and the
-        // buttons (item 8).
-        <div className="pt-2 pb-3 border-b space-y-2">
+        // Buttons sit directly under the row stack. No divider around them
+        // (item 5 removed the horizontal rule that previously sat next to
+        // "Add condition" / "Advanced") — the surrounding `space-y-3` gives
+        // enough separation from the Advanced section below.
+        <div className="pt-2 space-y-2">
           <div className="flex gap-2">
             {/* text-xs to match the adjacent row dropdowns' size (item 23d) —
                 `size="sm"` only trims height/padding, Button's base class

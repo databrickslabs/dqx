@@ -1379,7 +1379,7 @@
     "sqlAiImproveDescription": "Describe how to refine it.",
     "sqlAiImprovePlaceholder": "e.g. tighten the null handling",
     "sqlAiSubmit": "Submit",
-    "sqlAiExplainDismiss": "Dismiss",
+    "sqlAiExplainInserted": "Added the explanation as a comment above your logic.",
     "sqlAiWritten": "AI wrote a predicate — review it before saving.",
     "sqlAiImproved": "AI refined the predicate — review it before saving.",
     "sqlAiFailed": "AI request failed.",
