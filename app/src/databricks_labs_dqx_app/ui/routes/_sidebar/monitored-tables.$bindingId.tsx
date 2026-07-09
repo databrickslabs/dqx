@@ -123,6 +123,7 @@ import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByC
 import {
   RESERVED_SEVERITY_KEY,
   buildDesiredApplications,
+  computeRunGating,
   desiredApplicationsKey,
   extractApiError,
   groupAppliedRulesByRuleId,
@@ -528,7 +529,7 @@ function MonitoredTableDetailPage() {
                 table={table}
                 isDirty={isDirty}
                 onSaveDraft={saveDraft}
-                hasAppliedRules={stagedRows.length > 0}
+                {...computeRunGating(baseline.length, stagedRows.length)}
               />
             )}
             {/* ⋮ menu (P23 item 13) — Schedule (dialog) + Delete (confirm),
@@ -780,17 +781,24 @@ function RunTableAction({
   table,
   isDirty,
   onSaveDraft,
-  hasAppliedRules,
+  runNowHasRules,
+  runDraftHasRules,
 }: {
   bindingId: string;
   table: MonitoredTableOut;
   isDirty: boolean;
   onSaveDraft: () => Promise<boolean>;
-  /** True when the table has at least one applied rule (staged or saved).
-   *  A table with none has nothing to run — both Run now and Run draft are
-   *  disabled with an "Apply rules first" tooltip regardless of version/
-   *  draft state (item 31), ahead of the more specific hints below. */
-  hasAppliedRules: boolean;
+  /** True when there is a persisted (approved) applied-rule set to run —
+   *  i.e. the last-saved baseline is non-empty. "Run now" executes that
+   *  server-side snapshot, so it must gate on the baseline, NOT on the
+   *  volatile local edit buffer (item 31 fix): editing/removing staged rows
+   *  without saving must never disable "Run now", and clearing the baseline
+   *  via a saved removal must disable it even if unsaved staged rows exist. */
+  runNowHasRules: boolean;
+  /** True when the local staged-edit buffer has at least one applied rule.
+   *  "Run draft" executes (a saved copy of) that buffer, so it gates on
+   *  `stagedRows`, independently of `runNowHasRules`. */
+  runDraftHasRules: boolean;
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -802,7 +810,8 @@ function RunTableAction({
   // binding itself is in draft, or there are unsaved applied-rule edits that
   // Save-as-draft would persist (item 15).
   const canRunDraft = table.status === "draft" || isDirty;
-  const noRules = !hasAppliedRules;
+  const noRulesRunNow = !runNowHasRules;
+  const noRulesRunDraft = !runDraftHasRules;
   // Spans the whole save-then-run sequence in `handleRunDraft`, not just
   // `runMutation.isPending`. `onSaveDraft` runs against the caller's own save
   // mutation (not visible here), so without this a fast double-click could
@@ -849,10 +858,10 @@ function RunTableAction({
       <TooltipProvider delayDuration={200}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className={cn((!hasApproved || noRules) && "cursor-not-allowed")}>
+            <span className={cn((!hasApproved || noRulesRunNow) && "cursor-not-allowed")}>
               <Button
                 onClick={() => handleRun("approved")}
-                disabled={!hasApproved || runMutation.isPending || noRules}
+                disabled={!hasApproved || runMutation.isPending || noRulesRunNow}
                 className="gap-2 rounded-r-none"
               >
                 {runMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
@@ -862,7 +871,7 @@ function RunTableAction({
               </Button>
             </span>
           </TooltipTrigger>
-          {noRules ? (
+          {noRulesRunNow ? (
             <TooltipContent side="bottom">{t("monitoredTables.runDisabledNoRulesHint")}</TooltipContent>
           ) : (
             !hasApproved && <TooltipContent side="bottom">{t("monitoredTables.runNowDisabledHint")}</TooltipContent>
@@ -884,9 +893,9 @@ function RunTableAction({
           <TooltipProvider delayDuration={200}>
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className={cn((!canRunDraft || noRules) && "cursor-not-allowed")}>
+                <span className={cn((!canRunDraft || noRulesRunDraft) && "cursor-not-allowed")}>
                   <DropdownMenuItem
-                    disabled={!canRunDraft || runMutation.isPending || runDraftBusy || noRules}
+                    disabled={!canRunDraft || runMutation.isPending || runDraftBusy || noRulesRunDraft}
                     onSelect={(e) => {
                       e.preventDefault();
                       void handleRunDraft();
@@ -896,7 +905,7 @@ function RunTableAction({
                   </DropdownMenuItem>
                 </span>
               </TooltipTrigger>
-              {noRules ? (
+              {noRulesRunDraft ? (
                 <TooltipContent side="left">{t("monitoredTables.runDisabledNoRulesHint")}</TooltipContent>
               ) : (
                 !canRunDraft && (

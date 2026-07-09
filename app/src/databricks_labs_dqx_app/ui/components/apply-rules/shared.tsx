@@ -216,6 +216,39 @@ export function desiredApplicationsKey(stagedRows: AppliedRuleOut[]): string {
   return JSON.stringify(normalized);
 }
 
+// ---------------------------------------------------------------------------
+// Run-action gating (P23-F fix) — "Run now" executes the last-persisted
+// (approved) snapshot, a server-side state entirely unaffected by local
+// editor state; "Run draft" executes the volatile `stagedRows` edit buffer
+// (saving it first if dirty — see `handleRunDraft` in
+// `monitored-tables.$bindingId.tsx`). Each action's "nothing to run" gate
+// must therefore be evaluated against its OWN source of truth — baseline for
+// Run now, staged rows for Run draft — never the other one. This pure helper
+// is the single choke point for that decision so both call sites (and their
+// tests) can't drift apart.
+// ---------------------------------------------------------------------------
+
+export interface RunGating {
+  /** True when "Run now" has a persisted (approved) applied-rule set to
+   *  execute — i.e. the last-saved `baseline` is non-empty. Unaffected by
+   *  unsaved local edits. */
+  runNowHasRules: boolean;
+  /** True when "Run draft" has something to execute — i.e. the local
+   *  `stagedRows` edit buffer is non-empty (after saving, if dirty). */
+  runDraftHasRules: boolean;
+}
+
+/** Compute the "Apply rules first" gate for each Run action independently.
+ *  *baselineCount* is `baseline.length` (last-persisted applied-rule rows);
+ *  *stagedCount* is `stagedRows.length` (the current, possibly-unsaved,
+ *  edit buffer). See `RunGating` above for why these must not be conflated. */
+export function computeRunGating(baselineCount: number, stagedCount: number): RunGating {
+  return {
+    runNowHasRules: baselineCount > 0,
+    runDraftHasRules: stagedCount > 0,
+  };
+}
+
 export function TagBadge({ label, color }: { label: string; color?: string }) {
   if (!label) return null;
   return (
