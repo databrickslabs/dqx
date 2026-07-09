@@ -464,3 +464,98 @@ def test_object_type_enum_values():
     assert ObjectType.REGISTRY_RULE.value == "registry_rule"
     assert ObjectType.MONITORED_TABLE.value == "monitored_table"
     assert ObjectType.DATA_PRODUCT.value == "data_product"
+
+
+# ---------------------------------------------------------------------------
+# object_id validation at every SQL entry boundary
+#
+# object_id is a raw path parameter reachable by any authenticated user
+# (GET/PUT/DELETE /permissions/{type}/{id}/...); it is interpolated into SQL
+# string literals via escape_sql_string, which deliberately does not escape
+# backslashes. These assert the 400-mapped rejection at each boundary method
+# rather than only in the shared sql_utils helper.
+# ---------------------------------------------------------------------------
+
+
+_MALICIOUS_OBJECT_IDS = ["r1\\", "r1' OR '1'='1", "r1\n", "", "r1 space"]
+
+
+@pytest.mark.parametrize("bad_id", _MALICIOUS_OBJECT_IDS)
+def test_list_grants_rejects_bad_object_id(svc, bad_id):
+    with pytest.raises(HTTPException) as exc:
+        svc.list_grants("registry_rule", bad_id)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("bad_id", _MALICIOUS_OBJECT_IDS)
+def test_list_effective_grants_rejects_bad_object_id(svc, bad_id):
+    with pytest.raises(HTTPException) as exc:
+        svc.list_effective_grants("registry_rule", bad_id)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("bad_id", _MALICIOUS_OBJECT_IDS)
+def test_effective_privileges_rejects_bad_object_id(svc, bad_id):
+    with pytest.raises(HTTPException) as exc:
+        svc.effective_privileges("registry_rule", bad_id, principal_ids=set())
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("bad_id", _MALICIOUS_OBJECT_IDS)
+def test_get_object_owner_rejects_bad_object_id(svc, bad_id):
+    with pytest.raises(HTTPException) as exc:
+        svc.get_object_owner("registry_rule", bad_id)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("bad_id", _MALICIOUS_OBJECT_IDS)
+def test_require_object_rejects_bad_object_id(svc, bad_id):
+    with pytest.raises(HTTPException) as exc:
+        svc.require_object(
+            "registry_rule",
+            bad_id,
+            Privilege.MODIFY,
+            role=UserRole.RULE_AUTHOR,
+            principal_ids=set(),
+            principal_email="me@x.com",
+        )
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("bad_id", _MALICIOUS_OBJECT_IDS)
+def test_set_grant_rejects_bad_object_id(mock_sql, app_settings_mock, bad_id):
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    with pytest.raises(HTTPException) as exc:
+        svc.set_grant(
+            "registry_rule",
+            bad_id,
+            "u1",
+            principal_type="user",
+            principal_name="Alice",
+            privileges={Privilege.MODIFY},
+            inherit=False,
+            grantor="admin@x.com",
+        )
+    assert exc.value.status_code == 400
+    mock_sql.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("bad_id", _MALICIOUS_OBJECT_IDS)
+def test_remove_grant_rejects_bad_object_id(mock_sql, app_settings_mock, bad_id):
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    with pytest.raises(HTTPException) as exc:
+        svc.remove_grant("registry_rule", bad_id, "u1", actor="admin@x.com")
+    assert exc.value.status_code == 400
+    mock_sql.execute.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "object_id",
+    ["r1", "a" * 32, "a" * 16, "binding-abc_123"],
+)
+def test_valid_object_id_formats_pass_through(svc, object_id):
+    # Covers the three real id shapes: registry_rule (uuid4().hex[:16]),
+    # monitored_table binding_id (uuid4().hex[:16]), data_product product_id
+    # (uuid4().hex) — plus a dash/underscore id. No exception raised.
+    svc.list_grants("registry_rule", object_id)
+    svc.get_object_owner("monitored_table", object_id)

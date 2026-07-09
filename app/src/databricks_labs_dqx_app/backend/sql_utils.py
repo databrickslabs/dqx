@@ -171,6 +171,36 @@ def validate_schedule_name(name: str) -> str:
     return name
 
 
+# \A/\Z (not ^/$) so a trailing newline can't sneak past the end anchor.
+_OBJECT_ID_RE = re.compile(r"\A[a-zA-Z0-9_-]{1,128}\Z")
+
+
+def validate_object_id(object_id: str) -> str:
+    """Validate a securable object id (registry rule / binding / data product id).
+
+    Object ids are app-minted (``uuid4().hex`` or a truncation of it — see
+    ``RulesCatalogService``, ``MonitoredTableService``, ``DataProductService``),
+    so a strict allowlist is safe: letters, digits, underscore, hyphen, bounded
+    length. This is the identifier-side counterpart to ``escape_sql_string``:
+    object ids reach :mod:`permissions_service` as raw path parameters from any
+    authenticated user and are interpolated into single-quoted SQL string
+    literals via ``escape_sql_string``, which deliberately does not escape
+    backslashes (see its docstring). Rejecting anything outside the allowlist
+    here — before the value ever reaches SQL — closes that string-literal
+    break-out class regardless of backend (Postgres/Lakebase or the Delta
+    fallback).
+
+    Raises ValueError if the id is empty, too long, or contains a disallowed
+    character. Returns the id unchanged.
+    """
+    if not object_id or len(object_id) > 128 or not _OBJECT_ID_RE.match(object_id):
+        raise ValueError(
+            f"Invalid object id: '{object_id}'. "
+            "Must be 1-128 characters using only letters, digits, underscores, or hyphens."
+        )
+    return object_id
+
+
 def validate_entity_type(entity_type: str, valid_types: set[str]) -> str:
     """Validate that an entity type is in the allowed set.
 

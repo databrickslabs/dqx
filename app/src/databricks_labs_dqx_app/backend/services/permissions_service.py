@@ -44,7 +44,7 @@ from databricks_labs_dqx_app.backend.common.permissions import (
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_object_id
 
 logger = logging.getLogger(__name__)
 
@@ -95,12 +95,30 @@ class PermissionsService:
         self._history_table = sql.fqn("dq_object_grants_history")
         self._members_table = sql.fqn("dq_data_product_members")
 
+    @staticmethod
+    def _validate_object_id(object_id: str) -> None:
+        """Reject an ``object_id`` that isn't a well-formed app-minted id.
+
+        Called at every SQL entry boundary of this service (``list_grants``,
+        ``get_object_owner``, ``set_grant``, ``remove_grant`` — every other
+        public method funnels through one of those before touching SQL).
+        ``object_id`` reaches this service as a raw path parameter from any
+        authenticated caller; see :func:`validate_object_id` for why this
+        matters even though the deployed backend (Lakebase/Postgres) is not
+        itself exploitable via this vector.
+        """
+        try:
+            validate_object_id(object_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid object id.") from exc
+
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
 
     def list_grants(self, object_type: str, object_id: str) -> list[ObjectGrant]:
         """Return the direct grants stored on one object (no inheritance)."""
+        self._validate_object_id(object_id)
         ot = escape_sql_string(object_type)
         oid = escape_sql_string(object_id)
         sql = (
@@ -222,6 +240,7 @@ class PermissionsService:
 
     def get_object_owner(self, object_type: str, object_id: str) -> str | None:
         """Return the object's ``created_by`` (owner) email, or None if unknown."""
+        self._validate_object_id(object_id)
         source = self._OWNER_SOURCE.get(object_type)
         if source is None:
             return None
@@ -428,6 +447,7 @@ class PermissionsService:
         per-object "revoked" marker that suppresses the implicit default (so
         the object no longer falls back to SELECT + APPLY for everyone).
         """
+        self._validate_object_id(object_id)
         self._reject_reserved_principal(principal_id)
         self._validate_enums(object_type, principal_type)
         norm = normalize_privileges(privileges)
@@ -475,6 +495,7 @@ class PermissionsService:
 
     def remove_grant(self, object_type: str, object_id: str, principal_id: str, *, actor: str | None = None) -> None:
         """Remove a principal's grant from an object (no-op if absent)."""
+        self._validate_object_id(object_id)
         self._delete_row(object_type, object_id, principal_id)
         self._record_history(object_type, object_id, principal_id, None, None, None, self._ACTION_REMOVE, actor)
         logger.info("Removed object grant on %s/%s", object_type, object_id)

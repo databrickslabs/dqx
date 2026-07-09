@@ -10,6 +10,7 @@ from databricks_labs_dqx_app.backend.sql_utils import (
     quote_fqn,
     validate_entity_type,
     validate_fqn,
+    validate_object_id,
     validate_schedule_name,
 )
 
@@ -203,3 +204,40 @@ class TestValidateEntityType:
     def test_empty_string_invalid(self):
         with pytest.raises(ValueError):
             validate_entity_type("", {"run", "rule"})
+
+
+# ---------------------------------------------------------------------------
+# validate_object_id
+# ---------------------------------------------------------------------------
+
+
+class TestValidateObjectId:
+    @pytest.mark.parametrize(
+        "object_id",
+        [
+            "r1",
+            "a" * 32,  # uuid4().hex — registry_rule / monitored_table id shape
+            "a" * 16,  # uuid4().hex[:16] — the truncated id shape some services use
+            "abc-123_def",
+            "A" * 128,  # exactly at the length cap
+        ],
+    )
+    def test_valid_app_minted_ids_pass(self, object_id):
+        assert validate_object_id(object_id) == object_id
+
+    @pytest.mark.parametrize(
+        "object_id",
+        [
+            "",
+            "a" * 129,  # over the length cap
+            "r1' OR '1'='1",
+            "r1\\",  # trailing backslash — the string-literal break-out class
+            "r1'; DROP TABLE dq_object_grants; --",
+            "r1\n",  # control character — also a log-injection vector
+            "r1 space",
+            "r1/*comment*/",
+        ],
+    )
+    def test_malicious_or_malformed_ids_raise(self, object_id):
+        with pytest.raises(ValueError):
+            validate_object_id(object_id)
