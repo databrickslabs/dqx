@@ -1,23 +1,22 @@
 /**
  * ProductTabsShell — tab strip for the data product detail page.
  *
- * Ported from dqlake's `components/products/ProductTabsShell.tsx`. Adapted
- * per the Data Products design spec (§6): the History tab is cut entirely
- * (no history model in DQX). Runs is dqlake-exact — it is NOT a visible tab;
- * it lives in the header's ⋮ menu (P21 item 29) and its content is still
- * reachable via `?tab=runs` deep links (the menu navigates there). Schedule
- * is its own right-aligned tab, dqlake-exact (P25 item 1 reverted P23 item
- * 13's move into the ⋮ menu).
+ * Ported from dqlake's `components/products/ProductTabsShell.tsx`. Runs is
+ * dqlake-exact — it is NOT a visible tab; it lives in the header's ⋮ menu
+ * (P21 item 29) and its content is still reachable via `?tab=runs` deep
+ * links (the menu navigates there). Schedule and History are right-aligned
+ * tabs, dqlake-exact (RIGHT_TABS = [scheduling, history]; P25 item 1
+ * reverted P23 item 13's move of Schedule into the ⋮ menu).
  *
- * Tab order: About | Sharing, Tables  ‖  Schedule
+ * Tab order: About | Sharing, Tables  ‖  Schedule, History
  * `|` characters render as visible muted dividers inside the TabsList.
  */
 import { useTranslation } from "react-i18next";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { CalendarClock, History, Info, KeyRound, Table2, type LucideIcon } from "lucide-react";
+import { CalendarClock, History, Info, KeyRound, ListChecks, Table2, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type ProductTabKey = "about" | "permissions" | "tables" | "runs" | "scheduling";
+export type ProductTabKey = "about" | "permissions" | "tables" | "runs" | "scheduling" | "history";
 
 // Same icon-strip treatment as the Monitored Tables detail tab bar
 // (routes/_sidebar/monitored-tables.$bindingId.tsx) — gap-1.5 + h-3.5 w-3.5
@@ -26,8 +25,9 @@ const TAB_ICONS: Record<ProductTabKey, LucideIcon> = {
   about: Info,
   permissions: KeyRound,
   tables: Table2,
-  runs: History,
+  runs: ListChecks,
   scheduling: CalendarClock,
+  history: History,
 };
 
 interface Props {
@@ -40,7 +40,7 @@ interface Props {
 
 /** All valid tab keys, in display order. The detail route validates the
  *  `?tab=` search param against this list. */
-export const PRODUCT_TAB_KEYS: ProductTabKey[] = ["about", "permissions", "tables", "runs", "scheduling"];
+export const PRODUCT_TAB_KEYS: ProductTabKey[] = ["about", "permissions", "tables", "runs", "scheduling", "history"];
 
 function Separator() {
   return (
@@ -51,12 +51,12 @@ function Separator() {
 }
 
 // Groups define the visual separator layout:
-// [About] | [Sharing, Tables]  →gap→  [Schedule]
+// [About] | [Sharing, Tables]  →gap→  [Schedule, History]
 // Runs is intentionally absent from the strip — it lives in the header ⋮
 // menu (P21 item 29) and is still reachable by `?tab=runs`.
 const GROUP_A: ProductTabKey[] = ["about"];
 const GROUP_B: ProductTabKey[] = ["permissions", "tables"];
-const RIGHT_TABS: ProductTabKey[] = ["scheduling"];
+const RIGHT_TABS: ProductTabKey[] = ["scheduling", "history"];
 
 function TabTrigger({ tabKey, label, disabled }: { tabKey: ProductTabKey; label: string; disabled: boolean }) {
   const Icon = TAB_ICONS[tabKey];
@@ -82,6 +82,7 @@ export function ProductTabsShell({ activeTab, onTabChange, disabledTabs = new Se
       tables: t("dataProducts.tabTables"),
       runs: t("dataProducts.tabRuns"),
       scheduling: t("dataProducts.tabSchedule"),
+      history: t("dataProducts.tabHistory"),
     })[key];
 
   return (

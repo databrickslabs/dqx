@@ -30,7 +30,7 @@ export const Route = createFileRoute("/_sidebar/table-spaces/new")({
 // one-shot modal, not a page with tabs — so this empty-shell wiring is
 // N/A there; only table spaces and registry rules have a tabbed create
 // page that needs it.
-const NEW_PRODUCT_DISABLED_TABS = new Set<ProductTabKey>(["tables", "runs"]);
+const NEW_PRODUCT_DISABLED_TABS = new Set<ProductTabKey>(["tables", "runs", "history"]);
 
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };

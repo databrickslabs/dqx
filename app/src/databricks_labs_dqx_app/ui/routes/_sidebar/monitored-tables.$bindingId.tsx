@@ -47,6 +47,7 @@ import {
   Clock,
   Columns3,
   Database,
+  History,
   Info,
   KeyRound,
   Loader2,
@@ -126,10 +127,14 @@ import {
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
+import { MonitoredTableHistoryTab } from "@/components/monitored-tables/MonitoredTableHistoryTab";
 
 // Schedule is its own tab again (P25 item 1 reverted P23 item 13's move into
-// the header ⋮ menu), matching dqlake's binding detail tab strip.
-const DETAIL_TAB_KEYS = ["about", "view-data", "permissions", "profile", "apply-rules", "results", "schedule"] as const;
+// the header ⋮ menu), matching dqlake's binding detail tab strip. Schedule
+// and History sit in a second, right-aligned TabsList — dqlake's
+// `BindingTabsShell` RIGHT_TABS = [scheduling, history], same layout the
+// table-spaces `ProductTabsShell` uses.
+const DETAIL_TAB_KEYS = ["about", "view-data", "permissions", "profile", "apply-rules", "results", "schedule", "history"] as const;
 type DetailTab = (typeof DETAIL_TAB_KEYS)[number];
 
 /** Client-side deadline for the AI suggest-rules request (prefetch + manual
@@ -602,40 +607,50 @@ function MonitoredTableDetailPage() {
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           {/* Tab order (P23 item 14): About, View Data, Permissions first,
-              then the working group (Profile, Apply Rules), then Results and
-              Schedule (back in the strip per P25 item 1, as in dqlake). */}
-          <TabsList>
-            <TabsTrigger value="about" className="gap-1.5">
-              <Info className="h-3.5 w-3.5" />
-              {t("monitoredTables.tabAbout")}
-            </TabsTrigger>
-            <TabsTrigger value="view-data" className="gap-1.5">
-              <Database className="h-3.5 w-3.5" />
-              {t("monitoredTables.tabViewData")}
-            </TabsTrigger>
-            <TabsTrigger value="permissions" className="gap-1.5">
-              <KeyRound className="h-3.5 w-3.5" />
-              {t("monitoredTables.tabPermissions")}
-            </TabsTrigger>
-            <TabGroupDivider />
-            <TabsTrigger value="profile" className="gap-1.5">
-              <BarChart3 className="h-3.5 w-3.5" />
-              {t("monitoredTables.tabProfile")}
-            </TabsTrigger>
-            <TabsTrigger value="apply-rules" className="gap-1.5">
-              <Columns3 className="h-3.5 w-3.5" />
-              {t("monitoredTables.tabApplyRules")}
-            </TabsTrigger>
-            <TabGroupDivider />
-            <TabsTrigger value="results" className="gap-1.5">
-              <ClipboardList className="h-3.5 w-3.5" />
-              {t("monitoredTables.tabResults")}
-            </TabsTrigger>
-            <TabsTrigger value="schedule" className="gap-1.5">
-              <Clock className="h-3.5 w-3.5" />
-              {t("monitoredTables.tabSchedule")}
-            </TabsTrigger>
-          </TabsList>
+              then the working group (Profile, Apply Rules), then Results.
+              Schedule + History live in a second, RIGHT-aligned TabsList —
+              the table-spaces `ProductTabsShell` / dqlake `BindingTabsShell`
+              two-group layout (RIGHT_TABS = [scheduling, history]). */}
+          <div className="w-full flex items-center justify-between">
+            <TabsList>
+              <TabsTrigger value="about" className="gap-1.5">
+                <Info className="h-3.5 w-3.5" />
+                {t("monitoredTables.tabAbout")}
+              </TabsTrigger>
+              <TabsTrigger value="view-data" className="gap-1.5">
+                <Database className="h-3.5 w-3.5" />
+                {t("monitoredTables.tabViewData")}
+              </TabsTrigger>
+              <TabsTrigger value="permissions" className="gap-1.5">
+                <KeyRound className="h-3.5 w-3.5" />
+                {t("monitoredTables.tabPermissions")}
+              </TabsTrigger>
+              <TabGroupDivider />
+              <TabsTrigger value="profile" className="gap-1.5">
+                <BarChart3 className="h-3.5 w-3.5" />
+                {t("monitoredTables.tabProfile")}
+              </TabsTrigger>
+              <TabsTrigger value="apply-rules" className="gap-1.5">
+                <Columns3 className="h-3.5 w-3.5" />
+                {t("monitoredTables.tabApplyRules")}
+              </TabsTrigger>
+              <TabGroupDivider />
+              <TabsTrigger value="results" className="gap-1.5">
+                <ClipboardList className="h-3.5 w-3.5" />
+                {t("monitoredTables.tabResults")}
+              </TabsTrigger>
+            </TabsList>
+            <TabsList>
+              <TabsTrigger value="schedule" className="gap-1.5">
+                <Clock className="h-3.5 w-3.5" />
+                {t("monitoredTables.tabSchedule")}
+              </TabsTrigger>
+              <TabsTrigger value="history" className="gap-1.5">
+                <History className="h-3.5 w-3.5" />
+                {t("monitoredTables.tabHistory")}
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
           <TabsContent value="about">
             <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
@@ -677,6 +692,10 @@ function MonitoredTableDetailPage() {
 
           <TabsContent value="schedule">
             <MonitoredTableSchedulingTab table={table} canEdit={perms.canCreateRules} />
+          </TabsContent>
+
+          <TabsContent value="history">
+            <MonitoredTableHistoryTab bindingId={bindingId} />
           </TabsContent>
         </Tabs>
       </div>
