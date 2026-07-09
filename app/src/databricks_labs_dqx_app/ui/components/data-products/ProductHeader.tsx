@@ -6,7 +6,8 @@
  * (RUNNER, orthogonal) rather than dqlake's single per-object `can_edit`.
  * A Table Space carries its own submit-for-review lifecycle (P21 item 30):
  * "Submit for review" replaces Publish, and approvers see Approve/Reject
- * top-right when it's pending. Runs is dqlake-exact — it lives in the ⋮ menu
+ * inside the amber pending-approval banner below the header when it's
+ * pending. Runs is dqlake-exact — it lives in the ⋮ menu
  * (item 29) alongside Run draft and Delete, not in the visible tab strip.
  */
 import { useEffect, useMemo, useState } from "react";
@@ -417,24 +418,24 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   };
 
   return (
-    <div className="flex items-start justify-between gap-4 border-b pb-4 max-w-5xl">
-      <div className="space-y-1">
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-semibold">{product.name}</h1>
-          <TableSpaceVersionBadge product={product} />
-          {isPending && (
-            <Badge variant="outline" className="border-amber-500 text-amber-600">
-              {t("dataProducts.statusPendingApproval")}
-            </Badge>
-          )}
-          {product.status === "rejected" && (
-            <Badge variant="outline" className="border-red-500 text-red-600">
-              {t("dataProducts.statusRejected")}
-            </Badge>
-          )}
+    <div className="space-y-4 border-b pb-4 max-w-5xl">
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold">{product.name}</h1>
+            <TableSpaceVersionBadge product={product} />
+            {isPending && (
+              <Badge variant="outline" className="border-amber-500 text-amber-600">
+                {t("dataProducts.statusPendingApproval")}
+              </Badge>
+            )}
+            {product.status === "rejected" && (
+              <Badge variant="outline" className="border-red-500 text-red-600">
+                {t("dataProducts.statusRejected")}
+              </Badge>
+            )}
+          </div>
         </div>
-      </div>
-      <div className="flex flex-col items-end gap-2">
         <div className="flex gap-2 items-center">
           {canApprove && (
             <ReviewPendingChangesButton productId={product.product_id} members={editState.members} />
@@ -528,37 +529,58 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-
-        {/* Product-level Approve/Reject — the space's OWN review lifecycle
-            (P21 item 30), gated to approvers when it's pending. Distinct from
-            the member-table ReviewPendingChangesButton above (P19-I). Sits on
-            its own row BELOW the primary actions (Save as draft / Submit for
-            review / Run now) so the review decision reads as a distinct step. */}
-        {isPending && canApprove && (
-          <div className="flex gap-2 items-center">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={lifecycleBusy}
-              onClick={() => void handleApprove()}
-              className="gap-1.5 text-emerald-600 border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950"
-            >
-              {approveMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-              {t("dataProducts.approveAction")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={lifecycleBusy}
-              onClick={() => setRejectOpen(true)}
-              className="gap-1.5 text-red-600 border-red-400 hover:bg-red-50 dark:hover:bg-red-950"
-            >
-              {rejectMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
-              {t("dataProducts.rejectAction")}
-            </Button>
-          </div>
-        )}
       </div>
+
+      {/* Product-level Approve/Reject — the space's OWN review lifecycle
+          (P21 item 30). The buttons live INSIDE the pending-approval banner
+          (not the header action row) so the review decision reads in the same
+          place that explains why the space is waiting. Distinct from the
+          member-table ReviewPendingChangesButton above (P19-I). Buttons are
+          gated to approvers; everyone else sees the banner text only. */}
+      {isPending && (
+        <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700">
+          <Clock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+          <div className="flex flex-1 flex-wrap items-center gap-x-4 gap-y-2">
+            <div className="flex-1 min-w-[16rem] space-y-1">
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                {t("dataProducts.pendingBannerTitle")}
+              </p>
+              <p className="text-sm text-amber-800/90 dark:text-amber-300/90">
+                {t("dataProducts.pendingBannerBody")}
+              </p>
+              {!canApprove && (
+                <p className="text-xs text-amber-700/80 dark:text-amber-300/70 italic">
+                  {t("dataProducts.awaitingApproval")}
+                </p>
+              )}
+            </div>
+            {canApprove && (
+              <div className="flex items-center gap-2 ml-auto shrink-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={lifecycleBusy}
+                  onClick={() => void handleApprove()}
+                  className="gap-1.5 h-7 text-xs text-emerald-700 border-emerald-400 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950"
+                >
+                  {approveMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                  {t("dataProducts.approveAction")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={lifecycleBusy}
+                  onClick={() => setRejectOpen(true)}
+                  className="gap-1.5 h-7 text-xs text-red-700 border-red-400 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
+                >
+                  {rejectMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
+                  {t("dataProducts.rejectAction")}
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <AlertDialog open={rejectOpen} onOpenChange={setRejectOpen}>
         <AlertDialogContent>
