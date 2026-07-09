@@ -37,7 +37,7 @@ def _perms_mock() -> MagicMock:
     return m
 
 
-def test_list_object_grants_returns_baseline_and_grants():
+def test_list_object_grants_returns_grants():
     perms = _perms_mock()
     perms.list_effective_grants.return_value = [
         ObjectGrant(
@@ -52,9 +52,36 @@ def test_list_object_grants_returns_baseline_and_grants():
     ]
     out = list_object_grants("registry_rule", "r1", "me@x.com", UserRole.ADMIN, frozenset(), perms)
     assert out.object_type == "registry_rule"
-    assert out.baseline_privileges == ["SELECT", "APPLY"]
     assert len(out.grants) == 1
     assert out.grants[0].principal_name == "Alice"
+
+
+def test_list_object_grants_surfaces_default_flag():
+    perms = _perms_mock()
+    perms.list_effective_grants.return_value = [
+        ObjectGrant(
+            object_type="registry_rule",
+            object_id="r1",
+            principal_id="users",
+            principal_type="group",
+            principal_name="users",
+            privileges={Privilege.SELECT, Privilege.APPLY},
+            inherit=False,
+            is_default=True,
+        )
+    ]
+    out = list_object_grants("registry_rule", "r1", "me@x.com", UserRole.ADMIN, frozenset(), perms)
+    assert out.grants[0].is_default is True
+    assert out.grants[0].principal_id == "users"
+
+
+def test_set_object_grant_rejects_legacy_sentinel():
+    perms = _perms_mock()
+    body = SetObjectGrantIn(principal_id="__all__", principal_type="group", privileges=["MODIFY"], inherit=False)
+    with pytest.raises(HTTPException) as exc:
+        set_object_grant("registry_rule", "r1", body, "me@x.com", UserRole.ADMIN, frozenset(), perms)
+    assert exc.value.status_code == 400
+    perms.set_grant.assert_not_called()
 
 
 def test_list_object_grants_rejects_bad_type():

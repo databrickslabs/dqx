@@ -1489,10 +1489,10 @@ class PrincipalSearchOut(BaseModel):
 
 
 class ObjectGrantOut(BaseModel):
-    """One principal's grant on a securable object (direct or inherited)."""
+    """One principal's grant on a securable object (direct, inherited, or the users-group default)."""
 
-    principal_id: str = Field(description="Workspace SCIM id, or '__all__' for the all-principals baseline grant")
-    principal_type: str = Field(description="'user', 'group', or 'all'")
+    principal_id: str = Field(description="Workspace SCIM id; 'users' for the workspace users group")
+    principal_type: str = Field(description="'user' or 'group'")
     principal_name: str | None = Field(default=None, description="Human-readable principal name")
     privileges: list[str] = Field(default_factory=list, description="Granted privileges (SELECT/MODIFY/APPLY or ALL_PRIVILEGES)")
     inherit: bool = Field(default=False, description="Whether this grant flows down to child objects")
@@ -1501,17 +1501,18 @@ class ObjectGrantOut(BaseModel):
     inherited: bool = Field(default=False, description="True when surfaced from a parent object via inheritance")
     inherited_from_type: str | None = Field(default=None, description="Parent object type an inherited grant came from")
     inherited_from_id: str | None = Field(default=None, description="Parent object id an inherited grant came from")
+    is_default: bool = Field(
+        default=False,
+        description="True on the synthetic users-group default row (implicit SELECT+APPLY, not yet materialized)",
+    )
 
 
 class ObjectGrantsOut(BaseModel):
-    """Response for the Permissions tab: grants + baseline + caller capability."""
+    """Response for the Permissions tab: grants (incl. the users-group default) + caller capability."""
 
     object_type: str = Field(description="Securable object type")
     object_id: str = Field(description="Securable object id")
     grants: list[ObjectGrantOut] = Field(default_factory=list)
-    baseline_privileges: list[str] = Field(
-        default_factory=list, description="Privileges every principal holds by default (shown as the 'All users' baseline row)"
-    )
     can_manage: bool = Field(default=False, description="Whether the caller may add/remove grants on this object")
     default_inherit: bool = Field(default=False, description="Admin default for the per-grant inheritance toggle on new grants")
 
@@ -1519,10 +1520,10 @@ class ObjectGrantsOut(BaseModel):
 class SetObjectGrantIn(BaseModel):
     """Create-or-replace one principal's grant on a securable object."""
 
-    principal_id: str = Field(description="Workspace SCIM id, or '__all__' for the baseline grant")
-    principal_type: str = Field(description="'user', 'group', or 'all'")
+    principal_id: str = Field(description="Workspace SCIM id; 'users' for the workspace users group")
+    principal_type: str = Field(description="'user' or 'group'")
     principal_name: str | None = Field(default=None, description="Human-readable principal name")
-    privileges: list[str] = Field(default_factory=list, description="Privileges to grant (empty removes the grant)")
+    privileges: list[str] = Field(default_factory=list, description="Privileges to grant (empty removes the grant, or revokes the users-group default)")
     inherit: bool = Field(default=False, description="Whether the grant flows down to child objects")
 
 

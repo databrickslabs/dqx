@@ -5,7 +5,8 @@
  * Renders:
  *  - an optional Steward section (a `PrincipalPicker` that stores the picked
  *    principal's display name), when `showSteward` is set;
- *  - a read-only "All users" baseline row;
+ *  - the workspace users-group default grant (SELECT + APPLY), rendered like
+ *    any grant, muted, and editable by grant-managers (narrow or revoke it);
  *  - the direct + inherited grants, inherited rows shown muted and locked;
  *  - an "Add permission" control (owners/admins/approvers only) that opens a
  *    dialog with a principal picker, privilege checkboxes, and an inherit
@@ -64,6 +65,15 @@ const PRIV_SELECT = "SELECT";
 const PRIV_MODIFY = "MODIFY";
 const PRIV_APPLY = "APPLY";
 const PRIV_ALL = "ALL_PRIVILEGES";
+
+// The workspace users-group principal — the visible, manageable day-one
+// default (SELECT + APPLY) shown on every object, mirroring how `account
+// users` appears in Unity Catalog grants.
+const USERS_GROUP = "users";
+
+function isUsersGroupGrant(grant: ObjectGrantOut): boolean {
+  return grant.principal_id === USERS_GROUP || (grant.is_default ?? false);
+}
 
 function isAllPrivileges(privileges: string[]): boolean {
   if (privileges.includes(PRIV_ALL)) return true;
@@ -167,6 +177,10 @@ function GrantDialog({
   saving: boolean;
   onSave: (draft: GrantDraft) => void;
 }) {
+  // The users-group row may be saved with no privileges — that revokes the
+  // day-one default (the per-object "revoked" marker). Any other principal
+  // must keep at least one privilege.
+  const allowEmpty = !!editing && isUsersGroupGrant(editing);
   const { t } = useTranslation();
   const [draft, setDraft] = useState<GrantDraft>({
     principal: null,
@@ -199,7 +213,7 @@ function GrantDialog({
   }, [open, editing, defaultInherit]);
 
   const noPrivileges = !draft.view && !draft.modify && !draft.apply;
-  const canSave = !!draft.principal && !noPrivileges && !saving;
+  const canSave = !!draft.principal && (!noPrivileges || allowEmpty) && !saving;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -317,7 +331,6 @@ export function PermissionsTab({
 
   const data: ObjectGrantsOut | undefined = grantsData;
   const grants = data?.grants ?? [];
-  const baseline = data?.baseline_privileges ?? [];
   const canManage = data?.can_manage ?? false;
   const defaultInherit = data?.default_inherit ?? false;
 
@@ -430,43 +443,6 @@ export function PermissionsTab({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {/* Baseline "All users" row — read-only. */}
-                  <TableRow className="bg-muted/30">
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        <span>{t("permissions.allUsers")}</span>
-                        <span className="text-xs text-muted-foreground">{t("permissions.defaultNote")}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {baseline.length === 0 ? (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        ) : (
-                          baseline.map((p) => (
-                            <Badge key={p} variant="outline" className="text-xs text-muted-foreground">
-                              {p === PRIV_SELECT
-                                ? t("permissions.view")
-                                : p === PRIV_APPLY
-                                  ? t("permissions.apply")
-                                  : p === PRIV_MODIFY
-                                    ? t("permissions.modify")
-                                    : p}
-                            </Badge>
-                          ))
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-xs text-muted-foreground">—</span>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-xs text-muted-foreground">—</span>
-                    </TableCell>
-                    {canManage && <TableCell />}
-                  </TableRow>
-
                   {grants.length === 0 ? (
                     <TableRow>
                       <TableCell
@@ -479,14 +455,32 @@ export function PermissionsTab({
                   ) : (
                     grants.map((grant) => {
                       const inherited = grant.inherited ?? false;
+                      // The workspace users-group default is rendered like any
+                      // grant, muted, labelled, and editable by grant-managers
+                      // (edit it to narrow SELECT/APPLY or revoke entirely).
+                      const usersGroup = isUsersGroupGrant(grant);
+                      const isDefault = grant.is_default ?? false;
+                      const muted = inherited || usersGroup;
+                      const name = usersGroup
+                        ? t("permissions.allUsers")
+                        : (grant.principal_name ?? grant.principal_id);
                       return (
-                        <TableRow key={grant.principal_id} className={cn(inherited && "opacity-60")}>
+                        <TableRow
+                          key={grant.principal_id}
+                          className={cn(inherited && "opacity-60", usersGroup && "bg-muted/30")}
+                        >
                           <TableCell>
-                            <PrincipalCell
-                              name={grant.principal_name ?? grant.principal_id}
-                              type={grant.principal_type}
-                              muted={inherited}
-                            />
+                            <div className="flex items-center gap-2">
+                              <PrincipalCell name={name} type={grant.principal_type} muted={muted} />
+                              {isDefault && (
+                                <>
+                                  <span className="text-xs text-muted-foreground">
+                                    {t("permissions.defaultNote")}
+                                  </span>
+                                  <HelpTooltip text={t("permissions.defaultGrantHint")} />
+                                </>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell>
                             <PrivilegeBadges privileges={grant.privileges ?? []} />
@@ -520,20 +514,24 @@ export function PermissionsTab({
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
                                   </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 text-destructive hover:text-destructive"
-                                    onClick={() => handleRemove(grant)}
-                                    disabled={removingId === grant.principal_id}
-                                    aria-label={t("permissions.removePermission")}
-                                  >
-                                    {removingId === grant.principal_id ? (
-                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    ) : (
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    )}
-                                  </Button>
+                                  {/* The synthetic default has no stored row to
+                                      delete — revoke it via edit-to-empty. */}
+                                  {!isDefault && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 text-destructive hover:text-destructive"
+                                      onClick={() => handleRemove(grant)}
+                                      disabled={removingId === grant.principal_id}
+                                      aria-label={t("permissions.removePermission")}
+                                    >
+                                      {removingId === grant.principal_id ? (
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      ) : (
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      )}
+                                    </Button>
+                                  )}
                                 </div>
                               )}
                             </TableCell>

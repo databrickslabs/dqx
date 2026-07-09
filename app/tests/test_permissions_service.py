@@ -17,7 +17,7 @@ from fastapi import HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.common.permissions import (
-    PRINCIPAL_ALL,
+    USERS_GROUP_PRINCIPAL_ID,
     ObjectType,
     Privilege,
 )
@@ -98,15 +98,49 @@ def svc(fake, app_settings_mock) -> PermissionsService:
 
 
 # ---------------------------------------------------------------------------
-# Baseline defaults
+# Users-group default (implicit-unless-overridden)
 # ---------------------------------------------------------------------------
 
 
-def test_baseline_grants_select_and_apply_to_everyone(svc):
+def test_default_grants_select_and_apply_to_everyone(svc):
     eff = svc.effective_privileges("registry_rule", "r1", principal_ids=set())
     assert Privilege.SELECT in eff
     assert Privilege.APPLY in eff
     assert Privilege.MODIFY not in eff
+
+
+def test_list_effective_grants_surfaces_synthetic_default(svc):
+    eff = svc.list_effective_grants("registry_rule", "r1")
+    assert len(eff) == 1
+    default = eff[0]
+    assert default.is_default is True
+    assert default.principal_id == USERS_GROUP_PRINCIPAL_ID
+    assert default.principal_type == "group"
+    assert default.privileges == {Privilege.SELECT, Privilege.APPLY}
+
+
+def test_explicit_users_group_grant_replaces_synthetic_default(svc, fake):
+    # An explicit users-group row narrowed to SELECT overrides the default.
+    fake.add_grant("registry_rule", "r1", USERS_GROUP_PRINCIPAL_ID, "SELECT", principal_type="group")
+    eff = svc.list_effective_grants("registry_rule", "r1")
+    assert len(eff) == 1
+    assert eff[0].is_default is False
+    assert eff[0].privileges == {Privilege.SELECT}
+
+
+def test_narrowing_users_group_to_select_makes_apply_bite(svc, fake):
+    # Revoking APPLY on the users group means a non-owner author loses APPLY.
+    fake.add_grant("monitored_table", "b1", USERS_GROUP_PRINCIPAL_ID, "SELECT", principal_type="group")
+    eff = svc.effective_privileges("monitored_table", "b1", principal_ids={"u1"})
+    assert Privilege.SELECT in eff
+    assert Privilege.APPLY not in eff
+
+
+def test_revoked_users_group_grant_confers_nothing(svc, fake):
+    # An explicit empty users-group row is the per-object "revoked" marker.
+    fake.add_grant("registry_rule", "r1", USERS_GROUP_PRINCIPAL_ID, "", principal_type="group")
+    eff = svc.effective_privileges("registry_rule", "r1", principal_ids={"u1"})
+    assert eff == set()
 
 
 def test_author_cannot_modify_without_grant(svc):
@@ -168,8 +202,8 @@ def test_grant_to_group_matches_via_principal_ids(svc, fake):
     )
 
 
-def test_all_principals_grant_applies_to_everyone(svc, fake):
-    fake.add_grant("data_product", "p1", PRINCIPAL_ALL, "MODIFY", principal_type="all")
+def test_users_group_grant_applies_to_everyone(svc, fake):
+    fake.add_grant("data_product", "p1", USERS_GROUP_PRINCIPAL_ID, "MODIFY", principal_type="group")
     assert svc.has_privilege(
         "data_product",
         "p1",
@@ -252,7 +286,7 @@ def test_non_inheriting_product_grant_does_not_flow(svc, fake):
 def test_list_effective_grants_flags_inherited(svc, fake):
     fake.members["b1"] = ["p1"]
     fake.add_grant("data_product", "p1", "u1", "MODIFY", inherit=True)
-    eff = svc.list_effective_grants("monitored_table", "b1")
+    eff = [g for g in svc.list_effective_grants("monitored_table", "b1") if not g.is_default]
     assert len(eff) == 1
     assert eff[0].inherited_from_type == "data_product"
     assert eff[0].inherited_from_id == "p1"
@@ -262,7 +296,7 @@ def test_direct_grant_shadows_inherited_for_same_principal(svc, fake):
     fake.members["b1"] = ["p1"]
     fake.add_grant("data_product", "p1", "u1", "SELECT", inherit=True)
     fake.add_grant("monitored_table", "b1", "u1", "MODIFY")
-    eff = svc.list_effective_grants("monitored_table", "b1")
+    eff = [g for g in svc.list_effective_grants("monitored_table", "b1") if not g.is_default]
     # Only the direct grant surfaces for u1 (inherited one is shadowed).
     assert len(eff) == 1
     assert eff[0].inherited_from_type is None
@@ -366,6 +400,40 @@ def test_set_grant_empty_privileges_removes(mock_sql, app_settings_mock):
     executed = " ".join(str(c.args[0]) for c in mock_sql.execute.call_args_list)
     assert "DELETE FROM dq_object_grants" in executed
     assert "INSERT INTO dq_object_grants " not in executed
+
+
+def test_set_grant_users_group_empty_materializes_revoked_row(mock_sql, app_settings_mock):
+    # For the users group, empty privileges = explicit "revoked" marker row
+    # (INSERT with empty privileges), NOT a delete-to-default.
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    svc.set_grant(
+        "registry_rule",
+        "r1",
+        USERS_GROUP_PRINCIPAL_ID,
+        principal_type="group",
+        principal_name="users",
+        privileges=set(),
+        inherit=False,
+        grantor="admin@x.com",
+    )
+    executed = " ".join(str(c.args[0]) for c in mock_sql.execute.call_args_list)
+    assert "INSERT INTO dq_object_grants " in executed
+
+
+def test_set_grant_rejects_legacy_sentinel(mock_sql, app_settings_mock):
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    with pytest.raises(HTTPException) as exc:
+        svc.set_grant(
+            "registry_rule",
+            "r1",
+            "__all__",
+            principal_type="group",
+            principal_name="everyone",
+            privileges={Privilege.MODIFY},
+            inherit=False,
+            grantor="admin@x.com",
+        )
+    assert exc.value.status_code == 400
 
 
 def test_set_grant_rejects_bad_object_type(mock_sql, app_settings_mock):

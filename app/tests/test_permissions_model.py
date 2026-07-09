@@ -3,18 +3,32 @@
 from __future__ import annotations
 
 from databricks_labs_dqx_app.backend.common.permissions import (
-    BASELINE_PRIVILEGES,
+    DEFAULT_USERS_GROUP_PRIVILEGES,
+    USERS_GROUP_PRINCIPAL_ID,
     Privilege,
     expand_privileges,
+    is_reserved_principal_id,
+    is_users_group,
     normalize_privileges,
     parse_privileges,
     serialize_privileges,
 )
 
 
-def test_baseline_is_select_and_apply_not_modify():
-    assert BASELINE_PRIVILEGES == {Privilege.SELECT, Privilege.APPLY}
-    assert Privilege.MODIFY not in BASELINE_PRIVILEGES
+def test_default_users_group_is_select_and_apply_not_modify():
+    assert DEFAULT_USERS_GROUP_PRIVILEGES == {Privilege.SELECT, Privilege.APPLY}
+    assert Privilege.MODIFY not in DEFAULT_USERS_GROUP_PRIVILEGES
+
+
+def test_users_group_principal_helpers():
+    assert is_users_group(USERS_GROUP_PRINCIPAL_ID)
+    assert not is_users_group("someone")
+
+
+def test_reserved_principal_rejects_legacy_sentinel():
+    assert is_reserved_principal_id("__all__")
+    assert not is_reserved_principal_id(USERS_GROUP_PRINCIPAL_ID)
+    assert not is_reserved_principal_id("u1")
 
 
 def test_expand_all_privileges_to_concrete_set():

@@ -10,9 +10,11 @@ model, hierarchy, baseline, and role-layering rules live in
 Enforcement contract (see :meth:`require`): roles remain the coarse gate
 (``require_role`` still guards routes); object grants refine *within* a role.
 ``ADMIN``/``RULE_APPROVER`` bypass object grants (UC owner/admin convention);
-the object creator is owner-equivalent (implicit ``ALL_PRIVILEGES``); every
-principal holds the :data:`~backend.common.permissions.BASELINE_PRIVILEGES`
-baseline so existing flows keep working on day one.
+the object creator is owner-equivalent (implicit ``ALL_PRIVILEGES``); the
+workspace users group holds
+:data:`~backend.common.permissions.DEFAULT_USERS_GROUP_PRIVILEGES` on every
+object by default (implicit-unless-overridden) so existing flows keep working
+on day one.
 """
 
 from __future__ import annotations
@@ -26,13 +28,16 @@ from fastapi import HTTPException, status
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.common.permissions import (
-    PRINCIPAL_ALL,
-    BASELINE_PRIVILEGES,
+    DEFAULT_USERS_GROUP_PRIVILEGES,
+    USERS_GROUP_PRINCIPAL_ID,
+    USERS_GROUP_PRINCIPAL_NAME,
     CHILD_TO_PARENT_TYPE,
     ObjectType,
     PrincipalType,
     Privilege,
     expand_privileges,
+    is_reserved_principal_id,
+    is_users_group,
     normalize_privileges,
     parse_privileges,
     serialize_privileges,
@@ -66,6 +71,10 @@ class ObjectGrant:
     # for direct grants. Holds the parent object's type+id it flowed from.
     inherited_from_type: str | None = None
     inherited_from_id: str | None = None
+    # UI-only: True on the synthetic users-group row surfaced when an object
+    # has no stored users-group grant (the implicit default). Distinguishes the
+    # default from an explicit, materialized users-group grant.
+    is_default: bool = False
 
 
 def _as_bool(value: object) -> bool:
@@ -109,13 +118,25 @@ class PermissionsService:
         Inherited grants carry ``inherited_from_type``/``inherited_from_id``
         so the UI can render them distinctly (greyed + "Inherited from …"),
         mirroring how Unity Catalog surfaces inherited grants.
+
+        The workspace users-group default is surfaced as a real row: when the
+        object has no stored users-group grant, a synthetic ``is_default`` row
+        (SELECT + APPLY) is prepended so the UI renders it like any grant. Once
+        a users-group grant is materialized (narrowed/revoked), that stored row
+        shows instead. The users-group grant is per-object and never inherited.
         """
         direct = self.list_grants(object_type, object_id)
         result = list(direct)
         direct_principals = {g.principal_id for g in direct}
+        if USERS_GROUP_PRINCIPAL_ID not in direct_principals:
+            result.insert(0, self._default_users_group_grant(object_type, object_id))
         for parent_type, parent_id in self._parent_refs(object_type, object_id):
             for g in self.list_grants(parent_type.value, parent_id):
                 if not g.inherit:
+                    continue
+                # The users-group default is intrinsic to each object, not
+                # inherited — a child shows its own default, never a parent's.
+                if is_users_group(g.principal_id):
                     continue
                 # A direct grant on the child object takes precedence over an
                 # inherited one for the same principal (UC shows the closest).
@@ -149,6 +170,21 @@ class PermissionsService:
             inherit=_as_bool(row[6]),
             grantor=row[7] if row[7] else None,
             updated_at=datetime.fromisoformat(row[8]) if row[8] else None,
+        )
+
+    @staticmethod
+    def _default_users_group_grant(object_type: str, object_id: str) -> ObjectGrant:
+        """Build the synthetic (implicit) users-group default grant for display."""
+        return ObjectGrant(
+            object_type=object_type,
+            object_id=object_id,
+            principal_id=USERS_GROUP_PRINCIPAL_ID,
+            principal_type=PrincipalType.GROUP.value,
+            principal_name=USERS_GROUP_PRINCIPAL_NAME,
+            privileges=set(DEFAULT_USERS_GROUP_PRIVILEGES),
+            inherit=False,
+            grantor=None,
+            is_default=True,
         )
 
     def _parent_refs(self, object_type: str, object_id: str) -> list[tuple[ObjectType, str]]:
@@ -216,10 +252,18 @@ class PermissionsService:
     ) -> set[Privilege]:
         """Resolve the privileges a caller effectively holds on an object.
 
-        Combines: the all-principals baseline, direct grants matching the
-        caller's principal set (or the all-principals sentinel), and
-        inherited grants (``inherit=True``) on parent objects. The object
-        creator (``owner_email``) is treated as holding all privileges.
+        Combines: the workspace users-group default (implicit unless the object
+        has an explicit users-group grant that narrows/revokes it), direct
+        grants matching the caller's principal set (the users-group grant
+        matches every caller), and inherited grants (``inherit=True``) on parent
+        objects. The object creator (``owner_email``) is treated as holding all
+        privileges.
+
+        The users-group default is per-object: if the object has *no* stored
+        users-group row it contributes :data:`DEFAULT_USERS_GROUP_PRIVILEGES`;
+        if it *does* (even an empty/revoked one) that stored row wins and the
+        default is not added. Inherited users-group rows are ignored (the
+        default is intrinsic to each object, never inherited).
 
         Args:
             object_type: The securable object type value.
@@ -235,19 +279,27 @@ class PermissionsService:
         if owner_email and principal_email and owner_email.strip().lower() == principal_email.strip().lower():
             return expand_privileges({Privilege.ALL_PRIVILEGES})
 
-        priv: set[Privilege] = set(BASELINE_PRIVILEGES)
-
         def _matches(grant: ObjectGrant) -> bool:
-            return grant.principal_id == PRINCIPAL_ALL or grant.principal_id in principal_ids
+            # The users-group grant applies to everyone; other grants match the
+            # caller's resolved principal set (own id + group ids/names).
+            return is_users_group(grant.principal_id) or grant.principal_id in principal_ids
 
-        for grant in self.list_grants(object_type, object_id):
+        priv: set[Privilege] = set()
+        direct = self.list_grants(object_type, object_id)
+        has_users_group_row = any(is_users_group(g.principal_id) for g in direct)
+        for grant in direct:
             if _matches(grant):
                 priv |= expand_privileges(grant.privileges)
 
         for parent_type, parent_id in self._parent_refs(object_type, object_id):
             for grant in self.list_grants(parent_type.value, parent_id):
-                if grant.inherit and _matches(grant):
+                # Users-group grants are per-object, never inherited.
+                if grant.inherit and not is_users_group(grant.principal_id) and _matches(grant):
                     priv |= expand_privileges(grant.privileges)
+
+        # Implicit users-group default, unless the object overrides it.
+        if not has_users_group_row:
+            priv |= set(DEFAULT_USERS_GROUP_PRIVILEGES)
 
         return priv
 
@@ -368,12 +420,19 @@ class PermissionsService:
         """Create or replace the grant for one principal on one object.
 
         Replace semantics: the principal's full privilege set is overwritten
-        (matches the UI's checkbox state). Passing an empty privilege set is
-        equivalent to :meth:`remove_grant`.
+        (matches the UI's checkbox state).
+
+        Empty privilege set: for a normal principal this is equivalent to
+        :meth:`remove_grant` (the row is deleted). For the workspace users
+        group it instead materializes an explicit empty-privilege row — the
+        per-object "revoked" marker that suppresses the implicit default (so
+        the object no longer falls back to SELECT + APPLY for everyone).
         """
+        self._reject_reserved_principal(principal_id)
         self._validate_enums(object_type, principal_type)
         norm = normalize_privileges(privileges)
-        if not norm:
+        users_group = is_users_group(principal_id)
+        if not norm and not users_group:
             self.remove_grant(object_type, object_id, principal_id, actor=grantor)
             return ObjectGrant(
                 object_type=object_type,
@@ -427,6 +486,19 @@ class PermissionsService:
             f"AND principal_id = '{escape_sql_string(principal_id)}'"
         )
         self._sql.execute(sql)
+
+    def _reject_reserved_principal(self, principal_id: str) -> None:
+        """Reject the legacy all-principals sentinel from the write path.
+
+        The users group is now a first-class principal
+        (:data:`~backend.common.permissions.USERS_GROUP_PRINCIPAL_ID`); the old
+        ``__all__`` sentinel must never be accepted as a raw principal id.
+        """
+        if is_reserved_principal_id(principal_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid principal. Grant the workspace users group instead.",
+            )
 
     def _validate_enums(self, object_type: str, principal_type: str) -> None:
         try:

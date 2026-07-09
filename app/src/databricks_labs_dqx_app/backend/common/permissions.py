@@ -14,18 +14,28 @@ at the application level:
   space), and ``ALL_PRIVILEGES`` (the UC-style superset that expands to the
   concrete set at check-time; the stored form stays ``ALL PRIVILEGES``, not
   its components).
-* **Grants** target workspace principals (users/groups, by SCIM id) or the
-  all-principals sentinel :data:`PRINCIPAL_ALL`.
+* **Grants** target workspace principals (users/groups, by SCIM id). The
+  workspace **users group** (:data:`USERS_GROUP_PRINCIPAL_ID`) is a
+  first-class group principal that stands in for "everyone", the way
+  ``account users`` appears in Unity Catalog grants.
 * **Layering with role RBAC**: roles stay the coarse gate (``require_role``
   still guards every route). Object grants *refine within* what a role
   allows — a ``RULE_AUTHOR`` needs ``MODIFY`` (direct, inherited, or via
   ownership) on rule X to edit X. ``ADMIN`` and ``RULE_APPROVER`` bypass
   object grants entirely, mirroring UC's owner/admin conventions; the
   object's creator is owner-equivalent (implicit ``ALL_PRIVILEGES``).
-* **Day-one baseline**: every principal implicitly holds
-  :data:`BASELINE_PRIVILEGES` (``SELECT`` + ``APPLY``) so existing apply/view
-  flows keep working the moment the feature ships. ``MODIFY`` is the
-  privilege that becomes gated. The baseline is surfaced in the UI.
+* **Visible day-one default**: rather than an invisible baseline constant,
+  every securable object shows a real, manageable grant to the workspace
+  **users group** of :data:`DEFAULT_USERS_GROUP_PRIVILEGES` (``SELECT`` +
+  ``APPLY``) so existing apply/view flows keep working the moment the feature
+  ships. ``MODIFY`` is the privilege that becomes gated. This default is
+  *implicit-unless-overridden*: an object with no stored ``users``-group row
+  confers (and displays) the default; the first grant-management action on
+  the ``users`` group materializes a row that overrides it (narrow it to
+  ``SELECT`` only, or revoke it entirely with an empty-privilege row — the
+  per-object "revoked" marker). Existing objects therefore need no backfill:
+  they all show the default until someone changes it. Revoking ``APPLY`` on
+  the ``users`` group makes the ``APPLY`` checks bite for non-owners.
 """
 
 from __future__ import annotations
@@ -60,13 +70,32 @@ class PrincipalType(str, Enum):
 
     USER = "user"
     GROUP = "group"
-    ALL = "all"
 
 
-# Sentinel principal id for the all-principals baseline grant. Any explicit
-# grant stored against this id applies to every caller (see
-# :meth:`PermissionsService.effective_privileges`).
-PRINCIPAL_ALL = "__all__"
+# First-class group principal representing the workspace "users" group — the
+# group every workspace user belongs to. It stands in for "everyone" (the way
+# ``account users`` appears in Unity Catalog grants) and is stored like any
+# other group grant: ``principal_type='group'``, this id/name. A grant against
+# this principal matches every caller regardless of the caller's resolved group
+# set (see :meth:`PermissionsService.effective_privileges`).
+USERS_GROUP_PRINCIPAL_ID = "users"
+USERS_GROUP_PRINCIPAL_NAME = "users"
+
+# The legacy internal sentinel the users-group principal replaces. Kept only so
+# the public API surface can explicitly reject it (never accept it as a raw
+# principal id) — it is no longer written or matched anywhere.
+LEGACY_ALL_SENTINEL = "__all__"
+
+
+def is_users_group(principal_id: str) -> bool:
+    """Return True if ``principal_id`` is the workspace users-group principal."""
+    return principal_id == USERS_GROUP_PRINCIPAL_ID
+
+
+def is_reserved_principal_id(principal_id: str) -> bool:
+    """Return True if ``principal_id`` is a reserved/rejected id (the legacy sentinel)."""
+    return principal_id == LEGACY_ALL_SENTINEL
+
 
 # The concrete privileges ``ALL_PRIVILEGES`` expands to. Deliberately excludes
 # any "manage grants" capability — like UC's ALL PRIVILEGES excluding MANAGE —
@@ -76,10 +105,12 @@ _CONCRETE_PRIVILEGES: frozenset[Privilege] = frozenset(
     {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY}
 )
 
-# Day-one default held by every principal so existing view/apply flows keep
-# working the moment the feature ships. MODIFY is intentionally absent — it is
-# the privilege the feature gates. Documented + surfaced in the UI.
-BASELINE_PRIVILEGES: frozenset[Privilege] = frozenset(
+# The default privilege set the workspace users-group holds on every object
+# until a grant-manager narrows or revokes it. Confers view + apply so existing
+# flows keep working day one; MODIFY is intentionally absent — it is the
+# privilege the feature gates. Surfaced in the UI as a real (removable) grant
+# row on the users group, not an invisible constant.
+DEFAULT_USERS_GROUP_PRIVILEGES: frozenset[Privilege] = frozenset(
     {Privilege.SELECT, Privilege.APPLY}
 )
 

@@ -1437,12 +1437,12 @@ export type ObjectGrantOutInheritedFromType = string | null;
 export type ObjectGrantOutInheritedFromId = string | null;
 
 /**
- * One principal's grant on a securable object (direct or inherited).
+ * One principal's grant on a securable object (direct, inherited, or the users-group default).
  */
 export interface ObjectGrantOut {
-  /** Workspace SCIM id, or '__all__' for the all-principals baseline grant */
+  /** Workspace SCIM id; 'users' for the workspace users group */
   principal_id: string;
-  /** 'user', 'group', or 'all' */
+  /** 'user' or 'group' */
   principal_type: string;
   /** Human-readable principal name */
   principal_name?: ObjectGrantOutPrincipalName;
@@ -1460,10 +1460,12 @@ export interface ObjectGrantOut {
   inherited_from_type?: ObjectGrantOutInheritedFromType;
   /** Parent object id an inherited grant came from */
   inherited_from_id?: ObjectGrantOutInheritedFromId;
+  /** True on the synthetic users-group default row (implicit SELECT+APPLY, not yet materialized) */
+  is_default?: boolean;
 }
 
 /**
- * Response for the Permissions tab: grants + baseline + caller capability.
+ * Response for the Permissions tab: grants (incl. the users-group default) + caller capability.
  */
 export interface ObjectGrantsOut {
   /** Securable object type */
@@ -1471,8 +1473,6 @@ export interface ObjectGrantsOut {
   /** Securable object id */
   object_id: string;
   grants?: ObjectGrantOut[];
-  /** Privileges every principal holds by default (shown as the 'All users' baseline row) */
-  baseline_privileges?: string[];
   /** Whether the caller may add/remove grants on this object */
   can_manage?: boolean;
   /** Admin default for the per-grant inheritance toggle on new grants */
@@ -2478,13 +2478,13 @@ export type SetObjectGrantInPrincipalName = string | null;
  * Create-or-replace one principal's grant on a securable object.
  */
 export interface SetObjectGrantIn {
-  /** Workspace SCIM id, or '__all__' for the baseline grant */
+  /** Workspace SCIM id; 'users' for the workspace users group */
   principal_id: string;
-  /** 'user', 'group', or 'all' */
+  /** 'user' or 'group' */
   principal_type: string;
   /** Human-readable principal name */
   principal_name?: SetObjectGrantInPrincipalName;
-  /** Privileges to grant (empty removes the grant) */
+  /** Privileges to grant (empty removes the grant, or revokes the users-group default) */
   privileges?: string[];
   /** Whether the grant flows down to child objects */
   inherit?: boolean;
@@ -17925,7 +17925,7 @@ export const useSetPermissionsDefaultInherit = <TError = AxiosError<HTTPValidati
     }
     
 /**
- * List the grants on an object (direct + inherited) with baseline + capability.
+ * List the grants on an object (direct + inherited + users-group default) with capability.
  * @summary List Object Grants
  */
 export const listObjectGrants = (

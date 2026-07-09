@@ -21,10 +21,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from databricks_labs_dqx_app.backend.common.authorization import CurrentUser, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import (
-    BASELINE_PRIVILEGES,
     ObjectType,
     Privilege,
-    serialize_privileges,
+    is_reserved_principal_id,
 )
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentPrincipalIds,
@@ -77,6 +76,7 @@ def _to_out(grant: ObjectGrant) -> ObjectGrantOut:
         inherited=grant.inherited_from_type is not None,
         inherited_from_type=grant.inherited_from_type,
         inherited_from_id=grant.inherited_from_id,
+        is_default=grant.is_default,
     )
 
 
@@ -123,7 +123,7 @@ def list_object_grants(
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> ObjectGrantsOut:
-    """List the grants on an object (direct + inherited) with baseline + capability."""
+    """List the grants on an object (direct + inherited + users-group default) with capability."""
     ot = _validate_object_type(object_type)
     owner = perms.get_object_owner(ot, object_id)
     grants = [_to_out(g) for g in perms.list_effective_grants(ot, object_id)]
@@ -134,7 +134,6 @@ def list_object_grants(
         object_type=ot,
         object_id=object_id,
         grants=grants,
-        baseline_privileges=serialize_privileges(set(BASELINE_PRIVILEGES)).split(","),
         can_manage=can_manage,
         default_inherit=perms.get_default_inherit(),
     )
@@ -159,6 +158,11 @@ def set_object_grant(
 
     Requires the caller to own the object or hold an admin/approver role.
     """
+    if is_reserved_principal_id(body.principal_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid principal. Grant the workspace users group instead.",
+        )
     ot = _validate_object_type(object_type)
     owner = perms.get_object_owner(ot, object_id)
     if not perms.can_manage_grants(
