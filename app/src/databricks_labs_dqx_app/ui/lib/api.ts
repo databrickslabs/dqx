@@ -2536,6 +2536,10 @@ export interface RunStatusOut {
   view_cleaned_up?: boolean;
 }
 
+export interface SampleQuestionsOut {
+  questions: string[];
+}
+
 /**
  * Request body for ``saveAppliedRules`` — the FULL desired set of applications for a binding.
 
@@ -3369,6 +3373,13 @@ export type GetWarehouseAccessParams = {
  * Warehouse id to check
  */
 warehouse_id: string;
+};
+
+export type GetSampleQuestionsParams = {
+/**
+ * Fully qualified table name (catalog.schema.table)
+ */
+table_fqn: string;
 };
 
 export type SearchPrincipalsParams = {
@@ -18071,6 +18082,160 @@ export const usePreviewTableData = <TError = AxiosError<HTTPValidationError>,
       return useMutation(mutationOptions, queryClient);
     }
     
+/**
+ * Suggest 3 schema-grounded example questions for the ask-a-question chips.
+
+Same access model as the ask endpoint above: any authenticated user; the
+schema read runs OBO so Unity Catalog permissions are the real boundary.
+Decorative endpoint — every failure degrades to an empty list (the UI then
+shows its static prompts), and raw errors are never relayed (OWASP LLM06).
+ * @summary Get Sample Questions
+ */
+export const getSampleQuestions = (
+    params: GetSampleQuestionsParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SampleQuestionsOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/table-data/sample-questions`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getGetSampleQuestionsQueryKey = (params?: GetSampleQuestionsParams,) => {
+    return [
+    `/api/v1/table-data/sample-questions`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getGetSampleQuestionsQueryOptions = <TData = Awaited<ReturnType<typeof getSampleQuestions>>, TError = AxiosError<HTTPValidationError>>(params: GetSampleQuestionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSampleQuestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSampleQuestionsQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSampleQuestions>>> = ({ signal }) => getSampleQuestions(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSampleQuestions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetSampleQuestionsQueryResult = NonNullable<Awaited<ReturnType<typeof getSampleQuestions>>>
+export type GetSampleQuestionsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetSampleQuestions<TData = Awaited<ReturnType<typeof getSampleQuestions>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetSampleQuestionsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSampleQuestions>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSampleQuestions>>,
+          TError,
+          Awaited<ReturnType<typeof getSampleQuestions>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSampleQuestions<TData = Awaited<ReturnType<typeof getSampleQuestions>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetSampleQuestionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSampleQuestions>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSampleQuestions>>,
+          TError,
+          Awaited<ReturnType<typeof getSampleQuestions>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSampleQuestions<TData = Awaited<ReturnType<typeof getSampleQuestions>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetSampleQuestionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSampleQuestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Sample Questions
+ */
+
+export function useGetSampleQuestions<TData = Awaited<ReturnType<typeof getSampleQuestions>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetSampleQuestionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSampleQuestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetSampleQuestionsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetSampleQuestionsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getSampleQuestions>>, TError = AxiosError<HTTPValidationError>>(params: GetSampleQuestionsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSampleQuestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSampleQuestionsQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSampleQuestions>>> = ({ signal }) => getSampleQuestions(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSampleQuestions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetSampleQuestionsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getSampleQuestions>>>
+export type GetSampleQuestionsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetSampleQuestionsSuspense<TData = Awaited<ReturnType<typeof getSampleQuestions>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetSampleQuestionsParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSampleQuestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSampleQuestionsSuspense<TData = Awaited<ReturnType<typeof getSampleQuestions>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetSampleQuestionsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSampleQuestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSampleQuestionsSuspense<TData = Awaited<ReturnType<typeof getSampleQuestions>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetSampleQuestionsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSampleQuestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Sample Questions
+ */
+
+export function useGetSampleQuestionsSuspense<TData = Awaited<ReturnType<typeof getSampleQuestions>>, TError = AxiosError<HTTPValidationError>>(
+ params: GetSampleQuestionsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getSampleQuestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetSampleQuestionsSuspenseQueryOptions(params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
 /**
  * Answer a natural-language question by generating + running a safe SELECT.
  * @summary Query Table Data

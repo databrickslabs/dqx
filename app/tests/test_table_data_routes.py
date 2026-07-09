@@ -11,16 +11,28 @@ from fastapi import HTTPException
 from databricks_labs_dqx_app.backend.routes.v1.table_data import (
     TablePreviewIn,
     TableQueryIn,
+    get_sample_questions,
     preview_table_data,
     query_table_data,
+    router,
 )
 from databricks_labs_dqx_app.backend.services.ai_gateway import AIUnavailableError
+from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService, TableColumn
 from databricks_labs_dqx_app.backend.services.table_data_service import PreviewResult, TableDataService
 
 
 @pytest.fixture
 def svc():
     return create_autospec(TableDataService, instance=True)
+
+
+@pytest.fixture
+def discovery():
+    mock = create_autospec(DiscoveryService, instance=True)
+    mock.get_table_columns_async.return_value = [
+        TableColumn(name="city", type_name="STRING", comment=None, nullable=True, position=0)
+    ]
+    return mock
 
 
 def _result():
@@ -92,3 +104,61 @@ class TestQuery:
         with pytest.raises(HTTPException) as exc:
             await query_table_data(TableQueryIn(table_fqn="c.s.t", question="q"), svc, "user@x")
         assert exc.value.status_code == 400
+
+
+_THREE = ["Which city is hottest?", "How does rainfall vary by city?", "What is the average temperature?"]
+
+
+class TestSampleQuestions:
+    @pytest.mark.asyncio
+    async def test_happy_path_returns_three_questions(self, svc, discovery):
+        svc.ai_available.return_value = True
+        svc.sample_questions.return_value = list(_THREE)
+
+        result = await get_sample_questions("c.s.t", svc, discovery, "user@x")
+
+        assert result.questions == _THREE
+        discovery.get_table_columns_async.assert_awaited_once_with("c", "s", "t")
+
+    @pytest.mark.asyncio
+    async def test_ai_unavailable_returns_empty_without_lookups(self, svc, discovery):
+        svc.ai_available.return_value = False
+
+        result = await get_sample_questions("c.s.t", svc, discovery, "user@x")
+
+        assert result.questions == []
+        discovery.get_table_columns_async.assert_not_called()
+        svc.sample_questions.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_malformed_fqn_returns_empty_without_lookups(self, svc, discovery):
+        svc.ai_available.return_value = True
+
+        result = await get_sample_questions("not_an_fqn", svc, discovery, "user@x")
+
+        assert result.questions == []
+        discovery.get_table_columns_async.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_schema_fetch_failure_degrades_to_empty(self, svc, discovery):
+        svc.ai_available.return_value = True
+        discovery.get_table_columns_async.side_effect = RuntimeError("uc down")
+
+        result = await get_sample_questions("c.s.t", svc, discovery, "user@x")
+
+        assert result.questions == []
+
+    @pytest.mark.asyncio
+    async def test_service_failure_degrades_to_empty(self, svc, discovery):
+        svc.ai_available.return_value = True
+        svc.sample_questions.side_effect = RuntimeError("endpoint down")
+
+        result = await get_sample_questions("c.s.t", svc, discovery, "user@x")
+
+        assert result.questions == []
+
+    def test_rbac_matches_the_ask_endpoint(self):
+        """Same gating as /query: no role guard — auth + UC OBO perms are the boundary."""
+        by_path = {route.path: route for route in router.routes}
+        assert "/sample-questions" in by_path
+        assert by_path["/sample-questions"].dependencies == by_path["/query"].dependencies == []

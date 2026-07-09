@@ -8,6 +8,11 @@
   read-only SELECT via the app's AI gateway, runs it, and returns the rows.
   Degrades cleanly (503/429/502/400) exactly like the other AI routes so the
   tab can fall back to the plain preview.
+- ``GET /table-data/sample-questions`` asks the AI gateway for 3 short,
+  schema-grounded example questions to seed the ask-a-question chips. Purely
+  decorative, so every failure mode (AI off, rate limit, malformed output,
+  schema fetch error) returns an empty list — never an error status — and the
+  UI falls back to its static prompts.
 
 See ``services/table_data_service.py`` for the Genie-vs-LLM decision rationale.
 """
@@ -17,17 +22,18 @@ from __future__ import annotations
 from typing import Annotated
 
 from databricks.labs.dqx.errors import UnsafeSqlQueryError
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
-from databricks_labs_dqx_app.backend.dependencies import get_table_data_service, require_role
+from databricks_labs_dqx_app.backend.dependencies import get_discovery_service, get_table_data_service, require_role
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.services.ai_gateway import (
     AIRateLimitExceededError,
     AIResponseParseError,
     AIUnavailableError,
 )
+from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
 from databricks_labs_dqx_app.backend.services.table_data_service import PreviewResult, TableDataService
 
 # Non-VIEWER by default is not required; UC OBO perms are the real data boundary.
@@ -43,6 +49,10 @@ class TablePreviewIn(BaseModel):
 class TableQueryIn(BaseModel):
     table_fqn: str
     question: str
+
+
+class SampleQuestionsOut(BaseModel):
+    questions: list[str]
 
 
 class TableDataOut(BaseModel):
@@ -79,6 +89,36 @@ async def preview_table_data(
         logger.error("Failed to preview table data: %s", e, exc_info=True)
         raise HTTPException(status_code=502, detail="Could not load table data. Check the SQL warehouse and your access.")
     return _to_out(result, ai_available=svc.ai_available())
+
+
+@router.get("/sample-questions", response_model=SampleQuestionsOut, operation_id="getSampleQuestions")
+async def get_sample_questions(
+    table_fqn: Annotated[str, Query(description="Fully qualified table name (catalog.schema.table)")],
+    svc: Annotated[TableDataService, Depends(get_table_data_service)],
+    discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
+    user_email: Annotated[str, Depends(get_user_email)],
+) -> SampleQuestionsOut:
+    """Suggest 3 schema-grounded example questions for the ask-a-question chips.
+
+    Same access model as the ask endpoint above: any authenticated user; the
+    schema read runs OBO so Unity Catalog permissions are the real boundary.
+    Decorative endpoint — every failure degrades to an empty list (the UI then
+    shows its static prompts), and raw errors are never relayed (OWASP LLM06).
+    """
+    if not svc.ai_available():
+        return SampleQuestionsOut(questions=[])
+    try:
+        parts = table_fqn.split(".")
+        if len(parts) != 3:
+            return SampleQuestionsOut(questions=[])
+        # Same OBO service path the About tab's schema section uses — cached,
+        # and enforcing the caller's own UC grants on the metadata read.
+        columns = await discovery.get_table_columns_async(*parts)
+        questions = await svc.sample_questions(table_fqn, columns, user_email)
+    except Exception as e:
+        logger.warning("Sample-question generation failed: %s", e, exc_info=True)
+        return SampleQuestionsOut(questions=[])
+    return SampleQuestionsOut(questions=questions)
 
 
 @router.post("/query", response_model=TableDataOut, operation_id="queryTableData")

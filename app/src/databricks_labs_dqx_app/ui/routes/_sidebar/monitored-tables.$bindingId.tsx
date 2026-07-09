@@ -85,6 +85,7 @@ import {
   useSuggestRulesForTable,
   usePreviewTableData,
   useQueryTableData,
+  useGetSampleQuestions,
   type AppliedRuleOut,
   type ColumnOut,
   type MonitoredTableOut,
@@ -2170,7 +2171,19 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
   const aiAvailable = preview?.ai_available ?? false;
   const active = answer ?? preview;
 
-  const suggestions = useMemo(() => {
+  // Schema-aware AI sample questions (Databricks-style chips). Fetched once
+  // per table (staleTime Infinity; the query key carries the FQN) and only
+  // when the preview said AI is available. The backend returns an empty list
+  // on any failure, and `retry: false` keeps errors quiet — either way the
+  // static i18n prompts below take over, so the chips never break the panel.
+  const sampleQuestionsQuery = useGetSampleQuestions(
+    { table_fqn: tableFqn },
+    { query: { enabled: aiAvailable, staleTime: Infinity, retry: false } },
+  );
+  const aiQuestions = sampleQuestionsQuery.data?.data.questions ?? [];
+  const chipsLoading = aiAvailable && sampleQuestionsQuery.isLoading;
+
+  const staticSuggestions = useMemo(() => {
     const cols = preview?.columns ?? [];
     const first = cols[0];
     const out = [t("monitoredTables.viewData.suggestCount")];
@@ -2180,6 +2193,8 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
     }
     return out;
   }, [preview, t]);
+
+  const suggestions = aiQuestions.length > 0 ? aiQuestions : staticSuggestions;
 
   if (previewMutation.isPending && !preview) {
     return <Skeleton className="h-64 w-full" />;
@@ -2266,17 +2281,21 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
                 flush under the hover-transparent 1px border exactly like a
                 borderless gradient pill, and add overflow-hidden so the
                 rounded-full radius always clips it. */}
-            {suggestions.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => runQuestion(s)}
-                disabled={queryMutation.isPending}
-                className="overflow-hidden rounded-full border bg-origin-border px-2.5 py-1 text-[11px] text-muted-foreground transition-[color,border-color] hover:bg-gradient-to-r hover:from-violet-500 hover:via-fuchsia-500 hover:to-pink-500 hover:text-white hover:border-transparent disabled:pointer-events-none disabled:opacity-50"
-              >
-                {s}
-              </button>
-            ))}
+            {chipsLoading
+              ? // Subtle pill-shaped placeholders while the AI sample
+                // questions load — same footprint as the rendered chips.
+                [0, 1, 2].map((i) => <Skeleton key={i} className="h-6 w-44 rounded-full bg-background/60" />)
+              : suggestions.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => runQuestion(s)}
+                    disabled={queryMutation.isPending}
+                    className="overflow-hidden rounded-full border bg-origin-border px-2.5 py-1 text-[11px] text-muted-foreground transition-[color,border-color] hover:bg-gradient-to-r hover:from-violet-500 hover:via-fuchsia-500 hover:to-pink-500 hover:text-white hover:border-transparent disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    {s}
+                  </button>
+                ))}
           </div>
         </div>
       )}
