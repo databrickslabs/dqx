@@ -444,12 +444,115 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
           )}
         </div>
       </div>
-      <div className="flex gap-2 items-center">
+      <div className="flex flex-col items-end gap-2">
+        <div className="flex gap-2 items-center">
+          {canApprove && (
+            <ReviewPendingChangesButton productId={product.product_id} members={editState.members} />
+          )}
+
+          {canEdit && (
+            <Button
+              onClick={() => void editState.handleSaveDraft()}
+              disabled={!editState.canSave || editState.savePending}
+              variant="outline"
+              size="sm"
+              className="gap-2"
+            >
+              {editState.savePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {t("dataProducts.saveAsDraftButton")}
+            </Button>
+          )}
+
+          {canEdit && (
+            <Button
+              onClick={() => void editState.handleSubmit()}
+              disabled={editState.submitPending || (submitDisabledNoChanges && !editState.canSave)}
+              size="sm"
+              className="gap-2"
+              title={submitDisabledNoChanges ? t("dataProducts.submitDisabledNoChangesHint") : undefined}
+            >
+              {editState.submitPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {t("dataProducts.submitForReviewButton")}
+            </Button>
+          )}
+
+          {canRun && (
+            <Button
+              onClick={() => void handleRun(RunDataProductInSource.approved)}
+              disabled={runPending || runnableCount === 0}
+              size="sm"
+              className="gap-2"
+              title={runnableCount === 0 ? t("dataProducts.runNowDisabledHint") : undefined}
+            >
+              {runPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+              {runPending ? t("dataProducts.runningLabel") : t("dataProducts.runNowButton")}
+            </Button>
+          )}
+
+          {/* ⋮ menu — Runs (dqlake-exact, item 29), Run draft, Delete. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="ghost" aria-label={t("dataProducts.actionsMenuLabel")}>
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {/* Run draft at the TOP (item 15): only when the space is a draft
+                  or has pending edits; those edits are saved first. Disabled +
+                  tooltip otherwise, matching the app's convention. */}
+              {canRun && (
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className={cn(!canRunDraft && "cursor-not-allowed")}>
+                        <DropdownMenuItem
+                          onSelect={(e) => {
+                            e.preventDefault();
+                            void handleRunDraft();
+                          }}
+                          disabled={runPending || !canRunDraft}
+                          className="gap-2"
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                          {t("dataProducts.runDraftAction")}
+                        </DropdownMenuItem>
+                      </span>
+                    </TooltipTrigger>
+                    {!canRunDraft && (
+                      <TooltipContent side="left">{t("dataProducts.runDraftDisabledHint")}</TooltipContent>
+                    )}
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+              {/* Schedule left the tab strip (P23 item 13): it opens as a
+                  dialog from here, mirroring how the Rules Registry detail's
+                  ⋮ items open dialog surfaces. */}
+              <DropdownMenuItem onSelect={() => setScheduleOpen(true)} className="gap-2">
+                <CalendarClock className="h-3.5 w-3.5" />
+                {t("dataProducts.scheduleAction")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={goToRuns} className="gap-2">
+                <History className="h-3.5 w-3.5" />
+                {t("dataProducts.tabRuns")}
+              </DropdownMenuItem>
+              {canEdit && <DropdownMenuSeparator />}
+              {canEdit && (
+                <DropdownMenuItem onSelect={() => setDeleteOpen(true)} variant="destructive" className="gap-2">
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {t("dataProducts.deleteAction")}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
         {/* Product-level Approve/Reject — the space's OWN review lifecycle
             (P21 item 30), gated to approvers when it's pending. Distinct from
-            the member-table ReviewPendingChangesButton below (P19-I). */}
+            the member-table ReviewPendingChangesButton above (P19-I). Sits on
+            its own row BELOW the primary actions (Save as draft / Submit for
+            review / Run now) so the review decision reads as a distinct step. */}
         {isPending && canApprove && (
-          <>
+          <div className="flex gap-2 items-center">
             <Button
               variant="outline"
               size="sm"
@@ -470,107 +573,8 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
               {rejectMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
               {t("dataProducts.rejectAction")}
             </Button>
-          </>
+          </div>
         )}
-
-        {canApprove && (
-          <ReviewPendingChangesButton productId={product.product_id} members={editState.members} />
-        )}
-
-        {canEdit && (
-          <Button
-            onClick={() => void editState.handleSaveDraft()}
-            disabled={!editState.canSave || editState.savePending}
-            variant="outline"
-            size="sm"
-            className="gap-2"
-          >
-            {editState.savePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            {t("dataProducts.saveAsDraftButton")}
-          </Button>
-        )}
-
-        {canEdit && (
-          <Button
-            onClick={() => void editState.handleSubmit()}
-            disabled={editState.submitPending || (submitDisabledNoChanges && !editState.canSave)}
-            size="sm"
-            className="gap-2"
-            title={submitDisabledNoChanges ? t("dataProducts.submitDisabledNoChangesHint") : undefined}
-          >
-            {editState.submitPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            {t("dataProducts.submitForReviewButton")}
-          </Button>
-        )}
-
-        {canRun && (
-          <Button
-            onClick={() => void handleRun(RunDataProductInSource.approved)}
-            disabled={runPending || runnableCount === 0}
-            size="sm"
-            className="gap-2"
-            title={runnableCount === 0 ? t("dataProducts.runNowDisabledHint") : undefined}
-          >
-            {runPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-            {runPending ? t("dataProducts.runningLabel") : t("dataProducts.runNowButton")}
-          </Button>
-        )}
-
-        {/* ⋮ menu — Runs (dqlake-exact, item 29), Run draft, Delete. */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button size="sm" variant="ghost" aria-label={t("dataProducts.actionsMenuLabel")}>
-              <MoreVertical className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {/* Run draft at the TOP (item 15): only when the space is a draft
-                or has pending edits; those edits are saved first. Disabled +
-                tooltip otherwise, matching the app's convention. */}
-            {canRun && (
-              <TooltipProvider delayDuration={200}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className={cn(!canRunDraft && "cursor-not-allowed")}>
-                      <DropdownMenuItem
-                        onSelect={(e) => {
-                          e.preventDefault();
-                          void handleRunDraft();
-                        }}
-                        disabled={runPending || !canRunDraft}
-                        className="gap-2"
-                      >
-                        <Play className="h-3.5 w-3.5" />
-                        {t("dataProducts.runDraftAction")}
-                      </DropdownMenuItem>
-                    </span>
-                  </TooltipTrigger>
-                  {!canRunDraft && (
-                    <TooltipContent side="left">{t("dataProducts.runDraftDisabledHint")}</TooltipContent>
-                  )}
-                </Tooltip>
-              </TooltipProvider>
-            )}
-            {/* Schedule left the tab strip (P23 item 13): it opens as a
-                dialog from here, mirroring how the Rules Registry detail's
-                ⋮ items open dialog surfaces. */}
-            <DropdownMenuItem onSelect={() => setScheduleOpen(true)} className="gap-2">
-              <CalendarClock className="h-3.5 w-3.5" />
-              {t("dataProducts.scheduleAction")}
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={goToRuns} className="gap-2">
-              <History className="h-3.5 w-3.5" />
-              {t("dataProducts.tabRuns")}
-            </DropdownMenuItem>
-            {canEdit && <DropdownMenuSeparator />}
-            {canEdit && (
-              <DropdownMenuItem onSelect={() => setDeleteOpen(true)} variant="destructive" className="gap-2">
-                <Trash2 className="h-3.5 w-3.5" />
-                {t("dataProducts.deleteAction")}
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
 
       <AlertDialog open={rejectOpen} onOpenChange={setRejectOpen}>

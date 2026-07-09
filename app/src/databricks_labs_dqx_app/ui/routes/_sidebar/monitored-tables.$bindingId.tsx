@@ -451,9 +451,95 @@ function MonitoredTableDetailPage() {
               <p className="text-sm text-muted-foreground mt-1">{t("monitoredTables.colSteward")}: {table.steward}</p>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex items-center gap-2">
+              {perms.canCreateRules && (
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={handleSaveAsDraft}
+                    disabled={!isDirty || lifecycleBusy}
+                    className="gap-2"
+                  >
+                    {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {t("monitoredTables.saveAsDraftButton")}
+                  </Button>
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className={cn(submitDisabledNoChanges && "cursor-not-allowed")}>
+                          <Button
+                            onClick={handleSubmit}
+                            disabled={lifecycleBusy || submitDisabledNoChanges}
+                            className="gap-2"
+                          >
+                            {saveMutation.isPending || submitMutation.isPending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <UploadCloud className="h-4 w-4" />
+                            )}
+                            {submitMutation.isPending ? t("monitoredTables.submitting") : t("monitoredTables.submitButton")}
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {submitDisabledNoChanges && (
+                        <TooltipContent side="bottom">{t("monitoredTables.submitDisabledNoChangesHint")}</TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
+                </>
+              )}
+              {/* Run now sits to the right of Submit for review — matches
+                  dqlake's binding header ordering (Save, Publish, then Run;
+                  item 12). */}
+              {perms.canRunRules && (
+                <RunTableAction
+                  bindingId={bindingId}
+                  table={table}
+                  isDirty={isDirty}
+                  onSaveDraft={saveDraft}
+                  {...computeRunGating(baseline.length, stagedRows.length)}
+                />
+              )}
+              {/* ⋮ menu (P23 item 13) — Schedule (dialog) + Delete (confirm),
+                  mirroring the Rules Registry detail's top-right menu. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    aria-label={t("monitoredTables.actionsMenuLabel")}
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => setScheduleDialogOpen(true)} className="gap-2">
+                    <CalendarClock className="h-3.5 w-3.5" />
+                    {t("monitoredTables.actionSchedule")}
+                  </DropdownMenuItem>
+                  {perms.canCreateRules && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => setDeleteConfirmOpen(true)}
+                        variant="destructive"
+                        className="gap-2"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        {t("monitoredTables.actionDelete")}
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            {/* Approve/Reject sit on their own row BELOW the primary actions
+                (Save as draft / Submit for review / Run) so the review
+                decision reads as a distinct step, not another edit action. */}
             {table.status === "pending_approval" && perms.canApproveRules && (
-              <>
+              <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
@@ -482,89 +568,8 @@ function MonitoredTableDetailPage() {
                   )}
                   {t("monitoredTables.rejectAction")}
                 </Button>
-              </>
+              </div>
             )}
-            {perms.canCreateRules && (
-              <>
-                <Button
-                  variant="outline"
-                  onClick={handleSaveAsDraft}
-                  disabled={!isDirty || lifecycleBusy}
-                  className="gap-2"
-                >
-                  {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {t("monitoredTables.saveAsDraftButton")}
-                </Button>
-                <TooltipProvider delayDuration={200}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className={cn(submitDisabledNoChanges && "cursor-not-allowed")}>
-                        <Button
-                          onClick={handleSubmit}
-                          disabled={lifecycleBusy || submitDisabledNoChanges}
-                          className="gap-2"
-                        >
-                          {saveMutation.isPending || submitMutation.isPending ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <UploadCloud className="h-4 w-4" />
-                          )}
-                          {submitMutation.isPending ? t("monitoredTables.submitting") : t("monitoredTables.submitButton")}
-                        </Button>
-                      </span>
-                    </TooltipTrigger>
-                    {submitDisabledNoChanges && (
-                      <TooltipContent side="bottom">{t("monitoredTables.submitDisabledNoChangesHint")}</TooltipContent>
-                    )}
-                  </Tooltip>
-                </TooltipProvider>
-              </>
-            )}
-            {/* Run now sits to the right of Submit for review — matches
-                dqlake's binding header ordering (Save, Publish, then Run;
-                item 12). */}
-            {perms.canRunRules && (
-              <RunTableAction
-                bindingId={bindingId}
-                table={table}
-                isDirty={isDirty}
-                onSaveDraft={saveDraft}
-                {...computeRunGating(baseline.length, stagedRows.length)}
-              />
-            )}
-            {/* ⋮ menu (P23 item 13) — Schedule (dialog) + Delete (confirm),
-                mirroring the Rules Registry detail's top-right menu. */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 w-8 p-0"
-                  aria-label={t("monitoredTables.actionsMenuLabel")}
-                >
-                  <MoreVertical className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => setScheduleDialogOpen(true)} className="gap-2">
-                  <CalendarClock className="h-3.5 w-3.5" />
-                  {t("monitoredTables.actionSchedule")}
-                </DropdownMenuItem>
-                {perms.canCreateRules && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={() => setDeleteConfirmOpen(true)}
-                      variant="destructive"
-                      className="gap-2"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      {t("monitoredTables.actionDelete")}
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
         </div>
 
