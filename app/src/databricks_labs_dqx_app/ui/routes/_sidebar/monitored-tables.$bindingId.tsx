@@ -939,10 +939,9 @@ function RunTableAction({
 // Schema section page size — deliberately small so the schema section lands
 // at roughly the same height as the About section beside it: About renders
 // ten definition rows (text-xs, gap-y-2) plus the Unity Catalog link line,
-// while each schema table row is ~1.4x taller (py-2 + badge), and the table
-// adds a header row and a pagination footer. Six body rows balances the two
-// columns.
-const SCHEMA_PAGE_SIZE = 6;
+// and the schema table adds a header row and a pagination footer around its
+// compact (h-8) body rows. Eight body rows balances the two columns.
+const SCHEMA_PAGE_SIZE = 8;
 
 function AboutTab({
   table,
@@ -1091,8 +1090,8 @@ function AboutTab({
                     </thead>
                     <tbody>
                       {pagedColumns.map((c) => (
-                        <tr key={c.name} className="border-t h-10">
-                          <td className="px-3 py-2 overflow-hidden">
+                        <tr key={c.name} className="border-t h-8">
+                          <td className="px-3 py-1 overflow-hidden">
                             <TooltipProvider delayDuration={300}>
                               <Tooltip>
                                 <TooltipTrigger asChild>
@@ -1111,7 +1110,7 @@ function AboutTab({
                               </Tooltip>
                             </TooltipProvider>
                           </td>
-                          <td className="px-3 py-2 overflow-hidden">
+                          <td className="px-3 py-1 overflow-hidden">
                             <Badge
                               variant="outline"
                               className="text-[10px] font-mono max-w-full"
@@ -1120,7 +1119,7 @@ function AboutTab({
                               <span className="truncate">{c.type_name}</span>
                             </Badge>
                           </td>
-                          <td className="px-3 py-2 overflow-hidden">
+                          <td className="px-3 py-1 overflow-hidden">
                             {c.comment ? (
                               <span className="text-xs block truncate" title={c.comment}>
                                 {c.comment}
