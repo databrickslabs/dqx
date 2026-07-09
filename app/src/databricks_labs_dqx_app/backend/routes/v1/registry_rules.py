@@ -20,6 +20,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
     get_apply_rules_service,
     get_materializer,
+    get_monitored_table_service,
     get_monitored_table_version_service,
     get_permissions_service,
     get_registry_service,
@@ -40,6 +41,7 @@ from databricks_labs_dqx_app.backend.models import (
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
+from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
@@ -318,6 +320,7 @@ def approve_registry_rule(
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
     materializer: Annotated[Materializer, Depends(get_materializer)],
     version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     user_email: CurrentUser,
 ) -> RegistryRuleOut:
@@ -350,17 +353,31 @@ def approve_registry_rule(
         rule = svc.approve(rule_id, user_email)
         embeddings.embed_and_store(rule)
         rematerialized = materializer.rematerialize_for_rule(rule_id)
-        if app_settings.get_auto_upgrade_without_approval():
-            for binding_id in rematerialized:
-                try:
+        auto_upgrade = app_settings.get_auto_upgrade_without_approval()
+        for binding_id in rematerialized:
+            try:
+                if auto_upgrade:
+                    # ON: the follower's approved rows silently pick up the new
+                    # content and STAY approved, so the binding's snapshot is
+                    # re-frozen in place (its status is unchanged).
                     version_svc.refreeze_current(binding_id)
-                except Exception:  # a bookkeeping refreeze must not fail the publish
-                    logger.warning(
-                        "Auto-upgrade re-freeze for binding %s after publishing rule %s failed",
-                        binding_id,
-                        rule_id,
-                        exc_info=True,
-                    )
+                else:
+                    # OFF: a changed follower check dropped to pending_approval
+                    # (materializer Behaviour B). Roll the binding status up so
+                    # it reflects "review needed" instead of silently claiming
+                    # approved while the frozen snapshot serves the stale
+                    # version — otherwise the table-level approve path (which
+                    # requires pending_approval) stays blocked and the run keeps
+                    # using the old checks (P23 item 1).
+                    monitored_tables.rollup_status(binding_id, user_email)
+            except Exception:  # bookkeeping must not fail the publish
+                logger.warning(
+                    "Post-publish binding sync for %s after publishing rule %s failed (auto_upgrade=%s)",
+                    binding_id,
+                    rule_id,
+                    auto_upgrade,
+                    exc_info=True,
+                )
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

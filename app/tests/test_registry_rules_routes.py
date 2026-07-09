@@ -251,7 +251,7 @@ class TestLifecycleRoutes:
         embeddings = MagicMock()
         materializer = MagicMock()
         result = approve_registry_rule(
-            "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), user_email="alice@x"
+            "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), user_email="alice@x"
         )
         assert result.status == "approved"
         assert result.version == 1
@@ -262,7 +262,7 @@ class TestLifecycleRoutes:
         svc.approve.return_value = published
         embeddings = MagicMock()
         materializer = MagicMock()
-        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), user_email="alice@x")
+        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), user_email="alice@x")
         embeddings.embed_and_store.assert_called_once_with(published)
 
     def test_approve_propagates_unexpected_embedding_errors_as_500(self):
@@ -276,7 +276,7 @@ class TestLifecycleRoutes:
         materializer = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
-                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), user_email="alice@x"
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), user_email="alice@x"
             )
         assert excinfo.value.status_code == 500
 
@@ -289,7 +289,7 @@ class TestLifecycleRoutes:
         svc.approve.return_value = published
         embeddings = MagicMock()
         materializer = MagicMock()
-        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), user_email="alice@x")
+        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), user_email="alice@x")
         materializer.rematerialize_for_rule.assert_called_once_with("r1")
 
     def test_approve_propagates_unexpected_materializer_errors_as_500(self):
@@ -300,9 +300,62 @@ class TestLifecycleRoutes:
         materializer.rematerialize_for_rule.side_effect = TypeError("boom")
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
-                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), user_email="alice@x"
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), user_email="alice@x"
             )
         assert excinfo.value.status_code == 500
+
+    def test_approve_auto_upgrade_off_rolls_up_follower_bindings(self):
+        """P23 item 1 regression: with auto-upgrade OFF, a republish drops
+        changed follower checks to ``pending_approval``. The binding must be
+        rolled up (not silently left ``approved``) so the table-level approve
+        path is unblocked and the run stops serving the stale snapshot.
+        Re-freeze must NOT fire (the new content isn't approved yet)."""
+        svc = MagicMock()
+        svc.approve.return_value = _rule(status="approved", version=2)
+        embeddings = MagicMock()
+        materializer = MagicMock()
+        materializer.rematerialize_for_rule.return_value = ["b1", "b2"]
+        version_svc = MagicMock()
+        monitored_tables = MagicMock()
+        approve_registry_rule(
+            "r1",
+            svc=svc,
+            embeddings=embeddings,
+            materializer=materializer,
+            version_svc=version_svc,
+            monitored_tables=monitored_tables,
+            app_settings=_no_auto_upgrade(),
+            user_email="alice@x",
+        )
+        assert monitored_tables.rollup_status.call_count == 2
+        monitored_tables.rollup_status.assert_any_call("b1", "alice@x")
+        monitored_tables.rollup_status.assert_any_call("b2", "alice@x")
+        version_svc.refreeze_current.assert_not_called()
+
+    def test_approve_auto_upgrade_on_refreezes_and_does_not_rollup(self):
+        """With auto-upgrade ON, follower checks stay approved and the frozen
+        snapshot is re-frozen in place; the binding status is untouched."""
+        svc = MagicMock()
+        svc.approve.return_value = _rule(status="approved", version=2)
+        embeddings = MagicMock()
+        materializer = MagicMock()
+        materializer.rematerialize_for_rule.return_value = ["b1"]
+        version_svc = MagicMock()
+        monitored_tables = MagicMock()
+        app_settings = MagicMock()
+        app_settings.get_auto_upgrade_without_approval.return_value = True
+        approve_registry_rule(
+            "r1",
+            svc=svc,
+            embeddings=embeddings,
+            materializer=materializer,
+            version_svc=version_svc,
+            monitored_tables=monitored_tables,
+            app_settings=app_settings,
+            user_email="alice@x",
+        )
+        version_svc.refreeze_current.assert_called_once_with("b1")
+        monitored_tables.rollup_status.assert_not_called()
 
     def test_reject_success(self):
         svc = MagicMock()
@@ -329,7 +382,7 @@ class TestLifecycleRoutes:
         materializer = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
-                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), user_email="alice@x"
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), user_email="alice@x"
             )
         assert excinfo.value.status_code == 404
 

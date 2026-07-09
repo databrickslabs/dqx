@@ -498,6 +498,46 @@ class MonitoredTableService:
         rows = self._sql.query(sql)
         return [(row[0], row[1]) for row in rows if row and row[0]]
 
+    def rollup_status(self, binding_id: str, user_email: str) -> MonitoredTable | None:
+        """Roll a binding's own status up from its materialized checks' statuses.
+
+        Mirrors the submit/approve/reject route orchestration's
+        ``_rollup_binding_status`` (``routes/v1/monitored_tables.py``): any
+        check still ``pending_approval`` keeps the binding
+        ``pending_approval``; otherwise if any check is ``approved`` the
+        binding is ``approved``; with neither it falls back to ``draft``.
+
+        Exposed as a service method (not just a route helper) because a
+        registry-rule REPUBLISH re-materializes a follower binding's checks
+        out-of-band of any binding-level transition: with auto-upgrade OFF a
+        changed follower check silently drops to ``pending_approval``
+        (materializer Behaviour B), and without this roll-up the binding would
+        keep claiming ``approved`` while its frozen snapshot serves the stale
+        version and the table-level approve path (which requires
+        ``pending_approval``) stays blocked — the exact "the rule updated but
+        the run still uses the old checks" gap (P23 item 1).
+
+        No-op (returns the binding unchanged) when the binding has no
+        materialized checks or the rolled-up status already matches, so it is
+        safe to call unconditionally after a re-materialization. Returns
+        ``None`` when *binding_id* does not exist.
+        """
+        table = self._get(binding_id)
+        if table is None:
+            return None
+        statuses = {status for _, status in self.list_materialized_rule_statuses(binding_id)}
+        if not statuses:
+            return table
+        if "pending_approval" in statuses:
+            target = "pending_approval"
+        elif "approved" in statuses:
+            target = "approved"
+        else:
+            target = "draft"
+        if target == table.status:
+            return table
+        return self.set_status(binding_id, target, user_email)
+
     def _applied_rule_ids(self, binding_id: str) -> list[str]:
         e = escape_sql_string(binding_id)
         sql = f"SELECT id FROM {self._applied_table} WHERE binding_id = '{e}'"  # noqa: S608

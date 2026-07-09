@@ -403,6 +403,76 @@ class TestListMaterializedRuleStatuses:
 
 
 # ---------------------------------------------------------------------------
+# rollup_status (P23 item 1 — post-republish binding status sync)
+# ---------------------------------------------------------------------------
+
+
+def _rollup_dispatch(sql, *, table_status: str, materialized: list[list[str]]) -> None:
+    """Wire ``sql.query`` for a ``rollup_status`` call.
+
+    Serves the ``_get`` table row, the applied-rule ids, and the
+    materialized ``(rule_id, status)`` rows off the emitted SQL.
+    """
+
+    def _fn(query: str, **_kwargs):
+        if "FROM dqx_test.dqx_app_test.dq_monitored_tables" in query:
+            return [_table_row(binding_id="b1", status=table_status)]
+        if "FROM dqx_test.dqx_app_test.dq_applied_rules" in query:
+            return [["ar1"], ["ar2"]]
+        if "FROM dqx_test.dqx_app_test.dq_quality_rules" in query:
+            return materialized
+        return []
+
+    sql.query.side_effect = _fn
+
+
+class TestRollupStatus:
+    def test_pending_check_moves_approved_binding_to_pending(self, svc, sql):
+        # An approved binding whose republish left one check pending must be
+        # rolled up to pending_approval (P23 item 1 regression).
+        _rollup_dispatch(
+            sql,
+            table_status="approved",
+            materialized=[["ar1-0", "pending_approval"], ["ar2-0", "approved"]],
+        )
+        table = svc.rollup_status("b1", "alice@x")
+        assert table is not None
+        assert table.status == "pending_approval"
+        assert any("status = 'pending_approval'" in c.args[0] for c in sql.execute.call_args_list)
+
+    def test_all_approved_is_idempotent_noop(self, svc, sql):
+        _rollup_dispatch(
+            sql,
+            table_status="approved",
+            materialized=[["ar1-0", "approved"], ["ar2-0", "approved"]],
+        )
+        table = svc.rollup_status("b1", "alice@x")
+        assert table is not None
+        assert table.status == "approved"
+        # Already-matching target => no UPDATE emitted.
+        sql.execute.assert_not_called()
+
+    def test_no_materialized_checks_leaves_status_untouched(self, svc, sql):
+        _rollup_dispatch(sql, table_status="approved", materialized=[])
+
+        def _fn(query: str, **_kwargs):
+            if "FROM dqx_test.dqx_app_test.dq_monitored_tables" in query:
+                return [_table_row(binding_id="b1", status="approved")]
+            return []  # no applied rules
+
+        sql.query.side_effect = _fn
+        table = svc.rollup_status("b1", "alice@x")
+        assert table is not None
+        assert table.status == "approved"
+        sql.execute.assert_not_called()
+
+    def test_missing_binding_returns_none(self, svc, sql):
+        sql.query.return_value = []
+        assert svc.rollup_status("missing", "alice@x") is None
+        sql.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # delete
 # ---------------------------------------------------------------------------
 
