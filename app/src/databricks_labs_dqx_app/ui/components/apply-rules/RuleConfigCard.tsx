@@ -10,22 +10,27 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
-import { Check, ChevronDown, Loader2, MoreVertical } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { AppliedRuleOut, ColumnOut, RegistryRuleOut, RuleParameter, RuleSlot } from "@/lib/api";
+import type { AppliedRuleOut, ColumnOut, RegistryRuleOut, RegistryRuleVersionOut, RuleParameter, RuleSlot } from "@/lib/api";
+import { useListRegistryRuleVersions } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
 import { paramValueToRaw } from "@/lib/registry-rule-conversion";
 import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
 import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
 import { isV2Ast } from "@/lib/lowcodeAst";
 import { slotFamilyToLowcode, type LowcodeColumnRef } from "@/lib/lowcodeCompile";
+import { buildVersionPinMenuModel } from "@/lib/version-pin-menu";
+import selector from "@/lib/selector";
 import { MappingChips } from "./MappingChips";
 import { RESERVED_DESCRIPTION_KEY } from "@/components/RegistryRuleBadges";
 import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag } from "./shared";
@@ -230,52 +235,110 @@ export function RuleLogicDisclosure({
 // Version-pin dropdown badge
 // ---------------------------------------------------------------------------
 
+// Ported from `MemberVersionPin` (data-products) — the applied-rule pin used
+// to only offer "Latest" and "v<current> (pinned)", making v1/v2 of a rule
+// that's since reached v3 unreachable even though `dq_rule_versions` stores
+// every published snapshot and the materializer already resolves any
+// `pinned_version` via `RegistryService.get_version` (see
+// `apply_rules_service.py`/`materializer.py` — no backend change needed).
+// This now lists the rule's FULL published history: "Follow latest (vN)"
+// plus every version vN..v1 descending, with an amber stale indicator when
+// pinned < latest — matching `MemberVersionPin`'s visual language.
 function VersionPinDropdown({
-  currentVersion,
-  pinned,
+  ruleId,
+  latestVersion,
+  pinnedVersion,
   onPinChange,
   readonly,
 }: {
-  currentVersion: number;
-  pinned: boolean;
-  onPinChange: (value: "latest" | "pinned") => void;
+  ruleId: string;
+  /** The registry rule's current published version — what "Follow latest" resolves to. */
+  latestVersion: number;
+  /** `null` = follow latest; a number = pinned to that published version. */
+  pinnedVersion: number | null;
+  onPinChange: (version: number | null) => void;
   readonly: boolean;
 }) {
   const { t } = useTranslation();
-  const label = pinned ? t("monitoredTables.pinnedBadge") : t("monitoredTables.latestBadge");
+  const [open, setOpen] = useState(false);
+  const displayVersion = pinnedVersion ?? latestVersion;
+  const label = pinnedVersion !== null ? t("monitoredTables.pinnedBadge") : t("monitoredTables.latestBadge");
+  const stale = pinnedVersion !== null && pinnedVersion < latestVersion;
+
+  // Fetch the rule's full version history lazily, only once the dropdown is
+  // opened (not on every card render) — `enabled: open` plus React Query's
+  // default caching means this fires once per rule per session, not once
+  // per card mount, avoiding an N-request fan-out across a table with many
+  // applied rules (P24 fix).
+  const { data: versions, isLoading } = useListRegistryRuleVersions(ruleId, {
+    query: { enabled: open, ...selector<RegistryRuleVersionOut[]>().query },
+  });
+  const menu = buildVersionPinMenuModel((versions ?? []).map((v) => v.version), pinnedVersion, latestVersion);
+
+  const badgeInner = (
+    // FIXED width (not min-width) — regardless of "v1" vs "v12" or
+    // "Latest" vs "Pinned", this badge never reflows the card header or
+    // shifts the severity badge next to it (item 22). The stale icon is
+    // shrink-0 so the label still end-truncates instead of pushing it out.
+    <Badge
+      variant="outline"
+      className={cn(
+        "font-mono text-[10px] w-full justify-start gap-1",
+        !readonly && "cursor-pointer hover:bg-muted/60",
+      )}
+    >
+      <span className="truncate">
+        v{displayVersion} &middot; {label}
+      </span>
+      {stale && <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" aria-hidden />}
+      {!readonly && <span className="shrink-0" aria-hidden>&#x25BE;</span>}
+    </Badge>
+  );
+
+  const badge = stale ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex w-full">{badgeInner}</span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-xs">
+        {t("monitoredTables.pinStaleTooltip", { latest: latestVersion, pinned: pinnedVersion })}
+      </TooltipContent>
+    </Tooltip>
+  ) : (
+    badgeInner
+  );
 
   if (readonly) {
-    return (
-      // FIXED width (not min-width) — regardless of "v1" vs "v12" or
-      // "Latest" vs "Pinned", this badge never reflows the card header or
-      // shifts the severity badge next to it (item 22).
-      <div className="inline-flex items-center justify-center w-[104px] shrink-0">
-        <Badge variant="outline" className="font-mono text-[10px] w-full justify-start truncate">
-          v{currentVersion} &middot; {label}
-        </Badge>
-      </div>
-    );
+    return <div className="inline-flex items-center justify-center w-[104px] shrink-0">{badge}</div>;
   }
 
   return (
     <div className="inline-flex items-center justify-center w-[104px] shrink-0">
-      <DropdownMenu>
+      <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger asChild>
           <button type="button" onClick={(e) => e.stopPropagation()} className="w-full focus:outline-none">
-            <Badge variant="outline" className="font-mono text-[10px] w-full justify-start truncate cursor-pointer hover:bg-muted/60">
-              v{currentVersion} &middot; {label} &#x25BE;
-            </Badge>
+            {badge}
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-          <DropdownMenuItem onClick={() => onPinChange("latest")} className="gap-2">
-            {!pinned ? <Check className="h-3.5 w-3.5" /> : <span className="inline-block w-3.5" />}
-            <span>{t("monitoredTables.pinFollowLatest")}</span>
+          <DropdownMenuItem onClick={() => onPinChange(null)} className="gap-2">
+            {menu.followLatestChecked ? <Check className="h-3.5 w-3.5" /> : <span className="inline-block w-3.5" />}
+            <span>{t("monitoredTables.pinFollowLatestVersioned", { version: menu.latestVersion })}</span>
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onPinChange("pinned")} className="gap-2">
-            {pinned ? <Check className="h-3.5 w-3.5" /> : <span className="inline-block w-3.5" />}
-            <span className="font-mono">{t("monitoredTables.pinVersion", { version: currentVersion })}</span>
-          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {isLoading ? (
+            <DropdownMenuItem disabled className="gap-2">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <span>{t("monitoredTables.pinVersionsLoading")}</span>
+            </DropdownMenuItem>
+          ) : (
+            menu.entries.map((entry) => (
+              <DropdownMenuItem key={entry.version} onClick={() => onPinChange(entry.version)} className="gap-2">
+                {entry.checked ? <Check className="h-3.5 w-3.5" /> : <span className="inline-block w-3.5" />}
+                <span className="font-mono">{t("monitoredTables.pinVersionMenuItem", { version: entry.version })}</span>
+              </DropdownMenuItem>
+            ))
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
@@ -406,7 +469,8 @@ interface RuleConfigCardProps {
   severityValues: string[];
   canEdit: boolean;
   busy: boolean;
-  onPinChange: (value: string) => void;
+  /** `null` = follow latest; a number = pin to that published version. */
+  onPinChange: (version: number | null) => void;
   onSeverityChange: (value: string) => void;
   onRemove: () => void;
   onJumpToColumn?: (colName: string) => void;
@@ -463,7 +527,7 @@ export function RuleConfigCard({
   const slots = registryRule?.definition.slots ?? [];
   const status = computeStatus(rule, slots);
   const incomplete = status.kind === "incomplete";
-  const currentVersion = rule.pinned_version ?? registryRule?.version ?? 1;
+  const latestVersion = registryRule?.version ?? 1;
   const groupCount = (rule.column_mapping ?? []).length;
   const needsFirstMapping = slots.length > 0 && groupCount === 0;
 
@@ -573,8 +637,9 @@ export function RuleConfigCard({
           ) : (
             <>
               <VersionPinDropdown
-                currentVersion={currentVersion}
-                pinned={rule.pinned_version != null}
+                ruleId={rule.rule_id}
+                latestVersion={latestVersion}
+                pinnedVersion={rule.pinned_version ?? null}
                 onPinChange={onPinChange}
                 readonly={!canEdit}
               />

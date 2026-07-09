@@ -1635,10 +1635,15 @@ function ApplyRulesTab({
     });
   };
 
-  const handlePinChange = (rule: AppliedRuleOut, value: string) => {
-    const registryRule = ruleById.get(rule.rule_id);
-    const pinned_version = value === "latest" ? null : registryRule?.version ?? rule.pinned_version ?? null;
-    setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, pinned_version } : r)));
+  // `version` is `null` (follow latest) or a specific published version
+  // number to pin to — `VersionPinDropdown` now offers the rule's FULL
+  // version history (not just "latest" vs. "current version"), so this
+  // stages whatever version the steward picked directly instead of
+  // re-deriving it from the registry rule's live `version` (P24 fix).
+  const handlePinChange = (rule: AppliedRuleOut, version: number | null) => {
+    setStagedRows((prev) =>
+      prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, pinned_version: version } : r)),
+    );
   };
 
   const handleSeverityChange = (rule: AppliedRuleOut, value: string) => {
