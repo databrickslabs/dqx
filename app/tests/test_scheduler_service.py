@@ -761,7 +761,11 @@ class TestTickProducts:
 
         mocks.oltp.query.assert_not_called()
 
-    def test_query_predicate_filters_by_cron_and_approved_status(self, make_scheduler):
+    def test_query_predicate_filters_by_cron_and_approved_snapshot_version(self, make_scheduler):
+        # Changed: the predicate no longer gates on ``status = 'approved'``.
+        # A Table Space pending re-approval must keep running its existing
+        # frozen (``version > 0``) schedule — see the ruling documented on
+        # ``_load_scheduled_products``.
         svc, mocks, _dp = _make_product_scheduler(make_scheduler)
         mocks.oltp.query.return_value = []
 
@@ -769,7 +773,8 @@ class TestTickProducts:
 
         sql = mocks.oltp.query.call_args.args[0]
         assert "schedule_cron IS NOT NULL" in sql
-        assert "status = 'approved'" in sql
+        assert "version > 0" in sql
+        assert "status = 'approved'" not in sql
 
     def test_missing_table_is_tolerated(self, make_scheduler):
         svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
@@ -798,6 +803,47 @@ class TestTickProducts:
         svc._tick_products(datetime.now(timezone.utc))  # must not raise
 
         assert calls == ["bad", "good"]
+
+    @pytest.mark.parametrize(
+        "status,version,expect_fires",
+        [
+            ("pending_approval", 3, True),  # space rolled to review by a member's republish — vN keeps running
+            ("rejected", 2, True),  # rejected-with-a-prior-approved-version keeps running vN
+            ("approved", 1, True),  # baseline: approved keeps running
+            ("draft", 0, False),  # never approved — nothing frozen to run
+            ("pending_approval", 0, False),  # pending on the FIRST-ever approval — still nothing to run
+        ],
+    )
+    def test_scheduling_eligibility_matrix_is_version_gated_not_status_gated(
+        self, make_scheduler, status, version, expect_fires
+    ):
+        """Table Space analogue of the monitored-table matrix in ``TestTickMonitoredTables``.
+
+        Emulates the production ``WHERE schedule_cron IS NOT NULL AND
+        version > 0`` predicate in Python (no live DB in these unit tests)
+        across every review ``status`` a space can carry, resolving each
+        member per pin / latest-approved version exactly as
+        ``DataProductService.run`` always has when it does fire.
+        """
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        product = {"product_id": "p1", "status": status, "version": version, "schedule_cron": "0 9 * * *"}
+
+        would_be_returned = product["version"] > 0
+        svc._load_scheduled_products = lambda: (  # type: ignore[method-assign]
+            [{"product_id": product["product_id"], "schedule_cron": product["schedule_cron"], "schedule_tz": "UTC"}]
+            if would_be_returned
+            else []
+        )
+        assert would_be_returned == expect_fires
+
+        fired: list[str] = []
+        original = svc._tick_one_product
+        svc._tick_one_product = lambda p, now: fired.append(p["product_id"])  # type: ignore[method-assign]
+
+        svc._tick_products(datetime.now(timezone.utc))
+
+        assert (fired == ["p1"]) == expect_fires
+        svc._tick_one_product = original
 
 
 # ---------------------------------------------------------------------------
@@ -902,7 +948,12 @@ class TestTickMonitoredTables:
         svc._tick_monitored_tables(datetime.now(timezone.utc))
         mocks.oltp.query.assert_not_called()
 
-    def test_query_predicate_filters_by_cron_and_approved_status(self, make_scheduler):
+    def test_query_predicate_filters_by_cron_and_approved_snapshot_version(self, make_scheduler):
+        # Changed: the predicate no longer gates on ``status = 'approved'``.
+        # A following table rolled to ``pending_approval`` by a followed
+        # rule's republish (auto-upgrade OFF) must keep running its
+        # existing frozen (``version > 0``) schedule — see the ruling
+        # documented on ``_load_scheduled_tables``.
         svc, mocks, _br = _make_table_scheduler(make_scheduler)
         mocks.oltp.query.return_value = []
 
@@ -911,7 +962,8 @@ class TestTickMonitoredTables:
         sql = mocks.oltp.query.call_args.args[0]
         assert "dq_monitored_tables" in sql
         assert "schedule_cron IS NOT NULL" in sql
-        assert "status = 'approved'" in sql
+        assert "version > 0" in sql
+        assert "status = 'approved'" not in sql
 
     def test_missing_table_is_tolerated(self, make_scheduler):
         svc, mocks, br_service = _make_table_scheduler(make_scheduler)
@@ -920,6 +972,53 @@ class TestTickMonitoredTables:
         svc._tick_monitored_tables(datetime.now(timezone.utc))  # must not raise
 
         br_service.run_binding.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "status,version,expect_fires",
+        [
+            ("pending_approval", 3, True),  # follower rolled to review by a republish — vN keeps running
+            ("rejected", 2, True),  # rejected-with-a-prior-approved-version keeps running vN
+            ("approved", 1, True),  # baseline: approved keeps running
+            ("draft", 0, False),  # never approved — nothing frozen to run
+            ("pending_approval", 0, False),  # pending on the FIRST-ever approval — still nothing to run
+        ],
+    )
+    def test_scheduling_eligibility_matrix_is_version_gated_not_status_gated(
+        self, make_scheduler, status, version, expect_fires
+    ):
+        """Mirrors the SQL predicate's ``version > 0`` gate for every ``status`` value.
+
+        The real gate lives in the WHERE clause (asserted separately above);
+        this test emulates the DB-side filter in Python — using the exact
+        same predicate the production SQL applies — so the ruling's full
+        status/version matrix is exercised without a live database. It
+        proves ``_tick_monitored_tables`` fires purely off of whatever
+        ``_load_scheduled_tables`` (i.e. the SQL layer) returns, with no
+        additional Python-side status check that could reintroduce the
+        pause the ruling rejected.
+        """
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        binding = {"binding_id": "b1", "status": status, "version": version, "schedule_cron": "0 9 * * *"}
+
+        # Emulate ``WHERE schedule_cron IS NOT NULL AND version > 0`` — the
+        # production predicate in ``_load_scheduled_tables`` — filtering the
+        # fixture table before it ever reaches the tick.
+        would_be_returned = binding["version"] > 0
+        svc._load_scheduled_tables = lambda: (  # type: ignore[method-assign]
+            [{"binding_id": binding["binding_id"], "schedule_cron": binding["schedule_cron"], "schedule_tz": "UTC"}]
+            if would_be_returned
+            else []
+        )
+        assert would_be_returned == expect_fires
+
+        fired: list[str] = []
+        monkeypatch_target = svc._tick_one_table
+        svc._tick_one_table = lambda table, now: fired.append(table["binding_id"])  # type: ignore[method-assign]
+
+        svc._tick_monitored_tables(datetime.now(timezone.utc))
+
+        assert (fired == ["b1"]) == expect_fires
+        svc._tick_one_table = monkeypatch_target
 
 
 # ---------------------------------------------------------------------------

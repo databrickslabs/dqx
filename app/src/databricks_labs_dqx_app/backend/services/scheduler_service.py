@@ -402,8 +402,10 @@ class SchedulerService:
         except Exception:
             logger.exception("Scheduler failed processing Data Product schedules")
 
-        # Third, independent due-ness source (P21 item 14): approved
-        # monitored tables carrying a cron. Fully isolated inside
+        # Third, independent due-ness source (P21 item 14): monitored
+        # tables with an approved snapshot (``version > 0``) carrying a
+        # cron — not gated on current review ``status``, see
+        # :meth:`_load_scheduled_tables`. Fully isolated inside
         # :meth:`_tick_monitored_tables` like the product tick above.
         try:
             await asyncio.to_thread(self._tick_monitored_tables, now)
@@ -463,7 +465,13 @@ class SchedulerService:
     # common case where no timezone was configured.
 
     def _tick_products(self, now: datetime) -> None:
-        """Check every approved, cron-scheduled Data Product and trigger due ones.
+        """Check every cron-scheduled Table Space with an approved snapshot and trigger due ones.
+
+        Eligibility (see :meth:`_load_scheduled_products`) is
+        ``version > 0``, not the space's current review ``status`` — a
+        space pending re-approval keeps its schedule and resolves each
+        member per its pin / latest-approved version as normal, same as
+        an approved space.
 
         No-op when the scheduler was constructed without a
         :class:`DataProductService` (legacy deployments, or unit tests that
@@ -488,7 +496,20 @@ class SchedulerService:
                 )
 
     def _load_scheduled_products(self) -> list[dict[str, Any]]:
-        """Return approved products with a non-null ``schedule_cron``.
+        """Return cron-scheduled Table Spaces that have an approved (frozen) snapshot.
+
+        Eligibility is ``schedule_cron IS NOT NULL AND version > 0`` — NOT
+        ``status = 'approved'``. Ruling (user's words): "keep the schedule
+        running with the old frozen version. Because it's frozen so who
+        cares?" A space that has been approved at least once keeps ticking
+        on schedule even while it sits in ``pending_approval`` (e.g. rolled
+        back to review by a followed rule's republish) or ``rejected`` —
+        the run resolves each member per its pin / latest-approved binding
+        version exactly as :meth:`DataProductService.run` always has, so it
+        is the already-reviewed frozen content that executes, never
+        unreviewed draft edits. Only a space that has NEVER been approved
+        (``version == 0``) is excluded, matching
+        :func:`data_product_service._is_runnable`'s member-level gate.
 
         Best-effort like :meth:`_load_schedule_configs`: a missing
         ``dq_data_products`` table (a deployment predating Data Products, or
@@ -498,7 +519,7 @@ class SchedulerService:
         try:
             sql = (
                 f"SELECT product_id, schedule_cron, schedule_tz FROM {self._products_table} "
-                f"WHERE schedule_cron IS NOT NULL AND status = 'approved'"
+                f"WHERE schedule_cron IS NOT NULL AND version > 0"
             )
             rows = self._oltp_sql.query(sql)
         except Exception:
@@ -645,9 +666,14 @@ class SchedulerService:
     # reserved in ``schedule_config_service`` exactly like ``product:``.
     # Cron evaluation reuses :meth:`_compute_next_cron_run` (same 5-field
     # POSIX dialect + per-table ``schedule_tz`` the product path uses).
+    #
+    # Eligibility is ``version > 0``, not ``status = 'approved'`` — see
+    # :meth:`_load_scheduled_tables` for the ruling and rationale. The
+    # scheduler runs the frozen, already-reviewed snapshot regardless of
+    # whether the binding is currently mid-review for NEWER content.
 
     def _tick_monitored_tables(self, now: datetime) -> None:
-        """Check every approved, cron-scheduled monitored table and trigger due ones.
+        """Check every cron-scheduled monitored table with an approved snapshot and trigger due ones.
 
         No-op when the scheduler was constructed without a
         :class:`BindingRunService` (legacy deployments, or unit tests that
@@ -672,7 +698,23 @@ class SchedulerService:
                 )
 
     def _load_scheduled_tables(self) -> list[dict[str, Any]]:
-        """Return approved monitored tables with a non-null ``schedule_cron``.
+        """Return cron-scheduled monitored tables that have an approved (frozen) snapshot.
+
+        Eligibility is ``schedule_cron IS NOT NULL AND version > 0`` — NOT
+        ``status = 'approved'``. Ruling (user's words): "keep the schedule
+        running with the old frozen version. Because it's frozen so who
+        cares?" A following table that gets rolled to ``pending_approval``
+        because a rule it follows republished (auto-upgrade OFF) must keep
+        running its existing schedule: :meth:`_tick_one_table` calls
+        ``BindingRunService.run_binding(..., source="approved", version=None)``,
+        which always resolves the latest APPROVED snapshot
+        (``binding.version``) — an immutable, already-reviewed artifact —
+        regardless of the binding's current review *status*. Pending review
+        of new content is no reason to stop running the old, frozen version.
+        A table with ``version == 0`` (never approved) or ``rejected`` with
+        a prior approved version behave symmetrically: v0 stays excluded
+        here (nothing to run); ``rejected``-with-vN keeps firing vN, exactly
+        like ``pending_approval``-with-vN.
 
         Best-effort like :meth:`_load_scheduled_products`: a missing
         ``dq_monitored_tables`` table (a deployment predating the schedule
@@ -682,7 +724,7 @@ class SchedulerService:
         try:
             sql = (
                 f"SELECT binding_id, schedule_cron, schedule_tz FROM {self._monitored_tables_table} "
-                f"WHERE schedule_cron IS NOT NULL AND status = 'approved'"
+                f"WHERE schedule_cron IS NOT NULL AND version > 0"
             )
             rows = self._oltp_sql.query(sql)
         except Exception:
