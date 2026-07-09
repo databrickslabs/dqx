@@ -65,6 +65,8 @@ import {
   getGetMonitoredTableProfileQueryKey,
   useSubmitProfileRun,
   getProfileRunStatus,
+  useListProfileRuns,
+  getListProfileRunsQueryKey,
   useSubmitMonitoredTable,
   useApproveMonitoredTable,
   useRejectMonitoredTable,
@@ -991,9 +993,33 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
   }, [columnsQuery.data]);
 
   const [runId, setRunId] = useState<string | null>(null);
-  const [jobRunId, setJobRunId] = useState<number | null>(null);
+
+  // P23 item 4: profile-run history is already persisted per-run in
+  // dq_profiling_results (no table changes needed) — this exposes it and,
+  // critically, lets the tab re-attach to a RUNNING run after the user
+  // navigated away. Radix unmounts an inactive tab, so a run kicked off here
+  // otherwise vanishes from local state on return; without re-attaching, the
+  // in-flight run "disappears" (the exact reported bug).
+  const runsQuery = useListProfileRuns();
+  const runsForTable = useMemo(
+    () => (runsQuery.data?.data ?? []).filter((r) => r.source_table_fqn === tableFqn),
+    [runsQuery.data, tableFqn],
+  );
+  const inProgressRun = useMemo(
+    () => runsForTable.find((r) => r.status === "RUNNING") ?? null,
+    [runsForTable],
+  );
+  const pastRuns = useMemo(() => runsForTable.filter((r) => r.status !== "RUNNING"), [runsForTable]);
 
   const submitMutation = useSubmitProfileRun();
+
+  // Re-attach the poller to a server-side RUNNING run whenever we don't have a
+  // local run in flight (fresh mount / tab re-entry).
+  useEffect(() => {
+    if (runId === null && inProgressRun?.run_id) {
+      setRunId(inProgressRun.run_id);
+    }
+  }, [inProgressRun, runId]);
 
   const fetchStatus = useCallback(async () => {
     if (!runId) throw new Error("No active profile run");
@@ -1003,7 +1029,7 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
 
   useJobPolling({
     fetchStatus,
-    enabled: jobRunId !== null && runId !== null,
+    enabled: runId !== null,
     interval: 3000,
     onComplete: async (status) => {
       if (status.result_state === "SUCCESS") {
@@ -1012,17 +1038,16 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
       } else {
         toast.error(t("monitoredTables.profileToastFailed"));
       }
-      setJobRunId(null);
       setRunId(null);
+      await queryClient.invalidateQueries({ queryKey: getListProfileRunsQueryKey() });
     },
     onError: () => {
       toast.error(t("monitoredTables.profileToastFailed"));
-      setJobRunId(null);
       setRunId(null);
     },
   });
 
-  const running = submitMutation.isPending || jobRunId !== null;
+  const running = submitMutation.isPending || runId !== null;
 
   const handleRunProfile = useCallback(() => {
     submitMutation.mutate(
@@ -1030,15 +1055,15 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
       {
         onSuccess: (resp) => {
           setRunId(resp.data.run_id);
-          setJobRunId(resp.data.job_run_id);
           toast.success(t("monitoredTables.profileToastStarted"));
+          void queryClient.invalidateQueries({ queryKey: getListProfileRunsQueryKey() });
         },
         onError: (err) => {
           toast.error(extractApiError(err, t("monitoredTables.profileToastFailed")), { duration: 6000 });
         },
       },
     );
-  }, [submitMutation, tableFqn, t]);
+  }, [submitMutation, tableFqn, t, queryClient]);
 
   const summary = (profile?.summary ?? {}) as Record<string, unknown>;
   const columnStats = useMemo(() => {
@@ -1122,6 +1147,39 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
       ) : (
         <div className="py-8 text-center text-xs text-muted-foreground border border-dashed rounded-md">
           {t("monitoredTables.profileNoColumnsMatch")}
+        </div>
+      )}
+
+      {pastRuns.length > 0 && (
+        <div className="pt-2">
+          <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+            {t("monitoredTables.profileHistoryTitle")}
+          </h4>
+          <ul className="divide-y rounded-md border text-xs">
+            {pastRuns.slice(0, 10).map((r) => (
+              <li key={r.run_id} className="flex items-center justify-between gap-3 px-3 py-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Badge
+                    variant={r.status === "SUCCESS" ? "secondary" : "destructive"}
+                    className="font-mono text-[10px] shrink-0"
+                  >
+                    {r.status ?? "—"}
+                  </Badge>
+                  <span className="font-mono text-muted-foreground truncate">
+                    {r.created_at ? formatDateShort(r.created_at) : "—"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 shrink-0 text-muted-foreground">
+                  {r.rows_profiled != null && (
+                    <span className="font-mono">
+                      {t("monitoredTables.profileHistoryRows", { count: r.rows_profiled })}
+                    </span>
+                  )}
+                  {r.requesting_user && <span className="truncate max-w-[12rem]">{r.requesting_user}</span>}
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>
