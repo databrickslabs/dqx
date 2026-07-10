@@ -1677,6 +1677,62 @@ Implementation notes:
 
 All results/score React Query hooks used in Tasks 9-12 must be configured so they never auto-refetch: `staleTime: Infinity`, `refetchOnWindowFocus: false`, no `refetchInterval`. The ONLY refresh trigger is query invalidation fired when a relevant run finishes: find the existing run-status polling/completion signal in the frontend (run history / run sets UI already tracks run state) and, on a run's transition to a terminal state for a given table/product, invalidate the dq-score and quarantine-sample query keys scoped to that table/product (and the global score key). Task 9's implementer establishes the invalidation helper; Tasks 10-12 reuse it.
 
+---
+
+# PHASE 2 (user course-correction, 2026-07-10): Faithful dqlake results-UI port
+
+Tasks 8-12 built a minimal approximation (ScoreBox + flat lists). The user's standing invariant is that dqlake ports COPY the original faithfully. Phase 2 replaces the minimal surfaces with dqlake's actual results UI — trend charts, dimension/severity/rule/column breakdowns, drilldown filters, inline failing-records sample with per-cell severity tinting, CSV/XLSX export — hooked to the Phase 1 backend + metric views. The authoritative port manifest (file inventory, props, endpoint shapes, dependency list) is recorded in `.superpowers/sdd/progress.md` and re-derivable from `/Users/oliver.gordon/Documents/Code/Other/databricks-dqwatch/src/dqlake/ui/`. The dqlake source code is the spec: when in doubt, match it.
+
+**User-mandated adaptations (the ONLY intended deviations from dqlake):**
+1. Global "Results" page = the full results UI over ALL tables the viewer can access (dqlake's product-tab-style composition spanning everything), not just ScoreBox + dashboard embed.
+2. Rules-registry results = the same UI with the rule facet locked to that single rule.
+3. Genie stripped (GenieChatProvider wrappers deleted — separate follow-on spec).
+4. All user-facing strings wrapped in t() with real translations in all 4 locales (dqlake has no i18n; DQX Studio's hard invariant wins).
+5. NO idle polling: dqlake's resultsPolling (5s/15s intervals) is NOT ported as-is — queries stay `RESULTS_QUERY_OPTIONS` (staleTime Infinity) with refresh ONLY on run-completion invalidation (the user explicitly called dqlake's constant self-refreshing a defect). The activity hooks may be ported to drive a "run in progress" banner and to trigger the completion invalidation, but never an idle refetch loop.
+
+**New dependencies authorized:** `recharts ^3.8.1` and `xlsx ^0.18.5` (dqlake's own stack). Add via the app's yarn workflow + `make lock-app-dependencies`; committed lockfiles must stay public-URL-only.
+
+**Permission model unchanged:** all new backend endpoints follow Phase 1 rules — aggregate data catalog-filtered via `get_user_catalog_names` (filtered, not 403), row-level samples only through the Task 7 OBO-gated path (the new filtered failed-rows endpoint must route through the same `QuarantineSampleService` gates: OBO self-check first, fine-grained suppression, SP fetch last).
+
+### Task P2.1: Backend — results query API (dqlake shapes over the metric views)
+
+New router `routes/v1/dq_results.py` (mounted `/api/v1/dq-results`) reproducing the response shapes dqlake's UI consumes (recorded in the manifest): 
+
+- `GET /runs/{binding_or_table}` → `RunsOut {rows: [{run_id, run_ts, pass_rate, failed_tests, total_tests}]}` — per-run rollup from `mv_dq_scores` (`GROUP BY run_id`).
+- `GET /table/{table_fqn}` with `axes=trend|breakdown` + repeatable filter params (`dimension`, `severity`, `rule`, `column`, `run_id`) → `EntityResultsOut` with `by_dimension/by_severity/by_rule/by_column` GroupRows, `trend`, `trend_by_dimension/_by_severity`, `trend_counts`, `trend_failures`. Per-check rows come from `v_dq_check_results`; dimension/severity/column attributes come from joining check_name → the binding's applied-rule metadata (severity tag, dimension tag, column mapping) in the app DB — join in Python, group per axis.
+- `GET /product/{product_id}` (+ `/product/{id}/runs`) → same shapes plus `by_table` and `tables`, aggregated over member tables.
+- `GET /global` → same shapes over ALL accessible tables (adaptation #1) — reuse the product aggregation with the accessible-table universe.
+- `GET /rule/{rule_id}` → same shapes filtered to one rule across its applied tables (adaptation #2).
+- `GET /failed-rows/{table_fqn}?limit=&dimension=&severity=&rule=&column=` → `FailedRowsOut` — the Task 7 quarantine-samples path EXTENDED with server-side failure filters (rule_name direct; severity/dimension via rule-metadata join; column via failures[].columns); all Task 7 security invariants apply unchanged.
+- `GET /registries/severities` + `/registries/dimensions` → `SeverityOut[]`/`DimensionOut[]` with `{name, color, rank}` derived from the existing label definitions (rank = array order; colors from value_colors).
+- `pass_rate` fields may be emitted as numbers (frontend `toNum()` tolerates strings; prefer numbers).
+
+TDD with the established mocked-SqlExecutor route-test pattern; catalog filtering tests per endpoint; failed-rows security tests re-asserting the Task 7 invariant order.
+
+### Task P2.2: Frontend — copy dqlake pure components + add deps
+
+Add `recharts` + `xlsx` (yarn + `make lock-app-dependencies`; verify lockfiles stay public-URL-only). Copy from dqlake `ui/components/results/` essentially verbatim into `app/src/databricks_labs_dqx_app/ui/components/results/`: `ScoreTrendChart.tsx`, `DimensionBreakdown.tsx`, `FailingRecordsTable.tsx` (dqlake's — REPLACES our Task 8 version; port its per-cell severity tinting via `severityRank.ts` + severityColors/Ranks props), `severityRank.ts`, `failedRecordsExport.ts` + `DownloadFailedRecordsMenu.tsx`, `CollapseRegion.tsx`, `CollapsibleSection.tsx`, `FilterChips.tsx`, `RunPicker.tsx`, `countSeries.ts`, dqlake's `ScoreBox.tsx` (merge with/replace ours — keep dqlake's richer props: trend arrow, info tooltip). Wrap strings in t() (4 locales); verify the `--chart-1..5` CSS vars exist in the Studio theme (add if missing); re-point the one `@/lib/api` type import in failedRecordsExport. Keep existing pure-helper bun tests where still relevant; add bun tests for `severityRank`, `countSeries`, `pivot`/`pivotCounts` (dqlake exports them — test against manifest semantics).
+
+### Task P2.3: Port BindingIssuesTab → monitored-table Results tab
+
+Copy dqlake `components/bindings/BindingIssuesTab.tsx` (~769 ln) as the new Results tab body (replacing Task 9's minimal tab): RunInProgressBanner, ScoreBox + RunPicker, "Over time" collapsible (overall trend chart, score-by-dimension/severity, count charts), "Drilldown" collapsible (facet filters + FilterChips, By dimension/severity/rule/column breakdowns, Failed Records inline table + Download menu). Re-point hooks to P2.1 endpoints; strip Genie wrapper; i18n; polling per adaptation #5 (activity hooks feed the existing run-completion invalidation + a banner only). Keep exported helpers (`Facet`, `MultiFilters`, `toggleFacet`, `toNum`, `ApplicableToggle`, `COUNT_INFO`) since P2.4-P2.6 reuse them.
+
+### Task P2.4: Port ProductResultsTab → table-space Results tab
+
+Copy dqlake `components/products/ProductResultsTab.tsx` (~740 ln) replacing Task 10's tab: Average ScoreBox, overall/average trend mode with per-table dull lines, By dimension/severity, By rule, By table + By column, by-table row selection revealing that table's invalid-samples FailingRecordsTable (row-level fetch via the Task 7-gated endpoint). Re-point, strip Genie, i18n, no idle polling.
+
+### Task P2.5: Global Results page = full UI over all tables
+
+Replace Task 12's minimal page with the product-style composition spanning ALL accessible tables (adaptation #1), backed by `GET /api/v1/dq-results/global`. Keep the sidebar entry. By-table drilldown/selection reveals per-table sample (Task 7 gates).
+
+### Task P2.6: Rule results = same UI locked to one rule
+
+Replace Task 11's minimal tab content with the shared composition filtered to the rule (adaptation #2), backed by `GET /api/v1/dq-results/rule/{rule_id}`. The disabled-tab + tooltip behavior for `applied_to_count === 0` (already reviewed) is KEPT exactly as-is. Also FIX the Task 13 finding: applying/unapplying a rule must invalidate the dq-score AND dq-results query keys so the tab enables without a reload.
+
+### Task P2.7: Verification pass (repeat Task 13 protocol)
+
+Full suites + browser pass with the dqlake-fidelity lens: charts render with real trend data, breakdowns filter, drilldown chips work, per-cell severity tinting uses admin-configured severity colors, exports download, rule tab enables immediately after applying a rule, no idle refetch, global page spans all tables. Side-by-side eyeball against dqlake screenshots where possible.
+
 ## Deferred (explicitly out of scope)
 
 - Genie Space provisioning + chat UI — separate follow-on spec, once this plan's data model has shipped and has real data for Genie to query.
