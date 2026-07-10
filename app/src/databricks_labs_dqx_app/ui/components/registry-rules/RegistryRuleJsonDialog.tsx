@@ -13,7 +13,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { useCreateRegistryRule, useListCheckFunctions, type RegistryRuleOut } from "@/lib/api";
-import { buildDqxCheckJson, parseDqxCheckJson } from "@/lib/registry-rule-conversion";
+import { useLabelDefinitions } from "@/lib/api-custom";
+import { buildDqxCheckJson, parseDqxCheckJson, severityValueCriticality } from "@/lib/registry-rule-conversion";
 
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };
@@ -64,6 +65,13 @@ export function RegistryRuleJsonDialog({
   const { t } = useTranslation();
   const { data: fnData } = useListCheckFunctions();
   const checkFunctions = useMemo(() => fnData?.data?.functions ?? [], [fnData]);
+  // The rendered `criticality` honours the admin-edited severity ->
+  // criticality mapping (config page), not just the built-in defaults.
+  const { data: labelDefsData } = useLabelDefinitions();
+  const severityCriticality = useMemo(
+    () => severityValueCriticality(labelDefsData?.definitions),
+    [labelDefsData],
+  );
 
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -71,9 +79,9 @@ export function RegistryRuleJsonDialog({
 
   useEffect(() => {
     if (!open) return;
-    setText(JSON.stringify(buildDqxCheckJson(rule), null, 2));
+    setText(JSON.stringify(buildDqxCheckJson(rule, severityCriticality), null, 2));
     setError(null);
-  }, [open, rule]);
+  }, [open, rule, severityCriticality]);
 
   const createMutation = useCreateRegistryRule();
 

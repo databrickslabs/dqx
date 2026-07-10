@@ -115,6 +115,7 @@ import {
   nativeArguments,
   parseParamValue,
   paramValueToRaw,
+  severityValueCriticality,
   type ParsedCheckDefinition,
 } from "@/lib/registry-rule-conversion";
 import { RegistryRuleFormJsonDialog } from "@/components/registry-rules/RegistryRuleFormJsonDialog";
@@ -2432,13 +2433,16 @@ export function RegistryRuleFormDialog({
           open={jsonDialogOpen}
           onOpenChange={setJsonDialogOpen}
           description={t("rulesRegistry.jsonDialogDescriptionApply")}
-          checkJson={buildDqxCheckJson({
-            ...(sourceRule ?? {}),
-            mode,
-            definition: buildDefinition(),
-            polarity: polarityIsMeaningful ? polarity : null,
-            user_metadata: buildUserMetadata(),
-          } as RegistryRuleOut)}
+          checkJson={buildDqxCheckJson(
+            {
+              ...(sourceRule ?? {}),
+              mode,
+              definition: buildDefinition(),
+              polarity: polarityIsMeaningful ? polarity : null,
+              user_metadata: buildUserMetadata(),
+            } as RegistryRuleOut,
+            severityValueCriticality(labelDefinitions),
+          )}
           currentDefinition={buildDefinition()}
           currentUserMetadata={buildUserMetadata()}
           currentMode={mode}

@@ -866,6 +866,14 @@ export interface LabelDefinition {
   /** Optional value → short description map (e.g. per-dimension explanations). */
   value_descriptions?: Record<string, string> | null;
   /**
+   * Optional value → DQX criticality ("warn" | "error") map. Only meaningful
+   * on the reserved ``severity`` key: the materializer reads it to decide
+   * which criticality a registry rule's effective severity renders as (see
+   * `registry_models.resolve_criticality`); unmapped values fall back to the
+   * built-in defaults. Pruned to keys present in ``values`` on save.
+   */
+  value_criticality?: Record<string, string> | null;
+  /**
    * True for reserved, pre-seeded keys (e.g. the Rules Registry
    * ``dimension``/``severity`` tags). Such keys cannot be deleted or
    * renamed via `saveLabelDefinitions`, though their values, colors, and
