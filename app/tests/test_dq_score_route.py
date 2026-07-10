@@ -19,9 +19,15 @@ from fastapi.testclient import TestClient
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
     get_conf,
+    get_data_product_service,
     get_sp_sql_executor,
     get_user_catalog_names,
     get_user_role,
+)
+from databricks_labs_dqx_app.backend.services.data_product_service import (
+    DataProductDetail,
+    DataProductMemberDetail,
+    DataProductService,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
@@ -36,7 +42,14 @@ def sql_mock() -> MagicMock:
 
 
 @pytest.fixture
-def client(sql_mock, app_config) -> TestClient:
+def data_products_mock() -> MagicMock:
+    mock = create_autospec(DataProductService, instance=True)
+    mock.get.return_value = None
+    return mock
+
+
+@pytest.fixture
+def client(sql_mock, data_products_mock, app_config) -> TestClient:
     from databricks_labs_dqx_app.backend.routes.v1.dq_score import router
 
     app = FastAPI()
@@ -45,7 +58,39 @@ def client(sql_mock, app_config) -> TestClient:
     app.dependency_overrides[get_conf] = lambda: app_config
     app.dependency_overrides[get_user_catalog_names] = lambda: ACCESSIBLE_CATALOGS
     app.dependency_overrides[get_user_role] = lambda: UserRole.VIEWER
+    app.dependency_overrides[get_data_product_service] = lambda: data_products_mock
     return TestClient(app)
+
+
+def make_product_detail(product_id: str, table_fqns: list[str]) -> DataProductDetail:
+    """Build a DataProductDetail whose members carry the given table FQNs."""
+    members = [
+        DataProductMemberDetail(
+            id=f"m{i}",
+            binding_id=f"b{i}",
+            table_fqn=fqn,
+            binding_status="approved",
+            binding_version=1,
+            pinned_version=None,
+            rules_count=1,
+            checks_count=1,
+            runnable=True,
+        )
+        for i, fqn in enumerate(table_fqns)
+    ]
+    return DataProductDetail(product=MagicMock(name="DataProduct"), members=members, member_count=len(members))
+
+
+def metrics_rows(run_id: str, row_count: int, error_count: int) -> list[dict[str, str]]:
+    """Long-format dq_metrics rows for one run with a single check."""
+    return [
+        {"run_id": run_id, "metric_name": "input_row_count", "metric_value": str(row_count)},
+        {
+            "run_id": run_id,
+            "metric_name": "check_metrics",
+            "metric_value": json.dumps([{"check_name": "rule_a", "error_count": error_count, "warning_count": 0}]),
+        },
+    ]
 
 
 class TestCatalogGating:
@@ -134,13 +179,98 @@ class TestScoreComputation:
         assert resp.status_code == 500
 
 
+class TestProductScore:
+    def test_averages_member_tables(self, client, sql_mock, data_products_mock):
+        data_products_mock.get.return_value = make_product_detail(
+            "p1", ["main.sales.orders", "dev.sales.items"]
+        )
+
+        def per_table_rows(stmt: str) -> list[dict[str, str]]:
+            if "'main.sales.orders'" in stmt:
+                return metrics_rows("r1", 100, 10)  # score 0.9
+            return metrics_rows("r2", 100, 30)  # score 0.7
+
+        sql_mock.query_dicts.side_effect = per_table_rows
+        resp = client.get("/api/v1/dq-score/product/p1")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["product_id"] == "p1"
+        assert body["score"] == pytest.approx(0.8)  # unweighted mean of 0.9 and 0.7
+        assert [t["source_table_fqn"] for t in body["member_table_scores"]] == [
+            "main.sales.orders",
+            "dev.sales.items",
+        ]
+        assert [t["score"] for t in body["member_table_scores"]] == [pytest.approx(0.9), pytest.approx(0.7)]
+        data_products_mock.get.assert_called_once_with("p1")
+
+    def test_unknown_product_returns_404(self, client, sql_mock, data_products_mock):
+        data_products_mock.get.return_value = None
+        resp = client.get("/api/v1/dq-score/product/nope")
+        assert resp.status_code == 404
+        sql_mock.query_dicts.assert_not_called()
+
+    def test_inaccessible_catalogs_are_filtered_not_403(self, client, sql_mock, data_products_mock):
+        data_products_mock.get.return_value = make_product_detail(
+            "p1", ["main.sales.orders", "secret.hr.salaries"]
+        )
+        sql_mock.query_dicts.return_value = metrics_rows("r1", 100, 10)
+        resp = client.get("/api/v1/dq-score/product/p1")
+        assert resp.status_code == 200
+        body = resp.json()
+        # The inaccessible member is silently excluded from both the mean
+        # and the member breakdown.
+        assert [t["source_table_fqn"] for t in body["member_table_scores"]] == ["main.sales.orders"]
+        assert body["score"] == pytest.approx(0.9)
+        for call in sql_mock.query_dicts.call_args_list:
+            assert "secret.hr.salaries" not in call[0][0]
+
+    def test_unscored_members_excluded_from_mean_but_listed(self, client, sql_mock, data_products_mock):
+        data_products_mock.get.return_value = make_product_detail(
+            "p1", ["main.sales.orders", "main.sales.new_table"]
+        )
+
+        def per_table_rows(stmt: str) -> list[dict[str, str]]:
+            if "'main.sales.orders'" in stmt:
+                return metrics_rows("r1", 100, 10)  # score 0.9
+            return []  # never run -> no score
+
+        sql_mock.query_dicts.side_effect = per_table_rows
+        resp = client.get("/api/v1/dq-score/product/p1")
+        body = resp.json()
+        assert body["score"] == pytest.approx(0.9)  # mean over scored members only
+        assert len(body["member_table_scores"]) == 2
+        assert body["member_table_scores"][1]["score"] is None
+
+    def test_product_with_no_scored_members_yields_null_score(self, client, sql_mock, data_products_mock):
+        data_products_mock.get.return_value = make_product_detail("p1", ["main.sales.orders"])
+        sql_mock.query_dicts.return_value = []
+        resp = client.get("/api/v1/dq-score/product/p1")
+        assert resp.status_code == 200
+        assert resp.json()["score"] is None
+
+    def test_member_lookup_failure_maps_to_500(self, client, data_products_mock):
+        data_products_mock.get.side_effect = RuntimeError("lakebase down")
+        resp = client.get("/api/v1/dq-score/product/p1")
+        assert resp.status_code == 500
+
+    def test_empty_product_yields_null_score(self, client, sql_mock, data_products_mock):
+        data_products_mock.get.return_value = make_product_detail("p1", [])
+        resp = client.get("/api/v1/dq-score/product/p1")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["score"] is None
+        assert body["member_table_scores"] == []
+        sql_mock.query_dicts.assert_not_called()
+
+
 class TestRbac:
-    def test_route_is_gated_for_all_roles(self):
+    @pytest.mark.parametrize("operation_id", ["getTableScore", "getProductScore"])
+    def test_route_is_gated_for_all_roles(self, operation_id):
         """Score reads are viewer-visible, like the metrics routes."""
         from databricks_labs_dqx_app.backend.routes.v1 import dq_score
 
         for route in dq_score.router.routes:
-            if getattr(route, "operation_id", None) != "getTableScore":
+            if getattr(route, "operation_id", None) != operation_id:
                 continue
             for dep in route.dependencies:
                 for cell in getattr(dep.dependency, "__closure__", None) or ():
@@ -153,4 +283,4 @@ class TestRbac:
                             UserRole.VIEWER,
                         }
                         return
-        raise AssertionError("No require_role dependency found for getTableScore")
+        raise AssertionError(f"No require_role dependency found for {operation_id}")

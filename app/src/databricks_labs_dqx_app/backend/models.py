@@ -1345,6 +1345,20 @@ class TableScoreOut(BaseModel):
     failed_tests: int = 0
 
 
+class ProductScoreOut(BaseModel):
+    """Aggregate DQ score for a data product (Table Space).
+
+    *score* is the unweighted mean of the member tables' latest scores,
+    restricted to the members whose catalog the requesting user can
+    access; members with no computable score are listed but excluded
+    from the mean. None when no accessible member has a score.
+    """
+
+    product_id: str
+    score: float | None = None
+    member_table_scores: list[TableScoreOut] = Field(default_factory=list)
+
+
 class CatalogOut(BaseModel):
     name: str
     comment: str | None = None

@@ -1664,6 +1664,22 @@ export interface PrincipalSearchOut {
   secondary?: PrincipalSearchOutSecondary;
 }
 
+export type ProductScoreOutScore = number | null;
+
+/**
+ * Aggregate DQ score for a data product (Table Space).
+
+*score* is the unweighted mean of the member tables' latest scores,
+restricted to the members whose catalog the requesting user can
+access; members with no computable score are listed but excluded
+from the mean. None when no accessible member has a score.
+ */
+export interface ProductScoreOut {
+  product_id: string;
+  score?: ProductScoreOutScore;
+  member_table_scores?: TableScoreOut[];
+}
+
 export type ProfileResultsOutRowsProfiled = number | null;
 
 export type ProfileResultsOutColumnsProfiled = number | null;
@@ -15859,6 +15875,158 @@ export function useGetTableScoreSuspense<TData = Awaited<ReturnType<typeof getTa
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetTableScoreSuspenseQueryOptions(tableFqn,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Return the unweighted mean DQ score over a data product's member tables.
+
+Members in catalogs the requesting user cannot access are silently
+excluded (filtered, not 403'd) — the same catalog gate as the table
+endpoint, applied per member. Members with no computable score are
+listed with a null score but excluded from the mean.
+ * @summary Get Product Score
+ */
+export const getProductScore = (
+    productId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ProductScoreOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/dq-score/product/${productId}`,options
+    );
+  }
+
+
+
+
+export const getGetProductScoreQueryKey = (productId?: string,) => {
+    return [
+    `/api/v1/dq-score/product/${productId}`
+    ] as const;
+    }
+
+    
+export const getGetProductScoreQueryOptions = <TData = Awaited<ReturnType<typeof getProductScore>>, TError = AxiosError<HTTPValidationError>>(productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProductScoreQueryKey(productId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProductScore>>> = ({ signal }) => getProductScore(productId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(productId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getProductScore>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetProductScoreQueryResult = NonNullable<Awaited<ReturnType<typeof getProductScore>>>
+export type GetProductScoreQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetProductScore<TData = Awaited<ReturnType<typeof getProductScore>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductScore>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProductScore>>,
+          TError,
+          Awaited<ReturnType<typeof getProductScore>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProductScore<TData = Awaited<ReturnType<typeof getProductScore>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductScore>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProductScore>>,
+          TError,
+          Awaited<ReturnType<typeof getProductScore>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProductScore<TData = Awaited<ReturnType<typeof getProductScore>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Product Score
+ */
+
+export function useGetProductScore<TData = Awaited<ReturnType<typeof getProductScore>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetProductScoreQueryOptions(productId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetProductScoreSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getProductScore>>, TError = AxiosError<HTTPValidationError>>(productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProductScoreQueryKey(productId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProductScore>>> = ({ signal }) => getProductScore(productId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductScore>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetProductScoreSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getProductScore>>>
+export type GetProductScoreSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetProductScoreSuspense<TData = Awaited<ReturnType<typeof getProductScore>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProductScoreSuspense<TData = Awaited<ReturnType<typeof getProductScore>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProductScoreSuspense<TData = Awaited<ReturnType<typeof getProductScore>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Product Score
+ */
+
+export function useGetProductScoreSuspense<TData = Awaited<ReturnType<typeof getProductScore>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetProductScoreSuspenseQueryOptions(productId,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
