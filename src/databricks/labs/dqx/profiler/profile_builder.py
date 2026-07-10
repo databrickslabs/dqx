@@ -9,10 +9,27 @@ from pyspark.sql import DataFrame
 from pyspark.sql import types as T, functions as F
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileBuilder
+from databricks.labs.dqx.profiler.profile_options import (
+    PROFILE_OPTION_DISTINCT_RATIO,
+    PROFILE_OPTION_FILTER,
+    PROFILE_OPTION_MAX_EMPTY_RATIO,
+    PROFILE_OPTION_MAX_IN_COUNT,
+    PROFILE_OPTION_MAX_NULL_RATIO,
+    PROFILE_OPTION_NUM_SIGMAS,
+    PROFILE_OPTION_OUTLIER_COLUMNS,
+    PROFILE_OPTION_REMOVE_OUTLIERS,
+    PROFILE_OPTION_ROUND,
+    PROFILE_OPTION_TRIM_STRINGS,
+    PROFILE_OPTION_OUTLIERS_RATIO,
+)
+from databricks.labs.dqx.calculations_utils import calculate_median_absolute_deviation_bounds
 
 # Type alias for annotations; use TEXT_TYPES for isinstance() checks.
 TextType = T.CharType | T.StringType | T.VarcharType
 TEXT_TYPES: tuple[type[TextType], ...] = (T.CharType, T.StringType, T.VarcharType)
+
+NumericType = T.IntegerType | T.LongType | T.FloatType | T.DoubleType
+NUMERICAL_TYPES: tuple[type[NumericType], ...] = (T.IntegerType, T.LongType, T.FloatType, T.DoubleType)
 
 PROFILE_BUILDER_REGISTRY: dict[str, DQProfileBuilder] = {}
 logger = logging.getLogger(__name__)
@@ -81,8 +98,8 @@ def make_is_in_profile(
     if total_count == 0:
         return None
 
-    max_in_count = profiler_options.get("max_in_count", 0)
-    max_distinct_ratio = profiler_options.get("distinct_ratio", 0.0)
+    max_in_count = profiler_options.get(PROFILE_OPTION_MAX_IN_COUNT, 0)
+    max_distinct_ratio = profiler_options.get(PROFILE_OPTION_DISTINCT_RATIO, 0.0)
 
     col = df.columns[0]
     distinct_values = [row[0] for row in df.select(col).distinct().collect()]
@@ -99,7 +116,7 @@ def make_is_in_profile(
             name="is_in",
             column=column_name,
             parameters={"in": distinct_values},
-            filter=profiler_options.get("filter", None),
+            filter=profiler_options.get(PROFILE_OPTION_FILTER, None),
         )
 
     return None
@@ -155,6 +172,19 @@ def _is_text(column_type: T.DataType) -> bool:
     return isinstance(column_type, TEXT_TYPES)
 
 
+def _is_numeric(column_type: T.DataType) -> bool:
+    """
+    Validates that the input column type is a Spark numeric type.
+
+    Args:
+        column_type: Input column type
+
+    Returns:
+         True if the column is a Spark numeric type, otherwise False
+    """
+    return isinstance(column_type, NUMERICAL_TYPES)
+
+
 def _make_null_or_empty_profile(
     column_name: str, profiler_metrics: dict[str, Any], profiler_options: dict[str, Any]
 ) -> DQProfile | None:
@@ -177,9 +207,9 @@ def _make_null_or_empty_profile(
     null_ratio = null_count / total_count
     empty_count = profiler_metrics.get("empty_count", 0)
     empty_ratio = empty_count / total_count
-    max_null_ratio = profiler_options.get("max_null_ratio", 0.0)
-    max_empty_ratio = profiler_options.get("max_empty_ratio", 0.0)
-    trim_strings = profiler_options.get("trim_strings", True)
+    max_null_ratio = profiler_options.get(PROFILE_OPTION_MAX_NULL_RATIO, 0.0)
+    max_empty_ratio = profiler_options.get(PROFILE_OPTION_MAX_EMPTY_RATIO, 0.0)
+    trim_strings = profiler_options.get(PROFILE_OPTION_TRIM_STRINGS, True)
 
     not_null = null_ratio <= max_null_ratio
     not_empty = empty_ratio <= max_empty_ratio
@@ -196,7 +226,7 @@ def _make_null_or_empty_profile(
             column=column_name,
             description=description,
             parameters={"trim_strings": trim_strings},
-            filter=profiler_options.get("filter", None),
+            filter=profiler_options.get(PROFILE_OPTION_FILTER, None),
         )
 
     if not_null:
@@ -209,7 +239,7 @@ def _make_null_or_empty_profile(
             name="is_not_null",
             column=column_name,
             description=description,
-            filter=profiler_options.get("filter", None),
+            filter=profiler_options.get(PROFILE_OPTION_FILTER, None),
         )
 
     if not_empty:
@@ -222,7 +252,7 @@ def _make_null_or_empty_profile(
                 else None
             ),
             parameters={"trim_strings": trim_strings},
-            filter=profiler_options.get("filter", None),
+            filter=profiler_options.get(PROFILE_OPTION_FILTER, None),
         )
 
     return None
@@ -247,7 +277,7 @@ def _make_null_profile(
     if total_count == 0:
         return None
     null_ratio = null_count / total_count
-    max_null_ratio = profiler_options.get("max_null_ratio", 0.0)
+    max_null_ratio = profiler_options.get(PROFILE_OPTION_MAX_NULL_RATIO, 0.0)
 
     if null_ratio <= max_null_ratio:
         return DQProfile(
@@ -258,7 +288,7 @@ def _make_null_profile(
                 if null_count > 0
                 else None
             ),
-            filter=profiler_options.get("filter", None),
+            filter=profiler_options.get(PROFILE_OPTION_FILTER, None),
         )
 
     return None
@@ -303,11 +333,11 @@ def _remove_outliers(column_name: str, profiler_options: dict[str, Any]) -> bool
     Returns:
         True if outlier removal should be applied to this column, otherwise False.
     """
-    remove_outliers = profiler_options.get("remove_outliers", True)
+    remove_outliers = profiler_options.get(PROFILE_OPTION_REMOVE_OUTLIERS, True)
     if not remove_outliers:
         return False
 
-    outlier_columns = profiler_options.get("outlier_columns", [])
+    outlier_columns = profiler_options.get(PROFILE_OPTION_OUTLIER_COLUMNS, [])
     if not outlier_columns:
         return True  # empty list means apply to all columns
     return column_name in outlier_columns
@@ -363,7 +393,7 @@ def _make_min_max_profile_with_outlier_removal(
         column=column_name,
         description=description,
         parameters={"min": min_limit, "max": max_limit},
-        filter=profiler_options.get("filter", None),
+        filter=profiler_options.get(PROFILE_OPTION_FILTER, None),
     )
 
 
@@ -444,7 +474,7 @@ def _make_min_max_profile_without_outlier_removal(
         column=column_name,
         parameters={"min": min_value, "max": max_value},
         description="Real min/max values were used",
-        filter=profiler_options.get("filter", None),
+        filter=profiler_options.get(PROFILE_OPTION_FILTER, None),
     )
 
 
@@ -467,7 +497,7 @@ def _get_min_max_limits(
     max_value = aggregates.get("max_value")
     mean_value = aggregates.get("mean_value")
     stddev_value = aggregates.get("stddev_value")
-    num_sigmas = profiler_options.get("num_sigmas", 3)
+    num_sigmas = profiler_options.get(PROFILE_OPTION_NUM_SIGMAS, 3)
 
     if mean_value is None or stddev_value is None:
         adjusted_min_value, adjusted_max_value = _adjust_min_max_limits(
@@ -560,7 +590,7 @@ def _round_value(value: Any, rounding_direction: str, profiler_options: dict[str
     Returns:
         The rounded value, or the original value if rounding is not enabled.
     """
-    if value is None or not profiler_options.get("round", False):
+    if value is None or not profiler_options.get(PROFILE_OPTION_ROUND, False):
         return value
 
     if isinstance(value, datetime.datetime):
@@ -646,3 +676,53 @@ def _round_decimal(value: decimal.Decimal, rounding_direction: str) -> decimal.D
     if rounding_direction == "up":
         return value.to_integral_value(rounding=decimal.ROUND_CEILING)
     return value
+
+
+@register_profile_builder("has_no_outliers")
+def make_has_no_outliers_profile(
+    df: DataFrame,
+    column_name: str,
+    column_type: T.DataType,
+    profiler_metrics: dict[str, Any],
+    profiler_options: dict[str, Any],
+) -> DQProfile | None:
+    """
+
+    Creates an `has_no_outliers` profile by checking whether input numerical column has outliers using MAD method,
+    the same one that is used by `has_no_outliers` rule.
+
+    Args:
+        column_name: Input column name
+        column_type: Input column type
+        profiler_metrics: Column-level statistics computed by the DQProfiler
+        profiler_options: Configuration options for the DQProfiler
+
+    Returns:
+        A DQProfile if the correct conditions are met, otherwise None
+    """
+    if not _is_numeric(column_type):
+        return None
+
+    total_count = profiler_metrics.get("count", 0)
+    if total_count == 0:
+        return None
+
+    filter_condition = profiler_options.get(PROFILE_OPTION_FILTER, None)
+    bounds = calculate_median_absolute_deviation_bounds(df, column_name, filter_condition)
+    if bounds is None:
+        return None
+
+    lower_bound, upper_bound = bounds
+    outliers_count = df.filter((F.col(column_name) < lower_bound) | (F.col(column_name) > upper_bound)).count()
+
+    outliers_ratio = float(outliers_count) / total_count
+    outliers_ratio_threshold = profiler_options[PROFILE_OPTION_OUTLIERS_RATIO]
+    if outliers_ratio < outliers_ratio_threshold:
+        return DQProfile(
+            name="has_no_outliers",
+            description=f"Column {column_name} has {outliers_ratio* 100:.1f}% of outliers (allowed: {outliers_ratio_threshold* 100:.1f}%). Lower boundary - {lower_bound}, upper boundary - {upper_bound}.",
+            column=column_name,
+            filter=filter_condition,
+        )
+
+    return None

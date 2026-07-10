@@ -19,6 +19,17 @@ from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
 from databricks.labs.dqx.profiler.profile import DQProfile
 from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, TEXT_TYPES
+from databricks.labs.dqx.profiler.profile_options import (
+    DEFAULT_PROFILE_OPTIONS,
+    PROFILE_OPTION_FILTER,
+    PROFILE_OPTION_LIMIT,
+    PROFILE_OPTION_LLM_PRIMARY_KEY_DETECTION,
+    PROFILE_OPTION_SAMPLE_BY_COLUMN,
+    PROFILE_OPTION_SAMPLE_BY_VALUES_LIMIT,
+    PROFILE_OPTION_SAMPLE_FRACTION,
+    PROFILE_OPTION_SAMPLE_SEED,
+    PROFILE_OPTION_TRIM_STRINGS,
+)
 from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.telemetry import telemetry_logger
 
@@ -46,25 +57,6 @@ class DQProfiler(DQEngineBase):
 
         llm_model_config = llm_model_config or LLMModelConfig()
         self.llm_engine = DQLLMEngine(model_config=llm_model_config, spark=self.spark) if LLM_ENABLED else None
-
-    default_profile_options = {
-        "round": True,  # round the min/max values
-        "max_in_count": 10,  # generate is_in if we have less than 1 percent of distinct values
-        "distinct_ratio": 0.05,  # generate is_in if we have less than 1 percent of distinct values
-        "max_null_ratio": 0.01,  # generate is_not_null if we have less than 1 percent of nulls
-        "remove_outliers": True,  # remove outliers
-        "outlier_columns": [],  # remove outliers in the columns
-        "num_sigmas": 3,  # number of sigmas to use when remove_outliers is True
-        "trim_strings": True,  # trim whitespace from strings
-        "max_empty_ratio": 0.01,  # generate is_not_null_or_empty rule if we have less than 1 percent of empty strings
-        "sample_fraction": 0.3,  # fraction of data to sample. float for uniform sample, or dict for per-stratum sample (requires sample_by_column)
-        "sample_seed": None,  # seed for sampling
-        "sample_by_column": None,  # column used to stratify the sample via DataFrame.sampleBy
-        "sample_by_values_limit": 1000,  # max distinct sample_by_column values collected when sampling uniformly
-        "limit": 1000,  # limit the number of samples
-        "filter": None,  # filter to apply to the dataset
-        "llm_primary_key_detection": True,  # detect primary keys
-    }
 
     @staticmethod
     def get_columns_or_fields(columns: list[T.StructField]) -> list[T.StructField]:
@@ -111,7 +103,7 @@ class DQProfiler(DQEngineBase):
         if options is None:
             options = {}
 
-        options = {**self.default_profile_options, **options}  # merge default options with user-provided options
+        options = {**DEFAULT_PROFILE_OPTIONS, **options}  # merge default options with user-provided options
         df = self._sample(df, options)
 
         dq_rules: list[DQProfile] = []
@@ -297,7 +289,7 @@ class DQProfiler(DQEngineBase):
         """
         matched_options = DQProfiler._match_options_list(table, options)
         sorted_options = DQProfiler._sort_options_list(table, matched_options)
-        built_options = DQProfiler.default_profile_options.copy()
+        built_options = DEFAULT_PROFILE_OPTIONS.copy()
         for opt in sorted_options:
             if opt and isinstance(opt, dict):
                 built_options |= opt.get("options") or {}
@@ -340,12 +332,12 @@ class DQProfiler(DQEngineBase):
 
     @staticmethod
     def _sample(df: DataFrame, opts: dict[str, Any]) -> DataFrame:
-        sample_fraction = opts.get("sample_fraction", None)
-        sample_seed = opts.get("sample_seed", None)
-        sample_by_column = opts.get("sample_by_column", None)
-        sample_by_values_limit = opts.get("sample_by_values_limit", None)
-        limit = opts.get("limit", None)
-        filter_dataset = opts.get("filter", None)
+        sample_fraction = opts.get(PROFILE_OPTION_SAMPLE_FRACTION, None)
+        sample_seed = opts.get(PROFILE_OPTION_SAMPLE_SEED, None)
+        sample_by_column = opts.get(PROFILE_OPTION_SAMPLE_BY_COLUMN, None)
+        sample_by_values_limit = opts.get(PROFILE_OPTION_SAMPLE_BY_VALUES_LIMIT, None)
+        limit = opts.get(PROFILE_OPTION_LIMIT, None)
+        filter_dataset = opts.get(PROFILE_OPTION_FILTER, None)
 
         if filter_dataset:
             df = df.filter(filter_dataset)
@@ -444,7 +436,7 @@ class DQProfiler(DQEngineBase):
             summary_stats: Summary statistics dictionary to update with profiler results.
             total_count: Total number of rows in the input DataFrame.
         """
-        trim_strings = opts.get("trim_strings", True)
+        trim_strings = opts.get(PROFILE_OPTION_TRIM_STRINGS, True)
 
         for field in self.get_columns_or_fields(df_cols):
             field_name = field.name
@@ -521,7 +513,7 @@ class DQProfiler(DQEngineBase):
             summary_stats: Summary statistics dictionary to update with PK detection results
             opts: A dictionary of options for profiling.
         """
-        if not LLM_ENABLED or not opts.get("llm_primary_key_detection", False):
+        if not LLM_ENABLED or not opts.get(PROFILE_OPTION_LLM_PRIMARY_KEY_DETECTION, False):
             return
 
         logger.info("🤖 Starting LLM-based primary key detection for DataFrame")
@@ -551,7 +543,7 @@ class DQProfiler(DQEngineBase):
                             name="is_unique",
                             column=",".join(valid_columns),
                             parameters={"nulls_distinct": False, "reasoning": reasoning, "confidence": confidence},
-                            filter=opts.get("filter", None),
+                            filter=opts.get(PROFILE_OPTION_FILTER, None),
                             description=f"LLM-detected primary key columns: {', '.join(valid_columns)}",
                         )
                     )

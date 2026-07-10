@@ -1,5 +1,5 @@
 import decimal
-from unittest.mock import create_autospec
+from unittest.mock import create_autospec, patch
 
 import pytest
 import pyspark.sql.types as T
@@ -8,6 +8,7 @@ from pyspark.sql import DataFrame
 from databricks.labs.dqx.profiler.profile import DQProfile
 from databricks.labs.dqx.profiler.profile_builder import (
     PROFILE_BUILDER_REGISTRY,
+    make_has_no_outliers_profile,
     make_is_in_profile,
     make_min_max_profile,
     make_null_or_empty_profile,
@@ -30,6 +31,7 @@ def test_profile_builder_registry_contains_expected_builders():
     assert "null_or_empty" in PROFILE_BUILDER_REGISTRY
     assert "is_in" in PROFILE_BUILDER_REGISTRY
     assert "min_max" in PROFILE_BUILDER_REGISTRY
+    assert "has_no_outliers" in PROFILE_BUILDER_REGISTRY
 
 
 def test_register_profile_builder_registers_and_builder_is_callable():
@@ -504,3 +506,23 @@ def test_min_max_rounding_enabled_for_decimal_type(mock_df):
     assert profile is not None
     assert profile.parameters["min"] == decimal.Decimal("1")
     assert profile.parameters["max"] == decimal.Decimal("10")
+
+
+# ---------------------------------------------------------------------------
+# make_has_no_outliers_profile
+# ---------------------------------------------------------------------------
+
+def _make_df_with_outlier_count(outlier_count: int) -> DataFrame:
+    df = create_autospec(DataFrame)
+    df.filter.return_value.count.return_value = outlier_count
+    return df
+
+@pytest.mark.parametrize("column_type", [T.StringType(), T.BooleanType(), T.DateType(), T.TimestampType()])
+def test_has_no_outliers_non_numeric_type_returns_none(mock_df, column_type):
+    profile = make_has_no_outliers_profile(mock_df, "col", column_type, {"count": 10}, {"outliers_ratio": 0.01})
+    assert profile is None
+
+
+def test_has_no_outliers_empty_dataframe_returns_none(mock_df):
+    profile = make_has_no_outliers_profile(mock_df, "col", T.IntegerType(), {"count": 0}, {"outliers_ratio": 0.01})
+    assert profile is None
