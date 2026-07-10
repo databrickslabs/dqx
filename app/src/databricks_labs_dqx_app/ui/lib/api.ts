@@ -134,7 +134,7 @@ export interface BatchSaveRulesIn {
   /** List of check metadata dictionaries */
   checks: BatchSaveRulesInChecksItem[];
   /** Origin of the rules: ui, imported, or ai */
-  source?: string;
+  source?: RuleSource;
 }
 
 export type BatchSaveRulesOutFailedItem = {[key: string]: string};
@@ -989,6 +989,35 @@ export interface RuleCatalogEntryOut {
   updated_at?: RuleCatalogEntryOutUpdatedAt;
 }
 
+/**
+ * Source (e.g. 'ui', 'profiler') where the rule was created.
+ */
+export type RuleSource = typeof RuleSource[keyof typeof RuleSource];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RuleSource = {
+  ui: 'ui',
+  sql: 'sql',
+  profiler: 'profiler',
+  import: 'import',
+  ai: 'ai',
+} as const;
+
+/**
+ * Lifecycle status of a rule in the catalog.
+ */
+export type RuleStatus = typeof RuleStatus[keyof typeof RuleStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const RuleStatus = {
+  draft: 'draft',
+  pending_approval: 'pending_approval',
+  approved: 'approved',
+  rejected: 'rejected',
+} as const;
+
 export type RunConfigInputConfig = InputConfig | null;
 
 export type RunConfigOutputConfig = OutputConfig | null;
@@ -1086,7 +1115,7 @@ export interface SaveRulesIn {
   /** List of check metadata dictionaries */
   checks: SaveRulesInChecksItem[];
   /** Origin of the rules: ui, imported, or ai */
-  source?: string;
+  source?: RuleSource;
   /** If set, update existing rule instead of creating */
   rule_id?: SaveRulesInRuleId;
 }
@@ -1160,7 +1189,7 @@ export type SetStatusInExpectedVersion = number | null;
 
 export interface SetStatusIn {
   /** New status: draft | pending_approval | approved | rejected */
-  status: string;
+  status: RuleStatus;
   /** If provided, the update is rejected when the current version does not match (optimistic concurrency). */
   expected_version?: SetStatusInExpectedVersion;
 }

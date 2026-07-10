@@ -46,8 +46,9 @@ from typing import Any, Protocol
 # boundary wrappers; deferring the heavy psycopg import to the
 # executor's own users keeps this module importable in Delta-only
 # environments (e.g. the dqx-library integration test rig).
-from ..pg_cursor_helpers import run_parameterized_sql, run_trusted_sql
-from ..sql_executor import OltpExecutorProtocol
+from databricks_labs_dqx_app.backend.pg_cursor_helpers import run_parameterized_sql, run_trusted_sql
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
+from databricks_labs_dqx_app.backend.models import RuleSource, RuleStatus
 
 logger = logging.getLogger(__name__)
 
@@ -124,9 +125,9 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  updated_by TEXT,"
             "  updated_at TIMESTAMPTZ,"
             "  CONSTRAINT chk_dq_quality_rules_status "
-            "    CHECK (status IN ('draft','pending_approval','approved','rejected')),"
+            f"    CHECK (status IN ({RuleStatus.sql_in_list()})),"
             "  CONSTRAINT chk_dq_quality_rules_source "
-            "    CHECK (source IN ('ui','sql','profiler','import','ai'))"
+            f"    CHECK (source IN ({RuleSource.sql_in_list()}))"
             ");"
             # Two read-paths dominate: by table_fqn (rules-list page) and
             # by status filter (review queue). One composite index covers

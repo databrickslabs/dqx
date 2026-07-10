@@ -632,14 +632,14 @@ function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, 
                             <Badge
                               variant="outline"
                               className={`text-[10px] py-0 px-1.5 ${
-                                rule.source === "imported"
+                                rule.source === "import"
                                   ? "border-blue-500 text-blue-600"
                                   : rule.source === "ai"
                                     ? "border-purple-500 text-purple-600"
                                     : "border-emerald-500 text-emerald-600"
                               }`}
                             >
-                              {rule.source === "imported" ? t("rulesActive.imported") : rule.source === "ai" ? t("rulesActive.ai") : t("rulesActive.ui")}
+                              {rule.source === "import" ? t("rulesActive.imported") : rule.source === "ai" ? t("rulesActive.ai") : t("rulesActive.ui")}
                             </Badge>
                           </td>
                           <td className="p-2 px-4 text-xs text-muted-foreground">{formatUser(rule.created_by)}</td>
