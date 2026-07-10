@@ -1,5 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { countUpValue, formatCount, formatScorePercent } from "./statFormat";
+import {
+  countUpValue,
+  deltaDirection,
+  deltaPoints,
+  formatCount,
+  formatScorePercent,
+} from "./statFormat";
 
 describe("countUpValue", () => {
   it("starts at 0 and lands exactly on the target", () => {
@@ -48,5 +54,31 @@ describe("formatScorePercent", () => {
     expect(formatScorePercent(0.9134, 91.34)).toBe("91.3%");
     expect(formatScorePercent(1, 100)).toBe("100.0%");
     expect(formatScorePercent(0, 0)).toBe("0.0%");
+  });
+});
+
+describe("deltaDirection (dqlake DeltaIndicator thresholds)", () => {
+  it("reads >= +0.05pp as up", () => {
+    expect(deltaDirection(0.0005)).toBe("up");
+    expect(deltaDirection(0.05)).toBe("up");
+  });
+
+  it("reads <= -0.05pp as down", () => {
+    expect(deltaDirection(-0.0005)).toBe("down");
+    expect(deltaDirection(-0.1)).toBe("down");
+  });
+
+  it("reads sub-0.05pp moves (either sign) and zero as flat", () => {
+    expect(deltaDirection(0)).toBe("flat");
+    expect(deltaDirection(0.0004)).toBe("flat");
+    expect(deltaDirection(-0.0004)).toBe("flat");
+  });
+});
+
+describe("deltaPoints", () => {
+  it("renders the absolute change in percentage points to one decimal", () => {
+    expect(deltaPoints(0.0634)).toBe("6.3");
+    expect(deltaPoints(-0.05)).toBe("5.0");
+    expect(deltaPoints(0)).toBe("0.0");
   });
 });

@@ -30,6 +30,12 @@ row (NULL score) so "computed, nothing found" is distinguishable from
 Scores are PUBLISHED-only by construction (``run_mode = 'published'``
 filter on the metric view — the run-level tag stamped at run assembly,
 with the legacy run_type heuristic resolved inside the shaping view).
+
+P3.5 addition — ``dq_score_history``: every SCORED upsert (any scope)
+also appends one append-only trend row and count-trims the scope to
+:data:`HISTORY_KEEP_ROWS`. ``get_history`` reads the last N points for
+one scope (the homepage's global score trend + delta) — Postgres-only,
+no warehouse.
 """
 
 from __future__ import annotations
@@ -52,6 +58,12 @@ SCOPE_PRODUCT = "product"
 SCOPE_GLOBAL = "global"
 # The single row key used for the global scope.
 GLOBAL_SCOPE_KEY = "global"
+
+# How many ``dq_score_history`` rows are kept per scope. Every scored
+# upsert appends one trend point and count-trims to this cap, so the
+# table's growth is bounded by (scopes x cap) with no retention sweep.
+# 200 comfortably covers the homepage trend read (last ~30 points).
+HISTORY_KEEP_ROWS = 200
 
 
 @dataclass(frozen=True)
@@ -106,6 +118,7 @@ class ScoreCacheService:
         self._oltp = oltp
         self._warehouse_sql = warehouse_sql
         self._cache_table = oltp.fqn("dq_score_cache")
+        self._history_table = oltp.fqn("dq_score_history")
         self._members_table = oltp.fqn("dq_data_product_members")
         self._monitored_table = oltp.fqn("dq_monitored_tables")
 
@@ -295,6 +308,39 @@ class ScoreCacheService:
             )
         return out
 
+    def get_history(self, scope_type: str, scope_key: str, limit: int = 30) -> list[CachedScore]:
+        """Last *limit* scored trend points for one scope, oldest first.
+
+        Reads the ``dq_score_history`` append rows (newest first, capped
+        by *limit*) and returns them ascending for charting. Every row
+        carries a non-NULL score by construction (NULL-score recomputes
+        never append — see :meth:`_append_history`). ``latest_run_id``
+        is not recorded in history, so it is always None here.
+        """
+        e_type = escape_sql_string(scope_type)
+        e_key = escape_sql_string(scope_key)
+        run_time = self._oltp.ts_text("run_time")
+        computed_at = self._oltp.ts_text("computed_at")
+        stmt = (
+            f"SELECT score, failed_tests, total_tests, "
+            f"{run_time} AS run_time, {computed_at} AS computed_at "
+            f"FROM {self._history_table} "  # noqa: S608
+            f"WHERE scope_type = '{e_type}' AND scope_key = '{e_key}' "
+            f"ORDER BY computed_at DESC LIMIT {int(limit)}"
+        )
+        points = [
+            parse_cached_score(
+                row.get("score"),
+                row.get("failed_tests"),
+                row.get("total_tests"),
+                row.get("computed_at"),
+                run_time=row.get("run_time"),
+            )
+            for row in self._oltp.query_dicts(stmt)
+        ]
+        points.reverse()
+        return points
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -325,4 +371,54 @@ class ScoreCacheService:
                 ),
                 "computed_at": RawSql("current_timestamp()"),
             },
+        )
+        if score is not None:
+            self._append_history(
+                scope_type,
+                scope_key,
+                score=score,
+                failed_tests=failed_tests,
+                total_tests=total_tests,
+                run_time=run_time,
+            )
+
+    def _append_history(
+        self,
+        scope_type: str,
+        scope_key: str,
+        *,
+        score: float,
+        failed_tests: int | None,
+        total_tests: int | None,
+        run_time: str | None,
+    ) -> None:
+        """Append one ``dq_score_history`` trend point and count-trim the scope.
+
+        Called from :meth:`_upsert` for every SCORED recompute (uniform
+        across table/product/global scopes). NULL-score recomputes
+        ("computed, nothing found") update the cache but never append —
+        they would only punch holes in the trend. The trim keeps the
+        newest :data:`HISTORY_KEEP_ROWS` rows per scope: rows strictly
+        older than the oldest kept ``computed_at`` are deleted, so ties
+        on the boundary timestamp are kept rather than over-trimmed.
+        """
+        e_type = escape_sql_string(scope_type)
+        e_key = escape_sql_string(scope_key)
+        failed_expr = str(int(failed_tests)) if failed_tests is not None else "NULL"
+        total_expr = str(int(total_tests)) if total_tests is not None else "NULL"
+        run_time_expr = f"CAST('{escape_sql_string(run_time)}' AS TIMESTAMP)" if run_time else "NULL"
+        self._oltp.execute(
+            f"INSERT INTO {self._history_table} "  # noqa: S608
+            f"(scope_type, scope_key, score, failed_tests, total_tests, run_time, computed_at) "
+            f"VALUES ('{e_type}', '{e_key}', {float(score)}, {failed_expr}, {total_expr}, "
+            f"{run_time_expr}, now())"
+        )
+        self._oltp.execute(
+            f"DELETE FROM {self._history_table} "  # noqa: S608
+            f"WHERE scope_type = '{e_type}' AND scope_key = '{e_key}' AND computed_at < ("
+            f"SELECT MIN(computed_at) FROM ("
+            f"SELECT computed_at FROM {self._history_table} "
+            f"WHERE scope_type = '{e_type}' AND scope_key = '{e_key}' "
+            f"ORDER BY computed_at DESC LIMIT {HISTORY_KEEP_ROWS}"
+            f") newest_rows)"
         )

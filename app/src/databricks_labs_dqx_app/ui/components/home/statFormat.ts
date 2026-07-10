@@ -29,3 +29,24 @@ export function formatScorePercent(
 ): string {
   return score == null ? "—" : `${animatedPercent.toFixed(1)}%`;
 }
+
+export type DeltaDirection = "up" | "down" | "flat";
+
+/**
+ * Direction of the score change since the previous run — dqlake's
+ * DeltaIndicator thresholds. `delta` is a 0..1 fraction (e.g. +0.05 =
+ * +5 percentage points); moves under 0.05pp read as flat because the
+ * score itself is shown to one decimal.
+ */
+export function deltaDirection(delta: number): DeltaDirection {
+  const pp = delta * 100;
+  if (pp >= 0.05) return "up";
+  if (pp <= -0.05) return "down";
+  return "flat";
+}
+
+/** Magnitude of the change in percentage points, one decimal (for the
+ *  delta badge tooltip: "Up 5.0 points since the previous run"). */
+export function deltaPoints(delta: number): string {
+  return Math.abs(delta * 100).toFixed(1);
+}

@@ -117,6 +117,13 @@
       "resultsDesc": "Explora puntuaciones de DQ, desgloses y registros con errores en tus tablas",
       "config": "Configuración",
       "configDesc": "Configura ajustes y preferencias"
+    },
+    "avgQuality": "Calidad media de todas las tablas",
+    "notEnoughHistory": "Aún no hay suficiente historial de ejecuciones.",
+    "delta": {
+      "up": "Subió {{points}} puntos desde la ejecución anterior",
+      "down": "Bajó {{points}} puntos desde la ejecución anterior",
+      "flat": "Sin cambios desde la ejecución anterior"
     }
   },
   "auth": {

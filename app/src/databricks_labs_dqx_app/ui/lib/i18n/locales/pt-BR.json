@@ -117,6 +117,13 @@
       "resultsDesc": "Explore pontuações de DQ, detalhamentos e registros com falha em suas tabelas",
       "config": "Configuração",
       "configDesc": "Configure ajustes e preferências"
+    },
+    "avgQuality": "Qualidade média de todas as tabelas",
+    "notEnoughHistory": "Ainda não há histórico de execuções suficiente.",
+    "delta": {
+      "up": "Subiu {{points}} pontos desde a execução anterior",
+      "down": "Caiu {{points}} pontos desde a execução anterior",
+      "flat": "Sem alteração desde a execução anterior"
     }
   },
   "auth": {

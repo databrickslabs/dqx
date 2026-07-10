@@ -117,6 +117,13 @@
       "resultsDesc": "Explore DQ scores, breakdowns, and failing records across your tables",
       "config": "Configuration",
       "configDesc": "Configure settings and preferences"
+    },
+    "avgQuality": "Average Quality of All Tables",
+    "notEnoughHistory": "Not enough run history yet.",
+    "delta": {
+      "up": "Up {{points}} points since the previous run",
+      "down": "Down {{points}} points since the previous run",
+      "flat": "No change since the previous run"
     }
   },
   "auth": {

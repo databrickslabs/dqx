@@ -269,3 +269,109 @@ class TestParseCachedScore:
         assert cached.score is None
         assert cached.failed_tests is None
         assert cached.total_tests is None
+
+
+_HISTORY = "dqx_test.dqx_app_test.dq_score_history"
+
+
+def _history_inserts(oltp: MagicMock) -> list[str]:
+    """Every INSERT statement targeting the history table, in order."""
+    return [
+        call[0][0]
+        for call in oltp.execute.call_args_list
+        if call[0][0].lstrip().upper().startswith("INSERT") and _HISTORY in call[0][0]
+    ]
+
+
+def _history_trims(oltp: MagicMock) -> list[str]:
+    """Every DELETE (trim) statement targeting the history table, in order."""
+    return [
+        call[0][0]
+        for call in oltp.execute.call_args_list
+        if call[0][0].lstrip().upper().startswith("DELETE") and _HISTORY in call[0][0]
+    ]
+
+
+class TestScoreHistoryAppend:
+    """P3.5 follow-on: every scored upsert appends a `dq_score_history` row."""
+
+    def test_global_refresh_appends_a_history_row(self, svc, oltp):
+        oltp.query_dicts.return_value = [{"score": "0.912345", "failed_tests": "7", "total_tests": "70"}]
+        svc.refresh_global()
+        inserts = _history_inserts(oltp)
+        assert len(inserts) == 1
+        stmt = inserts[0]
+        assert "'global', 'global'" in stmt
+        assert "0.9123" in stmt
+        assert " 7," in stmt
+        assert " 70," in stmt
+        assert "now()" in stmt
+
+    def test_table_refresh_appends_history_with_run_time(self, svc, oltp, warehouse):
+        warehouse.query_dicts.return_value = [_measure_row(FQN_A)]
+        svc.refresh_for_tables([FQN_A])
+        inserts = _history_inserts(oltp)
+        assert len(inserts) == 1
+        assert f"'table', '{FQN_A}'" in inserts[0]
+        assert "CAST('2026-07-10 08:00:00' AS TIMESTAMP)" in inserts[0]
+
+    def test_null_score_upserts_do_not_pollute_history(self, svc, oltp, warehouse):
+        """'Computed, nothing found' rows update the cache but must not
+        append NULL points to the trend."""
+        warehouse.query_dicts.return_value = []
+        svc.refresh_for_tables([FQN_A])
+        assert _history_inserts(oltp) == []
+        assert _history_trims(oltp) == []
+
+    def test_append_trims_to_the_keep_cap_per_scope(self, svc, oltp):
+        oltp.query_dicts.return_value = [{"score": "0.5", "failed_tests": "1", "total_tests": "2"}]
+        svc.refresh_global()
+        trims = _history_trims(oltp)
+        assert len(trims) == 1
+        stmt = trims[0]
+        assert "scope_type = 'global'" in stmt
+        assert "scope_key = 'global'" in stmt
+        # count-trim: keep the newest HISTORY_KEEP_ROWS rows.
+        assert "ORDER BY computed_at DESC LIMIT 200" in stmt
+        assert "computed_at <" in stmt
+
+    def test_scope_key_is_escaped_in_history_statements(self, svc, oltp):
+        oltp.query_dicts.return_value = [{"score": "0.5", "failed_tests": "1", "total_tests": "2"}]
+        svc.refresh_product("p'1")
+        for stmt in _history_inserts(oltp) + _history_trims(oltp):
+            assert "p''1" in stmt
+            assert "'p'1'" not in stmt
+
+
+class TestGetHistory:
+    def test_reads_newest_first_and_returns_ascending(self, svc, oltp):
+        oltp.query_dicts.return_value = [
+            {
+                "score": "0.9",
+                "failed_tests": "1",
+                "total_tests": "10",
+                "run_time": None,
+                "computed_at": "2026-07-10 09:00:00",
+            },
+            {
+                "score": "0.8",
+                "failed_tests": "2",
+                "total_tests": "10",
+                "run_time": None,
+                "computed_at": "2026-07-09 09:00:00",
+            },
+        ]
+        points = svc.get_history("global", GLOBAL_SCOPE_KEY, limit=30)
+        stmt = oltp.query_dicts.call_args[0][0]
+        assert _HISTORY in stmt
+        assert "scope_type = 'global'" in stmt
+        assert "scope_key = 'global'" in stmt
+        assert "ORDER BY computed_at DESC LIMIT 30" in stmt
+        # DESC read, ascending return — oldest first for charting.
+        assert [p.score for p in points] == [0.8, 0.9]
+        assert points[0].computed_at == "2026-07-09 09:00:00"
+        assert points[1] == CachedScore(score=0.9, failed_tests=1, total_tests=10, computed_at="2026-07-10 09:00:00")
+
+    def test_empty_history(self, svc, oltp):
+        oltp.query_dicts.return_value = []
+        assert svc.get_history("global", GLOBAL_SCOPE_KEY) == []

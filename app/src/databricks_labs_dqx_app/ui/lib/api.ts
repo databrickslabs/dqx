@@ -1384,6 +1384,8 @@ export type HomeStatsOutTotalTests = number | null;
 
 export type HomeStatsOutComputedAt = string | null;
 
+export type HomeStatsOutScoreDelta = number | null;
+
 /**
  * Homepage "at a glance" stats (dqlake's ``HomeStatsOut``, adapted).
 
@@ -1393,6 +1395,12 @@ org-wide aggregate from the ``dq_score_cache`` 'global' row (P3.4) —
 the endpoint never touches the warehouse. *computed_at* is when that
 global row was last recomputed (dqlake's *refreshed_at* analogue);
 None until the first run-completion refresh populates the cache.
+
+*score_trend* is the last ~30 global points from ``dq_score_history``
+(oldest first — dqlake's home trend, re-sourced from the OLTP store);
+*score_delta* is the change between the trend's last two points (a
+0..1 fraction, e.g. +0.05 = +5 percentage points), None until there
+are at least two points.
  */
 export interface HomeStatsOut {
   rule_count?: number;
@@ -1402,6 +1410,8 @@ export interface HomeStatsOut {
   failed_tests?: HomeStatsOutFailedTests;
   total_tests?: HomeStatsOutTotalTests;
   computed_at?: HomeStatsOutComputedAt;
+  score_trend?: ScoreTrendPointOut[];
+  score_delta?: HomeStatsOutScoreDelta;
 }
 
 export type InputConfigSchema = string | null;
@@ -2954,6 +2964,17 @@ export interface SchemaOut {
   name: string;
   catalog_name: string;
   comment?: SchemaOutComment;
+}
+
+/**
+ * One homepage trend point from ``dq_score_history`` (P3.5).
+
+*ts* is the point's ``computed_at`` instant (ISO-ish string, same
+projection the score-cache reads use); *score* is the 0..1 fraction.
+ */
+export interface ScoreTrendPointOut {
+  ts: string;
+  score: number;
 }
 
 export interface ServingEndpointsOut {
@@ -18048,12 +18069,13 @@ export function useGetTableResultsSuspense<TData = Awaited<ReturnType<typeof get
 
 
 /**
- * Return the homepage stat-card numbers in one response.
+ * Return the homepage stat-card numbers + score trend in one response.
 
 A never-populated score cache serves ``score=None`` (the homepage
 renders an em dash); a populated row whose score is NULL ("computed,
 nothing found") still carries *computed_at* so the two are
-distinguishable.
+distinguishable. *score_trend*\/*score_delta* come from the
+``dq_score_history`` append rows (P3.5) — still zero warehouse.
  * @summary Get Home Stats
  */
 export const getHomeStats = (

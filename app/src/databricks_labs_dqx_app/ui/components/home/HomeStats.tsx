@@ -1,23 +1,24 @@
 import { Suspense, useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Boxes, Gauge, Library, Loader2, Table2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Boxes, Gauge, Library, Loader2, Minus, Table2 } from "lucide-react";
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent } from "@/components/ui/card";
+import { ScoreTrendChart } from "@/components/results/ScoreTrendChart";
 import { useGetHomeStatsSuspense } from "@/lib/api";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { cn } from "@/lib/utils";
-import { countUpValue, formatCount, formatScorePercent } from "./statFormat";
+import { countUpValue, deltaDirection, deltaPoints, formatCount, formatScorePercent } from "./statFormat";
 
 /**
  * Faithful port of dqlake's `components/home/HomeStats.tsx` — the "At a
- * Glance" stat-card row for the top of the Home page — with the
- * established Phase-2/3 adaptations:
+ * Glance" stat-card row + overall score trend for the top of the Home
+ * page — with the established Phase-2/3 adaptations:
  *
  * - data comes from OUR `GET /api/v1/home/stats` (app-DB counts + the
- *   cached global score from `dq_score_cache`), not dqlake's
- *   warehouse-backed home summary;
+ *   cached global score and its `dq_score_history` trend/delta), not
+ *   dqlake's warehouse-backed home summary — still zero warehouse;
  * - all display text through t() (4 locales);
  * - no idle polling — RESULTS_QUERY_OPTIONS. The score card refreshes via
  *   the run-completion / rule-application invalidations (the
@@ -28,10 +29,10 @@ import { countUpValue, formatCount, formatScorePercent } from "./statFormat";
  *   without wiring every CRUD mutation to this query);
  * - the third card is Table Spaces (our nav unit) instead of dqlake's
  *   warehouse-computed "Checks in place";
- * - dqlake's score-trend chart section and its up/down delta badge are
- *   NOT ported: their data came from a warehouse trend query, and this
- *   endpoint is deliberately warehouse-free (the cached global row has
- *   no history). The full trend lives one click away on /results.
+ * - the trend's x-axis is the cache recompute instant (`computed_at`
+ *   of each history point) rather than dqlake's per-run date — the
+ *   history rows ARE the run-completion recomputes, so the shape is
+ *   the same signal.
  */
 
 /** Animate a number from 0 → target on mount (easeOutCubic) via rAF. Returns
@@ -64,15 +65,50 @@ const CARDS: { key: string; labelKey: string; icon: LucideIcon; inverted?: boole
   { key: "score", labelKey: "home.stats.score", icon: Gauge, inverted: true },
 ];
 
+/** Direction-of-change badge for the score card: green ▲ / red ▼ / grey =,
+ *  comparing the latest cache recompute to the previous one. `delta` is a
+ *  fraction (e.g. +0.05 ⇒ +5 percentage points); sub-0.05pp moves read as
+ *  flat (the score itself is shown to one decimal) — see `deltaDirection`. */
+function DeltaIndicator({ delta }: { delta: number }) {
+  const { t } = useTranslation();
+  const direction = deltaDirection(delta);
+  const points = deltaPoints(delta);
+  if (direction === "up") {
+    const label = t("home.delta.up", { points });
+    return (
+      <span className="inline-flex items-center text-emerald-600" title={label}>
+        <ArrowUp className="h-5 w-5" aria-label={label} />
+      </span>
+    );
+  }
+  if (direction === "down") {
+    const label = t("home.delta.down", { points });
+    return (
+      <span className="inline-flex items-center text-red-600" title={label}>
+        <ArrowDown className="h-5 w-5" aria-label={label} />
+      </span>
+    );
+  }
+  const label = t("home.delta.flat");
+  return (
+    <span className="inline-flex items-center text-neutral-500" title={label}>
+      <Minus className="h-5 w-5" aria-label={label} />
+    </span>
+  );
+}
+
 /** One stat card: big bold value (or an in-place spinner while loading), a
  *  label, and a lucide icon. The emphasised card (`inverted`) is a solid
- *  black-on-light / white-on-dark card (`bg-foreground text-background`). */
+ *  black-on-light / white-on-dark card (`bg-foreground text-background`).
+ *  `delta` (when given) renders the up/down/flat change badge next to the
+ *  value. */
 function StatCard({
   label,
   value,
   icon: Icon,
   inverted = false,
   loading = false,
+  delta,
   entered = true,
   enterDelayMs = 0,
 }: {
@@ -81,6 +117,7 @@ function StatCard({
   icon: LucideIcon;
   inverted?: boolean;
   loading?: boolean;
+  delta?: number | null;
   entered?: boolean;
   enterDelayMs?: number;
 }) {
@@ -116,6 +153,7 @@ function StatCard({
           ) : (
             value
           )}
+          {!loading && delta != null && <DeltaIndicator delta={delta} />}
         </div>
       </CardContent>
     </Card>
@@ -131,7 +169,8 @@ function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) 
   const { data } = useGetHomeStatsSuspense({
     query: { select: (d) => d.data, ...RESULTS_QUERY_OPTIONS, refetchOnMount: "always" },
   });
-  const { rule_count, monitored_table_count, table_space_count, score } = data;
+  const { rule_count, monitored_table_count, table_space_count, score, score_delta } = data;
+  const trend = data.score_trend ?? [];
 
   // "At a Glance" entrance: staggered card fade/slide-in + a count-up of each
   // number, so the data points animate in when the page loads/refreshes.
@@ -150,22 +189,42 @@ function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) 
   };
 
   return (
-    <section className="space-y-3">
-      <h2 className={sectionLabelClass}>{t("home.atAGlance")}</h2>
-      <CardGrid>
-        {CARDS.map((c, i) => (
-          <StatCard
-            key={c.key}
-            label={t(c.labelKey)}
-            value={valueFor[c.key]}
-            icon={c.icon}
-            inverted={c.inverted}
-            entered={mounted}
-            enterDelayMs={i * 70}
+    <div className="space-y-6">
+      <section className="space-y-3">
+        <h2 className={sectionLabelClass}>{t("home.atAGlance")}</h2>
+        <CardGrid>
+          {CARDS.map((c, i) => (
+            <StatCard
+              key={c.key}
+              label={t(c.labelKey)}
+              value={valueFor[c.key]}
+              icon={c.icon}
+              inverted={c.inverted}
+              delta={c.key === "score" ? score_delta : undefined}
+              entered={mounted}
+              enterDelayMs={i * 70}
+            />
+          ))}
+        </CardGrid>
+      </section>
+
+      {/* Overall score over time. The single-series ScoreTrendChart renders
+          the red→green gradient line; ≥2 points only. Below that we show a
+          calm placeholder rather than a broken one-point chart. */}
+      <section className="space-y-3">
+        <h2 className={sectionLabelClass}>{t("home.avgQuality")}</h2>
+        {trend.length >= 2 ? (
+          <ScoreTrendChart
+            data={trend.map((p) => ({ run_date: p.ts, pass_rate: p.score }))}
+            animate
           />
-        ))}
-      </CardGrid>
-    </section>
+        ) : (
+          <div className="rounded-md border p-6 text-center text-sm text-muted-foreground">
+            {t("home.notEnoughHistory")}
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -174,25 +233,33 @@ function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) 
 function HomeStatsLoading({ sectionLabelClass }: { sectionLabelClass: string }) {
   const { t } = useTranslation();
   return (
-    <section className="space-y-3">
-      <h2 className={sectionLabelClass}>{t("home.atAGlance")}</h2>
-      <CardGrid>
-        {CARDS.map((c) => (
-          <StatCard
-            key={c.key}
-            label={t(c.labelKey)}
-            icon={c.icon}
-            inverted={c.inverted}
-            loading
-          />
-        ))}
-      </CardGrid>
-    </section>
+    <div className="space-y-6">
+      <section className="space-y-3">
+        <h2 className={sectionLabelClass}>{t("home.atAGlance")}</h2>
+        <CardGrid>
+          {CARDS.map((c) => (
+            <StatCard
+              key={c.key}
+              label={t(c.labelKey)}
+              icon={c.icon}
+              inverted={c.inverted}
+              loading
+            />
+          ))}
+        </CardGrid>
+      </section>
+      <section className="space-y-3">
+        <h2 className={sectionLabelClass}>{t("home.avgQuality")}</h2>
+        <div className="flex h-[200px] items-center justify-center rounded-md border">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-label={t("home.loading")} />
+        </div>
+      </section>
+    </div>
   );
 }
 
-/** Big stat cards for the top of the Home page. `sectionLabelClass` is the
- *  shared grey, capitalised subheader style. */
+/** Big stat cards + an overall score trend for the top of the Home page.
+ *  `sectionLabelClass` is the shared grey, capitalised subheader style. */
 export function HomeStats({
   sectionLabelClass = "text-xs font-medium uppercase tracking-wide text-muted-foreground",
 }: {

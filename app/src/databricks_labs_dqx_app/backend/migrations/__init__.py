@@ -1020,6 +1020,27 @@ _V15_SCORE_CACHE = (
 )
 
 
+# DQ score history — Delta OLTP fallback for ``dq_score_history`` (P3.5).
+# Mirrors the Postgres v12 migration: an append-only companion to
+# dq_score_cache — every scored recompute (non-NULL score) appends one
+# row so the homepage can chart the global score over time without a
+# warehouse query. Growth is capped by ScoreCacheService (count-trim to
+# the newest HISTORY_KEEP_ROWS rows per scope on every append). Only
+# present on Delta when Lakebase is disabled (``oltp_fallback=True``) —
+# see the Postgres v12 comment for the full semantics.
+_V16_SCORE_HISTORY = (
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_score_history ("
+    "  scope_type    STRING NOT NULL,"
+    "  scope_key     STRING NOT NULL,"
+    "  score         DOUBLE NOT NULL,"
+    "  failed_tests  BIGINT,"
+    "  total_tests   BIGINT,"
+    "  run_time      TIMESTAMP,"
+    "  computed_at   TIMESTAMP NOT NULL"
+    ") CLUSTER BY (scope_type, scope_key, computed_at)"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -1137,6 +1158,13 @@ MIGRATIONS: list[Migration] = [
         description="DQ score cache (dq_score_cache) — list-page score columns (P3.4), "
         "used only when Lakebase is disabled",
         sql_template=_V15_SCORE_CACHE,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=16,
+        description="DQ score history (dq_score_history) — append-only trend points for the "
+        "homepage chart (P3.5), used only when Lakebase is disabled",
+        sql_template=_V16_SCORE_HISTORY,
         oltp_fallback=True,
     ),
 ]

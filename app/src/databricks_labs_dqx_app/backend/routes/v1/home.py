@@ -34,7 +34,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_score_cache_service,
     require_role,
 )
-from databricks_labs_dqx_app.backend.models import HomeStatsOut
+from databricks_labs_dqx_app.backend.models import HomeStatsOut, ScoreTrendPointOut
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
@@ -49,6 +49,25 @@ router = APIRouter()
 
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 
+# How many global ``dq_score_history`` points feed the homepage trend
+# chart — dqlake's home trend showed the recent run history, not the
+# full archive (the history table keeps HISTORY_KEEP_ROWS per scope).
+_TREND_POINTS = 30
+
+
+def _trend_from_history(score_cache: ScoreCacheService) -> list[ScoreTrendPointOut]:
+    """Map the global score-history points onto the response trend.
+
+    Points arrive oldest-first from *get_history*; rows missing a score
+    or timestamp are dropped defensively (the append path never writes
+    them, but the trend must not 500 over a hand-edited row).
+    """
+    return [
+        ScoreTrendPointOut(ts=p.computed_at, score=p.score)
+        for p in score_cache.get_history(SCOPE_GLOBAL, GLOBAL_SCOPE_KEY, limit=_TREND_POINTS)
+        if p.score is not None and p.computed_at is not None
+    ]
+
 
 @router.get(
     "/stats",
@@ -62,21 +81,29 @@ def get_home_stats(
     products: Annotated[DataProductService, Depends(get_data_product_service)],
     score_cache: Annotated[ScoreCacheService, Depends(get_score_cache_service)],
 ) -> HomeStatsOut:
-    """Return the homepage stat-card numbers in one response.
+    """Return the homepage stat-card numbers + score trend in one response.
 
     A never-populated score cache serves ``score=None`` (the homepage
     renders an em dash); a populated row whose score is NULL ("computed,
     nothing found") still carries *computed_at* so the two are
-    distinguishable.
+    distinguishable. *score_trend*/*score_delta* come from the
+    ``dq_score_history`` append rows (P3.5) — still zero warehouse.
     """
     try:
         rule_count = registry.count()
         monitored_table_count = monitored_tables.count()
         table_space_count = products.count()
         cached = score_cache.get_many(SCOPE_GLOBAL, [GLOBAL_SCOPE_KEY]).get(GLOBAL_SCOPE_KEY)
+        trend = _trend_from_history(score_cache)
     except Exception as exc:
         logger.exception("Failed to compose homepage stats")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    # Change since the previous recompute — the last two points of the same
+    # trend the homepage chart plots (dqlake's delta semantics). Rounded to
+    # the cache's own 4-decimal score precision so float noise never flips
+    # the flat/up/down badge.
+    score_delta = round(trend[-1].score - trend[-2].score, 4) if len(trend) >= 2 else None
 
     return HomeStatsOut(
         rule_count=rule_count,
@@ -86,4 +113,6 @@ def get_home_stats(
         failed_tests=cached.failed_tests if cached else None,
         total_tests=cached.total_tests if cached else None,
         computed_at=cached.computed_at if cached else None,
+        score_trend=trend,
+        score_delta=score_delta,
     )

@@ -117,6 +117,13 @@
       "resultsDesc": "Esplora punteggi DQ, suddivisioni e record non conformi nelle tue tabelle",
       "config": "Configurazione",
       "configDesc": "Configura impostazioni e preferenze"
+    },
+    "avgQuality": "Qualità media di tutte le tabelle",
+    "notEnoughHistory": "Cronologia delle esecuzioni ancora insufficiente.",
+    "delta": {
+      "up": "In aumento di {{points}} punti rispetto all'esecuzione precedente",
+      "down": "In calo di {{points}} punti rispetto all'esecuzione precedente",
+      "flat": "Nessuna variazione rispetto all'esecuzione precedente"
     }
   },
   "auth": {

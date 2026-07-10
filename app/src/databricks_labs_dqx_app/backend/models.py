@@ -1612,6 +1612,17 @@ class RefreshScoresOut(BaseModel):
     global_refreshed: bool = True
 
 
+class ScoreTrendPointOut(BaseModel):
+    """One homepage trend point from ``dq_score_history`` (P3.5).
+
+    *ts* is the point's ``computed_at`` instant (ISO-ish string, same
+    projection the score-cache reads use); *score* is the 0..1 fraction.
+    """
+
+    ts: str
+    score: float
+
+
 class HomeStatsOut(BaseModel):
     """Homepage "at a glance" stats (dqlake's ``HomeStatsOut``, adapted).
 
@@ -1621,6 +1632,12 @@ class HomeStatsOut(BaseModel):
     the endpoint never touches the warehouse. *computed_at* is when that
     global row was last recomputed (dqlake's *refreshed_at* analogue);
     None until the first run-completion refresh populates the cache.
+
+    *score_trend* is the last ~30 global points from ``dq_score_history``
+    (oldest first — dqlake's home trend, re-sourced from the OLTP store);
+    *score_delta* is the change between the trend's last two points (a
+    0..1 fraction, e.g. +0.05 = +5 percentage points), None until there
+    are at least two points.
     """
 
     rule_count: int = 0
@@ -1630,6 +1647,8 @@ class HomeStatsOut(BaseModel):
     failed_tests: int | None = None
     total_tests: int | None = None
     computed_at: str | None = None
+    score_trend: list[ScoreTrendPointOut] = Field(default_factory=list)
+    score_delta: float | None = None
 
 
 class CatalogOut(BaseModel):

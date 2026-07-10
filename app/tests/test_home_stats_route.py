@@ -64,6 +64,7 @@ def products_mock() -> MagicMock:
 def score_cache_mock() -> MagicMock:
     mock = create_autospec(ScoreCacheService, instance=True)
     mock.get_many.return_value = {}
+    mock.get_history.return_value = []
     return mock
 
 
@@ -108,8 +109,11 @@ class TestHomeStats:
             "failed_tests": 42,
             "total_tests": 500,
             "computed_at": "2026-07-10 09:00:00",
+            "score_trend": [],
+            "score_delta": None,
         }
         score_cache_mock.get_many.assert_called_once_with(SCOPE_GLOBAL, [GLOBAL_SCOPE_KEY])
+        score_cache_mock.get_history.assert_called_once_with(SCOPE_GLOBAL, GLOBAL_SCOPE_KEY, limit=30)
 
     def test_never_computed_cache_serves_null_score(self, client, registry_mock, score_cache_mock):
         registry_mock.count.return_value = 7
@@ -142,6 +146,48 @@ class TestHomeStats:
         registry_mock.count.side_effect = RuntimeError("db down")
         resp = client.get("/api/v1/home/stats")
         assert resp.status_code == 500
+
+    def test_score_trend_and_delta_from_history(self, client, score_cache_mock):
+        # get_history returns ascending points (oldest first) — the route maps
+        # them 1:1 onto {ts, score} and computes the last-vs-previous delta.
+        score_cache_mock.get_history.return_value = [
+            CachedScore(score=0.8, computed_at="2026-07-08 09:00:00"),
+            CachedScore(score=0.85, computed_at="2026-07-09 09:00:00"),
+            CachedScore(score=0.9134, computed_at="2026-07-10 09:00:00"),
+        ]
+
+        resp = client.get("/api/v1/home/stats")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["score_trend"] == [
+            {"ts": "2026-07-08 09:00:00", "score": 0.8},
+            {"ts": "2026-07-09 09:00:00", "score": 0.85},
+            {"ts": "2026-07-10 09:00:00", "score": 0.9134},
+        ]
+        assert body["score_delta"] == pytest.approx(0.0634)
+
+    def test_history_rows_missing_score_or_ts_are_dropped_from_trend(self, client, score_cache_mock):
+        score_cache_mock.get_history.return_value = [
+            CachedScore(score=None, computed_at="2026-07-08 09:00:00"),
+            CachedScore(score=0.7, computed_at=None),
+            CachedScore(score=0.9, computed_at="2026-07-10 09:00:00"),
+        ]
+
+        body = client.get("/api/v1/home/stats").json()
+
+        assert body["score_trend"] == [{"ts": "2026-07-10 09:00:00", "score": 0.9}]
+        assert body["score_delta"] is None  # a single point has no previous run
+
+    def test_single_point_trend_has_no_delta(self, client, score_cache_mock):
+        score_cache_mock.get_history.return_value = [
+            CachedScore(score=0.9, computed_at="2026-07-10 09:00:00")
+        ]
+
+        body = client.get("/api/v1/home/stats").json()
+
+        assert len(body["score_trend"]) == 1
+        assert body["score_delta"] is None
 
 
 class TestCountMethods:
