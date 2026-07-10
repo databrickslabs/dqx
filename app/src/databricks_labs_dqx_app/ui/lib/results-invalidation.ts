@@ -1,8 +1,8 @@
 /**
  * Run-completion invalidation for the DQ score / failing-records queries.
  *
- * Score and quarantine-sample data only changes when a validation run
- * finishes, so those queries are configured to never refetch on their own
+ * Score and failing-rows data only changes when a validation run finishes,
+ * so those queries are configured to never refetch on their own
  * (`staleTime: Infinity`, no window-focus refetch, no polling). The refresh
  * triggers are the helpers in this module, called from the places that
  * already observe the underlying change:
@@ -10,21 +10,18 @@
  * - `routes/_sidebar/runs-history.tsx` — polls RUNNING validation runs and
  *   sees each one settle (knows the run's `source_table_fqn`)
  * - `hooks/use-product-run-sets.ts` — polls a data product's run sets and
- *   sees each set settle (member table FQNs unknown at summary level, so
- *   it invalidates broadly)
+ *   sees each set settle (member table FQNs unknown at summary level)
  * - the rule apply/unapply mutation call sites (the monitored-table detail
  *   page's staged-save/submit/delete flows and the registry ApplyRuleModal)
  *   — via `invalidateResultsAfterRuleApplicationChange`, since applying a
  *   rule changes score aggregates (e.g. `applied_to_count`) without any run
  *
  * A finished run for ONE table moves every aggregate above it (global,
- * product, and rule scores), so all `/api/v1/dq-score/*` AND all
- * `/api/v1/dq-results/*` queries (runs / table / product / global / rule
- * breakdowns, failed rows, registries) are always invalidated by path
- * prefix; quarantine samples are per-table, so they are narrowed to the
- * finished tables' exact paths when the caller knows them. Tasks 10-12
- * (global/product/rule score views) and the Phase 2 dqlake-port results
- * tabs reuse this helper as-is.
+ * product, and rule scores), so all `/api/v1/dq-score/*`, `/api/v1/dq-results/*`
+ * (runs / table / product / global / rule breakdowns, filtered failed rows,
+ * registries) and `/api/v1/home/*` queries are always invalidated wholesale
+ * by path prefix. Tasks 10-12 (global/product/rule score views) and the
+ * Phase 2 dqlake-port results tabs reuse this helper as-is.
  *
  * P3.4 addition: when the finished tables ARE known, the run-completion
  * helper also fires a fire-and-forget `POST /api/v1/dq-results/refresh-scores`
@@ -34,7 +31,7 @@
  * refresh-all).
  */
 import type { QueryClient } from "@tanstack/react-query";
-import { getGetQuarantineSampleQueryKey, refreshDqScores } from "@/lib/api";
+import { refreshDqScores } from "@/lib/api";
 
 /**
  * Query options for every score / failing-records query covered by this
@@ -59,54 +56,28 @@ export const DQ_RESULTS_PATH_PREFIX = "/api/v1/dq-results/";
  *  cached global aggregate, so it is score-shaped and refreshes on the same
  *  run-completion / rule-application events as the dq-score queries. */
 export const HOME_STATS_PATH_PREFIX = "/api/v1/home/";
-/** Path prefix of the per-table failing-records sample endpoint. */
-export const QUARANTINE_SAMPLE_PATH_PREFIX = "/api/v1/quarantine-samples/";
-
-export interface ResultsInvalidationMatcher {
-  /** Query-key paths matched by `startsWith`. */
-  pathPrefixes: string[];
-  /** Query-key paths matched by exact equality (per-table quarantine samples). */
-  exactPaths: string[];
-}
 
 /**
- * Builds the matcher for one run-completion event. With *tableFqns*, the
- * quarantine-sample invalidation narrows to exactly those tables; without,
- * every quarantine-sample query is invalidated. Score queries are always
- * matched wholesale (see module doc).
+ * Every query-key path prefix covered by the results invalidation. Run
+ * completion and rule-application changes both move the aggregates behind
+ * all three, so both events invalidate the same set, wholesale.
  */
-export function buildResultsInvalidationMatcher(tableFqns?: readonly string[]): ResultsInvalidationMatcher {
-  if (!tableFqns || tableFqns.length === 0) {
-    return {
-      pathPrefixes: [
-        DQ_SCORE_PATH_PREFIX,
-        DQ_RESULTS_PATH_PREFIX,
-        HOME_STATS_PATH_PREFIX,
-        QUARANTINE_SAMPLE_PATH_PREFIX,
-      ],
-      exactPaths: [],
-    };
-  }
-  return {
-    pathPrefixes: [DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX, HOME_STATS_PATH_PREFIX],
-    exactPaths: tableFqns.map((fqn) => getGetQuarantineSampleQueryKey(fqn)[0]),
-  };
-}
+export const RESULTS_INVALIDATION_PATH_PREFIXES = [
+  DQ_SCORE_PATH_PREFIX,
+  DQ_RESULTS_PATH_PREFIX,
+  HOME_STATS_PATH_PREFIX,
+] as const;
 
 /**
- * True when a React Query key belongs to a score / quarantine-sample query
- * covered by *matcher*. Orval keys put the request path first (an optional
- * params object follows), so only `queryKey[0]` is inspected — exact
- * equality for per-table paths deliberately ignores the params element so
- * every `limit` variant of a sample query is invalidated together.
+ * True when a React Query key belongs to a score / results query covered by
+ * this module. Orval keys put the request path first (an optional params
+ * object follows), so only `queryKey[0]` is inspected — every params variant
+ * of a query is invalidated together.
  */
-export function matchesResultsInvalidation(
-  queryKey: readonly unknown[],
-  matcher: ResultsInvalidationMatcher,
-): boolean {
+export function matchesResultsInvalidation(queryKey: readonly unknown[]): boolean {
   const path = queryKey[0];
   if (typeof path !== "string") return false;
-  return matcher.pathPrefixes.some((prefix) => path.startsWith(prefix)) || matcher.exactPaths.includes(path);
+  return RESULTS_INVALIDATION_PATH_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
 /** Server-side cap on one refresh-scores call (`RefreshScoresIn.table_fqns`). */
@@ -154,34 +125,18 @@ export function triggerScoreCacheRefresh(queryClient: QueryClient, tableFqns?: r
 
 /**
  * Invalidate every score and failing-records query affected by a finished
- * run. Pass the finished runs' table FQNs when known (narrows the
- * quarantine-sample invalidation and triggers the server-side score-cache
- * recompute); omit them to invalidate broadly (no cache recompute).
+ * run. Pass the finished runs' table FQNs when known — they trigger the
+ * server-side score-cache recompute; omit them to invalidate without the
+ * recompute (the query invalidation itself is always prefix-wide).
  */
 export function invalidateResultsAfterRunCompletion(
   queryClient: QueryClient,
   tableFqns?: readonly string[],
 ): void {
-  const matcher = buildResultsInvalidationMatcher(tableFqns);
   void queryClient.invalidateQueries({
-    predicate: (query) => matchesResultsInvalidation(query.queryKey, matcher),
+    predicate: (query) => matchesResultsInvalidation(query.queryKey),
   });
   triggerScoreCacheRefresh(queryClient, tableFqns);
-}
-
-/**
- * Matcher for a rule-APPLICATION change (see
- * `invalidateResultsAfterRuleApplicationChange`): every dq-score and
- * dq-results query, but NOT quarantine samples — applying/unapplying a rule
- * changes what is applied (e.g. a rule score's `applied_to_count`, which
- * gates the registry rule's Results tab), not the captured failing rows,
- * which only change when a run finishes.
- */
-export function buildRuleApplicationChangeMatcher(): ResultsInvalidationMatcher {
-  return {
-    pathPrefixes: [DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX, HOME_STATS_PATH_PREFIX],
-    exactPaths: [],
-  };
 }
 
 /**
@@ -194,8 +149,7 @@ export function buildRuleApplicationChangeMatcher(): ResultsInvalidationMatcher 
  * prefix-wide invalidation is deliberate.
  */
 export function invalidateResultsAfterRuleApplicationChange(queryClient: QueryClient): void {
-  const matcher = buildRuleApplicationChangeMatcher();
   void queryClient.invalidateQueries({
-    predicate: (query) => matchesResultsInvalidation(query.queryKey, matcher),
+    predicate: (query) => matchesResultsInvalidation(query.queryKey),
   });
 }

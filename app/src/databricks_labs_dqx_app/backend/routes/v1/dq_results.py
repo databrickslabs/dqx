@@ -19,8 +19,8 @@ Permission model (unchanged from Phase 1):
   multi-table endpoints (global/product/rule) silently FILTER inaccessible
   tables, never 403.
 - The filtered failed-rows endpoint returns actual row values, so it runs
-  the Task 7 security gates in the same load-bearing order as
-  ``quarantine_samples.py``: FQN validation (400) -> live OBO SELECT
+  the Task 7 security gates in the load-bearing order enforced by
+  ``services/quarantine_sample_service.py``: FQN validation (400) -> live OBO SELECT
   self-check as the caller (empty 200 on denial, never 403/404) ->
   fine-grained-control suppression -> SP fetch last.
 """
@@ -666,8 +666,8 @@ def get_dq_results_failed_rows(
     place run_mode is resolved: stamped tag first, legacy run_type
     heuristic as fallback). ``include_drafts=true`` drops the subselect.
 
-    SECURITY MODEL — identical to ``quarantine_samples.py``, in the same
-    load-bearing order:
+    SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
+    in the same load-bearing order:
 
     1. Validate the FQN (400 before any backend call).
     2. Live OBO SELECT self-check on the SOURCE table, as the CALLER; on
@@ -698,8 +698,8 @@ def get_dq_results_failed_rows(
     # within the scanned window (a lower bound when the window is capped).
     scan_limit = limit if not facets.any_active() else min(max(limit * 5, 1000), 100000)
 
-    # (4) SP-side fetch of the precomputed failing rows (same query shape
-    # as quarantine_samples.py, plus created_at surfaced as the run_ts).
+    # (4) SP-side fetch of the precomputed failing rows, with created_at
+    # surfaced as the run_ts.
     quarantine_table = _app_object_fqn(app_conf, "dq_quarantine_records")
     e_fqn = escape_sql_string(table_fqn)
     run_mode_cond = ""

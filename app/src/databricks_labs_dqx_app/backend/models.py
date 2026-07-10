@@ -1328,22 +1328,6 @@ class FailingRecordOut(BaseModel):
     failures: list[FailingRecordFailureOut] = Field(default_factory=list)
 
 
-class FailingRecordsOut(BaseModel):
-    """Row-level failing sample for one source table.
-
-    *suppressed* is True when the source table carries fine-grained access
-    controls (row filter / column mask) that the copied sample cannot
-    faithfully replicate — the UI shows an explanatory notice instead of
-    rows. An empty, non-suppressed response is also what a caller without
-    SELECT on the source table receives (deliberately indistinguishable
-    from "no failing rows recorded").
-    """
-
-    source_table_fqn: str
-    records: list[FailingRecordOut] = Field(default_factory=list)
-    suppressed: bool = False
-
-
 # ---------------------------------------------------------------------------
 # Metrics models
 # ---------------------------------------------------------------------------
