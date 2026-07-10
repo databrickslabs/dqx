@@ -514,6 +514,8 @@ def test_apply_checks_raises_when_minor_version_below_required(dbr_version):
         ("15.4 LTS", _check_requires_dbr_17_1),
         # Serverless reports e.g. "18.2.x-photon-scala2.13"; it must parse to (18, 2), not hard-fail.
         ("18.2.x-photon-scala2.13", _check_requires_dbr_max),
+        # Bare-major serverless form below the required major: "16.x" must fail a 17.1 requirement.
+        ("16.x-photon-scala2.13", _check_requires_dbr_17_1),
     ],
 )
 def test_apply_checks_parses_dbr_version_with_suffix(dbr_version, required_check):
@@ -527,3 +529,9 @@ def test_apply_checks_parses_dbr_version_with_suffix(dbr_version, required_check
         match=rf"require Databricks Runtime >= .*but the current version is {re.escape(dbr_version)}",
     ):
         engine.apply_checks(df, [DQRowRule(check_func=required_check, column="a")])
+
+
+@pytest.mark.parametrize("dbr_version", ["17.x-photon-scala2.13", "18.x-photon-scala2.13", "17.x"])
+def test_validate_dbr_version_bare_major_serverless_satisfies_same_major(dbr_version):
+    engine = _engine_returning_dbr_version(dbr_version)
+    engine._validate_dbr_version_requirements([DQRowRule(check_func=_check_requires_dbr_17_1, column="a")])
