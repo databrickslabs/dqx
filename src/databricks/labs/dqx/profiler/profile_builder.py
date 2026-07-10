@@ -174,13 +174,13 @@ def _is_text(column_type: T.DataType) -> bool:
 
 def _is_numeric(column_type: T.DataType) -> bool:
     """
-    Validates that the input column type is a Spark numeric type.
+    Returns True if the input column type is a Spark numeric type.
 
     Args:
         column_type: Input column type
 
     Returns:
-         True if the column is a Spark numeric type, otherwise False
+        True if the column is a Spark numeric type, otherwise False.
     """
     return isinstance(column_type, NUMERICAL_TYPES)
 

@@ -21,7 +21,7 @@ def test_make_has_no_outliers_profile_filter_empty_data_frame(spark):
     assert profile is None
 
 
-def test_make_has_no_outliers_profile_outliers_bellow_threshold(spark):
+def test_make_has_no_outliers_profile_outliers_below_threshold(spark):
     """
     Test expects profile to be created for the following case: 11 values with one extreme value.
     1 outlier out of 11 ≈ 9 %. The threshold configuration is 10 %, hence profile is expected to return.
