@@ -16,6 +16,7 @@ import {
   useListResultSeveritiesSuspense,
   type EntityResultsOut,
   type DataProductOut,
+  type GetProductResultsParams,
   type TrendPointOut,
   type DimensionOut,
   type SeverityOut,
@@ -63,18 +64,45 @@ import {
 // (`as_of_batch` carry-forward: trends show history up to the batch, scores
 // carry each member's latest run at that instant). Our
 // `/dq-results/product/{id}/runs` returns per-member-table run_id rollups
-// (RunsOut — one row per underlying run, GROUP BY run_id), and the results
-// endpoint's `run_id` param FILTERS rows to that single run rather than
-// pinning as-of. So here: picking a run scopes the score + the Drilldown
-// breakdowns to that run_id (like the monitored-table tab), while the
-// Over-time charts stay all-runs (passing run_id would collapse every trend
-// to a single point). "Latest" keeps dqlake's behaviour exactly (score =
-// last point of the product trend; breakdowns unscoped).
+// (RunsOut — one row per underlying run, GROUP BY run_id), so a run_id here
+// identifies ONE member table's run, NOT a product-level batch. Filtering a
+// multi-table view by such a run_id silently collapses every breakdown
+// (By dimension/severity/rule/table) to that single member table — a
+// run-selection artifact that masquerades as a permission problem. The
+// picker is therefore restricted to "Latest" (productRunPickerRuns) and the
+// breakdown queries NEVER pass a run_id (productBreakdownParams); "Latest"
+// keeps dqlake's behaviour exactly (score = last point of the product trend;
+// breakdowns unscoped). The backend's run_id filter stays in place
+// underneath — a product-level batch id landing in dq_metrics (which needs
+// a change to how product runs are submitted; backlog, not now) would
+// restore full dqlake picker parity.
 
 /** undefined when the array is empty, else the array — so an empty facet is
  *  omitted from the query params (and stays backward-compatible). */
 function orUndef(values: string[]): string[] | undefined {
   return values.length ? values : undefined;
+}
+
+/** Runs offered by the product tab's RunPicker: the LATEST entry only. Our
+ *  run history rows are per-member-table run_id rollups, not product-level
+ *  batches, so a non-latest selection cannot scope a multi-table view
+ *  coherently (see the run-picker adaptation note in the module comment). */
+export function productRunPickerRuns(runs: Run[]): Run[] {
+  return runs.slice(0, 1);
+}
+
+/** Breakdown-query params for the product tab. Deliberately NEVER includes a
+ *  run_id filter — per-table run_ids are not product batches, and scoping the
+ *  product breakdowns by one would collapse them to a single member table
+ *  (see the run-picker adaptation note in the module comment). */
+export function productBreakdownParams(filters: MultiFilters): GetProductResultsParams {
+  return {
+    dimension: orUndef(filters.dimension),
+    severity: orUndef(filters.severity),
+    rule: orUndef(filters.rule),
+    column: orUndef(filters.column),
+    axes: "breakdown",
+  };
 }
 
 /** Muted, desaturated palette for the per-table contributing lines on the
@@ -207,10 +235,9 @@ function ResultsBody({ productId }: { productId: string }) {
   // breakdown row toggles the matching facet, which re-scopes every breakdown
   // and trend (mirrors the monitored-table tab).
   const [filters, setFilters] = useState<MultiFilters>(EMPTY_FILTERS);
-  // The selected run_id, or null for "Latest" (the default). See the
-  // run-picker semantic adaptation note in the module comment: a selected run
-  // scopes the score + Drilldown breakdowns; Latest omits it.
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // No selected-run state: the picker is fixed to "Latest" (per-table run_ids
+  // are not product batches — see the module comment), so no run_id ever
+  // scopes the queries below.
   // Drilldown scope: "Applicable" (default) cross-filters the breakdowns by the
   // active chips and hides rows excluded by them; "All" keeps the excluded base
   // rows, rendered greyed alongside the matching ones.
@@ -230,9 +257,6 @@ function ResultsBody({ productId }: { productId: string }) {
   const runs: Run[] = (runsQuery.data?.data?.rows ?? []).filter(
     (r): r is typeof r & { run_id: string } => typeof r.run_id === "string",
   );
-  const latestRunId = runs[0]?.run_id;
-  const isLatest = !selectedRunId || selectedRunId === latestRunId;
-  const runIdParam = selectedRunId ?? undefined;
 
   // The FILTERED product trends: cross-filtered by the active facet chips
   // (dqlake's product tab re-scopes its trends on the chips, unlike the
@@ -255,35 +279,19 @@ function ResultsBody({ productId }: { productId: string }) {
   const trends = trendQuery.data?.data;
   const loading = trendQuery.isPending;
 
-  // The FILTERED product breakdowns: run-scoped AND cross-filtered by the
-  // active facet chips. This is the live result in both modes — the numbers
-  // always reflect the active filter.
-  const resultsQuery = useGetProductResults(
-    productId,
-    {
-      dimension: orUndef(filters.dimension),
-      severity: orUndef(filters.severity),
-      rule: orUndef(filters.rule),
-      column: orUndef(filters.column),
-      run_id: runIdParam,
-      axes: "breakdown",
-    },
-    {
-      query: { placeholderData: keepPreviousData, ...RESULTS_QUERY_OPTIONS },
-    },
-  );
+  // The FILTERED product breakdowns: cross-filtered by the active facet
+  // chips (never run-scoped — see productBreakdownParams). This is the live
+  // result in both modes — the numbers always reflect the active filter.
+  const resultsQuery = useGetProductResults(productId, productBreakdownParams(filters), {
+    query: { placeholderData: keepPreviousData, ...RESULTS_QUERY_OPTIONS },
+  });
   const results = resultsQuery.data?.data;
-  // The BASE (applicable) product breakdowns: run-scoped only, NO facet
-  // filter. Drives the row set in "All" mode — base rows absent from the
-  // filtered result render greyed. In "Applicable" mode it's unused beyond
-  // being the same set.
-  const baseQuery = useGetProductResults(
-    productId,
-    { run_id: runIdParam, axes: "breakdown" },
-    {
-      query: { placeholderData: keepPreviousData, ...RESULTS_QUERY_OPTIONS },
-    },
-  );
+  // The BASE (applicable) product breakdowns: NO facet filter. Drives the
+  // row set in "All" mode — base rows absent from the filtered result render
+  // greyed. In "Applicable" mode it's unused beyond being the same set.
+  const baseQuery = useGetProductResults(productId, productBreakdownParams(EMPTY_FILTERS), {
+    query: { placeholderData: keepPreviousData, ...RESULTS_QUERY_OPTIONS },
+  });
   const baseResults = baseQuery.data?.data;
   // Background refetch (filter/selection change) vs first load: only the former
   // gets the subtle drilldown spinner — the first load has the ChartFrame and
@@ -448,16 +456,11 @@ function ResultsBody({ productId }: { productId: string }) {
       pass_rate: toNum(p.pass_rate),
     }));
 
-  // Product average score. Latest (dqlake behaviour) = the latest point on the
-  // product trend (the mean across members). A picked run = that run's rollup
-  // from the runs list (our runs are per-member-run, not batches — see the
-  // module comment). Failed tests always sum the (run-scoped, filtered)
+  // Product average score (dqlake behaviour) = the latest point on the
+  // product trend (the mean across members). Failed tests sum the filtered
   // by_table rows, matching dqlake's use of its filtered results.
-  const selectedRun = selectedRunId
-    ? runs.find((r) => r.run_id === selectedRunId)
-    : undefined;
   const lastTrend = (trends?.trend ?? []).at(-1);
-  const passRate = selectedRun ? toNum(selectedRun.pass_rate) : toNum(lastTrend?.pass_rate);
+  const passRate = toNum(lastTrend?.pass_rate);
   const failedTests = (results?.by_table ?? []).reduce(
     (a, g) => a + (g.failed_tests ?? 0),
     0,
@@ -506,10 +509,13 @@ function ResultsBody({ productId }: { productId: string }) {
   return (
     <div className="space-y-6">
       {/* The run picker overlaps the score box's top-right corner; it drops
-          below the score on very small screens (mirrors the Tables tab). */}
+          below the score on very small screens (mirrors the Tables tab). It is
+          fixed to "Latest": only the newest entry is offered, and selecting it
+          resolves to the latest path anyway, so onChange is a no-op (see the
+          run-picker adaptation note in the module comment). */}
       <div className="relative">
         <div className="z-10 sm:absolute sm:right-2 sm:top-2 max-sm:mb-2 max-sm:flex max-sm:justify-end">
-          <RunPicker runs={runs} value={selectedRunId} onChange={setSelectedRunId} />
+          <RunPicker runs={productRunPickerRuns(runs)} value={null} onChange={() => {}} />
         </div>
         <div className="sm:pr-2">
           <ScoreBox
@@ -683,7 +689,7 @@ function ResultsBody({ productId }: { productId: string }) {
                     }`}
                   />
                 </button>
-                {selectedFqn && isLatest && !failedRows?.suppressed && (
+                {selectedFqn && !failedRows?.suppressed && (
                   <DownloadFailedRecordsMenu
                     fetchRows={fetchAllFailedRows}
                     tableName={selectedTable}
@@ -696,13 +702,6 @@ function ResultsBody({ productId }: { productId: string }) {
                   // By-table label that no longer resolves to a member FQN.
                   <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
                     {t("resultsUi.invalidSamplesUnavailable")}
-                  </div>
-                ) : !isLatest ? (
-                  // Our failed-rows endpoint always reads the latest run window
-                  // (no run_id param), so showing it under an older picked run
-                  // would be misleading — same gating as the monitored-table tab.
-                  <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                    {t("resultsUi.failedRecordsLatestOnly")}
                   </div>
                 ) : failedRows?.suppressed ? (
                   // Our failed-rows envelope carries an extra `suppressed` flag

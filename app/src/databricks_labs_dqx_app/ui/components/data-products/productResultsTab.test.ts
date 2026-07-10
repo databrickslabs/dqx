@@ -4,7 +4,10 @@ import {
   buildTableColorMap,
   computeOverallPoints,
   friendlyTableName,
+  productBreakdownParams,
+  productRunPickerRuns,
 } from "./ProductResultsTab";
+import { EMPTY_FILTERS } from "@/components/monitored-tables/BindingResultsTab";
 import type { TrendPointOut } from "@/lib/api";
 
 const A = "cat.sch.orders";
@@ -13,6 +16,49 @@ const B = "cat.sch.customers";
 function pt(series: string, run_date: string, pass_rate: number | null = 1): TrendPointOut {
   return { series, run_date, pass_rate };
 }
+
+describe("productRunPickerRuns", () => {
+  it("offers ONLY the latest run (per-table run_ids are not product batches)", () => {
+    const runs = [
+      { run_id: "r3", run_ts: "2026-01-03T00:00:00" },
+      { run_id: "r2", run_ts: "2026-01-02T00:00:00" },
+      { run_id: "r1", run_ts: "2026-01-01T00:00:00" },
+    ];
+    expect(productRunPickerRuns(runs)).toEqual([runs[0]]);
+  });
+
+  it("is empty when there are no runs", () => {
+    expect(productRunPickerRuns([])).toEqual([]);
+  });
+});
+
+describe("productBreakdownParams", () => {
+  it("NEVER carries a run_id filter (a member-table run_id cannot scope the product view)", () => {
+    const params = productBreakdownParams({
+      ...EMPTY_FILTERS,
+      dimension: ["Completeness"],
+      runId: "r2", // even a stray runId in the filters must not leak through
+    });
+    expect("run_id" in params).toBe(false);
+    expect(params).toEqual({
+      dimension: ["Completeness"],
+      severity: undefined,
+      rule: undefined,
+      column: undefined,
+      axes: "breakdown",
+    });
+  });
+
+  it("omits empty facets and pins axes to breakdown for the base (unfiltered) query", () => {
+    expect(productBreakdownParams(EMPTY_FILTERS)).toEqual({
+      dimension: undefined,
+      severity: undefined,
+      rule: undefined,
+      column: undefined,
+      axes: "breakdown",
+    });
+  });
+});
 
 describe("friendlyTableName", () => {
   it("returns the last FQN segment", () => {
