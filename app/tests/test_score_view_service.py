@@ -185,6 +185,35 @@ class TestShapingViewDdl:
         assert "a.registry_rule_id" in ddl
         assert "a.columns" in ddl  # stays an ARRAY<STRING> column
 
+    def test_reads_run_provenance_tags_from_the_run_level_metadata_map(self, svc):
+        # dq_metrics is long-format: the run-level user_metadata map repeats
+        # per metric row, so MAX over the grouped rows picks it from any row.
+        ddl = svc.shaping_view_ddl()
+        assert "MAX(user_metadata['run_mode']) AS run_mode_tag" in ddl
+        assert "MAX(user_metadata['binding_version']) AS binding_version_tag" in ddl
+
+    def test_run_mode_tag_wins_with_the_legacy_run_type_heuristic_as_fallback(self, svc):
+        # LEGACY HEURISTIC (documented in the DDL docstring): runs predating
+        # the stamped tag derive run_mode from dq_validation_runs.run_type —
+        # scheduled -> published, dryrun/preview -> draft; unknown provenance
+        # (no runs row / unknown run_type) defaults to published so legacy
+        # data stays visible under the endpoints' published-only default.
+        ddl = svc.shaping_view_ddl()
+        assert "`dqx_test`.`dqx_app_test`.dq_validation_runs" in ddl
+        assert "LEFT JOIN run_types rt" in ddl  # LEFT — tagless AND rowless runs survive
+        assert (
+            "COALESCE(\n"
+            "    e.run_mode_tag,\n"
+            "    CASE WHEN rt.run_type = 'scheduled' THEN 'published'\n"
+            "         WHEN rt.run_type IN ('dryrun', 'preview') THEN 'draft' END,\n"
+            "    'published') AS run_mode" in ddl
+        )
+
+    def test_binding_version_is_tag_only_and_cast_to_int(self, svc):
+        # No heuristic for binding_version — legacy runs keep NULL.
+        ddl = svc.shaping_view_ddl()
+        assert "TRY_CAST(e.binding_version_tag AS INT) AS binding_version" in ddl
+
 
 class TestMetricViewDdl:
     def test_is_idempotent_create_or_replace_with_metrics_yaml(self, svc):
@@ -210,6 +239,9 @@ class TestMetricViewDdl:
             "run_id": "run_id",
             "run_time": "run_time",
             "is_latest_run": "is_latest_run",
+            # Run provenance ('draft' | 'published') — tag-first with the
+            # legacy run_type heuristic resolved in the shaping view.
+            "run_mode": "run_mode",
             "check_name": "check_name",
             # As-of-run attribution dimensions (frozen at materialization
             # time in checks_json — never rewritten by later tag edits).
@@ -320,6 +352,52 @@ class TestMeasureFormulaMatchesScoreService:
             # And the supporting measures match the Python aggregates.
             assert simulated_failed == sum(m.error_count + m.warning_count for m in check_metrics)
             assert simulated_total == input_row_count * len(check_metrics)
+
+
+# ---------------------------------------------------------------------------
+# Run-mode resolution: the COALESCE heuristic's intended truth table
+# ---------------------------------------------------------------------------
+
+
+def _simulate_run_mode_resolution(run_mode_tag: str | None, run_type: str | None) -> str:
+    """Evaluate the shaping view's run_mode COALESCE over one run.
+
+    Mirrors the SQL exactly: the stamped run-level tag wins; legacy runs
+    fall back to the dq_validation_runs.run_type heuristic (scheduled ->
+    published, dryrun/preview -> draft); anything else — no runs row,
+    unknown run_type — defaults to published so pre-tag/external metrics
+    stay visible under the endpoints' published-only default.
+    """
+    if run_mode_tag is not None:
+        return run_mode_tag
+    if run_type == "scheduled":
+        return "published"
+    if run_type in ("dryrun", "preview"):
+        return "draft"
+    return "published"
+
+
+class TestRunModeResolutionTruthTable:
+    @pytest.mark.parametrize(
+        ("run_mode_tag", "run_type", "expected"),
+        [
+            # The stamped tag always wins, whatever run_type says.
+            ("draft", "dryrun", "draft"),
+            ("published", "dryrun", "published"),
+            ("draft", "scheduled", "draft"),
+            # Legacy heuristic: scheduled runs were always approved-rules runs.
+            (None, "scheduled", "published"),
+            # Pre-tag manual binding runs are indistinguishable from ad-hoc
+            # dry runs — conservatively drafts.
+            (None, "dryrun", "draft"),
+            (None, "preview", "draft"),
+            # Unknown provenance stays visible by default.
+            (None, None, "published"),
+            (None, "something_else", "published"),
+        ],
+    )
+    def test_resolution(self, run_mode_tag: str | None, run_type: str | None, expected: str):
+        assert _simulate_run_mode_resolution(run_mode_tag, run_type) == expected
 
 
 # ---------------------------------------------------------------------------

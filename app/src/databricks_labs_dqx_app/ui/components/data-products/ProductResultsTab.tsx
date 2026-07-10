@@ -109,7 +109,7 @@ function ResultsBody({ productId }: { productId: string }) {
   // The product run history for the run picker (newest-first). Our rows are
   // already RunPicker-shaped (run_id/run_ts/pass_rate). NON-suspense so the
   // picker fills in once available without blocking the rest of the shell.
-  const runsQuery = useGetProductResultsRuns(productId, {
+  const runsQuery = useGetProductResultsRuns(productId, undefined, {
     query: { ...RESULTS_QUERY_OPTIONS },
   });
   const runs: Run[] = (runsQuery.data?.data?.rows ?? []).filter(

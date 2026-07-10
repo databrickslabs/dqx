@@ -158,7 +158,35 @@ class TestRuleScore:
         assert "MEASURE(score)" in stmt
         assert "MEASURE(failed_tests)" in stmt
         assert "MEASURE(total_tests)" in stmt
-        assert "is_latest_run" in stmt
+        # Latest run within the selected mode set — NOT the view's
+        # is_latest_run flag, which is computed over ALL runs regardless of
+        # run_mode (a newer draft would otherwise blank the published score).
+        assert "ORDER BY run_time DESC LIMIT 1" in stmt
+        assert "is_latest_run" not in stmt
+
+    def test_scores_default_to_the_latest_published_run(
+        self, client, sql_mock, apply_rules_mock, monitored_tables_mock
+    ):
+        apply_rules_mock.list_bindings_for_rule.return_value = [make_applied_rule("ar1", "b1")]
+        monitored_tables_mock.get.return_value = make_binding_detail("b1", "main.sales.orders")
+        sql_mock.query_dicts.return_value = [measure_row("r1", 0.9, 10, 100)]
+        resp = client.get("/api/v1/dq-score/rule/r1")
+        assert resp.status_code == 200
+        stmt = sql_mock.query_dicts.call_args[0][0]
+        assert "run_mode = 'published'" in stmt
+
+    def test_include_drafts_drops_the_run_mode_filter(
+        self, client, sql_mock, apply_rules_mock, monitored_tables_mock
+    ):
+        apply_rules_mock.list_bindings_for_rule.return_value = [make_applied_rule("ar1", "b1")]
+        monitored_tables_mock.get.return_value = make_binding_detail("b1", "main.sales.orders")
+        sql_mock.query_dicts.return_value = [measure_row("r1", 0.9, 10, 100)]
+        resp = client.get("/api/v1/dq-score/rule/r1", params={"include_drafts": "true"})
+        assert resp.status_code == 200
+        stmt = sql_mock.query_dicts.call_args[0][0]
+        assert "run_mode" not in stmt
+        # The latest run overall is still what gets scored.
+        assert "ORDER BY run_time DESC LIMIT 1" in stmt
 
     def test_applied_to_count_includes_inaccessible_tables(
         self, client, sql_mock, apply_rules_mock, monitored_tables_mock

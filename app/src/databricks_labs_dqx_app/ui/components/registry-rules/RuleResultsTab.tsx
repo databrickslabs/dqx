@@ -51,7 +51,7 @@ import {
  */
 function RuleResultsContent({ ruleId }: { ruleId: string }) {
   const { t } = useTranslation();
-  const { data } = useGetRuleScoreSuspense(ruleId, {
+  const { data } = useGetRuleScoreSuspense(ruleId, undefined, {
     query: { select: (d) => d.data, ...RESULTS_QUERY_OPTIONS },
   });
 

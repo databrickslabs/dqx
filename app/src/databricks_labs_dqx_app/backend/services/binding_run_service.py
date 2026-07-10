@@ -29,6 +29,12 @@ from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
+from databricks_labs_dqx_app.backend.services.score_view_service import (
+    BINDING_VERSION_TAG,
+    RUN_MODE_DRAFT,
+    RUN_MODE_PUBLISHED,
+    RUN_MODE_TAG,
+)
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
 
 logger = logging.getLogger(__name__)
@@ -63,6 +69,45 @@ class BindingRunResult:
     run_id: str
     job_run_id: int
     view_fqn: str
+
+
+def _stamp_run_provenance(
+    checks: list[dict[str, Any]], run_mode: str, binding_version: int | None
+) -> list[dict[str, Any]]:
+    """Return a copy of *checks* with uniform run-provenance tags merged into
+    every check's ``user_metadata``.
+
+    The frozen runner's ``_aggregate_rule_labels`` (READ-ONLY
+    ``app/tasks/.../runner.py``) collapses the per-check maps into the
+    run-level ``dq_metrics.user_metadata`` by intersection-with-equal-values,
+    so a tag stamped with the SAME value on EVERY check is guaranteed to
+    survive into the run-level map — that is the carrier the score views read
+    ``run_mode`` / ``binding_version`` back out of. Stamping happens at
+    run-assembly time only: the checks list is copied per check (and the
+    ``user_metadata`` dict re-built), so neither the materializer's rendered
+    output nor the frozen version snapshot is ever mutated.
+
+    Note on fingerprints: *compute_rule_fingerprint* hashes only
+    name/criticality/function/arguments/filter/for_each_column —
+    ``user_metadata`` does not participate — so the stamped tags never change
+    ``rule_set_fingerprint`` and a draft and published run of identical rules
+    still fingerprint identically.
+    """
+    tags: dict[str, str] = {RUN_MODE_TAG: run_mode}
+    if binding_version is not None:
+        tags[BINDING_VERSION_TAG] = str(binding_version)
+    stamped: list[dict[str, Any]] = []
+    for check in checks:
+        if not isinstance(check, dict):
+            stamped.append(check)
+            continue
+        existing = check.get("user_metadata")
+        merged: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
+        merged.update(tags)
+        new_check = dict(check)
+        new_check["user_metadata"] = merged
+        stamped.append(new_check)
+    return stamped
 
 
 def _extract_sql_query(checks: list[dict[str, Any]]) -> str | None:
@@ -152,6 +197,13 @@ class BindingRunService:
         checks, binding_version = self._resolve_checks(binding_id, detail.table.version, source, version)
         if not checks:
             raise BindingRunError(f"No checks resolved for binding {binding_id} (source={source})")
+
+        # Stamp uniform run-provenance tags onto every check so the frozen
+        # runner's label intersection carries run_mode / binding_version
+        # into the run-level dq_metrics.user_metadata map (copy-on-write —
+        # the resolved snapshot / rendered checks are never mutated).
+        run_mode = RUN_MODE_DRAFT if source == "draft" else RUN_MODE_PUBLISHED
+        checks = _stamp_run_provenance(checks, run_mode, binding_version)
 
         run_id = uuid4().hex[:16]
         is_synthetic = table_fqn.startswith(_SQL_CHECK_PREFIX)

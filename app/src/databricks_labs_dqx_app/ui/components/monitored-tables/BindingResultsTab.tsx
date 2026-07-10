@@ -273,7 +273,7 @@ function ResultsBody({
   // run to scope the score, and switching runs is a deliberate action. Keyed
   // on the binding id (the endpoint accepts a binding id or a table FQN),
   // matching dqlake's binding_id param.
-  const { data: runsData } = useGetDqResultsRunsSuspense<RunsOut>(bindingId, {
+  const { data: runsData } = useGetDqResultsRunsSuspense<RunsOut>(bindingId, undefined, {
     query: { ...selector<RunsOut>().query, ...RESULTS_QUERY_OPTIONS },
   });
   const runs = (runsData.rows ?? []).filter(

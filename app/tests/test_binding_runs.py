@@ -152,14 +152,20 @@ class TestResolutionMatrix:
 
 
 class TestSubmission:
-    def test_submits_exactly_the_resolved_checks(self, service, monitored_tables, version_service, job_service):
+    def test_submits_the_resolved_checks_plus_provenance_tags(
+        self, service, monitored_tables, version_service, job_service
+    ):
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
         version_service.get_checks.return_value = _CHECKS
 
         service.run_binding("b1", source="approved", version=2, user_email="alice@x")
 
         _, kwargs = job_service.submit_run.call_args
-        assert kwargs["config"]["checks"] == _CHECKS
+        submitted = kwargs["config"]["checks"]
+        # The functional payload is exactly the resolved checks; the only
+        # addition is the uniform run-provenance user_metadata stamp.
+        assert [{k: v for k, v in c.items() if k != "user_metadata"} for c in submitted] == _CHECKS
+        assert all(c["user_metadata"] == {"run_mode": "published", "binding_version": "2"} for c in submitted)
         assert kwargs["config"]["source_table_fqn"] == "cat.schema.tbl"
         assert kwargs["config"]["is_sql_check"] is False
         assert kwargs["requesting_user"] == "alice@x"
@@ -243,6 +249,135 @@ class TestSubmission:
 
         _, submit_kwargs = job_service.submit_run.call_args
         assert submit_kwargs["config"]["sample_size"] == 1000
+
+
+class TestRunProvenanceStamping:
+    """Task P3.3 — every submitted check carries uniform run-provenance tags.
+
+    The frozen runner's ``_aggregate_rule_labels`` keeps only user_metadata
+    keys with the SAME value on every check, so a uniform per-check stamp is
+    what carries ``run_mode`` / ``binding_version`` into the run-level
+    ``dq_metrics.user_metadata`` map (the score views read it back out).
+    The tags never touch name/criticality/function/arguments/filter, so the
+    run's ``rule_set_fingerprint`` is unchanged (user_metadata does not
+    participate in ``compute_rule_fingerprint``).
+    """
+
+    def _submitted_checks(self, job_service) -> list[dict]:
+        _, kwargs = job_service.submit_run.call_args
+        return kwargs["config"]["checks"]
+
+    def test_draft_run_stamps_run_mode_draft_without_binding_version(
+        self, service, monitored_tables, materializer, job_service
+    ):
+        monitored_tables.get.return_value = _detail(version=0)
+        materializer.render_binding_checks.return_value = _CHECKS
+
+        service.run_binding("b1", source="draft", version=None, user_email="alice@x")
+
+        for check in self._submitted_checks(job_service):
+            assert check["user_metadata"]["run_mode"] == "draft"
+            assert "binding_version" not in check["user_metadata"]
+
+    def test_approved_run_stamps_run_mode_published_and_pinned_version(
+        self, service, monitored_tables, version_service, job_service
+    ):
+        monitored_tables.get.return_value = _detail(version=5)
+        version_service.get_checks.return_value = _CHECKS
+
+        service.run_binding("b1", source="approved", version=3, user_email="alice@x")
+
+        for check in self._submitted_checks(job_service):
+            assert check["user_metadata"]["run_mode"] == "published"
+            assert check["user_metadata"]["binding_version"] == "3"
+
+    def test_latest_approved_stamps_the_binding_version(
+        self, service, monitored_tables, version_service, job_service
+    ):
+        monitored_tables.get.return_value = _detail(version=4)
+        version_service.get_checks.return_value = _CHECKS
+
+        service.run_binding("b1", source="approved", version=None, user_email="alice@x")
+
+        for check in self._submitted_checks(job_service):
+            assert check["user_metadata"]["binding_version"] == "4"
+
+    def test_existing_user_metadata_is_preserved_and_uniform_across_checks(
+        self, service, monitored_tables, version_service, job_service
+    ):
+        monitored_tables.get.return_value = _detail(version=2)
+        version_service.get_checks.return_value = [
+            {
+                "name": "c1",
+                "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+                "user_metadata": {"severity": "High", "dimension": "Completeness"},
+            },
+            {
+                "name": "c2",
+                "check": {"function": "is_not_null", "arguments": {"column": "name"}},
+            },
+        ]
+
+        service.run_binding("b1", source="approved", version=2, user_email="alice@x")
+
+        submitted = self._submitted_checks(job_service)
+        assert submitted[0]["user_metadata"] == {
+            "severity": "High",
+            "dimension": "Completeness",
+            "run_mode": "published",
+            "binding_version": "2",
+        }
+        # A check with no prior metadata still gets the full uniform stamp —
+        # required for the runner's intersection to keep the keys.
+        assert submitted[1]["user_metadata"] == {"run_mode": "published", "binding_version": "2"}
+
+    def test_stamping_never_mutates_the_resolved_snapshot(
+        self, service, monitored_tables, version_service, job_service
+    ):
+        monitored_tables.get.return_value = _detail(version=2)
+        snapshot = [
+            {
+                "name": "c1",
+                "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+                "user_metadata": {"severity": "High"},
+            }
+        ]
+        version_service.get_checks.return_value = snapshot
+
+        service.run_binding("b1", source="approved", version=2, user_email="alice@x")
+
+        # The stored snapshot object handed back by the version service is
+        # untouched — stamping is copy-on-write.
+        assert snapshot == [
+            {
+                "name": "c1",
+                "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+                "user_metadata": {"severity": "High"},
+            }
+        ]
+        assert self._submitted_checks(job_service)[0] is not snapshot[0]
+
+    def test_stamping_does_not_change_the_rule_set_fingerprint(
+        self, service, monitored_tables, version_service, job_service
+    ):
+        # user_metadata does not participate in compute_rule_fingerprint, so
+        # a draft and published run of identical rules fingerprint the same.
+        from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
+
+        checks = [
+            {
+                "name": "c1",
+                "criticality": "error",
+                "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+            }
+        ]
+        monitored_tables.get.return_value = _detail(version=2)
+        version_service.get_checks.return_value = checks
+
+        service.run_binding("b1", source="approved", version=2, user_email="alice@x")
+
+        submitted = self._submitted_checks(job_service)
+        assert compute_rule_set_fingerprint_by_metadata(submitted) == compute_rule_set_fingerprint_by_metadata(checks)
 
 
 class TestFailClosedOrdering:

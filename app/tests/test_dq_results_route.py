@@ -200,6 +200,7 @@ def runs_row(
     pass_rate: float | None = 0.9,
     failed: int | None = 10,
     total: int | None = 100,
+    run_mode: str | None = "published",
 ) -> dict[str, str | None]:
     return {
         "run_id": run_id,
@@ -207,6 +208,7 @@ def runs_row(
         "pass_rate": None if pass_rate is None else str(pass_rate),
         "failed_tests": None if failed is None else str(failed),
         "total_tests": None if total is None else str(total),
+        "run_mode": run_mode,
     }
 
 
@@ -216,10 +218,15 @@ def sql_dispatch(
     check_rows: list[dict[str, str | None]] | None = None,
     metrics_rows: list[dict[str, str | None]] | None = None,
     runs_rows: list[dict[str, str | None]] | None = None,
+    quarantine_rows: list[dict[str, str | None]] | None = None,
 ) -> None:
     """Route each SP query to its canned result by the statement's target."""
 
     def dispatch(stmt: str, **_kwargs: object) -> list[dict[str, str | None]]:
+        # Quarantine first: its published-run subselect references the
+        # shaping view inside the same statement.
+        if "dq_quarantine_records" in stmt:
+            return quarantine_rows or []
         if SHAPING_VIEW_NAME in stmt:
             return check_rows or []
         if METRIC_VIEW_NAME in stmt:
@@ -485,11 +492,13 @@ class TestRuns:
             "pass_rate": pytest.approx(0.8),
             "failed_tests": 20,
             "total_tests": 100,
+            "run_mode": "published",
         }
         stmt = sql_mock.query_dicts.call_args[0][0]
         assert f"`{app_config.catalog}`.`{app_config.schema_name}`.{METRIC_VIEW_NAME}" in stmt
         assert "MEASURE(score) AS pass_rate" in stmt
-        assert "GROUP BY run_id, run_time" in stmt
+        # run_mode rides along per run (lossless: a run has exactly one mode).
+        assert "GROUP BY run_id, run_time, run_mode" in stmt
         assert "ORDER BY run_time DESC" in stmt
         assert f"'{FQN}'" in stmt
 
@@ -1033,6 +1042,130 @@ class TestFailedRowsShapeAndFilters:
         resp = client.get(FAILED_ROWS_URL, params={"limit": limit})
         assert resp.status_code == 422
         sql_mock.query_dicts.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# include_drafts — published-only defaults everywhere (Task P3.3)
+# ---------------------------------------------------------------------------
+
+
+class TestIncludeDrafts:
+    """Every dq-results read defaults to published runs only; the
+    ``include_drafts=true`` escape hatch drops the run_mode filter. The
+    view's ``run_mode`` column already resolves the stamped run-level tag
+    with the legacy run_type heuristic, so the routes filter one column —
+    which is exactly what these tests pin."""
+
+    CHECK_ROW_ENDPOINTS = [
+        f"/api/v1/dq-results/table/{FQN}",
+        "/api/v1/dq-results/global",
+        "/api/v1/dq-results/product/p1",
+        "/api/v1/dq-results/rule/rule-1",
+    ]
+
+    @pytest.fixture(autouse=True)
+    def _scoping(self, data_products_mock, apply_rules_mock, monitored_tables_mock):
+        data_products_mock.get.return_value = product_detail("p1", [("b1", FQN)])
+        apply_rules_mock.list_bindings_for_rule.return_value = [
+            AppliedRule(id="ar1", binding_id="b1", rule_id="rule-1")
+        ]
+        monitored_tables_mock.get.return_value = binding_detail("b1", FQN)
+
+    def _shaping_stmts(self, sql_mock) -> list[str]:
+        return [
+            call[0][0]
+            for call in sql_mock.query_dicts.call_args_list
+            if SHAPING_VIEW_NAME in call[0][0] and "dq_quarantine_records" not in call[0][0]
+        ]
+
+    @pytest.mark.parametrize("url", CHECK_ROW_ENDPOINTS)
+    def test_check_row_reads_default_to_published_runs(self, client, sql_mock, url):
+        sql_dispatch(sql_mock)
+        assert client.get(url).status_code == 200
+        stmts = self._shaping_stmts(sql_mock)
+        assert stmts, "expected a shaping-view read"
+        assert all("run_mode = 'published'" in stmt for stmt in stmts)
+
+    @pytest.mark.parametrize("url", CHECK_ROW_ENDPOINTS)
+    def test_include_drafts_drops_the_run_mode_filter(self, client, sql_mock, url):
+        sql_dispatch(sql_mock)
+        assert client.get(url, params={"include_drafts": "true"}).status_code == 200
+        for stmt in self._shaping_stmts(sql_mock):
+            assert "run_mode" not in stmt
+
+    def test_legacy_heuristic_rows_flow_through_unchanged(self, client, sql_mock):
+        # The heuristic lives in the VIEW (COALESCE over the stamped tag and
+        # the runs-join run_type) — a legacy run the view resolved to
+        # 'published' arrives as an ordinary row and is served normally.
+        sql_dispatch(sql_mock, check_rows=[check_row("legacy_check", errors=2, total=10)])
+        body = client.get(f"/api/v1/dq-results/table/{FQN}").json()
+        assert [g["label"] for g in body["by_rule"]] == ["legacy_check"]
+        assert "run_mode = 'published'" in self._shaping_stmts(sql_mock)[0]
+
+    @pytest.mark.parametrize(
+        "url",
+        [f"/api/v1/dq-results/runs/{FQN}", "/api/v1/dq-results/product/p1/runs"],
+    )
+    def test_runs_lists_default_to_published_runs(self, client, sql_mock, url):
+        sql_dispatch(sql_mock, runs_rows=[runs_row()])
+        assert client.get(url).status_code == 200
+        stmt = sql_mock.query_dicts.call_args[0][0]
+        assert METRIC_VIEW_NAME in stmt
+        assert "run_mode = 'published'" in stmt
+
+    @pytest.mark.parametrize(
+        "url",
+        [f"/api/v1/dq-results/runs/{FQN}", "/api/v1/dq-results/product/p1/runs"],
+    )
+    def test_runs_lists_include_drafts_drops_the_filter_and_badges_rows(self, client, sql_mock, url):
+        sql_dispatch(
+            sql_mock,
+            runs_rows=[
+                runs_row("r2", "2026-07-02 00:00:00", run_mode="draft"),
+                runs_row("r1", run_mode="published"),
+            ],
+        )
+        body = client.get(url, params={"include_drafts": "true"}).json()
+        stmt = sql_mock.query_dicts.call_args[0][0]
+        assert "run_mode = 'published'" not in stmt
+        # Each row still carries its run_mode so the picker can badge drafts.
+        assert [r["run_mode"] for r in body["rows"]] == ["draft", "published"]
+
+    def test_failed_rows_default_scopes_to_published_run_ids(self, client, sql_mock, app_config):
+        # dq_quarantine_records has no run_mode column — the published-only
+        # default filters by run_id against the shaping view instead.
+        sql_dispatch(sql_mock, quarantine_rows=[quarantine_row("q1")])
+        body = client.get(FAILED_ROWS_URL).json()
+        assert body["total"] == 1
+        stmt = sql_mock.query_dicts.call_args[0][0]
+        assert "dq_quarantine_records" in stmt
+        assert (
+            f"run_id IN (SELECT run_id FROM "
+            f"`{app_config.catalog}`.`{app_config.schema_name}`.{SHAPING_VIEW_NAME} "
+            f"WHERE input_location = '{FQN}' AND run_mode = 'published')" in stmt
+        )
+
+    def test_failed_rows_include_drafts_reads_all_runs(self, client, sql_mock):
+        sql_dispatch(sql_mock, quarantine_rows=[quarantine_row("q1")])
+        body = client.get(FAILED_ROWS_URL, params={"include_drafts": "true"}).json()
+        assert body["total"] == 1
+        stmt = sql_mock.query_dicts.call_args[0][0]
+        assert "run_mode" not in stmt
+        assert SHAPING_VIEW_NAME not in stmt
+
+    def test_failed_records_lookup_is_not_run_mode_filtered(self, client, sql_mock):
+        # _fetch_failed_records_by_run is a lookup map consulted only for
+        # the (table, run) keys already present in the filtered check rows —
+        # filtering it again would be redundant, so the dq_metrics read
+        # stays mode-agnostic by design.
+        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=1, total=10)])
+        client.get(f"/api/v1/dq-results/table/{FQN}")
+        metrics_stmts = [
+            call[0][0]
+            for call in sql_mock.query_dicts.call_args_list
+            if "dq_metrics" in call[0][0] and SHAPING_VIEW_NAME not in call[0][0]
+        ]
+        assert metrics_stmts and all("run_mode" not in stmt for stmt in metrics_stmts)
 
 
 # ---------------------------------------------------------------------------

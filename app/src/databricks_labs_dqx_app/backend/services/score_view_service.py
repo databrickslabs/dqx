@@ -67,6 +67,18 @@ ATTRIBUTION_VIEW_NAME = "v_dq_check_attribution"
 SHAPING_VIEW_NAME = "v_dq_check_results"
 METRIC_VIEW_NAME = "mv_dq_scores"
 
+# Run-provenance tags stamped uniformly onto EVERY check's user_metadata at
+# run-assembly time (services.binding_run_service). The frozen runner's
+# _aggregate_rule_labels keeps only keys carrying the SAME value on every
+# check, so a uniform stamp survives the intersection into the run-level
+# dq_metrics.user_metadata map — which is where the shaping view reads it
+# back out. RUN_MODE_TAG is "draft" | "published"; BINDING_VERSION_TAG is the
+# approved snapshot version as a string (absent on draft runs).
+RUN_MODE_TAG = "run_mode"
+BINDING_VERSION_TAG = "binding_version"
+RUN_MODE_DRAFT = "draft"
+RUN_MODE_PUBLISHED = "published"
+
 # from_json schema for the observer's check_metrics JSON-array payload:
 # [{"check_name": ..., "error_count": ..., "warning_count": ...}, ...].
 # Mirrors metrics_utils.parse_check_metrics / CheckMetricBreakdown.
@@ -208,8 +220,24 @@ class ScoreViewService:
           it executed with; rows without a frozen rule set keep NULLs
           (untagged bucket). LEFT — never INNER — so legacy runs stay
           visible.
+        - *run_mode* ('draft' | 'published') is read from the run-level
+          ``dq_metrics.user_metadata`` map (the run-provenance tag the
+          app stamps uniformly onto every check at run-assembly time —
+          the map repeats per metric row of a run, so MAX over the
+          grouped rows picks it from any row). LEGACY-RUN HEURISTIC:
+          runs predating the tag fall back to the
+          ``dq_validation_runs.run_type`` join — 'scheduled' maps to
+          'published', 'dryrun'/'preview' to 'draft' (pre-tag manual
+          binding runs are indistinguishable from ad-hoc dry runs, so
+          they conservatively count as drafts). Runs with no runs-table
+          row or an unknown run_type default to 'published' so
+          pre-existing/externally-written metrics stay visible in the
+          default published-only endpoint filters.
+        - *binding_version* is the approved snapshot version the run
+          executed (tag-only — NULL for draft runs and every legacy run).
         """
         metrics_table = f"{self._catalog_q}.{self._schema_q}.dq_metrics"
+        validation_runs = f"{self._catalog_q}.{self._schema_q}.dq_validation_runs"
         return (
             f"CREATE OR REPLACE VIEW {self.shaping_view_fqn_quoted} AS\n"
             "WITH per_run AS (\n"
@@ -218,9 +246,16 @@ class ScoreViewService:
             "    input_location,\n"
             "    MAX(run_time) AS run_time,\n"
             "    MAX(CASE WHEN metric_name = 'input_row_count' THEN metric_value END) AS input_row_count_str,\n"
-            "    MAX(CASE WHEN metric_name = 'check_metrics' THEN metric_value END) AS check_metrics_json\n"
+            "    MAX(CASE WHEN metric_name = 'check_metrics' THEN metric_value END) AS check_metrics_json,\n"
+            f"    MAX(user_metadata['{RUN_MODE_TAG}']) AS run_mode_tag,\n"
+            f"    MAX(user_metadata['{BINDING_VERSION_TAG}']) AS binding_version_tag\n"
             f"  FROM {metrics_table}\n"
             "  GROUP BY run_id, input_location\n"
+            "),\n"
+            "run_types AS (\n"
+            "  SELECT run_id, MAX(run_type) AS run_type\n"
+            f"  FROM {validation_runs}\n"
+            "  GROUP BY run_id\n"
             "),\n"
             "ranked AS (\n"
             "  SELECT\n"
@@ -235,6 +270,8 @@ class ScoreViewService:
             "    r.run_time,\n"
             "    (r.rn = 1) AS is_latest_run,\n"
             "    r.input_row_count_str,\n"
+            "    r.run_mode_tag,\n"
+            "    r.binding_version_tag,\n"
             "    c.check_name,\n"
             "    c.error_count,\n"
             "    c.warning_count,\n"
@@ -257,12 +294,24 @@ class ScoreViewService:
             "       ELSE COALESCE(e.warning_count, 0) END AS warning_count,\n"
             "  CASE WHEN e.is_placeholder THEN CAST(NULL AS BIGINT)\n"
             "       ELSE TRY_CAST(TRY_CAST(e.input_row_count_str AS DOUBLE) AS BIGINT) END AS input_row_count,\n"
+            # Run-mode resolution: the run-level tag wins; legacy runs
+            # (no tag) fall back to the run_type heuristic (scheduled ->
+            # published, dryrun/preview -> draft); unknown provenance
+            # defaults to published so legacy data stays visible.
+            "  COALESCE(\n"
+            "    e.run_mode_tag,\n"
+            f"    CASE WHEN rt.run_type = 'scheduled' THEN '{RUN_MODE_PUBLISHED}'\n"
+            f"         WHEN rt.run_type IN ('dryrun', 'preview') THEN '{RUN_MODE_DRAFT}' END,\n"
+            f"    '{RUN_MODE_PUBLISHED}') AS run_mode,\n"
+            "  TRY_CAST(e.binding_version_tag AS INT) AS binding_version,\n"
             "  a.criticality,\n"
             "  a.severity,\n"
             "  a.dimension,\n"
             "  a.registry_rule_id,\n"
             "  a.columns\n"
             "FROM exploded e\n"
+            "LEFT JOIN run_types rt\n"
+            "  ON rt.run_id = e.run_id\n"
             f"LEFT JOIN {self.attribution_view_fqn_quoted} a\n"
             "  ON a.run_id = e.run_id\n"
             "  AND a.source_table_fqn = e.input_location\n"
@@ -286,6 +335,10 @@ class ScoreViewService:
             "    expr: run_time\n"
             "  - name: is_latest_run\n"
             "    expr: is_latest_run\n"
+            # Run provenance ('draft' | 'published') — tag-first with the
+            # legacy run_type heuristic resolved in the shaping view.
+            "  - name: run_mode\n"
+            "    expr: run_mode\n"
             "  - name: check_name\n"
             "    expr: check_name\n"
             # As-of-run attribution (frozen into checks_json at

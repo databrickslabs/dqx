@@ -1487,13 +1487,21 @@ class EntityResultsOut(BaseModel):
 
 
 class RunRowOut(BaseModel):
-    """One run's rollup for the run picker (newest first)."""
+    """One run's rollup for the run picker (newest first).
+
+    *run_mode* is the run's provenance ('draft' | 'published') — the
+    stamped run-level tag, with the legacy run_type heuristic as fallback
+    (resolved in the shaping view). Only meaningful to display when the
+    caller requested ``include_drafts=true``; the default filter already
+    restricts rows to published runs.
+    """
 
     run_id: str | None = None
     run_ts: str | None = None
     pass_rate: float | None = None
     failed_tests: int | None = None
     total_tests: int | None = None
+    run_mode: str | None = None
 
 
 class RunsOut(BaseModel):

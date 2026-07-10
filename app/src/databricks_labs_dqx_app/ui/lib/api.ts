@@ -2615,8 +2615,16 @@ export type RunRowOutFailedTests = number | null;
 
 export type RunRowOutTotalTests = number | null;
 
+export type RunRowOutRunMode = string | null;
+
 /**
  * One run's rollup for the run picker (newest first).
+
+*run_mode* is the run's provenance ('draft' | 'published') — the
+stamped run-level tag, with the legacy run_type heuristic as fallback
+(resolved in the shaping view). Only meaningful to display when the
+caller requested ``include_drafts=true``; the default filter already
+restricts rows to published runs.
  */
 export interface RunRowOut {
   run_id?: RunRowOutRunId;
@@ -2624,6 +2632,7 @@ export interface RunRowOut {
   pass_rate?: RunRowOutPassRate;
   failed_tests?: RunRowOutFailedTests;
   total_tests?: RunRowOutTotalTests;
+  run_mode?: RunRowOutRunMode;
 }
 
 export type RunSetDetailOutProductId = string | null;
@@ -3683,6 +3692,10 @@ export type GetMetricsTrendParams = {
 limit?: number;
 };
 
+export type GetRuleScoreParams = {
+include_drafts?: boolean;
+};
+
 export type GetGlobalResultsParams = {
 dimension?: string[] | null;
 severity?: string[] | null;
@@ -3690,6 +3703,7 @@ rule?: string[] | null;
 column?: string[] | null;
 run_id?: string | null;
 axes?: string;
+include_drafts?: boolean;
 };
 
 export type GetRuleResultsParams = {
@@ -3699,6 +3713,11 @@ rule?: string[] | null;
 column?: string[] | null;
 run_id?: string | null;
 axes?: string;
+include_drafts?: boolean;
+};
+
+export type GetProductResultsRunsParams = {
+include_drafts?: boolean;
 };
 
 export type GetProductResultsParams = {
@@ -3708,6 +3727,7 @@ rule?: string[] | null;
 column?: string[] | null;
 run_id?: string | null;
 axes?: string;
+include_drafts?: boolean;
 };
 
 export type GetDqResultsFailedRowsParams = {
@@ -3720,6 +3740,11 @@ column?: string[] | null;
  * @maximum 100000
  */
 limit?: number;
+include_drafts?: boolean;
+};
+
+export type GetDqResultsRunsParams = {
+include_drafts?: boolean;
 };
 
 export type GetTableResultsParams = {
@@ -3729,6 +3754,7 @@ rule?: string[] | null;
 column?: string[] | null;
 run_id?: string | null;
 axes?: string;
+include_drafts?: boolean;
 };
 
 export type ListRunSetsParams = {
@@ -16237,39 +16263,45 @@ bindings — deliberately NOT restricted to the viewer's accessible
 catalogs, since the frontend uses ``applied_to_count == 0`` to mean
 "not applied anywhere". *per_table* applies the same silent catalog
 filter as the product endpoint and is deduplicated by table (a rule
-applied twice to one table is scored once).
+applied twice to one table is scored once). Per-table scores read the
+latest PUBLISHED run unless *include_drafts*.
  * @summary Get Rule Score
  */
 export const getRuleScore = (
-    ruleId: string, options?: AxiosRequestConfig
+    ruleId: string,
+    params?: GetRuleScoreParams, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<RuleScoreOut>> => {
     
     
     return axios.default.get(
-      `/api/v1/dq-score/rule/${ruleId}`,options
+      `/api/v1/dq-score/rule/${ruleId}`,{
+    ...options,
+        params: {...params, ...options?.params},}
     );
   }
 
 
 
 
-export const getGetRuleScoreQueryKey = (ruleId?: string,) => {
+export const getGetRuleScoreQueryKey = (ruleId?: string,
+    params?: GetRuleScoreParams,) => {
     return [
-    `/api/v1/dq-score/rule/${ruleId}`
+    `/api/v1/dq-score/rule/${ruleId}`, ...(params ? [params]: [])
     ] as const;
     }
 
     
-export const getGetRuleScoreQueryOptions = <TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetRuleScoreQueryOptions = <TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(ruleId: string,
+    params?: GetRuleScoreParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetRuleScoreQueryKey(ruleId);
+  const queryKey =  queryOptions?.queryKey ?? getGetRuleScoreQueryKey(ruleId,params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRuleScore>>> = ({ signal }) => getRuleScore(ruleId, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRuleScore>>> = ({ signal }) => getRuleScore(ruleId,params, { signal, ...axiosOptions });
 
       
 
@@ -16283,7 +16315,8 @@ export type GetRuleScoreQueryError = AxiosError<HTTPValidationError>
 
 
 export function useGetRuleScore<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>> & Pick<
+ ruleId: string,
+    params: undefined |  GetRuleScoreParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getRuleScore>>,
           TError,
@@ -16293,7 +16326,8 @@ export function useGetRuleScore<TData = Awaited<ReturnType<typeof getRuleScore>>
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetRuleScore<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>> & Pick<
+ ruleId: string,
+    params?: GetRuleScoreParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getRuleScore>>,
           TError,
@@ -16303,7 +16337,8 @@ export function useGetRuleScore<TData = Awaited<ReturnType<typeof getRuleScore>>
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetRuleScore<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ ruleId: string,
+    params?: GetRuleScoreParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -16311,11 +16346,12 @@ export function useGetRuleScore<TData = Awaited<ReturnType<typeof getRuleScore>>
  */
 
 export function useGetRuleScore<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ ruleId: string,
+    params?: GetRuleScoreParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getGetRuleScoreQueryOptions(ruleId,options)
+  const queryOptions = getGetRuleScoreQueryOptions(ruleId,params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -16327,16 +16363,17 @@ export function useGetRuleScore<TData = Awaited<ReturnType<typeof getRuleScore>>
 
 
 
-export const getGetRuleScoreSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetRuleScoreSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(ruleId: string,
+    params?: GetRuleScoreParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetRuleScoreQueryKey(ruleId);
+  const queryKey =  queryOptions?.queryKey ?? getGetRuleScoreQueryKey(ruleId,params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRuleScore>>> = ({ signal }) => getRuleScore(ruleId, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRuleScore>>> = ({ signal }) => getRuleScore(ruleId,params, { signal, ...axiosOptions });
 
       
 
@@ -16350,15 +16387,18 @@ export type GetRuleScoreSuspenseQueryError = AxiosError<HTTPValidationError>
 
 
 export function useGetRuleScoreSuspense<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ ruleId: string,
+    params: undefined |  GetRuleScoreParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetRuleScoreSuspense<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ ruleId: string,
+    params?: GetRuleScoreParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetRuleScoreSuspense<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ ruleId: string,
+    params?: GetRuleScoreParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -16366,11 +16406,12 @@ export function useGetRuleScoreSuspense<TData = Awaited<ReturnType<typeof getRul
  */
 
 export function useGetRuleScoreSuspense<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ ruleId: string,
+    params?: GetRuleScoreParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getGetRuleScoreSuspenseQueryOptions(ruleId,options)
+  const queryOptions = getGetRuleScoreSuspenseQueryOptions(ruleId,params,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -16682,6 +16723,7 @@ export function useListResultDimensionsSuspense<TData = Awaited<ReturnType<typeo
 
 Tables in catalogs the caller cannot access are silently filtered
 (never 403) — the same gate as the dq-score global endpoint.
+Draft runs are excluded unless *include_drafts*.
  * @summary Get Global Results
  */
 export const getGlobalResults = (
@@ -17006,35 +17048,40 @@ export function useGetRuleResultsSuspense<TData = Awaited<ReturnType<typeof getR
  * @summary Get Product Results Runs
  */
 export const getProductResultsRuns = (
-    productId: string, options?: AxiosRequestConfig
+    productId: string,
+    params?: GetProductResultsRunsParams, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<RunsOut>> => {
     
     
     return axios.default.get(
-      `/api/v1/dq-results/product/${productId}/runs`,options
+      `/api/v1/dq-results/product/${productId}/runs`,{
+    ...options,
+        params: {...params, ...options?.params},}
     );
   }
 
 
 
 
-export const getGetProductResultsRunsQueryKey = (productId?: string,) => {
+export const getGetProductResultsRunsQueryKey = (productId?: string,
+    params?: GetProductResultsRunsParams,) => {
     return [
-    `/api/v1/dq-results/product/${productId}/runs`
+    `/api/v1/dq-results/product/${productId}/runs`, ...(params ? [params]: [])
     ] as const;
     }
 
     
-export const getGetProductResultsRunsQueryOptions = <TData = Awaited<ReturnType<typeof getProductResultsRuns>>, TError = AxiosError<HTTPValidationError>>(productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetProductResultsRunsQueryOptions = <TData = Awaited<ReturnType<typeof getProductResultsRuns>>, TError = AxiosError<HTTPValidationError>>(productId: string,
+    params?: GetProductResultsRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetProductResultsRunsQueryKey(productId);
+  const queryKey =  queryOptions?.queryKey ?? getGetProductResultsRunsQueryKey(productId,params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProductResultsRuns>>> = ({ signal }) => getProductResultsRuns(productId, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProductResultsRuns>>> = ({ signal }) => getProductResultsRuns(productId,params, { signal, ...axiosOptions });
 
       
 
@@ -17048,7 +17095,8 @@ export type GetProductResultsRunsQueryError = AxiosError<HTTPValidationError>
 
 
 export function useGetProductResultsRuns<TData = Awaited<ReturnType<typeof getProductResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>> & Pick<
+ productId: string,
+    params: undefined |  GetProductResultsRunsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getProductResultsRuns>>,
           TError,
@@ -17058,7 +17106,8 @@ export function useGetProductResultsRuns<TData = Awaited<ReturnType<typeof getPr
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetProductResultsRuns<TData = Awaited<ReturnType<typeof getProductResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>> & Pick<
+ productId: string,
+    params?: GetProductResultsRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getProductResultsRuns>>,
           TError,
@@ -17068,7 +17117,8 @@ export function useGetProductResultsRuns<TData = Awaited<ReturnType<typeof getPr
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetProductResultsRuns<TData = Awaited<ReturnType<typeof getProductResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ productId: string,
+    params?: GetProductResultsRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -17076,11 +17126,12 @@ export function useGetProductResultsRuns<TData = Awaited<ReturnType<typeof getPr
  */
 
 export function useGetProductResultsRuns<TData = Awaited<ReturnType<typeof getProductResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ productId: string,
+    params?: GetProductResultsRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getGetProductResultsRunsQueryOptions(productId,options)
+  const queryOptions = getGetProductResultsRunsQueryOptions(productId,params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -17092,16 +17143,17 @@ export function useGetProductResultsRuns<TData = Awaited<ReturnType<typeof getPr
 
 
 
-export const getGetProductResultsRunsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getProductResultsRuns>>, TError = AxiosError<HTTPValidationError>>(productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetProductResultsRunsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getProductResultsRuns>>, TError = AxiosError<HTTPValidationError>>(productId: string,
+    params?: GetProductResultsRunsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetProductResultsRunsQueryKey(productId);
+  const queryKey =  queryOptions?.queryKey ?? getGetProductResultsRunsQueryKey(productId,params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProductResultsRuns>>> = ({ signal }) => getProductResultsRuns(productId, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProductResultsRuns>>> = ({ signal }) => getProductResultsRuns(productId,params, { signal, ...axiosOptions });
 
       
 
@@ -17115,15 +17167,18 @@ export type GetProductResultsRunsSuspenseQueryError = AxiosError<HTTPValidationE
 
 
 export function useGetProductResultsRunsSuspense<TData = Awaited<ReturnType<typeof getProductResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ productId: string,
+    params: undefined |  GetProductResultsRunsParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetProductResultsRunsSuspense<TData = Awaited<ReturnType<typeof getProductResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ productId: string,
+    params?: GetProductResultsRunsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetProductResultsRunsSuspense<TData = Awaited<ReturnType<typeof getProductResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ productId: string,
+    params?: GetProductResultsRunsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -17131,11 +17186,12 @@ export function useGetProductResultsRunsSuspense<TData = Awaited<ReturnType<type
  */
 
 export function useGetProductResultsRunsSuspense<TData = Awaited<ReturnType<typeof getProductResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ productId: string,
+    params?: GetProductResultsRunsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getProductResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getGetProductResultsRunsSuspenseQueryOptions(productId,options)
+  const queryOptions = getGetProductResultsRunsSuspenseQueryOptions(productId,params,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -17152,6 +17208,7 @@ export function useGetProductResultsRunsSuspense<TData = Awaited<ReturnType<type
  * Results aggregated over the product's member tables (by_table filled).
 
 Members in inaccessible catalogs are silently filtered (never 403).
+Draft runs are excluded unless *include_drafts*.
  * @summary Get Product Results
  */
 export const getProductResults = (
@@ -17313,6 +17370,12 @@ export function useGetProductResultsSuspense<TData = Awaited<ReturnType<typeof g
 
 /**
  * Latest failing rows for *table_fqn*, filtered server-side (OBO-gated).
+
+``dq_quarantine_records`` carries no run_mode of its own, but it does
+carry ``run_id`` — so the default published-only filter is a subselect
+of the table's published run ids from ``v_dq_check_results`` (the one
+place run_mode is resolved: stamped tag first, legacy run_type
+heuristic as fallback). ``include_drafts=true`` drops the subselect.
 
 SECURITY MODEL — identical to ``quarantine_samples.py``, in the same
 load-bearing order:
@@ -17487,39 +17550,45 @@ export function useGetDqResultsFailedRowsSuspense<TData = Awaited<ReturnType<typ
  * Per-run rollup for one table, newest first (backs the run picker).
 
 Accepts either a three-part table FQN or a monitored-table binding id
-(resolved to its bound table).
+(resolved to its bound table). Draft runs are excluded unless
+*include_drafts*.
  * @summary Get Dq Results Runs
  */
 export const getDqResultsRuns = (
-    bindingOrTable: string, options?: AxiosRequestConfig
+    bindingOrTable: string,
+    params?: GetDqResultsRunsParams, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<RunsOut>> => {
     
     
     return axios.default.get(
-      `/api/v1/dq-results/runs/${bindingOrTable}`,options
+      `/api/v1/dq-results/runs/${bindingOrTable}`,{
+    ...options,
+        params: {...params, ...options?.params},}
     );
   }
 
 
 
 
-export const getGetDqResultsRunsQueryKey = (bindingOrTable?: string,) => {
+export const getGetDqResultsRunsQueryKey = (bindingOrTable?: string,
+    params?: GetDqResultsRunsParams,) => {
     return [
-    `/api/v1/dq-results/runs/${bindingOrTable}`
+    `/api/v1/dq-results/runs/${bindingOrTable}`, ...(params ? [params]: [])
     ] as const;
     }
 
     
-export const getGetDqResultsRunsQueryOptions = <TData = Awaited<ReturnType<typeof getDqResultsRuns>>, TError = AxiosError<HTTPValidationError>>(bindingOrTable: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetDqResultsRunsQueryOptions = <TData = Awaited<ReturnType<typeof getDqResultsRuns>>, TError = AxiosError<HTTPValidationError>>(bindingOrTable: string,
+    params?: GetDqResultsRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetDqResultsRunsQueryKey(bindingOrTable);
+  const queryKey =  queryOptions?.queryKey ?? getGetDqResultsRunsQueryKey(bindingOrTable,params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDqResultsRuns>>> = ({ signal }) => getDqResultsRuns(bindingOrTable, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDqResultsRuns>>> = ({ signal }) => getDqResultsRuns(bindingOrTable,params, { signal, ...axiosOptions });
 
       
 
@@ -17533,7 +17602,8 @@ export type GetDqResultsRunsQueryError = AxiosError<HTTPValidationError>
 
 
 export function useGetDqResultsRuns<TData = Awaited<ReturnType<typeof getDqResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- bindingOrTable: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>> & Pick<
+ bindingOrTable: string,
+    params: undefined |  GetDqResultsRunsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getDqResultsRuns>>,
           TError,
@@ -17543,7 +17613,8 @@ export function useGetDqResultsRuns<TData = Awaited<ReturnType<typeof getDqResul
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetDqResultsRuns<TData = Awaited<ReturnType<typeof getDqResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- bindingOrTable: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>> & Pick<
+ bindingOrTable: string,
+    params?: GetDqResultsRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getDqResultsRuns>>,
           TError,
@@ -17553,7 +17624,8 @@ export function useGetDqResultsRuns<TData = Awaited<ReturnType<typeof getDqResul
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetDqResultsRuns<TData = Awaited<ReturnType<typeof getDqResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- bindingOrTable: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ bindingOrTable: string,
+    params?: GetDqResultsRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -17561,11 +17633,12 @@ export function useGetDqResultsRuns<TData = Awaited<ReturnType<typeof getDqResul
  */
 
 export function useGetDqResultsRuns<TData = Awaited<ReturnType<typeof getDqResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- bindingOrTable: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ bindingOrTable: string,
+    params?: GetDqResultsRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getGetDqResultsRunsQueryOptions(bindingOrTable,options)
+  const queryOptions = getGetDqResultsRunsQueryOptions(bindingOrTable,params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -17577,16 +17650,17 @@ export function useGetDqResultsRuns<TData = Awaited<ReturnType<typeof getDqResul
 
 
 
-export const getGetDqResultsRunsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getDqResultsRuns>>, TError = AxiosError<HTTPValidationError>>(bindingOrTable: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetDqResultsRunsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getDqResultsRuns>>, TError = AxiosError<HTTPValidationError>>(bindingOrTable: string,
+    params?: GetDqResultsRunsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetDqResultsRunsQueryKey(bindingOrTable);
+  const queryKey =  queryOptions?.queryKey ?? getGetDqResultsRunsQueryKey(bindingOrTable,params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDqResultsRuns>>> = ({ signal }) => getDqResultsRuns(bindingOrTable, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDqResultsRuns>>> = ({ signal }) => getDqResultsRuns(bindingOrTable,params, { signal, ...axiosOptions });
 
       
 
@@ -17600,15 +17674,18 @@ export type GetDqResultsRunsSuspenseQueryError = AxiosError<HTTPValidationError>
 
 
 export function useGetDqResultsRunsSuspense<TData = Awaited<ReturnType<typeof getDqResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- bindingOrTable: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ bindingOrTable: string,
+    params: undefined |  GetDqResultsRunsParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetDqResultsRunsSuspense<TData = Awaited<ReturnType<typeof getDqResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- bindingOrTable: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ bindingOrTable: string,
+    params?: GetDqResultsRunsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetDqResultsRunsSuspense<TData = Awaited<ReturnType<typeof getDqResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- bindingOrTable: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ bindingOrTable: string,
+    params?: GetDqResultsRunsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -17616,11 +17693,12 @@ export function useGetDqResultsRunsSuspense<TData = Awaited<ReturnType<typeof ge
  */
 
 export function useGetDqResultsRunsSuspense<TData = Awaited<ReturnType<typeof getDqResultsRuns>>, TError = AxiosError<HTTPValidationError>>(
- bindingOrTable: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ bindingOrTable: string,
+    params?: GetDqResultsRunsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDqResultsRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getGetDqResultsRunsSuspenseQueryOptions(bindingOrTable,options)
+  const queryOptions = getGetDqResultsRunsSuspenseQueryOptions(bindingOrTable,params,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -17638,7 +17716,7 @@ export function useGetDqResultsRunsSuspense<TData = Awaited<ReturnType<typeof ge
 
 ``trend_failures`` honours the run filter but not the drilldown chips
 (dqlake parity: its table reader filters that series on binding/run
-only).
+only). Draft runs are excluded unless *include_drafts*.
  * @summary Get Table Results
  */
 export const getTableResults = (
@@ -19022,6 +19100,9 @@ export const useDeleteDataProduct = <TError = AxiosError<HTTPValidationError>,
 Adding a table to a space mutates the space, so it requires ``APPLY`` on
 the table space (in the day-one baseline; tightenable via a grant) unless
 the caller is an admin/approver.
+
+400 if the binding is not approved (P3.2 — draft tables cannot join
+table spaces); 404 if the product or binding does not exist.
  * @summary Add Data Product Member
  */
 export const addDataProductMember = (

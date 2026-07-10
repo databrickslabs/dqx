@@ -1147,7 +1147,7 @@ export function RegistryRuleFormDialog({
   // (RuleResultsTab), so the two never disagree. Never refetches on its own
   // (RESULTS_QUERY_OPTIONS) — run-completion invalidation is the only
   // refresh, same as every other score query.
-  const ruleScoreQuery = useGetRuleScore(versionsRuleId, {
+  const ruleScoreQuery = useGetRuleScore(versionsRuleId, undefined, {
     query: { enabled: open && Boolean(sourceRule), select: (d) => d.data, ...RESULTS_QUERY_OPTIONS },
   });
   const ruleScore = ruleScoreQuery.data;

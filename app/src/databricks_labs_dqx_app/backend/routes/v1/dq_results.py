@@ -75,6 +75,7 @@ from databricks_labs_dqx_app.backend.services.quarantine_sample_service import (
     to_failing_record,
 )
 from databricks_labs_dqx_app.backend.services.score_view_service import (
+    RUN_MODE_PUBLISHED,
     SHAPING_VIEW_NAME,
     metric_view_fqn,
 )
@@ -152,11 +153,15 @@ def _fetch_check_rows(
     app_conf: AppConfig,
     table_fqns: list[str] | None,
     run_id: str | None = None,
+    include_drafts: bool = False,
 ) -> list[CheckResultRow]:
     """Read per-check result rows from ``v_dq_check_results``.
 
     *table_fqns* None means "every table" (the global endpoint filters
     by catalog app-side afterwards); an empty list short-circuits.
+    Draft runs are excluded unless *include_drafts* — the view's
+    ``run_mode`` column already resolves the stamped run-level tag with
+    the legacy run_type heuristic as fallback.
     """
     if table_fqns is not None and not table_fqns:
         return []
@@ -166,6 +171,8 @@ def _fetch_check_rows(
         conds.append(f"input_location IN ({_in_list(table_fqns)})")
     if run_id:
         conds.append(f"run_id = '{escape_sql_string(run_id)}'")
+    if not include_drafts:
+        conds.append(f"run_mode = '{RUN_MODE_PUBLISHED}'")
     where = f"WHERE {' AND '.join(conds)} " if conds else ""
     stmt = (
         f"SELECT input_location, run_id, CAST(run_time AS STRING) AS run_date, "
@@ -191,6 +198,11 @@ def _fetch_failed_records_by_run(
     ``valid_row_count`` per run; their difference is the number of rows
     carrying any error or warning — the analogue of dqlake's persisted
     ``failed_records``. None when either metric is missing/unparseable.
+
+    Deliberately NOT run_mode-filtered: this is a lookup map consulted
+    only for the (table, run) keys present in the already-filtered check
+    rows (``_trend_failures``), so draft-run entries are simply never
+    read when the caller excluded drafts.
     """
     if table_fqns is not None and not table_fqns:
         return {}
@@ -234,18 +246,27 @@ def _runs_from_metric_view(
     sql: SqlExecutor,
     app_conf: AppConfig,
     table_fqns: list[str],
+    include_drafts: bool = False,
 ) -> RunsOut:
-    """Per-run rollup from ``mv_dq_scores``, newest first (dqlake RunsOut)."""
+    """Per-run rollup from ``mv_dq_scores``, newest first (dqlake RunsOut).
+
+    Draft runs are excluded unless *include_drafts*; every row carries its
+    ``run_mode`` so the picker can badge drafts when they are included
+    (grouping by run_mode is lossless — a run has exactly one mode).
+    """
     if not table_fqns:
         return RunsOut()
     mv = metric_view_fqn(app_conf.catalog, app_conf.schema_name)
+    conds = [f"input_location IN ({_in_list(table_fqns)})"]
+    if not include_drafts:
+        conds.append(f"run_mode = '{RUN_MODE_PUBLISHED}'")
     stmt = (
-        f"SELECT run_id, CAST(run_time AS STRING) AS run_ts, "
+        f"SELECT run_id, CAST(run_time AS STRING) AS run_ts, run_mode, "
         f"MEASURE(score) AS pass_rate, MEASURE(failed_tests) AS failed_tests, "
         f"MEASURE(total_tests) AS total_tests "
         f"FROM {mv} "  # noqa: S608
-        f"WHERE input_location IN ({_in_list(table_fqns)}) "
-        f"GROUP BY run_id, run_time "
+        f"WHERE {' AND '.join(conds)} "
+        f"GROUP BY run_id, run_time, run_mode "
         f"ORDER BY run_time DESC LIMIT {_RUNS_LIMIT}"
     )
     rows = sql.query_dicts(stmt)
@@ -257,6 +278,7 @@ def _runs_from_metric_view(
                 pass_rate=safe_float(row.get("pass_rate")),
                 failed_tests=safe_int(row.get("failed_tests")),
                 total_tests=safe_int(row.get("total_tests")),
+                run_mode=row.get("run_mode"),
             )
             for row in rows
         ]
@@ -349,17 +371,19 @@ def get_global_results(
     column: Annotated[list[str] | None, Query()] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
+    include_drafts: bool = Query(False),
 ) -> EntityResultsOut:
     """Results over every table tracked in dq_metrics that the caller can access.
 
     Tables in catalogs the caller cannot access are silently filtered
     (never 403) — the same gate as the dq-score global endpoint.
+    Draft runs are excluded unless *include_drafts*.
     """
     _validate_run_id(run_id)
     try:
         rows = [
             row
-            for row in _fetch_check_rows(sql, app_conf, None, run_id)
+            for row in _fetch_check_rows(sql, app_conf, None, run_id, include_drafts)
             if catalog_of(row.table_fqn) in user_catalogs
         ]
         accessible_fqns = sorted({row.table_fqn for row in rows})
@@ -408,6 +432,7 @@ def get_rule_results(
     column: Annotated[list[str] | None, Query()] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
+    include_drafts: bool = Query(False),
 ) -> EntityResultsOut:
     """Results across the rule's applied tables, restricted to that rule's checks.
 
@@ -445,7 +470,7 @@ def get_rule_results(
                 continue
             table_fqns.append(fqn)
             binding_id_by_fqn[fqn] = binding_id
-        all_rows = _fetch_check_rows(sql, app_conf, table_fqns, run_id)
+        all_rows = _fetch_check_rows(sql, app_conf, table_fqns, run_id, include_drafts)
         rows: list[CheckResultRow] = [row for row in all_rows if row.rule_id == rule_id]
     except Exception as exc:
         logger.exception(f"Failed to compute results for rule {rule_id}")
@@ -501,11 +526,12 @@ def get_product_results_runs(
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     data_products: Annotated[DataProductService, Depends(get_data_product_service)],
+    include_drafts: bool = Query(False),
 ) -> RunsOut:
     """Run rollups across the product's accessible member tables, newest first."""
     try:
         fqns, _ = _accessible_member_fqns(data_products, product_id, user_catalogs)
-        return _runs_from_metric_view(sql, app_conf, fqns)
+        return _runs_from_metric_view(sql, app_conf, fqns, include_drafts)
     except HTTPException:
         raise
     except Exception as exc:
@@ -530,15 +556,17 @@ def get_product_results(
     column: Annotated[list[str] | None, Query()] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
+    include_drafts: bool = Query(False),
 ) -> EntityResultsOut:
     """Results aggregated over the product's member tables (by_table filled).
 
     Members in inaccessible catalogs are silently filtered (never 403).
+    Draft runs are excluded unless *include_drafts*.
     """
     _validate_run_id(run_id)
     try:
         fqns, binding_ids = _accessible_member_fqns(data_products, product_id, user_catalogs)
-        rows = _fetch_check_rows(sql, app_conf, fqns, run_id)
+        rows = _fetch_check_rows(sql, app_conf, fqns, run_id, include_drafts)
         failed_records = _fetch_failed_records_by_run(sql, app_conf, fqns)
     except HTTPException:
         raise
@@ -577,8 +605,15 @@ def get_dq_results_failed_rows(
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
     limit: int = Query(200, ge=1, le=100000),
+    include_drafts: bool = Query(False),
 ) -> FailedRowsOut:
     """Latest failing rows for *table_fqn*, filtered server-side (OBO-gated).
+
+    ``dq_quarantine_records`` carries no run_mode of its own, but it does
+    carry ``run_id`` — so the default published-only filter is a subselect
+    of the table's published run ids from ``v_dq_check_results`` (the one
+    place run_mode is resolved: stamped tag first, legacy run_type
+    heuristic as fallback). ``include_drafts=true`` drops the subselect.
 
     SECURITY MODEL — identical to ``quarantine_samples.py``, in the same
     load-bearing order:
@@ -616,11 +651,20 @@ def get_dq_results_failed_rows(
     # as quarantine_samples.py, plus created_at surfaced as the run_ts).
     quarantine_table = _app_object_fqn(app_conf, "dq_quarantine_records")
     e_fqn = escape_sql_string(table_fqn)
+    run_mode_cond = ""
+    if not include_drafts:
+        # Quarantine rows have no run_mode column; scope them to the
+        # table's published run ids via the shaping view instead.
+        run_mode_cond = (
+            f"AND run_id IN (SELECT run_id FROM {_shaping_view_fqn(app_conf)} "
+            f"WHERE input_location = '{e_fqn}' AND run_mode = '{RUN_MODE_PUBLISHED}') "
+        )
     stmt = (
         f"SELECT quarantine_id, run_id, to_json(row_data) AS row_data, "
         f"to_json(errors) AS errors, to_json(warnings) AS warnings, "
         f"CAST(created_at AS STRING) AS created_at "
         f"FROM {quarantine_table} WHERE source_table_fqn = '{e_fqn}' "  # noqa: S608
+        f"{run_mode_cond}"
         f"ORDER BY created_at DESC LIMIT {int(scan_limit)}"
     )
     try:
@@ -675,11 +719,13 @@ def get_dq_results_runs(
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    include_drafts: bool = Query(False),
 ) -> RunsOut:
     """Per-run rollup for one table, newest first (backs the run picker).
 
     Accepts either a three-part table FQN or a monitored-table binding id
-    (resolved to its bound table).
+    (resolved to its bound table). Draft runs are excluded unless
+    *include_drafts*.
     """
     table_fqn = binding_or_table
     try:
@@ -705,7 +751,7 @@ def get_dq_results_runs(
         raise HTTPException(status_code=403, detail="You do not have access to this table's catalog")
 
     try:
-        return _runs_from_metric_view(sql, app_conf, [table_fqn])
+        return _runs_from_metric_view(sql, app_conf, [table_fqn], include_drafts)
     except Exception as exc:
         logger.exception(f"Failed to list runs for {table_fqn}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -727,12 +773,13 @@ def get_table_results(
     column: Annotated[list[str] | None, Query()] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
+    include_drafts: bool = Query(False),
 ) -> EntityResultsOut:
     """Breakdowns + trends for one table (dqlake's table Results tab shapes).
 
     ``trend_failures`` honours the run filter but not the drilldown chips
     (dqlake parity: its table reader filters that series on binding/run
-    only).
+    only). Draft runs are excluded unless *include_drafts*.
     """
     _validate_run_id(run_id)
     try:
@@ -743,7 +790,7 @@ def get_table_results(
         raise HTTPException(status_code=403, detail="You do not have access to this table's catalog")
 
     try:
-        rows = _fetch_check_rows(sql, app_conf, [table_fqn], run_id)
+        rows = _fetch_check_rows(sql, app_conf, [table_fqn], run_id, include_drafts)
         failed_records = _fetch_failed_records_by_run(sql, app_conf, [table_fqn])
     except Exception as exc:
         logger.exception(f"Failed to compute results for {table_fqn}")

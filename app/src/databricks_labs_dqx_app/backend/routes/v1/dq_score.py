@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.config import AppConfig
@@ -46,7 +46,10 @@ from databricks_labs_dqx_app.backend.registry_models import AppliedRule
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.score_service import ScoreService
-from databricks_labs_dqx_app.backend.services.score_view_service import metric_view_fqn
+from databricks_labs_dqx_app.backend.services.score_view_service import (
+    RUN_MODE_PUBLISHED,
+    metric_view_fqn,
+)
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
@@ -74,20 +77,32 @@ def _row_to_table_score(table_fqn: str, row: dict[str, str | None]) -> TableScor
     )
 
 
-def _compute_score_for_table(table_fqn: str, sql: SqlExecutor, app_conf: AppConfig) -> TableScoreOut:
+def _compute_score_for_table(
+    table_fqn: str, sql: SqlExecutor, app_conf: AppConfig, include_drafts: bool = False
+) -> TableScoreOut:
     """Read the row-weighted DQ score for *table_fqn*'s latest run.
 
-    Raises the underlying exception on SQL failure — the caller maps it
-    to an HTTP status.
+    By default the latest PUBLISHED run is scored (``run_mode`` filter on
+    the metric view — stamped run-level tag, legacy run_type heuristic as
+    fallback), so a newer draft run never displaces the published score.
+    The latest run within the selected mode set is picked via
+    ``ORDER BY run_time DESC LIMIT 1`` rather than the view's
+    ``is_latest_run`` flag, which is computed over ALL runs regardless of
+    mode. Raises the underlying exception on SQL failure — the caller
+    maps it to an HTTP status.
     """
     mv = metric_view_fqn(app_conf.catalog, app_conf.schema_name)
     e_fqn = escape_sql_string(table_fqn)
+    conds = [f"input_location = '{e_fqn}'"]
+    if not include_drafts:
+        conds.append(f"run_mode = '{RUN_MODE_PUBLISHED}'")
     stmt = (
         f"SELECT run_id, MEASURE(score) AS score, "
         f"MEASURE(failed_tests) AS failed_tests, MEASURE(total_tests) AS total_tests "
         f"FROM {mv} "  # noqa: S608
-        f"WHERE is_latest_run AND input_location = '{e_fqn}' "
-        f"GROUP BY run_id"
+        f"WHERE {' AND '.join(conds)} "
+        f"GROUP BY run_id, run_time "
+        f"ORDER BY run_time DESC LIMIT 1"
     )
     rows = sql.query_dicts(stmt)
     if not rows:
@@ -141,6 +156,7 @@ def get_rule_score(
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    include_drafts: bool = Query(False),
 ) -> RuleScoreOut:
     """Return the aggregate DQ score for a registry rule across its applied tables.
 
@@ -149,13 +165,14 @@ def get_rule_score(
     catalogs, since the frontend uses ``applied_to_count == 0`` to mean
     "not applied anywhere". *per_table* applies the same silent catalog
     filter as the product endpoint and is deduplicated by table (a rule
-    applied twice to one table is scored once).
+    applied twice to one table is scored once). Per-table scores read the
+    latest PUBLISHED run unless *include_drafts*.
     """
     try:
         applications = apply_rules.list_bindings_for_rule(rule_id)
         table_fqns = _resolve_binding_fqns(applications, monitored_tables)
         accessible = [fqn for fqn in table_fqns if catalog_of(fqn) in user_catalogs]
-        per_table = [_compute_score_for_table(fqn, sql, app_conf) for fqn in accessible]
+        per_table = [_compute_score_for_table(fqn, sql, app_conf, include_drafts) for fqn in accessible]
     except Exception as exc:
         logger.exception("Failed to compute score for rule %s", rule_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
