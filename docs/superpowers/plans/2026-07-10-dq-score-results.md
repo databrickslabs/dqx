@@ -19,6 +19,8 @@
 - No new frontend charting dependency — build the score/trend display with existing shadcn primitives (`badge`, `card`) and plain SVG/CSS, not a new chart library (YAGNI; no chart lib is installed today).
 - Format with `make fmt` before every commit.
 - GPG-sign every commit (already configured repo-locally); never `--no-gpg-sign`.
+- (Added 2026-07-10, user requirement) Score/results aggregate data shown in the UI must be backed by a Unity Catalog **metric view** (see Task 14), not ad hoc SQL over `dq_metrics`.
+- (Added 2026-07-10, user requirement) Results queries in the UI must never auto-refetch (no `refetchOnWindowFocus`, no polling interval, `staleTime: Infinity`); they are invalidated **only** when a relevant run finishes (see Tasks 9-12).
 
 ---
 
@@ -1650,6 +1652,30 @@ Stop the dev servers: `make app-stop-dev`.
 - [ ] **Step 4: Report results to the user** — do not mark this plan complete until the manual pass above has actually been run and observed, per project verification standards; typecheck and unit tests confirm code correctness, not feature correctness.
 
 ---
+
+### Task 14: Metric-view backing for the score endpoints (user addition, 2026-07-10)
+
+**Files:**
+- Create: `app/src/databricks_labs_dqx_app/backend/services/score_view_service.py` (DDL management: shaping view + metric view, idempotent create-or-replace at startup)
+- Modify: wherever the app runs its startup Delta DDL/migrations (find the existing startup migration path in `app.py`/migrations and register the new DDL step there, after the `dq_metrics` table exists)
+- Modify: `app/src/databricks_labs_dqx_app/backend/routes/v1/dq_score.py` (`_compute_score_for_table` and the `/global` latest-run query refactored onto the metric view)
+- Test: extend `app/tests/test_dq_score_route.py`; new `app/tests/test_score_view_service.py`
+
+**Interfaces:**
+- Consumes: existing `dq_metrics` table (unchanged, frozen pipeline still writes it).
+- Produces: `<catalog>.<schema>.v_dq_check_results` — a plain UC view over `dq_metrics` that explodes the per-rule `check_metrics` JSON into one row per (run_id, input_location, check_name) with `error_count`, `warning_count`, `input_row_count`, `run_time`, and an `is_latest_run` flag (window function per input_location).
+- Produces: `<catalog>.<schema>.mv_dq_scores` — a UC **metric view** (YAML `WITH METRICS LANGUAGE YAML`) over the shaping view with dimensions (`input_location`, `run_id`, `run_time`, `is_latest_run`, `check_name`) and measures `failed_tests = SUM(error_count + warning_count)`, `total_tests = SUM(input_row_count)`, `score = 1 - SUM(error_count + warning_count) / SUM(input_row_count)`.
+- Produces: dq_score endpoints querying `SELECT input_location, MEASURE(score), MEASURE(failed_tests), MEASURE(total_tests) FROM mv_dq_scores WHERE is_latest_run GROUP BY input_location` (and per-table/per-check variants), replacing the raw `dq_metrics` SQL. Response models and the app-layer OBO catalog filtering are UNCHANGED — the metric view is SP-owned (definer's rights) and is not itself the permission boundary.
+
+Implementation notes:
+- Consult the `databricks-metric-views` skill for exact YAML/DDL syntax before writing the DDL.
+- The score formula must remain numerically identical to `ScoreService.compute_table_score` (same approved filter approximation); keep the ScoreService unit tests as the formula's specification and add a test asserting the MEASURE-based path and the pure-Python path agree on the same fixture data.
+- DDL must be idempotent (`CREATE OR REPLACE`) and tolerant of `dq_metrics` not existing yet on first boot (same ordering guarantees as the app's existing startup DDL).
+- The row-level failing-sample endpoint (Task 7) is NOT part of this — row-level data cannot and must not come from a metric view.
+
+### Refresh-behavior requirement for Tasks 9-12 (user addition, 2026-07-10)
+
+All results/score React Query hooks used in Tasks 9-12 must be configured so they never auto-refetch: `staleTime: Infinity`, `refetchOnWindowFocus: false`, no `refetchInterval`. The ONLY refresh trigger is query invalidation fired when a relevant run finishes: find the existing run-status polling/completion signal in the frontend (run history / run sets UI already tracks run state) and, on a run's transition to a terminal state for a given table/product, invalidate the dq-score and quarantine-sample query keys scoped to that table/product (and the global score key). Task 9's implementer establishes the invalidation helper; Tasks 10-12 reuse it.
 
 ## Deferred (explicitly out of scope)
 
