@@ -57,6 +57,38 @@ export type FailingRecord = {
 const PAGE_SIZE = 20;
 
 /**
+ * Dedupe a hovered record's failures for the tooltip: a rule applied to
+ * several columns produces one failure entry per column, so the same
+ * (rule, severity) can repeat. Show each rule once per severity, merging the
+ * columns so the cell-hover highlight still matches any column the rule
+ * touched. Exported for the blank-tooltip regression tests.
+ */
+export function dedupeTooltipFailures(
+  failures: FailingRecord["failures"],
+): FailingRecord["failures"] {
+  const byKey = new Map<string, FailingRecord["failures"][number]>();
+  const out: FailingRecord["failures"] = [];
+  for (const f of failures) {
+    // NUL separator (dqlake uses a literal NUL byte here): rule names and
+    // severities can contain spaces, so a printable separator could collide.
+    const key = `${f.rule_name ?? ""}\u0000${f.severity ?? ""}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      for (const c of f.columns ?? []) {
+        if (!(existing.columns ?? []).includes(c)) {
+          existing.columns = [...(existing.columns ?? []), c];
+        }
+      }
+    } else {
+      const copy = { ...f, columns: [...(f.columns ?? [])] };
+      byKey.set(key, copy);
+      out.push(copy);
+    }
+  }
+  return out;
+}
+
+/**
  * Drill-down table over failing source records. One column per source field
  * (union of all rows' row_values keys, first-seen order). Failed cells are
  * highlighted red; hovering a row reveals the failures that hit it in a
@@ -160,33 +192,9 @@ export function FailingRecordsTable({
       });
 
   const hovered = hover != null ? rows[hover.index] : null;
-  // A rule applied to several columns produces one failure entry per column, so
-  // the same (rule, severity) can repeat in a record's failures. Show each rule
-  // once per severity — dedupe, merging the columns so the cell-hover highlight
-  // still matches any column the rule touched.
-  const dedupedFailures: FailingRecord["failures"] = (() => {
-    if (!hovered) return [];
-    const byKey = new Map<string, FailingRecord["failures"][number]>();
-    const out: FailingRecord["failures"] = [];
-    for (const f of hovered.failures) {
-      // NUL separator (dqlake uses a literal NUL byte here): rule names and
-      // severities can contain spaces, so a printable separator could collide.
-      const key = `${f.rule_name ?? ""}\u0000${f.severity ?? ""}`;
-      const existing = byKey.get(key);
-      if (existing) {
-        for (const c of f.columns ?? []) {
-          if (!(existing.columns ?? []).includes(c)) {
-            existing.columns = [...(existing.columns ?? []), c];
-          }
-        }
-      } else {
-        const copy = { ...f, columns: [...(f.columns ?? [])] };
-        byKey.set(key, copy);
-        out.push(copy);
-      }
-    }
-    return out;
-  })();
+  const dedupedFailures: FailingRecord["failures"] = hovered
+    ? dedupeTooltipFailures(hovered.failures)
+    : [];
 
   return (
     <div className="space-y-2">
@@ -327,10 +335,17 @@ export function FailingRecordsTable({
                 .join(" ");
               return (
                 <li key={j} className={cls}>
-                  {/* Line 1: rule name + severity chip (severity colour). */}
+                  {/* Line 1: rule name + severity chip (severity colour). The
+                      rule name always renders — a struct without one (legacy /
+                      degraded payloads) falls back to an explicit label so the
+                      row can never be blank. */}
                   <div className="flex flex-wrap items-center gap-2">
-                    {f.rule_name && (
+                    {f.rule_name ? (
                       <span className="font-semibold">{f.rule_name}</span>
+                    ) : (
+                      <span className="font-semibold italic text-muted-foreground">
+                        {t("resultsUi.unknownRuleFallback")}
+                      </span>
                     )}
                     {f.severity && (
                       <span
@@ -347,15 +362,34 @@ export function FailingRecordsTable({
                       {f.quality_dimension}
                     </div>
                   )}
-                  {/* Line 3: description (the rule description, sent as message). */}
-                  {f.message && (
+                  {/* Line 3: description (the rule description, sent as
+                      message). Always renders — a missing/empty message falls
+                      back to an explicit "no message" so the tooltip never
+                      shows a bare rule name over blank space. */}
+                  {f.message ? (
                     <div className="text-muted-foreground break-words">
                       {f.message}
+                    </div>
+                  ) : (
+                    <div className="text-muted-foreground italic">
+                      {t("resultsUi.noMessageFallback")}
                     </div>
                   )}
                 </li>
               );
             })}
+            {/* A quarantined row can arrive with NO parseable failure structs
+                at all (observed live: the frozen task runner's sampled writes
+                can persist rows whose errors VARIANT is NULL and warnings is
+                an empty array — see the P3.6 report). Without this the
+                tooltip rendered as an empty box. */}
+            {dedupedFailures.length === 0 && (
+              <li className="space-y-0.5 -mx-3 px-3 py-1.5 -mt-3 pt-3 -mb-3 pb-3">
+                <div className="text-muted-foreground italic">
+                  {t("resultsUi.noFailureDetails")}
+                </div>
+              </li>
+            )}
           </ul>
         </div>
       )}

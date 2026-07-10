@@ -22,6 +22,7 @@ from databricks_labs_dqx_app.backend.services.quarantine_sample_service import (
     QuarantineSampleService,
     enrich_failures,
     parse_failures,
+    to_failing_record,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
@@ -200,6 +201,33 @@ class TestParseFailures:
         assert parse_failures(quarantine_row()) == []
         assert parse_failures({"errors": "{not json", "warnings": None}) == []
         assert parse_failures({"errors": json.dumps([1, "x"]), "warnings": None}) == []
+
+    def test_no_failure_payload_row_yields_empty_failures_but_keeps_the_record(self):
+        """Regression pin for the blank-tooltip report (P3.6).
+
+        Observed live on the dev workspace: the frozen task runner can
+        persist quarantine rows whose ``errors`` VARIANT is SQL NULL and
+        whose ``warnings`` is an empty array (non-deterministic
+        ``df.limit(sample_size)`` re-evaluation between the split filter
+        and the quarantine write). ``to_json`` renders those as None /
+        ``"[]"``. The read path must degrade to an EMPTY failures list —
+        the record itself is still returned (its row values are real) and
+        the UI renders an explicit "no failure details" fallback instead
+        of a blank tooltip.
+        """
+        row = {
+            "quarantine_id": "q-empty",
+            "row_data": json.dumps({"id": 7, "name": None}),
+            "errors": None,  # to_json(NULL VARIANT) -> NULL
+            "warnings": "[]",  # to_json(empty array) -> "[]"
+        }
+        parsed = parse_failures(row)
+        assert parsed == []
+        record = to_failing_record(row, parsed)
+        assert record.record_key == "q-empty"
+        assert record.row_values == {"id": "7", "name": None}
+        assert record.failed_columns == []
+        assert record.failures == []
 
 
 class TestEnrichFailures:
