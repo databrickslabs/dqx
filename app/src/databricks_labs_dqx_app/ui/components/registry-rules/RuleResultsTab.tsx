@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useGetRuleResults, useGetRuleScoreSuspense } from "@/lib/api";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ruleResultsState } from "@/lib/results-display";
+import { includeDraftsParam } from "@/components/results/RunModeSelect";
 import {
   MultiTableResultsSection,
   type UseEntityResults,
@@ -51,9 +52,17 @@ import {
  */
 function RuleResultsContent({ ruleId }: { ruleId: string }) {
   const { t } = useTranslation();
-  const { data } = useGetRuleScoreSuspense(ruleId, undefined, {
-    query: { select: (d) => d.data, ...RESULTS_QUERY_OPTIONS },
-  });
+  // Run mode ("Published only" vs "Published + Draft"), owned per surface —
+  // wired into the rule-score query here AND (via the composition props)
+  // into every rule-results trend/breakdown/failed-rows query.
+  const [includeDrafts, setIncludeDrafts] = useState(false);
+  const { data } = useGetRuleScoreSuspense(
+    ruleId,
+    { include_drafts: includeDraftsParam(includeDrafts) },
+    {
+      query: { select: (d) => d.data, ...RESULTS_QUERY_OPTIONS },
+    },
+  );
 
   const state = ruleResultsState(data);
   const appliedCount = data.applied_to_count ?? 0;
@@ -87,6 +96,8 @@ function RuleResultsContent({ ruleId }: { ruleId: string }) {
         // same set (applied_to_count may be higher — see ruleResultsState).
         scoreLabel={(count) => t("rulesRegistry.resultsOverallScoreLabel", { count })}
         hideRuleBreakdown
+        includeDrafts={includeDrafts}
+        onIncludeDraftsChange={setIncludeDrafts}
       />
     </div>
   );

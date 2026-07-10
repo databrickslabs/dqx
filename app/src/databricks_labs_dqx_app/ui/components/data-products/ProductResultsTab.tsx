@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
@@ -11,6 +12,7 @@ import {
 import selector from "@/lib/selector";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { RunPicker, type Run } from "@/components/results/RunPicker";
+import { includeDraftsParam } from "@/components/results/RunModeSelect";
 import {
   MultiTableResultsSection,
   type UseEntityResults,
@@ -106,12 +108,22 @@ export function ProductResultsTab({ productId }: { productId: string }) {
 function ResultsBody({ productId }: { productId: string }) {
   const { t } = useTranslation();
 
+  // Run mode ("Published only" vs "Published + Draft") for THIS surface —
+  // owned here because the runs list below is a surface-level dq-results
+  // query outside the shared composition; the dropdown itself renders
+  // inside the composition (next to the run picker).
+  const [includeDrafts, setIncludeDrafts] = useState(false);
+
   // The product run history for the run picker (newest-first). Our rows are
   // already RunPicker-shaped (run_id/run_ts/pass_rate). NON-suspense so the
   // picker fills in once available without blocking the rest of the shell.
-  const runsQuery = useGetProductResultsRuns(productId, undefined, {
-    query: { ...RESULTS_QUERY_OPTIONS },
-  });
+  const runsQuery = useGetProductResultsRuns(
+    productId,
+    { include_drafts: includeDraftsParam(includeDrafts) },
+    {
+      query: { ...RESULTS_QUERY_OPTIONS },
+    },
+  );
   const runs: Run[] = (runsQuery.data?.data?.rows ?? []).filter(
     (r): r is typeof r & { run_id: string } => typeof r.run_id === "string",
   );
@@ -135,6 +147,8 @@ function ResultsBody({ productId }: { productId: string }) {
       useEntityResults={useEntityResults}
       scoreLabel={() => t("resultsUi.averageScoreLabel")}
       requiredFqns={memberFqns}
+      includeDrafts={includeDrafts}
+      onIncludeDraftsChange={setIncludeDrafts}
       // Fixed to "Latest": only the newest entry is offered, and selecting it
       // resolves to the latest path anyway, so onChange is a no-op (see the
       // run-picker adaptation note in the module comment).

@@ -74,6 +74,7 @@ import {
   useListRegistryRules,
   useGetTableColumns,
   useListMonitoredTableVersions,
+  useGetRunSet,
   useRunMonitoredTable,
   useSuggestRulesForTable,
   usePreviewTableData,
@@ -97,7 +98,10 @@ import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
-import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
+import {
+  invalidateResultsAfterRuleApplicationChange,
+  invalidateResultsAfterRunCompletion,
+} from "@/lib/results-invalidation";
 import { useLabelDefinitions, useWorkspaceHost } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useJobPolling } from "@/hooks/use-job-polling";
@@ -255,6 +259,36 @@ function MonitoredTableDetailPage() {
     () => invalidateAfterMonitoredTableChange(queryClient, bindingId),
     [queryClient, bindingId],
   );
+
+  // -- Active-run-scoped tracking (P3.6) ----------------------------------
+  // When a run is triggered FROM this page (the header's Run action), poll
+  // THAT run set's status until it settles, then fire the run-completion
+  // invalidation (which also triggers the server-side score-cache refresh)
+  // and stop. This is NOT idle polling: `trackedRunSetId` is null unless a
+  // run was started here, and the query is disabled whenever it is null —
+  // runs triggered elsewhere are still covered by the Runs History /
+  // run-set polls' completion detectors, as before. While tracking, the
+  // Results tab shows dqlake's in-progress banner.
+  const [trackedRunSetId, setTrackedRunSetId] = useState<string | null>(null);
+  const trackedRunSetQuery = useGetRunSet(trackedRunSetId ?? "", {
+    query: {
+      enabled: trackedRunSetId != null,
+      refetchInterval: 4000,
+      refetchIntervalInBackground: false,
+      staleTime: 0,
+    },
+  });
+  const trackedRunSetStatus =
+    trackedRunSetId != null ? trackedRunSetQuery.data?.data?.status : undefined;
+  const tableFqnForInvalidation = table.table_fqn;
+  useEffect(() => {
+    if (trackedRunSetStatus == null || trackedRunSetStatus === "running") return;
+    // Terminal (success/failed/canceled): stop tracking — dropping the id
+    // disables the poll — and refresh the results/score queries for this
+    // table so the tab reflects the finished run without a reload.
+    setTrackedRunSetId(null);
+    invalidateResultsAfterRunCompletion(queryClient, [tableFqnForInvalidation]);
+  }, [trackedRunSetStatus, queryClient, tableFqnForInvalidation]);
 
   // ---------------------------------------------------------------------
   // Staged editor (P16-F) — every add/mapping-edit/severity-override/pin/
@@ -515,6 +549,7 @@ function MonitoredTableDetailPage() {
                 table={table}
                 isDirty={isDirty}
                 onSaveDraft={saveDraft}
+                onRunStarted={setTrackedRunSetId}
                 {...computeRunGating(baseline.length, stagedRows.length)}
               />
             )}
@@ -708,6 +743,8 @@ function MonitoredTableDetailPage() {
               bindingId={bindingId}
               tableName={tableName}
               tableFqn={table.table_fqn}
+              neverApproved={(table.version ?? 0) === 0}
+              runInProgress={trackedRunSetId != null}
             />
           </TabsContent>
 
@@ -806,6 +843,7 @@ function RunTableAction({
   table,
   isDirty,
   onSaveDraft,
+  onRunStarted,
   runNowHasRules,
   runDraftHasRules,
 }: {
@@ -813,6 +851,9 @@ function RunTableAction({
   table: MonitoredTableOut;
   isDirty: boolean;
   onSaveDraft: () => Promise<boolean>;
+  /** Reports the just-submitted run set's id so the page can track it to
+   *  completion (in-progress banner + results refresh on settle). */
+  onRunStarted?: (runSetId: string) => void;
   /** True when there is a persisted (approved) applied-rule set to run —
    *  i.e. the last-saved baseline is non-empty. "Run now" executes that
    *  server-side snapshot, so it must gate on the baseline, NOT on the
@@ -848,6 +889,7 @@ function RunTableAction({
       { bindingId, data: { source, version } },
       {
         onSuccess: (resp) => {
+          onRunStarted?.(resp.data.run_set_id);
           toast.success(t("monitoredTables.toastRunStarted"), {
             action: {
               label: t("monitoredTables.toastRunStartedViewAction"),

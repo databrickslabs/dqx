@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
@@ -65,6 +65,8 @@ const useGlobalEntityResults: UseEntityResults = (params, queryOptions) =>
 
 function GlobalResultsContent() {
   const { t } = useTranslation();
+  // Run mode ("Published only" vs "Published + Draft"), owned per surface.
+  const [includeDrafts, setIncludeDrafts] = useState(false);
   return (
     <FadeIn>
       <div className="space-y-6">
@@ -82,6 +84,8 @@ function GlobalResultsContent() {
             // by-table rows are already catalog-filtered to the viewer —
             // Phase 1's global-score semantics).
             scoreLabel={(count) => t("globalResults.orgWideScoreLabel", { count })}
+            includeDrafts={includeDrafts}
+            onIncludeDraftsChange={setIncludeDrafts}
             // No runPickerSlot and no requiredFqns: the picker is omitted
             // (see the module comment) and the Average-line universe derives
             // from the accessible by-table rows.

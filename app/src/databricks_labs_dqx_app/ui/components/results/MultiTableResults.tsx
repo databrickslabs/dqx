@@ -30,6 +30,7 @@ import {
   toFailingRecords,
 } from "@/components/results/failedRecordsExport";
 import { toCountSeries } from "@/components/results/countSeries";
+import { RunModeSelect, includeDraftsParam } from "@/components/results/RunModeSelect";
 import {
   toNum,
   ApplicableToggle,
@@ -100,11 +101,17 @@ export type UseEntityResults = (
  *  a run_id filter — a per-table run_id cannot scope a multi-table view
  *  coherently: it is not a batch across tables, so scoping the breakdowns by
  *  one would collapse them to the single table that produced it (see the
- *  run-picker adaptation note in ProductResultsTab). */
-export function breakdownParams(filters: MultiFilters): EntityResultsParams {
+ *  run-picker adaptation note in ProductResultsTab). *includeDrafts* adds
+ *  `include_drafts: true` only when the surface's run-mode dropdown says so;
+ *  otherwise the param is omitted (backend published-only default). */
+export function breakdownParams(
+  filters: MultiFilters,
+  includeDrafts = false,
+): EntityResultsParams {
   return {
     ...facetQueryParams(filters),
     axes: "breakdown",
+    include_drafts: includeDraftsParam(includeDrafts),
   };
 }
 
@@ -228,6 +235,14 @@ export interface MultiTableResultsSectionProps {
    *  for a rule-locked surface, so hiding is the minimal adaptation; the
    *  reviewed product/global consumers don't pass this and are unchanged. */
   hideRuleBreakdown?: boolean;
+  /** Run mode ("Published only" vs "Published + Draft"). CONTROLLED by the
+   *  caller — each surface owns its own state (never global), and callers
+   *  with surface-level dq-results queries of their own (the product tab's
+   *  runs list, the rule tab's score) wire the same value into them. The
+   *  composition renders the dropdown and threads `include_drafts` into
+   *  every query it owns. */
+  includeDrafts: boolean;
+  onIncludeDraftsChange: (includeDrafts: boolean) => void;
 }
 
 /**
@@ -243,6 +258,8 @@ export function MultiTableResultsSection({
   runPickerSlot,
   requiredFqns,
   hideRuleBreakdown,
+  includeDrafts,
+  onIncludeDraftsChange,
 }: MultiTableResultsSectionProps) {
   const { t } = useTranslation();
   // The active single-table selection (E2). Clicking a By Table row sets it;
@@ -270,10 +287,12 @@ export function MultiTableResultsSection({
   // tab). NOT run-scoped — see breakdownParams. NON-suspense so the shell +
   // chart frames render first and each widget shows its own spinner while
   // loading (F1).
+  const draftsParam = includeDraftsParam(includeDrafts);
   const trendQuery = useEntityResults(
     {
       ...facetQueryParams(filters),
       axes: "trend",
+      include_drafts: draftsParam,
     },
     { placeholderData: keepPreviousData, ...RESULTS_QUERY_OPTIONS },
   );
@@ -283,7 +302,7 @@ export function MultiTableResultsSection({
   // The FILTERED breakdowns: cross-filtered by the active facet chips (never
   // run-scoped — see breakdownParams). This is the live result in both modes
   // — the numbers always reflect the active filter.
-  const resultsQuery = useEntityResults(breakdownParams(filters), {
+  const resultsQuery = useEntityResults(breakdownParams(filters, includeDrafts), {
     placeholderData: keepPreviousData,
     ...RESULTS_QUERY_OPTIONS,
   });
@@ -291,7 +310,7 @@ export function MultiTableResultsSection({
   // The BASE (applicable) breakdowns: NO facet filter. Drives the row set in
   // "All" mode — base rows absent from the filtered result render greyed. In
   // "Applicable" mode it's unused beyond being the same set.
-  const baseQuery = useEntityResults(breakdownParams(EMPTY_FILTERS), {
+  const baseQuery = useEntityResults(breakdownParams(EMPTY_FILTERS, includeDrafts), {
     placeholderData: keepPreviousData,
     ...RESULTS_QUERY_OPTIONS,
   });
@@ -338,7 +357,7 @@ export function MultiTableResultsSection({
   // fetch via the Task 7 OBO-gated failed-rows endpoint (FQN-keyed).
   const failedRowsQuery = useGetDqResultsFailedRows(
     selectedFqn ?? "",
-    { limit: 200 },
+    { limit: 200, include_drafts: draftsParam },
     {
       query: {
         enabled: Boolean(selectedFqn),
@@ -355,7 +374,7 @@ export function MultiTableResultsSection({
   // is picked the box is empty; once picked it shows that table's columns.
   const tableColumnsQuery = useGetTableResults(
     selectedFqn ?? "",
-    { axes: "breakdown" },
+    { axes: "breakdown", include_drafts: draftsParam },
     {
       query: {
         enabled: Boolean(selectedFqn),
@@ -372,6 +391,7 @@ export function MultiTableResultsSection({
     if (!selectedFqn) return [];
     const res = await getDqResultsFailedRows(selectedFqn, {
       limit: EXPORT_ROW_LIMIT,
+      include_drafts: draftsParam,
     });
     return toFailingRecords(res.data.rows);
   };
@@ -520,20 +540,16 @@ export function MultiTableResultsSection({
 
   return (
     <div className="space-y-6">
-      {/* The run picker (when the caller supplies one) overlaps the score
-          box's top-right corner; it drops below the score on very small
-          screens (mirrors the Tables tab). Callers without a coherent run
-          universe pass no slot and the ScoreBox renders full width. */}
-      {runPickerSlot ? (
-        <div className="relative">
-          <div className="z-10 sm:absolute sm:right-2 sm:top-2 max-sm:mb-2 max-sm:flex max-sm:justify-end">
-            {runPickerSlot}
-          </div>
-          <div className="sm:pr-2">{scoreBox}</div>
+      {/* The run-mode dropdown (always) and the run picker (when the caller
+          supplies one) overlap the score box's top-right corner; they drop
+          below the score on very small screens (mirrors the Tables tab). */}
+      <div className="relative">
+        <div className="z-10 flex items-center gap-2 sm:absolute sm:right-2 sm:top-2 max-sm:mb-2 max-sm:justify-end">
+          <RunModeSelect includeDrafts={includeDrafts} onChange={onIncludeDraftsChange} />
+          {runPickerSlot}
         </div>
-      ) : (
-        scoreBox
-      )}
+        <div className="sm:pr-2">{scoreBox}</div>
+      </div>
 
       <CollapsibleSection title={t("resultsUi.overTimeSection")} defaultOpen>
         <div className="space-y-6">

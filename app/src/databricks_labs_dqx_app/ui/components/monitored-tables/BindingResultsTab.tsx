@@ -24,6 +24,8 @@ import selector from "@/lib/selector";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ScoreBox } from "@/components/results/ScoreBox";
 import { RunPicker } from "@/components/results/RunPicker";
+import { RunModeSelect, includeDraftsParam } from "@/components/results/RunModeSelect";
+import { RunInProgressBanner } from "@/components/results/RunInProgressBanner";
 import { CollapsibleSection } from "@/components/results/CollapsibleSection";
 import { CollapseRegion } from "@/components/results/CollapseRegion";
 import { ScoreTrendChart } from "@/components/results/ScoreTrendChart";
@@ -44,8 +46,9 @@ import { toCountSeries } from "@/components/results/countSeries";
 // RESULTS_QUERY_OPTIONS and refresh comes from the run-completion
 // invalidation in `lib/results-invalidation.ts` (dqlake's resultsPolling /
 // useBindingRunsActivity 5s/15s refetch loops are deliberately not ported).
-// The RunInProgressBanner is omitted with them: this tab has no run-status
-// data source, and deriving one would mean reintroducing an idle poll.
+// The RunInProgressBanner IS shown, but its signal is active-run-scoped:
+// the detail page polls ONLY a run set it just triggered (see the
+// `runInProgress` prop) — never an idle poll.
 
 export type Facet = "dimension" | "severity" | "rule" | "column";
 
@@ -136,12 +139,23 @@ export function BindingResultsTab({
   bindingId,
   tableName,
   tableFqn,
+  neverApproved,
+  runInProgress,
 }: {
   bindingId: string;
   /** Friendly table name (for the failed-records download filename). */
   tableName?: string;
   /** Fully-qualified `catalog.schema.table` — the dq-results endpoints key on it. */
   tableFqn: string;
+  /** True when the binding has never been approved (version 0): its runs are
+   *  all drafts, hidden by the published-only default — an informational
+   *  notice points at the run-mode dropdown. */
+  neverApproved?: boolean;
+  /** True while a run triggered FROM this detail page is still executing
+   *  (the page polls that run set's status — see the detail route). Shows
+   *  dqlake's in-progress banner; results refresh via the completion
+   *  invalidation once it settles. */
+  runInProgress?: boolean;
 }) {
   const { t } = useTranslation();
   return (
@@ -163,6 +177,8 @@ export function BindingResultsTab({
               bindingId={bindingId}
               tableName={tableName}
               tableFqn={tableFqn}
+              neverApproved={neverApproved}
+              runInProgress={runInProgress}
             />
           </ErrorBoundary>
         )}
@@ -262,13 +278,23 @@ function ResultsBody({
   bindingId,
   tableName,
   tableFqn,
+  neverApproved,
+  runInProgress,
 }: {
   bindingId: string;
   tableName?: string;
   tableFqn: string;
+  neverApproved?: boolean;
+  runInProgress?: boolean;
 }) {
   const { t } = useTranslation();
   const [filters, setFilters] = useState<MultiFilters>(EMPTY_FILTERS);
+  // Run mode: "Published only" (default) or "Published + Draft". Per-surface
+  // state — every dq-results query on THIS tab gets `include_drafts` from it
+  // (true only when drafts are included; omitted otherwise so the backend's
+  // published-only default applies).
+  const [includeDrafts, setIncludeDrafts] = useState(false);
+  const draftsParam = includeDraftsParam(includeDrafts);
   // Drilldown scope: "applicable" (default) cross-filters the breakdowns by the
   // active chips; "all" shows each breakdown's full set ignoring those chips.
   const [applicableOnly, setApplicableOnly] = useState(true);
@@ -292,9 +318,13 @@ function ResultsBody({
   // run to scope the score, and switching runs is a deliberate action. Keyed
   // on the binding id (the endpoint accepts a binding id or a table FQN),
   // matching dqlake's binding_id param.
-  const { data: runsData } = useGetDqResultsRunsSuspense<RunsOut>(bindingId, undefined, {
-    query: { ...selector<RunsOut>().query, ...RESULTS_QUERY_OPTIONS },
-  });
+  const { data: runsData } = useGetDqResultsRunsSuspense<RunsOut>(
+    bindingId,
+    { include_drafts: draftsParam },
+    {
+      query: { ...selector<RunsOut>().query, ...RESULTS_QUERY_OPTIONS },
+    },
+  );
   const runs = (runsData.rows ?? []).filter(
     (r): r is typeof r & { run_id: string } => typeof r.run_id === "string",
   );
@@ -306,7 +336,7 @@ function ResultsBody({
   // render immediately and each shows its own spinner while loading (F1).
   const trendQuery = useGetTableResults(
     tableFqn,
-    { axes: "trend" },
+    { axes: "trend", include_drafts: draftsParam },
     {
       query: { placeholderData: keepPreviousData, ...RESULTS_QUERY_OPTIONS },
     },
@@ -323,6 +353,7 @@ function ResultsBody({
       ...facetQueryParams(filters),
       run_id: effectiveRunId,
       axes: "breakdown",
+      include_drafts: draftsParam,
     },
     {
       query: { placeholderData: keepPreviousData, ...RESULTS_QUERY_OPTIONS },
@@ -334,7 +365,7 @@ function ResultsBody({
   // greyed. In "Applicable" mode it's unused beyond being the same set.
   const baseTableQuery = useGetTableResults(
     tableFqn,
-    { run_id: effectiveRunId, axes: "breakdown" },
+    { run_id: effectiveRunId, axes: "breakdown", include_drafts: draftsParam },
     {
       query: { placeholderData: keepPreviousData, ...RESULTS_QUERY_OPTIONS },
     },
@@ -377,6 +408,7 @@ function ResultsBody({
     {
       ...facetQueryParams(filters),
       limit: 200,
+      include_drafts: draftsParam,
     },
     {
       query: { placeholderData: keepPreviousData, ...RESULTS_QUERY_OPTIONS },
@@ -521,6 +553,7 @@ function ResultsBody({
   const fetchAllFailedRows = async () => {
     const res = await getDqResultsFailedRows(tableFqn, {
       limit: EXPORT_ROW_LIMIT,
+      include_drafts: draftsParam,
     });
     return toFailingRecords(res.data.rows);
   };
@@ -543,10 +576,25 @@ function ResultsBody({
 
   return (
     <div className="space-y-6">
-      {/* A2: the run picker overlaps the score box's top-right corner; it drops
-          below the score on very small screens. */}
+      <RunInProgressBanner show={Boolean(runInProgress)}>
+        {t("resultsUi.runInProgressBanner")}
+      </RunInProgressBanner>
+
+      {/* Draft-binding context (P3.6): a never-approved binding only has
+          draft runs, which the published-only default hides — one plain
+          informational line pointing at the run-mode dropdown. */}
+      {neverApproved && (
+        <p className="text-xs text-muted-foreground" role="note">
+          {t("resultsUi.draftBindingNotice")}
+        </p>
+      )}
+
+      {/* A2: the run picker (plus the run-mode dropdown) overlaps the score
+          box's top-right corner; it drops below the score on very small
+          screens. */}
       <div className="relative">
-        <div className="z-10 sm:absolute sm:right-2 sm:top-2 max-sm:mb-2 max-sm:flex max-sm:justify-end">
+        <div className="z-10 flex items-center gap-2 sm:absolute sm:right-2 sm:top-2 max-sm:mb-2 max-sm:justify-end">
+          <RunModeSelect includeDrafts={includeDrafts} onChange={setIncludeDrafts} />
           <RunPicker
             runs={runs}
             value={filters.runId ?? null}
