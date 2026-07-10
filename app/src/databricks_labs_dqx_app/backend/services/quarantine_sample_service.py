@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 
 from databricks.sdk import WorkspaceClient
 
@@ -32,7 +33,6 @@ from databricks_labs_dqx_app.backend.models import (
     FailingRecordFailureOut,
     FailingRecordOut,
 )
-from databricks_labs_dqx_app.backend.services.dq_results_service import CheckAttribution
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn
 
@@ -49,30 +49,39 @@ def parse_json_or_none(raw: str | None) -> object:
         return None
 
 
-def to_failing_record(row: dict[str, str | None]) -> FailingRecordOut:
-    """Transform a dq_quarantine_records row into the UI's failure-highlight shape.
+@dataclass(frozen=True)
+class ParsedFailure:
+    """One failure struct off a quarantined row, attribution included.
 
-    The quarantine table nests the quarantined source row under the VARIANT
-    *row_data* column, with DQX's result structs (*name*, *message*,
-    *columns* — see schema/dq_result_schema.py) under the sibling VARIANT
-    *errors*/*warnings* columns. All three arrive here as JSON text.
-    Malformed payloads degrade to empty values rather than failing the
-    whole response.
+    *user_metadata* is the check's OWN metadata map as stamped into the
+    failure struct by the DQX engine at run time (the core library's
+    DQRuleManager result struct) — it carries the reserved *severity* /
+    *dimension* tags and the *registry_rule_id* provenance frozen at
+    materialization time, making downstream enrichment version-accurate
+    without any live rule join. Empty for legacy/untagged failures.
     """
-    parsed_row = parse_json_or_none(row.get("row_data"))
-    row_values: dict[str, str | None] = {}
-    if isinstance(parsed_row, dict):
-        row_values = {str(k): (None if v is None else str(v)) for k, v in parsed_row.items()}
 
-    failures: list[FailingRecordFailureOut] = []
+    rule_name: str | None
+    message: str | None
+    columns: tuple[str, ...] = ()
+    user_metadata: dict[str, str] = field(default_factory=dict)
+
+
+def parse_failures(row: dict[str, str | None]) -> list[ParsedFailure]:
+    """Parse the VARIANT *errors*/*warnings* failure structs of one row.
+
+    The quarantine table stores DQX's result structs (*name*, *message*,
+    *columns*, *user_metadata* — see the core schema/dq_result_schema.py)
+    as JSON text here. Malformed payloads degrade to empty values rather
+    than failing the whole response.
+    """
+    failures: list[ParsedFailure] = []
     for col_name in ("errors", "warnings"):
         parsed = parse_json_or_none(row.get(col_name))
         if isinstance(parsed, dict):
             # Legacy SQL-check rows wrote a single {check_name: message}
             # dict (see _row_to_record in routes/v1/quarantine.py).
-            failures.extend(
-                FailingRecordFailureOut(rule_name=str(k), message=str(v), columns=[]) for k, v in parsed.items()
-            )
+            failures.extend(ParsedFailure(rule_name=str(k), message=str(v)) for k, v in parsed.items())
             continue
         if not isinstance(parsed, list):
             continue
@@ -80,47 +89,70 @@ def to_failing_record(row: dict[str, str | None]) -> FailingRecordOut:
             if not isinstance(entry, dict):
                 continue
             columns = entry.get("columns")
+            metadata = entry.get("user_metadata")
             failures.append(
-                FailingRecordFailureOut(
+                ParsedFailure(
                     rule_name=str(entry["name"]) if entry.get("name") is not None else None,
                     message=str(entry["message"]) if entry.get("message") is not None else None,
-                    columns=[str(c) for c in columns] if isinstance(columns, list) else [],
+                    columns=tuple(str(c) for c in columns) if isinstance(columns, list) else (),
+                    user_metadata=(
+                        {k: v for k, v in metadata.items() if isinstance(k, str) and isinstance(v, str)}
+                        if isinstance(metadata, dict)
+                        else {}
+                    ),
                 )
             )
+    return failures
 
-    failed_columns = sorted({c for f in failures for c in f.columns})
+
+def to_failing_record(
+    row: dict[str, str | None], failures: list[ParsedFailure] | None = None
+) -> FailingRecordOut:
+    """Transform a dq_quarantine_records row into the UI's failure-highlight shape.
+
+    The quarantined source row arrives as JSON text under *row_data*; the
+    failure structs are parsed via :func:`parse_failures` (pass *failures*
+    to reuse an already-parsed list). Malformed payloads degrade to empty
+    values rather than failing the whole response.
+    """
+    parsed_row = parse_json_or_none(row.get("row_data"))
+    row_values: dict[str, str | None] = {}
+    if isinstance(parsed_row, dict):
+        row_values = {str(k): (None if v is None else str(v)) for k, v in parsed_row.items()}
+
+    parsed_failures = parse_failures(row) if failures is None else failures
+    failed_columns = sorted({c for f in parsed_failures for c in f.columns})
     return FailingRecordOut(
         record_key=str(row.get("quarantine_id") or ""),
         row_values=row_values,
         failed_columns=failed_columns,
-        failures=failures,
+        failures=[
+            FailingRecordFailureOut(rule_name=f.rule_name, message=f.message, columns=list(f.columns))
+            for f in parsed_failures
+        ],
     )
 
 
-def enrich_failures(
-    failures: list[FailingRecordFailureOut],
-    attribution: dict[str, CheckAttribution],
-) -> list[FailedRowFailureOut]:
-    """Join each failure's rule name to the binding's applied-rule metadata.
+def enrich_failures(failures: list[ParsedFailure]) -> list[FailedRowFailureOut]:
+    """Shape parsed failures into the dqlake FailureOut, attribution included.
 
-    Produces the dqlake FailureOut shape: rule_id / quality_dimension /
-    severity come from the applied-rule attribution (None for checks not
-    attributable to a registry rule application).
+    rule_id / quality_dimension / severity are read from EACH failure
+    struct's own frozen *user_metadata* (the as-of-run payload) — never
+    from the binding's current applied-rule metadata, so a tag edited or
+    renamed after the run cannot rewrite what the failure reports. None
+    for untagged failures (legacy rows, hand-authored checks).
     """
-    out: list[FailedRowFailureOut] = []
-    for failure in failures:
-        attr = attribution.get(failure.rule_name) if failure.rule_name else None
-        out.append(
-            FailedRowFailureOut(
-                rule_id=attr.rule_id if attr else None,
-                rule_name=failure.rule_name,
-                quality_dimension=attr.dimension if attr else None,
-                severity=attr.severity if attr else None,
-                message=failure.message,
-                columns=list(failure.columns),
-            )
+    return [
+        FailedRowFailureOut(
+            rule_id=failure.user_metadata.get("registry_rule_id"),
+            rule_name=failure.rule_name,
+            quality_dimension=failure.user_metadata.get("dimension"),
+            severity=failure.user_metadata.get("severity"),
+            message=failure.message,
+            columns=list(failure.columns),
         )
-    return out
+        for failure in failures
+    ]
 
 
 class QuarantineSampleService:

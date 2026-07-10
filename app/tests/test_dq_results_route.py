@@ -6,9 +6,11 @@ SQL/auth seams (spec-bound autospecs, no live workspace).
 
 The aggregation math itself is pinned in ``test_dq_results_service.py``;
 these tests pin the SQL statements, the catalog gating per endpoint, the
-attribution wiring, and — for the filtered failed-rows endpoint — the
-Task 7 security-invariant ORDER (OBO self-check first, fine-grained
-suppression second, SP fetch last).
+AS-OF-RUN attribution wiring (severity/dimension/columns/rule id read
+off the view rows and the failure structs' own frozen user_metadata —
+never a live join to the binding's current rule metadata), and — for the
+filtered failed-rows endpoint — the Task 7 security-invariant ORDER
+(OBO self-check first, fine-grained suppression second, SP fetch last).
 """
 
 from __future__ import annotations
@@ -44,7 +46,6 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductService,
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
-    AppliedRuleSummary,
     MonitoredTableDetail,
     MonitoredTableService,
 )
@@ -157,8 +158,17 @@ def check_row(
     run_id: str = "r1",
     run_date: str = "2026-07-01 00:00:00",
     fqn: str = FQN,
+    severity: str | None = None,
+    dimension: str | None = None,
+    rule_id: str | None = None,
+    columns: list[str] | None = None,
 ) -> dict[str, str | None]:
-    """One v_dq_check_results row, Statement-Execution shaped (all strings)."""
+    """One v_dq_check_results row, Statement-Execution shaped (all strings).
+
+    The attribution columns (severity/dimension/registry_rule_id/columns)
+    are the AS-OF-RUN values the view parsed out of the run's frozen
+    ``checks_json`` — NULL for legacy/untagged runs.
+    """
     return {
         "input_location": fqn,
         "run_id": run_id,
@@ -167,6 +177,10 @@ def check_row(
         "error_count": None if errors is None else str(errors),
         "warning_count": None if warnings is None else str(warnings),
         "input_row_count": None if total is None else str(total),
+        "severity": severity,
+        "dimension": dimension,
+        "registry_rule_id": rule_id,
+        "columns_json": None if columns is None else json.dumps(columns),
     }
 
 
@@ -216,33 +230,11 @@ def sql_dispatch(
     sql_mock.query_dicts.side_effect = dispatch
 
 
-def applied_summary(
-    rule_id: str = "rule-1",
-    name: str | None = "c1",
-    severity: str | None = "High",
-    dimension: str | None = "Completeness",
-    columns: list[str] | None = None,
-    severity_override: str | None = None,
-    binding_id: str = "b1",
-) -> AppliedRuleSummary:
-    applied = AppliedRule(
-        id=f"ar-{rule_id}",
-        binding_id=binding_id,
-        rule_id=rule_id,
-        severity_override=severity_override,
-        column_mapping=[{"col": c} for c in (columns or [])],
-    )
-    return AppliedRuleSummary(
-        applied_rule=applied, rule_name=name, rule_dimension=dimension, rule_severity=severity
-    )
-
-
-def binding_detail(
-    binding_id: str, fqn: str, summaries: list[AppliedRuleSummary] | None = None
-) -> MonitoredTableDetail:
-    return MonitoredTableDetail(
-        table=MonitoredTable(binding_id=binding_id, table_fqn=fqn), applied_rules=summaries or []
-    )
+def binding_detail(binding_id: str, fqn: str) -> MonitoredTableDetail:
+    # Applied-rule summaries are deliberately absent: since P2.1b the
+    # dq-results paths never read the binding's current rule metadata —
+    # bindings only resolve ids to tables (runs picker, rule scoping).
+    return MonitoredTableDetail(table=MonitoredTable(binding_id=binding_id, table_fqn=fqn), applied_rules=[])
 
 
 def product_detail(product_id: str, members: list[tuple[str, str]]) -> DataProductDetail:
@@ -338,22 +330,32 @@ class TestTableResults:
         assert resp.status_code == 403
         sql_mock.query_dicts.assert_not_called()
 
-    def test_breakdowns_join_check_names_to_applied_rule_metadata(
+    def test_breakdowns_use_as_of_run_attribution_from_the_view_rows(
         self, client, sql_mock, monitored_tables_mock
     ):
         sql_dispatch(
             sql_mock,
             check_rows=[
-                check_row("c1", errors=10, warnings=0, total=100),
-                check_row("c2", errors=0, warnings=30, total=100),
-            ],
-        )
-        monitored_tables_mock.get_by_table_fqn.return_value = binding_detail(
-            "b1",
-            FQN,
-            [
-                applied_summary("rule-1", "c1", severity="High", dimension="Completeness", columns=["id"]),
-                applied_summary("rule-2", "c2", severity="Low", dimension="Validity", columns=["amount"]),
+                check_row(
+                    "c1",
+                    errors=10,
+                    warnings=0,
+                    total=100,
+                    severity="High",
+                    dimension="Completeness",
+                    rule_id="rule-1",
+                    columns=["id"],
+                ),
+                check_row(
+                    "c2",
+                    errors=0,
+                    warnings=30,
+                    total=100,
+                    severity="Low",
+                    dimension="Validity",
+                    rule_id="rule-2",
+                    columns=["amount"],
+                ),
             ],
         )
         resp = client.get(f"/api/v1/dq-results/table/{FQN}")
@@ -369,10 +371,13 @@ class TestTableResults:
         # Table endpoint fills `tables` (dqlake parity), not `by_table`.
         assert [g["label"] for g in body["tables"]] == [FQN]
         assert body["by_table"] == []
-        monitored_tables_mock.get_by_table_fqn.assert_called_once_with(FQN)
+        # VERSION ACCURACY: the binding's CURRENT rule metadata is never
+        # consulted — attribution is frozen into the run's checks_json.
+        monitored_tables_mock.get_by_table_fqn.assert_not_called()
 
-    def test_unmonitored_table_serves_unattributed_results(self, client, sql_mock, monitored_tables_mock):
-        monitored_tables_mock.get_by_table_fqn.return_value = None
+    def test_untagged_runs_serve_unattributed_results(self, client, sql_mock):
+        # Legacy runs (NULL checks_json) or hand-authored checks arrive
+        # with NULL attribution columns and land in the untagged bucket.
         sql_dispatch(sql_mock, check_rows=[check_row("adhoc_check", errors=1, total=10)])
         body = client.get(f"/api/v1/dq-results/table/{FQN}").json()
         assert [g["label"] for g in body["by_dimension"]] == [None]
@@ -384,6 +389,9 @@ class TestTableResults:
         stmt = sql_mock.query_dicts.call_args_list[0][0][0]
         assert f"{app_config.catalog}.{app_config.schema_name}.{SHAPING_VIEW_NAME}" in stmt
         assert f"'{FQN}'" in stmt
+        # The as-of-run attribution columns ride along on the same query.
+        assert "severity, dimension, registry_rule_id" in stmt
+        assert "to_json(columns) AS columns_json" in stmt
 
     def test_run_id_filter_is_pushed_into_sql(self, client, sql_mock):
         sql_dispatch(sql_mock)
@@ -391,24 +399,14 @@ class TestTableResults:
         stmt = sql_mock.query_dicts.call_args_list[0][0][0]
         assert "run_id = 'r42'" in stmt
 
-    def test_facets_restrict_breakdowns_but_not_trend_failures(
-        self, client, sql_mock, monitored_tables_mock
-    ):
+    def test_facets_restrict_breakdowns_but_not_trend_failures(self, client, sql_mock):
         # dqlake parity: the table reader's trend_failures series filters on
         # binding/run only — the drilldown chips never restrict it.
         sql_dispatch(
             sql_mock,
             check_rows=[
-                check_row("c1", errors=10, total=100),
-                check_row("c2", errors=20, total=100),
-            ],
-        )
-        monitored_tables_mock.get_by_table_fqn.return_value = binding_detail(
-            "b1",
-            FQN,
-            [
-                applied_summary("rule-1", "c1", dimension="Completeness"),
-                applied_summary("rule-2", "c2", dimension="Validity"),
+                check_row("c1", errors=10, total=100, dimension="Completeness"),
+                check_row("c2", errors=20, total=100, dimension="Validity"),
             ],
         )
         body = client.get(f"/api/v1/dq-results/table/{FQN}", params={"dimension": "Completeness"}).json()
@@ -416,15 +414,20 @@ class TestTableResults:
         assert body["trend"][0]["pass_rate"] == pytest.approx(0.9)
         assert body["trend_failures"][0]["failed_test_count"] == 30  # unfiltered
 
-    def test_severity_override_attributes_to_overridden_bucket(
-        self, client, sql_mock, monitored_tables_mock
-    ):
-        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=1, total=10)])
-        monitored_tables_mock.get_by_table_fqn.return_value = binding_detail(
-            "b1", FQN, [applied_summary("rule-1", "c1", severity="Low", severity_override="Critical")]
+    def test_retagged_rule_keeps_historical_attribution(self, client, sql_mock, monitored_tables_mock):
+        # THE POINT of P2.1b: the same check carries the severity it RAN
+        # with in each run — a later severity edit (which would change the
+        # binding's current metadata) cannot rewrite the older run.
+        sql_dispatch(
+            sql_mock,
+            check_rows=[
+                check_row("c1", errors=1, total=10, run_id="r1", run_date="d1", severity="Low"),
+                check_row("c1", errors=1, total=10, run_id="r2", run_date="d2", severity="Critical"),
+            ],
         )
         body = client.get(f"/api/v1/dq-results/table/{FQN}").json()
-        assert [g["label"] for g in body["by_severity"]] == ["Critical"]
+        assert {g["label"] for g in body["by_severity"]} == {"Low", "Critical"}
+        monitored_tables_mock.get_by_table_fqn.assert_not_called()
 
     def test_failed_records_derived_from_input_minus_valid(self, client, sql_mock, monitored_tables_mock):
         sql_dispatch(
@@ -447,14 +450,14 @@ class TestTableResults:
         assert body["trend"] == [] and body["trend_failures"] == []
         assert body["by_rule"] != []
 
-    def test_attribution_lookup_failure_degrades_to_unattributed(
-        self, client, sql_mock, monitored_tables_mock
-    ):
+    def test_oltp_outage_cannot_affect_table_results(self, client, sql_mock, monitored_tables_mock):
+        # Attribution no longer touches the OLTP store at all — a broken
+        # MonitoredTableService is simply never called on this path.
         monitored_tables_mock.get_by_table_fqn.side_effect = RuntimeError("lakebase hiccup")
-        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=1, total=10)])
+        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=1, total=10, dimension="Validity")])
         resp = client.get(f"/api/v1/dq-results/table/{FQN}")
         assert resp.status_code == 200
-        assert [g["label"] for g in resp.json()["by_dimension"]] == [None]
+        assert [g["label"] for g in resp.json()["by_dimension"]] == ["Validity"]
 
     def test_sql_failure_maps_to_500(self, client, sql_mock):
         sql_mock.query_dicts.side_effect = RuntimeError("warehouse down")
@@ -592,9 +595,8 @@ class TestGlobalResults:
         )
         body = client.get("/api/v1/dq-results/global").json()
         assert [g["label"] for g in body["by_table"]] == ["main.sales.orders"]
-        # Attribution is only resolved for accessible tables.
-        looked_up = {call[0][0] for call in monitored_tables_mock.get_by_table_fqn.call_args_list}
-        assert looked_up == {"main.sales.orders"}
+        # Attribution rides on the view rows — no OLTP lookups anywhere.
+        monitored_tables_mock.get_by_table_fqn.assert_not_called()
 
     def test_global_query_has_no_table_filter(self, client, sql_mock, app_config):
         sql_dispatch(sql_mock)
@@ -614,25 +616,22 @@ class TestGlobalResults:
 
 
 class TestRuleResults:
-    def test_restricts_rows_to_the_rules_own_checks(
+    def test_restricts_rows_by_the_frozen_registry_rule_id(
         self, client, sql_mock, apply_rules_mock, monitored_tables_mock
     ):
+        # Applications only SCOPE the tables; row membership comes from
+        # each run's own frozen registry_rule_id provenance tag — a check
+        # renamed since the run still attributes to the rule.
         apply_rules_mock.list_bindings_for_rule.return_value = [
             AppliedRule(id="ar1", binding_id="b1", rule_id="rule-1")
         ]
-        monitored_tables_mock.get.return_value = binding_detail(
-            "b1",
-            FQN,
-            [
-                applied_summary("rule-1", "c1", dimension="Completeness"),
-                applied_summary("rule-2", "c2", dimension="Validity"),
-            ],
-        )
+        monitored_tables_mock.get.return_value = binding_detail("b1", FQN)
         sql_dispatch(
             sql_mock,
             check_rows=[
-                check_row("c1", errors=10, total=100),
-                check_row("c2", errors=30, total=100),  # another rule's check — excluded
+                check_row("c1", errors=10, total=100, rule_id="rule-1", dimension="Completeness"),
+                check_row("c2", errors=30, total=100, rule_id="rule-2"),  # another rule's check — excluded
+                check_row("adhoc", errors=5, total=100),  # no provenance — excluded
             ],
         )
         body = client.get("/api/v1/dq-results/rule/rule-1").json()
@@ -654,11 +653,11 @@ class TestRuleResults:
             AppliedRule(id="ar2", binding_id="b2", rule_id="rule-1"),
         ]
         details = {
-            "b1": binding_detail("b1", FQN, [applied_summary("rule-1", "c1")]),
-            "b2": binding_detail("b2", "secret.hr.salaries", [applied_summary("rule-1", "c1")]),
+            "b1": binding_detail("b1", FQN),
+            "b2": binding_detail("b2", "secret.hr.salaries"),
         }
         monitored_tables_mock.get.side_effect = details.get
-        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=1, total=10)])
+        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=1, total=10, rule_id="rule-1")])
         resp = client.get("/api/v1/dq-results/rule/rule-1")
         assert resp.status_code == 200
         for call in sql_mock.query_dicts.call_args_list:
@@ -674,11 +673,11 @@ class TestRuleResults:
 
         def get_binding(binding_id: str) -> MonitoredTableDetail:
             if binding_id == "b1":
-                return binding_detail("b1", FQN, [applied_summary("rule-1", "c1")])
+                return binding_detail("b1", FQN)
             raise RuntimeError("lakebase hiccup")
 
         monitored_tables_mock.get.side_effect = get_binding
-        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=1, total=10)])
+        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=1, total=10, rule_id="rule-1")])
         resp = client.get("/api/v1/dq-results/rule/rule-1")
         assert resp.status_code == 200
         assert [g["label"] for g in resp.json()["by_table"]] == [FQN]
@@ -771,17 +770,28 @@ class TestFailedRowsSecurity:
 
 
 class TestFailedRowsShapeAndFilters:
-    def test_rows_carry_enriched_failures_and_run_ts(self, client, sql_mock, monitored_tables_mock):
+    def test_rows_carry_struct_enriched_failures_and_run_ts(self, client, sql_mock, monitored_tables_mock):
+        # Severity/dimension/rule_id come from the failure struct's OWN
+        # frozen user_metadata (stamped by the DQX engine at run time) —
+        # never from a live applied-rule lookup.
         sql_mock.query_dicts.return_value = [
             quarantine_row(
                 "q1",
                 row_data={"id": 1, "amount": None},
-                errors=[{"name": "c1", "message": "id is null", "columns": ["id"]}],
+                errors=[
+                    {
+                        "name": "c1",
+                        "message": "id is null",
+                        "columns": ["id"],
+                        "user_metadata": {
+                            "severity": "High",
+                            "dimension": "Completeness",
+                            "registry_rule_id": "rule-1",
+                        },
+                    }
+                ],
             )
         ]
-        monitored_tables_mock.get_by_table_fqn.return_value = binding_detail(
-            "b1", FQN, [applied_summary("rule-1", "c1", severity="High", dimension="Completeness")]
-        )
         body = client.get(FAILED_ROWS_URL).json()
         assert body["total"] == 1
         row = body["rows"][0]
@@ -799,9 +809,9 @@ class TestFailedRowsShapeAndFilters:
                 "columns": ["id"],
             }
         ]
+        monitored_tables_mock.get_by_table_fqn.assert_not_called()
 
-    def test_unattributed_failures_have_null_metadata(self, client, sql_mock, monitored_tables_mock):
-        monitored_tables_mock.get_by_table_fqn.return_value = None
+    def test_unattributed_failures_have_null_metadata(self, client, sql_mock):
         sql_mock.query_dicts.return_value = [
             quarantine_row("q1", errors=[{"name": "adhoc", "message": "boom", "columns": []}])
         ]
@@ -811,43 +821,55 @@ class TestFailedRowsShapeAndFilters:
         assert failure["severity"] is None
         assert failure["rule_name"] == "adhoc"
 
-    def _two_rows(self, sql_mock, monitored_tables_mock):
+    def _two_rows(self, sql_mock):
         sql_mock.query_dicts.return_value = [
-            quarantine_row("q1", errors=[{"name": "c1", "message": "m1", "columns": ["id"]}]),
-            quarantine_row("q2", errors=[{"name": "c2", "message": "m2", "columns": ["amount"]}]),
+            quarantine_row(
+                "q1",
+                errors=[
+                    {
+                        "name": "c1",
+                        "message": "m1",
+                        "columns": ["id"],
+                        "user_metadata": {"severity": "High", "dimension": "Completeness"},
+                    }
+                ],
+            ),
+            quarantine_row(
+                "q2",
+                errors=[
+                    {
+                        "name": "c2",
+                        "message": "m2",
+                        "columns": ["amount"],
+                        "user_metadata": {"severity": "Low", "dimension": "Validity"},
+                    }
+                ],
+            ),
         ]
-        monitored_tables_mock.get_by_table_fqn.return_value = binding_detail(
-            "b1",
-            FQN,
-            [
-                applied_summary("rule-1", "c1", severity="High", dimension="Completeness"),
-                applied_summary("rule-2", "c2", severity="Low", dimension="Validity"),
-            ],
-        )
 
-    def test_rule_filter(self, client, sql_mock, monitored_tables_mock):
-        self._two_rows(sql_mock, monitored_tables_mock)
+    def test_rule_filter(self, client, sql_mock):
+        self._two_rows(sql_mock)
         body = client.get(FAILED_ROWS_URL, params={"rule": "c1"}).json()
         assert [r["record_key"] for r in body["rows"]] == ["q1"]
         assert body["total"] == 1
 
-    def test_severity_filter_via_metadata_join(self, client, sql_mock, monitored_tables_mock):
-        self._two_rows(sql_mock, monitored_tables_mock)
+    def test_severity_filter_via_frozen_struct_metadata(self, client, sql_mock):
+        self._two_rows(sql_mock)
         body = client.get(FAILED_ROWS_URL, params={"severity": "Low"}).json()
         assert [r["record_key"] for r in body["rows"]] == ["q2"]
 
-    def test_dimension_filter_via_metadata_join(self, client, sql_mock, monitored_tables_mock):
-        self._two_rows(sql_mock, monitored_tables_mock)
+    def test_dimension_filter_via_frozen_struct_metadata(self, client, sql_mock):
+        self._two_rows(sql_mock)
         body = client.get(FAILED_ROWS_URL, params={"dimension": "Completeness"}).json()
         assert [r["record_key"] for r in body["rows"]] == ["q1"]
 
-    def test_column_filter_over_failed_columns(self, client, sql_mock, monitored_tables_mock):
-        self._two_rows(sql_mock, monitored_tables_mock)
+    def test_column_filter_over_failed_columns(self, client, sql_mock):
+        self._two_rows(sql_mock)
         body = client.get(FAILED_ROWS_URL, params={"column": "amount"}).json()
         assert [r["record_key"] for r in body["rows"]] == ["q2"]
 
-    def test_repeatable_facets_are_ored(self, client, sql_mock, monitored_tables_mock):
-        self._two_rows(sql_mock, monitored_tables_mock)
+    def test_repeatable_facets_are_ored(self, client, sql_mock):
+        self._two_rows(sql_mock)
         body = client.get(FAILED_ROWS_URL, params={"rule": ["c1", "c2"]}).json()
         assert body["total"] == 2
 
@@ -861,8 +883,8 @@ class TestFailedRowsShapeAndFilters:
         client.get(FAILED_ROWS_URL, params={"limit": 7, "rule": "c1"})
         assert "LIMIT 1000" in sql_mock.query_dicts.call_args[0][0]
 
-    def test_limit_caps_rows_but_total_counts_matches(self, client, sql_mock, monitored_tables_mock):
-        self._two_rows(sql_mock, monitored_tables_mock)
+    def test_limit_caps_rows_but_total_counts_matches(self, client, sql_mock):
+        self._two_rows(sql_mock)
         body = client.get(FAILED_ROWS_URL, params={"limit": 1, "rule": ["c1", "c2"]}).json()
         assert len(body["rows"]) == 1
         assert body["total"] == 2

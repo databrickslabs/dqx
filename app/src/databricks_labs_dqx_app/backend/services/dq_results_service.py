@@ -3,17 +3,23 @@
 The dqlake original computes its breakdowns/trends in SQL over an enriched
 fact table (``run_check_totals`` joined to versioned rule/mapping dims).
 DQX Studio's per-check facts live in the UC shaping view
-``v_dq_check_results`` (one row per run x table x check, counts only), and
-the rule metadata (severity tag, quality dimension, column mapping) lives
-in the app's OLTP store — so the join happens here, in Python:
+``v_dq_check_results`` (one row per run x table x check), which carries the
+AS-OF-THE-RUN attribution on every row: severity tag, quality dimension,
+mapped columns, and registry rule id parsed from the run's own frozen
+``dq_validation_runs.checks_json`` rendered rule set (see
+``services.score_view_service``). Attribution is therefore VERSION-ACCURATE
+by construction — editing or renaming a rule's tags today never rewrites
+historical results — and this module needs no live join to the binding's
+current applied-rule metadata:
 
 1. The route fetches the raw check rows via SQL (``parse_check_rows``).
-2. Each check row is attributed to its applied-rule metadata by CHECK
-   NAME — the materializer writes the registry rule's ``name`` tag as the
-   materialized check's ``name``, which the metrics observer echoes back
-   as ``check_name`` (``build_attribution_map``).
-3. ``compute_entity_results`` filters by the active facets and groups
+2. ``compute_entity_results`` filters by the active facets and groups
    every axis, mirroring dqlake's SQL semantics (documented per helper).
+
+Rows from runs without a frozen rule set (legacy pre-checks_json runs) or
+from checks that carry no tags (hand-authored checks, synthesized SQL-check
+payloads) arrive with NULL attribution and land in the untagged (NULL
+label) bucket.
 
 Everything in this module is pure (no I/O) so the aggregation semantics
 are unit-testable without a warehouse.
@@ -21,6 +27,7 @@ are unit-testable without a warehouse.
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -33,28 +40,18 @@ from databricks_labs_dqx_app.backend.models import (
     TrendFailurePointOut,
     TrendPointOut,
 )
-from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableDetail
 
 VALID_AXES = ("all", "trend", "breakdown")
 
 
 @dataclass(frozen=True)
-class CheckAttribution:
-    """Metadata attributed to one materialized check via its check name."""
-
-    rule_id: str | None = None
-    rule_name: str | None = None
-    severity: str | None = None
-    dimension: str | None = None
-    columns: tuple[str, ...] = ()
-
-
-_UNATTRIBUTED = CheckAttribution()
-
-
-@dataclass(frozen=True)
 class CheckResultRow:
-    """One ``v_dq_check_results`` row: a check's outcome in one run."""
+    """One ``v_dq_check_results`` row: a check's outcome in one run.
+
+    *severity* / *dimension* / *columns* / *rule_id* are the check's
+    as-of-run attribution (frozen into the run's ``checks_json`` at
+    materialization time); all-None/empty for untagged checks.
+    """
 
     table_fqn: str
     run_id: str | None
@@ -62,6 +59,10 @@ class CheckResultRow:
     check_name: str
     failed: int
     total: int | None
+    severity: str | None = None
+    dimension: str | None = None
+    columns: tuple[str, ...] = ()
+    rule_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -77,40 +78,17 @@ class ResultFacets:
         return bool(self.dimensions or self.severities or self.rules or self.columns)
 
 
-def build_attribution_map(detail: MonitoredTableDetail) -> dict[str, CheckAttribution]:
-    """Map check name -> applied-rule metadata for one monitored table.
-
-    The materialized check's name is the registry rule's ``name`` tag
-    (see ``services.materializer.render_check``), so the join key is the
-    rule name. The effective severity honours the per-application
-    ``severity_override``. When the same rule is applied twice to one
-    binding (different mapping groups), the mapped columns are merged —
-    the run's metrics carry a single check name either way.
-    """
-    out: dict[str, CheckAttribution] = {}
-    for summary in detail.applied_rules:
-        applied = summary.applied_rule
-        name = summary.rule_name
-        if not name:
-            continue  # unnamed rule -> its check name is DQX-generated; not attributable
-        columns: list[str] = []
-        for group in applied.column_mapping:
-            for value in group.values():
-                if value and value not in columns:
-                    columns.append(value)
-        existing = out.get(name)
-        if existing is not None:
-            merged = list(existing.columns) + [c for c in columns if c not in existing.columns]
-            out[name] = replace(existing, columns=tuple(merged))
-            continue
-        out[name] = CheckAttribution(
-            rule_id=applied.rule_id,
-            rule_name=name,
-            severity=applied.severity_override or summary.rule_severity,
-            dimension=summary.rule_dimension,
-            columns=tuple(columns),
-        )
-    return out
+def _parse_columns_json(raw: str | None) -> tuple[str, ...]:
+    """Parse the view's ``to_json(columns)`` array; empty on absent/corrupt."""
+    if not raw or raw == "null":
+        return ()
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return ()
+    if not isinstance(parsed, list):
+        return ()
+    return tuple(str(c) for c in parsed if c is not None)
 
 
 def parse_check_rows(raw_rows: list[dict[str, str | None]]) -> list[CheckResultRow]:
@@ -118,6 +96,8 @@ def parse_check_rows(raw_rows: list[dict[str, str | None]]) -> list[CheckResultR
 
     Placeholder rows (a run with no per-check breakdown — ``check_name``
     NULL) are dropped: they carry no test counts and belong to no axis.
+    The attribution columns are optional: NULLs (legacy runs, untagged
+    checks) parse to None/empty and land in the untagged bucket.
     """
     out: list[CheckResultRow] = []
     for row in raw_rows:
@@ -134,44 +114,38 @@ def parse_check_rows(raw_rows: list[dict[str, str | None]]) -> list[CheckResultR
                 check_name=check_name,
                 failed=failed,
                 total=safe_int(row.get("input_row_count")),
+                severity=row.get("severity"),
+                dimension=row.get("dimension"),
+                columns=_parse_columns_json(row.get("columns_json")),
+                rule_id=row.get("registry_rule_id"),
             )
         )
     return out
 
 
-def _attr_of(row: CheckResultRow, attributions: dict[str, dict[str, CheckAttribution]]) -> CheckAttribution:
-    return attributions.get(row.table_fqn, {}).get(row.check_name, _UNATTRIBUTED)
+def _rule_key(row: CheckResultRow) -> str:
+    """Distinct-rule counting key: the frozen registry rule id when the run
+    carried one, else the check name (mirrors dqlake's
+    COUNT(DISTINCT rule_id))."""
+    return row.rule_id or row.check_name
 
 
-def _rule_label(row: CheckResultRow, attr: CheckAttribution) -> str:
-    return attr.rule_name or row.check_name
-
-
-def _rule_key(row: CheckResultRow, attr: CheckAttribution) -> str:
-    """Distinct-rule counting key: the registry rule id when attributed,
-    else the check name (mirrors dqlake's COUNT(DISTINCT rule_id))."""
-    return attr.rule_id or row.check_name
-
-
-def row_matches_facets(
-    row: CheckResultRow,
-    attr: CheckAttribution,
-    facets: ResultFacets,
-) -> bool:
+def row_matches_facets(row: CheckResultRow, facets: ResultFacets) -> bool:
     """dqlake facet semantics: OR within a facet, AND across facets.
 
     Untagged checks (attribution field None) never match an active
     dimension/severity facet — the SQL analogue is ``col = 'v'`` on a
     NULL column. The column facet is a membership test over the check's
-    mapped columns.
+    as-of-run mapped columns. The rule facet is keyed on the check name
+    (the registry rule's name tag, frozen at materialization time).
     """
-    if facets.dimensions and attr.dimension not in facets.dimensions:
+    if facets.dimensions and row.dimension not in facets.dimensions:
         return False
-    if facets.severities and attr.severity not in facets.severities:
+    if facets.severities and row.severity not in facets.severities:
         return False
-    if facets.rules and _rule_label(row, attr) not in facets.rules:
+    if facets.rules and row.check_name not in facets.rules:
         return False
-    if facets.columns and not any(c in facets.columns for c in attr.columns):
+    if facets.columns and not any(c in facets.columns for c in row.columns):
         return False
     return True
 
@@ -183,11 +157,11 @@ class _GroupAcc:
     rule_keys: set[str] = field(default_factory=set)
     check_rows: int = 0
 
-    def add(self, row: CheckResultRow, rule_key: str) -> None:
+    def add(self, row: CheckResultRow) -> None:
         self.failed += row.failed
         if row.total is not None:
             self.total = (self.total or 0) + row.total
-        self.rule_keys.add(rule_key)
+        self.rule_keys.add(_rule_key(row))
         self.check_rows += 1
 
     @property
@@ -199,14 +173,14 @@ class _GroupAcc:
 
 
 def _group_rows(
-    pairs: list[tuple[CheckResultRow, CheckAttribution]],
-    key_of: Callable[[CheckResultRow, CheckAttribution], str | None],
+    rows: list[CheckResultRow],
+    key_of: Callable[[CheckResultRow], str | None],
     *,
     with_check_count: bool = True,
 ) -> list[GroupRowOut]:
     groups: dict[str | None, _GroupAcc] = defaultdict(_GroupAcc)
-    for row, attr in pairs:
-        groups[key_of(row, attr)].add(row, _rule_key(row, attr))
+    for row in rows:
+        groups[key_of(row)].add(row)
     out = [
         GroupRowOut(
             label=label,
@@ -223,22 +197,20 @@ def _group_rows(
     return out
 
 
-def _by_column_rows(pairs: list[tuple[CheckResultRow, CheckAttribution]]) -> list[GroupRowOut]:
+def _by_column_rows(rows: list[CheckResultRow]) -> list[GroupRowOut]:
     """By-column breakdown EXPLODES the mapped columns: a check spanning N
     columns attributes to each of them (rows can sum above the total —
     dqlake's intended "involvement" view). Checks with no mapped columns
     don't appear (SQL analogue: explode of a NULL array yields no rows).
     dqlake's by_column query computes no check_count."""
-    exploded: list[tuple[CheckResultRow, CheckAttribution]] = []
-    for row, attr in pairs:
-        exploded.extend((row, replace(attr, columns=(column,))) for column in attr.columns)
-    return _group_rows(exploded, lambda _row, attr: attr.columns[0], with_check_count=False)
+    exploded = [replace(row, columns=(column,)) for row in rows for column in row.columns]
+    return _group_rows(exploded, lambda row: row.columns[0], with_check_count=False)
 
 
-def _trend(pairs: list[tuple[CheckResultRow, CheckAttribution]]) -> list[TrendPointOut]:
+def _trend(rows: list[CheckResultRow]) -> list[TrendPointOut]:
     groups: dict[str | None, _GroupAcc] = defaultdict(_GroupAcc)
-    for row, attr in pairs:
-        groups[row.run_date].add(row, _rule_key(row, attr))
+    for row in rows:
+        groups[row.run_date].add(row)
     return [
         TrendPointOut(run_date=run_date, pass_rate=groups[run_date].pass_rate)
         for run_date in sorted(groups, key=lambda d: d or "")
@@ -246,12 +218,12 @@ def _trend(pairs: list[tuple[CheckResultRow, CheckAttribution]]) -> list[TrendPo
 
 
 def _trend_grouped(
-    pairs: list[tuple[CheckResultRow, CheckAttribution]],
-    series_of: Callable[[CheckResultRow, CheckAttribution], str | None],
+    rows: list[CheckResultRow],
+    series_of: Callable[[CheckResultRow], str | None],
 ) -> list[TrendPointOut]:
     groups: dict[tuple[str | None, str | None], _GroupAcc] = defaultdict(_GroupAcc)
-    for row, attr in pairs:
-        groups[(row.run_date, series_of(row, attr))].add(row, _rule_key(row, attr))
+    for row in rows:
+        groups[(row.run_date, series_of(row))].add(row)
     return [
         TrendPointOut(
             run_date=run_date,
@@ -264,10 +236,10 @@ def _trend_grouped(
     ]
 
 
-def _trend_counts(pairs: list[tuple[CheckResultRow, CheckAttribution]]) -> list[TrendCountPointOut]:
+def _trend_counts(rows: list[CheckResultRow]) -> list[TrendCountPointOut]:
     groups: dict[str | None, _GroupAcc] = defaultdict(_GroupAcc)
-    for row, attr in pairs:
-        groups[row.run_date].add(row, _rule_key(row, attr))
+    for row in rows:
+        groups[row.run_date].add(row)
     return [
         TrendCountPointOut(
             run_date=run_date,
@@ -280,7 +252,7 @@ def _trend_counts(pairs: list[tuple[CheckResultRow, CheckAttribution]]) -> list[
 
 
 def _trend_failures(
-    pairs: list[tuple[CheckResultRow, CheckAttribution]],
+    rows: list[CheckResultRow],
     failed_records_by_run: dict[tuple[str, str], int | None],
 ) -> list[TrendFailurePointOut]:
     """Per run instant: failed rules (distinct), failed checks (rows with
@@ -292,23 +264,21 @@ def _trend_failures(
     the distinct runs at one instant; None when no run at the instant has
     a derivable count (dqlake reads a persisted ``failed_records`` column
     we don't have)."""
-    by_date: dict[str | None, list[tuple[CheckResultRow, CheckAttribution]]] = defaultdict(list)
-    for row, attr in pairs:
-        by_date[row.run_date].append((row, attr))
+    by_date: dict[str | None, list[CheckResultRow]] = defaultdict(list)
+    for row in rows:
+        by_date[row.run_date].append(row)
     out: list[TrendFailurePointOut] = []
     for run_date in sorted(by_date, key=lambda d: d or ""):
         rows_here = by_date[run_date]
-        failed_rules = {_rule_key(row, attr) for row, attr in rows_here if row.failed > 0}
-        runs_here = {(row.table_fqn, row.run_id) for row, _ in rows_here if row.run_id}
-        record_counts = [
-            count for key in runs_here if (count := failed_records_by_run.get(key)) is not None
-        ]
+        failed_rules = {_rule_key(row) for row in rows_here if row.failed > 0}
+        runs_here = {(row.table_fqn, row.run_id) for row in rows_here if row.run_id}
+        record_counts = [count for key in runs_here if (count := failed_records_by_run.get(key)) is not None]
         out.append(
             TrendFailurePointOut(
                 run_date=run_date,
                 failed_rule_count=len(failed_rules),
-                failed_check_count=sum(1 for row, _ in rows_here if row.failed > 0),
-                failed_test_count=sum(row.failed for row, _ in rows_here),
+                failed_check_count=sum(1 for row in rows_here if row.failed > 0),
+                failed_test_count=sum(row.failed for row in rows_here),
                 failed_records=sum(record_counts) if record_counts else None,
             )
         )
@@ -317,7 +287,6 @@ def _trend_failures(
 
 def compute_entity_results(
     rows: list[CheckResultRow],
-    attributions: dict[str, dict[str, CheckAttribution]],
     facets: ResultFacets,
     *,
     axes: str = "all",
@@ -342,28 +311,27 @@ def compute_entity_results(
     """
     if axes not in VALID_AXES:
         axes = "all"  # dqlake parity: anything else selects every slice
-    all_pairs = [(row, _attr_of(row, attributions)) for row in rows]
-    pairs = [(row, attr) for row, attr in all_pairs if row_matches_facets(row, attr, facets)]
-    failure_pairs = all_pairs if failures_ignore_facets else pairs
+    matched = [row for row in rows if row_matches_facets(row, facets)]
+    failure_rows = rows if failures_ignore_facets else matched
 
     result = EntityResultsOut()
     records_by_run = failed_records_by_run or {}
     if axes in ("all", "breakdown"):
-        result.by_dimension = _group_rows(pairs, lambda _row, attr: attr.dimension)
-        result.by_severity = _group_rows(pairs, lambda _row, attr: attr.severity)
-        result.by_rule = _group_rows(pairs, _rule_label)
-        result.by_column = _by_column_rows(pairs)
-        table_groups = _group_rows(pairs, lambda row, _attr: row.table_fqn)
+        result.by_dimension = _group_rows(matched, lambda row: row.dimension)
+        result.by_severity = _group_rows(matched, lambda row: row.severity)
+        result.by_rule = _group_rows(matched, lambda row: row.check_name)
+        result.by_column = _by_column_rows(matched)
+        table_groups = _group_rows(matched, lambda row: row.table_fqn)
         if table_axis == "by_table":
             result.by_table = table_groups
         else:
             result.tables = table_groups
     if axes in ("all", "trend"):
-        result.trend = _trend(pairs)
-        result.trend_by_dimension = _trend_grouped(pairs, lambda _row, attr: attr.dimension)
-        result.trend_by_severity = _trend_grouped(pairs, lambda _row, attr: attr.severity)
+        result.trend = _trend(matched)
+        result.trend_by_dimension = _trend_grouped(matched, lambda row: row.dimension)
+        result.trend_by_severity = _trend_grouped(matched, lambda row: row.severity)
         if table_axis == "by_table":
-            result.trend_by_table = _trend_grouped(pairs, lambda row, _attr: row.table_fqn)
-        result.trend_counts = _trend_counts(pairs)
-        result.trend_failures = _trend_failures(failure_pairs, records_by_run)
+            result.trend_by_table = _trend_grouped(matched, lambda row: row.table_fqn)
+        result.trend_counts = _trend_counts(matched)
+        result.trend_failures = _trend_failures(failure_rows, records_by_run)
     return result

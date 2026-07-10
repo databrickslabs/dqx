@@ -1,14 +1,19 @@
 """Unit tests for ``backend.services.score_view_service``.
 
-The service owns the two SP-created UC objects that back the dq-score
+The service owns the three SP-created UC objects that back the dq-score
 endpoints (dqlake-parity architecture):
 
+- ``v_dq_check_attribution`` — as-of-the-run rule attribution parsed
+  from the frozen ``dq_validation_runs.checks_json`` rendered rule set
+  (severity/dimension reserved tags, criticality, mapped columns,
+  registry rule id) — one row per (run_id, source_table_fqn, check_name);
 - ``v_dq_check_results`` — plain shaping view that explodes the
   long-format ``dq_metrics`` table into one row per
-  (run_id, input_location, check_name);
+  (run_id, input_location, check_name), LEFT JOINed to the attribution
+  view so every check row carries the metadata it ran with;
 - ``mv_dq_scores`` — a UC metric view (``WITH METRICS LANGUAGE YAML``)
   over the shaping view exposing ``failed_tests`` / ``total_tests`` /
-  ``score`` measures.
+  ``score`` measures over attribution-aware dimensions.
 
 Unit tests cannot reach a warehouse, so they pin the DDL *contract*:
 object names, CREATE OR REPLACE idempotency, single-statement shape,
@@ -26,6 +31,7 @@ import pytest
 from databricks_labs_dqx_app.backend.models import CheckMetricBreakdown
 from databricks_labs_dqx_app.backend.services.score_service import ScoreService
 from databricks_labs_dqx_app.backend.services.score_view_service import (
+    ATTRIBUTION_VIEW_NAME,
     METRIC_VIEW_NAME,
     SHAPING_VIEW_NAME,
     ScoreViewService,
@@ -48,11 +54,78 @@ def _yaml_body(metric_ddl: str) -> dict:
 
 class TestObjectNames:
     def test_view_name_constants(self):
+        assert ATTRIBUTION_VIEW_NAME == "v_dq_check_attribution"
         assert SHAPING_VIEW_NAME == "v_dq_check_results"
         assert METRIC_VIEW_NAME == "mv_dq_scores"
 
     def test_metric_view_fqn_helper(self):
         assert metric_view_fqn("cat", "sch") == "cat.sch.mv_dq_scores"
+
+
+class TestAttributionViewDdl:
+    """``v_dq_check_attribution`` — as-of-run attribution from checks_json.
+
+    The frozen runner (READ-ONLY ``app/tasks/.../runner.py``) writes the
+    complete rendered rule set for every run into
+    ``dq_validation_runs.checks_json``; this view is what makes the
+    severity/dimension/columns attribution VERSION-ACCURATE — editing or
+    renaming a tag today must never rewrite historical results.
+    """
+
+    def test_is_idempotent_create_or_replace(self, svc):
+        assert svc.attribution_view_ddl().startswith("CREATE OR REPLACE VIEW ")
+
+    def test_targets_attribution_view_and_reads_validation_runs(self, svc):
+        ddl = svc.attribution_view_ddl()
+        assert f"`dqx_test`.`dqx_app_test`.{ATTRIBUTION_VIEW_NAME}" in ddl
+        assert "`dqx_test`.`dqx_app_test`.dq_validation_runs" in ddl
+
+    def test_is_a_single_statement(self, svc):
+        assert ";" not in svc.attribution_view_ddl()
+
+    def test_parses_the_materializer_rendered_check_shape(self, svc):
+        # The from_json schema must address exactly the paths the
+        # materializer renders (see test_render_check_* fixtures):
+        # name / criticality / check.arguments.column|columns /
+        # user_metadata (string map with the reserved tags).
+        ddl = svc.attribution_view_ddl()
+        assert "from_json" in ddl
+        assert "name: STRING" in ddl
+        assert "criticality: STRING" in ddl
+        assert "column: STRING" in ddl
+        assert "columns: ARRAY<STRING>" in ddl
+        assert "user_metadata: MAP<STRING, STRING>" in ddl
+
+    def test_extracts_reserved_tags_and_registry_rule_id(self, svc):
+        ddl = svc.attribution_view_ddl()
+        assert "user_metadata['severity'] AS severity" in ddl
+        assert "user_metadata['dimension'] AS dimension" in ddl
+        assert "user_metadata['registry_rule_id'] AS registry_rule_id" in ddl
+
+    def test_columns_stay_an_array_merging_column_and_columns(self, svc):
+        # A single-column check renders arguments.column, a multi-column
+        # one arguments.columns — the view exposes ONE array column.
+        ddl = svc.attribution_view_ddl()
+        assert "COALESCE(arg_columns, CASE WHEN arg_column IS NOT NULL THEN array(arg_column) END)" in ddl
+
+    def test_only_rows_with_checks_json_participate(self, svc):
+        # The app inserts a RUNNING lifecycle row without checks_json; the
+        # runner appends the result row WITH it. Legacy runs may have none.
+        ddl = svc.attribution_view_ddl()
+        assert "checks_json IS NOT NULL" in ddl
+
+    def test_dedupes_lifecycle_rows_and_duplicate_check_names(self, svc):
+        # One attribution row per (run_id, table, check_name): latest
+        # lifecycle row wins; duplicate names in one rendered set (should
+        # not happen — names are unique per rule set) keep the first.
+        ddl = svc.attribution_view_ddl()
+        assert "ROW_NUMBER() OVER (PARTITION BY run_id, source_table_fqn ORDER BY created_at DESC)" in ddl
+        assert "QUALIFY ROW_NUMBER() OVER (PARTITION BY run_id, source_table_fqn, check_name ORDER BY pos) = 1" in ddl
+
+    def test_unnamed_checks_are_excluded(self, svc):
+        # A check without a name gets a DQX-generated check name at run
+        # time — it can never join back to the metrics row.
+        assert "check_name IS NOT NULL" in svc.attribution_view_ddl()
 
 
 class TestShapingViewDdl:
@@ -90,6 +163,23 @@ class TestShapingViewDdl:
         assert "`prod-east`" in ddl
         assert " prod-east." not in ddl
 
+    def test_left_joins_as_of_run_attribution(self, svc):
+        # LEFT (not INNER): a legacy run with NULL checks_json still keeps
+        # its check rows — they land in the untagged (NULL) bucket.
+        ddl = svc.shaping_view_ddl()
+        assert f"LEFT JOIN `dqx_test`.`dqx_app_test`.{ATTRIBUTION_VIEW_NAME} a" in ddl
+        assert "ON a.run_id = e.run_id" in ddl
+        assert "AND a.source_table_fqn = e.input_location" in ddl
+        assert "AND a.check_name = e.check_name" in ddl
+
+    def test_carries_attribution_columns(self, svc):
+        ddl = svc.shaping_view_ddl()
+        assert "a.criticality" in ddl
+        assert "a.severity" in ddl
+        assert "a.dimension" in ddl
+        assert "a.registry_rule_id" in ddl
+        assert "a.columns" in ddl  # stays an ARRAY<STRING> column
+
 
 class TestMetricViewDdl:
     def test_is_idempotent_create_or_replace_with_metrics_yaml(self, svc):
@@ -116,6 +206,11 @@ class TestMetricViewDdl:
             "run_time": "run_time",
             "is_latest_run": "is_latest_run",
             "check_name": "check_name",
+            # As-of-run attribution dimensions (frozen at materialization
+            # time in checks_json — never rewritten by later tag edits).
+            "severity": "severity",
+            "dimension": "dimension",
+            "criticality": "criticality",
         }
 
     def test_yaml_measures_match_the_score_formula(self, svc):
@@ -129,24 +224,25 @@ class TestMetricViewDdl:
 
 
 class TestEnsureViews:
-    def test_creates_shaping_view_before_metric_view(self, svc, sql_executor_mock):
+    def test_creates_attribution_then_shaping_then_metric_view(self, svc, sql_executor_mock):
         svc.ensure_views()
         executed = [call.args[0] for call in sql_executor_mock.execute.call_args_list]
-        assert executed == [svc.shaping_view_ddl(), svc.metric_view_ddl()]
+        assert executed == [svc.attribution_view_ddl(), svc.shaping_view_ddl(), svc.metric_view_ddl()]
 
 
 class TestStartupWiring:
     """``backend.app._ensure_score_views`` — the lifespan step that owns the DDL."""
 
-    def test_creates_both_views(self, sql_executor_mock):
+    def test_creates_all_three_views(self, sql_executor_mock):
         from databricks_labs_dqx_app.backend.app import _ensure_score_views
 
         sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
         _ensure_score_views(sql_executor_mock)
         executed = [call.args[0] for call in sql_executor_mock.execute.call_args_list]
-        assert len(executed) == 2
-        assert SHAPING_VIEW_NAME in executed[0]
-        assert METRIC_VIEW_NAME in executed[1]
+        assert len(executed) == 3
+        assert ATTRIBUTION_VIEW_NAME in executed[0]
+        assert SHAPING_VIEW_NAME in executed[1]
+        assert METRIC_VIEW_NAME in executed[2]
 
     def test_is_best_effort_and_never_raises(self, sql_executor_mock):
         from databricks_labs_dqx_app.backend.app import _ensure_score_views
@@ -219,3 +315,104 @@ class TestMeasureFormulaMatchesScoreService:
             # And the supporting measures match the Python aggregates.
             assert simulated_failed == sum(m.error_count + m.warning_count for m in check_metrics)
             assert simulated_total == input_row_count * len(check_metrics)
+
+
+# ---------------------------------------------------------------------------
+# Attribution contract: the from_json schema vs the materializer's real output
+# ---------------------------------------------------------------------------
+
+
+def _simulate_attribution_extraction(check: dict) -> dict[str, object]:
+    """Evaluate the attribution view's per-check extraction over one check dict.
+
+    Mirrors what the warehouse computes from ``checks_json`` via the
+    from_json schema: name / criticality at the top level, the reserved
+    tags + registry_rule_id out of the ``user_metadata`` string map, and
+    the merged column array from ``check.arguments.column|columns``.
+    """
+    metadata = check.get("user_metadata") or {}
+    arguments = (check.get("check") or {}).get("arguments") or {}
+    arg_column = arguments.get("column") if isinstance(arguments.get("column"), str) else None
+    arg_columns = arguments.get("columns") if isinstance(arguments.get("columns"), list) else None
+    columns = arg_columns if arg_columns is not None else ([arg_column] if arg_column is not None else None)
+    return {
+        "check_name": check.get("name"),
+        "criticality": check.get("criticality"),
+        "severity": metadata.get("severity"),
+        "dimension": metadata.get("dimension"),
+        "registry_rule_id": metadata.get("registry_rule_id"),
+        "columns": columns,
+    }
+
+
+class TestChecksJsonAttributionContract:
+    """A REALISTIC rendered check (the materializer's own ``render_check``
+    output — exactly what the frozen runner json-dumps into
+    ``dq_validation_runs.checks_json``) must expose every path the
+    attribution view's from_json schema addresses, with string-typed
+    values so the MAP<STRING, STRING> cast holds."""
+
+    def _rendered_check(self) -> dict:
+        from unittest.mock import create_autospec
+
+        from databricks_labs_dqx_app.backend.registry_models import RuleDefinition, RuleVersion
+        from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+        from databricks_labs_dqx_app.backend.services.materializer import render_check
+
+        app_settings = create_autospec(AppSettingsService, instance=True)
+        app_settings.get_label_definitions.return_value = []
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_not_null", "arguments": {"column": "{{column}}"}},
+                "slots": [{"name": "column", "family": "any", "position": 0, "cardinality": "one"}],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(
+            rule_id="r1",
+            version=1,
+            definition=definition,
+            polarity=None,
+            user_metadata={"name": "Not Null Check", "dimension": "Completeness", "severity": "High"},
+        )
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="High",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=app_settings,
+        )
+        return check
+
+    def test_rendered_check_yields_full_attribution(self):
+        extracted = _simulate_attribution_extraction(self._rendered_check())
+        assert extracted == {
+            "check_name": "Not Null Check",
+            "criticality": "error",
+            "severity": "High",
+            "dimension": "Completeness",
+            "registry_rule_id": "r1",
+            "columns": ["customer_id"],
+        }
+
+    def test_rendered_user_metadata_is_a_pure_string_map(self):
+        # The view casts user_metadata to MAP<STRING, STRING>; a non-string
+        # value would null the map and silently drop the run's tags.
+        metadata = self._rendered_check()["user_metadata"]
+        assert metadata and all(isinstance(k, str) and isinstance(v, str) for k, v in metadata.items())
+
+    def test_untagged_hand_authored_check_degrades_to_null_attribution(self):
+        # A hand-authored (non-registry) check has no user_metadata at all
+        # — every attribution field must come back None (untagged bucket).
+        extracted = _simulate_attribution_extraction(
+            {"criticality": "warn", "check": {"function": "sql_expression", "arguments": {"expression": "a > 0"}}}
+        )
+        assert extracted["check_name"] is None
+        assert extracted["severity"] is None
+        assert extracted["dimension"] is None
+        assert extracted["registry_rule_id"] is None
+        assert extracted["columns"] is None

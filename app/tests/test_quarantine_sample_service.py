@@ -14,11 +14,14 @@ import pytest
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.catalog import ColumnInfo, ColumnMask, TableInfo, TableRowFilter
 
-from databricks_labs_dqx_app.backend.models import FailedRowFailureOut, FailingRecordFailureOut
-from databricks_labs_dqx_app.backend.services.dq_results_service import CheckAttribution
+import json
+
+from databricks_labs_dqx_app.backend.models import FailedRowFailureOut
 from databricks_labs_dqx_app.backend.services.quarantine_sample_service import (
+    ParsedFailure,
     QuarantineSampleService,
     enrich_failures,
+    parse_failures,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
@@ -108,7 +111,7 @@ class TestUserCanSelect:
 
 
 # ---------------------------------------------------------------------------
-# Failure enrichment + server-side filters (dq-results failed-rows path)
+# Failure parsing + enrichment (dq-results failed-rows path)
 # ---------------------------------------------------------------------------
 
 
@@ -127,20 +130,92 @@ def failure(
     )
 
 
-class TestEnrichFailures:
-    def test_joins_rule_metadata_by_check_name(self):
-        raw = [FailingRecordFailureOut(rule_name="c1", message="boom", columns=["id"])]
-        attribution = {
-            "c1": CheckAttribution(
-                rule_id="rule-1",
-                rule_name="c1",
-                severity="High",
-                dimension="Completeness",
-                columns=("id",),
+def quarantine_row(errors: object = None, warnings: object = None) -> dict[str, str | None]:
+    return {
+        "quarantine_id": "q1",
+        "row_data": json.dumps({"id": 1}),
+        "errors": json.dumps(errors) if errors is not None else None,
+        "warnings": json.dumps(warnings) if warnings is not None else None,
+    }
+
+
+class TestParseFailures:
+    """The failure structs written by the DQX engine (see the core
+    library's ``DQRuleManager._build_result_struct``) carry the check's
+    OWN ``user_metadata`` map — the severity/dimension tags and registry
+    provenance frozen at materialization time. Parsing keeps that map so
+    enrichment is version-accurate without any live rule join."""
+
+    def test_parses_struct_fields_and_user_metadata(self):
+        parsed = parse_failures(
+            quarantine_row(
+                errors=[
+                    {
+                        "name": "c1",
+                        "message": "id is null",
+                        "columns": ["id"],
+                        "user_metadata": {
+                            "severity": "High",
+                            "dimension": "Completeness",
+                            "registry_rule_id": "rule-1",
+                        },
+                    }
+                ]
             )
-        }
-        out = enrich_failures(raw, attribution)
-        assert out == [
+        )
+        assert parsed == [
+            ParsedFailure(
+                rule_name="c1",
+                message="id is null",
+                columns=("id",),
+                user_metadata={"severity": "High", "dimension": "Completeness", "registry_rule_id": "rule-1"},
+            )
+        ]
+
+    def test_merges_errors_and_warnings(self):
+        parsed = parse_failures(
+            quarantine_row(
+                errors=[{"name": "e1", "message": "m1", "columns": []}],
+                warnings=[{"name": "w1", "message": "m2", "columns": []}],
+            )
+        )
+        assert [f.rule_name for f in parsed] == ["e1", "w1"]
+
+    def test_missing_user_metadata_degrades_to_empty(self):
+        parsed = parse_failures(quarantine_row(errors=[{"name": "c1", "message": "m", "columns": []}]))
+        assert parsed[0].user_metadata == {}
+
+    def test_non_string_metadata_values_are_dropped(self):
+        parsed = parse_failures(
+            quarantine_row(errors=[{"name": "c1", "message": "m", "columns": [], "user_metadata": {"a": 1, "b": "x"}}])
+        )
+        assert parsed[0].user_metadata == {"b": "x"}
+
+    def test_legacy_dict_shape_yields_untagged_failures(self):
+        # Legacy SQL-check rows wrote a single {check_name: message} dict.
+        parsed = parse_failures(quarantine_row(errors={"legacy_check": "boom"}))
+        assert parsed == [ParsedFailure(rule_name="legacy_check", message="boom", columns=(), user_metadata={})]
+
+    def test_malformed_payloads_degrade_to_empty(self):
+        assert parse_failures(quarantine_row()) == []
+        assert parse_failures({"errors": "{not json", "warnings": None}) == []
+        assert parse_failures({"errors": json.dumps([1, "x"]), "warnings": None}) == []
+
+
+class TestEnrichFailures:
+    """Severity/dimension/rule_id come from the failure struct's OWN
+    frozen user_metadata — the as-of-run payload — never a live join."""
+
+    def test_reads_metadata_from_the_failure_struct(self):
+        parsed = [
+            ParsedFailure(
+                rule_name="c1",
+                message="boom",
+                columns=("id",),
+                user_metadata={"severity": "High", "dimension": "Completeness", "registry_rule_id": "rule-1"},
+            )
+        ]
+        assert enrich_failures(parsed) == [
             FailedRowFailureOut(
                 rule_id="rule-1",
                 rule_name="c1",
@@ -151,18 +226,13 @@ class TestEnrichFailures:
             )
         ]
 
-    def test_unattributed_failures_keep_null_metadata(self):
-        raw = [FailingRecordFailureOut(rule_name="adhoc", message="boom", columns=[])]
-        out = enrich_failures(raw, {})
+    def test_untagged_failures_keep_null_metadata(self):
+        parsed = [ParsedFailure(rule_name="adhoc", message="boom", columns=(), user_metadata={})]
+        out = enrich_failures(parsed)
         assert out[0].rule_id is None
         assert out[0].quality_dimension is None
         assert out[0].severity is None
         assert out[0].rule_name == "adhoc"
-
-    def test_nameless_failures_are_not_looked_up(self):
-        raw = [FailingRecordFailureOut(rule_name=None, message="boom", columns=[])]
-        out = enrich_failures(raw, {"c1": CheckAttribution(rule_id="rule-1", rule_name="c1")})
-        assert out[0].rule_id is None
 
 
 class TestRowMatchesFilters:

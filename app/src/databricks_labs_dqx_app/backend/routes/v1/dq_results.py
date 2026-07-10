@@ -3,9 +3,14 @@
 Serves the breakdowns/trends/runs the ported dqlake results UI consumes
 (see ``routes/dq_results.py`` in dqlake; shapes recorded in the Phase 2
 port manifest). Aggregate axes are computed from ``v_dq_check_results``
-(one row per run x table x check) joined in Python to the applied-rule
-metadata (severity tag, quality dimension, column mapping) — see
-``services.dq_results_service`` for the aggregation semantics.
+(one row per run x table x check), whose rows already carry the
+AS-OF-THE-RUN attribution (severity tag, quality dimension, mapped
+columns, registry rule id) baked in from the run's frozen
+``dq_validation_runs.checks_json`` rendered rule set — no live join to
+the binding's current applied-rule metadata anywhere on these paths, so
+editing or renaming a tag today never rewrites historical results. See
+``services.dq_results_service`` for the aggregation semantics and
+``services.score_view_service`` for the attribution DDL.
 
 Permission model (unchanged from Phase 1):
 
@@ -57,10 +62,8 @@ from databricks_labs_dqx_app.backend.services.app_settings_service import AppSet
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.dq_results_service import (
-    CheckAttribution,
     CheckResultRow,
     ResultFacets,
-    build_attribution_map,
     compute_entity_results,
     parse_check_rows,
 )
@@ -68,6 +71,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import Mon
 from databricks_labs_dqx_app.backend.services.quarantine_sample_service import (
     QuarantineSampleService,
     enrich_failures,
+    parse_failures,
     to_failing_record,
 )
 from databricks_labs_dqx_app.backend.services.score_view_service import (
@@ -143,7 +147,10 @@ def _fetch_check_rows(
     where = f"WHERE {' AND '.join(conds)} " if conds else ""
     stmt = (
         f"SELECT input_location, run_id, CAST(run_time AS STRING) AS run_date, "
-        f"check_name, error_count, warning_count, input_row_count "
+        f"check_name, error_count, warning_count, input_row_count, "
+        # As-of-run attribution baked into the view rows (frozen
+        # checks_json payload — see score_view_service).
+        f"severity, dimension, registry_rule_id, to_json(columns) AS columns_json "
         f"FROM {view} "  # noqa: S608
         f"{where}"
         f"ORDER BY run_time"
@@ -185,22 +192,6 @@ def _fetch_failed_records_by_run(
         failed = input_rows - valid_rows if input_rows is not None and valid_rows is not None else None
         out[(fqn, run_id)] = failed if failed is None or failed >= 0 else None
     return out
-
-
-def _attribution_for_table(
-    monitored_tables: MonitoredTableService, table_fqn: str
-) -> dict[str, CheckAttribution]:
-    """Check-name attribution for one table; empty (unattributed) on any
-    lookup failure so an OLTP hiccup degrades to untagged results rather
-    than failing the whole aggregate."""
-    try:
-        detail = monitored_tables.get_by_table_fqn(table_fqn)
-    except Exception:
-        logger.warning(f"Applied-rule attribution lookup failed for {table_fqn}", exc_info=True)
-        return {}
-    if detail is None:
-        return {}
-    return build_attribution_map(detail)
 
 
 def _facets(
@@ -329,7 +320,6 @@ def get_global_results(
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
-    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -350,14 +340,12 @@ def get_global_results(
             if catalog_of(row.table_fqn) in user_catalogs
         ]
         accessible_fqns = sorted({row.table_fqn for row in rows})
-        attributions = {fqn: _attribution_for_table(monitored_tables, fqn) for fqn in accessible_fqns}
         failed_records = _fetch_failed_records_by_run(sql, app_conf, accessible_fqns)
     except Exception as exc:
         logger.exception("Failed to compute global results")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return compute_entity_results(
         rows,
-        attributions,
         _facets(dimension, severity, rule, column),
         axes=axes,
         table_axis="by_table",
@@ -391,6 +379,12 @@ def get_rule_results(
 ) -> EntityResultsOut:
     """Results across the rule's applied tables, restricted to that rule's checks.
 
+    The rule's current applications only SCOPE which tables to query;
+    which check rows belong to the rule is decided by each run's own
+    frozen ``registry_rule_id`` provenance tag (version-accurate: a check
+    renamed since the run still attributes to the rule, and a run
+    predating checks_json simply carries no provenance).
+
     Tables in inaccessible catalogs are silently filtered (never 403).
     ``failed_records`` is intentionally absent from *trend_failures*: the
     per-run failing-row count is table-wide and cannot be scoped to one
@@ -400,10 +394,7 @@ def get_rule_results(
     try:
         applications = apply_rules.list_bindings_for_rule(rule_id)
         binding_ids = list(dict.fromkeys(a.binding_id for a in applications))
-        rows: list[CheckResultRow] = []
-        attributions: dict[str, dict[str, CheckAttribution]] = {}
         table_fqns: list[str] = []
-        rule_check_names: dict[str, set[str]] = {}
         for binding_id in binding_ids:
             try:
                 detail = monitored_tables.get(binding_id)
@@ -413,23 +404,16 @@ def get_rule_results(
             if detail is None:
                 continue
             fqn = detail.table.table_fqn
-            if catalog_of(fqn) not in user_catalogs or fqn in attributions:
+            if catalog_of(fqn) not in user_catalogs or fqn in table_fqns:
                 continue
             table_fqns.append(fqn)
-            attributions[fqn] = build_attribution_map(detail)
-            rule_check_names[fqn] = {
-                summary.rule_name
-                for summary in detail.applied_rules
-                if summary.applied_rule.rule_id == rule_id and summary.rule_name
-            }
         all_rows = _fetch_check_rows(sql, app_conf, table_fqns, run_id)
-        rows = [row for row in all_rows if row.check_name in rule_check_names.get(row.table_fqn, set())]
+        rows: list[CheckResultRow] = [row for row in all_rows if row.rule_id == rule_id]
     except Exception as exc:
         logger.exception(f"Failed to compute results for rule {rule_id}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return compute_entity_results(
         rows,
-        attributions,
         _facets(dimension, severity, rule, column),
         axes=axes,
         table_axis="by_table",
@@ -497,7 +481,6 @@ def get_product_results(
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     data_products: Annotated[DataProductService, Depends(get_data_product_service)],
-    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -513,7 +496,6 @@ def get_product_results(
     try:
         fqns, _ = _accessible_member_fqns(data_products, product_id, user_catalogs)
         rows = _fetch_check_rows(sql, app_conf, fqns, run_id)
-        attributions = {fqn: _attribution_for_table(monitored_tables, fqn) for fqn in fqns}
         failed_records = _fetch_failed_records_by_run(sql, app_conf, fqns)
     except HTTPException:
         raise
@@ -522,7 +504,6 @@ def get_product_results(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return compute_entity_results(
         rows,
-        attributions,
         _facets(dimension, severity, rule, column),
         axes=axes,
         table_axis="by_table",
@@ -546,7 +527,6 @@ def get_dq_results_failed_rows(
     obo_sql: Annotated[SqlExecutor, Depends(get_preview_sql_executor)],
     sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
-    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -606,11 +586,13 @@ def get_dq_results_failed_rows(
         logger.exception(f"Failed to load failed rows for {table_fqn}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    attribution = _attribution_for_table(monitored_tables, table_fqn)
     matched: list[FailedRowOut] = []
     for raw in raw_rows:
-        record = to_failing_record(raw)
-        failures = enrich_failures(record.failures, attribution)
+        # Severity/dimension/rule_id come from each failure struct's OWN
+        # frozen user_metadata (as-of-run payload) — no live rule join.
+        parsed_failures = parse_failures(raw)
+        record = to_failing_record(raw, parsed_failures)
+        failures = enrich_failures(parsed_failures)
         if not QuarantineSampleService.row_matches_filters(
             failures,
             record.failed_columns,
@@ -690,7 +672,6 @@ def get_table_results(
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
-    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -714,14 +695,12 @@ def get_table_results(
 
     try:
         rows = _fetch_check_rows(sql, app_conf, [table_fqn], run_id)
-        attributions = {table_fqn: _attribution_for_table(monitored_tables, table_fqn)}
         failed_records = _fetch_failed_records_by_run(sql, app_conf, [table_fqn])
     except Exception as exc:
         logger.exception(f"Failed to compute results for {table_fqn}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return compute_entity_results(
         rows,
-        attributions,
         _facets(dimension, severity, rule, column),
         axes=axes,
         table_axis="tables",
