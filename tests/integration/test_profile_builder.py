@@ -27,7 +27,7 @@ def test_make_has_no_outliers_profile_outliers_bellow_threshold(spark):
     1 outlier out of 11 ≈ 9 %. The threshold configuration is 10 %, hence profile is expected to return.
     MAD bounds: median=6; MAD=3; lower=-4.5; upper=16.5; Hence only 1000 is an outlier.
     """
-    data = [(v,) for v in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1000]]
+    data = [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,), (10,), (1000,)]
     df = spark.createDataFrame(data, "col: int")
     profiler_metrics = {"count": len(data)}
     profiler_options = {"outliers_ratio": 0.1}
@@ -38,7 +38,7 @@ def test_make_has_no_outliers_profile_outliers_bellow_threshold(spark):
     assert profile.filter is None
 
 
-def test_make_has_no_outliers_profile_outliers_above_threshold(spark, ws):
+def test_make_has_no_outliers_profile_outliers_above_threshold(spark):
     """
     Test expects no profile for the following case: 7 values with three extreme values.
     3 outliers out of 7 ≈ 43 %. The threshold configuration is 10 %, hence no profile is expected to return.
@@ -46,7 +46,7 @@ def test_make_has_no_outliers_profile_outliers_above_threshold(spark, ws):
     """
     # [1..4] + three extreme values → 3 outliers out of 7 ≈ 43 %, threshold 10 % → None
     # MAD bounds: median=4, MAD=3 → lower=-6.5, upper=14.5 → 100, 200, 300 are outliers
-    data = [(v,) for v in [1, 2, 3, 4, 100, 200, 300]]
+    data = [(1,), (2,), (3,), (4,), (100,), (200,), (300,)]
     df = spark.createDataFrame(data, "col: int")
     profiler_metrics = {"count": len(data)}
     profiler_options = {"outliers_ratio": 0.1}

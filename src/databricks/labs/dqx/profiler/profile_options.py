@@ -51,7 +51,7 @@ PROFILE_OPTION_LLM_PRIMARY_KEY_DETECTION = "llm_primary_key_detection"
 """Whether to invoke the LLM engine to detect primary-key columns and emit an *is_unique* rule."""
 
 PROFILE_OPTION_OUTLIERS_RATIO = "outliers_ratio"
-"""Outliers percentage threshold to consider generate `has_no_outliers` profile for"""
+"""Outlier ratio threshold; emit a *has_no_outliers* profile only when the outlier fraction is below this value."""
 
 DEFAULT_PROFILE_OPTIONS: dict[str, Any] = {
     PROFILE_OPTION_ROUND: True,

@@ -9,6 +9,7 @@ from pyspark.sql import DataFrame
 from pyspark.sql import types as T, functions as F
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileBuilder
+from databricks.labs.dqx.calculations_utils import calculate_median_absolute_deviation_bounds
 from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_DISTINCT_RATIO,
     PROFILE_OPTION_FILTER,
@@ -17,12 +18,11 @@ from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_MAX_NULL_RATIO,
     PROFILE_OPTION_NUM_SIGMAS,
     PROFILE_OPTION_OUTLIER_COLUMNS,
+    PROFILE_OPTION_OUTLIERS_RATIO,
     PROFILE_OPTION_REMOVE_OUTLIERS,
     PROFILE_OPTION_ROUND,
     PROFILE_OPTION_TRIM_STRINGS,
-    PROFILE_OPTION_OUTLIERS_RATIO,
 )
-from databricks.labs.dqx.calculations_utils import calculate_median_absolute_deviation_bounds
 
 # Type alias for annotations; use TEXT_TYPES for isinstance() checks.
 TextType = T.CharType | T.StringType | T.VarcharType
@@ -687,22 +687,22 @@ def make_has_no_outliers_profile(
     profiler_options: dict[str, Any],
 ) -> DQProfile | None:
     """
-    Creates an `has_no_outliers` profile by checking whether input numerical column has outliers using MAD method,
-    the same one that is used by `has_no_outliers` rule. Profile is created if the following conditions met:
-    - Dataframe is not empty after filtering.
-    - Outliers ratio is bellow `outliers_ratio` threshold.
-    - Profiled column has non-null values.
-    If some of these conditions are not met, return None.
+    Creates a *has_no_outliers* profile using the same MAD method as the *has_no_outliers* check rule.
+
+    A profile is returned when all of the following conditions are met:
+    - The column type is numeric (integer, long, float, or double).
+    - The DataFrame is non-empty after applying *filter_condition*.
+    - The fraction of outliers (values outside *median* ± 3.5 × MAD) is below *outliers_ratio*.
 
     Args:
-        df: The dataframe to create the profile for.
+        df: The DataFrame to create the profile for.
         column_name: Input column name
         column_type: Input column type
         profiler_metrics: Column-level statistics computed by the DQProfiler
         profiler_options: Configuration options for the DQProfiler
 
     Returns:
-        A DQProfile if the correct conditions are met, otherwise None
+        A DQProfile if all conditions are met, otherwise None.
     """
     if not _is_numeric(column_type):
         return None
@@ -725,7 +725,7 @@ def make_has_no_outliers_profile(
     if outliers_ratio < outliers_ratio_threshold:
         return DQProfile(
             name="has_no_outliers",
-            description=f"Column {column_name} has {outliers_ratio* 100:.1f}% of outliers (allowed: {outliers_ratio_threshold* 100:.1f}%). Lower boundary - {lower_bound}, upper boundary - {upper_bound}.",
+            description=f"Column {column_name} has {outliers_ratio * 100:.1f}% of outliers (allowed: {outliers_ratio_threshold * 100:.1f}%). Lower boundary - {lower_bound}, upper boundary - {upper_bound}.",
             column=column_name,
             filter=filter_condition,
         )
