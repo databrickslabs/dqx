@@ -660,14 +660,18 @@ def _column_configs(catalog: str, schema: str) -> dict[str, list[dict]]:
 
 def _sql_snippets(catalog: str, schema: str) -> dict:
     """Space-native SQL expressions (measures / filters / expressions), all
-    table-qualified per the schema. Returned WITHOUT ids —
+    table-qualified per the schema. Qualification is PER-PART
+    (:func:`quote_object_fqn`, the same form as the curated SQLs): dqlake
+    wrapped the whole dotted FQN in one backtick pair, which makes it a
+    single identifier and fails to resolve (live-confirmed
+    UNRESOLVED_COLUMN). Returned WITHOUT ids —
     :func:`build_serialized_space` assigns + sorts them."""
-    mv = _plain_fqn(catalog, schema, METRIC_VIEW_NAME)
+    mv = quote_object_fqn(catalog, schema, METRIC_VIEW_NAME)
     measures = [
         {
             "alias": "pass_rate",
             "display_name": "Pass Rate",
-            "sql": [f"MEASURE(`{mv}`.`score`)"],
+            "sql": [f"MEASURE({mv}.`score`)"],
             "synonyms": ["quality score", "data quality score", "score"],
             "instruction": [
                 "Share of tests that passed (0-1) at the test grain. Always read via MEASURE(); "
@@ -677,7 +681,7 @@ def _sql_snippets(catalog: str, schema: str) -> dict:
         {
             "alias": "failed_tests",
             "display_name": "Failed Tests",
-            "sql": [f"MEASURE(`{mv}`.`failed_tests`)"],
+            "sql": [f"MEASURE({mv}.`failed_tests`)"],
             "synonyms": ["failures", "failed test count", "number of failures"],
             "instruction": [
                 "Count of record-level tests that failed (errors + warnings). Rank "
@@ -688,7 +692,7 @@ def _sql_snippets(catalog: str, schema: str) -> dict:
     filters = [
         {
             "display_name": "published runs",
-            "sql": [f"`{mv}`.`run_mode` = 'published'"],
+            "sql": [f"{mv}.`run_mode` = 'published'"],
             "synonyms": ["published only", "official runs", "excluding drafts"],
             "instruction": [
                 "Apply by DEFAULT to every question — draft runs only when the question "
@@ -701,7 +705,7 @@ def _sql_snippets(catalog: str, schema: str) -> dict:
             "alias": "severity_rank",
             "display_name": "Severity Rank",
             "sql": [
-                "CASE `" + mv + "`.`severity` WHEN 'Critical' THEN 0 "
+                f"CASE {mv}.`severity` WHEN 'Critical' THEN 0 "
                 "WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END"
             ],
             "synonyms": ["severity order", "most severe first"],

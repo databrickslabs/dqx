@@ -221,13 +221,25 @@ def test_sql_snippets_shape_and_grounding() -> None:
     assert set(snippets.keys()) == {"measures", "filters", "expressions"}
     for kind, items in snippets.items():
         assert [s["id"] for s in items] == sorted(s["id"] for s in items), kind
+    # Per-part qualification (the same form as the curated SQLs). Wrapping
+    # the whole dotted FQN in one backtick pair — dqlake's form — makes it a
+    # single identifier and fails to resolve (live-confirmed
+    # UNRESOLVED_COLUMN).
+    mv_quoted = f"`{CATALOG}`.`{SCHEMA}`.mv_dq_scores"
     measures = {m["alias"]: m for m in snippets["measures"]}
-    assert measures["pass_rate"]["sql"] == [f"MEASURE(`{MV_FQN}`.`score`)"]
-    assert measures["failed_tests"]["sql"] == [f"MEASURE(`{MV_FQN}`.`failed_tests`)"]
+    assert measures["pass_rate"]["sql"] == [f"MEASURE({mv_quoted}.`score`)"]
+    assert measures["failed_tests"]["sql"] == [f"MEASURE({mv_quoted}.`failed_tests`)"]
     (published,) = snippets["filters"]
-    assert published["sql"] == [f"`{MV_FQN}`.`run_mode` = 'published'"]
+    assert published["sql"] == [f"{mv_quoted}.`run_mode` = 'published'"]
     (severity_rank,) = snippets["expressions"]
+    assert severity_rank["sql"][0].startswith(f"CASE {mv_quoted}.`severity` ")
     assert "WHEN 'Critical' THEN 0" in severity_rank["sql"][0]
+
+
+def test_sql_snippets_never_wrap_the_whole_fqn_in_one_backtick_pair() -> None:
+    space = build()
+    dump = json.dumps(space["instructions"]["sql_snippets"])
+    assert f"`{MV_FQN}`" not in dump
 
 
 def test_column_configs_enable_prompt_matching_sorted_by_name() -> None:
