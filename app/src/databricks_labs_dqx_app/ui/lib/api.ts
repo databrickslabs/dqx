@@ -1321,6 +1321,104 @@ export interface GenerateRulesFromContractOut {
   validation_errors?: string[];
 }
 
+export type GenieAnswerOutConversationId = string | null;
+
+export type GenieAnswerOutMessageId = string | null;
+
+export type GenieAnswerOutAnswerText = string | null;
+
+export type GenieAnswerOutSql = string | null;
+
+export type GenieAnswerOutSqlDescription = string | null;
+
+export type GenieAnswerOutResultColumns = string[] | null;
+
+export type GenieAnswerOutResultRowsAnyOfItemItem = string | null;
+
+export type GenieAnswerOutResultRows = GenieAnswerOutResultRowsAnyOfItemItem[][] | null;
+
+export type GenieAnswerOutStatus = string | null;
+
+export type GenieAnswerOutStage = string | null;
+
+export type GenieAnswerOutError = string | null;
+
+/**
+ * Partial-or-final state of one Genie message (shared by ask/start/poll).
+ */
+export interface GenieAnswerOut {
+  /** False when no Genie space is provisioned */
+  available: boolean;
+  conversation_id?: GenieAnswerOutConversationId;
+  message_id?: GenieAnswerOutMessageId;
+  answer_text?: GenieAnswerOutAnswerText;
+  sql?: GenieAnswerOutSql;
+  sql_description?: GenieAnswerOutSqlDescription;
+  result_columns?: GenieAnswerOutResultColumns;
+  result_rows?: GenieAnswerOutResultRows;
+  status?: GenieAnswerOutStatus;
+  stage?: GenieAnswerOutStage;
+  error?: GenieAnswerOutError;
+}
+
+export type GenieAskInConversationId = string | null;
+
+/**
+ * Ask (or continue) a Genie conversation. The question may carry a
+context preamble — ``(Table: <fqn>)`` or
+``(Data product: <name> — tables: ...)`` — that the space instructions
+route on.
+ */
+export interface GenieAskIn {
+  /**
+   * @minLength 1
+   * @maxLength 4000
+   */
+  question: string;
+  conversation_id?: GenieAskInConversationId;
+}
+
+/**
+ * Thumbs up/down on one Genie answer.
+ */
+export interface GenieFeedbackIn {
+  /** @pattern ^[A-Za-z0-9_\-]{1,128}$ */
+  message_id: string;
+  /** @pattern ^(up|down)$ */
+  vote: string;
+}
+
+export interface GenieFeedbackOut {
+  ok: boolean;
+}
+
+/**
+ * Poll one in-flight Genie message.
+ */
+export interface GeniePollIn {
+  /** @pattern ^[A-Za-z0-9_\-]{1,128}$ */
+  conversation_id: string;
+  /** @pattern ^[A-Za-z0-9_\-]{1,128}$ */
+  message_id: string;
+}
+
+export type GenieSpaceOutSpaceId = string | null;
+
+export type GenieSpaceOutStatus = string | null;
+
+export type GenieSpaceOutSpaceUrl = string | null;
+
+/**
+ * Genie space availability + metadata for the chat UI.
+ */
+export interface GenieSpaceOut {
+  available: boolean;
+  space_id?: GenieSpaceOutSpaceId;
+  sample_questions?: string[];
+  status?: GenieSpaceOutStatus;
+  space_url?: GenieSpaceOutSpaceUrl;
+}
+
 export interface GrantWarehouseAccessIn {
   warehouse_id: string;
 }
@@ -18068,6 +18166,409 @@ export function useGetTableResultsSuspense<TData = Awaited<ReturnType<typeof get
 
 
 
+/**
+ * Blocking one-shot: start a message and poll it to a terminal state.
+ * @summary Ask Genie
+ */
+export const askGenie = (
+    genieAskIn: GenieAskIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<GenieAnswerOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/genie/ask`,
+      genieAskIn,options
+    );
+  }
+
+
+
+export const getAskGenieMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof askGenie>>, TError,{data: GenieAskIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof askGenie>>, TError,{data: GenieAskIn}, TContext> => {
+
+const mutationKey = ['askGenie'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof askGenie>>, {data: GenieAskIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  askGenie(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AskGenieMutationResult = NonNullable<Awaited<ReturnType<typeof askGenie>>>
+    export type AskGenieMutationBody = GenieAskIn
+    export type AskGenieMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Ask Genie
+ */
+export const useAskGenie = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof askGenie>>, TError,{data: GenieAskIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof askGenie>>,
+        TError,
+        {data: GenieAskIn},
+        TContext
+      > => {
+
+      const mutationOptions = getAskGenieMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Kick off a question and return ids immediately; the UI then polls
+/poll to show live progress.
+ * @summary Start Genie Message
+ */
+export const startGenieMessage = (
+    genieAskIn: GenieAskIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<GenieAnswerOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/genie/start`,
+      genieAskIn,options
+    );
+  }
+
+
+
+export const getStartGenieMessageMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startGenieMessage>>, TError,{data: GenieAskIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof startGenieMessage>>, TError,{data: GenieAskIn}, TContext> => {
+
+const mutationKey = ['startGenieMessage'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startGenieMessage>>, {data: GenieAskIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  startGenieMessage(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartGenieMessageMutationResult = NonNullable<Awaited<ReturnType<typeof startGenieMessage>>>
+    export type StartGenieMessageMutationBody = GenieAskIn
+    export type StartGenieMessageMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Start Genie Message
+ */
+export const useStartGenieMessage = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startGenieMessage>>, TError,{data: GenieAskIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startGenieMessage>>,
+        TError,
+        {data: GenieAskIn},
+        TContext
+      > => {
+
+      const mutationOptions = getStartGenieMessageMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Fetch the current state of an in-flight message (partial or final).
+ * @summary Poll Genie Message
+ */
+export const pollGenieMessage = (
+    geniePollIn: GeniePollIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<GenieAnswerOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/genie/poll`,
+      geniePollIn,options
+    );
+  }
+
+
+
+export const getPollGenieMessageMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof pollGenieMessage>>, TError,{data: GeniePollIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof pollGenieMessage>>, TError,{data: GeniePollIn}, TContext> => {
+
+const mutationKey = ['pollGenieMessage'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof pollGenieMessage>>, {data: GeniePollIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  pollGenieMessage(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PollGenieMessageMutationResult = NonNullable<Awaited<ReturnType<typeof pollGenieMessage>>>
+    export type PollGenieMessageMutationBody = GeniePollIn
+    export type PollGenieMessageMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Poll Genie Message
+ */
+export const usePollGenieMessage = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof pollGenieMessage>>, TError,{data: GeniePollIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof pollGenieMessage>>,
+        TError,
+        {data: GeniePollIn},
+        TContext
+      > => {
+
+      const mutationOptions = getPollGenieMessageMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Space availability, provisioning status, sample questions, deep link.
+ * @summary Get Genie Space
+ */
+export const getGenieSpace = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<GenieSpaceOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/genie/space`,options
+    );
+  }
+
+
+
+
+export const getGetGenieSpaceQueryKey = () => {
+    return [
+    `/api/v1/genie/space`
+    ] as const;
+    }
+
+    
+export const getGetGenieSpaceQueryOptions = <TData = Awaited<ReturnType<typeof getGenieSpace>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGenieSpace>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGenieSpaceQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGenieSpace>>> = ({ signal }) => getGenieSpace({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getGenieSpace>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetGenieSpaceQueryResult = NonNullable<Awaited<ReturnType<typeof getGenieSpace>>>
+export type GetGenieSpaceQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetGenieSpace<TData = Awaited<ReturnType<typeof getGenieSpace>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGenieSpace>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getGenieSpace>>,
+          TError,
+          Awaited<ReturnType<typeof getGenieSpace>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGenieSpace<TData = Awaited<ReturnType<typeof getGenieSpace>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGenieSpace>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getGenieSpace>>,
+          TError,
+          Awaited<ReturnType<typeof getGenieSpace>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGenieSpace<TData = Awaited<ReturnType<typeof getGenieSpace>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGenieSpace>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Genie Space
+ */
+
+export function useGetGenieSpace<TData = Awaited<ReturnType<typeof getGenieSpace>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGenieSpace>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetGenieSpaceQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetGenieSpaceSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getGenieSpace>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGenieSpace>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGenieSpaceQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGenieSpace>>> = ({ signal }) => getGenieSpace({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGenieSpace>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetGenieSpaceSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getGenieSpace>>>
+export type GetGenieSpaceSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetGenieSpaceSuspense<TData = Awaited<ReturnType<typeof getGenieSpace>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGenieSpace>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGenieSpaceSuspense<TData = Awaited<ReturnType<typeof getGenieSpace>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGenieSpace>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGenieSpaceSuspense<TData = Awaited<ReturnType<typeof getGenieSpace>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGenieSpace>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Genie Space
+ */
+
+export function useGetGenieSpaceSuspense<TData = Awaited<ReturnType<typeof getGenieSpace>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGenieSpace>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetGenieSpaceSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Record a thumbs up/down on one answer (log-only, like dqlake).
+
+Both fields are pattern-validated by the model (no newlines or control
+characters), so they are safe to interpolate into the log line.
+ * @summary Submit Genie Feedback
+ */
+export const submitGenieFeedback = (
+    genieFeedbackIn: GenieFeedbackIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<GenieFeedbackOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/genie/feedback`,
+      genieFeedbackIn,options
+    );
+  }
+
+
+
+export const getSubmitGenieFeedbackMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitGenieFeedback>>, TError,{data: GenieFeedbackIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof submitGenieFeedback>>, TError,{data: GenieFeedbackIn}, TContext> => {
+
+const mutationKey = ['submitGenieFeedback'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitGenieFeedback>>, {data: GenieFeedbackIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  submitGenieFeedback(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SubmitGenieFeedbackMutationResult = NonNullable<Awaited<ReturnType<typeof submitGenieFeedback>>>
+    export type SubmitGenieFeedbackMutationBody = GenieFeedbackIn
+    export type SubmitGenieFeedbackMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Submit Genie Feedback
+ */
+export const useSubmitGenieFeedback = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitGenieFeedback>>, TError,{data: GenieFeedbackIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof submitGenieFeedback>>,
+        TError,
+        {data: GenieFeedbackIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSubmitGenieFeedbackMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 /**
  * Return the homepage stat-card numbers + score trend in one response.
 

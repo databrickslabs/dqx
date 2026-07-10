@@ -296,6 +296,41 @@ def _ensure_score_views(sp_sql: SqlExecutor) -> None:
         )
 
 
+def _ensure_genie_space(sp_ws: WorkspaceClient, warehouse_id: str, settings_sql: OltpExecutorProtocol) -> None:
+    """Provision (or update) the Ask-Genie space over the score views (best-effort).
+
+    Runs after ``_ensure_score_views`` so the objects the space points at
+    exist. ``ensure_dq_genie_space`` itself is idempotent (config-hash no-op /
+    in-place PATCH / find-or-create by title) and never raises; this wrapper
+    only guards the collaborator wiring around it. Requires a warehouse to
+    bind a freshly-created space to — skipped (with a log) when none is
+    bound, same contract as the other best-effort startup steps.
+    """
+    try:
+        from .services.genie_space_service import ensure_dq_genie_space
+
+        if not warehouse_id:
+            logger.info("Genie space provisioning skipped: no SQL warehouse bound (DATABRICKS_WAREHOUSE_ID)")
+            return
+        settings = AppSettingsService(sql=settings_sql)
+        try:
+            parent_path = f"/Users/{sp_ws.current_user.me().user_name}"
+        except Exception:
+            # Best-effort: the parent folder is cosmetic — fall back to a
+            # location every workspace has rather than skip provisioning.
+            parent_path = "/Shared"
+        ensure_dq_genie_space(
+            settings=settings,
+            ws=sp_ws,
+            warehouse_id=warehouse_id,
+            parent_path=parent_path,
+            catalog=conf.catalog,
+            schema=conf.schema_name,
+        )
+    except Exception as e:
+        logger.warning("Could not provision the DQ Genie space: %s", e, exc_info=True)
+
+
 def _maybe_start_vector_store_provisioning(
     app: FastAPI,
     *,
@@ -462,6 +497,13 @@ async def lifespan(app: FastAPI):
     # DQ score views (shaping view + UC metric view over dq_metrics) —
     # must come after the Delta migrations above so dq_metrics exists.
     _ensure_score_views(sp_sql)
+
+    # Ask-Genie space over the score views — after the views so a freshly
+    # created space points at objects that exist. Blocking Genie REST calls
+    # run in a thread; the ensure itself is idempotent + best-effort.
+    await asyncio.to_thread(
+        _ensure_genie_space, sp_ws, wh_id, pg_executor if pg_executor is not None else sp_sql
+    )
 
     # Seed the run-review-status catalogue once, here at startup, rather
     # than lazily on first read. This keeps ``get_run_review_statuses``

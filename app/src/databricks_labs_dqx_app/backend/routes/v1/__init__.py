@@ -21,6 +21,7 @@ from .quarantine_samples import router as quarantine_samples_router
 from .metrics import router as metrics_router
 from .dq_score import router as dq_score_router
 from .dq_results import router as dq_results_router
+from .genie import router as genie_router
 from .home import router as home_router
 from .review_status import router as review_status_router
 from .schedules import router as schedules_router
@@ -55,6 +56,7 @@ v1_router.include_router(quarantine_samples_router, prefix="/quarantine-samples"
 v1_router.include_router(metrics_router, prefix="/metrics", tags=["metrics"])
 v1_router.include_router(dq_score_router, prefix="/dq-score", tags=["dq-score"])
 v1_router.include_router(dq_results_router, prefix="/dq-results", tags=["dq-results"])
+v1_router.include_router(genie_router, prefix="/genie", tags=["genie"])
 v1_router.include_router(home_router, prefix="/home", tags=["home"])
 v1_router.include_router(review_status_router, prefix="/runs", tags=["review-status"])
 v1_router.include_router(run_sets_router, prefix="/run-sets", tags=["run-sets"])

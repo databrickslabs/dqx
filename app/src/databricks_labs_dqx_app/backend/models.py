@@ -1921,3 +1921,77 @@ class SetPermissionsDefaultInheritIn(BaseModel):
     """Request body for updating the default-inheritance admin setting."""
 
     enabled: bool
+
+
+# ---------------------------------------------------------------------------
+# Genie chat (Ask Genie over the DQ score views) — dqlake-parity shapes
+# ---------------------------------------------------------------------------
+
+# Genie conversation/message ids are opaque workspace identifiers (hex-ish).
+# The charset constraint keeps them safe to echo into URL paths and logs.
+_GENIE_ID_PATTERN = r"^[A-Za-z0-9_\-]{1,128}$"
+
+
+class GenieAskIn(BaseModel):
+    """Ask (or continue) a Genie conversation. The question may carry a
+    context preamble — ``(Table: <fqn>)`` or
+    ``(Data product: <name> — tables: ...)`` — that the space instructions
+    route on."""
+
+    question: str = Field(min_length=1, max_length=4000)
+    conversation_id: str | None = Field(default=None, pattern=_GENIE_ID_PATTERN)
+
+
+class GenieAnswerOut(BaseModel):
+    """Partial-or-final state of one Genie message (shared by ask/start/poll)."""
+
+    available: bool = Field(description="False when no Genie space is provisioned")
+    conversation_id: str | None = None
+    message_id: str | None = None
+    answer_text: str | None = None
+    sql: str | None = None
+    sql_description: str | None = None
+    # Executed query result for a query-answer: column names + row cells.
+    # None when the answer has no query attachment or the result fetch failed.
+    # Capped server-side (see genie_chat_service) so a large table can't
+    # bloat the response.
+    result_columns: list[str] | None = None
+    result_rows: list[list[str | None]] | None = None
+    status: str | None = None
+    # Short human label for the current step ("Writing SQL", "Running query",
+    # "Summarising results", "Done"), so the chat UI can show live progress
+    # while polling instead of one undifferentiated spinner.
+    stage: str | None = None
+    error: str | None = None
+
+
+class GeniePollIn(BaseModel):
+    """Poll one in-flight Genie message."""
+
+    conversation_id: str = Field(pattern=_GENIE_ID_PATTERN)
+    message_id: str = Field(pattern=_GENIE_ID_PATTERN)
+
+
+class GenieSpaceOut(BaseModel):
+    """Genie space availability + metadata for the chat UI."""
+
+    available: bool
+    space_id: str | None = None
+    sample_questions: list[str] = Field(default_factory=list)
+    # Provisioning lifecycle: "provisioning" | "ready" | "error" | None.
+    # Lets the UI show a calm "getting ready…" state and poll until ready.
+    status: str | None = None
+    # Deep link to the full Genie space in the workspace, when both the space
+    # id and the workspace host are known ("open in new tab").
+    space_url: str | None = None
+
+
+class GenieFeedbackIn(BaseModel):
+    """Thumbs up/down on one Genie answer."""
+
+    message_id: str = Field(pattern=_GENIE_ID_PATTERN)
+    vote: str = Field(pattern=r"^(up|down)$")
+
+
+class GenieFeedbackOut(BaseModel):
+    ok: bool
