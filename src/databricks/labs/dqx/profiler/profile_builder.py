@@ -687,11 +687,15 @@ def make_has_no_outliers_profile(
     profiler_options: dict[str, Any],
 ) -> DQProfile | None:
     """
-
     Creates an `has_no_outliers` profile by checking whether input numerical column has outliers using MAD method,
-    the same one that is used by `has_no_outliers` rule.
+    the same one that is used by `has_no_outliers` rule. Profile is created if the following conditions met:
+    - Dataframe is not empty after filtering.
+    - Outliers ratio is bellow `outliers_ratio` threshold.
+    - Profiled column has non-null values.
+    If some of these conditions are not met, return None.
 
     Args:
+        df: The dataframe to create the profile for.
         column_name: Input column name
         column_type: Input column type
         profiler_metrics: Column-level statistics computed by the DQProfiler
@@ -716,7 +720,8 @@ def make_has_no_outliers_profile(
     outliers_count = df.filter((F.col(column_name) < lower_bound) | (F.col(column_name) > upper_bound)).count()
 
     outliers_ratio = float(outliers_count) / total_count
-    outliers_ratio_threshold = profiler_options[PROFILE_OPTION_OUTLIERS_RATIO]
+    outliers_ratio_threshold = profiler_options.get(PROFILE_OPTION_OUTLIERS_RATIO, 0.01)
+
     if outliers_ratio < outliers_ratio_threshold:
         return DQProfile(
             name="has_no_outliers",
