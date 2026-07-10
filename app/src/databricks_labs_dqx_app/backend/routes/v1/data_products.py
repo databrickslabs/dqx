@@ -36,6 +36,7 @@ from databricks_labs_dqx_app.backend.models import (
     UpdateDataProductIn,
 )
 from databricks_labs_dqx_app.backend.services.data_product_service import (
+    BindingNotApprovedError,
     DataProductService,
     DuplicateDataProductNameError,
     InvalidStatusTransitionError,
@@ -229,6 +230,9 @@ def add_data_product_member(
     Adding a table to a space mutates the space, so it requires ``APPLY`` on
     the table space (in the day-one baseline; tightenable via a grant) unless
     the caller is an admin/approver.
+
+    400 if the binding is not approved (P3.2 — draft tables cannot join
+    table spaces); 404 if the product or binding does not exist.
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
@@ -242,6 +246,8 @@ def add_data_product_member(
         return DataProductOut.from_domain(detail)
     except (LookupError, RuntimeError) as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except BindingNotApprovedError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to add member to data product {product_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to add data product member: {e}")

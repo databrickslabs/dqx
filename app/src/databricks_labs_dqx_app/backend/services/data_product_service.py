@@ -49,6 +49,7 @@ from uuid import uuid4
 from databricks_labs_dqx_app.backend.registry_models import (
     DataProduct,
     DataProductMember,
+    MonitoredTable,
     RunSetSource,
     RunSetTrigger,
 )
@@ -74,6 +75,14 @@ class DuplicateDataProductNameError(ValueError):
 
 class NoRunnableMembersError(ValueError):
     """Raised by :meth:`DataProductService.run` when zero members resolve to a runnable check set."""
+
+
+class BindingNotApprovedError(ValueError):
+    """Raised by :meth:`DataProductService.add_member` for a binding that is not approved.
+
+    Only bindings satisfying :func:`_is_runnable` (status ``approved`` AND
+    ``version > 0``) may JOIN a table space. Maps to HTTP 400 at the route.
+    """
 
 
 class InvalidStatusTransitionError(ValueError):
@@ -301,9 +310,21 @@ class DataProductService:
 
         Flips the space back to ``draft`` (P21 item 30).
 
-        On a brand-new member (no existing row for *binding_id*), an
-        unspecified *pinned_version* (``None``) is resolved against the
-        ``default_auto_upgrade`` app-setting — see
+        On a brand-new member (no existing row for *binding_id*), the binding
+        must be APPROVED — :func:`_is_runnable`'s predicate (status
+        ``approved`` AND ``version > 0``), the same definition
+        ``DataProductMemberDetail.runnable`` exposes. A binding whose approved
+        rules carry unapproved edits ("modified" in the UI) still has
+        ``status == "approved"`` underneath plus a frozen approved snapshot,
+        so it stays eligible; draft / pending_approval / rejected /
+        never-approved (``version == 0``) bindings are rejected. This is
+        attach-time-only enforcement: the ``UPDATE`` branch (pin change on an
+        EXISTING member) deliberately skips the check, so members whose
+        binding later leaves ``approved`` are never retroactively evicted —
+        the ``run()`` fan-out already skips them under ``source="approved"``.
+
+        On a brand-new member, an unspecified *pinned_version* (``None``) is
+        resolved against the ``default_auto_upgrade`` app-setting — see
         :meth:`~databricks_labs_dqx_app.backend.services.app_settings_service.AppSettingsService.resolve_pinned_version_for_new_attachment`.
         This is attach-time-only: re-adding an existing member (the
         ``UPDATE`` branch) always honours the caller's ``pinned_version``
@@ -313,6 +334,8 @@ class DataProductService:
         Raises:
             LookupError: *product_id* does not exist.
             RuntimeError: *binding_id* does not exist (when adding a new member).
+            BindingNotApprovedError: the binding is not approved (when adding
+                a new member) — maps to HTTP 400 at the route.
         """
         if self._fetch_product(product_id) is None:
             raise LookupError(f"Data product not found: {product_id}")
@@ -329,15 +352,14 @@ class DataProductService:
                 f"WHERE id = '{escape_sql_string(member_id)}'"
             )
         else:
-            # New member: validate the binding exists before inserting
-            self._require_binding_exists(binding_id)
+            # New member: the binding must exist AND be approved before it can
+            # join the space (P3.2) — see the docstring for the exact predicate
+            # and the deliberate no-retroactive-eviction asymmetry with the
+            # UPDATE branch above.
+            table = self._require_approved_binding(binding_id)
             member_id = uuid4().hex
             if pinned_version is None:
-                binding_detail = self._monitored_tables.get(binding_id)
-                current_version = binding_detail.table.version if binding_detail is not None else 0
-                pinned_version = self._app_settings.resolve_pinned_version_for_new_attachment(
-                    None, current_version
-                )
+                pinned_version = self._app_settings.resolve_pinned_version_for_new_attachment(None, table.version)
             self._sql.execute(
                 f"INSERT INTO {self._members_table} (id, product_id, binding_id, pinned_version) VALUES "
                 f"('{escape_sql_string(member_id)}', '{e_pid}', '{e_bid}', {self._opt_int(pinned_version)})"
@@ -676,14 +698,36 @@ class DataProductService:
             f"created_by, {created_at} AS created_at, updated_by, {updated_at} AS updated_at"
         )
 
-    def _require_binding_exists(self, binding_id: str) -> None:
-        """Validate that a monitored table binding exists.
+    def _require_approved_binding(self, binding_id: str) -> MonitoredTable:
+        """Validate that a monitored table binding exists and is approved.
+
+        "Approved" is :func:`_is_runnable`'s predicate — status ``approved``
+        AND ``version > 0`` — NOT the UI display status: a binding shown as
+        "modified" (approved with unapproved edits) is still ``approved``
+        underneath and passes.
+
+        Returns:
+            The binding's :class:`MonitoredTable` row.
 
         Raises:
             RuntimeError: *binding_id* does not exist.
+            BindingNotApprovedError: the binding is not approved.
         """
-        if self._monitored_tables.get(binding_id) is None:
+        detail = self._monitored_tables.get(binding_id)
+        if detail is None:
             raise RuntimeError(f"Monitored table not found: {binding_id}")
+        table = detail.table
+        if not _is_runnable(table.status, table.version):
+            reason = (
+                "it has never been approved"
+                if table.version == 0
+                else f"its status is '{table.status}', expected 'approved'"
+            )
+            raise BindingNotApprovedError(
+                f"Cannot add table '{table.table_fqn}' to this table space: {reason}. "
+                "Only approved tables can join a table space."
+            )
+        return table
 
     def _fetch_product(self, product_id: str) -> DataProduct | None:
         e = escape_sql_string(product_id)

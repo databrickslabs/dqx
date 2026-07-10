@@ -24,6 +24,7 @@ from databricks_labs_dqx_app.backend.services.binding_run_service import (
     NeverApprovedError,
 )
 from databricks_labs_dqx_app.backend.services.data_product_service import (
+    BindingNotApprovedError,
     DataProductService,
     DuplicateDataProductNameError,
     InvalidStatusTransitionError,
@@ -100,9 +101,11 @@ def _table_summary(
     )
 
 
-def _monitored_table_detail(binding_id: str = "b1", version: int = 2) -> MonitoredTableDetail:
+def _monitored_table_detail(
+    binding_id: str = "b1", version: int = 2, status: str = "approved"
+) -> MonitoredTableDetail:
     return MonitoredTableDetail(
-        table=MonitoredTable(binding_id=binding_id, table_fqn="cat.schema.tbl", status="approved", version=version)
+        table=MonitoredTable(binding_id=binding_id, table_fqn="cat.schema.tbl", status=status, version=version)
     )
 
 
@@ -366,7 +369,8 @@ class TestDelete:
 
 
 class TestMembers:
-    def test_add_member_inserts_new_and_flips_to_draft(self, service, sql):
+    def test_add_member_inserts_new_and_flips_to_draft(self, service, sql, monitored_tables):
+        monitored_tables.get.return_value = _monitored_table_detail()
         sql.query.side_effect = [
             [_product_row(product_id="p1", status="published")],
             [],  # no existing member row
@@ -465,6 +469,71 @@ class TestMembers:
         member = service.add_member("p1", "b1", 2, "bob@x")
         assert member.binding_id == "b1"
         assert member.pinned_version == 2
+
+    @pytest.mark.parametrize(
+        ("status", "version"),
+        [
+            ("draft", 0),  # brand-new, never approved
+            ("pending_approval", 0),  # submitted, not yet approved
+            ("rejected", 0),  # rejected without any prior approval
+            ("pending_approval", 2),  # previously approved, resubmitted — status alone blocks
+            ("rejected", 2),  # previously approved, later rejected — status alone blocks
+            ("approved", 0),  # rollup edge: status flag approved but never binding-approved
+        ],
+    )
+    def test_add_member_non_approved_binding_raises_400(self, service, sql, monitored_tables, status, version):
+        """P3.2: only bindings passing _is_runnable (approved AND version > 0) can JOIN a space."""
+        monitored_tables.get.return_value = _monitored_table_detail(status=status, version=version)
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [],  # no existing member row — new-member branch
+        ]
+        with pytest.raises(BindingNotApprovedError, match="cat.schema.tbl"):
+            service.add_member("p1", "b1", None, "bob@x")
+        # Nothing was inserted and the space's status was left untouched.
+        sql.execute.assert_not_called()
+
+    def test_add_member_never_approved_message_names_table_and_reason(self, service, sql, monitored_tables):
+        monitored_tables.get.return_value = _monitored_table_detail(status="draft", version=0)
+        sql.query.side_effect = [[_product_row(product_id="p1")], []]
+        with pytest.raises(BindingNotApprovedError, match="never been approved"):
+            service.add_member("p1", "b1", None, "bob@x")
+
+    def test_add_member_non_approved_status_message_names_status(self, service, sql, monitored_tables):
+        monitored_tables.get.return_value = _monitored_table_detail(status="pending_approval", version=2)
+        sql.query.side_effect = [[_product_row(product_id="p1")], []]
+        with pytest.raises(BindingNotApprovedError, match="'pending_approval'"):
+            service.add_member("p1", "b1", None, "bob@x")
+
+    def test_add_member_modified_underneath_binding_stays_eligible(self, service, sql, monitored_tables):
+        """A binding shown as "modified" in the UI (approved rules with
+        unapproved edits) still has persisted status 'approved' and version > 0
+        — it has a frozen approved snapshot, so it remains eligible (P3.2)."""
+        monitored_tables.get.return_value = _monitored_table_detail(status="approved", version=3)
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [],  # no existing member row
+        ]
+        member = service.add_member("p1", "b1", 3, "bob@x")
+        assert member.binding_id == "b1"
+        calls = [c[0][0] for c in sql.execute.call_args_list]
+        assert any(f"INSERT INTO {_MEMBERS}" in c for c in calls)
+
+    def test_add_member_pin_change_on_existing_member_skips_approval_check(self, service, sql, monitored_tables):
+        """No retroactive eviction (P3.2): a binding that left 'approved' after
+        joining can still have its pin changed — the UPDATE branch never
+        consults the binding's status (run() already skips it under
+        source='approved')."""
+        monitored_tables.get.return_value = _monitored_table_detail(status="draft", version=0)
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [["m-existing"]],  # already a member
+        ]
+        member = service.add_member("p1", "b1", 4, "bob@x")
+        assert member.id == "m-existing"
+        monitored_tables.get.assert_not_called()
+        calls = [c[0][0] for c in sql.execute.call_args_list]
+        assert any(f"UPDATE {_MEMBERS}" in c and "pinned_version = 4" in c for c in calls)
 
     def test_remove_member_success_flips_to_draft(self, service, sql):
         sql.query.side_effect = [

@@ -2100,6 +2100,7 @@
     "pickerSelectedCount_other": "{{count}} selezionate",
     "pickerSelectRowAria": "Seleziona {{table}}",
     "pickerNotReadyBadge": "Non pronta",
+    "pickerNotEligibleTooltip": "Solo le tabelle approvate possono entrare in uno spazio tabelle. Invia prima questa tabella in revisione e approvala.",
     "pickerGroupByLabel": "Raggruppa per",
     "pickerGroupByCatalog": "Catalogo",
     "pickerGroupBySchema": "Schema",

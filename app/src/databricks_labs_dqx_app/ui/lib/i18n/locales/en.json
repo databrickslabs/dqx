@@ -2100,6 +2100,7 @@
     "pickerSelectedCount_other": "{{count}} selected",
     "pickerSelectRowAria": "Select {{table}}",
     "pickerNotReadyBadge": "Not ready",
+    "pickerNotEligibleTooltip": "Only approved tables can join a table space. Submit this table for review and approve it first.",
     "pickerGroupByLabel": "Group by",
     "pickerGroupByCatalog": "Catalog",
     "pickerGroupBySchema": "Schema",

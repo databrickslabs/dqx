@@ -2100,6 +2100,7 @@
     "pickerSelectedCount_other": "{{count}} seleccionadas",
     "pickerSelectRowAria": "Seleccionar {{table}}",
     "pickerNotReadyBadge": "No lista",
+    "pickerNotEligibleTooltip": "Solo las tablas aprobadas pueden unirse a un espacio de tablas. Envía esta tabla a revisión y apruébala primero.",
     "pickerGroupByLabel": "Agrupar por",
     "pickerGroupByCatalog": "Catálogo",
     "pickerGroupBySchema": "Esquema",

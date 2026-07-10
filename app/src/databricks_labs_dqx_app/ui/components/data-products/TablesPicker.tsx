@@ -14,9 +14,12 @@
  * fetch per group).
  *
  * Preserves the pre-existing contract dqlake's port relied on:
- *   - Sourced from ALL monitored tables regardless of approval status — per
- *     the Table Spaces design spec §6, unapproved rows are marked "not
- *     ready" but stay addable.
+ *   - Sourced from ALL monitored tables regardless of approval status, but
+ *     (P3.2 — superseding the design spec §6 "stay addable" behaviour) rows
+ *     that are not approved render disabled with a "not ready" badge +
+ *     tooltip and cannot be selected. Eligibility matches the backend's
+ *     add_member guard exactly: status === "approved" AND version > 0 — the
+ *     same predicate as `DataProductMemberOut.runnable`.
  *   - Already-member rows (`disabledKeys`) render checked + non-interactive.
  *   - Props key off `binding_id` (DQX has a real binding concept dqlake
  *     doesn't, so there's no need to key off the FQN).
@@ -115,6 +118,17 @@ type GroupMode = "catalog" | "schema" | "none";
 
 const ALL = "ALL";
 
+/**
+ * P3.2 eligibility: only approved bindings (status "approved" AND version > 0
+ * — the backend's `_is_runnable` / `DataProductMemberOut.runnable` predicate)
+ * can join a table space; the backend rejects the rest with a 400. A binding
+ * shown as "modified" (approved with unapproved edits) is still approved
+ * underneath and stays eligible.
+ */
+function isEligible(r: MonitoredTableSummaryOut): boolean {
+  return r.table.status === "approved" && (r.table.version ?? 0) > 0;
+}
+
 export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, pins, onPinChange }: Props) {
   const { t } = useTranslation();
   const { data } = useListMonitoredTablesSuspense(undefined, { ...selector<MonitoredTableSummaryOut[]>() });
@@ -124,6 +138,14 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
     onRowsLoaded?.(rows);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
+
+  // Non-approved bindings can't be selected (P3.2) — see isEligible above.
+  const ineligibleKeys = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of rows) if (!isEligible(r)) s.add(r.table.binding_id);
+    return s;
+  }, [rows]);
+  const isSelectable = (key: string) => !disabledKeys?.has(key) && !ineligibleKeys.has(key);
 
   const [groupBy, setGroupBy] = useState<GroupMode>("catalog");
   const [search, setSearch] = useState("");
@@ -179,7 +201,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
   }, [filtered, groupBy, t]);
 
   function toggleRow(key: string) {
-    if (disabledKeys?.has(key)) return;
+    if (!isSelectable(key)) return;
     const next = new Set(selected);
     if (next.has(key)) next.delete(key);
     else next.add(key);
@@ -187,7 +209,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
   }
 
   function toggleGroup(groupRows: MonitoredTableSummaryOut[]) {
-    const selectableKeys = groupRows.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k));
+    const selectableKeys = groupRows.map((r) => r.table.binding_id).filter(isSelectable);
     const allSelected = selectableKeys.length > 0 && selectableKeys.every((k) => selected.has(k));
     const next = new Set(selected);
     if (allSelected) {
@@ -206,8 +228,8 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
   // the current filter are left untouched); unchecking it clears the
   // selection entirely, same as the old "Clear" button.
   const allFilteredSelectableKeys = useMemo(
-    () => filtered.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k)),
-    [filtered, disabledKeys],
+    () => filtered.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k) && !ineligibleKeys.has(k)),
+    [filtered, disabledKeys, ineligibleKeys],
   );
   const allFilteredSelected =
     allFilteredSelectableKeys.length > 0 && allFilteredSelectableKeys.every((k) => selected.has(k));
@@ -362,9 +384,12 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
             <TableBody>
               {filtered.map((r) => {
                 const key = r.table.binding_id;
-                const isDisabled = disabledKeys?.has(key) ?? false;
-                const isChecked = isDisabled || selected.has(key);
-                const notReady = r.table.status !== "approved";
+                const isMember = disabledKeys?.has(key) ?? false;
+                const notEligible = ineligibleKeys.has(key);
+                // Members render checked; ineligible non-members render
+                // unchecked but equally non-interactive (P3.2).
+                const isDisabled = isMember || notEligible;
+                const isChecked = isMember || selected.has(key);
                 return (
                   <TableRow
                     key={key}
@@ -386,10 +411,17 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                     <TableCell className="overflow-hidden">
                       <span className="inline-flex items-center gap-2 max-w-full">
                         <TruncatedCell text={r.table.table_fqn} className="font-mono text-xs" />
-                        {notReady && (
-                          <Badge variant="outline" className="text-[10px] shrink-0">
-                            {t("dataProducts.pickerNotReadyBadge")}
-                          </Badge>
+                        {notEligible && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge variant="outline" className="text-[10px] shrink-0">
+                                {t("dataProducts.pickerNotReadyBadge")}
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs text-wrap">
+                              {t("dataProducts.pickerNotEligibleTooltip")}
+                            </TooltipContent>
+                          </Tooltip>
                         )}
                         {/* Version pin, inline right after the table name —
                             P24 item 16 (replaces the old standalone "Version
@@ -419,7 +451,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
           </Table>
         ) : (
           Array.from(grouped.entries()).map(([group, groupRows]) => {
-            const selectableKeys = groupRows.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k));
+            const selectableKeys = groupRows.map((r) => r.table.binding_id).filter(isSelectable);
             const allSelected = selectableKeys.length > 0 && selectableKeys.every((k) => selected.has(k));
             const someSelected = selectableKeys.some((k) => selected.has(k));
             return (
@@ -464,9 +496,12 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                   <TableBody>
                     {groupRows.map((r) => {
                       const key = r.table.binding_id;
-                      const isDisabled = disabledKeys?.has(key) ?? false;
-                      const isChecked = isDisabled || selected.has(key);
-                      const notReady = r.table.status !== "approved";
+                      const isMember = disabledKeys?.has(key) ?? false;
+                      const notEligible = ineligibleKeys.has(key);
+                      // Members render checked; ineligible non-members render
+                      // unchecked but equally non-interactive (P3.2).
+                      const isDisabled = isMember || notEligible;
+                      const isChecked = isMember || selected.has(key);
                       return (
                         <TableRow
                           key={key}
@@ -492,10 +527,17 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                                 fullText={r.table.table_fqn}
                                 className="font-mono text-xs"
                               />
-                              {notReady && (
-                                <Badge variant="outline" className="text-[10px] shrink-0">
-                                  {t("dataProducts.pickerNotReadyBadge")}
-                                </Badge>
+                              {notEligible && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="outline" className="text-[10px] shrink-0">
+                                      {t("dataProducts.pickerNotReadyBadge")}
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-xs text-wrap">
+                                    {t("dataProducts.pickerNotEligibleTooltip")}
+                                  </TooltipContent>
+                                </Tooltip>
                               )}
                               {/* Version pin, inline right after the table
                                   name — P24 item 16. Shown once the row is
