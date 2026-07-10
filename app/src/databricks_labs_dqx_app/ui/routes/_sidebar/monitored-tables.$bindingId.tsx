@@ -357,6 +357,13 @@ function MonitoredTableDetailPage() {
           const normalized = normalizeStagedRows(resp.data);
           setStagedRows(normalized);
           setBaseline(normalized);
+          // Invalidate HERE — as soon as the persist succeeds — not in the
+          // shared success handler below: the applied-rule set has already
+          // changed server-side at this point, so if the follow-on submit
+          // fails the score/results caches must still refresh (staleTime
+          // Infinity — see saveDraft for the full rationale). The !isDirty
+          // branch persists nothing, so it needs no invalidation.
+          invalidateResultsAfterRuleApplicationChange(queryClient);
         })
       : Promise.resolve();
     persistFirst
@@ -365,10 +372,6 @@ function MonitoredTableDetailPage() {
         justSavedRef.current = true;
         toast.success(t("monitoredTables.toastSubmitted"));
         invalidateLifecycleQueries();
-        // Staged apply/unapply edits may have been persisted just above
-        // (persistFirst) — see saveDraft for why the score/results caches
-        // must be invalidated when the applied-rule set changes.
-        invalidateResultsAfterRuleApplicationChange(queryClient);
       })
       .catch((err: unknown) => {
         toast.error(extractApiError(err, t("monitoredTables.toastSubmitFailed")), { duration: 6000 });
