@@ -1597,7 +1597,15 @@
     "slotFamilyArray": "Array",
     "slotFamilyAny": "Qualsiasi",
     "slotFamilyLockedTooltip": "Questo controllo funziona solo su un tipo di colonna, quindi la sua famiglia è fissa.",
-    "tabPermissions": "Autorizzazioni"
+    "tabPermissions": "Autorizzazioni",
+    "tabResults": "Risultati",
+    "resultsNotAppliedTooltip": "Questa regola deve essere applicata ad almeno una tabella monitorata prima che i risultati siano disponibili.",
+    "resultsNotApplied": "Questa regola non è ancora applicata a nessuna tabella monitorata, quindi non ci sono risultati da mostrare.",
+    "resultsNoAccessibleTables_one": "Questa regola è applicata a {{count}} tabella monitorata a cui non hai accesso.",
+    "resultsNoAccessibleTables_other": "Questa regola è applicata a {{count}} tabelle monitorate a cui non hai accesso.",
+    "resultsOverallScoreLabel_one": "Punteggio complessivo su {{count}} tabella",
+    "resultsOverallScoreLabel_other": "Punteggio complessivo su {{count}} tabelle",
+    "resultsBreakdownTitle": "Punteggi per tabella"
   },
   "monitoredTables": {
     "breadcrumb": "Tabelle monitorate",

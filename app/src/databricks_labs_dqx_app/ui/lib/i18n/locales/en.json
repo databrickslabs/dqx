@@ -1597,7 +1597,15 @@
     "slotFamilyArray": "Array",
     "slotFamilyAny": "Any",
     "slotFamilyLockedTooltip": "This check only works on one column type, so its family is fixed.",
-    "tabPermissions": "Permissions"
+    "tabPermissions": "Permissions",
+    "tabResults": "Results",
+    "resultsNotAppliedTooltip": "This rule must be applied to at least one monitored table before results are available.",
+    "resultsNotApplied": "This rule isn't applied to any monitored table yet, so there are no results to show.",
+    "resultsNoAccessibleTables_one": "This rule is applied to {{count}} monitored table you don't have access to.",
+    "resultsNoAccessibleTables_other": "This rule is applied to {{count}} monitored tables you don't have access to.",
+    "resultsOverallScoreLabel_one": "Overall score across {{count}} table",
+    "resultsOverallScoreLabel_other": "Overall score across {{count}} tables",
+    "resultsBreakdownTitle": "Per-table scores"
   },
   "monitoredTables": {
     "breadcrumb": "Monitored Tables",
