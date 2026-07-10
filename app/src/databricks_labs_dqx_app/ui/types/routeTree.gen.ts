@@ -14,6 +14,7 @@ import { Route as IndexRouteImport } from './../routes/index'
 import { Route as SidebarRunsHistoryRouteImport } from './../routes/_sidebar/runs-history'
 import { Route as SidebarRunsRouteImport } from './../routes/_sidebar/runs'
 import { Route as SidebarRulesRouteImport } from './../routes/_sidebar/rules'
+import { Route as SidebarResultsRouteImport } from './../routes/_sidebar/results'
 import { Route as SidebarProfilerRouteImport } from './../routes/_sidebar/profiler'
 import { Route as SidebarProfileRouteImport } from './../routes/_sidebar/profile'
 import { Route as SidebarInsightsRouteImport } from './../routes/_sidebar/insights'
@@ -66,6 +67,11 @@ const SidebarRunsRoute = SidebarRunsRouteImport.update({
 const SidebarRulesRoute = SidebarRulesRouteImport.update({
   id: '/rules',
   path: '/rules',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
+const SidebarResultsRoute = SidebarResultsRouteImport.update({
+  id: '/results',
+  path: '/results',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
 const SidebarProfilerRoute = SidebarProfilerRouteImport.update({
@@ -232,6 +238,7 @@ export interface FileRoutesByFullPath {
   '/insights': typeof SidebarInsightsRoute
   '/profile': typeof SidebarProfileRoute
   '/profiler': typeof SidebarProfilerRoute
+  '/results': typeof SidebarResultsRoute
   '/rules': typeof SidebarRulesRouteWithChildren
   '/runs': typeof SidebarRunsRouteWithChildren
   '/runs-history': typeof SidebarRunsHistoryRoute
@@ -267,6 +274,7 @@ export interface FileRoutesByTo {
   '/insights': typeof SidebarInsightsRoute
   '/profile': typeof SidebarProfileRoute
   '/profiler': typeof SidebarProfilerRoute
+  '/results': typeof SidebarResultsRoute
   '/runs-history': typeof SidebarRunsHistoryRoute
   '/data-products/$productId': typeof SidebarDataProductsProductIdRoute
   '/data-products/new': typeof SidebarDataProductsNewRoute
@@ -302,6 +310,7 @@ export interface FileRoutesById {
   '/_sidebar/insights': typeof SidebarInsightsRoute
   '/_sidebar/profile': typeof SidebarProfileRoute
   '/_sidebar/profiler': typeof SidebarProfilerRoute
+  '/_sidebar/results': typeof SidebarResultsRoute
   '/_sidebar/rules': typeof SidebarRulesRouteWithChildren
   '/_sidebar/runs': typeof SidebarRunsRouteWithChildren
   '/_sidebar/runs-history': typeof SidebarRunsHistoryRoute
@@ -339,6 +348,7 @@ export interface FileRouteTypes {
     | '/insights'
     | '/profile'
     | '/profiler'
+    | '/results'
     | '/rules'
     | '/runs'
     | '/runs-history'
@@ -374,6 +384,7 @@ export interface FileRouteTypes {
     | '/insights'
     | '/profile'
     | '/profiler'
+    | '/results'
     | '/runs-history'
     | '/data-products/$productId'
     | '/data-products/new'
@@ -408,6 +419,7 @@ export interface FileRouteTypes {
     | '/_sidebar/insights'
     | '/_sidebar/profile'
     | '/_sidebar/profiler'
+    | '/_sidebar/results'
     | '/_sidebar/rules'
     | '/_sidebar/runs'
     | '/_sidebar/runs-history'
@@ -476,6 +488,13 @@ declare module '@tanstack/react-router' {
       path: '/rules'
       fullPath: '/rules'
       preLoaderRoute: typeof SidebarRulesRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/results': {
+      id: '/_sidebar/results'
+      path: '/results'
+      fullPath: '/results'
+      preLoaderRoute: typeof SidebarResultsRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
     '/_sidebar/profiler': {
@@ -733,6 +752,7 @@ interface SidebarRouteRouteChildren {
   SidebarInsightsRoute: typeof SidebarInsightsRoute
   SidebarProfileRoute: typeof SidebarProfileRoute
   SidebarProfilerRoute: typeof SidebarProfilerRoute
+  SidebarResultsRoute: typeof SidebarResultsRoute
   SidebarRulesRoute: typeof SidebarRulesRouteWithChildren
   SidebarRunsRoute: typeof SidebarRunsRouteWithChildren
   SidebarRunsHistoryRoute: typeof SidebarRunsHistoryRoute
@@ -757,6 +777,7 @@ const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
   SidebarInsightsRoute: SidebarInsightsRoute,
   SidebarProfileRoute: SidebarProfileRoute,
   SidebarProfilerRoute: SidebarProfilerRoute,
+  SidebarResultsRoute: SidebarResultsRoute,
   SidebarRulesRoute: SidebarRulesRouteWithChildren,
   SidebarRunsRoute: SidebarRunsRouteWithChildren,
   SidebarRunsHistoryRoute: SidebarRunsHistoryRoute,

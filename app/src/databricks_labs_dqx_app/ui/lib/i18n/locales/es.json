@@ -66,7 +66,8 @@
     "documentationTitle": "Abrir la guía del usuario de DQX Studio en databrickslabs.github.io (se abre en una nueva pestaña)",
     "rulesRegistry": "Registro de Reglas",
     "monitoredTables": "Tablas monitorizadas",
-    "importRules": "Importar Reglas"
+    "importRules": "Importar Reglas",
+    "results": "Resultados"
   },
   "userMenu": {
     "profile": "Perfil",
@@ -2240,6 +2241,15 @@
     "fullTable": "Tabla completa",
     "records": "Registros",
     "percent": "%"
+  },
+  "globalResults": {
+    "breadcrumb": "Resultados",
+    "title": "Resultados",
+    "subtitle": "Calidad de datos de toda la organización en todas las tablas monitorizadas a las que tienes acceso.",
+    "orgWideScoreLabel_one": "Puntuación de toda la organización en {{count}} tabla",
+    "orgWideScoreLabel_other": "Puntuación de toda la organización en {{count}} tablas",
+    "breakdownTitle": "Puntuaciones por tabla",
+    "noTables": "Aún no hay resultados: ejecuta reglas en una tabla monitorizada para ver su puntuación aquí."
   },
   "results": {
     "noRunsYet": "Aún no hay ejecuciones",

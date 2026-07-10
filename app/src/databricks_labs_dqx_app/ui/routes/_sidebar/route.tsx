@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import {
   ClipboardCheck,
+  Gauge,
   History,
   LayoutDashboard,
   BookOpen,
@@ -166,6 +167,27 @@ function Layout() {
               >
                 <History size={16} />
                 <span>{t("sidebar.runsHistory")}</span>
+              </Link>
+            </SidebarMenuItem>
+
+            {/* Results — org-wide DQ score with a per-table breakdown
+                (GET /dq-score/global). Visible to all; the backend filters
+                the table list to the viewer's accessible catalogs. Sits
+                between Runs History and Insights: it's the outcome view of
+                the runs above it, at a higher altitude than the per-run
+                history. */}
+            <SidebarMenuItem>
+              <Link
+                to="/results"
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded-lg",
+                  location.pathname.startsWith("/results")
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
+              >
+                <Gauge size={16} />
+                <span>{t("sidebar.results")}</span>
               </Link>
             </SidebarMenuItem>
 
