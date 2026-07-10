@@ -61,6 +61,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
+from databricks_labs_dqx_app.backend.services.score_cache_service import CachedScore, parse_cached_score
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
@@ -110,13 +111,22 @@ class DataProductMemberDetail:
 
 @dataclass
 class DataProductDetail:
-    """A ``dq_data_products`` row plus resolved members and list-view counters."""
+    """A ``dq_data_products`` row plus resolved members and list-view counters.
+
+    The ``score*`` fields carry the cached DQ score LEFT-JOINed from
+    ``dq_score_cache`` (P3.4) — all ``None`` when the product has never
+    been scored. ``score_computed_at`` is the executor's ``ts_text`` string.
+    """
 
     product: DataProduct
     members: list[DataProductMemberDetail] = field(default_factory=list)
     member_count: int = 0
     runnable_count: int = 0
     last_run_at: datetime | None = None
+    score: float | None = None
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    score_computed_at: str | None = None
 
 
 @dataclass
@@ -187,25 +197,31 @@ class DataProductService:
         self._app_settings = app_settings
         self._products_table = sql.fqn("dq_data_products")
         self._members_table = sql.fqn("dq_data_product_members")
+        self._score_cache_table = sql.fqn("dq_score_cache")
 
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
 
     def list_products(self) -> list[DataProductDetail]:
-        """List every data product, newest-updated first, with resolved members."""
-        products = self._fetch_products()
-        if not products:
+        """List every data product, newest-updated first, with resolved members.
+
+        The cached DQ score columns are LEFT-JOINed from ``dq_score_cache``
+        in the same round-trip (P3.4) — never recomputed here.
+        """
+        scored = self._fetch_products_with_scores()
+        if not scored:
             return []
         table_map = self._table_summary_map()
-        return [self._build_detail(p, table_map) for p in products]
+        return [self._build_detail(p, table_map, cached) for p, cached in scored]
 
     def get(self, product_id: str) -> DataProductDetail | None:
         """Get a single data product with resolved members, or None if it doesn't exist."""
-        product = self._fetch_product(product_id)
-        if product is None:
+        scored = self._fetch_product_with_score(product_id)
+        if scored is None:
             return None
-        return self._build_detail(product, self._table_summary_map())
+        product, cached = scored
+        return self._build_detail(product, self._table_summary_map(), cached)
 
     # ------------------------------------------------------------------
     # CRUD
@@ -605,7 +621,12 @@ class DataProductService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_detail(self, product: DataProduct, table_map: dict[str, MonitoredTableSummary]) -> DataProductDetail:
+    def _build_detail(
+        self,
+        product: DataProduct,
+        table_map: dict[str, MonitoredTableSummary],
+        cached_score: CachedScore | None = None,
+    ) -> DataProductDetail:
         member_rows = self._fetch_members(product.product_id)
         members: list[DataProductMemberDetail] = []
         for row in member_rows:
@@ -634,12 +655,17 @@ class DataProductService:
                 )
             )
         last_run_at = self._last_run_at(product.product_id)
+        cached = cached_score or CachedScore()
         return DataProductDetail(
             product=product,
             members=members,
             member_count=len(members),
             runnable_count=sum(1 for m in members if m.runnable),
             last_run_at=last_run_at,
+            score=cached.score,
+            failed_tests=cached.failed_tests,
+            total_tests=cached.total_tests,
+            score_computed_at=cached.computed_at,
         )
 
     def _member_counts(self, summary: MonitoredTableSummary, pinned_version: int | None) -> tuple[int, int]:
@@ -690,12 +716,14 @@ class DataProductService:
         )
         return [_MemberRow(id=row[0], binding_id=row[1], pinned_version=self._parse_int(row[2])) for row in rows]
 
-    def _select_cols(self) -> str:
-        created_at = self._sql.ts_text("created_at")
-        updated_at = self._sql.ts_text("updated_at")
+    def _select_cols(self, prefix: str = "") -> str:
+        created_at = self._sql.ts_text(f"{prefix}created_at")
+        updated_at = self._sql.ts_text(f"{prefix}updated_at")
         return (
-            "product_id, name, description, steward, schedule_cron, schedule_tz, status, version, "
-            f"created_by, {created_at} AS created_at, updated_by, {updated_at} AS updated_at"
+            f"{prefix}product_id, {prefix}name, {prefix}description, {prefix}steward, "
+            f"{prefix}schedule_cron, {prefix}schedule_tz, {prefix}status, {prefix}version, "
+            f"{prefix}created_by, {created_at} AS created_at, "
+            f"{prefix}updated_by, {updated_at} AS updated_at"
         )
 
     def _require_approved_binding(self, binding_id: str) -> MonitoredTable:
@@ -737,10 +765,30 @@ class DataProductService:
             return None
         return self._row_to_product(rows[0])
 
-    def _fetch_products(self) -> list[DataProduct]:
-        sql = f"SELECT {self._select_cols()} FROM {self._products_table} ORDER BY updated_at DESC"  # noqa: S608
+    def _score_joined_select(self) -> str:
+        """SELECT + FROM + LEFT JOIN fragment for the score-carrying read paths."""
+        score_computed_at = self._sql.ts_text("sc.computed_at")
+        return (
+            f"SELECT {self._select_cols('p.')}, "
+            f"sc.score, sc.failed_tests, sc.total_tests, {score_computed_at} AS score_computed_at "
+            f"FROM {self._products_table} p "
+            f"LEFT JOIN {self._score_cache_table} sc "
+            f"ON sc.scope_type = 'product' AND sc.scope_key = p.product_id"
+        )
+
+    def _fetch_product_with_score(self, product_id: str) -> tuple[DataProduct, CachedScore] | None:
+        e = escape_sql_string(product_id)
+        sql = f"{self._score_joined_select()} WHERE p.product_id = '{e}'"  # noqa: S608
         rows = self._sql.query(sql)
-        return [self._row_to_product(row) for row in rows]
+        if not rows:
+            return None
+        row = rows[0]
+        return self._row_to_product(row), parse_cached_score(row[12], row[13], row[14], row[15])
+
+    def _fetch_products_with_scores(self) -> list[tuple[DataProduct, CachedScore]]:
+        sql = f"{self._score_joined_select()} ORDER BY p.updated_at DESC"  # noqa: S608
+        rows = self._sql.query(sql)
+        return [(self._row_to_product(row), parse_cached_score(row[12], row[13], row[14], row[15])) for row in rows]
 
     def _row_to_product(self, row: list[str]) -> DataProduct:
         return DataProduct(

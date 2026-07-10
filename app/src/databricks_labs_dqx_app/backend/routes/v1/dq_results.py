@@ -44,6 +44,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_monitored_table_service,
     get_obo_ws,
     get_preview_sql_executor,
+    get_score_cache_service,
     get_sp_sql_executor,
     get_user_catalog_names,
     require_role,
@@ -54,6 +55,8 @@ from databricks_labs_dqx_app.backend.models import (
     EntityResultsOut,
     FailedRowOut,
     FailedRowsOut,
+    RefreshScoresIn,
+    RefreshScoresOut,
     RunRowOut,
     RunsOut,
     SeverityOut,
@@ -68,6 +71,7 @@ from databricks_labs_dqx_app.backend.services.dq_results_service import (
     parse_check_rows,
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
+from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.quarantine_sample_service import (
     QuarantineSampleService,
     enrich_failures,
@@ -348,6 +352,53 @@ def list_result_dimensions(
     except Exception as exc:
         logger.exception("Failed to read dimension label definition")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Score-cache refresh (P3.4 — run-completion trigger, no polling/cron)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/refresh-scores",
+    operation_id="refreshDqScores",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def refresh_dq_scores(
+    body: RefreshScoresIn,
+    score_cache: Annotated[ScoreCacheService, Depends(get_score_cache_service)],
+) -> RefreshScoresOut:
+    """Recompute the cached DQ scores for the just-finished tables.
+
+    Called (fire-and-forget) by the frontend at the exact run-completion
+    moments that already fire the results invalidation — see
+    ``ui/lib/results-invalidation.ts``. Recomputes the given tables (ONE
+    batched warehouse query over the metric view, published runs only),
+    every table space containing any of them, and the global rollup —
+    all upserted into ``dq_score_cache`` so the list pages never touch
+    the warehouse on load.
+
+    SP-side by design: the cache is shared/global and viewer-independent;
+    the existing catalog filtering on the list endpoints scopes what each
+    viewer sees. Viewer+ RBAC like the other dq-results routes. The list
+    length is capped (see ``RefreshScoresIn``) and every FQN is validated
+    before it can reach a SQL string literal (400 on the first invalid).
+    """
+    for fqn in body.table_fqns:
+        try:
+            validate_fqn(fqn)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        refreshed_tables, refreshed_products = score_cache.refresh_all_for_tables(body.table_fqns)
+    except Exception as exc:
+        logger.exception("Failed to refresh DQ score cache")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return RefreshScoresOut(
+        refreshed_tables=refreshed_tables,
+        refreshed_products=refreshed_products,
+        global_refreshed=True,
+    )
 
 
 # ---------------------------------------------------------------------------

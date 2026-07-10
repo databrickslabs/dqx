@@ -37,6 +37,7 @@ from .services.run_sets import RunSetService
 from .services.binding_run_service import BindingRunService
 from .services.data_product_service import DataProductService
 from .services.rule_embeddings import RuleEmbeddingsService
+from .services.score_cache_service import ScoreCacheService
 from .services.rule_retriever import CosineRuleRetriever, RuleRetriever
 from .services.rule_suggester import RuleSuggester
 from .services.rules_catalog_service import RulesCatalogService
@@ -571,6 +572,22 @@ async def get_binding_run_service(
         settings_service=settings_service,
         runs_table=sp_sql.fqn("dq_validation_runs"),
     )
+
+
+async def get_score_cache_service(
+    oltp: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    warehouse_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> ScoreCacheService:
+    """Create a ScoreCacheService (P3.4 Lakebase score cache).
+
+    The cache table (plus the product-membership lookups the derived
+    scopes need) lives on the OLTP executor; the batched published-score
+    recompute reads the ``mv_dq_scores`` metric view via the SP warehouse
+    executor. SP-side by design — the cache is shared/global and
+    viewer-independent; catalog filtering happens at read time on the
+    list endpoints.
+    """
+    return ScoreCacheService(oltp=oltp, warehouse_sql=warehouse_sql)
 
 
 async def get_data_product_service(

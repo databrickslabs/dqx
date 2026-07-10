@@ -700,11 +700,21 @@ class MonitoredTableVersionOut(BaseModel):
 
 
 class MonitoredTableSummaryOut(BaseModel):
-    """A monitored table plus lightweight list-view counters, for ``listMonitoredTables``."""
+    """A monitored table plus lightweight list-view counters, for ``listMonitoredTables``.
+
+    The ``score*`` fields are LEFT-JOINed from the ``dq_score_cache`` OLTP
+    table in the same round-trip (P3.4) — the cached row-weighted DQ score
+    of the table's latest PUBLISHED run. All None when the table has never
+    been scored (no cache row yet).
+    """
 
     table: MonitoredTableOut
     applied_rule_count: int = 0
     check_count: int = 0
+    score: float | None = Field(default=None, description="Cached DQ score in [0, 1]; None = never computed")
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    score_computed_at: str | None = Field(default=None, description="When the cached score was last recomputed")
 
     @classmethod
     def from_domain(cls, summary: MonitoredTableSummary) -> "MonitoredTableSummaryOut":
@@ -712,6 +722,10 @@ class MonitoredTableSummaryOut(BaseModel):
             table=MonitoredTableOut.from_domain(summary.table),
             applied_rule_count=summary.applied_rule_count,
             check_count=summary.check_count,
+            score=summary.score,
+            failed_tests=summary.failed_tests,
+            total_tests=summary.total_tests,
+            score_computed_at=summary.score_computed_at,
         )
 
 
@@ -1155,6 +1169,13 @@ class DataProductOut(BaseModel):
     member_count: int = 0
     runnable_count: int = 0
     last_run_at: str | None = None
+    # LEFT-JOINed from the dq_score_cache OLTP table in the same round-trip
+    # (P3.4): the cached unweighted mean of member tables' latest published
+    # scores. All None when the product has never been scored.
+    score: float | None = Field(default=None, description="Cached DQ score in [0, 1]; None = never computed")
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    score_computed_at: str | None = Field(default=None, description="When the cached score was last recomputed")
     created_by: str | None = None
     created_at: str | None = None
     updated_by: str | None = None
@@ -1177,6 +1198,10 @@ class DataProductOut(BaseModel):
             member_count=detail.member_count,
             runnable_count=detail.runnable_count,
             last_run_at=detail.last_run_at.isoformat() if detail.last_run_at else None,
+            score=detail.score,
+            failed_tests=detail.failed_tests,
+            total_tests=detail.total_tests,
+            score_computed_at=detail.score_computed_at,
             created_by=product.created_by,
             created_at=product.created_at.isoformat() if product.created_at else None,
             updated_by=product.updated_by,
@@ -1561,6 +1586,30 @@ class DimensionOut(BaseModel):
     name: str
     color: str
     rank: int
+
+
+# Guard on the run-completion refresh trigger: the frontend only ever knows
+# a handful of just-finished tables, so a longer list signals a misuse (or
+# an attempt to turn the endpoint into a full-cache recompute).
+REFRESH_SCORES_MAX_TABLES = 100
+
+
+class RefreshScoresIn(BaseModel):
+    """Body of ``POST /dq-results/refresh-scores`` (``refreshDqScores``)."""
+
+    table_fqns: list[str] = Field(
+        min_length=1,
+        max_length=REFRESH_SCORES_MAX_TABLES,
+        description="Three-part FQNs of the tables whose runs just completed",
+    )
+
+
+class RefreshScoresOut(BaseModel):
+    """Summary of one score-cache recompute pass."""
+
+    refreshed_tables: int = 0
+    refreshed_products: int = 0
+    global_refreshed: bool = True
 
 
 class CatalogOut(BaseModel):

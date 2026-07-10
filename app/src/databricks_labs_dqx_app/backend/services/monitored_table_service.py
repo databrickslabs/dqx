@@ -36,6 +36,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_name,
     get_rule_severity,
 )
+from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
@@ -77,11 +78,20 @@ class MonitoredTableDetail:
 
 @dataclass
 class MonitoredTableSummary:
-    """A monitored table binding plus lightweight list-view counters."""
+    """A monitored table binding plus lightweight list-view counters.
+
+    The ``score*`` fields carry the cached DQ score LEFT-JOINed from
+    ``dq_score_cache`` (P3.4) — all ``None`` when the table has never been
+    scored. ``score_computed_at`` is the executor's ``ts_text`` string.
+    """
 
     table: MonitoredTable
     applied_rule_count: int = 0
     check_count: int = 0
+    score: float | None = None
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    score_computed_at: str | None = None
 
 
 @dataclass
@@ -117,18 +127,21 @@ class MonitoredTableService:
         self._applied_table = sql.fqn("dq_applied_rules")
         self._rules_table = sql.fqn("dq_rules")
         self._quality_rules_table = sql.fqn("dq_quality_rules")
+        self._score_cache_table = sql.fqn("dq_score_cache")
         self._profiling_table = profiling_sql.fqn("dq_profiling_results")
         self._select_cols = self._build_select_cols()
         self._applied_select_cols = self._build_applied_select_cols()
 
-    def _build_select_cols(self) -> str:
-        created_at = self._sql.ts_text("created_at")
-        updated_at = self._sql.ts_text("updated_at")
-        last_profiled_at = self._sql.ts_text("last_profiled_at")
+    def _build_select_cols(self, prefix: str = "") -> str:
+        created_at = self._sql.ts_text(f"{prefix}created_at")
+        updated_at = self._sql.ts_text(f"{prefix}updated_at")
+        last_profiled_at = self._sql.ts_text(f"{prefix}last_profiled_at")
         return (
-            f"binding_id, table_fqn, steward, status, version, schedule_cron, schedule_tz, "
+            f"{prefix}binding_id, {prefix}table_fqn, {prefix}steward, {prefix}status, "
+            f"{prefix}version, {prefix}schedule_cron, {prefix}schedule_tz, "
             f"{last_profiled_at} AS last_profiled_at, "
-            f"created_by, {created_at} AS created_at, updated_by, {updated_at} AS updated_at"
+            f"{prefix}created_by, {created_at} AS created_at, "
+            f"{prefix}updated_by, {updated_at} AS updated_at"
         )
 
     def _build_applied_select_cols(self) -> str:
@@ -263,32 +276,48 @@ class MonitoredTableService:
         ``schema``, and ``name`` filter over ``table_fqn`` in Python
         (matching how :class:`RegistryService.list_rules` handles
         JSON-blob metadata filters).
+
+        The cached DQ score columns are LEFT-JOINed from ``dq_score_cache``
+        in the same round-trip (P3.4) — never recomputed here; a page load
+        must not touch the warehouse. NULLs (no cache row yet) surface as
+        ``None`` score fields on the summary.
         """
         clauses: list[str] = []
         if status:
-            clauses.append(f"status = '{escape_sql_string(status)}'")
+            clauses.append(f"mt.status = '{escape_sql_string(status)}'")
         if steward:
-            clauses.append(f"steward = '{escape_sql_string(steward)}'")
-        sql = f"SELECT {self._select_cols} FROM {self._table}"
+            clauses.append(f"mt.steward = '{escape_sql_string(steward)}'")
+        score_computed_at = self._sql.ts_text("sc.computed_at")
+        sql = (
+            f"SELECT {self._build_select_cols('mt.')}, "
+            f"sc.score, sc.failed_tests, sc.total_tests, {score_computed_at} AS score_computed_at "
+            f"FROM {self._table} mt "
+            f"LEFT JOIN {self._score_cache_table} sc "
+            f"ON sc.scope_type = 'table' AND sc.scope_key = mt.table_fqn"
+        )
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY updated_at DESC LIMIT 2000"
+        sql += " ORDER BY mt.updated_at DESC LIMIT 2000"
         rows = self._sql.query(sql)
-        tables = [self._row_to_table(row) for row in rows]
+        tables = [(self._row_to_table(row), parse_cached_score(row[12], row[13], row[14], row[15])) for row in rows]
         if catalog:
-            tables = [t for t in tables if self._fqn_part(t.table_fqn, 0) == catalog]
+            tables = [(t, s) for t, s in tables if self._fqn_part(t.table_fqn, 0) == catalog]
         if schema:
-            tables = [t for t in tables if self._fqn_part(t.table_fqn, 1) == schema]
+            tables = [(t, s) for t, s in tables if self._fqn_part(t.table_fqn, 1) == schema]
         if name:
             needle = name.lower()
-            tables = [t for t in tables if needle in t.table_fqn.lower()]
+            tables = [(t, s) for t, s in tables if needle in t.table_fqn.lower()]
         return [
             MonitoredTableSummary(
                 table=t,
                 applied_rule_count=self._count_applied_rules(t.binding_id),
                 check_count=self._count_materialized_checks(t.table_fqn),
+                score=cached.score,
+                failed_tests=cached.failed_tests,
+                total_tests=cached.total_tests,
+                score_computed_at=cached.computed_at,
             )
-            for t in tables
+            for t, cached in tables
         ]
 
     @staticmethod

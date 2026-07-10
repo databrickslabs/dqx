@@ -8,9 +8,10 @@ helpers inside one route module.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from databricks_labs_dqx_app.backend.models import CheckMetricBreakdown
+if TYPE_CHECKING:
+    from databricks_labs_dqx_app.backend.models import CheckMetricBreakdown
 
 
 def catalog_of(fqn: str) -> str:
@@ -48,6 +49,13 @@ def safe_float(value: Any) -> float | None:
 
 def parse_check_metrics(raw: Any) -> list[CheckMetricBreakdown]:
     """Parse the ``check_metrics`` JSON-string emitted by the observer."""
+    # Local import breaks the module-level cycle this helper module would
+    # otherwise create: ``models`` imports the OLTP services, and those
+    # services import the ``safe_int``/``safe_float`` coercers above (via
+    # ``score_cache_service``). Same deferred-import convention as
+    # ``_scheduler_registry.notify_scheduler``'s call sites.
+    from databricks_labs_dqx_app.backend.models import CheckMetricBreakdown
+
     if not raw:
         return []
     try:

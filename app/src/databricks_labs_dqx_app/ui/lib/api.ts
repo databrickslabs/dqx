@@ -860,6 +860,20 @@ export const DataProductOutStatus = {
 
 export type DataProductOutLastRunAt = string | null;
 
+/**
+ * Cached DQ score in [0, 1]; None = never computed
+ */
+export type DataProductOutScore = number | null;
+
+export type DataProductOutFailedTests = number | null;
+
+export type DataProductOutTotalTests = number | null;
+
+/**
+ * When the cached score was last recomputed
+ */
+export type DataProductOutScoreComputedAt = string | null;
+
 export type DataProductOutCreatedBy = string | null;
 
 export type DataProductOutCreatedAt = string | null;
@@ -886,6 +900,12 @@ export interface DataProductOut {
   member_count?: number;
   runnable_count?: number;
   last_run_at?: DataProductOutLastRunAt;
+  /** Cached DQ score in [0, 1]; None = never computed */
+  score?: DataProductOutScore;
+  failed_tests?: DataProductOutFailedTests;
+  total_tests?: DataProductOutTotalTests;
+  /** When the cached score was last recomputed */
+  score_computed_at?: DataProductOutScoreComputedAt;
   created_by?: DataProductOutCreatedBy;
   created_at?: DataProductOutCreatedAt;
   updated_by?: DataProductOutUpdatedBy;
@@ -1666,12 +1686,37 @@ export interface MonitoredTableReviewOut {
 }
 
 /**
+ * Cached DQ score in [0, 1]; None = never computed
+ */
+export type MonitoredTableSummaryOutScore = number | null;
+
+export type MonitoredTableSummaryOutFailedTests = number | null;
+
+export type MonitoredTableSummaryOutTotalTests = number | null;
+
+/**
+ * When the cached score was last recomputed
+ */
+export type MonitoredTableSummaryOutScoreComputedAt = string | null;
+
+/**
  * A monitored table plus lightweight list-view counters, for ``listMonitoredTables``.
+
+The ``score*`` fields are LEFT-JOINed from the ``dq_score_cache`` OLTP
+table in the same round-trip (P3.4) — the cached row-weighted DQ score
+of the table's latest PUBLISHED run. All None when the table has never
+been scored (no cache row yet).
  */
 export interface MonitoredTableSummaryOut {
   table: MonitoredTableOut;
   applied_rule_count?: number;
   check_count?: number;
+  /** Cached DQ score in [0, 1]; None = never computed */
+  score?: MonitoredTableSummaryOutScore;
+  failed_tests?: MonitoredTableSummaryOutFailedTests;
+  total_tests?: MonitoredTableSummaryOutTotalTests;
+  /** When the cached score was last recomputed */
+  score_computed_at?: MonitoredTableSummaryOutScoreComputedAt;
 }
 
 export type MonitoredTableVersionOutId = string | null;
@@ -1973,6 +2018,27 @@ export interface QuarantineRecordOut {
   errors?: QuarantineRecordOutErrors;
   warnings?: QuarantineRecordOutWarnings;
   created_at?: QuarantineRecordOutCreatedAt;
+}
+
+/**
+ * Body of ``POST /dq-results/refresh-scores`` (``refreshDqScores``).
+ */
+export interface RefreshScoresIn {
+  /**
+   * Three-part FQNs of the tables whose runs just completed
+   * @minItems 1
+   * @maxItems 100
+   */
+  table_fqns: string[];
+}
+
+/**
+ * Summary of one score-cache recompute pass.
+ */
+export interface RefreshScoresOut {
+  refreshed_tables?: number;
+  refreshed_products?: number;
+  global_refreshed?: boolean;
 }
 
 /**
@@ -16718,6 +16784,83 @@ export function useListResultDimensionsSuspense<TData = Awaited<ReturnType<typeo
 
 
 
+/**
+ * Recompute the cached DQ scores for the just-finished tables.
+
+Called (fire-and-forget) by the frontend at the exact run-completion
+moments that already fire the results invalidation — see
+``ui/lib/results-invalidation.ts``. Recomputes the given tables (ONE
+batched warehouse query over the metric view, published runs only),
+every table space containing any of them, and the global rollup —
+all upserted into ``dq_score_cache`` so the list pages never touch
+the warehouse on load.
+
+SP-side by design: the cache is shared/global and viewer-independent;
+the existing catalog filtering on the list endpoints scopes what each
+viewer sees. Viewer+ RBAC like the other dq-results routes. The list
+length is capped (see ``RefreshScoresIn``) and every FQN is validated
+before it can reach a SQL string literal (400 on the first invalid).
+ * @summary Refresh Dq Scores
+ */
+export const refreshDqScores = (
+    refreshScoresIn: RefreshScoresIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RefreshScoresOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/dq-results/refresh-scores`,
+      refreshScoresIn,options
+    );
+  }
+
+
+
+export const getRefreshDqScoresMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshDqScores>>, TError,{data: RefreshScoresIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof refreshDqScores>>, TError,{data: RefreshScoresIn}, TContext> => {
+
+const mutationKey = ['refreshDqScores'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof refreshDqScores>>, {data: RefreshScoresIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  refreshDqScores(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RefreshDqScoresMutationResult = NonNullable<Awaited<ReturnType<typeof refreshDqScores>>>
+    export type RefreshDqScoresMutationBody = RefreshScoresIn
+    export type RefreshDqScoresMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Refresh Dq Scores
+ */
+export const useRefreshDqScores = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshDqScores>>, TError,{data: RefreshScoresIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof refreshDqScores>>,
+        TError,
+        {data: RefreshScoresIn},
+        TContext
+      > => {
+
+      const mutationOptions = getRefreshDqScoresMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 /**
  * Results over every table tracked in dq_metrics that the caller can access.
 

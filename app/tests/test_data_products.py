@@ -65,7 +65,15 @@ def _product_row(
     schedule_tz: str | None = None,
     status: str = "draft",
     version: str = "0",
+    score: str | None = None,
+    failed_tests: str | None = None,
+    total_tests: str | None = None,
+    score_computed_at: str | None = None,
 ) -> list[str | None]:
+    # The trailing 4 cells are the dq_score_cache LEFT-JOIN columns the
+    # list/get read paths select (P3.4) — all None when the product has
+    # never been scored. The other read paths select only the first 12
+    # columns; the extra cells are ignored by _row_to_product.
     return [
         product_id,
         name,
@@ -79,6 +87,10 @@ def _product_row(
         "2026-07-07T00:00:00",
         "alice@x",
         "2026-07-07T00:00:00",
+        score,
+        failed_tests,
+        total_tests,
+        score_computed_at,
     ]
 
 
@@ -209,6 +221,51 @@ class TestListAndGet:
     def test_list_products_empty(self, service, sql):
         sql.query.return_value = []
         assert service.list_products() == []
+
+    def test_list_products_left_joins_score_cache_in_same_round_trip(self, service, sql, monitored_tables):
+        """P3.4: the cached score columns ride along the products query —
+        no extra round trip and NEVER a warehouse recompute on page load."""
+        sql.query.side_effect = [
+            [_product_row(product_id="p1", score="0.9876", failed_tests="12", total_tests="1000",
+                          score_computed_at="2026-07-10T00:00:00")],
+            [],  # members
+        ]
+        monitored_tables.list_monitored_tables.return_value = []
+        result = service.list_products()
+        products_query = sql.query.call_args_list[0][0][0]
+        assert "LEFT JOIN dqx_test.dqx_app_test.dq_score_cache" in products_query
+        assert "sc.scope_type = 'product'" in products_query
+        assert "sc.scope_key = p.product_id" in products_query
+        detail = result[0]
+        assert detail.score == 0.9876
+        assert detail.failed_tests == 12
+        assert detail.total_tests == 1000
+        assert detail.score_computed_at == "2026-07-10T00:00:00"
+
+    def test_list_products_score_fields_none_when_never_scored(self, service, sql, monitored_tables):
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [],  # members
+        ]
+        monitored_tables.list_monitored_tables.return_value = []
+        detail = service.list_products()[0]
+        assert detail.score is None
+        assert detail.failed_tests is None
+        assert detail.total_tests is None
+        assert detail.score_computed_at is None
+
+    def test_get_carries_cached_score(self, service, sql, monitored_tables):
+        sql.query.side_effect = [
+            [_product_row(product_id="p1", score="0.5", failed_tests="1", total_tests="2",
+                          score_computed_at="2026-07-10T00:00:00")],
+            [],  # members
+        ]
+        monitored_tables.list_monitored_tables.return_value = []
+        detail = service.get("p1")
+        assert detail is not None
+        assert detail.score == 0.5
+        assert detail.failed_tests == 1
+        assert detail.total_tests == 2
 
     def test_member_referencing_missing_binding_is_skipped(self, service, sql, monitored_tables, run_set_service):
         sql.query.side_effect = [

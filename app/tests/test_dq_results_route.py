@@ -33,6 +33,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_monitored_table_service,
     get_obo_ws,
     get_preview_sql_executor,
+    get_score_cache_service,
     get_sp_sql_executor,
     get_user_catalog_names,
     get_user_role,
@@ -49,6 +50,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableDetail,
     MonitoredTableService,
 )
+from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.score_view_service import (
     METRIC_VIEW_NAME,
     SHAPING_VIEW_NAME,
@@ -119,6 +121,13 @@ def obo_ws_mock() -> MagicMock:
 
 
 @pytest.fixture
+def score_cache_mock() -> MagicMock:
+    mock = create_autospec(ScoreCacheService, instance=True)
+    mock.refresh_all_for_tables.return_value = (0, 0)
+    return mock
+
+
+@pytest.fixture
 def client(
     sql_mock,
     monitored_tables_mock,
@@ -127,6 +136,7 @@ def client(
     app_settings_mock,
     obo_sql_mock,
     obo_ws_mock,
+    score_cache_mock,
     app_config,
 ) -> TestClient:
     from databricks_labs_dqx_app.backend.routes.v1.dq_results import router
@@ -143,6 +153,7 @@ def client(
     app.dependency_overrides[get_app_settings_service] = lambda: app_settings_mock
     app.dependency_overrides[get_preview_sql_executor] = lambda: obo_sql_mock
     app.dependency_overrides[get_obo_ws] = lambda: obo_ws_mock
+    app.dependency_overrides[get_score_cache_service] = lambda: score_cache_mock
     return TestClient(app)
 
 
@@ -1241,6 +1252,7 @@ class TestRbac:
             "getDqResultsFailedRows",
             "getDqResultsRuns",
             "getTableResults",
+            "refreshDqScores",
         ],
     )
     def test_route_is_gated_for_all_roles(self, operation_id):
@@ -1262,3 +1274,45 @@ class TestRbac:
                         }
                         return
         raise AssertionError(f"No require_role dependency found for {operation_id}")
+
+
+# ---------------------------------------------------------------------------
+# POST /refresh-scores (P3.4 score-cache refresh trigger)
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshScores:
+    def test_refreshes_tables_products_and_global(self, client, score_cache_mock):
+        score_cache_mock.refresh_all_for_tables.return_value = (2, 1)
+        resp = client.post("/api/v1/dq-results/refresh-scores", json={"table_fqns": [FQN, "dev.s.t2"]})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body == {"refreshed_tables": 2, "refreshed_products": 1, "global_refreshed": True}
+        score_cache_mock.refresh_all_for_tables.assert_called_once_with([FQN, "dev.s.t2"])
+
+    def test_invalid_fqn_is_rejected_before_the_service_runs(self, client, score_cache_mock):
+        resp = client.post("/api/v1/dq-results/refresh-scores", json={"table_fqns": ["bad`fqn"]})
+        assert resp.status_code == 400
+        score_cache_mock.refresh_all_for_tables.assert_not_called()
+
+    def test_empty_list_is_a_422(self, client, score_cache_mock):
+        resp = client.post("/api/v1/dq-results/refresh-scores", json={"table_fqns": []})
+        assert resp.status_code == 422
+        score_cache_mock.refresh_all_for_tables.assert_not_called()
+
+    def test_list_longer_than_the_cap_is_a_422(self, client, score_cache_mock):
+        fqns = [f"main.s.t{i}" for i in range(101)]
+        resp = client.post("/api/v1/dq-results/refresh-scores", json={"table_fqns": fqns})
+        assert resp.status_code == 422
+        score_cache_mock.refresh_all_for_tables.assert_not_called()
+
+    def test_exactly_at_the_cap_is_accepted(self, client, score_cache_mock):
+        fqns = [f"main.s.t{i}" for i in range(100)]
+        score_cache_mock.refresh_all_for_tables.return_value = (100, 0)
+        resp = client.post("/api/v1/dq-results/refresh-scores", json={"table_fqns": fqns})
+        assert resp.status_code == 200
+
+    def test_service_failure_maps_to_500(self, client, score_cache_mock):
+        score_cache_mock.refresh_all_for_tables.side_effect = RuntimeError("warehouse down")
+        resp = client.post("/api/v1/dq-results/refresh-scores", json={"table_fqns": [FQN]})
+        assert resp.status_code == 500

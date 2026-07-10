@@ -64,7 +64,15 @@ def _table_row(
     schedule_cron: str | None = None,
     schedule_tz: str | None = None,
     last_profiled_at: str | None = None,
+    score: str | None = None,
+    failed_tests: str | None = None,
+    total_tests: str | None = None,
+    score_computed_at: str | None = None,
 ) -> list[str]:
+    # The trailing 4 cells are the dq_score_cache LEFT-JOIN columns the list
+    # query selects (P3.4) — all None when the table has never been scored.
+    # The single-row read paths select only the first 12 columns; the extra
+    # cells are simply ignored by _row_to_table.
     return [
         binding_id,
         table_fqn,
@@ -78,6 +86,10 @@ def _table_row(
         "2026-07-02T00:00:00+00:00",
         "alice@x",
         "2026-07-02T00:00:00+00:00",
+        score,
+        failed_tests,
+        total_tests,
+        score_computed_at,
     ]
 
 
@@ -268,6 +280,45 @@ class TestListMonitoredTables:
         summaries = svc.list_monitored_tables(name="order")
         assert len(summaries) == 1
         assert summaries[0].table.table_fqn == "cat.schema.orders"
+
+    def test_list_left_joins_score_cache_in_same_round_trip(self, svc, sql):
+        """P3.4: the cached score columns ride along the bindings query —
+        no extra round trip and NEVER a warehouse recompute on page load."""
+        sql.query.side_effect = [
+            [
+                _table_row(
+                    binding_id="b1",
+                    score="0.9876",
+                    failed_tests="12",
+                    total_tests="1000",
+                    score_computed_at="2026-07-10T00:00:00",
+                )
+            ],
+            [["2"]],  # applied-rule count
+            [["3"]],  # materialized-check count
+        ]
+        summaries = svc.list_monitored_tables()
+        list_sql = sql.query.call_args_list[0][0][0]
+        assert "LEFT JOIN dqx_test.dqx_app_test.dq_score_cache" in list_sql
+        assert "sc.scope_type = 'table'" in list_sql
+        assert "sc.scope_key = mt.table_fqn" in list_sql
+        summary = summaries[0]
+        assert summary.score == 0.9876
+        assert summary.failed_tests == 12
+        assert summary.total_tests == 1000
+        assert summary.score_computed_at == "2026-07-10T00:00:00"
+
+    def test_list_score_fields_none_when_never_scored(self, svc, sql):
+        sql.query.side_effect = [
+            [_table_row(binding_id="b1")],
+            [["0"]],
+            [["0"]],
+        ]
+        summary = svc.list_monitored_tables()[0]
+        assert summary.score is None
+        assert summary.failed_tests is None
+        assert summary.total_tests is None
+        assert summary.score_computed_at is None
 
 
 # ---------------------------------------------------------------------------

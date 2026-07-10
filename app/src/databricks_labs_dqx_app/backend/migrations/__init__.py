@@ -992,6 +992,34 @@ _V13_MONITORED_TABLES_SCHEDULE = (
 )
 
 
+# DQ score cache — Delta OLTP fallback for ``dq_score_cache`` (P3.4).
+# Mirrors the Postgres v11 migration: one row per scored scope, PK
+# (scope_type, scope_key). 'table' rows are recomputed from the
+# mv_dq_scores metric view (latest PUBLISHED run per table, one batched
+# warehouse query); 'product'/'global' rows derive from the cached
+# 'table' rows (unweighted means). The list endpoints LEFT JOIN this
+# table so the monitored-tables and table-spaces pages render scores
+# without touching the warehouse. Only present on Delta when Lakebase
+# is disabled (``oltp_fallback=True``) — see the Postgres v11 comment
+# for the full semantics.
+_V15_SCORE_CACHE = (
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_score_cache ("
+    "  scope_type    STRING NOT NULL,"
+    "  scope_key     STRING NOT NULL,"
+    "  score         DOUBLE,"
+    "  failed_tests  BIGINT,"
+    "  total_tests   BIGINT,"
+    "  latest_run_id STRING,"
+    "  run_time      TIMESTAMP,"
+    "  computed_at   TIMESTAMP,"
+    "  CONSTRAINT pk_dq_score_cache PRIMARY KEY (scope_type, scope_key) RELY"
+    ") CLUSTER BY (scope_type, scope_key);"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_score_cache "
+    f"  ADD CONSTRAINT chk_dq_score_cache_scope_type "
+    f"  CHECK (scope_type IN ('table','product','global'))"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -1102,6 +1130,13 @@ MIGRATIONS: list[Migration] = [
         description="UC-style object permissions (dq_object_grants + history) — P22-D item 10, "
         "used only when Lakebase is disabled",
         sql_template=_V14_OBJECT_GRANTS,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=15,
+        description="DQ score cache (dq_score_cache) — list-page score columns (P3.4), "
+        "used only when Lakebase is disabled",
+        sql_template=_V15_SCORE_CACHE,
         oltp_fallback=True,
     ),
 ]
