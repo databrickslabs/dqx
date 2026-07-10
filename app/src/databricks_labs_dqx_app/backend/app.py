@@ -44,6 +44,7 @@ from .services.data_product_service import DataProductService
 from .services.registry_service import RegistryService
 from .services.rule_embeddings import RuleEmbeddingsService
 from .services.scheduler_service import SchedulerService
+from .services.score_view_service import ScoreViewService
 from .services.vector_store import VectorStoreProvisioner
 from .services.view_service import mark_tmp_schema_ready
 from .sql_executor import OltpExecutorProtocol, SqlExecutor
@@ -268,6 +269,33 @@ async def _build_scheduler_data_product_service(
     return data_product_service, binding_run_service
 
 
+def _ensure_score_views(sp_sql: SqlExecutor) -> None:
+    """Create/refresh the DQ score shaping + metric views (best-effort).
+
+    Runs after the Delta migrations so ``dq_metrics`` is guaranteed to
+    exist, and uses CREATE OR REPLACE on every startup so view
+    definition changes ship with the app. Best-effort: a warehouse that
+    cannot create metric views (or a transient DDL failure) degrades to
+    failing dq-score endpoints rather than a crash-looping app — same
+    contract as the other post-migration startup steps.
+    """
+    try:
+        service = ScoreViewService(sql=sp_sql)
+        service.ensure_views()
+        logger.info(
+            "Ensured DQ score views exist: %s and %s",
+            service.shaping_view_fqn_quoted,
+            service.metric_view_fqn_quoted,
+        )
+    except Exception as e:
+        logger.warning(
+            "Could not create the DQ score views over dq_metrics — the dq-score "
+            "endpoints will fail until the next successful startup: %s",
+            e,
+            exc_info=True,
+        )
+
+
 def _maybe_start_vector_store_provisioning(
     app: FastAPI,
     *,
@@ -431,6 +459,10 @@ async def lifespan(app: FastAPI):
 
     # Best-effort below — the app can recover from these failing.
 
+    # DQ score views (shaping view + UC metric view over dq_metrics) —
+    # must come after the Delta migrations above so dq_metrics exists.
+    _ensure_score_views(sp_sql)
+
     # Seed the run-review-status catalogue once, here at startup, rather
     # than lazily on first read. This keeps ``get_run_review_statuses``
     # (called on the Runs listing GET path) side-effect free. Best-effort:
@@ -535,9 +567,7 @@ async def lifespan(app: FastAPI):
                 # and table ticks in that case — see
                 # ``SchedulerService._tick_products`` /
                 # ``_tick_monitored_tables``.
-                logger.warning(
-                    "Could not wire scheduler product/table tick collaborators: %s", dp_e, exc_info=True
-                )
+                logger.warning("Could not wire scheduler product/table tick collaborators: %s", dp_e, exc_info=True)
                 data_product_service = None
                 binding_run_service = None
 

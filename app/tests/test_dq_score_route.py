@@ -5,11 +5,17 @@ stand up a minimal FastAPI app with just the router under test and
 override the SQL/auth dependencies (the full ``backend.app`` lifespan
 needs a live workspace). SQL execution is a spec-bound
 ``create_autospec(SqlExecutor)`` so no warehouse is touched.
+
+The endpoints query the ``mv_dq_scores`` UC metric view (see
+``services.score_view_service``) via ``MEASURE()`` — the mocked
+executor returns Statement-Execution-shaped string rows and these
+tests pin the query text and the response mapping. The measure math
+itself is pinned against ``ScoreService`` in
+``test_score_view_service.py``.
 """
 
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
@@ -37,6 +43,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableDetail,
     MonitoredTableService,
 )
+from databricks_labs_dqx_app.backend.services.score_view_service import METRIC_VIEW_NAME
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 ACCESSIBLE_CATALOGS = frozenset({"main", "dev"})
@@ -113,16 +120,34 @@ def make_product_detail(product_id: str, table_fqns: list[str]) -> DataProductDe
     return DataProductDetail(product=MagicMock(name="DataProduct"), members=members, member_count=len(members))
 
 
-def metrics_rows(run_id: str, row_count: int, error_count: int) -> list[dict[str, str]]:
-    """Long-format dq_metrics rows for one run with a single check."""
-    return [
-        {"run_id": run_id, "metric_name": "input_row_count", "metric_value": str(row_count)},
-        {
-            "run_id": run_id,
-            "metric_name": "check_metrics",
-            "metric_value": json.dumps([{"check_name": "rule_a", "error_count": error_count, "warning_count": 0}]),
-        },
-    ]
+# Sentinel default for ``measure_row``'s optional column: distinguishes
+# "omit the input_location column entirely" (per-table queries don't
+# select it) from "the column is present and SQL NULL" (None).
+_OMIT = "__omit-column__"
+
+
+def measure_row(
+    run_id: str | None,
+    score: float | None,
+    failed_tests: int | None,
+    total_tests: int | None,
+    input_location: str | None = _OMIT,
+) -> dict[str, str | None]:
+    """One mv_dq_scores MEASURE() result row, Statement-Execution shaped.
+
+    The Statement Execution API returns every value as a string (or
+    None for SQL NULL) — mirror that so the response-mapping parsing is
+    what's actually under test.
+    """
+    row: dict[str, str | None] = {
+        "run_id": run_id,
+        "score": None if score is None else str(score),
+        "failed_tests": None if failed_tests is None else str(failed_tests),
+        "total_tests": None if total_tests is None else str(total_tests),
+    }
+    if input_location != _OMIT:
+        row["input_location"] = input_location
+    return row
 
 
 class TestCatalogGating:
@@ -138,15 +163,8 @@ class TestCatalogGating:
 
 
 class TestScoreComputation:
-    def test_computes_from_latest_run(self, client, sql_mock):
-        sql_mock.query_dicts.return_value = [
-            {"run_id": "r1", "metric_name": "input_row_count", "metric_value": "100"},
-            {
-                "run_id": "r1",
-                "metric_name": "check_metrics",
-                "metric_value": json.dumps([{"check_name": "rule_a", "error_count": 10, "warning_count": 0}]),
-            },
-        ]
+    def test_reads_measures_from_latest_run(self, client, sql_mock):
+        sql_mock.query_dicts.return_value = [measure_row("r1", 0.9, 10, 100)]
         resp = client.get("/api/v1/dq-score/table/main.sales.orders")
         assert resp.status_code == 200
         body = resp.json()
@@ -156,26 +174,10 @@ class TestScoreComputation:
         assert body["total_tests"] == 100
         assert body["failed_tests"] == 10
 
-    def test_multiple_checks_use_row_weighted_denominator(self, client, sql_mock):
-        sql_mock.query_dicts.return_value = [
-            {"run_id": "r9", "metric_name": "input_row_count", "metric_value": "100"},
-            {
-                "run_id": "r9",
-                "metric_name": "check_metrics",
-                "metric_value": json.dumps(
-                    [
-                        {"check_name": "rule_a", "error_count": 10, "warning_count": 0},
-                        {"check_name": "rule_b", "error_count": 20, "warning_count": 10},
-                    ]
-                ),
-            },
-        ]
-        resp = client.get("/api/v1/dq-score/table/main.sales.orders")
-        body = resp.json()
-        # failed=40, total=2 rules * 100 rows = 200 -> 0.8
-        assert body["score"] == pytest.approx(0.8)
-        assert body["total_tests"] == 200
-        assert body["failed_tests"] == 40
+    def test_score_is_rounded_to_four_decimals(self, client, sql_mock):
+        sql_mock.query_dicts.return_value = [measure_row("r1", 0.857142857142, 40, 280)]
+        body = client.get("/api/v1/dq-score/table/main.sales.orders").json()
+        assert body["score"] == pytest.approx(0.8571)
 
     def test_no_runs_yields_null_score(self, client, sql_mock):
         sql_mock.query_dicts.return_value = []
@@ -188,22 +190,25 @@ class TestScoreComputation:
         assert body["failed_tests"] == 0
 
     def test_run_without_check_metrics_yields_null_score(self, client, sql_mock):
-        # Runs predating check_metrics emission still return the run id
-        # but no score.
-        sql_mock.query_dicts.return_value = [
-            {"run_id": "r1", "metric_name": "input_row_count", "metric_value": "100"},
-        ]
-        resp = client.get("/api/v1/dq-score/table/main.sales.orders")
-        body = resp.json()
+        # A run predating check_metrics emission surfaces as an all-NULL
+        # measure row (the shaping view's placeholder row keeps the run
+        # visible) — the run id is still reported, without a score.
+        sql_mock.query_dicts.return_value = [measure_row("r1", None, None, None)]
+        body = client.get("/api/v1/dq-score/table/main.sales.orders").json()
         assert body["score"] is None
         assert body["latest_run_id"] == "r1"
         assert body["total_tests"] == 0
+        assert body["failed_tests"] == 0
 
-    def test_query_targets_metrics_table_and_escapes_fqn(self, client, sql_mock, app_config):
+    def test_query_measures_the_metric_view_and_escapes_fqn(self, client, sql_mock, app_config):
         client.get("/api/v1/dq-score/table/main.sales.orders")
         stmt = sql_mock.query_dicts.call_args[0][0]
-        assert f"{app_config.catalog}.{app_config.schema_name}.dq_metrics" in stmt
+        assert f"{app_config.catalog}.{app_config.schema_name}.{METRIC_VIEW_NAME}" in stmt
         assert "'main.sales.orders'" in stmt
+        assert "MEASURE(score)" in stmt
+        assert "MEASURE(failed_tests)" in stmt
+        assert "MEASURE(total_tests)" in stmt
+        assert "is_latest_run" in stmt
 
     def test_sql_failure_maps_to_500(self, client, sql_mock):
         sql_mock.query_dicts.side_effect = RuntimeError("warehouse down")
@@ -213,14 +218,12 @@ class TestScoreComputation:
 
 class TestProductScore:
     def test_averages_member_tables(self, client, sql_mock, data_products_mock):
-        data_products_mock.get.return_value = make_product_detail(
-            "p1", ["main.sales.orders", "dev.sales.items"]
-        )
+        data_products_mock.get.return_value = make_product_detail("p1", ["main.sales.orders", "dev.sales.items"])
 
-        def per_table_rows(stmt: str) -> list[dict[str, str]]:
+        def per_table_rows(stmt: str) -> list[dict[str, str | None]]:
             if "'main.sales.orders'" in stmt:
-                return metrics_rows("r1", 100, 10)  # score 0.9
-            return metrics_rows("r2", 100, 30)  # score 0.7
+                return [measure_row("r1", 0.9, 10, 100)]
+            return [measure_row("r2", 0.7, 30, 100)]
 
         sql_mock.query_dicts.side_effect = per_table_rows
         resp = client.get("/api/v1/dq-score/product/p1")
@@ -242,10 +245,8 @@ class TestProductScore:
         sql_mock.query_dicts.assert_not_called()
 
     def test_inaccessible_catalogs_are_filtered_not_403(self, client, sql_mock, data_products_mock):
-        data_products_mock.get.return_value = make_product_detail(
-            "p1", ["main.sales.orders", "secret.hr.salaries"]
-        )
-        sql_mock.query_dicts.return_value = metrics_rows("r1", 100, 10)
+        data_products_mock.get.return_value = make_product_detail("p1", ["main.sales.orders", "secret.hr.salaries"])
+        sql_mock.query_dicts.return_value = [measure_row("r1", 0.9, 10, 100)]
         resp = client.get("/api/v1/dq-score/product/p1")
         assert resp.status_code == 200
         body = resp.json()
@@ -257,13 +258,11 @@ class TestProductScore:
             assert "secret.hr.salaries" not in call[0][0]
 
     def test_unscored_members_excluded_from_mean_but_listed(self, client, sql_mock, data_products_mock):
-        data_products_mock.get.return_value = make_product_detail(
-            "p1", ["main.sales.orders", "main.sales.new_table"]
-        )
+        data_products_mock.get.return_value = make_product_detail("p1", ["main.sales.orders", "main.sales.new_table"])
 
-        def per_table_rows(stmt: str) -> list[dict[str, str]]:
+        def per_table_rows(stmt: str) -> list[dict[str, str | None]]:
             if "'main.sales.orders'" in stmt:
-                return metrics_rows("r1", 100, 10)  # score 0.9
+                return [measure_row("r1", 0.9, 10, 100)]
             return []  # never run -> no score
 
         sql_mock.query_dicts.side_effect = per_table_rows
@@ -319,10 +318,10 @@ class TestRuleScore:
         }
         monitored_tables_mock.get.side_effect = details.get
 
-        def per_table_rows(stmt: str) -> list[dict[str, str]]:
+        def per_table_rows(stmt: str) -> list[dict[str, str | None]]:
             if "'main.sales.orders'" in stmt:
-                return metrics_rows("r1", 100, 10)  # score 0.9
-            return metrics_rows("r2", 100, 30)  # score 0.7
+                return [measure_row("r1", 0.9, 10, 100)]
+            return [measure_row("r2", 0.7, 30, 100)]
 
         sql_mock.query_dicts.side_effect = per_table_rows
         resp = client.get("/api/v1/dq-score/rule/r1")
@@ -355,7 +354,7 @@ class TestRuleScore:
             "b3": make_binding_detail("b3", "secret.hr.salaries"),
         }
         monitored_tables_mock.get.side_effect = details.get
-        sql_mock.query_dicts.return_value = metrics_rows("r1", 100, 10)
+        sql_mock.query_dicts.return_value = [measure_row("r1", 0.9, 10, 100)]
         resp = client.get("/api/v1/dq-score/rule/r1")
         assert resp.status_code == 200
         body = resp.json()
@@ -374,19 +373,17 @@ class TestRuleScore:
             make_applied_rule("ar1", "b1"),
             make_applied_rule("ar2", "b-deleted"),
         ]
-        monitored_tables_mock.get.side_effect = (
-            lambda binding_id: make_binding_detail("b1", "main.sales.orders") if binding_id == "b1" else None
+        monitored_tables_mock.get.side_effect = lambda binding_id: (
+            make_binding_detail("b1", "main.sales.orders") if binding_id == "b1" else None
         )
-        sql_mock.query_dicts.return_value = metrics_rows("r1", 100, 10)
+        sql_mock.query_dicts.return_value = [measure_row("r1", 0.9, 10, 100)]
         resp = client.get("/api/v1/dq-score/rule/r1")
         assert resp.status_code == 200
         body = resp.json()
         assert body["applied_to_count"] == 2
         assert [t["source_table_fqn"] for t in body["per_table"]] == ["main.sales.orders"]
 
-    def test_binding_lookup_error_is_skipped_not_500(
-        self, client, sql_mock, apply_rules_mock, monitored_tables_mock
-    ):
+    def test_binding_lookup_error_is_skipped_not_500(self, client, sql_mock, apply_rules_mock, monitored_tables_mock):
         apply_rules_mock.list_bindings_for_rule.return_value = [
             make_applied_rule("ar1", "b1"),
             make_applied_rule("ar2", "b-broken"),
@@ -398,7 +395,7 @@ class TestRuleScore:
             raise RuntimeError("lakebase hiccup")
 
         monitored_tables_mock.get.side_effect = get_binding
-        sql_mock.query_dicts.return_value = metrics_rows("r1", 100, 10)
+        sql_mock.query_dicts.return_value = [measure_row("r1", 0.9, 10, 100)]
         resp = client.get("/api/v1/dq-score/rule/r1")
         assert resp.status_code == 200
         body = resp.json()
@@ -413,7 +410,7 @@ class TestRuleScore:
             make_applied_rule("ar2", "b1"),
         ]
         monitored_tables_mock.get.return_value = make_binding_detail("b1", "main.sales.orders")
-        sql_mock.query_dicts.return_value = metrics_rows("r1", 100, 10)
+        sql_mock.query_dicts.return_value = [measure_row("r1", 0.9, 10, 100)]
         resp = client.get("/api/v1/dq-score/rule/r1")
         body = resp.json()
         assert body["applied_to_count"] == 2
@@ -433,9 +430,9 @@ class TestRuleScore:
         }
         monitored_tables_mock.get.side_effect = details.get
 
-        def per_table_rows(stmt: str) -> list[dict[str, str]]:
+        def per_table_rows(stmt: str) -> list[dict[str, str | None]]:
             if "'main.sales.orders'" in stmt:
-                return metrics_rows("r1", 100, 10)  # score 0.9
+                return [measure_row("r1", 0.9, 10, 100)]
             return []  # never run -> no score
 
         sql_mock.query_dicts.side_effect = per_table_rows
@@ -451,27 +448,8 @@ class TestRuleScore:
         assert resp.status_code == 500
 
 
-def latest_run_listing(fqn_to_run: dict[str, str]) -> list[dict[str, str]]:
-    """Rows returned by the global endpoint's latest-run-per-table listing."""
-    return [{"input_location": fqn, "run_id": run_id} for fqn, run_id in fqn_to_run.items()]
-
-
 class TestGlobalScore:
-    """``GET /global`` — latest run per table across ALL of dq_metrics."""
-
-    @staticmethod
-    def _route_by_stmt(listing: list[dict[str, str]], per_table: dict[str, list[dict[str, str]]]):
-        """side_effect that serves the listing query, then per-table metric queries."""
-
-        def rows(stmt: str) -> list[dict[str, str]]:
-            if "ROW_NUMBER" in stmt:
-                return listing
-            for fqn, table_rows in per_table.items():
-                if f"'{fqn}'" in stmt:
-                    return table_rows
-            return []
-
-        return rows
+    """``GET /global`` — one MEASURE() query grouped by input_location."""
 
     def test_global_routes_to_global_handler_not_table_catchall(self, client, sql_mock):
         """/global must hit the global handler, not any parameterized route.
@@ -489,21 +467,13 @@ class TestGlobalScore:
     def test_get_global_score_filters_to_accessible_catalogs(self, client, sql_mock):
         # 3 tables in dq_metrics across 3 catalogs; user can access main+dev
         # only -> secret.* is silently excluded from both the breakdown and
-        # the mean (filtered, never 403).
-        sql_mock.query_dicts.side_effect = self._route_by_stmt(
-            latest_run_listing(
-                {
-                    "main.sales.orders": "r1",
-                    "dev.sales.items": "r2",
-                    "secret.hr.salaries": "r3",
-                }
-            ),
-            {
-                "main.sales.orders": metrics_rows("r1", 100, 10),  # score 0.9
-                "dev.sales.items": metrics_rows("r2", 100, 30),  # score 0.7
-                "secret.hr.salaries": metrics_rows("r3", 100, 50),
-            },
-        )
+        # the mean (filtered, never 403). The metric view returns every
+        # catalog — the app-layer OBO filter is the enforcement boundary.
+        sql_mock.query_dicts.return_value = [
+            measure_row("r1", 0.9, 10, 100, input_location="main.sales.orders"),
+            measure_row("r2", 0.7, 30, 100, input_location="dev.sales.items"),
+            measure_row("r3", 0.5, 50, 100, input_location="secret.hr.salaries"),
+        ]
         resp = client.get("/api/v1/dq-score/global")
         assert resp.status_code == 200
         body = resp.json()
@@ -511,14 +481,19 @@ class TestGlobalScore:
         assert body["table_count"] == 2
         # Unweighted mean of the accessible tables only: (0.9 + 0.7) / 2.
         assert body["overall_score"] == pytest.approx(0.8)
-        for call in sql_mock.query_dicts.call_args_list:
-            assert "'secret.hr.salaries'" not in call[0][0]
+
+    def test_tables_carry_latest_run_ids(self, client, sql_mock):
+        sql_mock.query_dicts.return_value = [
+            measure_row("r1", 0.9, 10, 100, input_location="main.sales.orders"),
+        ]
+        body = client.get("/api/v1/dq-score/global").json()
+        assert body["tables"][0]["latest_run_id"] == "r1"
 
     def test_unscored_tables_excluded_from_mean_but_listed(self, client, sql_mock):
-        sql_mock.query_dicts.side_effect = self._route_by_stmt(
-            latest_run_listing({"main.sales.orders": "r1", "main.sales.new_table": "r2"}),
-            {"main.sales.orders": metrics_rows("r1", 100, 10)},  # new_table -> no rows -> no score
-        )
+        sql_mock.query_dicts.return_value = [
+            measure_row("r1", 0.9, 10, 100, input_location="main.sales.orders"),
+            measure_row("r2", None, None, None, input_location="main.sales.new_table"),
+        ]
         resp = client.get("/api/v1/dq-score/global")
         body = resp.json()
         assert body["table_count"] == 2
@@ -527,20 +502,33 @@ class TestGlobalScore:
         assert body["overall_score"] == pytest.approx(0.9)  # mean over scored tables only
 
     def test_no_scored_tables_yields_null_overall(self, client, sql_mock):
-        sql_mock.query_dicts.side_effect = self._route_by_stmt(
-            latest_run_listing({"main.sales.orders": "r1"}), {}
-        )
+        sql_mock.query_dicts.return_value = [
+            measure_row("r1", None, None, None, input_location="main.sales.orders"),
+        ]
         resp = client.get("/api/v1/dq-score/global")
         assert resp.status_code == 200
         body = resp.json()
         assert body["overall_score"] is None
         assert body["table_count"] == 1
 
-    def test_listing_query_targets_metrics_table(self, client, sql_mock, app_config):
+    def test_rows_without_input_location_are_skipped(self, client, sql_mock):
+        sql_mock.query_dicts.return_value = [
+            measure_row("r1", 0.9, 10, 100, input_location=None),
+            measure_row("r2", 0.7, 30, 100, input_location="main.sales.orders"),
+        ]
+        body = client.get("/api/v1/dq-score/global").json()
+        assert [t["source_table_fqn"] for t in body["tables"]] == ["main.sales.orders"]
+        assert body["table_count"] == 1
+
+    def test_single_query_measures_the_metric_view(self, client, sql_mock, app_config):
         sql_mock.query_dicts.return_value = []
         client.get("/api/v1/dq-score/global")
+        assert sql_mock.query_dicts.call_count == 1
         stmt = sql_mock.query_dicts.call_args[0][0]
-        assert f"{app_config.catalog}.{app_config.schema_name}.dq_metrics" in stmt
+        assert f"{app_config.catalog}.{app_config.schema_name}.{METRIC_VIEW_NAME}" in stmt
+        assert "MEASURE(score)" in stmt
+        assert "is_latest_run" in stmt
+        assert "GROUP BY input_location" in stmt
 
     def test_sql_failure_maps_to_500(self, client, sql_mock):
         sql_mock.query_dicts.side_effect = RuntimeError("warehouse down")
@@ -549,9 +537,7 @@ class TestGlobalScore:
 
 
 class TestRbac:
-    @pytest.mark.parametrize(
-        "operation_id", ["getTableScore", "getProductScore", "getRuleScore", "getGlobalScore"]
-    )
+    @pytest.mark.parametrize("operation_id", ["getTableScore", "getProductScore", "getRuleScore", "getGlobalScore"])
     def test_route_is_gated_for_all_roles(self, operation_id):
         """Score reads are viewer-visible, like the metrics routes."""
         from databricks_labs_dqx_app.backend.routes.v1 import dq_score

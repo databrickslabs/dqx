@@ -1,12 +1,19 @@
 """DQ score read API.
 
-Computes table-level DQ scores from the existing ``dq_metrics`` table —
-no changes to the frozen metrics-emission pipeline. Aggregate scores
-are low-sensitivity (counts only, no row values), so access is gated
-at catalog granularity via the same *get_user_catalog_names* OBO
-pattern already used by ``metrics.py``, not a full per-table live check
-(that stricter check is reserved for the row-level sample endpoint,
-since that returns actual row values).
+Reads table-level DQ scores from the ``mv_dq_scores`` UC metric view
+via MEASURE() queries (see ``services.score_view_service`` for the view
+DDL) — the view derives everything from the existing ``dq_metrics``
+table, so the frozen metrics-emission pipeline is unchanged. The score
+formula is specified (and unit-tested) by ``ScoreService``; the metric
+view is its SQL translation.
+
+The metric view is SP-owned and executes with definer's rights, so it
+is NOT the permission boundary: aggregate scores are low-sensitivity
+(counts only, no row values) and access is gated at catalog granularity
+via the same *get_user_catalog_names* OBO pattern already used by
+``metrics.py``, not a full per-table live check (that stricter check is
+reserved for the row-level sample endpoint, since that returns actual
+row values).
 """
 
 from __future__ import annotations
@@ -29,7 +36,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
 )
 from databricks_labs_dqx_app.backend.metrics_utils import (
     catalog_of,
-    parse_check_metrics,
+    safe_float,
     safe_int,
 )
 from databricks_labs_dqx_app.backend.models import (
@@ -43,6 +50,7 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRu
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.score_service import ScoreService
+from databricks_labs_dqx_app.backend.services.score_view_service import metric_view_fqn
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
@@ -52,39 +60,44 @@ router = APIRouter()
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 
 
-def _compute_score_for_table(table_fqn: str, sql: SqlExecutor, app_conf: AppConfig) -> TableScoreOut:
-    """Compute the row-weighted DQ score for *table_fqn*'s latest run.
+def _row_to_table_score(table_fqn: str, row: dict[str, str | None]) -> TableScoreOut:
+    """Map one mv_dq_scores MEASURE() result row onto TableScoreOut.
 
-    Shared by the table and product endpoints. Raises the underlying
-    exception on SQL failure — callers map it to an HTTP status.
+    The Statement Execution API returns every value as a string (or
+    None for SQL NULL): *score* is NULL when the run has no rows or no
+    per-check breakdown — the metric view's TRY_DIVIDE analogue of
+    ScoreService returning None.
     """
-    metrics_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_metrics"
+    score = safe_float(row.get("score"))
+    return TableScoreOut(
+        source_table_fqn=table_fqn,
+        score=round(score, 4) if score is not None else None,
+        latest_run_id=row.get("run_id"),
+        total_tests=safe_int(row.get("total_tests")) or 0,
+        failed_tests=safe_int(row.get("failed_tests")) or 0,
+    )
+
+
+def _compute_score_for_table(table_fqn: str, sql: SqlExecutor, app_conf: AppConfig) -> TableScoreOut:
+    """Read the row-weighted DQ score for *table_fqn*'s latest run.
+
+    Shared by the table, product, and rule endpoints. Raises the
+    underlying exception on SQL failure — callers map it to an HTTP
+    status.
+    """
+    mv = metric_view_fqn(app_conf.catalog, app_conf.schema_name)
     e_fqn = escape_sql_string(table_fqn)
     stmt = (
-        f"WITH latest_run AS ("
-        f"  SELECT run_id FROM {metrics_table} WHERE input_location = '{e_fqn}' "  # noqa: S608
-        f"  ORDER BY run_time DESC LIMIT 1"
-        f") "
-        f"SELECT m.run_id, m.metric_name, m.metric_value FROM {metrics_table} m "
-        f"JOIN latest_run lr ON lr.run_id = m.run_id"
+        f"SELECT run_id, MEASURE(score) AS score, "
+        f"MEASURE(failed_tests) AS failed_tests, MEASURE(total_tests) AS total_tests "
+        f"FROM {mv} "  # noqa: S608
+        f"WHERE is_latest_run AND input_location = '{e_fqn}' "
+        f"GROUP BY run_id"
     )
     rows = sql.query_dicts(stmt)
     if not rows:
         return TableScoreOut(source_table_fqn=table_fqn)
-
-    metrics = {r["metric_name"]: r["metric_value"] for r in rows}
-    input_row_count = safe_int(metrics.get("input_row_count")) or 0
-    check_metrics = parse_check_metrics(metrics.get("check_metrics"))
-    score = ScoreService.compute_table_score(check_metrics, input_row_count)
-    failed = sum(m.error_count + m.warning_count for m in check_metrics)
-
-    return TableScoreOut(
-        source_table_fqn=table_fqn,
-        score=round(score, 4) if score is not None else None,
-        latest_run_id=rows[0]["run_id"],
-        total_tests=input_row_count * len(check_metrics),
-        failed_tests=failed,
-    )
+    return _row_to_table_score(table_fqn, rows[0])
 
 
 # Registered BEFORE the parameterized routes: FastAPI matches in
@@ -102,24 +115,31 @@ def get_global_score(
 ) -> GlobalScoreOut:
     """Return the cross-table DQ score over every table tracked in dq_metrics.
 
-    Takes the latest run per *input_location*, silently filters out
-    tables in catalogs the requesting user cannot access (same gate as
-    the product endpoint — filtered, never 403), and averages the
-    scored tables with an unweighted mean.
+    One MEASURE() query over the latest run per *input_location*
+    (``is_latest_run`` selects exactly one run per location, so adding
+    ``run_id`` to the grouping keeps one row per table while surfacing
+    the run id). Tables in catalogs the requesting user cannot access
+    are silently filtered app-side (same gate as the product endpoint —
+    filtered, never 403; the SP-owned metric view is not the permission
+    boundary), and the scored tables are averaged with an unweighted
+    mean.
     """
-    metrics_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_metrics"
+    mv = metric_view_fqn(app_conf.catalog, app_conf.schema_name)
     stmt = (
-        f"WITH latest AS ("
-        f"  SELECT input_location, run_id, "
-        f"         ROW_NUMBER() OVER (PARTITION BY input_location ORDER BY run_time DESC) AS rn "
-        f"  FROM {metrics_table}"  # noqa: S608
-        f") SELECT DISTINCT input_location, run_id FROM latest WHERE rn = 1"
+        f"SELECT input_location, run_id, MEASURE(score) AS score, "
+        f"MEASURE(failed_tests) AS failed_tests, MEASURE(total_tests) AS total_tests "
+        f"FROM {mv} "  # noqa: S608
+        f"WHERE is_latest_run "
+        f"GROUP BY input_location, run_id "
+        f"ORDER BY input_location"
     )
     try:
-        latest_runs = sql.query_dicts(stmt)
-        fqns = [fqn for r in latest_runs if (fqn := r.get("input_location"))]
-        accessible = [fqn for fqn in fqns if catalog_of(fqn) in user_catalogs]
-        tables = [_compute_score_for_table(fqn, sql, app_conf) for fqn in accessible]
+        rows = sql.query_dicts(stmt)
+        tables = [
+            _row_to_table_score(fqn, row)
+            for row in rows
+            if (fqn := row.get("input_location")) and catalog_of(fqn) in user_catalogs
+        ]
     except Exception as exc:
         logger.exception("Failed to compute global score")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -213,9 +233,7 @@ def _resolve_binding_fqns(applications: list[AppliedRule], monitored_tables: Mon
         try:
             detail = monitored_tables.get(application.binding_id)
         except Exception:
-            logger.warning(
-                "Skipping binding %s in rule score: lookup failed", application.binding_id, exc_info=True
-            )
+            logger.warning("Skipping binding %s in rule score: lookup failed", application.binding_id, exc_info=True)
             continue
         if detail is None:
             logger.warning("Skipping binding %s in rule score: binding not found", application.binding_id)

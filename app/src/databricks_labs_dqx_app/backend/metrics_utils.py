@@ -31,6 +31,21 @@ def safe_int(value: Any) -> int | None:
         return None
 
 
+def safe_float(value: Any) -> float | None:
+    """Best-effort string→float that tolerates ``None`` and empty strings.
+
+    The Statement Execution API returns every value as a string, so
+    MEASURE() results arrive as e.g. ``'0.9'`` — parse them without
+    letting a malformed value crash the response mapping.
+    """
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_check_metrics(raw: Any) -> list[CheckMetricBreakdown]:
     """Parse the ``check_metrics`` JSON-string emitted by the observer."""
     if not raw:
