@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import selector from "@/lib/selector";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
+import { GenieChatProvider } from "@/components/results/AskGenieButton";
 import { RunPicker, type Run } from "@/components/results/RunPicker";
 import { includeDraftsParam } from "@/components/results/RunModeSelect";
 import {
@@ -143,18 +144,30 @@ function ResultsBody({ productId }: { productId: string }) {
     useGetProductResults(productId, params, { query: queryOptions });
 
   return (
-    <MultiTableResultsSection
-      useEntityResults={useEntityResults}
-      scoreLabel={() => t("resultsUi.averageScoreLabel")}
-      requiredFqns={memberFqns}
-      includeDrafts={includeDrafts}
-      onIncludeDraftsChange={setIncludeDrafts}
-      // Fixed to "Latest": only the newest entry is offered, and selecting it
-      // resolves to the latest path anyway, so onChange is a no-op (see the
-      // run-picker adaptation note in the module comment).
-      runPickerSlot={
-        <RunPicker runs={productRunPickerRuns(runs)} value={null} onChange={() => {}} />
-      }
-    />
+    // Genie chat scope (P3.10, restoring dqlake's ProductResultsTab wrapper):
+    // conversation keyed to this product; sent questions carry the product
+    // name PLUS its member-table FQNs — no product-level object exists in the
+    // aggregates-only Genie space, so the P3.9 space instructions route
+    // product questions on that table list (our adaptation).
+    <GenieChatProvider
+      context={`data product ${productId}`}
+      contextKind="product"
+      contextSubject={product.name}
+      contextTables={memberFqns}
+    >
+      <MultiTableResultsSection
+        useEntityResults={useEntityResults}
+        scoreLabel={() => t("resultsUi.averageScoreLabel")}
+        requiredFqns={memberFqns}
+        includeDrafts={includeDrafts}
+        onIncludeDraftsChange={setIncludeDrafts}
+        // Fixed to "Latest": only the newest entry is offered, and selecting it
+        // resolves to the latest path anyway, so onChange is a no-op (see the
+        // run-picker adaptation note in the module comment).
+        runPickerSlot={
+          <RunPicker runs={productRunPickerRuns(runs)} value={null} onChange={() => {}} />
+        }
+      />
+    </GenieChatProvider>
   );
 }

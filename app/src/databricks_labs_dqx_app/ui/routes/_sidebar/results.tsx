@@ -9,6 +9,7 @@ import { FadeIn } from "@/components/anim/FadeIn";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useGetGlobalResults } from "@/lib/api";
+import { AskGenieButton } from "@/components/results/AskGenieButton";
 import {
   MultiTableResultsSection,
   type UseEntityResults,
@@ -91,6 +92,12 @@ function GlobalResultsContent() {
             // from the accessible by-table rows.
           />
         </div>
+
+        {/* Genie chat launcher (P3.10, restoring dqlake's ResultsOverview
+            standalone button): unscoped conversation over all tables — no
+            contextKind, so the default (table-worded) suggested questions
+            show and no subject preamble is injected. */}
+        <AskGenieButton context="all tables" />
       </div>
     </FadeIn>
   );

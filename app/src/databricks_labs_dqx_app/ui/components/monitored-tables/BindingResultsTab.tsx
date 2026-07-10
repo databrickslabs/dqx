@@ -22,6 +22,7 @@ import {
 } from "@/lib/api";
 import selector from "@/lib/selector";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
+import { GenieChatProvider } from "@/components/results/AskGenieButton";
 import { ScoreBox } from "@/components/results/ScoreBox";
 import { RunPicker } from "@/components/results/RunPicker";
 import { RunModeSelect, includeDraftsParam } from "@/components/results/RunModeSelect";
@@ -159,31 +160,40 @@ export function BindingResultsTab({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="space-y-6 pt-4 max-w-5xl">
-      <QueryErrorResetBoundary>
-        {({ reset }) => (
-          <ErrorBoundary
-            onReset={reset}
-            fallbackRender={({ resetErrorBoundary }) => (
-              <div className="rounded-md border border-dashed p-6 text-center space-y-2">
-                <p className="text-sm">{t("resultsUi.loadFailed")}</p>
-                <Button variant="outline" size="sm" onClick={resetErrorBoundary}>
-                  {t("resultsUi.tryAgain")}
-                </Button>
-              </div>
-            )}
-          >
-            <ResultsBody
-              bindingId={bindingId}
-              tableName={tableName}
-              tableFqn={tableFqn}
-              neverApproved={neverApproved}
-              runInProgress={runInProgress}
-            />
-          </ErrorBoundary>
-        )}
-      </QueryErrorResetBoundary>
-    </div>
+    // Genie chat scope (P3.10, restoring dqlake's BindingIssuesTab wrapper):
+    // the floating "Ask Genie" launcher + sidebar, conversation keyed to this
+    // binding, questions sent with the table FQN preamble.
+    <GenieChatProvider
+      context={`table binding ${bindingId}`}
+      contextKind="table"
+      contextSubject={tableFqn}
+    >
+      <div className="space-y-6 pt-4 max-w-5xl">
+        <QueryErrorResetBoundary>
+          {({ reset }) => (
+            <ErrorBoundary
+              onReset={reset}
+              fallbackRender={({ resetErrorBoundary }) => (
+                <div className="rounded-md border border-dashed p-6 text-center space-y-2">
+                  <p className="text-sm">{t("resultsUi.loadFailed")}</p>
+                  <Button variant="outline" size="sm" onClick={resetErrorBoundary}>
+                    {t("resultsUi.tryAgain")}
+                  </Button>
+                </div>
+              )}
+            >
+              <ResultsBody
+                bindingId={bindingId}
+                tableName={tableName}
+                tableFqn={tableFqn}
+                neverApproved={neverApproved}
+                runInProgress={runInProgress}
+              />
+            </ErrorBoundary>
+          )}
+        </QueryErrorResetBoundary>
+      </div>
+    </GenieChatProvider>
   );
 }
 
