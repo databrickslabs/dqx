@@ -2033,9 +2033,6 @@
     "tabTables": "Tabelle",
     "tabRuns": "Esecuzioni",
     "tabResults": "Risultati",
-    "resultsAverageScoreLabel": "Punteggio medio delle tabelle",
-    "resultsBreakdownTitle": "Punteggi per tabella",
-    "resultsNoMembers": "Nessuna tabella membro al momento.",
     "tabSchedule": "Pianificazione",
     "tabHistory": "Cronologia",
     "historyEmpty": "Ancora nessuna cronologia.",
@@ -2319,6 +2316,14 @@
     "chipDimension": "Dimensione: {{value}}",
     "chipSeverity": "Severità: {{value}}",
     "chipRule": "Regola: {{value}}",
-    "chipColumn": "Colonna: {{value}}"
+    "chipColumn": "Colonna: {{value}}",
+    "averageScoreLabel": "Punteggio medio",
+    "averageDqScoreTitle": "Punteggio DQ medio",
+    "byTableTitle": "Per tabella",
+    "tableHeader": "Tabella",
+    "invalidSamplesTitle": "Campioni non validi",
+    "pickTableForColumns": "Scegli una tabella per vedere le colonne",
+    "noColumnsForTable": "Nessuna colonna per questa tabella.",
+    "invalidSamplesUnavailable": "I campioni non validi non possono essere mostrati per questa tabella."
   }
 }

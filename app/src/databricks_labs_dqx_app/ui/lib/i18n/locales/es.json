@@ -2033,9 +2033,6 @@
     "tabTables": "Tablas",
     "tabRuns": "Ejecuciones",
     "tabResults": "Resultados",
-    "resultsAverageScoreLabel": "Puntuación media de las tablas",
-    "resultsBreakdownTitle": "Puntuaciones por tabla",
-    "resultsNoMembers": "Aún no hay tablas miembro.",
     "tabSchedule": "Programación",
     "tabHistory": "Historial",
     "historyEmpty": "Aún no hay historial.",
@@ -2319,6 +2316,14 @@
     "chipDimension": "Dimensión: {{value}}",
     "chipSeverity": "Severidad: {{value}}",
     "chipRule": "Regla: {{value}}",
-    "chipColumn": "Columna: {{value}}"
+    "chipColumn": "Columna: {{value}}",
+    "averageScoreLabel": "Puntuación media",
+    "averageDqScoreTitle": "Puntuación media de CD",
+    "byTableTitle": "Por tabla",
+    "tableHeader": "Tabla",
+    "invalidSamplesTitle": "Muestras inválidas",
+    "pickTableForColumns": "Elige una tabla para ver las columnas",
+    "noColumnsForTable": "No hay columnas para esta tabla.",
+    "invalidSamplesUnavailable": "Las muestras inválidas no pueden mostrarse para esta tabla."
   }
 }

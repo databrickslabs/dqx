@@ -2033,9 +2033,6 @@
     "tabTables": "Tables",
     "tabRuns": "Runs",
     "tabResults": "Results",
-    "resultsAverageScoreLabel": "Average table score",
-    "resultsBreakdownTitle": "Per-table scores",
-    "resultsNoMembers": "No member tables yet.",
     "tabSchedule": "Schedule",
     "tabHistory": "History",
     "historyEmpty": "No history yet.",
@@ -2319,6 +2316,14 @@
     "chipDimension": "Dimension: {{value}}",
     "chipSeverity": "Severity: {{value}}",
     "chipRule": "Rule: {{value}}",
-    "chipColumn": "Column: {{value}}"
+    "chipColumn": "Column: {{value}}",
+    "averageScoreLabel": "Average score",
+    "averageDqScoreTitle": "Average DQ Score",
+    "byTableTitle": "By table",
+    "tableHeader": "Table",
+    "invalidSamplesTitle": "Invalid samples",
+    "pickTableForColumns": "Pick a table to view columns",
+    "noColumnsForTable": "No columns for this table.",
+    "invalidSamplesUnavailable": "Invalid samples can't be shown for this table."
   }
 }

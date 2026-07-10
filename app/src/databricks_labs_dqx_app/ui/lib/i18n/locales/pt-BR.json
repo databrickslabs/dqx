@@ -2033,9 +2033,6 @@
     "tabTables": "Tabelas",
     "tabRuns": "Execuções",
     "tabResults": "Resultados",
-    "resultsAverageScoreLabel": "Pontuação média das tabelas",
-    "resultsBreakdownTitle": "Pontuações por tabela",
-    "resultsNoMembers": "Ainda não há tabelas membro.",
     "tabSchedule": "Agendamento",
     "tabHistory": "Histórico",
     "historyEmpty": "Ainda não há histórico.",
@@ -2319,6 +2316,14 @@
     "chipDimension": "Dimensão: {{value}}",
     "chipSeverity": "Severidade: {{value}}",
     "chipRule": "Regra: {{value}}",
-    "chipColumn": "Coluna: {{value}}"
+    "chipColumn": "Coluna: {{value}}",
+    "averageScoreLabel": "Pontuação média",
+    "averageDqScoreTitle": "Pontuação média de QD",
+    "byTableTitle": "Por tabela",
+    "tableHeader": "Tabela",
+    "invalidSamplesTitle": "Amostras inválidas",
+    "pickTableForColumns": "Escolha uma tabela para ver as colunas",
+    "noColumnsForTable": "Nenhuma coluna para esta tabela.",
+    "invalidSamplesUnavailable": "As amostras inválidas não podem ser exibidas para esta tabela."
   }
 }
