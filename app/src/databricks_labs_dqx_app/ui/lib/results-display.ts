@@ -76,22 +76,6 @@ export function ruleResultsState(score: {
 }
 
 /**
- * Data states of the global (org-wide) Results page.
- *
- * The backend filters `tables` to the viewer's accessible catalogs, so
- * "empty" covers both "nothing tracked in dq_metrics yet" and "nothing the
- * viewer can see" — either way the page shows an explanatory empty state
- * instead of a meaningless zero-table ScoreBox. Tables without a scored run
- * still count as data: they render in the breakdown with a "No runs yet"
- * placeholder.
- */
-export type GlobalResultsState = "empty" | "has-data";
-
-export function globalResultsState(score: { tables?: TableScoreOut[] }): GlobalResultsState {
-  return (score.tables?.length ?? 0) === 0 ? "empty" : "has-data";
-}
-
-/**
  * Union of row_values column names across all records, preserving
  * first-seen order — records may differ in shape (e.g. legacy rows), so
  * deriving from only the first record could drop columns.

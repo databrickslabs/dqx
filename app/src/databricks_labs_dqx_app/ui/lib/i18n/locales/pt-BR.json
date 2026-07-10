@@ -2244,9 +2244,7 @@
     "title": "Resultados",
     "subtitle": "Qualidade de dados de toda a organização em todas as tabelas monitoradas às quais você tem acesso.",
     "orgWideScoreLabel_one": "Pontuação de toda a organização em {{count}} tabela",
-    "orgWideScoreLabel_other": "Pontuação de toda a organização em {{count}} tabelas",
-    "breakdownTitle": "Pontuações por tabela",
-    "noTables": "Ainda não há resultados: execute regras em uma tabela monitorada para ver sua pontuação aqui."
+    "orgWideScoreLabel_other": "Pontuação de toda a organização em {{count}} tabelas"
   },
   "results": {
     "noRunsYet": "Nenhuma execução ainda",

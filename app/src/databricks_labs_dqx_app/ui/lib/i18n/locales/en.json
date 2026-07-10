@@ -2244,9 +2244,7 @@
     "title": "Results",
     "subtitle": "Organization-wide data quality across every monitored table you can access.",
     "orgWideScoreLabel_one": "Organization-wide score across {{count}} table",
-    "orgWideScoreLabel_other": "Organization-wide score across {{count}} tables",
-    "breakdownTitle": "Per-table scores",
-    "noTables": "No results yet — run rules on a monitored table to see its score here."
+    "orgWideScoreLabel_other": "Organization-wide score across {{count}} tables"
   },
   "results": {
     "noRunsYet": "No runs yet",

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { FailingRecordOut, GlobalScoreOut, RuleScoreOut, TableScoreOut } from "@/lib/api";
+import type { FailingRecordOut, RuleScoreOut, TableScoreOut } from "@/lib/api";
 import {
   SCORE_BAND_AMBER_MIN,
   SCORE_BAND_GREEN_MIN,
@@ -8,7 +8,6 @@ import {
   failedCellClass,
   failureMessageForCell,
   formatScorePercent,
-  globalResultsState,
   isFailedCell,
   rowHasWholeRowFailure,
   ruleResultsState,
@@ -316,34 +315,3 @@ describe("ruleResultsState", () => {
   });
 });
 
-describe("globalResultsState", () => {
-  const score = (over: Partial<GlobalScoreOut> = {}): GlobalScoreOut => ({
-    overall_score: 0.91,
-    table_count: 2,
-    tables: [
-      { source_table_fqn: "c.s.t1", score: 0.95 },
-      { source_table_fqn: "c.s.t2", score: 0.87 },
-    ],
-    ...over,
-  });
-
-  test("empty when no tables are tracked (or visible to the viewer)", () => {
-    expect(globalResultsState(score({ overall_score: null, table_count: 0, tables: [] }))).toBe("empty");
-  });
-
-  test("empty when tables is absent (optional in the generated types)", () => {
-    expect(globalResultsState(score({ overall_score: null, table_count: 0, tables: undefined }))).toBe("empty");
-  });
-
-  test("has-data when at least one table is visible", () => {
-    expect(globalResultsState(score())).toBe("has-data");
-  });
-
-  test("has-data even when no table has a scored run yet", () => {
-    expect(
-      globalResultsState(
-        score({ overall_score: null, table_count: 1, tables: [{ source_table_fqn: "c.s.t1", score: null }] }),
-      ),
-    ).toBe("has-data");
-  });
-});

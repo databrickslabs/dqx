@@ -8,29 +8,40 @@ import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ScoreBox } from "@/components/results/ScoreBox";
-import { TableScoreList } from "@/components/results/TableScoreList";
-import { useGetGlobalScoreSuspense } from "@/lib/api";
-import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
-import { globalResultsState, sumMemberTestCounts } from "@/lib/results-display";
+import { useGetGlobalResults } from "@/lib/api";
+import {
+  MultiTableResultsSection,
+  type UseEntityResults,
+} from "@/components/results/MultiTableResults";
 
 export const Route = createFileRoute("/_sidebar/results")({
   component: GlobalResultsPage,
 });
 
 /**
- * Global (org-wide) Results page: the cross-table DQ score over every table
- * tracked in dq_metrics, in a ScoreBox over a per-table breakdown list —
- * same layout as the Table Space and rule Results tabs (ProductResultsTab /
- * RuleResultsTab). The backend filters the table list to the viewer's
- * accessible catalogs, so tables the viewer can't see are silently absent
- * (never an error) and the empty state covers both "nothing tracked yet"
- * and "nothing you can see" (see globalResultsState).
+ * Global (org-wide) Results page: the FULL multi-table results composition
+ * (dqlake's product-tab layout, shared with the Table Space Results tab via
+ * `components/results/MultiTableResults.tsx`) over EVERY table tracked in
+ * dq_metrics that the viewer can access — average score, over-time trends,
+ * count charts, dimension/severity/rule/table/column breakdowns with facet
+ * drilldown, and per-table invalid samples (fetched through the OBO-gated
+ * failed-rows endpoint on By-table selection). The backend filters the
+ * table universe to the viewer's accessible catalogs, so tables the viewer
+ * can't see are silently absent (never an error).
  *
- * The score query never refetches on its own (RESULTS_QUERY_OPTIONS) — it
- * is refreshed by `invalidateResultsAfterRunCompletion`, which invalidates
- * every /api/v1/dq-score/* query by path prefix, fired from the Runs
- * History RUNNING-run poll and the product run-set poll.
+ * NO RUN PICKER on this page: the product tab already had to restrict its
+ * picker to "Latest" because per-table run_ids are not product-level batches
+ * (see the run-picker adaptation note in ProductResultsTab) — across the
+ * global all-tables universe a run_id is even less batch-like (it identifies
+ * one run of ONE table among all tables in the org), so no run selection can
+ * scope this view coherently and the picker is omitted entirely. The
+ * breakdown queries never pass a run_id (shared breakdownParams); "latest"
+ * is the only semantic, exactly like the product tab's pinned picker.
+ *
+ * The queries never refetch on their own (RESULTS_QUERY_OPTIONS inside the
+ * composition) — they are refreshed by `invalidateResultsAfterRunCompletion`,
+ * which invalidates every /api/v1/dq-results/* query by path prefix, fired
+ * from the Runs History RUNNING-run poll and the product run-set poll.
  */
 function GlobalResultsPage() {
   return (
@@ -46,15 +57,14 @@ function GlobalResultsPage() {
   );
 }
 
+// The composition's data source: the global (all accessible tables) results
+// endpoint — same axes/filter params as the product endpoint, no path
+// parameter. Module-scope so the hook wrapper is a stable identity.
+const useGlobalEntityResults: UseEntityResults = (params, queryOptions) =>
+  useGetGlobalResults(params, { query: queryOptions });
+
 function GlobalResultsContent() {
   const { t } = useTranslation();
-  const { data } = useGetGlobalScoreSuspense({
-    query: { select: (d) => d.data, ...RESULTS_QUERY_OPTIONS },
-  });
-
-  const tables = data.tables ?? [];
-  const { totalTests, failedTests } = sumMemberTestCounts(tables);
-
   return (
     <FadeIn>
       <div className="space-y-6">
@@ -65,28 +75,18 @@ function GlobalResultsContent() {
           <p className="text-sm text-muted-foreground mt-1">{t("globalResults.subtitle")}</p>
         </div>
 
-        {globalResultsState(data) === "empty" ? (
-          <p className="text-sm text-muted-foreground">{t("globalResults.noTables")}</p>
-        ) : (
-          <div className="flex flex-col gap-4 max-w-5xl">
-            <ScoreBox
-              passRate={data.overall_score ?? null}
-              label={t("globalResults.orgWideScoreLabel", { count: tables.length })}
-              totalTests={totalTests}
-              failedTests={failedTests}
-            />
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium">{t("globalResults.breakdownTitle")}</h3>
-              {/* Rows are deliberately NOT links to the monitored-table detail
-                  page: TableScoreOut carries only the source table FQN (no
-                  binding_id), so FQN->binding navigation would need an extra
-                  list-all-bindings lookup on every visit — and a table can
-                  appear in dq_metrics after its binding was deleted, so some
-                  rows would have no destination at all. */}
-              <TableScoreList tables={tables} />
-            </div>
-          </div>
-        )}
+        <div className="max-w-5xl">
+          <MultiTableResultsSection
+            useEntityResults={useGlobalEntityResults}
+            // Org-wide label carrying the ACCESSIBLE table count (the base
+            // by-table rows are already catalog-filtered to the viewer —
+            // Phase 1's global-score semantics).
+            scoreLabel={(count) => t("globalResults.orgWideScoreLabel", { count })}
+            // No runPickerSlot and no requiredFqns: the picker is omitted
+            // (see the module comment) and the Average-line universe derives
+            // from the accessible by-table rows.
+          />
+        </div>
       </div>
     </FadeIn>
   );
