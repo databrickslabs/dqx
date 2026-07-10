@@ -62,7 +62,11 @@ function RuleResultsContent({ ruleId }: { ruleId: string }) {
     <div className="flex flex-col gap-4 max-w-5xl">
       <ScoreBox
         score={data.overall_score ?? null}
-        label={t("rulesRegistry.resultsOverallScoreLabel", { count: appliedCount })}
+        // Deliberately the viewer-ACCESSIBLE table count (per_table.length),
+        // not applied_to_count: overall_score and the breakdown below only
+        // cover the tables the viewer can see, so the label must count the
+        // same set (applied_to_count may be higher — see ruleResultsState).
+        label={t("rulesRegistry.resultsOverallScoreLabel", { count: perTable.length })}
         totalTests={totalTests}
         failedTests={failedTests}
       />
