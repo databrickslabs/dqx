@@ -1733,6 +1733,69 @@ Replace Task 11's minimal tab content with the shared composition filtered to th
 
 Full suites + browser pass with the dqlake-fidelity lens: charts render with real trend data, breakdowns filter, drilldown chips work, per-cell severity tinting uses admin-configured severity colors, exports download, rule tab enables immediately after applying a rule, no idle refetch, global page spans all tables. Side-by-side eyeball against dqlake screenshots where possible.
 
+---
+
+# PHASE 3 (user directives, 2026-07-10 evening): follow-ups, draft semantics, score cache, homepage, Genie
+
+Research ground truth (recorded in ledger): binding status lifecycle is `draft|pending_approval|approved|rejected`; a draft binding CAN run today (`source="draft"` renders live unapproved rules, run-set member gets `binding_version=None`); `add_member` checks only existence, no status; `dq_validation_runs.run_type` ∈ {dryrun, scheduled, preview} reaches UC (runner promotes dryrun→scheduled when sample_size==0); `binding_version` lives only in Postgres run-set members; the frozen runner's `_aggregate_rule_labels` intersection preserves any tag that has the SAME value on every check → a uniform per-check `run_mode`/`binding_version` tag added at run-assembly time lands in `dq_metrics.user_metadata` in UC. ScoreBox counts are missing on the 3 MultiTableResults surfaces because `totalTests={0}` is hardcoded (a faithfully-ported dqlake bug); `by_table` rows already carry `total_tests`. DimensionBreakdown has no pagination anywhere (nor in dqlake).
+
+### Task P3.1: Backend hardening batch (final-review follow-ups)
+
+- Quote metric-view/shaping-view/dq_metrics/dq_quarantine_records READ FQNs (backtick-quote parts) consistently with the DDL side, so hyphenated catalogs work end-to-end (`score_view_service.metric_view_fqn`, `dq_results._shaping_view_fqn`, and the config-FQN builders in dq_score/dq_results/metrics/quarantine paths). Tests: a hyphenated-catalog fixture through each query builder.
+- Re-validate FQNs (`validate_fqn`) on the product/rule score paths before interpolation (defense-in-depth; app-DB-sourced FQNs).
+- Add `binding_id` to `by_table` GroupRows (join available in the service: table_fqn → binding via monitored-table service, already loaded for product/rule scoping; for global, one batched lookup) so the UI can link rows. Shape change is additive (`binding_id: str | None`).
+
+### Task P3.2: Draft tables cannot join table spaces
+
+- `data_product_service.add_member`: reject bindings whose status is not `approved` (or version==0/never-approved) with a clear 400; test both rejection and the approved-path success. Consider existing members: do NOT retroactively evict, but `run()` fan-out already skips never-approved under source="approved".
+- UI: the add-tables dialog filters out (or disables with a tooltip, matching how the app elsewhere disables ineligible options) non-approved bindings. i18n 4 locales.
+
+### Task P3.3: Run version / draft-run tracking
+
+- At run-assembly (binding_run_service, both draft and approved paths): stamp every check's `user_metadata` with uniform `run_mode` ("draft" | "published") and `binding_version` (int as string; absent/omitted for draft) tags — same value across all checks in the run so the frozen runner's intersection carries them into `dq_metrics.user_metadata` in UC. Do NOT touch frozen files; this happens in the checks payload the app already builds.
+- Views: `v_dq_check_results` (or the attribution join) exposes `run_mode` + `binding_version` columns read from `dq_metrics.user_metadata` map; `mv_dq_scores` gains `run_mode` as a dimension. Legacy runs without the tag: derive fallback from the runs join — `run_type='scheduled'` → published, `dryrun`/`preview` → draft (document the heuristic).
+- dq-results + dq-score endpoints: new `include_drafts: bool = False` query param — default excludes draft runs everywhere (trend, breakdowns, runs list, failed-rows, scores). Route tests for both modes + the legacy heuristic.
+
+### Task P3.4: Lakebase score cache + list-page score columns
+
+- New Lakebase table `dq_score_cache` (migration in the app's Postgres migrations + Delta fallback): `scope_type` ('table'|'product'|'global'), `scope_key` (fqn / product_id / 'global'), `score`, `failed_tests`, `total_tests`, `latest_run_id`, `run_time`, `computed_at`. PK (scope_type, scope_key). PUBLISHED-only scores (the cache backs list columns + homepage which follow the default view).
+- `ScoreCacheService`: `refresh_for_tables(fqns)` recomputes from the metric view (one warehouse query batched over the fqns) and upserts; `refresh_product(product_id)` + `refresh_global()` derive from cached table rows (unweighted means — no extra warehouse hit); `get_many(scope_type, keys)` fast read.
+- Refresh triggers: (a) server-side — a new lightweight `POST /api/v1/dq-results/refresh-scores` called by the frontend at the exact run-completion moments that already fire invalidation (results-invalidation.ts gains the POST); (b) lazy staleness — list endpoints return cached values as-is (no blocking recompute) plus `computed_at` so the UI can show staleness subtly if ever needed. No polling, no cron.
+- List endpoints: monitored-tables list + data-products list responses gain `score`, `failed_tests`, `total_tests`, `score_computed_at` joined from the cache in the same Postgres round-trip (LEFT JOIN — null when never computed). Catalog-filtering unchanged (rows already filtered).
+- UI: score column in the monitored-tables table and table-spaces table, styled like dqlake's list score badge/column (check dqlake's `DataProductsTable.tsx` and bindings table for the exact cell rendering — copy it). Sortable if the list tables support sorting. i18n 4 locales.
+
+### Task P3.5: dqlake-style homepage
+
+- Faithful port of dqlake's `routes/_sidebar/home.tsx` + `components/home/HomeStats.tsx` + `HomeGrid.tsx` (read the originals): "at a glance" overall score + workspace-wide stats + nav cards, adapted to our nav targets (Rules Registry, Monitored Tables, Table Spaces, Results, Config).
+- Backend `GET /api/v1/home/stats`: overall score from `dq_score_cache` (scope 'global'), counts from the app DB (rules, monitored tables, products — cheap Postgres counts), all in one response, no warehouse touch. dqlake's `home_stats_cache.py` semantics (short TTL in-process cache) may be layered if the Postgres counts are ever hot, but Postgres-only should be fast enough — implementer's call, note it.
+- Make it the default landing route (whatever `/` currently does — check and preserve deliberate behavior; if home already exists, replace its body faithfully).
+
+### Task P3.6: Frontend batch — run-mode dropdown, counts, pagination, small fixes
+
+- **Run-mode dropdown**: next to the run picker on the monitored-table tab (and where MultiTableResults surfaces would show it — global/product/rule get it too since drafts affect them): default "Published only", other option "Published + Draft"; wires `include_drafts` into every dq-results query on that surface. i18n 4 locales.
+- **ScoreBox counts fix**: MultiTableResults passes `totalTests` summed from `by_table[].total_tests` (and failedTests consistently from the same rows) so the failed/total subtitle renders on rule/table-space/global ScoreBoxes. (Fixes the ported dqlake `totalTests={0}` bug — deliberate, documented deviation from dqlake.)
+- **Pagination**: `DimensionBreakdown` gains optional `pageSize?: number`; when set and rows > pageSize, paginate client-side (slice + compact pager, mirroring FailingRecordsTable's existing pager idiom). Apply `pageSize={8}` to the "By table" and "By rule" boxes on all surfaces. Pure-helper tests for the pager math.
+- **Small fixes**: rule Results trigger shows a distinct tooltip on score-fetch error ("couldn't check applicability — retry") instead of silent disabled; global page by_table rows link to the monitored-table Results tab via the new `binding_id` (P3.1); RunInProgressBanner: when THIS page triggers a run, poll that run's status until terminal (active-run-scoped polling is not idle polling), show dqlake's banner while active, fire the invalidation helper on terminal — closing the Task 9 gap; draft-binding results tab shows a lightweight notice when the binding has never been approved (restores the lost pending-approval context without breaking fidelity).
+- **xlsx follow-up**: attempt migration to the official SheetJS dist (https://cdn.sheetjs.com tarball pin) IF the lockfile stays public-URL-clean and tests pass; otherwise document the risk acceptance (write-only usage) in a code comment and leave the npm pin. Either outcome is acceptable — report which.
+
+### Task P3.7: Phase 3 verification pass
+
+Full suites + browser pass: draft table cannot be added to a table space (UI + API); a draft run is excluded by default everywhere and appears when the dropdown flips; new runs carry run_mode/binding_version in dq_metrics.user_metadata (inspect a real run); score columns render on both list pages instantly (no warehouse call on page load — verify via network/log timing); homepage renders with overall score; ScoreBox counts show on all four surfaces; >8-row breakdowns paginate; global rows navigate to the table's results; banner appears during a page-triggered run and the tab refreshes on completion.
+
+### Task P3.8: Genie — research + spec
+
+Read dqlake's Genie implementation end-to-end (backend/materialiser/genie_space.py, routers/ai.py + ai_gateway.py, the ~15 Genie UI files, genieSuggestedQuestions.ts, docs/superpowers/specs/2026-06-17-genie-space-rework-design.md) and produce a port manifest in the ledger: space provisioning over OUR objects (mv_dq_scores, v_dq_check_results/attribution, dq_quarantine_records), chat UI wiring, suggested questions, conversation store. Deliverable: manifest + task split for P3.9/P3.10.
+
+### Task P3.9: Genie backend — space provisioning + chat proxy (faithful port, our data objects)
+
+### Task P3.10: Genie UI — AskGenieButton/GenieChatSidebar/GenieResult* port (faithful; i18n; no idle polling)
+
+### Task P3.11: Genie space instructions — REWRITE, not port
+
+User: dqlake's space instructions read wrong ("something's not quite right in the way it talks"). Write fresh instructions for the space: plain, precise, steward-appropriate tone (no cringe, no over-enthusiasm — the user's standing copy preference); grounded in our actual schema objects and score semantics (published-only default, as-of-run attribution); include the sample-question set re-grounded on our objects. Review the drafted instructions against dqlake's to confirm coverage parity even though the voice is new.
+
+### Task P3.12: Genie verification + final whole-branch re-review of Phase 3
+
 ## Deferred (explicitly out of scope)
 
-- Genie Space provisioning + chat UI — separate follow-on spec, once this plan's data model has shipped and has real data for Genie to query.
+- Product-level batch run ids in dq_metrics (would restore full product run-picker parity) — requires run-submission changes; backlog.
