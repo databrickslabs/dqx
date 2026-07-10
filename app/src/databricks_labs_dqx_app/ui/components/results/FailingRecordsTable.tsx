@@ -13,6 +13,8 @@ import {
   displayCellValue,
   failedCellClass,
   failureMessageForCell,
+  wholeRowFailureClass,
+  wholeRowFailureMessage,
 } from "@/lib/results-display";
 
 interface FailingRecordsTableProps {
@@ -27,8 +29,11 @@ interface FailingRecordsTableProps {
 
 /**
  * Failing-records sample table: one row per quarantined record, failed
- * cells tinted red with the attributed rule message as a tooltip. All
- * cell/column resolution lives in lib/results-display.ts (unit-tested).
+ * cells tinted red with the attributed rule message as a tooltip. A record
+ * whose failure carries no column attribution is a whole-row rule — the
+ * ENTIRE row is tinted (dqlake parity) with the failure message as a
+ * row-level tooltip. All cell/column resolution lives in
+ * lib/results-display.ts (unit-tested).
  */
 export function FailingRecordsTable({ records, suppressed }: FailingRecordsTableProps) {
   const { t } = useTranslation();
@@ -51,7 +56,11 @@ export function FailingRecordsTable({ records, suppressed }: FailingRecordsTable
         </TableHeader>
         <TableBody>
           {records.map((record) => (
-            <TableRow key={record.record_key}>
+            <TableRow
+              key={record.record_key}
+              className={wholeRowFailureClass(record)}
+              title={wholeRowFailureMessage(record)}
+            >
               {columns.map((col) => (
                 <TableCell
                   key={col}

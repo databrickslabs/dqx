@@ -81,6 +81,8 @@ import {
   useListRegistryRules,
   useGetTableColumns,
   useGetRules,
+  useGetTableScoreSuspense,
+  useGetQuarantineSampleSuspense,
   useListMonitoredTableVersions,
   useRunMonitoredTable,
   useSuggestRulesForTable,
@@ -129,6 +131,8 @@ import {
   normalizeStagedRows,
 } from "@/components/apply-rules/shared";
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
+import { ScoreBox } from "@/components/results/ScoreBox";
+import { FailingRecordsTable } from "@/components/results/FailingRecordsTable";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 import { MonitoredTableHistoryTab } from "@/components/monitored-tables/MonitoredTableHistoryTab";
@@ -2412,9 +2416,27 @@ function ResultsTab({ tableFqn, status }: { tableFqn: string; status: string }) 
             </div>
           </div>
         )}
-        <p className="text-sm text-muted-foreground">
-          {t("monitoredTables.resultsTableFqnHint", { table: tableFqn })}
-        </p>
+        {materialized && (
+          // Same tab-local error/suspense shape as the route wrapper — a
+          // score/sample failure resets and retries without unmounting the
+          // rest of the tab (banner + Runs History link stay visible).
+          <QueryErrorResetBoundary>
+            {({ reset }) => (
+              <ErrorBoundary onReset={reset} FallbackComponent={DetailError}>
+                <Suspense
+                  fallback={
+                    <div className="space-y-4">
+                      <Skeleton className="h-28 w-full" />
+                      <Skeleton className="h-48 w-full" />
+                    </div>
+                  }
+                >
+                  <ResultsContent tableFqn={tableFqn} />
+                </Suspense>
+              </ErrorBoundary>
+            )}
+          </QueryErrorResetBoundary>
+        )}
         <Button asChild variant="outline" size="sm" className="gap-2">
           <Link to="/runs-history">
             <ArrowLeft className="h-3.5 w-3.5 rotate-180" />
@@ -2423,5 +2445,42 @@ function ResultsTab({ tableFqn, status }: { tableFqn: string; status: string }) 
         </Button>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Score + failing-records data only changes when a validation run finishes,
+ * so these queries NEVER refetch on their own — no polling, no window-focus
+ * refetch, and an infinite staleTime. The only refresh trigger is
+ * `invalidateResultsAfterRunCompletion` (lib/results-invalidation.ts), fired
+ * from the places that already observe runs settling (Runs History's
+ * RUNNING-run poll and the data-product run-set poll).
+ */
+const RESULTS_QUERY_OPTIONS = {
+  staleTime: Infinity,
+  refetchOnWindowFocus: false,
+} as const;
+
+function ResultsContent({ tableFqn }: { tableFqn: string }) {
+  const { t } = useTranslation();
+  const { data: score } = useGetTableScoreSuspense(tableFqn, {
+    query: { select: (d) => d.data, ...RESULTS_QUERY_OPTIONS },
+  });
+  const { data: sample } = useGetQuarantineSampleSuspense(tableFqn, undefined, {
+    query: { select: (d) => d.data, ...RESULTS_QUERY_OPTIONS },
+  });
+  return (
+    <div className="flex flex-col gap-4">
+      <ScoreBox
+        score={score.score ?? null}
+        label={t("monitoredTables.resultsScoreLabel")}
+        totalTests={score.total_tests ?? 0}
+        failedTests={score.failed_tests ?? 0}
+      />
+      <div className="space-y-2">
+        <h3 className="text-sm font-medium">{t("monitoredTables.resultsFailingRecordsTitle")}</h3>
+        <FailingRecordsTable records={sample.records ?? []} suppressed={sample.suppressed ?? false} />
+      </div>
+    </div>
   );
 }

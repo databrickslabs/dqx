@@ -9,7 +9,10 @@ import {
   failureMessageForCell,
   formatScorePercent,
   isFailedCell,
+  rowHasWholeRowFailure,
   scoreBandClass,
+  wholeRowFailureClass,
+  wholeRowFailureMessage,
 } from "./results-display";
 
 describe("formatScorePercent", () => {
@@ -134,6 +137,90 @@ describe("failureMessageForCell", () => {
 
   test("tolerates missing failures list", () => {
     expect(failureMessageForCell(record({ failures: undefined }), "email")).toBeUndefined();
+  });
+});
+
+// dqlake fidelity: a failure whose `columns` is empty/undefined is a
+// whole-row rule — the entire row gets tinted, not any one cell.
+describe("rowHasWholeRowFailure", () => {
+  test("false when every failure is attributed to specific columns", () => {
+    expect(rowHasWholeRowFailure(record())).toBe(false);
+  });
+
+  test("true when a failure carries an empty columns list", () => {
+    const rec = record({
+      failures: [{ rule_name: "row_rule", message: "row-level failure", columns: [] }],
+    });
+    expect(rowHasWholeRowFailure(rec)).toBe(true);
+  });
+
+  test("true when a failure carries no columns field at all", () => {
+    const rec = record({
+      failures: [{ rule_name: "row_rule", message: "row-level failure" }],
+    });
+    expect(rowHasWholeRowFailure(rec)).toBe(true);
+  });
+
+  test("true when a whole-row failure sits alongside column-attributed ones", () => {
+    const rec = record({
+      failures: [
+        { rule_name: "is_valid_email", message: "bad format", columns: ["email"] },
+        { rule_name: "row_rule", message: "row-level failure", columns: [] },
+      ],
+    });
+    expect(rowHasWholeRowFailure(rec)).toBe(true);
+  });
+
+  test("false when the failures list is missing", () => {
+    expect(rowHasWholeRowFailure(record({ failures: undefined }))).toBe(false);
+  });
+
+  test("false when the failures list is empty", () => {
+    expect(rowHasWholeRowFailure(record({ failures: [] }))).toBe(false);
+  });
+});
+
+describe("wholeRowFailureClass", () => {
+  test("returns a red row tint for whole-row failures", () => {
+    const rec = record({
+      failures: [{ rule_name: "row_rule", message: "row-level failure", columns: [] }],
+    });
+    expect(wholeRowFailureClass(rec)).toContain("bg-red-500/");
+  });
+
+  test("pairs the light tint with a dark: variant", () => {
+    const rec = record({
+      failures: [{ rule_name: "row_rule", message: "row-level failure", columns: [] }],
+    });
+    expect(wholeRowFailureClass(rec)).toMatch(/dark:bg-red-/);
+  });
+
+  test("returns undefined for rows with only column-attributed failures", () => {
+    expect(wholeRowFailureClass(record())).toBeUndefined();
+  });
+});
+
+describe("wholeRowFailureMessage", () => {
+  test("returns the first column-less failure's message", () => {
+    const rec = record({
+      failures: [
+        { rule_name: "is_valid_email", message: "bad format", columns: ["email"] },
+        { rule_name: "row_rule_a", message: "first row-level failure", columns: [] },
+        { rule_name: "row_rule_b", message: "second row-level failure" },
+      ],
+    });
+    expect(wholeRowFailureMessage(rec)).toBe("first row-level failure");
+  });
+
+  test("returns undefined when the whole-row failure has a null message", () => {
+    const rec = record({
+      failures: [{ rule_name: "row_rule", message: null, columns: [] }],
+    });
+    expect(wholeRowFailureMessage(rec)).toBeUndefined();
+  });
+
+  test("returns undefined when there is no whole-row failure", () => {
+    expect(wholeRowFailureMessage(record())).toBeUndefined();
   });
 });
 

@@ -69,10 +69,43 @@ export function failedCellClass(record: FailingRecordOut, column: string): strin
  * tooltip. Undefined for passing cells, unattributed (row-level/legacy)
  * failures, or failures without a message.
  */
+// Note: only the FIRST matching failure's message is surfaced — additional failures on the same cell are not shown.
 export function failureMessageForCell(record: FailingRecordOut, column: string): string | undefined {
   if (!isFailedCell(record, column)) return undefined;
   const failure = record.failures?.find((f) => f.columns?.includes(column));
   return failure?.message ?? undefined;
+}
+
+/** True when a failure has no column attribution (empty/absent `columns`). */
+function isWholeRowFailure(failure: { columns?: string[] }): boolean {
+  return (failure.columns?.length ?? 0) === 0;
+}
+
+/**
+ * True when the record carries at least one failure with no column
+ * attribution — a whole-row rule (dqlake tints the ENTIRE row for these,
+ * since no single cell can be blamed).
+ */
+export function rowHasWholeRowFailure(record: FailingRecordOut): boolean {
+  return record.failures?.some(isWholeRowFailure) ?? false;
+}
+
+/**
+ * Row-level background tint for records with a whole-row failure — same red
+ * family as `failedCellClass` but at lower opacity so column-attributed
+ * cells still stand out on top of it. Undefined otherwise.
+ */
+export function wholeRowFailureClass(record: FailingRecordOut): string | undefined {
+  return rowHasWholeRowFailure(record) ? "bg-red-500/5 dark:bg-red-500/10" : undefined;
+}
+
+/**
+ * Message of the first whole-row (column-less) failure, for the row-level
+ * tooltip. Undefined when the record has no whole-row failure or it carries
+ * no message.
+ */
+export function wholeRowFailureMessage(record: FailingRecordOut): string | undefined {
+  return record.failures?.find(isWholeRowFailure)?.message ?? undefined;
 }
 
 /** Cell text for a record's column — the raw value, or an em dash for null/absent. */
