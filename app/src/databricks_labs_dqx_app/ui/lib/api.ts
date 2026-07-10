@@ -1168,6 +1168,23 @@ export interface GenerateRulesFromContractOut {
   validation_errors?: string[];
 }
 
+export type GlobalScoreOutOverallScore = number | null;
+
+/**
+ * Cross-table DQ score over every table tracked in *dq_metrics*.
+
+*tables* holds the latest-run score per table, restricted to the
+catalogs the requesting user can access (inaccessible catalogs are
+silently filtered, never 403'd). *overall_score* is the unweighted
+mean over the scored entries of *tables* — None when none are
+scored. *table_count* counts the accessible tables, scored or not.
+ */
+export interface GlobalScoreOut {
+  overall_score?: GlobalScoreOutOverallScore;
+  table_count?: number;
+  tables?: TableScoreOut[];
+}
+
 export interface GrantWarehouseAccessIn {
   warehouse_id: string;
 }
@@ -15749,6 +15766,158 @@ export function useGetMetricsSummarySuspense<TData = Awaited<ReturnType<typeof g
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetMetricsSummarySuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Return the cross-table DQ score over every table tracked in dq_metrics.
+
+Takes the latest run per *input_location*, silently filters out
+tables in catalogs the requesting user cannot access (same gate as
+the product endpoint — filtered, never 403), and averages the
+scored tables with an unweighted mean.
+ * @summary Get Global Score
+ */
+export const getGlobalScore = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<GlobalScoreOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/dq-score/global`,options
+    );
+  }
+
+
+
+
+export const getGetGlobalScoreQueryKey = () => {
+    return [
+    `/api/v1/dq-score/global`
+    ] as const;
+    }
+
+    
+export const getGetGlobalScoreQueryOptions = <TData = Awaited<ReturnType<typeof getGlobalScore>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGlobalScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGlobalScoreQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGlobalScore>>> = ({ signal }) => getGlobalScore({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getGlobalScore>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetGlobalScoreQueryResult = NonNullable<Awaited<ReturnType<typeof getGlobalScore>>>
+export type GetGlobalScoreQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetGlobalScore<TData = Awaited<ReturnType<typeof getGlobalScore>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGlobalScore>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getGlobalScore>>,
+          TError,
+          Awaited<ReturnType<typeof getGlobalScore>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGlobalScore<TData = Awaited<ReturnType<typeof getGlobalScore>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGlobalScore>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getGlobalScore>>,
+          TError,
+          Awaited<ReturnType<typeof getGlobalScore>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGlobalScore<TData = Awaited<ReturnType<typeof getGlobalScore>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGlobalScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Global Score
+ */
+
+export function useGetGlobalScore<TData = Awaited<ReturnType<typeof getGlobalScore>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGlobalScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetGlobalScoreQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetGlobalScoreSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getGlobalScore>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGlobalScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGlobalScoreQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGlobalScore>>> = ({ signal }) => getGlobalScore({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGlobalScore>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetGlobalScoreSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getGlobalScore>>>
+export type GetGlobalScoreSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetGlobalScoreSuspense<TData = Awaited<ReturnType<typeof getGlobalScore>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGlobalScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGlobalScoreSuspense<TData = Awaited<ReturnType<typeof getGlobalScore>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGlobalScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGlobalScoreSuspense<TData = Awaited<ReturnType<typeof getGlobalScore>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGlobalScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Global Score
+ */
+
+export function useGetGlobalScoreSuspense<TData = Awaited<ReturnType<typeof getGlobalScore>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGlobalScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetGlobalScoreSuspenseQueryOptions(options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

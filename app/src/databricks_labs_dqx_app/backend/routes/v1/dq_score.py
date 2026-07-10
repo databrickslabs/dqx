@@ -32,7 +32,12 @@ from databricks_labs_dqx_app.backend.metrics_utils import (
     parse_check_metrics,
     safe_int,
 )
-from databricks_labs_dqx_app.backend.models import ProductScoreOut, RuleScoreOut, TableScoreOut
+from databricks_labs_dqx_app.backend.models import (
+    GlobalScoreOut,
+    ProductScoreOut,
+    RuleScoreOut,
+    TableScoreOut,
+)
 from databricks_labs_dqx_app.backend.registry_models import AppliedRule
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
@@ -79,6 +84,52 @@ def _compute_score_for_table(table_fqn: str, sql: SqlExecutor, app_conf: AppConf
         latest_run_id=rows[0]["run_id"],
         total_tests=input_row_count * len(check_metrics),
         failed_tests=failed,
+    )
+
+
+# Registered BEFORE the parameterized routes: FastAPI matches in
+# declaration order, so a fixed path declared first can never be
+# swallowed by a catch-all like /table/{table_fqn:path}.
+@router.get(
+    "/global",
+    operation_id="getGlobalScore",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def get_global_score(
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    app_conf: Annotated[AppConfig, Depends(get_conf)],
+    user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
+) -> GlobalScoreOut:
+    """Return the cross-table DQ score over every table tracked in dq_metrics.
+
+    Takes the latest run per *input_location*, silently filters out
+    tables in catalogs the requesting user cannot access (same gate as
+    the product endpoint — filtered, never 403), and averages the
+    scored tables with an unweighted mean.
+    """
+    metrics_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_metrics"
+    stmt = (
+        f"WITH latest AS ("
+        f"  SELECT input_location, run_id, "
+        f"         ROW_NUMBER() OVER (PARTITION BY input_location ORDER BY run_time DESC) AS rn "
+        f"  FROM {metrics_table}"  # noqa: S608
+        f") SELECT DISTINCT input_location, run_id FROM latest WHERE rn = 1"
+    )
+    try:
+        latest_runs = sql.query_dicts(stmt)
+        fqns = [fqn for r in latest_runs if (fqn := r.get("input_location"))]
+        accessible = [fqn for fqn in fqns if catalog_of(fqn) in user_catalogs]
+        tables = [_compute_score_for_table(fqn, sql, app_conf) for fqn in accessible]
+    except Exception as exc:
+        logger.exception("Failed to compute global score")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    scored = [t.score for t in tables if t.score is not None]
+    overall = ScoreService.compute_product_score(scored)
+    return GlobalScoreOut(
+        overall_score=round(overall, 4) if overall is not None else None,
+        table_count=len(tables),
+        tables=tables,
     )
 
 

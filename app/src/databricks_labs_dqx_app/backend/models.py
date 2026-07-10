@@ -1378,6 +1378,21 @@ class RuleScoreOut(BaseModel):
     per_table: list[TableScoreOut] = Field(default_factory=list)
 
 
+class GlobalScoreOut(BaseModel):
+    """Cross-table DQ score over every table tracked in *dq_metrics*.
+
+    *tables* holds the latest-run score per table, restricted to the
+    catalogs the requesting user can access (inaccessible catalogs are
+    silently filtered, never 403'd). *overall_score* is the unweighted
+    mean over the scored entries of *tables* — None when none are
+    scored. *table_count* counts the accessible tables, scored or not.
+    """
+
+    overall_score: float | None = None
+    table_count: int = 0
+    tables: list[TableScoreOut] = Field(default_factory=list)
+
+
 class CatalogOut(BaseModel):
     name: str
     comment: str | None = None
