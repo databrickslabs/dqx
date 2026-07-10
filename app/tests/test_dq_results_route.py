@@ -77,6 +77,7 @@ def monitored_tables_mock() -> MagicMock:
     mock = create_autospec(MonitoredTableService, instance=True)
     mock.get.return_value = None
     mock.get_by_table_fqn.return_value = None
+    mock.get_binding_ids_by_table_fqn.return_value = {}
     return mock
 
 
@@ -371,6 +372,8 @@ class TestTableResults:
         # Table endpoint fills `tables` (dqlake parity), not `by_table`.
         assert [g["label"] for g in body["tables"]] == [FQN]
         assert body["by_table"] == []
+        # binding_id is a by_table-only enrichment; the tables axis keeps None.
+        assert body["tables"][0]["binding_id"] is None
         # VERSION ACCURACY: the binding's CURRENT rule metadata is never
         # consulted — attribution is frozen into the run's checks_json.
         monitored_tables_mock.get_by_table_fqn.assert_not_called()
@@ -387,7 +390,8 @@ class TestTableResults:
         sql_dispatch(sql_mock)
         client.get(f"/api/v1/dq-results/table/{FQN}")
         stmt = sql_mock.query_dicts.call_args_list[0][0][0]
-        assert f"{app_config.catalog}.{app_config.schema_name}.{SHAPING_VIEW_NAME}" in stmt
+        # Catalog/schema are backtick-quoted (hyphenated-catalog support).
+        assert f"`{app_config.catalog}`.`{app_config.schema_name}`.{SHAPING_VIEW_NAME}" in stmt
         assert f"'{FQN}'" in stmt
         # The as-of-run attribution columns ride along on the same query.
         assert "severity, dimension, registry_rule_id" in stmt
@@ -483,7 +487,7 @@ class TestRuns:
             "total_tests": 100,
         }
         stmt = sql_mock.query_dicts.call_args[0][0]
-        assert f"{app_config.catalog}.{app_config.schema_name}.{METRIC_VIEW_NAME}" in stmt
+        assert f"`{app_config.catalog}`.`{app_config.schema_name}`.{METRIC_VIEW_NAME}" in stmt
         assert "MEASURE(score) AS pass_rate" in stmt
         assert "GROUP BY run_id, run_time" in stmt
         assert "ORDER BY run_time DESC" in stmt
@@ -515,6 +519,14 @@ class TestRuns:
         monitored_tables_mock.get.return_value = binding_detail("b1", "secret.hr.salaries")
         resp = client.get("/api/v1/dq-results/runs/b1")
         assert resp.status_code == 403
+        sql_mock.query_dicts.assert_not_called()
+
+    def test_binding_resolving_to_invalid_fqn_returns_400_before_sql(self, client, sql_mock, monitored_tables_mock):
+        # Defense-in-depth: the binding-resolved FQN is app-DB-sourced and
+        # must be re-validated before it reaches a SQL string literal.
+        monitored_tables_mock.get.return_value = binding_detail("b1", "main.sales.evil\\")
+        resp = client.get("/api/v1/dq-results/runs/b1")
+        assert resp.status_code == 400
         sql_mock.query_dicts.assert_not_called()
 
     def test_sql_failure_maps_to_500(self, client, sql_mock):
@@ -578,6 +590,37 @@ class TestProductResults:
         assert body == {"rows": []}
         sql_mock.query_dicts.assert_not_called()
 
+    def test_by_table_rows_carry_member_binding_ids_without_extra_lookup(
+        self, client, sql_mock, data_products_mock, monitored_tables_mock
+    ):
+        data_products_mock.get.return_value = product_detail(
+            "p1", [("b1", "main.sales.orders"), ("b2", "dev.sales.items")]
+        )
+        sql_dispatch(
+            sql_mock,
+            check_rows=[
+                check_row("c1", errors=10, total=100, fqn="main.sales.orders"),
+                check_row("c2", errors=30, total=100, fqn="dev.sales.items"),
+            ],
+        )
+        body = client.get("/api/v1/dq-results/product/p1").json()
+        by_table = {g["label"]: g["binding_id"] for g in body["by_table"]}
+        assert by_table == {"main.sales.orders": "b1", "dev.sales.items": "b2"}
+        # Member binding ids are already loaded — no extra OLTP round-trip.
+        monitored_tables_mock.get_binding_ids_by_table_fqn.assert_not_called()
+
+    def test_invalid_member_fqn_is_filtered_before_interpolation(self, client, sql_mock, data_products_mock):
+        # Defense-in-depth: app-DB-sourced member FQNs are re-validated on
+        # read — a backslash would defeat escape_sql_string's escaping.
+        data_products_mock.get.return_value = product_detail(
+            "p1", [("b1", "main.sales.orders"), ("b2", "main.sales.evil\\")]
+        )
+        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=1, total=10)])
+        resp = client.get("/api/v1/dq-results/product/p1")
+        assert resp.status_code == 200
+        for call in sql_mock.query_dicts.call_args_list:
+            assert "evil" not in call[0][0]
+
 
 # ---------------------------------------------------------------------------
 # Global results
@@ -602,12 +645,40 @@ class TestGlobalResults:
         sql_dispatch(sql_mock)
         client.get("/api/v1/dq-results/global")
         stmt = sql_mock.query_dicts.call_args_list[0][0][0]
-        assert f"{app_config.catalog}.{app_config.schema_name}.{SHAPING_VIEW_NAME}" in stmt
+        assert f"`{app_config.catalog}`.`{app_config.schema_name}`.{SHAPING_VIEW_NAME}" in stmt
         assert "input_location IN" not in stmt
 
     def test_sql_failure_maps_to_500(self, client, sql_mock):
         sql_mock.query_dicts.side_effect = RuntimeError("warehouse down")
         assert client.get("/api/v1/dq-results/global").status_code == 500
+
+    def test_by_table_rows_carry_binding_ids_from_one_batched_lookup(self, client, sql_mock, monitored_tables_mock):
+        sql_dispatch(
+            sql_mock,
+            check_rows=[
+                check_row("c1", errors=10, total=100, fqn="main.sales.orders"),
+                check_row("c2", errors=5, total=100, fqn="dev.sales.items"),  # not monitored
+            ],
+        )
+        monitored_tables_mock.get_binding_ids_by_table_fqn.return_value = {"main.sales.orders": "b1"}
+        body = client.get("/api/v1/dq-results/global").json()
+        by_table = {g["label"]: g for g in body["by_table"]}
+        assert by_table["main.sales.orders"]["binding_id"] == "b1"
+        assert by_table["dev.sales.items"]["binding_id"] is None
+        # ONE batched lookup over the accessible tables — never per-table.
+        monitored_tables_mock.get_binding_ids_by_table_fqn.assert_called_once_with(
+            ["dev.sales.items", "main.sales.orders"]
+        )
+        monitored_tables_mock.get_by_table_fqn.assert_not_called()
+        monitored_tables_mock.get.assert_not_called()
+
+    def test_binding_id_lookup_failure_degrades_to_unlinked_rows(self, client, sql_mock, monitored_tables_mock):
+        # OLTP outage: results still serve, rows just aren't linkable.
+        monitored_tables_mock.get_binding_ids_by_table_fqn.side_effect = RuntimeError("lakebase hiccup")
+        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=1, total=10)])
+        resp = client.get("/api/v1/dq-results/global")
+        assert resp.status_code == 200
+        assert resp.json()["by_table"][0]["binding_id"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -681,6 +752,74 @@ class TestRuleResults:
         resp = client.get("/api/v1/dq-results/rule/rule-1")
         assert resp.status_code == 200
         assert [g["label"] for g in resp.json()["by_table"]] == [FQN]
+
+    def test_by_table_rows_carry_the_scoping_binding_ids(
+        self, client, sql_mock, apply_rules_mock, monitored_tables_mock
+    ):
+        apply_rules_mock.list_bindings_for_rule.return_value = [
+            AppliedRule(id="ar1", binding_id="b1", rule_id="rule-1")
+        ]
+        monitored_tables_mock.get.return_value = binding_detail("b1", FQN)
+        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=1, total=10, rule_id="rule-1")])
+        body = client.get("/api/v1/dq-results/rule/rule-1").json()
+        assert body["by_table"][0]["label"] == FQN
+        assert body["by_table"][0]["binding_id"] == "b1"
+        # The scoping loop already resolved the bindings — no batched lookup.
+        monitored_tables_mock.get_binding_ids_by_table_fqn.assert_not_called()
+
+    def test_invalid_binding_fqn_is_skipped_before_interpolation(
+        self, client, sql_mock, apply_rules_mock, monitored_tables_mock
+    ):
+        apply_rules_mock.list_bindings_for_rule.return_value = [
+            AppliedRule(id="ar1", binding_id="b1", rule_id="rule-1"),
+            AppliedRule(id="ar2", binding_id="b-bad", rule_id="rule-1"),
+        ]
+        details = {
+            "b1": binding_detail("b1", FQN),
+            "b-bad": binding_detail("b-bad", "main.sales.evil\\"),
+        }
+        monitored_tables_mock.get.side_effect = details.get
+        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=1, total=10, rule_id="rule-1")])
+        resp = client.get("/api/v1/dq-results/rule/rule-1")
+        assert resp.status_code == 200
+        assert [g["label"] for g in resp.json()["by_table"]] == [FQN]
+        for call in sql_mock.query_dicts.call_args_list:
+            assert "evil" not in call[0][0]
+
+
+# ---------------------------------------------------------------------------
+# Hyphenated app catalog — quoted read FQNs through every query builder
+# ---------------------------------------------------------------------------
+
+
+class TestHyphenatedAppCatalog:
+    """The app's own catalog/schema names come from config and can be
+    hyphenated (``prod-east``). Every read-path FQN must backtick-quote its
+    parts — consistently with the DDL side — or the statements won't parse."""
+
+    QUOTED_PREFIX = "`prod-east`.`dqx-studio`"
+
+    @pytest.fixture(autouse=True)
+    def _hyphenated_conf(self, client, app_config):
+        client.app.dependency_overrides[get_conf] = lambda: app_config.model_copy(
+            update={"catalog": "prod-east", "schema_name": "dqx-studio"}
+        )
+
+    def test_shaping_view_and_dq_metrics_reads_are_quoted(self, client, sql_mock):
+        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=1, total=10)])
+        assert client.get(f"/api/v1/dq-results/table/{FQN}").status_code == 200
+        stmts = [call[0][0] for call in sql_mock.query_dicts.call_args_list]
+        assert any(f"{self.QUOTED_PREFIX}.{SHAPING_VIEW_NAME}" in stmt for stmt in stmts)
+        assert any(f"{self.QUOTED_PREFIX}.dq_metrics" in stmt for stmt in stmts)
+
+    def test_metric_view_read_is_quoted(self, client, sql_mock):
+        sql_dispatch(sql_mock, runs_rows=[runs_row()])
+        assert client.get(f"/api/v1/dq-results/runs/{FQN}").status_code == 200
+        assert f"{self.QUOTED_PREFIX}.{METRIC_VIEW_NAME}" in sql_mock.query_dicts.call_args[0][0]
+
+    def test_quarantine_read_is_quoted(self, client, sql_mock):
+        assert client.get(FAILED_ROWS_URL).status_code == 200
+        assert f"{self.QUOTED_PREFIX}.dq_quarantine_records" in sql_mock.query_dicts.call_args[0][0]
 
 
 # ---------------------------------------------------------------------------

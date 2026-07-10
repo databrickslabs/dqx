@@ -79,7 +79,7 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
     metric_view_fqn,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_ident, validate_fqn
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -117,8 +117,35 @@ def _validate_run_id(run_id: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _app_object_fqn(app_conf: AppConfig, name: str) -> str:
+    """Backtick-quoted FQN of an app-schema object (*name* is a trusted constant).
+
+    Catalog/schema come from app config and are quoted per part — the same
+    convention as the view DDL's *sql.q* — so a hyphenated catalog
+    (``prod-east``) stays parseable on every read path.
+    """
+    return f"{quote_ident(app_conf.catalog)}.{quote_ident(app_conf.schema_name)}.{name}"
+
+
 def _shaping_view_fqn(app_conf: AppConfig) -> str:
-    return f"{app_conf.catalog}.{app_conf.schema_name}.{SHAPING_VIEW_NAME}"
+    return _app_object_fqn(app_conf, SHAPING_VIEW_NAME)
+
+
+def _is_valid_fqn(table_fqn: str, source: str) -> bool:
+    """Defense-in-depth re-validation of an app-DB-sourced table FQN.
+
+    Binding/member FQNs were validated on write, but they round-trip
+    through the app database before being interpolated into SQL string
+    literals here — and *escape_sql_string* deliberately relies on
+    *validate_fqn* having rejected backslashes. Re-validate at the read
+    boundary and skip (never 500) anything that no longer passes.
+    """
+    try:
+        validate_fqn(table_fqn)
+    except ValueError:
+        logger.warning(f"Skipping invalid table FQN from {source}")
+        return False
+    return True
 
 
 def _in_list(values: list[str]) -> str:
@@ -172,7 +199,7 @@ def _fetch_failed_records_by_run(
     """
     if table_fqns is not None and not table_fqns:
         return {}
-    metrics_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_metrics"
+    metrics_table = _app_object_fqn(app_conf, "dq_metrics")
     where = f"WHERE input_location IN ({_in_list(table_fqns)}) " if table_fqns is not None else ""
     stmt = (
         f"SELECT input_location, run_id, "
@@ -320,6 +347,7 @@ def get_global_results(
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -344,12 +372,21 @@ def get_global_results(
     except Exception as exc:
         logger.exception("Failed to compute global results")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    # by_table -> binding-id enrichment so the UI can link rows to their
+    # monitored-table pages. ONE batched lookup (never per-table), and
+    # best-effort: an OLTP hiccup degrades to unlinked rows, never a 500.
+    try:
+        binding_ids = monitored_tables.get_binding_ids_by_table_fqn(accessible_fqns)
+    except Exception:
+        logger.warning("Failed to resolve binding ids for global by_table rows", exc_info=True)
+        binding_ids = {}
     return compute_entity_results(
         rows,
         _facets(dimension, severity, rule, column),
         axes=axes,
         table_axis="by_table",
         failed_records_by_run=failed_records,
+        binding_ids_by_table=binding_ids,
     )
 
 
@@ -395,6 +432,7 @@ def get_rule_results(
         applications = apply_rules.list_bindings_for_rule(rule_id)
         binding_ids = list(dict.fromkeys(a.binding_id for a in applications))
         table_fqns: list[str] = []
+        binding_id_by_fqn: dict[str, str] = {}
         for binding_id in binding_ids:
             try:
                 detail = monitored_tables.get(binding_id)
@@ -404,9 +442,14 @@ def get_rule_results(
             if detail is None:
                 continue
             fqn = detail.table.table_fqn
+            # Defense-in-depth: the binding's FQN round-trips through the app
+            # DB before being interpolated into a SQL string literal below.
+            if not _is_valid_fqn(fqn, f"binding {binding_id} in rule results"):
+                continue
             if catalog_of(fqn) not in user_catalogs or fqn in table_fqns:
                 continue
             table_fqns.append(fqn)
+            binding_id_by_fqn[fqn] = binding_id
         all_rows = _fetch_check_rows(sql, app_conf, table_fqns, run_id)
         rows: list[CheckResultRow] = [row for row in all_rows if row.rule_id == rule_id]
     except Exception as exc:
@@ -417,6 +460,7 @@ def get_rule_results(
         _facets(dimension, severity, rule, column),
         axes=axes,
         table_axis="by_table",
+        binding_ids_by_table=binding_id_by_fqn,
     )
 
 
@@ -438,6 +482,10 @@ def _accessible_member_fqns(
     fqns: list[str] = []
     binding_ids: list[str] = []
     for member in detail.members:
+        # Defense-in-depth: member FQNs round-trip through the app DB before
+        # being interpolated into SQL string literals on the query paths.
+        if not _is_valid_fqn(member.table_fqn, f"product {product_id} member {member.binding_id}"):
+            continue
         if catalog_of(member.table_fqn) not in user_catalogs:
             continue
         if member.table_fqn in fqns:
@@ -494,7 +542,7 @@ def get_product_results(
     """
     _validate_run_id(run_id)
     try:
-        fqns, _ = _accessible_member_fqns(data_products, product_id, user_catalogs)
+        fqns, binding_ids = _accessible_member_fqns(data_products, product_id, user_catalogs)
         rows = _fetch_check_rows(sql, app_conf, fqns, run_id)
         failed_records = _fetch_failed_records_by_run(sql, app_conf, fqns)
     except HTTPException:
@@ -508,6 +556,8 @@ def get_product_results(
         axes=axes,
         table_axis="by_table",
         failed_records_by_run=failed_records,
+        # Member binding ids are already loaded — no extra lookup needed.
+        binding_ids_by_table=dict(zip(fqns, binding_ids)),
     )
 
 
@@ -569,7 +619,7 @@ def get_dq_results_failed_rows(
 
     # (4) SP-side fetch of the precomputed failing rows (same query shape
     # as quarantine_samples.py, plus created_at surfaced as the run_ts).
-    quarantine_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_quarantine_records"
+    quarantine_table = _app_object_fqn(app_conf, "dq_quarantine_records")
     e_fqn = escape_sql_string(table_fqn)
     stmt = (
         f"SELECT quarantine_id, run_id, to_json(row_data) AS row_data, "
@@ -651,6 +701,10 @@ def get_dq_results_runs(
                 detail="Expected a three-part table FQN or a known binding id",
             )
         table_fqn = detail.table.table_fqn
+        # Defense-in-depth: the binding-resolved FQN comes from the app DB
+        # and is interpolated into a SQL string literal below.
+        if not _is_valid_fqn(table_fqn, f"binding {binding_or_table} in runs"):
+            raise HTTPException(status_code=400, detail="Binding resolves to an invalid table FQN")
 
     if catalog_of(table_fqn) not in user_catalogs:
         raise HTTPException(status_code=403, detail="You do not have access to this table's catalog")

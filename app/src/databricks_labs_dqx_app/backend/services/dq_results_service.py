@@ -293,6 +293,7 @@ def compute_entity_results(
     table_axis: str = "tables",
     failed_records_by_run: dict[tuple[str, str], int | None] | None = None,
     failures_ignore_facets: bool = False,
+    binding_ids_by_table: dict[str, str] | None = None,
 ) -> EntityResultsOut:
     """Assemble the full EntityResultsOut from raw check rows.
 
@@ -308,6 +309,12 @@ def compute_entity_results(
     trend_failures query filters on binding/run only — never on the
     dimension/severity/rule/column chips (the product reader does honour
     them).
+
+    *binding_ids_by_table* (table_fqn -> monitored-table binding id)
+    enriches the ``by_table`` rows with an additive *binding_id* so the
+    UI can link each row to its monitored-table page. Tables absent from
+    the map keep None. Only the ``by_table`` axis is enriched — the
+    single-table endpoint's ``tables`` axis has no linking use case.
     """
     if axes not in VALID_AXES:
         axes = "all"  # dqlake parity: anything else selects every slice
@@ -323,6 +330,10 @@ def compute_entity_results(
         result.by_column = _by_column_rows(matched)
         table_groups = _group_rows(matched, lambda row: row.table_fqn)
         if table_axis == "by_table":
+            if binding_ids_by_table:
+                for group in table_groups:
+                    if group.label is not None:
+                        group.binding_id = binding_ids_by_table.get(group.label)
             result.by_table = table_groups
         else:
             result.tables = table_groups

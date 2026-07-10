@@ -59,6 +59,7 @@ from __future__ import annotations
 import logging
 
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import quote_ident
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +91,14 @@ _CHECKS_JSON_SCHEMA = (
 
 
 def metric_view_fqn(catalog: str, schema: str) -> str:
-    """Return the unquoted three-part name of the score metric view."""
-    return f"{catalog}.{schema}.{METRIC_VIEW_NAME}"
+    """Return the backtick-quoted three-part name of the score metric view.
+
+    Catalog and schema are quoted per part (the same convention as the
+    DDL side's *sql.q*) so a hyphenated catalog (``prod-east``) stays
+    parseable on the READ paths too. The view-name constant is a known
+    simple identifier and stays bare, matching the DDL.
+    """
+    return f"{quote_ident(catalog)}.{quote_ident(schema)}.{METRIC_VIEW_NAME}"
 
 
 class ScoreViewService:

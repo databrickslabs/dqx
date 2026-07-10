@@ -48,7 +48,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import Mon
 from databricks_labs_dqx_app.backend.services.score_service import ScoreService
 from databricks_labs_dqx_app.backend.services.score_view_service import metric_view_fqn
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -114,6 +114,15 @@ def _resolve_binding_fqns(applications: list[AppliedRule], monitored_tables: Mon
             logger.warning("Skipping binding %s in rule score: binding not found", application.binding_id)
             continue
         fqn = detail.table.table_fqn
+        # Defense-in-depth: the binding's FQN round-trips through the app DB
+        # before being interpolated into a SQL string literal
+        # (_compute_score_for_table), and *escape_sql_string* relies on
+        # *validate_fqn* having rejected backslashes. Skip, never 500.
+        try:
+            validate_fqn(fqn)
+        except ValueError:
+            logger.warning("Skipping binding %s in rule score: invalid table FQN", application.binding_id)
+            continue
         if fqn not in seen:
             seen.add(fqn)
             fqns.append(fqn)

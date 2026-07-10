@@ -253,6 +253,36 @@ class TestBreakdowns:
         assert [g.label for g in product_out.by_table] == [FQN]
         assert product_out.tables == []
 
+    def test_by_table_rows_carry_binding_ids_from_the_map(self):
+        rows = [
+            make_row("c1", failed=1, total=10, fqn="main.a.t1"),
+            make_row("c2", failed=2, total=10, fqn="main.a.t2"),
+        ]
+        out = compute_entity_results(
+            rows,
+            ResultFacets(),
+            table_axis="by_table",
+            binding_ids_by_table={"main.a.t1": "b1"},
+        )
+        by_table = {g.label: g.binding_id for g in out.by_table}
+        # Mapped tables link to their binding; unmonitored tables keep None.
+        assert by_table == {"main.a.t1": "b1", "main.a.t2": None}
+
+    def test_tables_axis_is_never_binding_enriched(self):
+        rows = [make_row("c1", failed=1, total=10)]
+        out = compute_entity_results(
+            rows,
+            ResultFacets(),
+            table_axis="tables",
+            binding_ids_by_table={FQN: "b1"},
+        )
+        assert out.tables[0].binding_id is None
+
+    def test_by_table_binding_id_defaults_to_none_without_a_map(self):
+        rows = [make_row("c1", failed=1, total=10)]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
+        assert out.by_table[0].binding_id is None
+
 
 class TestVersionAccuracy:
     def test_same_check_attributes_per_run_not_per_current_rule(self):

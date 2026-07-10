@@ -58,8 +58,13 @@ class TestObjectNames:
         assert SHAPING_VIEW_NAME == "v_dq_check_results"
         assert METRIC_VIEW_NAME == "mv_dq_scores"
 
-    def test_metric_view_fqn_helper(self):
-        assert metric_view_fqn("cat", "sch") == "cat.sch.mv_dq_scores"
+    def test_metric_view_fqn_helper_quotes_catalog_and_schema(self):
+        # Quoted per part, consistent with the DDL side's sql.q convention.
+        assert metric_view_fqn("cat", "sch") == "`cat`.`sch`.mv_dq_scores"
+
+    def test_metric_view_fqn_helper_supports_hyphenated_catalog(self):
+        # Read paths must stay parseable for exotic UC names end-to-end.
+        assert metric_view_fqn("prod-east", "dqx-studio") == "`prod-east`.`dqx-studio`.mv_dq_scores"
 
 
 class TestAttributionViewDdl:

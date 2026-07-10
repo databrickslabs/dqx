@@ -343,6 +343,33 @@ class MonitoredTableService:
             return None
         return MonitoredTableDetail(table=table, applied_rules=self._list_applied_rules(table.binding_id))
 
+    def get_binding_ids_by_table_fqn(self, table_fqns: list[str]) -> dict[str, str]:
+        """Batched ``table_fqn -> binding_id`` lookup in ONE ``IN (...)`` query.
+
+        Used by the dq-results global endpoint to enrich its ``by_table``
+        rows with a link target without a per-table round-trip (the
+        table_fqn column is unique, so at most one binding per FQN).
+        Tables that are not monitored are simply absent from the result.
+
+        Inputs may be warehouse-sourced (``dq_metrics.input_location``), so
+        anything failing :func:`validate_fqn` is silently dropped before
+        interpolation — an unmonitorable name can never match anyway.
+        """
+        candidates: list[str] = []
+        for fqn in table_fqns:
+            try:
+                validate_fqn(fqn)
+            except ValueError:
+                logger.warning("Dropping invalid table FQN from binding-id lookup")
+                continue
+            candidates.append(fqn)
+        if not candidates:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(fqn)}'" for fqn in candidates)
+        sql = f"SELECT table_fqn, binding_id FROM {self._table} WHERE table_fqn IN ({in_list})"  # noqa: S608
+        rows = self._sql.query(sql)
+        return {row[0]: row[1] for row in rows if row and row[0] and row[1]}
+
     def _get(self, binding_id: str) -> MonitoredTable | None:
         e = escape_sql_string(binding_id)
         sql = f"SELECT {self._select_cols} FROM {self._table} WHERE binding_id = '{e}'"  # noqa: S608

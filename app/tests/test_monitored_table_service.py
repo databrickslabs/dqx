@@ -311,6 +311,37 @@ class TestGet:
         assert summary.rule_severity is None
 
 
+class TestGetBindingIdsByTableFqn:
+    """Batched ``table_fqn -> binding_id`` lookup for the by_table axis."""
+
+    def test_maps_fqns_to_binding_ids_in_one_query(self, svc, sql):
+        sql.query.return_value = [["main.a.t1", "b1"], ["main.a.t2", "b2"]]
+        out = svc.get_binding_ids_by_table_fqn(["main.a.t1", "main.a.t2", "main.a.unmonitored"])
+        assert out == {"main.a.t1": "b1", "main.a.t2": "b2"}
+        assert sql.query.call_count == 1
+        stmt = sql.query.call_args[0][0]
+        assert "SELECT table_fqn, binding_id FROM dqx_test.dqx_app_test.dq_monitored_tables" in stmt
+        assert "IN ('main.a.t1', 'main.a.t2', 'main.a.unmonitored')" in stmt
+
+    def test_empty_input_short_circuits_without_sql(self, svc, sql):
+        assert svc.get_binding_ids_by_table_fqn([]) == {}
+        sql.query.assert_not_called()
+
+    def test_invalid_fqns_are_dropped_before_interpolation(self, svc, sql):
+        # Inputs can be warehouse-sourced (dq_metrics.input_location):
+        # anything failing validate_fqn never reaches the IN list.
+        sql.query.return_value = [["main.a.t1", "b1"]]
+        out = svc.get_binding_ids_by_table_fqn(["main.a.t1", "main.a.evil\\", "not-three-parts"])
+        assert out == {"main.a.t1": "b1"}
+        stmt = sql.query.call_args[0][0]
+        assert "evil" not in stmt
+        assert "not-three-parts" not in stmt
+
+    def test_all_invalid_input_short_circuits_without_sql(self, svc, sql):
+        assert svc.get_binding_ids_by_table_fqn(["main.a.evil\\"]) == {}
+        sql.query.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # set_status (submit-for-review lifecycle)
 # ---------------------------------------------------------------------------
