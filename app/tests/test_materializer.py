@@ -47,6 +47,17 @@ from databricks_labs_dqx_app.backend.services.rules_catalog_service import Rules
 # ---------------------------------------------------------------------------
 
 
+def _app_settings_stub() -> AppSettingsService:
+    """AppSettingsService double for direct ``render_check`` calls.
+
+    No stored label definitions, so severity -> criticality resolution uses
+    the built-in defaults (``registry_models.SEVERITY_TO_CRITICALITY``).
+    """
+    mock = create_autospec(AppSettingsService, instance=True)
+    mock.get_label_definitions.return_value = []
+    return mock
+
+
 def _is_not_null_definition(slot_name: str = "column") -> RuleDefinition:
     return RuleDefinition.model_validate(
         {
@@ -78,6 +89,7 @@ class TestRenderCheckMatchesHandAuthoredShape:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert is_tableless is False
 
@@ -107,9 +119,11 @@ class TestRenderCheckMatchesHandAuthoredShape:
         # criticality. They must match exactly between the registry-
         # materialized row and the equivalent hand-authored one.
         assert materialized_check["check"]["function"] == stored_hand_authored["check"]["function"] == "is_not_null"
-        assert materialized_check["check"]["arguments"] == stored_hand_authored["check"]["arguments"] == {
-            "column": "customer_id"
-        }
+        assert (
+            materialized_check["check"]["arguments"]
+            == stored_hand_authored["check"]["arguments"]
+            == {"column": "customer_id"}
+        )
         assert materialized_check["criticality"] == stored_hand_authored["criticality"] == "error"
 
         # The materialized row additionally carries registry provenance +
@@ -134,6 +148,7 @@ class TestRenderCheckMatchesHandAuthoredShape:
                 registry_rule_id="r1",
                 registry_version=1,
                 applied_rule_id="ar1",
+                app_settings=_app_settings_stub(),
             )
 
     def test_dqx_native_arbitrary_slot_name_keys_argument_by_param_name(self):
@@ -159,6 +174,7 @@ class TestRenderCheckMatchesHandAuthoredShape:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert check["check"]["arguments"] == {"column": "email_col"}
 
@@ -180,6 +196,7 @@ class TestRenderCheckMatchesHandAuthoredShape:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert check["check"]["arguments"] == {"columns": ["a", "b", "c"]}
 
@@ -220,6 +237,7 @@ class TestRenderCheckMatchesHandAuthoredShape:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert is_tableless is False
         assert check["check"]["arguments"]["columns"] == ["colA", "colB"]
@@ -251,6 +269,7 @@ class TestRenderCheckMatchesHandAuthoredShape:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert check["check"]["arguments"]["columns"] == ["colA"]
 
@@ -273,6 +292,7 @@ class TestRenderCheckMatchesHandAuthoredShape:
                 registry_rule_id="r1",
                 registry_version=1,
                 applied_rule_id="ar1",
+                app_settings=_app_settings_stub(),
             )
 
     def test_severity_maps_to_criticality(self):
@@ -287,6 +307,7 @@ class TestRenderCheckMatchesHandAuthoredShape:
                 registry_rule_id="r1",
                 registry_version=1,
                 applied_rule_id="ar1",
+                app_settings=_app_settings_stub(),
             )
             assert check["criticality"] == expected
 
@@ -307,6 +328,7 @@ class TestRenderCheckMessageExpr:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert check["message_expr"] == "'Column ' || {{column}} || ' failed'"
 
@@ -321,6 +343,7 @@ class TestRenderCheckMessageExpr:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert "message_expr" not in check
 
@@ -337,6 +360,7 @@ class TestRenderCheckMessageExpr:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert "message_expr" not in check
 
@@ -366,6 +390,7 @@ class TestRenderCheckNativeNegate:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert is_tableless is False
         assert check["check"]["function"] == "regex_match"
@@ -385,6 +410,7 @@ class TestRenderCheckNativeNegate:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert check["check"]["arguments"]["negate"] is True
 
@@ -403,6 +429,7 @@ class TestRenderCheckNativeNegate:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert "negate" not in check["check"]["arguments"]
 
@@ -429,6 +456,7 @@ class TestRenderCheckSqlMode:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert is_tableless is False
         assert check["check"]["function"] == "sql_expression"
@@ -447,6 +475,7 @@ class TestRenderCheckSqlMode:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert check["check"]["arguments"]["negate"] is True
 
@@ -464,6 +493,7 @@ class TestRenderCheckSqlMode:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert is_tableless is True
         assert check["check"]["function"] == "sql_query"
@@ -481,6 +511,7 @@ class TestRenderCheckSqlMode:
                 registry_rule_id="r1",
                 registry_version=1,
                 applied_rule_id="ar1",
+                app_settings=_app_settings_stub(),
             )
 
 
@@ -508,7 +539,15 @@ class TestRenderCheckLowcodeMode:
         # condition) plus the re-editable AST; renders like an sql-mode rule.
         body = {
             "lowcode_ast": {
-                "rows": [{"kind": "row", "combinator": None, "column_ref": "column", "operator": "is not null", "value": None}],
+                "rows": [
+                    {
+                        "kind": "row",
+                        "combinator": None,
+                        "column_ref": "column",
+                        "operator": "is not null",
+                        "value": None,
+                    }
+                ],
                 "joins": [],
             },
             "predicate": "{{column}} IS NOT NULL",
@@ -524,6 +563,7 @@ class TestRenderCheckLowcodeMode:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert is_tableless is False
         assert check["check"]["function"] == "sql_expression"
@@ -544,6 +584,7 @@ class TestRenderCheckLowcodeMode:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert check["check"]["arguments"]["negate"] is True
 
@@ -568,6 +609,7 @@ class TestRenderCheckLowcodeMode:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         args = check["check"]["arguments"]
         assert check["check"]["function"] == "sql_query"
@@ -586,10 +628,20 @@ class TestRenderCheckLowcodeMode:
         body = {
             "lowcode_ast": {
                 "rows": [
-                    {"kind": "row", "combinator": None, "column_ref": "column", "operator": "is not null", "value": None}
+                    {
+                        "kind": "row",
+                        "combinator": None,
+                        "column_ref": "column",
+                        "operator": "is not null",
+                        "value": None,
+                    }
                 ],
                 "joins": [
-                    {"join_type": "LEFT", "target_table": "c.s.dim", "keys": [{"joined_column": "id", "column_ref": "column"}]}
+                    {
+                        "join_type": "LEFT",
+                        "target_table": "c.s.dim",
+                        "keys": [{"joined_column": "id", "column_ref": "column"}],
+                    }
                 ],
             },
             "sql_query": (
@@ -609,6 +661,7 @@ class TestRenderCheckLowcodeMode:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         args = check["check"]["arguments"]
         assert check["check"]["function"] == "sql_query"
@@ -649,6 +702,7 @@ class TestRenderCheckLowcodeMode:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         args = check["check"]["arguments"]
         assert check["check"]["function"] == "sql_query"
@@ -675,6 +729,7 @@ class TestRenderCheckLowcodeMode:
                 registry_rule_id="r1",
                 registry_version=1,
                 applied_rule_id="ar1",
+                app_settings=_app_settings_stub(),
             )
 
 
@@ -709,6 +764,7 @@ def monitored_tables():
 def app_settings():
     mock = create_autospec(AppSettingsService, instance=True)
     mock.get_auto_upgrade_without_approval.return_value = False
+    mock.get_label_definitions.return_value = []
     return mock
 
 
@@ -816,7 +872,9 @@ class TestMaterializeBindingBasics:
 
 
 class TestMaterializeBindingIdempotency:
-    def test_rerun_with_unchanged_content_updates_without_status_change(self, materializer, sql, registry, monitored_tables):
+    def test_rerun_with_unchanged_content_updates_without_status_change(
+        self, materializer, sql, registry, monitored_tables
+    ):
         applied = AppliedRule(
             id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
         )
@@ -833,6 +891,7 @@ class TestMaterializeBindingIdempotency:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         existing_check_json = json.dumps(check, sort_keys=True)
 
@@ -1124,6 +1183,7 @@ class TestRenderCheckNativeCrossTable:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
 
         # foreign_key is per-table (it validates the monitored table's own
@@ -1152,9 +1212,7 @@ class TestRenderBindingChecks:
     render equals the materialized output.
     """
 
-    def test_render_equals_materialized_check_and_writes_nothing(
-        self, materializer, sql, registry, monitored_tables
-    ):
+    def test_render_equals_materialized_check_and_writes_nothing(self, materializer, sql, registry, monitored_tables):
         applied = AppliedRule(
             id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
         )
@@ -1174,14 +1232,13 @@ class TestRenderBindingChecks:
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
         )
         assert checks == [expected]
         # Read-only: no INSERT/UPDATE/DELETE against dq_quality_rules.
         sql.execute.assert_not_called()
 
-    def test_renders_every_mapping_group_across_applied_rules(
-        self, materializer, sql, registry, monitored_tables
-    ):
+    def test_renders_every_mapping_group_across_applied_rules(self, materializer, sql, registry, monitored_tables):
         applied = AppliedRule(
             id="ar1",
             binding_id="b1",
@@ -1202,9 +1259,7 @@ class TestRenderBindingChecks:
         with pytest.raises(MaterializationError):
             materializer.render_binding_checks("missing")
 
-    def test_unresolvable_applied_rule_contributes_nothing(
-        self, materializer, sql, registry, monitored_tables
-    ):
+    def test_unresolvable_applied_rule_contributes_nothing(self, materializer, sql, registry, monitored_tables):
         applied = AppliedRule(
             id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
         )
@@ -1213,9 +1268,7 @@ class TestRenderBindingChecks:
         assert materializer.render_binding_checks("b1") == []
         sql.execute.assert_not_called()
 
-    def test_render_uses_frozen_snapshot_mode_not_live_mode(
-        self, materializer, registry, monitored_tables
-    ):
+    def test_render_uses_frozen_snapshot_mode_not_live_mode(self, materializer, registry, monitored_tables):
         """A follower still serving vN renders vN's FROZEN mode, even after the
         live approved rule's mode was switched in place (P20 major fix): the
         frozen native snapshot must render as a native check, not be
@@ -1237,9 +1290,7 @@ class TestRenderBindingChecks:
         checks = materializer.render_binding_checks("b1")
         assert checks[0]["check"]["function"] == "is_not_null"
 
-    def test_render_falls_back_to_live_mode_for_legacy_null_snapshot(
-        self, materializer, registry, monitored_tables
-    ):
+    def test_render_falls_back_to_live_mode_for_legacy_null_snapshot(self, materializer, registry, monitored_tables):
         """A legacy snapshot written before mode was frozen (``mode=None``)
         falls back to the live rule's mode so it still renders."""
         applied = AppliedRule(

@@ -1256,6 +1256,10 @@ export type LabelDefinitionValueDescriptionsAnyOf = {[key: string]: string};
 
 export type LabelDefinitionValueDescriptions = LabelDefinitionValueDescriptionsAnyOf | null;
 
+export type LabelDefinitionValueCriticalityAnyOf = {[key: string]: string};
+
+export type LabelDefinitionValueCriticality = LabelDefinitionValueCriticalityAnyOf | null;
+
 /**
  * An admin-managed label definition.
 
@@ -1275,6 +1279,14 @@ to each value in the admin editor and as a tooltip wherever the value is
 picked (e.g. the ``dimension`` key's per-dimension descriptions). Both
 maps are pruned to keys present in ``values`` on save.
 
+``value_criticality`` optionally maps a subset (or all) of ``values`` to a
+DQX ``criticality`` (``"warn"`` or ``"error"``). Only meaningful on the
+reserved ``severity`` key today: the materializer reads it to decide which
+criticality a registry rule's effective severity renders as (see
+``registry_models.resolve_criticality``). Unmapped values fall back to the
+built-in defaults. Pruned to keys present in ``values`` on save, like the
+other per-value maps.
+
 ``is_builtin`` flags a reserved, pre-seeded key (e.g. the Rules Registry
 ``dimension``/``severity`` tags) — such keys cannot be deleted or renamed
 via :func:`save_label_definitions`, though their values, colors, and
@@ -1289,6 +1301,7 @@ export interface LabelDefinition {
   allow_custom_values?: boolean;
   value_colors?: LabelDefinitionValueColors;
   value_descriptions?: LabelDefinitionValueDescriptions;
+  value_criticality?: LabelDefinitionValueCriticality;
   is_builtin?: boolean;
 }
 

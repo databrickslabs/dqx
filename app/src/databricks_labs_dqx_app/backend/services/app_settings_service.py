@@ -249,9 +249,7 @@ class AppSettingsService:
 
     def save_permissions_default_inherit(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Persist the default per-grant inheritance setting. Returns the saved value."""
-        self.save_setting(
-            self._PERMISSIONS_DEFAULT_INHERIT_KEY, "true" if enabled else "false", user_email=user_email
-        )
+        self.save_setting(self._PERMISSIONS_DEFAULT_INHERIT_KEY, "true" if enabled else "false", user_email=user_email)
         return enabled
 
     # ------------------------------------------------------------------
@@ -601,8 +599,41 @@ class AppSettingsService:
                 "High": "#EA580C",
                 "Critical": "#DC2626",
             },
+            # Admin-editable severity -> DQX criticality mapping consumed by
+            # ``registry_models.resolve_criticality`` (materializer). Matches
+            # the historical hardcoded defaults
+            # (``registry_models.SEVERITY_TO_CRITICALITY``).
+            "value_criticality": {
+                "Low": "warn",
+                "Medium": "warn",
+                "High": "error",
+                "Critical": "error",
+            },
         },
     ]
+
+    def get_label_definitions(self) -> list[dict]:
+        """Return the stored ``label_definitions`` list as raw dicts.
+
+        Defensive read shared by the seeding path below and
+        ``registry_models.resolve_criticality``: malformed JSON, a
+        non-list payload, or non-dict entries degrade to an empty /
+        filtered list with a WARNING rather than propagating. Kept as
+        raw dicts (not the ``LabelDefinition`` pydantic model) to avoid
+        a services -> routes import cycle — see the class-level note.
+        """
+        raw = self.get_setting(self._LABEL_DEFINITIONS_KEY)
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("label_definitions setting is not valid JSON; treating as empty")
+            return []
+        if not isinstance(parsed, list):
+            logger.warning("label_definitions setting is not a list; treating as empty")
+            return []
+        return [item for item in parsed if isinstance(item, dict)]
 
     def seed_reserved_label_definitions_if_absent(self, *, user_email: str | None = None) -> bool:
         """Ensure the reserved ``dimension``/``severity`` label keys exist.
@@ -613,18 +644,7 @@ class AppSettingsService:
         entry (admin-edited or not) untouched. Returns ``True`` iff a
         write happened.
         """
-        raw = self.get_setting(self._LABEL_DEFINITIONS_KEY)
-        existing: list[dict] = []
-        if raw:
-            try:
-                parsed = json.loads(raw)
-                if isinstance(parsed, list):
-                    existing = [item for item in parsed if isinstance(item, dict)]
-                else:
-                    logger.warning("label_definitions setting is not a list; seeding onto an empty list")
-            except (TypeError, json.JSONDecodeError):
-                logger.warning("label_definitions setting is not valid JSON; seeding onto an empty list")
-
+        existing = self.get_label_definitions()
         existing_keys = {item.get("key") for item in existing}
         missing = [seed for seed in self._RESERVED_LABEL_DEFINITION_SEEDS if seed["key"] not in existing_keys]
         if not missing:

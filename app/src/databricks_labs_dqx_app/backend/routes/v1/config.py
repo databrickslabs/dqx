@@ -94,6 +94,14 @@ class LabelDefinition(BaseModel):
     picked (e.g. the ``dimension`` key's per-dimension descriptions). Both
     maps are pruned to keys present in ``values`` on save.
 
+    ``value_criticality`` optionally maps a subset (or all) of ``values`` to a
+    DQX ``criticality`` (``"warn"`` or ``"error"``). Only meaningful on the
+    reserved ``severity`` key today: the materializer reads it to decide which
+    criticality a registry rule's effective severity renders as (see
+    ``registry_models.resolve_criticality``). Unmapped values fall back to the
+    built-in defaults. Pruned to keys present in ``values`` on save, like the
+    other per-value maps.
+
     ``is_builtin`` flags a reserved, pre-seeded key (e.g. the Rules Registry
     ``dimension``/``severity`` tags) — such keys cannot be deleted or renamed
     via :func:`save_label_definitions`, though their values, colors, and
@@ -108,6 +116,7 @@ class LabelDefinition(BaseModel):
     allow_custom_values: bool = False
     value_colors: dict[str, str] | None = None
     value_descriptions: dict[str, str] | None = None
+    value_criticality: dict[str, str] | None = None
     is_builtin: bool = False
 
     @field_validator("value_colors")
@@ -118,6 +127,18 @@ class LabelDefinition(BaseModel):
         for label_value, color in value.items():
             if not _HEX_COLOR_RE.match(color):
                 raise ValueError(f"Invalid color {color!r} for value {label_value!r}; expected '#RRGGBB' hex format.")
+        return value
+
+    @field_validator("value_criticality")
+    @classmethod
+    def _validate_value_criticality(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        for label_value, criticality in value.items():
+            if criticality not in ("warn", "error"):
+                raise ValueError(
+                    f"Invalid criticality {criticality!r} for value {label_value!r}; expected 'warn' or 'error'."
+                )
         return value
 
 
@@ -510,8 +531,11 @@ def save_label_definitions(
 
         cleaned_colors = {v: c for v, c in (d.value_colors or {}).items() if v in seen_values} or None
         cleaned_descriptions = {
-            v: desc.strip() for v, desc in (d.value_descriptions or {}).items() if v in seen_values and (desc or "").strip()
+            v: desc.strip()
+            for v, desc in (d.value_descriptions or {}).items()
+            if v in seen_values and (desc or "").strip()
         } or None
+        cleaned_criticality = {v: c for v, c in (d.value_criticality or {}).items() if v in seen_values} or None
 
         cleaned.append(
             LabelDefinition(
@@ -521,6 +545,7 @@ def save_label_definitions(
                 allow_custom_values=False if key in _NO_CUSTOM_VALUE_BUILTIN_KEYS else bool(d.allow_custom_values),
                 value_colors=cleaned_colors,
                 value_descriptions=cleaned_descriptions,
+                value_criticality=cleaned_criticality,
                 # Authoritative from the previously-persisted state, never
                 # from the client payload — a caller cannot grant or strip
                 # ``is_builtin`` protection via the request body.
