@@ -14,8 +14,11 @@ import pytest
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.catalog import ColumnInfo, ColumnMask, TableInfo, TableRowFilter
 
+from databricks_labs_dqx_app.backend.models import FailedRowFailureOut, FailingRecordFailureOut
+from databricks_labs_dqx_app.backend.services.dq_results_service import CheckAttribution
 from databricks_labs_dqx_app.backend.services.quarantine_sample_service import (
     QuarantineSampleService,
+    enrich_failures,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
@@ -102,3 +105,113 @@ class TestUserCanSelect:
         with pytest.raises(ValueError):
             QuarantineSampleService.user_can_select(obo_sql, "nope")
         obo_sql.query.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Failure enrichment + server-side filters (dq-results failed-rows path)
+# ---------------------------------------------------------------------------
+
+
+def failure(
+    rule_name: str | None = "c1",
+    quality_dimension: str | None = None,
+    severity: str | None = None,
+    columns: list[str] | None = None,
+) -> FailedRowFailureOut:
+    return FailedRowFailureOut(
+        rule_name=rule_name,
+        quality_dimension=quality_dimension,
+        severity=severity,
+        message="m",
+        columns=columns or [],
+    )
+
+
+class TestEnrichFailures:
+    def test_joins_rule_metadata_by_check_name(self):
+        raw = [FailingRecordFailureOut(rule_name="c1", message="boom", columns=["id"])]
+        attribution = {
+            "c1": CheckAttribution(
+                rule_id="rule-1",
+                rule_name="c1",
+                severity="High",
+                dimension="Completeness",
+                columns=("id",),
+            )
+        }
+        out = enrich_failures(raw, attribution)
+        assert out == [
+            FailedRowFailureOut(
+                rule_id="rule-1",
+                rule_name="c1",
+                quality_dimension="Completeness",
+                severity="High",
+                message="boom",
+                columns=["id"],
+            )
+        ]
+
+    def test_unattributed_failures_keep_null_metadata(self):
+        raw = [FailingRecordFailureOut(rule_name="adhoc", message="boom", columns=[])]
+        out = enrich_failures(raw, {})
+        assert out[0].rule_id is None
+        assert out[0].quality_dimension is None
+        assert out[0].severity is None
+        assert out[0].rule_name == "adhoc"
+
+    def test_nameless_failures_are_not_looked_up(self):
+        raw = [FailingRecordFailureOut(rule_name=None, message="boom", columns=[])]
+        out = enrich_failures(raw, {"c1": CheckAttribution(rule_id="rule-1", rule_name="c1")})
+        assert out[0].rule_id is None
+
+
+class TestRowMatchesFilters:
+    """dqlake predicate parity: exists() per facet, OR within a facet,
+    AND across facets; column facet is a membership test over
+    failed_columns."""
+
+    def test_no_filters_matches_everything(self):
+        assert QuarantineSampleService.row_matches_filters([failure()], []) is True
+
+    def test_rule_filter_matches_any_failure(self):
+        failures = [failure(rule_name="c1"), failure(rule_name="c2")]
+        assert QuarantineSampleService.row_matches_filters(failures, [], rules=("c2",)) is True
+        assert QuarantineSampleService.row_matches_filters(failures, [], rules=("c3",)) is False
+
+    def test_severity_filter(self):
+        failures = [failure(severity="High")]
+        assert QuarantineSampleService.row_matches_filters(failures, [], severities=("High",)) is True
+        assert QuarantineSampleService.row_matches_filters(failures, [], severities=("Low",)) is False
+
+    def test_dimension_filter(self):
+        failures = [failure(quality_dimension="Validity")]
+        assert QuarantineSampleService.row_matches_filters(failures, [], dimensions=("Validity",)) is True
+        assert (
+            QuarantineSampleService.row_matches_filters(failures, [], dimensions=("Completeness",)) is False
+        )
+
+    def test_column_filter_is_membership_over_failed_columns(self):
+        assert QuarantineSampleService.row_matches_filters([failure()], ["id"], columns=("id",)) is True
+        assert QuarantineSampleService.row_matches_filters([failure()], ["id"], columns=("amount",)) is False
+
+    def test_or_within_a_facet(self):
+        failures = [failure(rule_name="c1")]
+        assert QuarantineSampleService.row_matches_filters(failures, [], rules=("c1", "c9")) is True
+
+    def test_and_across_facets(self):
+        # Facets may be satisfied by DIFFERENT failures on the same row
+        # (dqlake parity: one exists() predicate per facet).
+        failures = [failure(rule_name="c1", severity="High"), failure(rule_name="c2", severity="Low")]
+        assert (
+            QuarantineSampleService.row_matches_filters(failures, [], rules=("c1",), severities=("Low",))
+            is True
+        )
+        assert (
+            QuarantineSampleService.row_matches_filters(failures, [], rules=("c1",), severities=("Med",))
+            is False
+        )
+
+    def test_untagged_failures_never_match_active_metadata_facets(self):
+        failures = [failure(severity=None, quality_dimension=None)]
+        assert QuarantineSampleService.row_matches_filters(failures, [], severities=("High",)) is False
+        assert QuarantineSampleService.row_matches_filters(failures, [], dimensions=("Validity",)) is False

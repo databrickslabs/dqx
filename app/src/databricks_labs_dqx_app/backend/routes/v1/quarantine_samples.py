@@ -21,7 +21,6 @@ SECURITY MODEL — the order below is load-bearing:
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Annotated
 
@@ -37,13 +36,10 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_sp_sql_executor,
     require_role,
 )
-from databricks_labs_dqx_app.backend.models import (
-    FailingRecordFailureOut,
-    FailingRecordOut,
-    FailingRecordsOut,
-)
+from databricks_labs_dqx_app.backend.models import FailingRecordsOut
 from databricks_labs_dqx_app.backend.services.quarantine_sample_service import (
     QuarantineSampleService,
+    to_failing_record,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
@@ -105,65 +101,6 @@ def get_quarantine_sample(
 
     return FailingRecordsOut(
         source_table_fqn=table_fqn,
-        records=[_to_failing_record(r) for r in rows],
+        records=[to_failing_record(r) for r in rows],
         suppressed=False,
-    )
-
-
-def _parse_json_or_none(raw: str | None) -> object:
-    """Parse a to_json(...)-rendered VARIANT column; None when absent/corrupt."""
-    if not raw or raw == "null":
-        return None
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return None
-
-
-def _to_failing_record(row: dict[str, str | None]) -> FailingRecordOut:
-    """Transform a dq_quarantine_records row into the UI's failure-highlight shape.
-
-    The quarantine table nests the quarantined source row under the VARIANT
-    *row_data* column, with DQX's result structs (*name*, *message*,
-    *columns* — see schema/dq_result_schema.py) under the sibling VARIANT
-    *errors*/*warnings* columns. All three arrive here as JSON text.
-    Malformed payloads degrade to empty values rather than failing the
-    whole response.
-    """
-    parsed_row = _parse_json_or_none(row.get("row_data"))
-    row_values: dict[str, str | None] = {}
-    if isinstance(parsed_row, dict):
-        row_values = {str(k): (None if v is None else str(v)) for k, v in parsed_row.items()}
-
-    failures: list[FailingRecordFailureOut] = []
-    for col_name in ("errors", "warnings"):
-        parsed = _parse_json_or_none(row.get(col_name))
-        if isinstance(parsed, dict):
-            # Legacy SQL-check rows wrote a single {check_name: message}
-            # dict (see _row_to_record in routes/v1/quarantine.py).
-            failures.extend(
-                FailingRecordFailureOut(rule_name=str(k), message=str(v), columns=[])
-                for k, v in parsed.items()
-            )
-            continue
-        if not isinstance(parsed, list):
-            continue
-        for entry in parsed:
-            if not isinstance(entry, dict):
-                continue
-            columns = entry.get("columns")
-            failures.append(
-                FailingRecordFailureOut(
-                    rule_name=str(entry["name"]) if entry.get("name") is not None else None,
-                    message=str(entry["message"]) if entry.get("message") is not None else None,
-                    columns=[str(c) for c in columns] if isinstance(columns, list) else [],
-                )
-            )
-
-    failed_columns = sorted({c for f in failures for c in f.columns})
-    return FailingRecordOut(
-        record_key=str(row.get("quarantine_id") or ""),
-        row_values=row_values,
-        failed_columns=failed_columns,
-        failures=failures,
     )

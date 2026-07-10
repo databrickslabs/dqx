@@ -331,6 +331,18 @@ class MonitoredTableService:
         applied_rules = self._list_applied_rules(binding_id)
         return MonitoredTableDetail(table=table, applied_rules=applied_rules)
 
+    def get_by_table_fqn(self, table_fqn: str) -> MonitoredTableDetail | None:
+        """Like :meth:`get`, but keyed by the bound table's FQN.
+
+        Used by the dq-results endpoints to attribute a table's check
+        results (keyed by ``input_location``) back to the binding's
+        applied-rule metadata. None when the table is not monitored.
+        """
+        table = self._get_by_table_fqn(table_fqn)
+        if table is None:
+            return None
+        return MonitoredTableDetail(table=table, applied_rules=self._list_applied_rules(table.binding_id))
+
     def _get(self, binding_id: str) -> MonitoredTable | None:
         e = escape_sql_string(binding_id)
         sql = f"SELECT {self._select_cols} FROM {self._table} WHERE binding_id = '{e}'"  # noqa: S608

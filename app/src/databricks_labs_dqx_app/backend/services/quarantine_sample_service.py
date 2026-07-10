@@ -22,14 +22,105 @@ docs/superpowers/specs/2026-07-10-dq-score-results-design.md §3.
 
 from __future__ import annotations
 
+import json
 import logging
 
 from databricks.sdk import WorkspaceClient
 
+from databricks_labs_dqx_app.backend.models import (
+    FailedRowFailureOut,
+    FailingRecordFailureOut,
+    FailingRecordOut,
+)
+from databricks_labs_dqx_app.backend.services.dq_results_service import CheckAttribution
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn
 
 logger = logging.getLogger(__name__)
+
+
+def parse_json_or_none(raw: str | None) -> object:
+    """Parse a to_json(...)-rendered VARIANT column; None when absent/corrupt."""
+    if not raw or raw == "null":
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def to_failing_record(row: dict[str, str | None]) -> FailingRecordOut:
+    """Transform a dq_quarantine_records row into the UI's failure-highlight shape.
+
+    The quarantine table nests the quarantined source row under the VARIANT
+    *row_data* column, with DQX's result structs (*name*, *message*,
+    *columns* — see schema/dq_result_schema.py) under the sibling VARIANT
+    *errors*/*warnings* columns. All three arrive here as JSON text.
+    Malformed payloads degrade to empty values rather than failing the
+    whole response.
+    """
+    parsed_row = parse_json_or_none(row.get("row_data"))
+    row_values: dict[str, str | None] = {}
+    if isinstance(parsed_row, dict):
+        row_values = {str(k): (None if v is None else str(v)) for k, v in parsed_row.items()}
+
+    failures: list[FailingRecordFailureOut] = []
+    for col_name in ("errors", "warnings"):
+        parsed = parse_json_or_none(row.get(col_name))
+        if isinstance(parsed, dict):
+            # Legacy SQL-check rows wrote a single {check_name: message}
+            # dict (see _row_to_record in routes/v1/quarantine.py).
+            failures.extend(
+                FailingRecordFailureOut(rule_name=str(k), message=str(v), columns=[]) for k, v in parsed.items()
+            )
+            continue
+        if not isinstance(parsed, list):
+            continue
+        for entry in parsed:
+            if not isinstance(entry, dict):
+                continue
+            columns = entry.get("columns")
+            failures.append(
+                FailingRecordFailureOut(
+                    rule_name=str(entry["name"]) if entry.get("name") is not None else None,
+                    message=str(entry["message"]) if entry.get("message") is not None else None,
+                    columns=[str(c) for c in columns] if isinstance(columns, list) else [],
+                )
+            )
+
+    failed_columns = sorted({c for f in failures for c in f.columns})
+    return FailingRecordOut(
+        record_key=str(row.get("quarantine_id") or ""),
+        row_values=row_values,
+        failed_columns=failed_columns,
+        failures=failures,
+    )
+
+
+def enrich_failures(
+    failures: list[FailingRecordFailureOut],
+    attribution: dict[str, CheckAttribution],
+) -> list[FailedRowFailureOut]:
+    """Join each failure's rule name to the binding's applied-rule metadata.
+
+    Produces the dqlake FailureOut shape: rule_id / quality_dimension /
+    severity come from the applied-rule attribution (None for checks not
+    attributable to a registry rule application).
+    """
+    out: list[FailedRowFailureOut] = []
+    for failure in failures:
+        attr = attribution.get(failure.rule_name) if failure.rule_name else None
+        out.append(
+            FailedRowFailureOut(
+                rule_id=attr.rule_id if attr else None,
+                rule_name=failure.rule_name,
+                quality_dimension=attr.dimension if attr else None,
+                severity=attr.severity if attr else None,
+                message=failure.message,
+                columns=list(failure.columns),
+            )
+        )
+    return out
 
 
 class QuarantineSampleService:
@@ -90,3 +181,32 @@ class QuarantineSampleService:
         if table_info.row_filter is not None:
             return True
         return any(col.mask is not None for col in (table_info.columns or []))
+
+    @staticmethod
+    def row_matches_filters(
+        failures: list[FailedRowFailureOut],
+        failed_columns: list[str],
+        *,
+        dimensions: tuple[str, ...] = (),
+        severities: tuple[str, ...] = (),
+        rules: tuple[str, ...] = (),
+        columns: tuple[str, ...] = (),
+    ) -> bool:
+        """Server-side failure filter for the filtered failed-rows endpoint.
+
+        Mirrors dqlake's SQL predicates over ``failed_rows_latest``: each
+        facet is satisfied when ANY failure on the row matches ANY of its
+        values (``exists(failures, f -> f.<field> = v)``), the column facet
+        is a membership test over the row's *failed_columns*, and the
+        facets are ANDed together. Untagged failures (None fields) never
+        match an active dimension/severity facet.
+        """
+        if dimensions and not any(f.quality_dimension in dimensions for f in failures):
+            return False
+        if severities and not any(f.severity in severities for f in failures):
+            return False
+        if rules and not any(f.rule_name in rules for f in failures):
+            return False
+        if columns and not any(c in columns for c in failed_columns):
+            return False
+        return True

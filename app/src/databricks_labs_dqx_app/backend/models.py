@@ -1431,6 +1431,155 @@ class GlobalScoreOut(BaseModel):
     tables: list[TableScoreOut] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------
+# DQ results models (dqlake-shape port — see routes/v1/dq_results.py).
+# Field names/shapes deliberately mirror dqlake's routers/dq_results.py
+# response models so the ported results UI consumes them nearly verbatim.
+# ---------------------------------------------------------------------------
+
+
+class GroupRowOut(BaseModel):
+    """One breakdown row (by dimension / severity / rule / column / table).
+
+    *label* is None for checks whose rule carries no tag on the grouped
+    axis (dqlake parity: the UI renders an em-dash). *check_count* is
+    None on the by-column breakdown, matching dqlake's by_column query
+    which does not compute it.
+    """
+
+    label: str | None = None
+    pass_rate: float | None = None
+    failed_tests: int | None = None
+    rule_count: int | None = None
+    check_count: int | None = None
+    total_tests: int | None = None
+
+
+class TrendPointOut(BaseModel):
+    """One over-time point; *series* is set on grouped trends only."""
+
+    run_date: str | None = None
+    series: str | None = None
+    pass_rate: float | None = None
+    rule_count: int | None = None
+    total_tests: int | None = None
+
+
+class TrendCountPointOut(BaseModel):
+    """Per-run count axes: distinct rules, checks (rows), and tests
+    (record-level evaluations). Feeds the "Number of Rules, Checks & Tests"
+    chart."""
+
+    run_date: str | None = None
+    rule_count: int | None = None
+    check_count: int | None = None
+    test_count: int | None = None
+
+
+class TrendFailurePointOut(BaseModel):
+    """Per-run failure count axes. A failed check = a check row with >=1
+    failed test; a failed rule = a distinct rule with any failed test.
+    *failed_records* is the run's distinct failing-row count (derived from
+    the observer's input/valid row counts); None when underivable."""
+
+    run_date: str | None = None
+    failed_rule_count: int | None = None
+    failed_check_count: int | None = None
+    failed_test_count: int | None = None
+    failed_records: int | None = None
+
+
+class EntityResultsOut(BaseModel):
+    """Breakdowns + trends for one results entity (table / product / rule / global).
+
+    The table endpoint fills *tables*; the product/global/rule endpoints
+    fill *by_table* and *trend_by_table* (dqlake parity). Keys outside the
+    requested *axes* slice are returned empty so the shape is stable.
+    """
+
+    by_dimension: list[GroupRowOut] = Field(default_factory=list)
+    by_severity: list[GroupRowOut] = Field(default_factory=list)
+    by_column: list[GroupRowOut] = Field(default_factory=list)
+    by_table: list[GroupRowOut] = Field(default_factory=list)
+    by_rule: list[GroupRowOut] = Field(default_factory=list)
+    trend: list[TrendPointOut] = Field(default_factory=list)
+    trend_by_dimension: list[TrendPointOut] = Field(default_factory=list)
+    trend_by_severity: list[TrendPointOut] = Field(default_factory=list)
+    trend_by_table: list[TrendPointOut] = Field(default_factory=list)
+    trend_counts: list[TrendCountPointOut] = Field(default_factory=list)
+    trend_failures: list[TrendFailurePointOut] = Field(default_factory=list)
+    tables: list[GroupRowOut] = Field(default_factory=list)
+
+
+class RunRowOut(BaseModel):
+    """One run's rollup for the run picker (newest first)."""
+
+    run_id: str | None = None
+    run_ts: str | None = None
+    pass_rate: float | None = None
+    failed_tests: int | None = None
+    total_tests: int | None = None
+
+
+class RunsOut(BaseModel):
+    rows: list[RunRowOut] = Field(default_factory=list)
+
+
+class FailedRowFailureOut(BaseModel):
+    """One rule failure attached to a failing row, enriched with the
+    applied-rule metadata (registry rule id, severity tag, quality
+    dimension) joined via the check name. Enrichment fields are None for
+    checks not attributable to a registry rule application."""
+
+    rule_id: str | None = None
+    rule_name: str | None = None
+    quality_dimension: str | None = None
+    severity: str | None = None
+    message: str | None = None
+    columns: list[str] = Field(default_factory=list)
+
+
+class FailedRowOut(BaseModel):
+    """One failing source row shaped for per-cell failure highlighting."""
+
+    record_key: str | None = None
+    row_values: dict[str, str | None] = Field(default_factory=dict)
+    failed_columns: list[str] = Field(default_factory=list)
+    failures: list[FailedRowFailureOut] = Field(default_factory=list)
+    run_ts: str | None = None
+
+
+class FailedRowsOut(BaseModel):
+    """Filtered failing-rows sample (dqlake shape plus *suppressed*).
+
+    *total* is the number of matching rows found within the scanned
+    window — it can exceed ``len(rows)`` when capped by *limit*.
+    *suppressed* is True when the source table carries fine-grained
+    access controls (Task 7 semantics); an empty non-suppressed response
+    is also what a caller without SELECT on the source table receives.
+    """
+
+    rows: list[FailedRowOut] = Field(default_factory=list)
+    total: int = 0
+    suppressed: bool = False
+
+
+class SeverityOut(BaseModel):
+    """One severity registry entry derived from the reserved label definition."""
+
+    name: str
+    color: str
+    rank: int
+
+
+class DimensionOut(BaseModel):
+    """One quality-dimension registry entry derived from the reserved label definition."""
+
+    name: str
+    color: str
+    rank: int
+
+
 class CatalogOut(BaseModel):
     name: str
     comment: str | None = None
