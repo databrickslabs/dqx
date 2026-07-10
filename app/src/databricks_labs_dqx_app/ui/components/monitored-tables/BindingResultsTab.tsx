@@ -708,6 +708,7 @@ function ResultsBody({
               onSelect={(label) => onRowToggle("rule", label)}
               collapsed={!ruleColOpen}
               onToggleCollapse={() => setRuleColOpen((o) => !o)}
+              pageSize={8}
               headerRight={
                 <FacetSearch
                   label={t("resultsUi.facetRule")}

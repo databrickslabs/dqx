@@ -1,8 +1,9 @@
 import { useState } from "react";
 import type * as React from "react";
 import { keepPreviousData } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { ChevronDown, ExternalLink, Loader2 } from "lucide-react";
 import {
   useGetTableResults,
   useGetDqResultsFailedRows,
@@ -210,6 +211,23 @@ export function tableUniverse(byTable: EntityResultsOut["by_table"]): string[] {
   );
 }
 
+/**
+ * Failed/total test counts for the ScoreBox subtitle: BOTH sums come from
+ * the same (filtered) by_table rows so "X failed of Y tests" is internally
+ * consistent. DELIBERATE dqlake deviation — the original hardcodes
+ * totalTests={0}, which suppresses the subtitle on the product ScoreBox
+ * entirely (its ScoreBox only renders the subtitle when totalTests > 0).
+ */
+export function sumTestCounts(byTable: EntityResultsOut["by_table"]): {
+  failedTests: number;
+  totalTests: number;
+} {
+  return {
+    failedTests: (byTable ?? []).reduce((a, g) => a + (g.failed_tests ?? 0), 0),
+    totalTests: (byTable ?? []).reduce((a, g) => a + (g.total_tests ?? 0), 0),
+  };
+}
+
 /** Facet → chip-label i18n key (static keys so the extractor sees them). */
 const CHIP_LABEL_KEYS: Record<Facet, string> = {
   dimension: "resultsUi.chipDimension",
@@ -342,6 +360,15 @@ export function MultiTableResultsSection({
       .map((fqn) => [friendlyTableName(fqn), fqn] as const),
   );
   const selectedFqn = selectedTable ? (fqnByFriendly.get(selectedTable) ?? null) : null;
+  // By-table rows carry the monitored-table binding_id (additive P3.1
+  // enrichment) so each row can deep-link to that table's Results tab.
+  const bindingIdByFriendly = new Map(
+    (results?.by_table ?? [])
+      .filter((g): g is typeof g & { label: string; binding_id: string } =>
+        g.label != null && typeof g.binding_id === "string",
+      )
+      .map((g) => [friendlyTableName(g.label), g.binding_id] as const),
+  );
 
   const { data: dimensions } =
     useListResultDimensionsSuspense<DimensionOut[]>(selector<DimensionOut[]>());
@@ -479,14 +506,12 @@ export function MultiTableResultsSection({
     }));
 
   // Entity average score (dqlake behaviour) = the latest point on the entity
-  // trend (the mean across members). Failed tests sum the filtered by_table
-  // rows, matching dqlake's use of its filtered results.
+  // trend (the mean across members). Failed/total tests both sum the same
+  // filtered by_table rows — see sumTestCounts for the documented dqlake
+  // deviation (the original's totalTests={0} hid the subtitle).
   const lastTrend = (trends?.trend ?? []).at(-1);
   const passRate = toNum(lastTrend?.pass_rate);
-  const failedTests = (results?.by_table ?? []).reduce(
-    (a, g) => a + (g.failed_tests ?? 0),
-    0,
-  );
+  const { failedTests, totalTests } = sumTestCounts(results?.by_table);
 
   // Over-time chart: a prominent foreground "Average" trendline drawn on top of
   // dull, thin per-table lines. The Average is the mean of the member tables,
@@ -532,7 +557,7 @@ export function MultiTableResultsSection({
     <ScoreBox
       passRate={passRate}
       failedTests={failedTests}
-      totalTests={0}
+      totalTests={totalTests}
       info={COUNT_INFO}
       label={scoreLabel(accessibleTableCount)}
     />
@@ -659,6 +684,7 @@ export function MultiTableResultsSection({
                   onSelect={(label) => onRowToggle("rule", label)}
                   collapsed={!ruleColOpen}
                   onToggleCollapse={() => setRuleColOpen((o) => !o)}
+                  pageSize={8}
                 />
               </div>
             )}
@@ -673,6 +699,26 @@ export function MultiTableResultsSection({
                 loading={breakdownRefetching}
                 selected={selectedTable ? [selectedTable] : []}
                 onSelect={onTableSelect}
+                pageSize={8}
+                // Rows with a monitored-table binding deep-link to that
+                // table's Results tab; the row click itself still drives the
+                // invalid-samples selection (stopPropagation on the link).
+                rowLink={(label) => {
+                  const bindingId = bindingIdByFriendly.get(label);
+                  if (!bindingId) return null;
+                  return (
+                    <Link
+                      to="/monitored-tables/$bindingId"
+                      params={{ bindingId }}
+                      search={{ tab: "results" }}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={t("resultsUi.openTableResultsAria", { table: label })}
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                    </Link>
+                  );
+                }}
               />
             </div>
             <div data-testid="breakdown-by-column">

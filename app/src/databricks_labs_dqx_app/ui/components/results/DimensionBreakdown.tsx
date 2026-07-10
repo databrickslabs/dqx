@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import type * as React from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowDown, ArrowUp, ChevronDown, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
@@ -10,6 +11,27 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { CollapseRegion } from "./CollapseRegion";
+
+/**
+ * Client-side page slice for the breakdown table. Without *pageSize* the
+ * table is unpaginated (every row on one "page" — dqlake behaviour). The
+ * page is clamped so a shrink (filter/search change) can never strand the
+ * view on an out-of-range page — the same idiom as FailingRecordsTable's
+ * pager. Exported for the pager-math tests.
+ */
+export function paginateRows<T>(
+  rows: T[],
+  page: number,
+  pageSize?: number,
+): { pageRows: T[]; safePage: number; totalPages: number } {
+  if (!pageSize || pageSize <= 0 || rows.length <= pageSize) {
+    return { pageRows: rows, safePage: 0, totalPages: 1 };
+  }
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const safePage = Math.min(Math.max(page, 0), totalPages - 1);
+  const start = safePage * pageSize;
+  return { pageRows: rows.slice(start, start + pageSize), safePage, totalPages };
+}
 
 /** A label that truncates with an ellipsis and reveals the full text in a
  *  tooltip — but only when it's actually clipped (re-checked on hover, the
@@ -97,6 +119,8 @@ export function DimensionBreakdown({
   countMode = "rules",
   emptyText,
   defaultSort,
+  pageSize,
+  rowLink,
 }: {
   title: string;
   rows: Array<BreakdownRow>;
@@ -133,9 +157,19 @@ export function DimensionBreakdown({
    *  back to the default state reverts to this order. Persists across refetches
    *  and row swaps. Defaults to incoming (API) order when omitted. */
   defaultSort?: { key: SortKey; dir: "asc" | "desc" };
+  /** Client-side page size. When set and the (sorted) rows exceed it, the
+   *  table paginates with the compact Prev/Next pager (FailingRecordsTable's
+   *  idiom). Unset = unpaginated (dqlake behaviour). */
+  pageSize?: number;
+  /** Optional per-row link node (e.g. an icon-link to the row's detail
+   *  page), rendered after the label. The node must handle its own click
+   *  (row clicks still fire `onSelect`; wrap with stopPropagation). */
+  rowLink?: (label: string) => React.ReactNode;
 }) {
   const { t } = useTranslation();
   const [sort, setSort] = useState<SortState>(null);
+  // Client-side pagination over the sorted rows (only when pageSize is set).
+  const [page, setPage] = useState(0);
 
   const displayRows = rows;
   const mutedSet = new Set(mutedLabels ?? []);
@@ -160,6 +194,10 @@ export function DimensionBreakdown({
         return effectiveSort.dir === "asc" ? c : -c;
       })
     : displayRows;
+
+  // Slice the current page out of the full sorted set; the clamp keeps the
+  // page in range when a refetch/search shrinks the rows.
+  const { pageRows, safePage, totalPages } = paginateRows(sortedRows, page, pageSize);
 
   const selectedSet = new Set(selected ?? []);
 
@@ -218,7 +256,8 @@ export function DimensionBreakdown({
         {emptyText ?? t("resultsUi.noDataYet")}
       </p>
     ) : (
-      <div className="relative rounded-md border overflow-x-auto">
+      <div className="space-y-2">
+        <div className="relative rounded-md border overflow-x-auto">
           {loading && (
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
               <Loader2
@@ -249,7 +288,7 @@ export function DimensionBreakdown({
               </tr>
             </thead>
             <tbody>
-              {sortedRows.map((r, i) => {
+              {pageRows.map((r, i) => {
                 const isSelected = r.label != null && selectedSet.has(r.label);
                 // A muted row ("All" mode: a base row excluded by the active
                 // facet filter): render it dimmed + thinner so it reads as
@@ -283,6 +322,7 @@ export function DimensionBreakdown({
                             />
                           )}
                           <TruncatedText text={r.label} className="min-w-0" />
+                          {rowLink?.(r.label)}
                         </span>
                       )}
                     </td>
@@ -310,6 +350,32 @@ export function DimensionBreakdown({
             </tbody>
           </table>
         </div>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7"
+              disabled={safePage <= 0}
+              onClick={() => setPage(safePage - 1)}
+            >
+              {t("resultsUi.prevPage")}
+            </Button>
+            <span>
+              {t("resultsUi.pageOf", { page: safePage + 1, pages: totalPages })}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7"
+              disabled={safePage >= totalPages - 1}
+              onClick={() => setPage(safePage + 1)}
+            >
+              {t("resultsUi.nextPage")}
+            </Button>
+          </div>
+        )}
+      </div>
       );
 
   return (

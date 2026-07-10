@@ -1152,9 +1152,13 @@ export function RegistryRuleFormDialog({
   });
   const ruleScore = ruleScoreQuery.data;
   const resultsNotApplied = ruleScore !== undefined && ruleResultsState(ruleScore) === "not-applied";
+  // A FAILED score fetch also leaves the trigger disabled, but with its own
+  // explanatory tooltip + click-to-retry — previously it was silently
+  // disabled, indistinguishable from the still-loading state (P3.6).
+  const resultsScoreError = ruleScoreQuery.isError;
   // Disabled while there's no saved rule (create flow, like History) or the
   // score hasn't loaded yet — the tooltip only shows for the definitive
-  // "not applied anywhere" state.
+  // "not applied anywhere" / fetch-error states.
   const resultsDisabled = !sourceRule || ruleScore === undefined || resultsNotApplied;
 
   // -- Dirty (unsaved-changes) tracking -------------------------------------
@@ -2449,10 +2453,20 @@ export function RegistryRuleFormDialog({
                 definitive not-applied state. The wrapping <span> is the
                 tooltip trigger because the disabled button itself swallows
                 pointer events (`disabled:pointer-events-none`). */}
-            {resultsNotApplied ? (
+            {resultsNotApplied || resultsScoreError ? (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span tabIndex={0} className="inline-flex h-full cursor-not-allowed" aria-disabled="true">
+                  <span
+                    tabIndex={0}
+                    className={cn(
+                      "inline-flex h-full",
+                      resultsScoreError ? "cursor-pointer" : "cursor-not-allowed",
+                    )}
+                    aria-disabled="true"
+                    // On a fetch error the wrapper doubles as the retry
+                    // affordance (the disabled trigger swallows clicks).
+                    onClick={resultsScoreError ? () => void ruleScoreQuery.refetch() : undefined}
+                  >
                     <TabsTrigger value="results" className="gap-1.5" disabled aria-disabled="true">
                       <ClipboardList className="h-3.5 w-3.5" />
                       {t("rulesRegistry.tabResults")}
@@ -2460,7 +2474,9 @@ export function RegistryRuleFormDialog({
                   </span>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  {t("rulesRegistry.resultsNotAppliedTooltip")}
+                  {resultsScoreError
+                    ? t("rulesRegistry.resultsScoreErrorTooltip")
+                    : t("rulesRegistry.resultsNotAppliedTooltip")}
                 </TooltipContent>
               </Tooltip>
             ) : (
