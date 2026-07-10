@@ -133,6 +133,7 @@ import {
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ScoreBox } from "@/components/results/ScoreBox";
 import { FailingRecordsTable } from "@/components/results/FailingRecordsTable";
+import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 import { MonitoredTableHistoryTab } from "@/components/monitored-tables/MonitoredTableHistoryTab";
@@ -2447,19 +2448,6 @@ function ResultsTab({ tableFqn, status }: { tableFqn: string; status: string }) 
     </Card>
   );
 }
-
-/**
- * Score + failing-records data only changes when a validation run finishes,
- * so these queries NEVER refetch on their own — no polling, no window-focus
- * refetch, and an infinite staleTime. The only refresh trigger is
- * `invalidateResultsAfterRunCompletion` (lib/results-invalidation.ts), fired
- * from the places that already observe runs settling (Runs History's
- * RUNNING-run poll and the data-product run-set poll).
- */
-const RESULTS_QUERY_OPTIONS = {
-  staleTime: Infinity,
-  refetchOnWindowFocus: false,
-} as const;
 
 function ResultsContent({ tableFqn }: { tableFqn: string }) {
   const { t } = useTranslation();

@@ -6,7 +6,7 @@
  * (this repo has no component-test infrastructure); the .tsx files stay
  * thin JSX shells over these helpers.
  */
-import type { FailingRecordOut } from "@/lib/api";
+import type { FailingRecordOut, TableScoreOut } from "@/lib/api";
 
 /** Scores at or above this fraction render in the green (healthy) band. */
 export const SCORE_BAND_GREEN_MIN = 0.95;
@@ -29,6 +29,25 @@ export function scoreBandClass(score: number): string {
   if (score >= SCORE_BAND_GREEN_MIN) return "text-emerald-600 dark:text-emerald-400";
   if (score >= SCORE_BAND_AMBER_MIN) return "text-amber-600 dark:text-amber-400";
   return "text-red-600 dark:text-red-400";
+}
+
+/**
+ * Sums total/failed test counts across a product's member table scores, for
+ * the aggregate ScoreBox subline on the Table Space Results tab. Counts are
+ * optional in the generated types (members without runs carry none), so
+ * absent values count as zero; an absent/empty member list sums to zeros.
+ */
+export function sumMemberTestCounts(members: TableScoreOut[] | undefined): {
+  totalTests: number;
+  failedTests: number;
+} {
+  let totalTests = 0;
+  let failedTests = 0;
+  for (const member of members ?? []) {
+    totalTests += member.total_tests ?? 0;
+    failedTests += member.failed_tests ?? 0;
+  }
+  return { totalTests, failedTests };
 }
 
 /**

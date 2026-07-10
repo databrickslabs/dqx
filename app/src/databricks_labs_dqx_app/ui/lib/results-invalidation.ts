@@ -22,6 +22,18 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { getGetQuarantineSampleQueryKey } from "@/lib/api";
 
+/**
+ * Query options for every score / failing-records query covered by this
+ * module: the data only changes when a validation run finishes, so the
+ * queries never refetch on their own — `invalidateResultsAfterRunCompletion`
+ * below is their ONLY refresh trigger. Spread into the generated hooks'
+ * `query` options (table Results tab, product Results tab, …).
+ */
+export const RESULTS_QUERY_OPTIONS = {
+  staleTime: Infinity,
+  refetchOnWindowFocus: false,
+} as const;
+
 /** Path prefix shared by the global, table, product, and rule score endpoints. */
 export const DQ_SCORE_PATH_PREFIX = "/api/v1/dq-score/";
 /** Path prefix of the per-table failing-records sample endpoint. */

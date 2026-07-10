@@ -27,6 +27,7 @@ import { ProductHeader } from "@/components/data-products/ProductHeader";
 import { ProductAboutTab } from "@/components/data-products/ProductAboutTab";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
 import { ProductTablesTab } from "@/components/data-products/ProductTablesTab";
+import { ProductResultsTab } from "@/components/data-products/ProductResultsTab";
 import { ProductRunsTab } from "@/components/data-products/ProductRunsTab";
 import { ProductSchedulingTab } from "@/components/data-products/ProductSchedulingTab";
 import { ProductHistoryTab } from "@/components/data-products/ProductHistoryTab";
@@ -165,6 +166,11 @@ function DataProductDetailPage() {
             tables: (
               <TabBoundary label={t("dataProducts.tabTables")}>
                 <ProductTablesTab editState={editState} canEdit={canEdit} />
+              </TabBoundary>
+            ),
+            results: (
+              <TabBoundary label={t("dataProducts.tabResults")}>
+                <ProductResultsTab productId={productId} />
               </TabBoundary>
             ),
             runs: (
