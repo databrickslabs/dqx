@@ -170,9 +170,9 @@ function Layout() {
               </Link>
             </SidebarMenuItem>
 
-            {/* Results — org-wide DQ score with a per-table breakdown
-                (GET /dq-score/global). Visible to all; the backend filters
-                the table list to the viewer's accessible catalogs. Sits
+            {/* Results — org-wide DQ results composition over all monitored
+                tables (dq-results endpoints). Visible to all; the backend
+                filters to the viewer's accessible catalogs. Sits
                 between Runs History and Insights: it's the outcome view of
                 the runs above it, at a higher altitude than the per-run
                 history. */}

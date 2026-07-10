@@ -28,7 +28,6 @@ from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
     get_apply_rules_service,
     get_conf,
-    get_data_product_service,
     get_monitored_table_service,
     get_sp_sql_executor,
     get_user_catalog_names,
@@ -40,19 +39,16 @@ from databricks_labs_dqx_app.backend.metrics_utils import (
     safe_int,
 )
 from databricks_labs_dqx_app.backend.models import (
-    GlobalScoreOut,
-    ProductScoreOut,
     RuleScoreOut,
     TableScoreOut,
 )
 from databricks_labs_dqx_app.backend.registry_models import AppliedRule
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
-from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.score_service import ScoreService
 from databricks_labs_dqx_app.backend.services.score_view_service import metric_view_fqn
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -81,9 +77,8 @@ def _row_to_table_score(table_fqn: str, row: dict[str, str | None]) -> TableScor
 def _compute_score_for_table(table_fqn: str, sql: SqlExecutor, app_conf: AppConfig) -> TableScoreOut:
     """Read the row-weighted DQ score for *table_fqn*'s latest run.
 
-    Shared by the table, product, and rule endpoints. Raises the
-    underlying exception on SQL failure — callers map it to an HTTP
-    status.
+    Raises the underlying exception on SQL failure — the caller maps it
+    to an HTTP status.
     """
     mv = metric_view_fqn(app_conf.catalog, app_conf.schema_name)
     e_fqn = escape_sql_string(table_fqn)
@@ -98,126 +93,6 @@ def _compute_score_for_table(table_fqn: str, sql: SqlExecutor, app_conf: AppConf
     if not rows:
         return TableScoreOut(source_table_fqn=table_fqn)
     return _row_to_table_score(table_fqn, rows[0])
-
-
-# Registered BEFORE the parameterized routes: FastAPI matches in
-# declaration order, so a fixed path declared first can never be
-# swallowed by a catch-all like /table/{table_fqn:path}.
-@router.get(
-    "/global",
-    operation_id="getGlobalScore",
-    dependencies=[require_role(*_ALL_ROLES)],
-)
-def get_global_score(
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
-    app_conf: Annotated[AppConfig, Depends(get_conf)],
-    user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
-) -> GlobalScoreOut:
-    """Return the cross-table DQ score over every table tracked in dq_metrics.
-
-    One MEASURE() query over the latest run per *input_location*
-    (``is_latest_run`` selects exactly one run per location, so adding
-    ``run_id`` to the grouping keeps one row per table while surfacing
-    the run id). Tables in catalogs the requesting user cannot access
-    are silently filtered app-side (same gate as the product endpoint —
-    filtered, never 403; the SP-owned metric view is not the permission
-    boundary), and the scored tables are averaged with an unweighted
-    mean.
-    """
-    mv = metric_view_fqn(app_conf.catalog, app_conf.schema_name)
-    stmt = (
-        f"SELECT input_location, run_id, MEASURE(score) AS score, "
-        f"MEASURE(failed_tests) AS failed_tests, MEASURE(total_tests) AS total_tests "
-        f"FROM {mv} "  # noqa: S608
-        f"WHERE is_latest_run "
-        f"GROUP BY input_location, run_id "
-        f"ORDER BY input_location"
-    )
-    try:
-        rows = sql.query_dicts(stmt)
-        tables = [
-            _row_to_table_score(fqn, row)
-            for row in rows
-            if (fqn := row.get("input_location")) and catalog_of(fqn) in user_catalogs
-        ]
-    except Exception as exc:
-        logger.exception("Failed to compute global score")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    scored = [t.score for t in tables if t.score is not None]
-    overall = ScoreService.compute_product_score(scored)
-    return GlobalScoreOut(
-        overall_score=round(overall, 4) if overall is not None else None,
-        table_count=len(tables),
-        tables=tables,
-    )
-
-
-@router.get(
-    "/table/{table_fqn:path}",
-    operation_id="getTableScore",
-    dependencies=[require_role(*_ALL_ROLES)],
-)
-def get_table_score(
-    table_fqn: str,
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
-    app_conf: Annotated[AppConfig, Depends(get_conf)],
-    user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
-) -> TableScoreOut:
-    """Return the row-weighted DQ score for a table's latest run."""
-    try:
-        validate_fqn(table_fqn)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    if catalog_of(table_fqn) not in user_catalogs:
-        raise HTTPException(status_code=403, detail="You do not have access to this table's catalog")
-
-    try:
-        return _compute_score_for_table(table_fqn, sql, app_conf)
-    except Exception as exc:
-        logger.exception("Failed to compute score for %s", table_fqn)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@router.get(
-    "/product/{product_id}",
-    operation_id="getProductScore",
-    dependencies=[require_role(*_ALL_ROLES)],
-)
-def get_product_score(
-    product_id: str,
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
-    app_conf: Annotated[AppConfig, Depends(get_conf)],
-    user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
-    data_products: Annotated[DataProductService, Depends(get_data_product_service)],
-) -> ProductScoreOut:
-    """Return the unweighted mean DQ score over a data product's member tables.
-
-    Members in catalogs the requesting user cannot access are silently
-    excluded (filtered, not 403'd) — the same catalog gate as the table
-    endpoint, applied per member. Members with no computable score are
-    listed with a null score but excluded from the mean.
-    """
-    try:
-        detail = data_products.get(product_id)
-        if detail is None:
-            raise HTTPException(status_code=404, detail=f"Data product not found: {product_id}")
-        accessible = [m.table_fqn for m in detail.members if catalog_of(m.table_fqn) in user_catalogs]
-        table_scores = [_compute_score_for_table(fqn, sql, app_conf) for fqn in accessible]
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Failed to compute score for product %s", product_id)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    scored = [s.score for s in table_scores if s.score is not None]
-    product_score = ScoreService.compute_product_score(scored)
-    return ProductScoreOut(
-        product_id=product_id,
-        score=round(product_score, 4) if product_score is not None else None,
-        member_table_scores=table_scores,
-    )
 
 
 def _resolve_binding_fqns(applications: list[AppliedRule], monitored_tables: MonitoredTableService) -> list[str]:
