@@ -79,7 +79,7 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
     metric_view_fqn,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_ident, validate_fqn
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_object_fqn, validate_fqn
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -118,13 +118,8 @@ def _validate_run_id(run_id: str | None) -> None:
 
 
 def _app_object_fqn(app_conf: AppConfig, name: str) -> str:
-    """Backtick-quoted FQN of an app-schema object (*name* is a trusted constant).
-
-    Catalog/schema come from app config and are quoted per part — the same
-    convention as the view DDL's *sql.q* — so a hyphenated catalog
-    (``prod-east``) stays parseable on every read path.
-    """
-    return f"{quote_ident(app_conf.catalog)}.{quote_ident(app_conf.schema_name)}.{name}"
+    """Backtick-quoted FQN of an app-schema object (*name* is a trusted constant)."""
+    return quote_object_fqn(app_conf.catalog, app_conf.schema_name, name)
 
 
 def _shaping_view_fqn(app_conf: AppConfig) -> str:

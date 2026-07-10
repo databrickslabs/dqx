@@ -238,7 +238,8 @@ class TestHappyPath:
     def test_query_targets_quarantine_table_and_escapes_fqn(self, client, sp_sql_mock, app_config):
         client.get(URL)
         stmt = sp_sql_mock.query_dicts.call_args[0][0]
-        assert f"{app_config.catalog}.{app_config.schema_name}.dq_quarantine_records" in stmt
+        # Catalog/schema are backtick-quoted (hyphenated-catalog support).
+        assert f"`{app_config.catalog}`.`{app_config.schema_name}`.dq_quarantine_records" in stmt
         assert f"source_table_fqn = '{FQN}'" in stmt
         assert "to_json(row_data)" in stmt
         assert "to_json(errors)" in stmt
@@ -295,3 +296,17 @@ class TestRbac:
                         }
                         return
         raise AssertionError("No require_role dependency found for getQuarantineSample")
+
+
+class TestHyphenatedAppCatalog:
+    def test_quarantine_read_is_quoted(self, client, sp_sql_mock, app_config):
+        # The dq_quarantine_records FQN must backtick-quote the
+        # config-sourced catalog/schema (quote_object_fqn) so a hyphenated
+        # app catalog stays parseable — dq_results-read convention.
+        client.app.dependency_overrides[get_conf] = lambda: app_config.model_copy(
+            update={"catalog": "prod-east", "schema_name": "dqx-studio"}
+        )
+        resp = client.get(URL)
+        assert resp.status_code == 200
+        stmt = sp_sql_mock.query_dicts.call_args[0][0]
+        assert "`prod-east`.`dqx-studio`.dq_quarantine_records" in stmt

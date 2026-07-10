@@ -243,3 +243,61 @@ class TestPivotRows:
         ]
         out = metrics_module._pivot_rows(rows)
         assert out[0].run_type == "scheduled"
+
+
+class TestHyphenatedAppCatalog:
+    """The app's own catalog/schema come from config and can be hyphenated
+    (``prod-east``). The dq_metrics / dq_validation_runs read FQNs must
+    backtick-quote their parts (quote_object_fqn) or the SELECTs won't
+    parse — same convention as the dq_results read paths."""
+
+    QUOTED_METRICS = "`prod-east`.`dqx-studio`.dq_metrics"
+    QUOTED_RUNS = "`prod-east`.`dqx-studio`.dq_validation_runs"
+
+    @pytest.fixture
+    def sql_mock(self):
+        from unittest.mock import create_autospec
+
+        from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+
+        mock = create_autospec(SqlExecutor, instance=True)
+        mock.query_dicts.return_value = []
+        return mock
+
+    @pytest.fixture
+    def client(self, sql_mock, app_config):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from databricks_labs_dqx_app.backend.common.authorization import UserRole
+        from databricks_labs_dqx_app.backend.dependencies import (
+            get_conf,
+            get_sp_sql_executor,
+            get_user_catalog_names,
+            get_user_role,
+        )
+        from databricks_labs_dqx_app.backend.routes.v1.metrics import router
+
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1/metrics")
+        app.dependency_overrides[get_sp_sql_executor] = lambda: sql_mock
+        app.dependency_overrides[get_conf] = lambda: app_config.model_copy(
+            update={"catalog": "prod-east", "schema_name": "dqx-studio"}
+        )
+        app.dependency_overrides[get_user_catalog_names] = lambda: frozenset({"main"})
+        app.dependency_overrides[get_user_role] = lambda: UserRole.VIEWER
+        return TestClient(app)
+
+    def test_metrics_trend_reads_are_quoted(self, client, sql_mock):
+        resp = client.get("/api/v1/metrics/main.sales.orders")
+        assert resp.status_code == 200
+        stmt = sql_mock.query_dicts.call_args[0][0]
+        assert self.QUOTED_METRICS in stmt
+        assert self.QUOTED_RUNS in stmt
+
+    def test_metrics_summary_reads_are_quoted(self, client, sql_mock):
+        resp = client.get("/api/v1/metrics")
+        assert resp.status_code == 200
+        stmt = sql_mock.query_dicts.call_args[0][0]
+        assert self.QUOTED_METRICS in stmt
+        assert self.QUOTED_RUNS in stmt

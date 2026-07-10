@@ -42,7 +42,7 @@ from databricks_labs_dqx_app.backend.services.quarantine_sample_service import (
     to_failing_record,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_object_fqn, validate_fqn
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -82,7 +82,9 @@ def get_quarantine_sample(
     # (4) SP-side fetch of the precomputed failing rows. VARIANT columns are
     # rendered via to_json(...) — same convention as _query_quarantine in
     # routes/v1/quarantine.py.
-    quarantine_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_quarantine_records"
+    # Catalog/schema are backtick-quoted (quote_object_fqn) so hyphenated
+    # app catalogs stay parseable — same convention as the dq_results reads.
+    quarantine_table = quote_object_fqn(app_conf.catalog, app_conf.schema_name, "dq_quarantine_records")
     e_fqn = escape_sql_string(table_fqn)
     stmt = (
         f"SELECT quarantine_id, run_id, to_json(row_data) AS row_data, "

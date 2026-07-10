@@ -229,6 +229,19 @@ def quote_ident(part: str) -> str:
     return f"`{unwrapped.replace('`', '``')}`"
 
 
+def quote_object_fqn(catalog: str, schema: str, name: str) -> str:
+    """Backtick-quoted three-part FQN of an app-schema object.
+
+    *catalog* and *schema* come from app config and are quoted per part
+    (:func:`quote_ident`) so hyphenated or otherwise exotic names stay
+    parseable; *name* must be a TRUSTED constant identifier (a table or
+    view name owned by the app, e.g. ``dq_metrics``) and stays bare —
+    the same convention as the view-DDL side. Never pass user input as
+    *name*.
+    """
+    return f"{quote_ident(catalog)}.{quote_ident(schema)}.{name}"
+
+
 def quote_fqn(fqn: str) -> str:
     """Quote a validated FQN for safe embedding in SQL.
 

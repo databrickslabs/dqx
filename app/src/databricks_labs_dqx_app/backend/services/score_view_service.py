@@ -59,7 +59,7 @@ from __future__ import annotations
 import logging
 
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import quote_ident
+from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ def metric_view_fqn(catalog: str, schema: str) -> str:
     parseable on the READ paths too. The view-name constant is a known
     simple identifier and stays bare, matching the DDL.
     """
-    return f"{quote_ident(catalog)}.{quote_ident(schema)}.{METRIC_VIEW_NAME}"
+    return quote_object_fqn(catalog, schema, METRIC_VIEW_NAME)
 
 
 class ScoreViewService:
