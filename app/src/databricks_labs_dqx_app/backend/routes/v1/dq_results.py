@@ -23,6 +23,7 @@ Permission model (unchanged from Phase 1):
 from __future__ import annotations
 
 import logging
+import re
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
@@ -85,6 +86,26 @@ _RUNS_LIMIT = 50
 # Fallback swatch for label values missing a configured colour (matches
 # the UI's muted gray).
 _DEFAULT_LABEL_COLOR = "#6B7280"
+
+# Conservative allowlist for the user-supplied run_id filter. Observer run
+# ids are uuid4 strings (metrics_observer.DQMetricsObserver — hex plus
+# hyphens); the slightly wider charset tolerates prefixed/timestamped
+# overrides without admitting quotes, backslashes, whitespace, or control
+# characters. This validation is LOAD-BEARING: *escape_sql_string*
+# deliberately does not escape backslashes (it relies on upstream
+# validation, normally *validate_fqn* — which run_id never passes
+# through), so run_id must be charset-validated before it is interpolated
+# into any SQL string literal.
+_RUN_ID_SAFE = re.compile(r"^[A-Za-z0-9_\-.:]+$")
+
+
+def _validate_run_id(run_id: str | None) -> None:
+    """Reject a run_id unsafe to embed in a SQL string literal (400)."""
+    if run_id is not None and not _RUN_ID_SAFE.fullmatch(run_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid run_id: only letters, digits, '_', '-', '.' and ':' are allowed",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +342,7 @@ def get_global_results(
     Tables in catalogs the caller cannot access are silently filtered
     (never 403) — the same gate as the dq-score global endpoint.
     """
+    _validate_run_id(run_id)
     try:
         rows = [
             row
@@ -374,6 +396,7 @@ def get_rule_results(
     per-run failing-row count is table-wide and cannot be scoped to one
     rule's failures.
     """
+    _validate_run_id(run_id)
     try:
         applications = apply_rules.list_bindings_for_rule(rule_id)
         binding_ids = list(dict.fromkeys(a.binding_id for a in applications))
@@ -486,6 +509,7 @@ def get_product_results(
 
     Members in inaccessible catalogs are silently filtered (never 403).
     """
+    _validate_run_id(run_id)
     try:
         fqns, _ = _accessible_member_fqns(data_products, product_id, user_catalogs)
         rows = _fetch_check_rows(sql, app_conf, fqns, run_id)
@@ -680,6 +704,7 @@ def get_table_results(
     (dqlake parity: its table reader filters that series on binding/run
     only).
     """
+    _validate_run_id(run_id)
     try:
         validate_fqn(table_fqn)
     except ValueError as exc:

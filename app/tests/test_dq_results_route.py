@@ -875,6 +875,61 @@ class TestFailedRowsShapeAndFilters:
 
 
 # ---------------------------------------------------------------------------
+# run_id charset validation (SQL-literal safety)
+# ---------------------------------------------------------------------------
+
+
+class TestRunIdValidation:
+    """run_id is user input interpolated into a SQL string literal, and
+    ``escape_sql_string`` deliberately does NOT escape backslashes — so a
+    charset allowlist must reject anything that could break out of the
+    literal, with 400 BEFORE any SQL is issued (repo rule: no unvalidated
+    user input into SQL strings)."""
+
+    ADVERSARIAL_RUN_IDS = [
+        "abc\\",  # trailing backslash consumes the closing quote
+        "ab'c",  # embedded single quote
+        "x' OR '1'='1",  # classic literal break-out
+        "run\nid",  # control character
+        "run id",  # whitespace
+    ]
+
+    ENDPOINTS = [
+        f"/api/v1/dq-results/table/{FQN}",
+        "/api/v1/dq-results/product/p1",
+        "/api/v1/dq-results/rule/rule-1",
+        "/api/v1/dq-results/global",
+    ]
+
+    @pytest.mark.parametrize("url", ENDPOINTS)
+    @pytest.mark.parametrize("run_id", ADVERSARIAL_RUN_IDS)
+    def test_unsafe_run_id_is_rejected_with_400_before_any_sql(
+        self, client, sql_mock, data_products_mock, apply_rules_mock, url, run_id
+    ):
+        data_products_mock.get.return_value = product_detail("p1", [("b1", FQN)])
+        apply_rules_mock.list_bindings_for_rule.return_value = [
+            AppliedRule(id="ar1", binding_id="b1", rule_id="rule-1")
+        ]
+        resp = client.get(url, params={"run_id": run_id})
+        assert resp.status_code == 400
+        sql_mock.query_dicts.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "run_id",
+        [
+            "0e4a3c9a-9d5e-4a2e-8f0a-1b2c3d4e5f6a",  # observer uuid4 format
+            "run_2026-07-10T12:00:00.123",  # prefixed/timestamped override
+        ],
+    )
+    def test_safe_run_ids_are_accepted(self, client, sql_mock, run_id):
+        sql_dispatch(sql_mock)
+        resp = client.get(f"/api/v1/dq-results/table/{FQN}", params={"run_id": run_id})
+        assert resp.status_code == 200
+        stmt = sql_mock.query_dicts.call_args_list[0][0][0]
+        assert f"run_id = '{run_id}'" in stmt
+
+
+# ---------------------------------------------------------------------------
 # RBAC
 # ---------------------------------------------------------------------------
 
