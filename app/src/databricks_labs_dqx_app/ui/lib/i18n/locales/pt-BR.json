@@ -1605,8 +1605,7 @@
     "resultsNoAccessibleTables_one": "Esta regra está aplicada a {{count}} tabela monitorada à qual você não tem acesso.",
     "resultsNoAccessibleTables_other": "Esta regra está aplicada a {{count}} tabelas monitoradas às quais você não tem acesso.",
     "resultsOverallScoreLabel_one": "Pontuação geral em {{count}} tabela",
-    "resultsOverallScoreLabel_other": "Pontuação geral em {{count}} tabelas",
-    "resultsBreakdownTitle": "Pontuações por tabela"
+    "resultsOverallScoreLabel_other": "Pontuação geral em {{count}} tabelas"
   },
   "monitoredTables": {
     "breadcrumb": "Tabelas Monitoradas",

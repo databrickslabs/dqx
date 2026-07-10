@@ -1605,8 +1605,7 @@
     "resultsNoAccessibleTables_one": "This rule is applied to {{count}} monitored table you don't have access to.",
     "resultsNoAccessibleTables_other": "This rule is applied to {{count}} monitored tables you don't have access to.",
     "resultsOverallScoreLabel_one": "Overall score across {{count}} table",
-    "resultsOverallScoreLabel_other": "Overall score across {{count}} tables",
-    "resultsBreakdownTitle": "Per-table scores"
+    "resultsOverallScoreLabel_other": "Overall score across {{count}} tables"
   },
   "monitoredTables": {
     "breadcrumb": "Monitored Tables",

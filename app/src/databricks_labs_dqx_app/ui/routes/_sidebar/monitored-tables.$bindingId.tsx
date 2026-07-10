@@ -97,6 +97,7 @@ import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
+import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import { useLabelDefinitions, useWorkspaceHost } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useJobPolling } from "@/hooks/use-job-polling";
@@ -326,12 +327,19 @@ function MonitoredTableDetailPage() {
       setBaseline(normalized);
       justSavedRef.current = true;
       invalidateLifecycleQueries();
+      // The persisted applied-rule set changed (apply/unapply/severity
+      // override), which moves the dq-score / dq-results aggregates —
+      // notably a rule score's `applied_to_count`, which gates the registry
+      // rule's Results tab. Those queries never refetch on their own
+      // (staleTime Infinity), so invalidate them here or the tab stays
+      // stale-disabled until a full reload.
+      invalidateResultsAfterRuleApplicationChange(queryClient);
       return true;
     } catch (err: unknown) {
       toast.error(extractApiError(err, t("monitoredTables.toastSaveFailed")), { duration: 6000 });
       return false;
     }
-  }, [persistStagedRows, invalidateLifecycleQueries, t]);
+  }, [persistStagedRows, invalidateLifecycleQueries, queryClient, t]);
 
   const handleSaveAsDraft = () => {
     void saveDraft().then((ok) => {
@@ -357,6 +365,10 @@ function MonitoredTableDetailPage() {
         justSavedRef.current = true;
         toast.success(t("monitoredTables.toastSubmitted"));
         invalidateLifecycleQueries();
+        // Staged apply/unapply edits may have been persisted just above
+        // (persistFirst) — see saveDraft for why the score/results caches
+        // must be invalidated when the applied-rule set changes.
+        invalidateResultsAfterRuleApplicationChange(queryClient);
       })
       .catch((err: unknown) => {
         toast.error(extractApiError(err, t("monitoredTables.toastSubmitFailed")), { duration: 6000 });
@@ -395,6 +407,10 @@ function MonitoredTableDetailPage() {
       () => {
         toast.success(t("monitoredTables.toastDeleted"));
         invalidateLifecycleQueries();
+        // Deleting the binding unapplies every rule that was applied to it —
+        // see saveDraft for why the score/results caches must be invalidated
+        // when the applied-rule set changes.
+        invalidateResultsAfterRuleApplicationChange(queryClient);
         justSavedRef.current = true;
         void navigate({ to: "/monitored-tables" });
       },

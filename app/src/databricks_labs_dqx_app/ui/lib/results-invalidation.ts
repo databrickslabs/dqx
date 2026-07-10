@@ -3,15 +3,19 @@
  *
  * Score and quarantine-sample data only changes when a validation run
  * finishes, so those queries are configured to never refetch on their own
- * (`staleTime: Infinity`, no window-focus refetch, no polling). The ONLY
- * refresh trigger is this helper, called from the places that already
- * observe a run reaching a terminal state:
+ * (`staleTime: Infinity`, no window-focus refetch, no polling). The refresh
+ * triggers are the helpers in this module, called from the places that
+ * already observe the underlying change:
  *
  * - `routes/_sidebar/runs-history.tsx` — polls RUNNING validation runs and
  *   sees each one settle (knows the run's `source_table_fqn`)
  * - `hooks/use-product-run-sets.ts` — polls a data product's run sets and
  *   sees each set settle (member table FQNs unknown at summary level, so
  *   it invalidates broadly)
+ * - the rule apply/unapply mutation call sites (the monitored-table detail
+ *   page's staged-save/submit/delete flows and the registry ApplyRuleModal)
+ *   — via `invalidateResultsAfterRuleApplicationChange`, since applying a
+ *   rule changes score aggregates (e.g. `applied_to_count`) without any run
  *
  * A finished run for ONE table moves every aggregate above it (global,
  * product, and rule scores), so all `/api/v1/dq-score/*` AND all
@@ -99,6 +103,37 @@ export function invalidateResultsAfterRunCompletion(
   tableFqns?: readonly string[],
 ): void {
   const matcher = buildResultsInvalidationMatcher(tableFqns);
+  void queryClient.invalidateQueries({
+    predicate: (query) => matchesResultsInvalidation(query.queryKey, matcher),
+  });
+}
+
+/**
+ * Matcher for a rule-APPLICATION change (see
+ * `invalidateResultsAfterRuleApplicationChange`): every dq-score and
+ * dq-results query, but NOT quarantine samples — applying/unapplying a rule
+ * changes what is applied (e.g. a rule score's `applied_to_count`, which
+ * gates the registry rule's Results tab), not the captured failing rows,
+ * which only change when a run finishes.
+ */
+export function buildRuleApplicationChangeMatcher(): ResultsInvalidationMatcher {
+  return {
+    pathPrefixes: [DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX],
+    exactPaths: [],
+  };
+}
+
+/**
+ * Invalidate the score/results aggregates after a rule's APPLICATIONS change
+ * — applying or unapplying a registry rule on a monitored table (including
+ * severity overrides and deleting a monitored table, which unapplies
+ * everything on it). Without this, the rule score's `applied_to_count`
+ * (staleTime Infinity) keeps the registry rule's Results tab stale-disabled
+ * until a full reload. These are rare admin actions, so the broad
+ * prefix-wide invalidation is deliberate.
+ */
+export function invalidateResultsAfterRuleApplicationChange(queryClient: QueryClient): void {
+  const matcher = buildRuleApplicationChangeMatcher();
   void queryClient.invalidateQueries({
     predicate: (query) => matchesResultsInvalidation(query.queryKey, matcher),
   });

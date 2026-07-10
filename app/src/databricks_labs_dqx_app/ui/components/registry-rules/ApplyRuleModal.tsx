@@ -31,6 +31,7 @@ import {
   type RegistryRuleOut,
 } from "@/lib/api";
 import { buildSlotMapping } from "@/lib/slot-mapping";
+import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };
@@ -134,6 +135,14 @@ export function ApplyRuleModal({ open, onOpenChange, rule, onApplied }: ApplyRul
         toast.success(t("rulesRegistry.applyModalToastSummary", { applied, needsMapping }), {
           duration: 6000,
         });
+        if (applied > 0) {
+          // The rule's applications changed, which moves the dq-score /
+          // dq-results aggregates — notably this rule's `applied_to_count`,
+          // which gates its Results tab. Those queries never refetch on
+          // their own (staleTime Infinity), so invalidate them here or the
+          // tab stays stale-disabled until a full reload.
+          invalidateResultsAfterRuleApplicationChange(queryClient);
+        }
         onApplied();
         handleClose(false);
       } catch (err) {

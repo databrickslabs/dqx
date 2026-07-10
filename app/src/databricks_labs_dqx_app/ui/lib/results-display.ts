@@ -32,25 +32,6 @@ export function scoreBandClass(score: number): string {
 }
 
 /**
- * Sums total/failed test counts across a product's member table scores, for
- * the aggregate ScoreBox subline on the Table Space Results tab. Counts are
- * optional in the generated types (members without runs carry none), so
- * absent values count as zero; an absent/empty member list sums to zeros.
- */
-export function sumMemberTestCounts(members: TableScoreOut[] | undefined): {
-  totalTests: number;
-  failedTests: number;
-} {
-  let totalTests = 0;
-  let failedTests = 0;
-  for (const member of members ?? []) {
-    totalTests += member.total_tests ?? 0;
-    failedTests += member.failed_tests ?? 0;
-  }
-  return { totalTests, failedTests };
-}
-
-/**
  * Data states of the rule-level Results view (registry rule detail page).
  *
  * `applied_to_count` is the TOTAL number of current applications across all

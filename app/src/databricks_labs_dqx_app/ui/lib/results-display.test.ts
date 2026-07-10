@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { FailingRecordOut, RuleScoreOut, TableScoreOut } from "@/lib/api";
+import type { FailingRecordOut, RuleScoreOut } from "@/lib/api";
 import {
   SCORE_BAND_AMBER_MIN,
   SCORE_BAND_GREEN_MIN,
@@ -12,7 +12,6 @@ import {
   rowHasWholeRowFailure,
   ruleResultsState,
   scoreBandClass,
-  sumMemberTestCounts,
   wholeRowFailureClass,
   wholeRowFailureMessage,
 } from "./results-display";
@@ -241,40 +240,6 @@ describe("displayCellValue", () => {
 
   test("preserves empty strings (empty is a value, not absence)", () => {
     expect(displayCellValue(record({ row_values: { id: "" } }), "id")).toBe("");
-  });
-});
-
-describe("sumMemberTestCounts", () => {
-  const member = (over: Partial<TableScoreOut> = {}): TableScoreOut => ({
-    source_table_fqn: "c.s.t",
-    score: 0.9,
-    total_tests: 10,
-    failed_tests: 1,
-    ...over,
-  });
-
-  test("sums total and failed tests across members", () => {
-    const members = [
-      member({ source_table_fqn: "c.s.t1", total_tests: 10, failed_tests: 1 }),
-      member({ source_table_fqn: "c.s.t2", total_tests: 5, failed_tests: 2 }),
-    ];
-    expect(sumMemberTestCounts(members)).toEqual({ totalTests: 15, failedTests: 3 });
-  });
-
-  test("treats absent counts as zero (optional in the generated types)", () => {
-    const members = [
-      member({ source_table_fqn: "c.s.t1", total_tests: undefined, failed_tests: undefined, score: null }),
-      member({ source_table_fqn: "c.s.t2", total_tests: 4, failed_tests: 1 }),
-    ];
-    expect(sumMemberTestCounts(members)).toEqual({ totalTests: 4, failedTests: 1 });
-  });
-
-  test("returns zeros for an empty member list", () => {
-    expect(sumMemberTestCounts([])).toEqual({ totalTests: 0, failedTests: 0 });
-  });
-
-  test("returns zeros when the member list is absent", () => {
-    expect(sumMemberTestCounts(undefined)).toEqual({ totalTests: 0, failedTests: 0 });
   });
 });
 

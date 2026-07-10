@@ -5,30 +5,49 @@ import { ErrorBoundary } from "react-error-boundary";
 import { AlertCircle, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ScoreBox } from "@/components/results/ScoreBox";
-import { TableScoreList } from "@/components/results/TableScoreList";
-import { useGetRuleScoreSuspense } from "@/lib/api";
+import { useGetRuleResults, useGetRuleScoreSuspense } from "@/lib/api";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
-import { ruleResultsState, sumMemberTestCounts } from "@/lib/results-display";
+import { ruleResultsState } from "@/lib/results-display";
+import {
+  MultiTableResultsSection,
+  type UseEntityResults,
+} from "@/components/results/MultiTableResults";
 
 /**
- * Results tab content for the registry-rule detail page: the rule's overall
- * score (row-weighted across every applied table the viewer can access,
- * computed server-side) in a ScoreBox, over a per-table breakdown list —
- * same layout as the Table Space Results tab (ProductResultsTab).
+ * Results tab content for the registry-rule detail page: the full multi-table
+ * results composition (dqlake's product-tab layout, shared with the Table
+ * Space Results tab and the global Results page via
+ * `components/results/MultiTableResults.tsx`) locked to THIS rule — the
+ * `/api/v1/dq-results/rule/{rule_id}` endpoint scopes every trend/breakdown
+ * row to the rule's checks by frozen registry_rule_id provenance, across the
+ * applied tables the viewer can access (adaptation #2).
  *
- * Data-state semantics live in `ruleResultsState` (lib/results-display.ts,
- * unit-tested there): `applied_to_count` counts ALL current applications
- * (viewer-independent) while `per_table` holds only the viewer-accessible
- * ones, so "applied to N tables you can't see" renders an explanatory empty
- * state rather than the misleading "not applied". The "not-applied" state
- * normally never renders here — the tab trigger is disabled with a tooltip
- * (RegistryRuleFormDialog) — but a `?tab=results` deep link can still land
- * on it, so it shows the same explanation inline.
+ * Rule-locked deviations from the product/global consumers:
+ * - The "By rule" breakdown is hidden (`hideRuleBreakdown`): the rule facet
+ *   is locked server-side, so the box would always show this one rule.
+ * - NO run picker: the rule's applied tables have per-table run_ids, not a
+ *   rule-level batch — the same reason the product tab pinned its picker to
+ *   "Latest" and the global page omitted it (see the run-picker adaptation
+ *   note in ProductResultsTab); "latest" is the only coherent semantic, so
+ *   no `runPickerSlot` is passed.
+ * - No `requiredFqns`: the Average-line universe derives from the base
+ *   by-table rows (the rule's accessible applied tables with metrics).
  *
- * The score query never refetches on its own (RESULTS_QUERY_OPTIONS); it is
- * refreshed by `invalidateResultsAfterRunCompletion`, fired from the Runs
- * History RUNNING-run poll and the product run-set poll.
+ * Data-state gating (unchanged from Task 11) lives in `ruleResultsState`
+ * (lib/results-display.ts, unit-tested there): `applied_to_count` counts ALL
+ * current applications (viewer-independent) while `per_table` holds only the
+ * viewer-accessible ones, so "applied to N tables you can't see" renders an
+ * explanatory empty state rather than the misleading "not applied". The
+ * "not-applied" state normally never renders here — the tab trigger is
+ * disabled with a tooltip (RegistryRuleFormDialog, reading the same cheap P1
+ * `useGetRuleScore`) — but a `?tab=results` deep link can still land on it,
+ * so it shows the same explanation inline. Only the has-data body renders
+ * the shared composition.
+ *
+ * The queries never refetch on their own (RESULTS_QUERY_OPTIONS); they are
+ * refreshed by `invalidateResultsAfterRunCompletion` (run-completion polls)
+ * and `invalidateResultsAfterRuleApplicationChange` (apply/unapply edits),
+ * both in `lib/results-invalidation.ts`.
  */
 function RuleResultsContent({ ruleId }: { ruleId: string }) {
   const { t } = useTranslation();
@@ -38,6 +57,13 @@ function RuleResultsContent({ ruleId }: { ruleId: string }) {
 
   const state = ruleResultsState(data);
   const appliedCount = data.applied_to_count ?? 0;
+
+  // The composition's data source: the rule-scoped results endpoint. The
+  // closure is re-created per render, but the composition calls it
+  // unconditionally a fixed number of times, so the rules of hooks hold
+  // (same pattern as the product tab).
+  const useEntityResults: UseEntityResults = (params, queryOptions) =>
+    useGetRuleResults(ruleId, params, { query: queryOptions });
 
   if (state === "not-applied") {
     return <p className="text-sm text-muted-foreground">{t("rulesRegistry.resultsNotApplied")}</p>;
@@ -51,25 +77,17 @@ function RuleResultsContent({ ruleId }: { ruleId: string }) {
     );
   }
 
-  const perTable = data.per_table ?? [];
-  const { totalTests, failedTests } = sumMemberTestCounts(perTable);
-
   return (
-    <div className="flex flex-col gap-4 max-w-5xl">
-      <ScoreBox
-        passRate={data.overall_score ?? null}
-        // Deliberately the viewer-ACCESSIBLE table count (per_table.length),
-        // not applied_to_count: overall_score and the breakdown below only
-        // cover the tables the viewer can see, so the label must count the
+    <div className="max-w-5xl">
+      <MultiTableResultsSection
+        useEntityResults={useEntityResults}
+        // Counts the viewer-ACCESSIBLE tables (the composition passes the
+        // base by-table row count): the score and breakdowns only cover the
+        // applied tables the viewer can see, so the label must count the
         // same set (applied_to_count may be higher — see ruleResultsState).
-        label={t("rulesRegistry.resultsOverallScoreLabel", { count: perTable.length })}
-        totalTests={totalTests}
-        failedTests={failedTests}
+        scoreLabel={(count) => t("rulesRegistry.resultsOverallScoreLabel", { count })}
+        hideRuleBreakdown
       />
-      <div className="space-y-2">
-        <h3 className="text-sm font-medium">{t("rulesRegistry.resultsBreakdownTitle")}</h3>
-        <TableScoreList tables={perTable} />
-      </div>
     </div>
   );
 }

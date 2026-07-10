@@ -230,6 +230,12 @@ export interface MultiTableResultsSectionProps {
   /** Member-table universe for the Average line; derived from the base
    *  by-table rows when omitted. */
   requiredFqns?: string[];
+  /** Hides the "By rule" breakdown box. For consumers whose rule facet is
+   *  locked server-side (the rule Results view — every row would be the one
+   *  rule), where a one-row facet box adds nothing. dqlake has no precedent
+   *  for a rule-locked surface, so hiding is the minimal adaptation; the
+   *  reviewed product/global consumers don't pass this and are unchanged. */
+  hideRuleBreakdown?: boolean;
 }
 
 /**
@@ -244,6 +250,7 @@ export function MultiTableResultsSection({
   scoreLabel,
   runPickerSlot,
   requiredFqns,
+  hideRuleBreakdown,
 }: MultiTableResultsSectionProps) {
   const { t } = useTranslation();
   // The active single-table selection (E2). Clicking a By Table row sets it;
@@ -634,20 +641,22 @@ export function MultiTableResultsSection({
               selected={filters.severity}
               onSelect={(label) => onRowToggle("severity", label)}
             />
-            <div className="md:col-span-2" data-testid="breakdown-by-rule">
-              <DimensionBreakdown
-                title={t("resultsUi.byRuleTitle")}
-                valueHeader={t("resultsUi.ruleHeader")}
-                countMode="checks"
-                rows={ruleFacet.rows}
-                mutedLabels={ruleFacet.mutedLabels}
-                loading={breakdownRefetching}
-                selected={filters.rule}
-                onSelect={(label) => onRowToggle("rule", label)}
-                collapsed={!ruleColOpen}
-                onToggleCollapse={() => setRuleColOpen((o) => !o)}
-              />
-            </div>
+            {!hideRuleBreakdown && (
+              <div className="md:col-span-2" data-testid="breakdown-by-rule">
+                <DimensionBreakdown
+                  title={t("resultsUi.byRuleTitle")}
+                  valueHeader={t("resultsUi.ruleHeader")}
+                  countMode="checks"
+                  rows={ruleFacet.rows}
+                  mutedLabels={ruleFacet.mutedLabels}
+                  loading={breakdownRefetching}
+                  selected={filters.rule}
+                  onSelect={(label) => onRowToggle("rule", label)}
+                  collapsed={!ruleColOpen}
+                  onToggleCollapse={() => setRuleColOpen((o) => !o)}
+                />
+              </div>
+            )}
             <div data-testid="breakdown-by-table">
               <DimensionBreakdown
                 title={t("resultsUi.byTableTitle")}

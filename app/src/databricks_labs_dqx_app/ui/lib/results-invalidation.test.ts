@@ -4,11 +4,14 @@ import {
   DQ_SCORE_PATH_PREFIX,
   QUARANTINE_SAMPLE_PATH_PREFIX,
   buildResultsInvalidationMatcher,
+  buildRuleApplicationChangeMatcher,
   matchesResultsInvalidation,
 } from "./results-invalidation";
 import {
   getGetDqResultsFailedRowsQueryKey,
   getGetDqResultsRunsQueryKey,
+  getGetRuleResultsQueryKey,
+  getGetRuleScoreQueryKey,
   getGetTableResultsQueryKey,
   getListResultDimensionsQueryKey,
   getListResultSeveritiesQueryKey,
@@ -70,6 +73,32 @@ describe("DQ_RESULTS_PATH_PREFIX pins the generated dq-results query keys", () =
       expect(matchesResultsInvalidation(key, broad)).toBe(true);
       expect(matchesResultsInvalidation(key, scoped)).toBe(true);
     }
+  });
+});
+
+describe("buildRuleApplicationChangeMatcher (rule apply/unapply invalidation)", () => {
+  const matcher = buildRuleApplicationChangeMatcher();
+
+  test("covers the dq-score and dq-results prefixes but NOT quarantine samples", () => {
+    expect(matcher.pathPrefixes).toEqual([DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX]);
+    expect(matcher.exactPaths).toEqual([]);
+  });
+
+  test("matches the generated P1 rule-score key (the Results tab trigger's gate)", () => {
+    expect(matchesResultsInvalidation(getGetRuleScoreQueryKey("r1"), matcher)).toBe(true);
+  });
+
+  test("matches the generated rule-results keys (the rule Results tab body)", () => {
+    expect(matchesResultsInvalidation(getGetRuleResultsQueryKey("r1", { axes: "trend" }), matcher)).toBe(true);
+    expect(matchesResultsInvalidation(getGetRuleResultsQueryKey("r1", { axes: "breakdown" }), matcher)).toBe(true);
+  });
+
+  test("does NOT match quarantine samples (failing rows only change when a run finishes)", () => {
+    expect(matchesResultsInvalidation([`/api/v1/quarantine-samples/${FQN}`], matcher)).toBe(false);
+  });
+
+  test("never matches unrelated queries", () => {
+    expect(matchesResultsInvalidation(["/api/v1/monitored-tables/b1"], matcher)).toBe(false);
   });
 });
 
