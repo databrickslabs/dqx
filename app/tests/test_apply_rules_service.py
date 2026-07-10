@@ -400,6 +400,35 @@ class TestListAndGet:
 
 
 # ---------------------------------------------------------------------------
+# list_bindings_for_rule
+# ---------------------------------------------------------------------------
+
+
+class TestListBindingsForRule:
+    def test_returns_empty_when_unapplied(self, svc, sql):
+        sql.query.return_value = []
+        assert svc.list_bindings_for_rule("rule-not-applied-anywhere") == []
+
+    def test_returns_applications_across_bindings(self, svc, sql):
+        sql.query.return_value = [
+            _applied_row(id_="ar1", binding_id="b1", rule_id="r1"),
+            _applied_row(id_="ar2", binding_id="b2", rule_id="r1"),
+        ]
+        result = svc.list_bindings_for_rule("r1")
+        assert [a.id for a in result] == ["ar1", "ar2"]
+        assert [a.binding_id for a in result] == ["b1", "b2"]
+        query_sql = sql.query.call_args[0][0]
+        assert "rule_id = 'r1'" in query_sql
+        assert "binding_id = " not in query_sql
+
+    def test_escapes_rule_id(self, svc, sql):
+        sql.query.return_value = []
+        svc.list_bindings_for_rule("r'; DROP TABLE x --")
+        query_sql = sql.query.call_args[0][0]
+        assert "r''; DROP TABLE x --" in query_sql
+
+
+# ---------------------------------------------------------------------------
 # count_applications_for_rule
 # ---------------------------------------------------------------------------
 

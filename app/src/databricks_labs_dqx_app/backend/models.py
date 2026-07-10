@@ -1359,6 +1359,25 @@ class ProductScoreOut(BaseModel):
     member_table_scores: list[TableScoreOut] = Field(default_factory=list)
 
 
+class RuleScoreOut(BaseModel):
+    """Aggregate DQ score for a registry rule, across every table it is applied to.
+
+    *applied_to_count* is the TOTAL number of applications of the rule
+    (across all bindings), independent of the requesting viewer's catalog
+    access — the frontend disables the rule Results view on
+    ``applied_to_count == 0``, and a rule applied only to tables the
+    viewer cannot see is still applied. *per_table* IS filtered to the
+    viewer's accessible catalogs (deduplicated by table), and
+    *overall_score* is the unweighted mean over the scored entries of
+    *per_table* — None when none are scored.
+    """
+
+    rule_id: str
+    applied_to_count: int = 0
+    overall_score: float | None = None
+    per_table: list[TableScoreOut] = Field(default_factory=list)
+
+
 class CatalogOut(BaseModel):
     name: str
     comment: str | None = None

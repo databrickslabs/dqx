@@ -19,8 +19,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
+    get_apply_rules_service,
     get_conf,
     get_data_product_service,
+    get_monitored_table_service,
     get_sp_sql_executor,
     get_user_catalog_names,
     require_role,
@@ -30,8 +32,11 @@ from databricks_labs_dqx_app.backend.metrics_utils import (
     parse_check_metrics,
     safe_int,
 )
-from databricks_labs_dqx_app.backend.models import ProductScoreOut, TableScoreOut
+from databricks_labs_dqx_app.backend.models import ProductScoreOut, RuleScoreOut, TableScoreOut
+from databricks_labs_dqx_app.backend.registry_models import AppliedRule
+from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
+from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.score_service import ScoreService
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
@@ -141,4 +146,72 @@ def get_product_score(
         product_id=product_id,
         score=round(product_score, 4) if product_score is not None else None,
         member_table_scores=table_scores,
+    )
+
+
+def _resolve_binding_fqns(applications: list[AppliedRule], monitored_tables: MonitoredTableService) -> list[str]:
+    """Map each application's binding to its source table FQN, deduplicated.
+
+    A binding that no longer resolves (deleted concurrently, or its lookup
+    errors transiently) is skipped rather than failing the whole aggregate —
+    the remaining tables still yield a useful score.
+    """
+    fqns: list[str] = []
+    seen: set[str] = set()
+    for application in applications:
+        try:
+            detail = monitored_tables.get(application.binding_id)
+        except Exception:
+            logger.warning(
+                "Skipping binding %s in rule score: lookup failed", application.binding_id, exc_info=True
+            )
+            continue
+        if detail is None:
+            logger.warning("Skipping binding %s in rule score: binding not found", application.binding_id)
+            continue
+        fqn = detail.table.table_fqn
+        if fqn not in seen:
+            seen.add(fqn)
+            fqns.append(fqn)
+    return fqns
+
+
+@router.get(
+    "/rule/{rule_id}",
+    operation_id="getRuleScore",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def get_rule_score(
+    rule_id: str,
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    app_conf: Annotated[AppConfig, Depends(get_conf)],
+    user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+) -> RuleScoreOut:
+    """Return the aggregate DQ score for a registry rule across its applied tables.
+
+    *applied_to_count* is the TOTAL number of applications across all
+    bindings — deliberately NOT restricted to the viewer's accessible
+    catalogs, since the frontend uses ``applied_to_count == 0`` to mean
+    "not applied anywhere". *per_table* applies the same silent catalog
+    filter as the product endpoint and is deduplicated by table (a rule
+    applied twice to one table is scored once).
+    """
+    try:
+        applications = apply_rules.list_bindings_for_rule(rule_id)
+        table_fqns = _resolve_binding_fqns(applications, monitored_tables)
+        accessible = [fqn for fqn in table_fqns if catalog_of(fqn) in user_catalogs]
+        per_table = [_compute_score_for_table(fqn, sql, app_conf) for fqn in accessible]
+    except Exception as exc:
+        logger.exception("Failed to compute score for rule %s", rule_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    scored = [s.score for s in per_table if s.score is not None]
+    overall = ScoreService.compute_product_score(scored)
+    return RuleScoreOut(
+        rule_id=rule_id,
+        applied_to_count=len(applications),
+        overall_score=round(overall, 4) if overall is not None else None,
+        per_table=per_table,
     )

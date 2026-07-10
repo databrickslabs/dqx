@@ -2155,6 +2155,27 @@ export interface RuleParameter {
   value?: RuleParameterValue;
 }
 
+export type RuleScoreOutOverallScore = number | null;
+
+/**
+ * Aggregate DQ score for a registry rule, across every table it is applied to.
+
+*applied_to_count* is the TOTAL number of applications of the rule
+(across all bindings), independent of the requesting viewer's catalog
+access — the frontend disables the rule Results view on
+``applied_to_count == 0``, and a rule applied only to tables the
+viewer cannot see is still applied. *per_table* IS filtered to the
+viewer's accessible catalogs (deduplicated by table), and
+*overall_score* is the unweighted mean over the scored entries of
+*per_table* — None when none are scored.
+ */
+export interface RuleScoreOut {
+  rule_id: string;
+  applied_to_count?: number;
+  overall_score?: RuleScoreOutOverallScore;
+  per_table?: TableScoreOut[];
+}
+
 /**
  * Column family the slot accepts
  */
@@ -16027,6 +16048,160 @@ export function useGetProductScoreSuspense<TData = Awaited<ReturnType<typeof get
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetProductScoreSuspenseQueryOptions(productId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Return the aggregate DQ score for a registry rule across its applied tables.
+
+*applied_to_count* is the TOTAL number of applications across all
+bindings — deliberately NOT restricted to the viewer's accessible
+catalogs, since the frontend uses ``applied_to_count == 0`` to mean
+"not applied anywhere". *per_table* applies the same silent catalog
+filter as the product endpoint and is deduplicated by table (a rule
+applied twice to one table is scored once).
+ * @summary Get Rule Score
+ */
+export const getRuleScore = (
+    ruleId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RuleScoreOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/dq-score/rule/${ruleId}`,options
+    );
+  }
+
+
+
+
+export const getGetRuleScoreQueryKey = (ruleId?: string,) => {
+    return [
+    `/api/v1/dq-score/rule/${ruleId}`
+    ] as const;
+    }
+
+    
+export const getGetRuleScoreQueryOptions = <TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRuleScoreQueryKey(ruleId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRuleScore>>> = ({ signal }) => getRuleScore(ruleId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(ruleId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRuleScoreQueryResult = NonNullable<Awaited<ReturnType<typeof getRuleScore>>>
+export type GetRuleScoreQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetRuleScore<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRuleScore>>,
+          TError,
+          Awaited<ReturnType<typeof getRuleScore>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRuleScore<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRuleScore>>,
+          TError,
+          Awaited<ReturnType<typeof getRuleScore>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRuleScore<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Rule Score
+ */
+
+export function useGetRuleScore<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRuleScoreQueryOptions(ruleId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetRuleScoreSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRuleScoreQueryKey(ruleId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRuleScore>>> = ({ signal }) => getRuleScore(ruleId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRuleScoreSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getRuleScore>>>
+export type GetRuleScoreSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetRuleScoreSuspense<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRuleScoreSuspense<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRuleScoreSuspense<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Rule Score
+ */
+
+export function useGetRuleScoreSuspense<TData = Awaited<ReturnType<typeof getRuleScore>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRuleScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRuleScoreSuspenseQueryOptions(ruleId,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
