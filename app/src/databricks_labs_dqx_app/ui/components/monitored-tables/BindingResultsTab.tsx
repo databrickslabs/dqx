@@ -99,6 +99,25 @@ function orUndef(values: string[]): string[] | undefined {
   return values.length ? values : undefined;
 }
 
+/** The facet chips → query params mapping shared by every FILTERED query on
+ *  this tab (the filtered breakdown + the failing-records list). The BASE
+ *  breakdown query deliberately does NOT use it — it passes no facets, so in
+ *  "All" mode the excluded rows are still available to render greyed
+ *  (dqlake's filtered-vs-base wiring). Exported for the facet→params tests. */
+export function facetQueryParams(filters: MultiFilters): {
+  dimension?: string[];
+  severity?: string[];
+  rule?: string[];
+  column?: string[];
+} {
+  return {
+    dimension: orUndef(filters.dimension),
+    severity: orUndef(filters.severity),
+    rule: orUndef(filters.rule),
+    column: orUndef(filters.column),
+  };
+}
+
 /** Coerce a pass-rate that may arrive as a number or a numeric string into a
  *  number; anything non-finite (incl. null/undefined) becomes null. */
 export function toNum(value: unknown): number | null {
@@ -301,10 +320,7 @@ function ResultsBody({
   const filteredTableQuery = useGetTableResults(
     tableFqn,
     {
-      dimension: orUndef(filters.dimension),
-      severity: orUndef(filters.severity),
-      rule: orUndef(filters.rule),
-      column: orUndef(filters.column),
+      ...facetQueryParams(filters),
       run_id: effectiveRunId,
       axes: "breakdown",
     },
@@ -359,10 +375,7 @@ function ResultsBody({
   const failedRowsQuery = useGetDqResultsFailedRows(
     tableFqn,
     {
-      dimension: orUndef(filters.dimension),
-      severity: orUndef(filters.severity),
-      rule: orUndef(filters.rule),
-      column: orUndef(filters.column),
+      ...facetQueryParams(filters),
       limit: 200,
     },
     {

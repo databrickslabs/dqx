@@ -35,6 +35,7 @@ import {
   ApplicableToggle,
   COUNT_INFO,
   EMPTY_FILTERS,
+  facetQueryParams,
   toggleFacet,
   type Facet,
   type MultiFilters,
@@ -95,12 +96,6 @@ export type UseEntityResults = (
   isFetching: boolean;
 };
 
-/** undefined when the array is empty, else the array — so an empty facet is
- *  omitted from the query params (and stays backward-compatible). */
-function orUndef(values: string[]): string[] | undefined {
-  return values.length ? values : undefined;
-}
-
 /** Breakdown-query params for a multi-table view. Deliberately NEVER includes
  *  a run_id filter — a per-table run_id cannot scope a multi-table view
  *  coherently: it is not a batch across tables, so scoping the breakdowns by
@@ -108,10 +103,7 @@ function orUndef(values: string[]): string[] | undefined {
  *  run-picker adaptation note in ProductResultsTab). */
 export function breakdownParams(filters: MultiFilters): EntityResultsParams {
   return {
-    dimension: orUndef(filters.dimension),
-    severity: orUndef(filters.severity),
-    rule: orUndef(filters.rule),
-    column: orUndef(filters.column),
+    ...facetQueryParams(filters),
     axes: "breakdown",
   };
 }
@@ -280,10 +272,7 @@ export function MultiTableResultsSection({
   // loading (F1).
   const trendQuery = useEntityResults(
     {
-      dimension: orUndef(filters.dimension),
-      severity: orUndef(filters.severity),
-      rule: orUndef(filters.rule),
-      column: orUndef(filters.column),
+      ...facetQueryParams(filters),
       axes: "trend",
     },
     { placeholderData: keepPreviousData, ...RESULTS_QUERY_OPTIONS },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   EMPTY_FILTERS,
+  facetQueryParams,
   toggleFacet,
   toNum,
   type MultiFilters,
@@ -55,5 +56,50 @@ describe("toNum", () => {
     expect(toNum("n/a")).toBeNull();
     expect(toNum(Number.NaN)).toBeNull();
     expect(toNum(Number.POSITIVE_INFINITY)).toBeNull();
+  });
+});
+
+describe("facetQueryParams (facet chips → query params, per box)", () => {
+  const filters: MultiFilters = {
+    dimension: ["Completeness"],
+    severity: ["Critical", "High"],
+    rule: [],
+    column: ["amount"],
+    runId: "run-1",
+  };
+
+  it("maps each active facet to its list param and omits empty facets", () => {
+    expect(facetQueryParams(filters)).toEqual({
+      dimension: ["Completeness"],
+      severity: ["Critical", "High"],
+      rule: undefined,
+      column: ["amount"],
+    });
+  });
+
+  it("maps EMPTY_FILTERS to all-undefined (the BASE breakdown query shape)", () => {
+    expect(facetQueryParams(EMPTY_FILTERS)).toEqual({
+      dimension: undefined,
+      severity: undefined,
+      rule: undefined,
+      column: undefined,
+    });
+  });
+
+  it("never leaks runId into the facet params (run scoping is a separate param)", () => {
+    expect(Object.keys(facetQueryParams(filters))).toEqual([
+      "dimension",
+      "severity",
+      "rule",
+      "column",
+    ]);
+  });
+
+  it("feeds the FILTERED query only — toggling a facet changes the filtered shape, not the base", () => {
+    // The filtered breakdown/failed-rows queries spread facetQueryParams(filters);
+    // the base breakdown query passes NO facets (dqlake's filtered-vs-base wiring).
+    const clicked = toggleFacet(EMPTY_FILTERS, "dimension", "Validity");
+    expect(facetQueryParams(clicked).dimension).toEqual(["Validity"]);
+    expect(facetQueryParams(EMPTY_FILTERS).dimension).toBeUndefined();
   });
 });
