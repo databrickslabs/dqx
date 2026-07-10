@@ -18,6 +18,7 @@ from .roles import router as roles_router
 from .comments import router as comments_router
 from .quarantine import router as quarantine_router
 from .metrics import router as metrics_router
+from .dq_score import router as dq_score_router
 from .review_status import router as review_status_router
 from .schedules import router as schedules_router
 from .run_sets import router as run_sets_router
@@ -48,6 +49,7 @@ v1_router.include_router(settings_router, prefix="/settings", tags=["settings"])
 v1_router.include_router(comments_router, prefix="/comments", tags=["comments"])
 v1_router.include_router(quarantine_router, prefix="/quarantine", tags=["quarantine"])
 v1_router.include_router(metrics_router, prefix="/metrics", tags=["metrics"])
+v1_router.include_router(dq_score_router, prefix="/dq-score", tags=["dq-score"])
 v1_router.include_router(review_status_router, prefix="/runs", tags=["review-status"])
 v1_router.include_router(run_sets_router, prefix="/run-sets", tags=["run-sets"])
 v1_router.include_router(data_products_router, prefix="/data-products", tags=["data-products"])

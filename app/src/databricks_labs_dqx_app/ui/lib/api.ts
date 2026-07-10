@@ -2828,6 +2828,25 @@ export interface TableSchemaDdlOut {
   column_count?: number;
 }
 
+export type TableScoreOutScore = number | null;
+
+export type TableScoreOutLatestRunId = string | null;
+
+/**
+ * Row-weighted DQ score for one table, computed from its latest run.
+
+*score* is None when the latest run has no rows or no per-check
+breakdown (e.g. runs predating the observer's *check_metrics*
+emission).
+ */
+export interface TableScoreOut {
+  source_table_fqn: string;
+  score?: TableScoreOutScore;
+  latest_run_id?: TableScoreOutLatestRunId;
+  total_tests?: number;
+  failed_tests?: number;
+}
+
 /**
  * Column name to list of tags mapping
  */
@@ -15693,6 +15712,153 @@ export function useGetMetricsSummarySuspense<TData = Awaited<ReturnType<typeof g
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetMetricsSummarySuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Return the row-weighted DQ score for a table's latest run.
+ * @summary Get Table Score
+ */
+export const getTableScore = (
+    tableFqn: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<TableScoreOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/dq-score/table/${tableFqn}`,options
+    );
+  }
+
+
+
+
+export const getGetTableScoreQueryKey = (tableFqn?: string,) => {
+    return [
+    `/api/v1/dq-score/table/${tableFqn}`
+    ] as const;
+    }
+
+    
+export const getGetTableScoreQueryOptions = <TData = Awaited<ReturnType<typeof getTableScore>>, TError = AxiosError<HTTPValidationError>>(tableFqn: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTableScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTableScoreQueryKey(tableFqn);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTableScore>>> = ({ signal }) => getTableScore(tableFqn, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(tableFqn), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTableScore>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetTableScoreQueryResult = NonNullable<Awaited<ReturnType<typeof getTableScore>>>
+export type GetTableScoreQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetTableScore<TData = Awaited<ReturnType<typeof getTableScore>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTableScore>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getTableScore>>,
+          TError,
+          Awaited<ReturnType<typeof getTableScore>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetTableScore<TData = Awaited<ReturnType<typeof getTableScore>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTableScore>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getTableScore>>,
+          TError,
+          Awaited<ReturnType<typeof getTableScore>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetTableScore<TData = Awaited<ReturnType<typeof getTableScore>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTableScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Table Score
+ */
+
+export function useGetTableScore<TData = Awaited<ReturnType<typeof getTableScore>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTableScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetTableScoreQueryOptions(tableFqn,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetTableScoreSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getTableScore>>, TError = AxiosError<HTTPValidationError>>(tableFqn: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getTableScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTableScoreQueryKey(tableFqn);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTableScore>>> = ({ signal }) => getTableScore(tableFqn, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getTableScore>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetTableScoreSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getTableScore>>>
+export type GetTableScoreSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetTableScoreSuspense<TData = Awaited<ReturnType<typeof getTableScore>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getTableScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetTableScoreSuspense<TData = Awaited<ReturnType<typeof getTableScore>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getTableScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetTableScoreSuspense<TData = Awaited<ReturnType<typeof getTableScore>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getTableScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Table Score
+ */
+
+export function useGetTableScoreSuspense<TData = Awaited<ReturnType<typeof getTableScore>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getTableScore>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetTableScoreSuspenseQueryOptions(tableFqn,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

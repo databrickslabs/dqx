@@ -1330,6 +1330,21 @@ class MetricsSummaryOut(BaseModel):
     latest_created_at: str | None = None
 
 
+class TableScoreOut(BaseModel):
+    """Row-weighted DQ score for one table, computed from its latest run.
+
+    *score* is None when the latest run has no rows or no per-check
+    breakdown (e.g. runs predating the observer's *check_metrics*
+    emission).
+    """
+
+    source_table_fqn: str
+    score: float | None = None
+    latest_run_id: str | None = None
+    total_tests: int = 0
+    failed_tests: int = 0
+
+
 class CatalogOut(BaseModel):
     name: str
     comment: str | None = None
