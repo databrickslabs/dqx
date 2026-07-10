@@ -1994,6 +1994,7 @@
     "colTables": "# Tables",
     "colRules": "# Rules",
     "colChecks": "# Checks",
+    "colDqScore": "DQ Score",
     "colLastRun": "Last Run",
     "colSchedule": "Schedule",
     "colActions": "Actions",

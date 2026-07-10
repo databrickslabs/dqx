@@ -25,9 +25,16 @@
  * finished tables' exact paths when the caller knows them. Tasks 10-12
  * (global/product/rule score views) and the Phase 2 dqlake-port results
  * tabs reuse this helper as-is.
+ *
+ * P3.4 addition: when the finished tables ARE known, the run-completion
+ * helper also fires a fire-and-forget `POST /api/v1/dq-results/refresh-scores`
+ * so the server-side `dq_score_cache` (the list pages' instant score
+ * columns) is recomputed at the same moments — see
+ * `triggerScoreCacheRefresh`. Broad invalidations skip it (never a
+ * refresh-all).
  */
 import type { QueryClient } from "@tanstack/react-query";
-import { getGetQuarantineSampleQueryKey } from "@/lib/api";
+import { getGetQuarantineSampleQueryKey, refreshDqScores } from "@/lib/api";
 
 /**
  * Query options for every score / failing-records query covered by this
@@ -93,10 +100,48 @@ export function matchesResultsInvalidation(
   return matcher.pathPrefixes.some((prefix) => path.startsWith(prefix)) || matcher.exactPaths.includes(path);
 }
 
+/** Server-side cap on one refresh-scores call (`RefreshScoresIn.table_fqns`). */
+export const REFRESH_SCORES_MAX_FQNS = 100;
+
+/**
+ * Query-key paths of the list queries that render the cached DQ score
+ * columns (P3.4): the monitored-tables and table-spaces list endpoints
+ * LEFT JOIN `dq_score_cache`, so they are re-fetched once a score-cache
+ * recompute lands. Exact first-element matches — detail-page queries
+ * (`/api/v1/monitored-tables/{id}`) have a different path element and are
+ * deliberately untouched.
+ */
+export const SCORE_CACHE_LIST_PATHS = ["/api/v1/monitored-tables", "/api/v1/data-products"] as const;
+
+/**
+ * Fire-and-forget score-cache recompute for the just-finished tables
+ * (`POST /api/v1/dq-results/refresh-scores` — recomputes those tables,
+ * every table space containing them, and the global rollup, server-side).
+ * Skipped entirely on broad invalidations (no FQNs known): the endpoint is
+ * a scoped run-completion trigger, never a refresh-all. Once the recompute
+ * lands, the score-cache-backed list queries are invalidated so a mounted
+ * list re-reads the fresh cache; failures are swallowed — the cache just
+ * stays stale until the next completed run.
+ */
+export function triggerScoreCacheRefresh(queryClient: QueryClient, tableFqns?: readonly string[]): void {
+  if (!tableFqns || tableFqns.length === 0) return;
+  void refreshDqScores({ table_fqns: tableFqns.slice(0, REFRESH_SCORES_MAX_FQNS) })
+    .then(() => {
+      for (const path of SCORE_CACHE_LIST_PATHS) {
+        void queryClient.invalidateQueries({ queryKey: [path] });
+      }
+    })
+    .catch(() => {
+      // Fire-and-forget: a failed refresh only leaves the cached score
+      // columns stale; the next run completion covers it.
+    });
+}
+
 /**
  * Invalidate every score and failing-records query affected by a finished
  * run. Pass the finished runs' table FQNs when known (narrows the
- * quarantine-sample invalidation); omit them to invalidate broadly.
+ * quarantine-sample invalidation and triggers the server-side score-cache
+ * recompute); omit them to invalidate broadly (no cache recompute).
  */
 export function invalidateResultsAfterRunCompletion(
   queryClient: QueryClient,
@@ -106,6 +151,7 @@ export function invalidateResultsAfterRunCompletion(
   void queryClient.invalidateQueries({
     predicate: (query) => matchesResultsInvalidation(query.queryKey, matcher),
   });
+  triggerScoreCacheRefresh(queryClient, tableFqns);
 }
 
 /**

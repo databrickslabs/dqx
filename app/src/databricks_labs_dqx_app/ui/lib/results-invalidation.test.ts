@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import type { QueryClient } from "@tanstack/react-query";
 import {
   DQ_RESULTS_PATH_PREFIX,
   DQ_SCORE_PATH_PREFIX,
   QUARANTINE_SAMPLE_PATH_PREFIX,
+  SCORE_CACHE_LIST_PATHS,
   buildResultsInvalidationMatcher,
   buildRuleApplicationChangeMatcher,
   matchesResultsInvalidation,
+  triggerScoreCacheRefresh,
 } from "./results-invalidation";
 import {
   getGetDqResultsFailedRowsQueryKey,
@@ -13,6 +16,8 @@ import {
   getGetRuleResultsQueryKey,
   getGetRuleScoreQueryKey,
   getGetTableResultsQueryKey,
+  getListDataProductsQueryKey,
+  getListMonitoredTablesQueryKey,
   getListResultDimensionsQueryKey,
   getListResultSeveritiesQueryKey,
 } from "./api";
@@ -99,6 +104,39 @@ describe("buildRuleApplicationChangeMatcher (rule apply/unapply invalidation)", 
 
   test("never matches unrelated queries", () => {
     expect(matchesResultsInvalidation(["/api/v1/monitored-tables/b1"], matcher)).toBe(false);
+  });
+});
+
+describe("SCORE_CACHE_LIST_PATHS pins the generated list query keys (P3.4)", () => {
+  // The score-cache refresh invalidates exactly the two list queries that
+  // LEFT JOIN dq_score_cache — these assertions fail loudly if the backend
+  // mount points or the generated key shapes ever drift away.
+  test("every score-cache-backed list key path is covered, exactly", () => {
+    expect(getListMonitoredTablesQueryKey()[0]).toBe(SCORE_CACHE_LIST_PATHS[0]);
+    expect(getListDataProductsQueryKey()[0]).toBe(SCORE_CACHE_LIST_PATHS[1]);
+  });
+
+  test("detail-page paths are NOT list paths (exact element match, not prefix)", () => {
+    for (const path of SCORE_CACHE_LIST_PATHS) {
+      expect(path.endsWith("/")).toBe(false);
+    }
+    expect(SCORE_CACHE_LIST_PATHS).not.toContain("/api/v1/monitored-tables/b1");
+  });
+});
+
+describe("triggerScoreCacheRefresh", () => {
+  // A throwing stub: the broad (no-FQN) path must return without touching
+  // the query client OR the network — refresh-scores is a scoped
+  // run-completion trigger, never a refresh-all.
+  const throwingQueryClient = new Proxy({} as QueryClient, {
+    get() {
+      throw new Error("queryClient must not be touched on the broad path");
+    },
+  });
+
+  test("no FQNs → no-op (broad invalidations never refresh-all)", () => {
+    triggerScoreCacheRefresh(throwingQueryClient);
+    triggerScoreCacheRefresh(throwingQueryClient, []);
   });
 });
 

@@ -1994,6 +1994,7 @@
     "colTables": "N.º de tablas",
     "colRules": "N.º de reglas",
     "colChecks": "N.º de verificaciones",
+    "colDqScore": "Puntuación de calidad",
     "colLastRun": "Última ejecución",
     "colSchedule": "Programación",
     "colActions": "Acciones",
