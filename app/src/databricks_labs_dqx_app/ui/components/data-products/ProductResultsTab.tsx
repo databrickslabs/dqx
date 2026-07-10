@@ -1,8 +1,9 @@
 import { useTranslation } from "react-i18next";
 import { ScoreBox } from "@/components/results/ScoreBox";
+import { TableScoreList } from "@/components/results/TableScoreList";
 import { useGetProductScoreSuspense } from "@/lib/api";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
-import { formatScorePercent, scoreBandClass, sumMemberTestCounts } from "@/lib/results-display";
+import { sumMemberTestCounts } from "@/lib/results-display";
 
 /**
  * Results tab for the table-space (data product) detail page: one ScoreBox
@@ -39,23 +40,7 @@ export function ProductResultsTab({ productId }: { productId: string }) {
         {members.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("dataProducts.resultsNoMembers")}</p>
         ) : (
-          <ul className="flex flex-col gap-2">
-            {members.map((member) => {
-              const score = member.score ?? null;
-              return (
-                <li key={member.source_table_fqn} className="flex items-center justify-between gap-3 text-sm">
-                  <span className="font-mono truncate">{member.source_table_fqn}</span>
-                  {score === null ? (
-                    <span className="text-muted-foreground shrink-0">{t("results.noRunsYet")}</span>
-                  ) : (
-                    <span className={`tabular-nums font-medium shrink-0 ${scoreBandClass(score)}`}>
-                      {formatScorePercent(score)}
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+          <TableScoreList tables={members} />
         )}
       </div>
     </div>

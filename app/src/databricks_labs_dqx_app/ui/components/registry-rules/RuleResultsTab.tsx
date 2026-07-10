@@ -6,14 +6,10 @@ import { AlertCircle, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScoreBox } from "@/components/results/ScoreBox";
+import { TableScoreList } from "@/components/results/TableScoreList";
 import { useGetRuleScoreSuspense } from "@/lib/api";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
-import {
-  formatScorePercent,
-  ruleResultsState,
-  scoreBandClass,
-  sumMemberTestCounts,
-} from "@/lib/results-display";
+import { ruleResultsState, sumMemberTestCounts } from "@/lib/results-display";
 
 /**
  * Results tab content for the registry-rule detail page: the rule's overall
@@ -72,23 +68,7 @@ function RuleResultsContent({ ruleId }: { ruleId: string }) {
       />
       <div className="space-y-2">
         <h3 className="text-sm font-medium">{t("rulesRegistry.resultsBreakdownTitle")}</h3>
-        <ul className="flex flex-col gap-2">
-          {perTable.map((entry) => {
-            const score = entry.score ?? null;
-            return (
-              <li key={entry.source_table_fqn} className="flex items-center justify-between gap-3 text-sm">
-                <span className="font-mono truncate">{entry.source_table_fqn}</span>
-                {score === null ? (
-                  <span className="text-muted-foreground shrink-0">{t("results.noRunsYet")}</span>
-                ) : (
-                  <span className={`tabular-nums font-medium shrink-0 ${scoreBandClass(score)}`}>
-                    {formatScorePercent(score)}
-                  </span>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <TableScoreList tables={perTable} />
       </div>
     </div>
   );

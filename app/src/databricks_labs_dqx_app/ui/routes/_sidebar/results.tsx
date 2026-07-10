@@ -9,14 +9,10 @@ import { FadeIn } from "@/components/anim/FadeIn";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScoreBox } from "@/components/results/ScoreBox";
+import { TableScoreList } from "@/components/results/TableScoreList";
 import { useGetGlobalScoreSuspense } from "@/lib/api";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
-import {
-  formatScorePercent,
-  globalResultsState,
-  scoreBandClass,
-  sumMemberTestCounts,
-} from "@/lib/results-display";
+import { globalResultsState, sumMemberTestCounts } from "@/lib/results-display";
 
 export const Route = createFileRoute("/_sidebar/results")({
   component: GlobalResultsPage,
@@ -87,26 +83,7 @@ function GlobalResultsContent() {
                   list-all-bindings lookup on every visit — and a table can
                   appear in dq_metrics after its binding was deleted, so some
                   rows would have no destination at all. */}
-              <ul className="flex flex-col gap-2">
-                {tables.map((table) => {
-                  const score = table.score ?? null;
-                  return (
-                    <li
-                      key={table.source_table_fqn}
-                      className="flex items-center justify-between gap-3 text-sm"
-                    >
-                      <span className="font-mono truncate">{table.source_table_fqn}</span>
-                      {score === null ? (
-                        <span className="text-muted-foreground shrink-0">{t("results.noRunsYet")}</span>
-                      ) : (
-                        <span className={`tabular-nums font-medium shrink-0 ${scoreBandClass(score)}`}>
-                          {formatScorePercent(score)}
-                        </span>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
+              <TableScoreList tables={tables} />
             </div>
           </div>
         )}
