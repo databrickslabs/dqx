@@ -1,15 +1,16 @@
 [project]
 name = "databricks-labs-dqx-app"
-dynamic = ["version"]
+version = "0.15.0"
 description = "DQX Studio for Data Quality eXtended (DQX), a Python library for data quality monitoring"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi~=0.119",
     "pydantic-settings~=2.11",
     "uvicorn~=0.37",
-    "databricks-labs-dqx[llm,datacontract]",
-    "databricks-sdk~=0.73",
+    # Keep in lockstep with the pin in tasks/pyproject.toml.
+    "databricks-labs-dqx[llm,datacontract]==0.15.0",
+    "databricks-sdk~=0.120",
     "databricks-sql-connector[pyarrow]==4.2.5",
     "openpyxl>=3.1",
     # Lakebase (Postgres) backend for OLTP state. ``binary`` ships a
@@ -53,43 +54,19 @@ app-module = "databricks_labs_dqx_app.backend.app:app"
 
 
 [tool.uv]
-required-version = "~=0.11.0"
 exclude-newer-package = { "databricks-sdk" = false }
 
-[tool.uv.sources]
-databricks-labs-dqx = { path = "../", editable = true }
-
 [build-system]
-requires = ["hatchling==1.29.0", "uv-dynamic-versioning>=0.7.0"]
+requires = ["hatchling==1.29.0"]
 build-backend = "hatchling.build"
 
-[tool.hatch.version]
-source = "uv-dynamic-versioning"
-
-[tool.uv-dynamic-versioning]
-vcs = "git"
-# Append an optional build tag (set by ``scripts/build_app.py`` to a
-# timestamp like ``b20260530t012345``) as an extra PEP 440 local-version
-# segment, e.g. ``0.14.0.post42.dev0+abc1234.b20260530t012345``.
-# Without the env var (``uv build`` invoked directly during dev) the
-# version is unchanged.
-#
-# The build tag forces every redeploy of the same git commit to produce
-# a strictly greater version than the previous deploy, so pip in
-# Databricks Apps' persistent venv reinstalls fresh code instead of
-# skipping with "already satisfied". Baking the tag in at build
-# time (rather than rewriting the wheel filename after the fact)
-# ensures the filename and METADATA agree by construction.
-format-jinja = "{{ version }}{% if env.get('DQX_APP_BUILD_TAG') %}.{{ env['DQX_APP_BUILD_TAG'] }}{% endif %}"
-
-[tool.hatch.build.hooks.version]
-path = "src/databricks_labs_dqx_app/_version.py"
-template = '''
-version = "{version}"
-'''
-
+# Static version (see [project].version); build_app.py generates _version.py.
 [tool.hatch.build]
-artifacts = ["src/databricks_labs_dqx_app/__dist__", "src/databricks_labs_dqx_app/_metadata.py"]
+artifacts = [
+    "src/databricks_labs_dqx_app/__dist__",
+    "src/databricks_labs_dqx_app/_metadata.py",
+    "src/databricks_labs_dqx_app/_version.py",
+]
 exclude = ["src/databricks_labs_dqx_app/ui"]
 
 [tool.ruff]
@@ -154,7 +131,12 @@ target-version = "py311"
 # which uses the proper ``--group test`` env, so excluding them from the
 # static check here removes the false positives without losing real
 # coverage.
-exclude = ["tests", "**/.venv", "**/__pycache__", "src/databricks_labs_dqx_app/__dist__"]
+# ``.build`` is a generated source copy produced by ``make app-build``
+# (which CI runs before ``app-check``). Without excluding it, basedpyright
+# analyzes both ``src/...`` and ``.build/src/...`` and sees every class
+# twice under distinct import paths, yielding spurious "X is not assignable
+# to X" errors.
+exclude = ["tests", "**/.venv", "**/__pycache__", "src/databricks_labs_dqx_app/__dist__", ".build"]
 
 # basedpyright defaults to ``recommended`` mode, which enables ~10
 # strict-only rules (reportAny, reportExplicitAny,
