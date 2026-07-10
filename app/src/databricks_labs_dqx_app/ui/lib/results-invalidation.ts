@@ -14,10 +14,13 @@
  *   it invalidates broadly)
  *
  * A finished run for ONE table moves every aggregate above it (global,
- * product, and rule scores), so all `/api/v1/dq-score/*` queries are always
- * invalidated by path prefix; quarantine samples are per-table, so they are
- * narrowed to the finished tables' exact paths when the caller knows them.
- * Tasks 10-12 (global/product/rule score views) reuse this helper as-is.
+ * product, and rule scores), so all `/api/v1/dq-score/*` AND all
+ * `/api/v1/dq-results/*` queries (runs / table / product / global / rule
+ * breakdowns, failed rows, registries) are always invalidated by path
+ * prefix; quarantine samples are per-table, so they are narrowed to the
+ * finished tables' exact paths when the caller knows them. Tasks 10-12
+ * (global/product/rule score views) and the Phase 2 dqlake-port results
+ * tabs reuse this helper as-is.
  */
 import type { QueryClient } from "@tanstack/react-query";
 import { getGetQuarantineSampleQueryKey } from "@/lib/api";
@@ -36,6 +39,11 @@ export const RESULTS_QUERY_OPTIONS = {
 
 /** Path prefix shared by the global, table, product, and rule score endpoints. */
 export const DQ_SCORE_PATH_PREFIX = "/api/v1/dq-score/";
+/** Path prefix shared by the dqlake-shape results endpoints (runs, table /
+ *  product / global / rule breakdowns+trends, filtered failed rows, and the
+ *  severity/dimension registries). Aggregates over many tables, so it is
+ *  always invalidated wholesale, like the score prefix. */
+export const DQ_RESULTS_PATH_PREFIX = "/api/v1/dq-results/";
 /** Path prefix of the per-table failing-records sample endpoint. */
 export const QUARANTINE_SAMPLE_PATH_PREFIX = "/api/v1/quarantine-samples/";
 
@@ -54,10 +62,13 @@ export interface ResultsInvalidationMatcher {
  */
 export function buildResultsInvalidationMatcher(tableFqns?: readonly string[]): ResultsInvalidationMatcher {
   if (!tableFqns || tableFqns.length === 0) {
-    return { pathPrefixes: [DQ_SCORE_PATH_PREFIX, QUARANTINE_SAMPLE_PATH_PREFIX], exactPaths: [] };
+    return {
+      pathPrefixes: [DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX, QUARANTINE_SAMPLE_PATH_PREFIX],
+      exactPaths: [],
+    };
   }
   return {
-    pathPrefixes: [DQ_SCORE_PATH_PREFIX],
+    pathPrefixes: [DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX],
     exactPaths: tableFqns.map((fqn) => getGetQuarantineSampleQueryKey(fqn)[0]),
   };
 }

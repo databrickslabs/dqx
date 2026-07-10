@@ -1,17 +1,29 @@
 import { describe, expect, test } from "bun:test";
 import {
+  DQ_RESULTS_PATH_PREFIX,
   DQ_SCORE_PATH_PREFIX,
   QUARANTINE_SAMPLE_PATH_PREFIX,
   buildResultsInvalidationMatcher,
   matchesResultsInvalidation,
 } from "./results-invalidation";
+import {
+  getGetDqResultsFailedRowsQueryKey,
+  getGetDqResultsRunsQueryKey,
+  getGetTableResultsQueryKey,
+  getListResultDimensionsQueryKey,
+  getListResultSeveritiesQueryKey,
+} from "./api";
 
 const FQN = "main.sales.orders";
 
 describe("buildResultsInvalidationMatcher", () => {
-  test("without FQNs, matches every score AND every quarantine-sample path by prefix", () => {
+  test("without FQNs, matches every score, dq-results AND quarantine-sample path by prefix", () => {
     const matcher = buildResultsInvalidationMatcher();
-    expect(matcher.pathPrefixes).toEqual([DQ_SCORE_PATH_PREFIX, QUARANTINE_SAMPLE_PATH_PREFIX]);
+    expect(matcher.pathPrefixes).toEqual([
+      DQ_SCORE_PATH_PREFIX,
+      DQ_RESULTS_PATH_PREFIX,
+      QUARANTINE_SAMPLE_PATH_PREFIX,
+    ]);
     expect(matcher.exactPaths).toEqual([]);
   });
 
@@ -19,10 +31,45 @@ describe("buildResultsInvalidationMatcher", () => {
     expect(buildResultsInvalidationMatcher([])).toEqual(buildResultsInvalidationMatcher());
   });
 
-  test("with FQNs, narrows quarantine invalidation to exactly those tables", () => {
+  test("with FQNs, narrows quarantine invalidation to exactly those tables (dq-results stays wholesale)", () => {
     const matcher = buildResultsInvalidationMatcher([FQN]);
-    expect(matcher.pathPrefixes).toEqual([DQ_SCORE_PATH_PREFIX]);
+    expect(matcher.pathPrefixes).toEqual([DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX]);
     expect(matcher.exactPaths).toEqual([`/api/v1/quarantine-samples/${FQN}`]);
+  });
+});
+
+describe("DQ_RESULTS_PATH_PREFIX pins the generated dq-results query keys", () => {
+  // The prefix must keep matching whatever paths orval actually generates —
+  // these assertions fail loudly if the backend mount point or the generated
+  // key shape ever drifts away from the invalidation helper.
+  test("every generated dq-results key path starts with the prefix", () => {
+    const keys = [
+      getGetDqResultsRunsQueryKey("b1"),
+      getGetDqResultsRunsQueryKey(FQN),
+      getGetTableResultsQueryKey(FQN, { axes: "trend" }),
+      getGetDqResultsFailedRowsQueryKey(FQN, { limit: 200 }),
+      getListResultSeveritiesQueryKey(),
+      getListResultDimensionsQueryKey(),
+    ];
+    for (const key of keys) {
+      expect(String(key[0]).startsWith(DQ_RESULTS_PATH_PREFIX)).toBe(true);
+    }
+  });
+
+  test("generated dq-results keys match in BOTH broad and table-scoped modes", () => {
+    const broad = buildResultsInvalidationMatcher();
+    const scoped = buildResultsInvalidationMatcher([FQN]);
+    const keys = [
+      getGetDqResultsRunsQueryKey("b1"),
+      getGetTableResultsQueryKey(FQN, { axes: "breakdown", run_id: "r1" }),
+      getGetDqResultsFailedRowsQueryKey(FQN, { limit: 200 }),
+      getListResultSeveritiesQueryKey(),
+      getListResultDimensionsQueryKey(),
+    ];
+    for (const key of keys) {
+      expect(matchesResultsInvalidation(key, broad)).toBe(true);
+      expect(matchesResultsInvalidation(key, scoped)).toBe(true);
+    }
   });
 });
 

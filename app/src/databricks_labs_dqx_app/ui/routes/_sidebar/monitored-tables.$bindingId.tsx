@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
@@ -6,13 +6,6 @@ import { ErrorBoundary } from "react-error-boundary";
 import { toast } from "sonner";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -80,9 +73,6 @@ import {
   useSaveAppliedRules,
   useListRegistryRules,
   useGetTableColumns,
-  useGetRules,
-  useGetTableScoreSuspense,
-  useGetQuarantineSampleSuspense,
   useListMonitoredTableVersions,
   useRunMonitoredTable,
   useSuggestRulesForTable,
@@ -91,7 +81,6 @@ import {
   useGetSampleQuestions,
   type AppliedRuleOut,
   type ColumnOut,
-  type FailingRecordOut,
   type MonitoredTableOut,
   type MonitoredTableVersionOut,
   type RegistryRuleOut,
@@ -132,10 +121,8 @@ import {
   normalizeStagedRows,
 } from "@/components/apply-rules/shared";
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
-import { ScoreBox } from "@/components/results/ScoreBox";
-import { FailingRecordsTable, type FailingRecord } from "@/components/results/FailingRecordsTable";
-import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
+import { BindingResultsTab } from "@/components/monitored-tables/BindingResultsTab";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 import { MonitoredTableHistoryTab } from "@/components/monitored-tables/MonitoredTableHistoryTab";
 
@@ -698,7 +685,11 @@ function MonitoredTableDetailPage() {
           </TabsContent>
 
           <TabsContent value="results">
-            <ResultsTab tableFqn={table.table_fqn} status={table.status} />
+            <BindingResultsTab
+              bindingId={bindingId}
+              tableName={tableName}
+              tableFqn={table.table_fqn}
+            />
           </TabsContent>
 
           <TabsContent value="schedule">
@@ -2367,135 +2358,3 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
 
 // The preview row cap mirrors the backend TableDataService.PREVIEW_LIMIT.
 const TableDataService_PREVIEW_LIMIT = 500;
-
-// ---------------------------------------------------------------------------
-// Results tab
-// ---------------------------------------------------------------------------
-
-function ResultsTab({ tableFqn, status }: { tableFqn: string; status: string }) {
-  const { t } = useTranslation();
-
-  // Submitting the table materializes its applied rules into dq_quality_rules
-  // and moves them into the pending_approval queue; they only actually run
-  // once an approver flips them to `approved`, exactly like a manually
-  // authored rule. Nothing runs while the binding is still `draft` (nothing
-  // has been materialized yet), so only fetch/count checks once it has left
-  // draft, and point the steward at the existing Drafts & Review queue for
-  // any still awaiting review.
-  const materialized = status !== "draft";
-  const rulesQuery = useGetRules(tableFqn, {
-    query: { enabled: materialized, retry: false },
-  });
-  const checks = rulesQuery.data?.data ?? [];
-  const pendingCount = checks.filter((c) => c.status === "draft" || c.status === "pending_approval").length;
-
-  return (
-    <Card className="mt-4">
-      <CardHeader>
-        <CardTitle className="text-sm flex items-center gap-2">
-          <ClipboardList className="h-4 w-4" />
-          {t("monitoredTables.resultsTitle")}
-        </CardTitle>
-        <CardDescription>{t("monitoredTables.resultsDescription")}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {!materialized && (
-          <p className="text-sm text-muted-foreground">{t("monitoredTables.notYetPublishedResultsHint")}</p>
-        )}
-        {pendingCount > 0 && (
-          <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700">
-            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-                {t("monitoredTables.resultsApprovalBannerTitle")}
-              </p>
-              <p className="text-sm text-amber-800/90 dark:text-amber-300/90">
-                {t("monitoredTables.resultsApprovalBannerBody", { count: pendingCount })}
-              </p>
-              <Button asChild size="sm" variant="outline" className="gap-1.5 h-7 text-xs border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900">
-                <Link to="/rules/drafts">{t("monitoredTables.resultsApprovalBannerCta")}</Link>
-              </Button>
-            </div>
-          </div>
-        )}
-        {materialized && (
-          // Same tab-local error/suspense shape as the route wrapper — a
-          // score/sample failure resets and retries without unmounting the
-          // rest of the tab (banner + Runs History link stay visible).
-          <QueryErrorResetBoundary>
-            {({ reset }) => (
-              <ErrorBoundary onReset={reset} FallbackComponent={DetailError}>
-                <Suspense
-                  fallback={
-                    <div className="space-y-4">
-                      <Skeleton className="h-28 w-full" />
-                      <Skeleton className="h-48 w-full" />
-                    </div>
-                  }
-                >
-                  <ResultsContent tableFqn={tableFqn} />
-                </Suspense>
-              </ErrorBoundary>
-            )}
-          </QueryErrorResetBoundary>
-        )}
-        <Button asChild variant="outline" size="sm" className="gap-2">
-          <Link to="/runs-history">
-            <ArrowLeft className="h-3.5 w-3.5 rotate-180" />
-            {t("monitoredTables.viewRunsHistory")}
-          </Link>
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * Map the quarantine-sample records (FailingRecordOut, no severity/dimension
- * enrichment) into the dqlake FailingRecordsTable's FailingRecord shape,
- * normalising nulls to undefined/[]. The severity/dimension fields stay
- * undefined here — the P2.3+ tabs feed the enriched failed-rows endpoint
- * (FailedRowsOut) through `toFailingRecords` instead.
- */
-function quarantineRecordsToRows(records: FailingRecordOut[]): FailingRecord[] {
-  return records.map((r) => ({
-    record_key: r.record_key,
-    row_values: r.row_values ?? {},
-    failed_columns: r.failed_columns ?? [],
-    failures: (r.failures ?? []).map((f) => ({
-      rule_name: f.rule_name ?? undefined,
-      message: f.message ?? undefined,
-      columns: f.columns ?? [],
-    })),
-  }));
-}
-
-function ResultsContent({ tableFqn }: { tableFqn: string }) {
-  const { t } = useTranslation();
-  const { data: score } = useGetTableScoreSuspense(tableFqn, {
-    query: { select: (d) => d.data, ...RESULTS_QUERY_OPTIONS },
-  });
-  const { data: sample } = useGetQuarantineSampleSuspense(tableFqn, undefined, {
-    query: { select: (d) => d.data, ...RESULTS_QUERY_OPTIONS },
-  });
-  return (
-    <div className="flex flex-col gap-4">
-      <ScoreBox
-        passRate={score.score ?? null}
-        label={t("monitoredTables.resultsScoreLabel")}
-        totalTests={score.total_tests ?? 0}
-        failedTests={score.failed_tests ?? 0}
-      />
-      <div className="space-y-2">
-        <h3 className="text-sm font-medium">{t("monitoredTables.resultsFailingRecordsTitle")}</h3>
-        {sample.suppressed ? (
-          <p className="text-sm text-muted-foreground">
-            {t("results.suppressedFineGrainedControls")}
-          </p>
-        ) : (
-          <FailingRecordsTable rows={quarantineRecordsToRows(sample.records ?? [])} />
-        )}
-      </div>
-    </div>
-  );
-}
