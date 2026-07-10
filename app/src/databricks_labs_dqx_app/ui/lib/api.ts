@@ -1376,6 +1376,34 @@ export interface HTTPValidationError {
   detail?: ValidationError[];
 }
 
+export type HomeStatsOutScore = number | null;
+
+export type HomeStatsOutFailedTests = number | null;
+
+export type HomeStatsOutTotalTests = number | null;
+
+export type HomeStatsOutComputedAt = string | null;
+
+/**
+ * Homepage "at a glance" stats (dqlake's ``HomeStatsOut``, adapted).
+
+Counts come from cheap app-DB COUNT(*) queries; *score* (plus the
+*failed_tests* / *total_tests* counters behind it) is the cached
+org-wide aggregate from the ``dq_score_cache`` 'global' row (P3.4) —
+the endpoint never touches the warehouse. *computed_at* is when that
+global row was last recomputed (dqlake's *refreshed_at* analogue);
+None until the first run-completion refresh populates the cache.
+ */
+export interface HomeStatsOut {
+  rule_count?: number;
+  monitored_table_count?: number;
+  table_space_count?: number;
+  score?: HomeStatsOutScore;
+  failed_tests?: HomeStatsOutFailedTests;
+  total_tests?: HomeStatsOutTotalTests;
+  computed_at?: HomeStatsOutComputedAt;
+}
+
 export type InputConfigSchema = string | null;
 
 export type InputConfigOptions = {[key: string]: string};
@@ -18007,6 +18035,158 @@ export function useGetTableResultsSuspense<TData = Awaited<ReturnType<typeof get
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetTableResultsSuspenseQueryOptions(tableFqn,params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Return the homepage stat-card numbers in one response.
+
+A never-populated score cache serves ``score=None`` (the homepage
+renders an em dash); a populated row whose score is NULL ("computed,
+nothing found") still carries *computed_at* so the two are
+distinguishable.
+ * @summary Get Home Stats
+ */
+export const getHomeStats = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<HomeStatsOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/home/stats`,options
+    );
+  }
+
+
+
+
+export const getGetHomeStatsQueryKey = () => {
+    return [
+    `/api/v1/home/stats`
+    ] as const;
+    }
+
+    
+export const getGetHomeStatsQueryOptions = <TData = Awaited<ReturnType<typeof getHomeStats>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getHomeStats>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetHomeStatsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getHomeStats>>> = ({ signal }) => getHomeStats({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getHomeStats>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetHomeStatsQueryResult = NonNullable<Awaited<ReturnType<typeof getHomeStats>>>
+export type GetHomeStatsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetHomeStats<TData = Awaited<ReturnType<typeof getHomeStats>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getHomeStats>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getHomeStats>>,
+          TError,
+          Awaited<ReturnType<typeof getHomeStats>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetHomeStats<TData = Awaited<ReturnType<typeof getHomeStats>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getHomeStats>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getHomeStats>>,
+          TError,
+          Awaited<ReturnType<typeof getHomeStats>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetHomeStats<TData = Awaited<ReturnType<typeof getHomeStats>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getHomeStats>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Home Stats
+ */
+
+export function useGetHomeStats<TData = Awaited<ReturnType<typeof getHomeStats>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getHomeStats>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetHomeStatsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetHomeStatsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getHomeStats>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getHomeStats>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetHomeStatsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getHomeStats>>> = ({ signal }) => getHomeStats({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getHomeStats>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetHomeStatsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getHomeStats>>>
+export type GetHomeStatsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetHomeStatsSuspense<TData = Awaited<ReturnType<typeof getHomeStats>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getHomeStats>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetHomeStatsSuspense<TData = Awaited<ReturnType<typeof getHomeStats>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getHomeStats>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetHomeStatsSuspense<TData = Awaited<ReturnType<typeof getHomeStats>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getHomeStats>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Home Stats
+ */
+
+export function useGetHomeStatsSuspense<TData = Awaited<ReturnType<typeof getHomeStats>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getHomeStats>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetHomeStatsSuspenseQueryOptions(options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

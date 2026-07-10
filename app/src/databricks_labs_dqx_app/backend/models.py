@@ -1612,6 +1612,26 @@ class RefreshScoresOut(BaseModel):
     global_refreshed: bool = True
 
 
+class HomeStatsOut(BaseModel):
+    """Homepage "at a glance" stats (dqlake's ``HomeStatsOut``, adapted).
+
+    Counts come from cheap app-DB COUNT(*) queries; *score* (plus the
+    *failed_tests* / *total_tests* counters behind it) is the cached
+    org-wide aggregate from the ``dq_score_cache`` 'global' row (P3.4) —
+    the endpoint never touches the warehouse. *computed_at* is when that
+    global row was last recomputed (dqlake's *refreshed_at* analogue);
+    None until the first run-completion refresh populates the cache.
+    """
+
+    rule_count: int = 0
+    monitored_table_count: int = 0
+    table_space_count: int = 0
+    score: float | None = None
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    computed_at: str | None = None
+
+
 class CatalogOut(BaseModel):
     name: str
     comment: str | None = None

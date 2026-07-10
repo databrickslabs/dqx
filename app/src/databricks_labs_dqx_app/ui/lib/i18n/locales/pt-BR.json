@@ -51,6 +51,7 @@
     "switchFailed": "Falha ao trocar de idioma. Tente novamente."
   },
   "sidebar": {
+    "home": "Início",
     "createRules": "Criar Regras",
     "singleTableRules": "Regras de tabela única",
     "crossTableRules": "Regras entre tabelas",
@@ -96,15 +97,26 @@
     "loadFailedDescription": "Ocorreu um erro ao carregar as informações do seu perfil. Verifique se o backend está em execução e se você está autenticado."
   },
   "home": {
-    "subtitle": "Monitore, valide e melhore a qualidade dos dados em todo o seu Lakehouse Databricks — com regras automatizadas, agendamento e fluxos de aprovação.",
+    "welcome": "Boas-vindas",
+    "welcomeName": "Boas-vindas, {{name}}",
+    "atAGlance": "Visão geral",
     "getStarted": "Começar",
-    "applyToTable": "Aplicar a uma Tabela",
-    "howItWorks": "① Defina regras reutilizáveis no Registro de Regras → ② Aplique-as às suas Tabelas Monitoradas.",
-    "highlights": {
-      "uc": "Integração com Unity Catalog",
-      "ai": "Geração de regras em linguagem natural",
-      "schedule": "Execução agendada de regras",
-      "rbac": "Aprovação baseada em funções"
+    "loading": "Carregando",
+    "statsError": "Não foi possível carregar as estatísticas da página inicial.",
+    "tryAgain": "Tentar novamente",
+    "stats": {
+      "tables": "Tabelas monitoradas",
+      "rules": "Regras",
+      "spaces": "Espaços de tabelas",
+      "score": "Pontuação geral de DQ"
+    },
+    "grid": {
+      "rulesRegistryDesc": "Crie um repositório de regras de qualidade de dados reutilizáveis",
+      "monitoredTablesDesc": "Aplique regras a tabelas específicas e monitore sua qualidade de dados",
+      "tableSpacesDesc": "Agrupe tabelas relacionadas em espaços com um agendamento compartilhado",
+      "resultsDesc": "Explore pontuações de DQ, detalhamentos e registros com falha em suas tabelas",
+      "config": "Configuração",
+      "configDesc": "Configure ajustes e preferências"
     }
   },
   "auth": {

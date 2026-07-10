@@ -261,6 +261,11 @@ class MonitoredTableService:
     # List / Get
     # ------------------------------------------------------------------
 
+    def count(self) -> int:
+        """Total monitored table bindings, any status (homepage stat card)."""
+        rows = self._sql.query(f"SELECT COUNT(*) FROM {self._table}")  # noqa: S608
+        return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+
     def list_monitored_tables(
         self,
         *,

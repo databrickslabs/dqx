@@ -51,6 +51,7 @@
     "switchFailed": "Impossibile cambiare lingua. Riprova."
   },
   "sidebar": {
+    "home": "Home",
     "createRules": "Crea Regole",
     "singleTableRules": "Regole su tabella singola",
     "crossTableRules": "Regole tra tabelle",
@@ -96,15 +97,26 @@
     "loadFailedDescription": "Si è verificato un errore durante il caricamento delle informazioni del profilo. Assicurati che il backend sia in esecuzione e che tu sia autenticato."
   },
   "home": {
-    "subtitle": "Monitora, valida e migliora la qualità dei dati nel tuo Lakehouse Databricks — con regole automatizzate, pianificazione e flussi di approvazione.",
+    "welcome": "Ti diamo il benvenuto",
+    "welcomeName": "Ti diamo il benvenuto, {{name}}",
+    "atAGlance": "A colpo d'occhio",
     "getStarted": "Inizia",
-    "applyToTable": "Applica a una Tabella",
-    "howItWorks": "① Definisci regole riutilizzabili nel Registro delle Regole → ② Applicale alle tue Tabelle Monitorate.",
-    "highlights": {
-      "uc": "Integrazione Unity Catalog",
-      "ai": "Generazione di regole in linguaggio naturale",
-      "schedule": "Esecuzione regole pianificata",
-      "rbac": "Flusso di approvazione basato su ruoli"
+    "loading": "Caricamento",
+    "statsError": "Impossibile caricare le statistiche della home page.",
+    "tryAgain": "Riprova",
+    "stats": {
+      "tables": "Tabelle monitorate",
+      "rules": "Regole",
+      "spaces": "Spazi tabelle",
+      "score": "Punteggio DQ complessivo"
+    },
+    "grid": {
+      "rulesRegistryDesc": "Crea un repository di regole di qualità dei dati riutilizzabili",
+      "monitoredTablesDesc": "Applica regole a tabelle specifiche e monitora la loro qualità dei dati",
+      "tableSpacesDesc": "Raggruppa tabelle correlate in spazi con una pianificazione condivisa",
+      "resultsDesc": "Esplora punteggi DQ, suddivisioni e record non conformi nelle tue tabelle",
+      "config": "Configurazione",
+      "configDesc": "Configura impostazioni e preferenze"
     }
   },
   "auth": {

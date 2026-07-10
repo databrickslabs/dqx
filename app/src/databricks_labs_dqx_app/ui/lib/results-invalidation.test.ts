@@ -3,6 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import {
   DQ_RESULTS_PATH_PREFIX,
   DQ_SCORE_PATH_PREFIX,
+  HOME_STATS_PATH_PREFIX,
   QUARANTINE_SAMPLE_PATH_PREFIX,
   SCORE_CACHE_LIST_PATHS,
   buildResultsInvalidationMatcher,
@@ -13,6 +14,7 @@ import {
 import {
   getGetDqResultsFailedRowsQueryKey,
   getGetDqResultsRunsQueryKey,
+  getGetHomeStatsQueryKey,
   getGetRuleResultsQueryKey,
   getGetRuleScoreQueryKey,
   getGetTableResultsQueryKey,
@@ -25,11 +27,12 @@ import {
 const FQN = "main.sales.orders";
 
 describe("buildResultsInvalidationMatcher", () => {
-  test("without FQNs, matches every score, dq-results AND quarantine-sample path by prefix", () => {
+  test("without FQNs, matches every score, dq-results, home-stats AND quarantine-sample path by prefix", () => {
     const matcher = buildResultsInvalidationMatcher();
     expect(matcher.pathPrefixes).toEqual([
       DQ_SCORE_PATH_PREFIX,
       DQ_RESULTS_PATH_PREFIX,
+      HOME_STATS_PATH_PREFIX,
       QUARANTINE_SAMPLE_PATH_PREFIX,
     ]);
     expect(matcher.exactPaths).toEqual([]);
@@ -41,8 +44,15 @@ describe("buildResultsInvalidationMatcher", () => {
 
   test("with FQNs, narrows quarantine invalidation to exactly those tables (dq-results stays wholesale)", () => {
     const matcher = buildResultsInvalidationMatcher([FQN]);
-    expect(matcher.pathPrefixes).toEqual([DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX]);
+    expect(matcher.pathPrefixes).toEqual([DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX, HOME_STATS_PATH_PREFIX]);
     expect(matcher.exactPaths).toEqual([`/api/v1/quarantine-samples/${FQN}`]);
+  });
+
+  test("the generated home-stats key matches in BOTH broad and table-scoped modes (P3.5)", () => {
+    const key = getGetHomeStatsQueryKey();
+    expect(String(key[0]).startsWith(HOME_STATS_PATH_PREFIX)).toBe(true);
+    expect(matchesResultsInvalidation(key, buildResultsInvalidationMatcher())).toBe(true);
+    expect(matchesResultsInvalidation(key, buildResultsInvalidationMatcher([FQN]))).toBe(true);
   });
 });
 
@@ -84,8 +94,8 @@ describe("DQ_RESULTS_PATH_PREFIX pins the generated dq-results query keys", () =
 describe("buildRuleApplicationChangeMatcher (rule apply/unapply invalidation)", () => {
   const matcher = buildRuleApplicationChangeMatcher();
 
-  test("covers the dq-score and dq-results prefixes but NOT quarantine samples", () => {
-    expect(matcher.pathPrefixes).toEqual([DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX]);
+  test("covers the dq-score, dq-results and home-stats prefixes but NOT quarantine samples", () => {
+    expect(matcher.pathPrefixes).toEqual([DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX, HOME_STATS_PATH_PREFIX]);
     expect(matcher.exactPaths).toEqual([]);
   });
 
@@ -114,6 +124,7 @@ describe("SCORE_CACHE_LIST_PATHS pins the generated list query keys (P3.4)", () 
   test("every score-cache-backed list key path is covered, exactly", () => {
     expect(getListMonitoredTablesQueryKey()[0]).toBe(SCORE_CACHE_LIST_PATHS[0]);
     expect(getListDataProductsQueryKey()[0]).toBe(SCORE_CACHE_LIST_PATHS[1]);
+    expect(getGetHomeStatsQueryKey()[0]).toBe(SCORE_CACHE_LIST_PATHS[2]);
   });
 
   test("detail-page paths are NOT list paths (exact element match, not prefix)", () => {

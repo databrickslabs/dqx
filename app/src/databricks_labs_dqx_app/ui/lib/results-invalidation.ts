@@ -55,6 +55,10 @@ export const DQ_SCORE_PATH_PREFIX = "/api/v1/dq-score/";
  *  severity/dimension registries). Aggregates over many tables, so it is
  *  always invalidated wholesale, like the score prefix. */
 export const DQ_RESULTS_PATH_PREFIX = "/api/v1/dq-results/";
+/** Path prefix of the homepage stats endpoint (P3.5): its score card is the
+ *  cached global aggregate, so it is score-shaped and refreshes on the same
+ *  run-completion / rule-application events as the dq-score queries. */
+export const HOME_STATS_PATH_PREFIX = "/api/v1/home/";
 /** Path prefix of the per-table failing-records sample endpoint. */
 export const QUARANTINE_SAMPLE_PATH_PREFIX = "/api/v1/quarantine-samples/";
 
@@ -74,12 +78,17 @@ export interface ResultsInvalidationMatcher {
 export function buildResultsInvalidationMatcher(tableFqns?: readonly string[]): ResultsInvalidationMatcher {
   if (!tableFqns || tableFqns.length === 0) {
     return {
-      pathPrefixes: [DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX, QUARANTINE_SAMPLE_PATH_PREFIX],
+      pathPrefixes: [
+        DQ_SCORE_PATH_PREFIX,
+        DQ_RESULTS_PATH_PREFIX,
+        HOME_STATS_PATH_PREFIX,
+        QUARANTINE_SAMPLE_PATH_PREFIX,
+      ],
       exactPaths: [],
     };
   }
   return {
-    pathPrefixes: [DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX],
+    pathPrefixes: [DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX, HOME_STATS_PATH_PREFIX],
     exactPaths: tableFqns.map((fqn) => getGetQuarantineSampleQueryKey(fqn)[0]),
   };
 }
@@ -111,7 +120,13 @@ export const REFRESH_SCORES_MAX_FQNS = 100;
  * (`/api/v1/monitored-tables/{id}`) have a different path element and are
  * deliberately untouched.
  */
-export const SCORE_CACHE_LIST_PATHS = ["/api/v1/monitored-tables", "/api/v1/data-products"] as const;
+export const SCORE_CACHE_LIST_PATHS = [
+  "/api/v1/monitored-tables",
+  "/api/v1/data-products",
+  // The homepage stats endpoint serves the cached GLOBAL score row, so it
+  // must re-read once a recompute lands too (P3.5).
+  "/api/v1/home/stats",
+] as const;
 
 /**
  * Fire-and-forget score-cache recompute for the just-finished tables
@@ -164,7 +179,7 @@ export function invalidateResultsAfterRunCompletion(
  */
 export function buildRuleApplicationChangeMatcher(): ResultsInvalidationMatcher {
   return {
-    pathPrefixes: [DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX],
+    pathPrefixes: [DQ_SCORE_PATH_PREFIX, DQ_RESULTS_PATH_PREFIX, HOME_STATS_PATH_PREFIX],
     exactPaths: [],
   };
 }

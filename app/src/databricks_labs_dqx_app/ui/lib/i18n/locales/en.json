@@ -51,6 +51,7 @@
     "switchFailed": "Failed to switch language. Please try again."
   },
   "sidebar": {
+    "home": "Home",
     "createRules": "Create Rules",
     "singleTableRules": "Single table rules",
     "crossTableRules": "Cross-table rules",
@@ -96,15 +97,26 @@
     "loadFailedDescription": "There was an error loading your profile information. Make sure the backend is running and you're authenticated."
   },
   "home": {
-    "subtitle": "Monitor, validate, and improve data quality across your Databricks Lakehouse — with automated rules, scheduling, and approval workflows.",
+    "welcome": "Welcome",
+    "welcomeName": "Welcome, {{name}}",
+    "atAGlance": "At a Glance",
     "getStarted": "Get Started",
-    "applyToTable": "Apply to a Table",
-    "howItWorks": "① Define reusable rules in the Rules Registry → ② Apply them to your Monitored Tables.",
-    "highlights": {
-      "uc": "Unity Catalog integration",
-      "ai": "Natural-language rule generation",
-      "schedule": "Scheduled rule execution",
-      "rbac": "Role-based approval workflow"
+    "loading": "Loading",
+    "statsError": "Couldn't load the homepage stats.",
+    "tryAgain": "Try again",
+    "stats": {
+      "tables": "Tables monitored",
+      "rules": "Rules",
+      "spaces": "Table spaces",
+      "score": "Overall DQ score"
+    },
+    "grid": {
+      "rulesRegistryDesc": "Create a repository of reusable data quality rules",
+      "monitoredTablesDesc": "Apply rules to specific tables and monitor their data quality",
+      "tableSpacesDesc": "Group related tables into spaces with a shared schedule",
+      "resultsDesc": "Explore DQ scores, breakdowns, and failing records across your tables",
+      "config": "Configuration",
+      "configDesc": "Configure settings and preferences"
     }
   },
   "auth": {

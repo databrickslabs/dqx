@@ -51,6 +51,7 @@
     "switchFailed": "No se pudo cambiar el idioma. Inténtalo de nuevo."
   },
   "sidebar": {
+    "home": "Inicio",
     "createRules": "Crear Reglas",
     "singleTableRules": "Reglas de tabla única",
     "crossTableRules": "Reglas entre tablas",
@@ -96,15 +97,26 @@
     "loadFailedDescription": "Hubo un error al cargar la información de tu perfil. Asegúrate de que el backend esté en ejecución y que hayas iniciado sesión."
   },
   "home": {
-    "subtitle": "Monitorea, valida y mejora la calidad de los datos en todo tu Lakehouse de Databricks — con reglas automatizadas, programación y flujos de aprobación.",
+    "welcome": "Te damos la bienvenida",
+    "welcomeName": "Te damos la bienvenida, {{name}}",
+    "atAGlance": "De un vistazo",
     "getStarted": "Comenzar",
-    "applyToTable": "Aplicar a una Tabla",
-    "howItWorks": "① Define reglas reutilizables en el Registro de Reglas → ② Aplícalas a tus Tablas Monitoreadas.",
-    "highlights": {
-      "uc": "Integración con Unity Catalog",
-      "ai": "Generación de reglas en lenguaje natural",
-      "schedule": "Ejecución programada de reglas",
-      "rbac": "Aprobación basada en roles"
+    "loading": "Cargando",
+    "statsError": "No se pudieron cargar las estadísticas de la página de inicio.",
+    "tryAgain": "Reintentar",
+    "stats": {
+      "tables": "Tablas monitorizadas",
+      "rules": "Reglas",
+      "spaces": "Espacios de tablas",
+      "score": "Puntuación general de DQ"
+    },
+    "grid": {
+      "rulesRegistryDesc": "Crea un repositorio de reglas de calidad de datos reutilizables",
+      "monitoredTablesDesc": "Aplica reglas a tablas específicas y monitoriza su calidad de datos",
+      "tableSpacesDesc": "Agrupa tablas relacionadas en espacios con una programación compartida",
+      "resultsDesc": "Explora puntuaciones de DQ, desgloses y registros con errores en tus tablas",
+      "config": "Configuración",
+      "configDesc": "Configura ajustes y preferencias"
     }
   },
   "auth": {

@@ -203,6 +203,11 @@ class DataProductService:
     # Read
     # ------------------------------------------------------------------
 
+    def count(self) -> int:
+        """Total table spaces (data products), any status (homepage stat card)."""
+        rows = self._sql.query(f"SELECT COUNT(*) FROM {self._products_table}")  # noqa: S608
+        return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+
     def list_products(self) -> list[DataProductDetail]:
         """List every data product, newest-updated first, with resolved members.
 
