@@ -2227,5 +2227,11 @@
     "fullTable": "Tabela completa",
     "records": "Registros",
     "percent": "%"
+  },
+  "results": {
+    "noRunsYet": "Nenhuma execução ainda",
+    "testsFailedOfTotal": "{{failed}} de {{total}} testes falharam",
+    "noFailingRecords": "Nenhum registro com falhas para exibir.",
+    "suppressedFineGrainedControls": "Os registros com falhas estão ocultos porque esta tabela usa controles de acesso refinados (um filtro de linhas ou uma máscara de colunas), que a amostra não consegue reproduzir fielmente."
   }
 }

@@ -2227,5 +2227,11 @@
     "fullTable": "Tabla completa",
     "records": "Registros",
     "percent": "%"
+  },
+  "results": {
+    "noRunsYet": "Aún no hay ejecuciones",
+    "testsFailedOfTotal": "{{failed}} de {{total}} pruebas fallidas",
+    "noFailingRecords": "No hay registros con errores para mostrar.",
+    "suppressedFineGrainedControls": "Los registros con errores están ocultos porque esta tabla usa controles de acceso detallados (un filtro de filas o una máscara de columnas), que la muestra no puede reproducir fielmente."
   }
 }

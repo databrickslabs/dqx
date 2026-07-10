@@ -2227,5 +2227,11 @@
     "fullTable": "Full table",
     "records": "Records",
     "percent": "%"
+  },
+  "results": {
+    "noRunsYet": "No runs yet",
+    "testsFailedOfTotal": "{{failed}} of {{total}} tests failed",
+    "noFailingRecords": "No failing records to show.",
+    "suppressedFineGrainedControls": "Failing records are hidden because this table uses fine-grained access controls (a row filter or column mask), which the sample cannot faithfully reproduce."
   }
 }
