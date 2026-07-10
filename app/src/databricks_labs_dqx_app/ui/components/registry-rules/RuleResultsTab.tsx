@@ -57,7 +57,7 @@ function RuleResultsContent({ ruleId }: { ruleId: string }) {
   return (
     <div className="flex flex-col gap-4 max-w-5xl">
       <ScoreBox
-        score={data.overall_score ?? null}
+        passRate={data.overall_score ?? null}
         // Deliberately the viewer-ACCESSIBLE table count (per_table.length),
         // not applied_to_count: overall_score and the breakdown below only
         // cover the tables the viewer can see, so the label must count the

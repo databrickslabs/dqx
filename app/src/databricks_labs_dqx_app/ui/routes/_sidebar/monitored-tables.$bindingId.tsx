@@ -91,6 +91,7 @@ import {
   useGetSampleQuestions,
   type AppliedRuleOut,
   type ColumnOut,
+  type FailingRecordOut,
   type MonitoredTableOut,
   type MonitoredTableVersionOut,
   type RegistryRuleOut,
@@ -132,7 +133,7 @@ import {
 } from "@/components/apply-rules/shared";
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ScoreBox } from "@/components/results/ScoreBox";
-import { FailingRecordsTable } from "@/components/results/FailingRecordsTable";
+import { FailingRecordsTable, type FailingRecord } from "@/components/results/FailingRecordsTable";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
@@ -2449,6 +2450,26 @@ function ResultsTab({ tableFqn, status }: { tableFqn: string; status: string }) 
   );
 }
 
+/**
+ * Map the quarantine-sample records (FailingRecordOut, no severity/dimension
+ * enrichment) into the dqlake FailingRecordsTable's FailingRecord shape,
+ * normalising nulls to undefined/[]. The severity/dimension fields stay
+ * undefined here — the P2.3+ tabs feed the enriched failed-rows endpoint
+ * (FailedRowsOut) through `toFailingRecords` instead.
+ */
+function quarantineRecordsToRows(records: FailingRecordOut[]): FailingRecord[] {
+  return records.map((r) => ({
+    record_key: r.record_key,
+    row_values: r.row_values ?? {},
+    failed_columns: r.failed_columns ?? [],
+    failures: (r.failures ?? []).map((f) => ({
+      rule_name: f.rule_name ?? undefined,
+      message: f.message ?? undefined,
+      columns: f.columns ?? [],
+    })),
+  }));
+}
+
 function ResultsContent({ tableFqn }: { tableFqn: string }) {
   const { t } = useTranslation();
   const { data: score } = useGetTableScoreSuspense(tableFqn, {
@@ -2460,14 +2481,20 @@ function ResultsContent({ tableFqn }: { tableFqn: string }) {
   return (
     <div className="flex flex-col gap-4">
       <ScoreBox
-        score={score.score ?? null}
+        passRate={score.score ?? null}
         label={t("monitoredTables.resultsScoreLabel")}
         totalTests={score.total_tests ?? 0}
         failedTests={score.failed_tests ?? 0}
       />
       <div className="space-y-2">
         <h3 className="text-sm font-medium">{t("monitoredTables.resultsFailingRecordsTitle")}</h3>
-        <FailingRecordsTable records={sample.records ?? []} suppressed={sample.suppressed ?? false} />
+        {sample.suppressed ? (
+          <p className="text-sm text-muted-foreground">
+            {t("results.suppressedFineGrainedControls")}
+          </p>
+        ) : (
+          <FailingRecordsTable rows={quarantineRecordsToRows(sample.records ?? [])} />
+        )}
       </div>
     </div>
   );

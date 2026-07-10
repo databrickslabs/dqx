@@ -1,0 +1,333 @@
+import { useRef, useState } from "react";
+import type * as React from "react";
+import { useTranslation } from "react-i18next";
+import { ArrowDown, ArrowUp, ChevronDown, Loader2 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import { CollapseRegion } from "./CollapseRegion";
+
+/** A label that truncates with an ellipsis and reveals the full text in a
+ *  tooltip — but only when it's actually clipped (re-checked on hover, the
+ *  only time it matters). Mirrors the TruncatedCell used in the rules
+ *  registry / tables / data-product tables. */
+function TruncatedText({ text, className }: { text: string; className?: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [overflow, setOverflow] = useState(false);
+  const checkOverflow = () => {
+    const el = ref.current;
+    if (el) setOverflow(el.scrollWidth > el.clientWidth);
+  };
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          ref={ref}
+          className={cn("block truncate", className)}
+          onPointerEnter={checkOverflow}
+        >
+          {text}
+        </span>
+      </TooltipTrigger>
+      {overflow && (
+        <TooltipContent side="top" className="max-w-md break-words">
+          {text}
+        </TooltipContent>
+      )}
+    </Tooltip>
+  );
+}
+
+export type BreakdownRow = {
+  label: string | null;
+  pass_rate: number | null;
+  failed_tests: number | null;
+  rule_count?: number | null;
+  check_count?: number | null;
+  total_tests?: number | null;
+};
+
+type SortKey =
+  | "label"
+  | "pass_rate"
+  | "failed_tests"
+  | "rule_count"
+  | "check_count"
+  | "total_tests";
+type SortState = { key: SortKey; dir: "asc" | "desc" } | null;
+
+/** Compare two rows on a key; nulls always sort last regardless of direction. */
+function compareRows(a: BreakdownRow, b: BreakdownRow, key: SortKey): number {
+  const av = a[key];
+  const bv = b[key];
+  const an = av == null;
+  const bn = bv == null;
+  if (an && bn) return 0;
+  if (an) return 1;
+  if (bn) return -1;
+  if (typeof av === "string" && typeof bv === "string") {
+    return av.localeCompare(bv);
+  }
+  return (av as number) - (bv as number);
+}
+
+/**
+ * Presentational breakdown table: one row per group, showing pass rate,
+ * failed count, distinct rules and total checks. Headers cycle a tri-state
+ * client-side sort (asc -> desc -> default order). Rows are clickable filters
+ * when `onSelect` is given; `selected` marks the active (multi-select) rows.
+ * No data fetching — callers pass the rows in.
+ */
+export function DimensionBreakdown({
+  title,
+  rows,
+  colorMap,
+  onSelect,
+  selected,
+  valueHeader,
+  headerRight,
+  mutedLabels,
+  loading,
+  collapsed,
+  onToggleCollapse,
+  countMode = "rules",
+  emptyText,
+  defaultSort,
+}: {
+  title: string;
+  rows: Array<BreakdownRow>;
+  /** Optional label → hex colour map. When a row's label has a colour,
+   *  a small swatch is shown next to it. */
+  colorMap?: Record<string, string>;
+  /** When provided, each labelled row becomes clickable and fires this
+   *  with the row's label (the parent toggles the filter). */
+  onSelect?: (label: string) => void;
+  /** Labels currently active as filters; marks matching rows aria-pressed. */
+  selected?: string[];
+  /** Header text for the first (value) column. Defaults to "Label". */
+  valueHeader?: string;
+  /** Rendered at the top-right of the box, inline with the title. */
+  headerRight?: React.ReactNode;
+  /** Labels to render muted/thin ("All" mode: base rows that fell outside the
+   *  active facet filter). Their numbers still show, dimmed. */
+  mutedLabels?: string[];
+  /** When true, dim the table and show a small centred spinner over it (a
+   *  background refetch is in flight for this box only). */
+  loading?: boolean;
+  /** When `onToggleCollapse` is provided, a chevron follows the title and the
+   *  table body animates open/closed by `collapsed`. */
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+  /** First numeric column: "rules" (# Rules, default) or "checks" (# Checks).
+   *  By Rule uses "checks" — its # Rules is always 1, so checks is the useful
+   *  count there. */
+  countMode?: "rules" | "checks";
+  /** Message shown when there are no rows. Defaults to "No data yet.". */
+  emptyText?: string;
+  /** Order to apply when the user has NOT chosen a sort (no header clicked).
+   *  Once the user clicks a header their choice takes precedence, and clicking
+   *  back to the default state reverts to this order. Persists across refetches
+   *  and row swaps. Defaults to incoming (API) order when omitted. */
+  defaultSort?: { key: SortKey; dir: "asc" | "desc" };
+}) {
+  const { t } = useTranslation();
+  const [sort, setSort] = useState<SortState>(null);
+
+  const displayRows = rows;
+  const mutedSet = new Set(mutedLabels ?? []);
+
+  // Numeric columns start descending (highest first is the useful default);
+  // the label column starts ascending. Click cycle: first dir -> opposite ->
+  // default order.
+  const cycle = (key: SortKey) =>
+    setSort((cur) => {
+      const first: "asc" | "desc" = key === "label" ? "asc" : "desc";
+      if (!cur || cur.key !== key) return { key, dir: first };
+      if (cur.dir === first) return { key, dir: first === "asc" ? "desc" : "asc" };
+      return null; // back to default order
+    });
+
+  // The user's explicit click wins; otherwise fall back to the caller's
+  // defaultSort; otherwise incoming (API) order.
+  const effectiveSort = sort ?? defaultSort ?? null;
+  const sortedRows = effectiveSort
+    ? [...displayRows].sort((a, b) => {
+        const c = compareRows(a, b, effectiveSort.key);
+        return effectiveSort.dir === "asc" ? c : -c;
+      })
+    : displayRows;
+
+  const selectedSet = new Set(selected ?? []);
+
+  const sortIcon = (key: SortKey) => {
+    if (!sort || sort.key !== key) return null;
+    return sort.dir === "asc" ? (
+      <ArrowUp className="ml-1 inline h-3 w-3" />
+    ) : (
+      <ArrowDown className="ml-1 inline h-3 w-3" />
+    );
+  };
+
+  const headerCell = (key: SortKey, text: string, align: "left" | "right") => (
+    <th
+      className={`${align === "left" ? "text-left truncate max-w-0" : "text-right whitespace-nowrap"} px-3 py-2 uppercase tracking-wide text-[10px] text-muted-foreground`}
+    >
+      <button
+        type="button"
+        onClick={() => cycle(key)}
+        className={`inline-flex max-w-full items-center uppercase tracking-wide hover:text-foreground ${align === "right" ? "flex-row-reverse" : ""}`}
+      >
+        <span className={align === "left" ? "truncate" : "whitespace-nowrap"}>
+          {text}
+        </span>
+        {sortIcon(key)}
+      </button>
+    </th>
+  );
+
+  const collapsible = onToggleCollapse != null;
+  const titleEl = collapsible ? (
+    <button
+      type="button"
+      onClick={onToggleCollapse}
+      aria-expanded={!collapsed}
+      className="group flex items-center gap-1.5 text-left"
+    >
+      <span className="text-xs uppercase tracking-wide text-muted-foreground">
+        {title}
+      </span>
+      <ChevronDown
+        className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+          collapsed ? "-rotate-90" : ""
+        }`}
+      />
+    </button>
+  ) : (
+    <div className="text-xs uppercase tracking-wide text-muted-foreground">
+      {title}
+    </div>
+  );
+
+  const tableBody =
+    displayRows.length === 0 ? (
+      <p className="text-sm text-muted-foreground">
+        {emptyText ?? t("resultsUi.noDataYet")}
+      </p>
+    ) : (
+      <div className="relative rounded-md border overflow-x-auto">
+          {loading && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+              <Loader2
+                className="h-5 w-5 animate-spin text-muted-foreground"
+                aria-label={t("resultsUi.updatingAria")}
+              />
+            </div>
+          )}
+          <table
+            className={`w-full table-fixed text-xs ${loading ? "opacity-60" : ""}`}
+          >
+            <colgroup>
+              <col style={{ width: "auto" }} />
+              <col style={{ width: "88px" }} />
+              <col style={{ width: "88px" }} />
+              <col style={{ width: "88px" }} />
+              <col style={{ width: "88px" }} />
+            </colgroup>
+            <thead className="bg-muted/30 border-b">
+              <tr>
+                {headerCell("label", valueHeader ?? t("resultsUi.labelHeader"), "left")}
+                {countMode === "checks"
+                  ? headerCell("check_count", t("resultsUi.checksHeader"), "right")
+                  : headerCell("rule_count", t("resultsUi.rulesHeader"), "right")}
+                {headerCell("failed_tests", t("resultsUi.failedTestsHeader"), "right")}
+                {headerCell("total_tests", t("resultsUi.totalTestsHeader"), "right")}
+                {headerCell("pass_rate", t("resultsUi.scoreHeader"), "right")}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRows.map((r, i) => {
+                const isSelected = r.label != null && selectedSet.has(r.label);
+                // A muted row ("All" mode: a base row excluded by the active
+                // facet filter): render it dimmed + thinner so it reads as
+                // out-of-scope, not a live result.
+                const isMuted = r.label != null && mutedSet.has(r.label);
+                return (
+                  <tr
+                    key={i}
+                    className={`border-b last:border-b-0${
+                      onSelect ? " cursor-pointer hover:bg-muted/40" : ""
+                    }${isSelected ? " bg-muted/60" : ""}${
+                      isMuted ? " text-muted-foreground opacity-60 font-light" : ""
+                    }`}
+                    {...(onSelect
+                      ? {
+                          role: "button",
+                          "aria-pressed": isSelected,
+                          onClick: () => r.label != null && onSelect(r.label),
+                        }
+                      : {})}
+                  >
+                    <td className="px-3 py-2 max-w-0">
+                      {r.label == null ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <span className="flex items-center gap-2">
+                          {colorMap?.[r.label] && (
+                            <span
+                              className="inline-block h-2.5 w-2.5 rounded-full shrink-0"
+                              style={{ backgroundColor: colorMap[r.label] }}
+                            />
+                          )}
+                          <TruncatedText text={r.label} className="min-w-0" />
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {countMode === "checks"
+                        ? (r.check_count == null ? "—" : r.check_count)
+                        : (r.rule_count == null ? "—" : r.rule_count)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {r.pass_rate == null && r.failed_tests == null
+                        ? "—"
+                        : (r.failed_tests ?? 0)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {r.total_tests == null ? "—" : r.total_tests}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {r.pass_rate == null
+                        ? "—"
+                        : `${(r.pass_rate * 100).toFixed(1)}%`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      );
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2 min-h-9">
+          {titleEl}
+          {/* The search box (and any other headerRight content) only makes
+              sense while the table is visible; hide it when collapsed so the
+              header is just the title + chevron. */}
+          {!collapsed && headerRight}
+        </div>
+        {collapsible ? (
+          <CollapseRegion open={!collapsed}>{tableBody}</CollapseRegion>
+        ) : (
+          tableBody
+        )}
+      </div>
+    </TooltipProvider>
+  );
+}

@@ -289,15 +289,15 @@
     tslib "^2.0.0"
 
 "@emnapi/core@^1.11.1":
-  version "1.11.1"
-  integrity sha512-RSvbQmHzdKzNsLYa/wHrbc3KN4sYLKAdPZxqiM2HATqv/SBk2/ENSHpvXGaLOMcsAyz0poEGqkmmKYG3OWiJEQ==
+  version "1.11.2"
+  integrity sha512-TC8MkTuZUtcTSiFeuC0ksCh9QIJ5+F21MvZ4Wn4ORfYaFJ/0dsiudv5tVkejgwZlwQ39jL9WWDe2lz8x0WglOA==
   dependencies:
     "@emnapi/wasi-threads" "1.2.2"
     tslib "^2.4.0"
 
 "@emnapi/runtime@^1.11.1":
-  version "1.11.1"
-  integrity sha512-vgj7R3y3Wgx24IQaGPA/R6YFXLHVMOZ0uVEyIQPaWs+rd1AzfEMXlAC22FYwO1XkKR6NPsq7mUandH8oIRdZFw==
+  version "1.11.2"
+  integrity sha512-kyOl3X0DuTiT1h2ft8r2fYO8JYtU9a9Xis/zBSiGArNaagCOWx90N1k2wxp18czFDH+OgcWGb5ZP/XMt3dcyPA==
   dependencies:
     tslib "^2.4.0"
 
@@ -557,8 +557,8 @@
   integrity sha512-q9ZFdbtfxhaSeN6AykhVYk/EgkgV99dIW7ua15Wzy3s5BTH6tH1MZJA743QE9BQ+Iul/u1+XYNSaJm2/jiMQig==
 
 "@ibm-cloud/openapi-ruleset@^1.33.1":
-  version "1.33.10"
-  integrity sha512-6Efayit+4dbl0jDISE8M13Bd67vtKlG1rCZ1oimt/mAXxuYpnI7TiKgBysLdKmkJ+pBNcmn087KXDMIMdYlKNQ==
+  version "1.33.11"
+  integrity sha512-cJOFIYWEaLO/sJ8IHwL4aKcnohiysWYxduKlI2T4jssue+aU6iV4fM/hl38/8I2idyt8scHYAMFoR1zasArTPA==
   dependencies:
     "@ibm-cloud/openapi-ruleset-utilities" "1.9.2"
     "@stoplight/spectral-formats" "1.8.2"
@@ -760,38 +760,51 @@
   integrity sha512-7AdCK9PQyiljKoBDbN8OuctCbd/esdwZPQ8RtOE3SsyQtUpiPb+ND75q0jEhC1m1ecBI0MFNeLJvwIh9iKHRcQ==
 
 "@radix-ui/react-alert-dialog@^1.1.15":
-  version "1.1.17"
-  integrity sha512-563ygGeyWPrxyVCNp7OV4rE2aIXhFPknpFyo4wbDlcyMMPZ6ySh+zC5WTvY0ZFLgPTg/QB6tA8PyDQyJ2b4cPg==
+  version "1.1.18"
+  integrity sha512-6c2cXpNlAgHDhKguK24XcWHHayMpK+lk7/WwBXBco+ZJ4Dv7xP++GBM280KgTD/HCRu3jSdfe8WQiZssonYaIA==
   dependencies:
     "@radix-ui/primitive" "1.1.4"
     "@radix-ui/react-compose-refs" "1.1.3"
     "@radix-ui/react-context" "1.1.4"
-    "@radix-ui/react-dialog" "1.1.17"
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-dialog" "1.1.18"
+    "@radix-ui/react-primitive" "2.1.7"
 
-"@radix-ui/react-arrow@1.1.10":
-  version "1.1.10"
-  integrity sha512-j2VTDz1vgCsmuG0k5lBfOcM8n5JPFqZBcMryasFjHYMhwxYL5SRUV5lMSUpRdNtw3D/Sv8pzJtrlAgkssYSsQQ==
+"@radix-ui/react-arrow@1.1.11":
+  version "1.1.11"
+  integrity sha512-Kdil9BB1rIFC/khmf4hC35bn8701AJcizTU7G7cUbEbk5XqqbjDuHW60uUfKqO5WojjZcbAW51Q7P0hRmMLw8A==
   dependencies:
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
 
 "@radix-ui/react-avatar@^1.1.10":
-  version "1.2.0"
-  integrity sha512-am/CwltXtmtdtP+5FbYblYDnMa/zuKcMJP1i3/SJMDXXfj2mG+BTqLH2wucqeyyiQMursUtg/5cK+Nh2pCaSOA==
+  version "1.2.1"
+  integrity sha512-+8PWoLLZv3AVb5m0pvoiOca/bQGzc9vPVb+982HB2x3Un0DpYEPM3zLMl4oqRpBsocJuNqLkiv/HXTnTrlwr4g==
   dependencies:
     "@radix-ui/react-context" "1.1.4"
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
     "@radix-ui/react-use-callback-ref" "1.1.2"
     "@radix-ui/react-use-is-hydrated" "0.1.1"
     "@radix-ui/react-use-layout-effect" "1.1.2"
 
-"@radix-ui/react-collection@1.1.10":
-  version "1.1.10"
-  integrity sha512-IVVz4EvBcKjrzKgof714qDnz/SzQAkLA2Emh5edlHbgcE6fNd3Un6CJLlaYcnm8N4JmAtzQgse4dOKxcD2yc9g==
+"@radix-ui/react-collapsible@^1.1.12":
+  version "1.1.15"
+  integrity sha512-8A1zibu5skAQ+UVbaeNH5hVMibiFCRJzgMuM14LTWGttnTZKQL9jwYnhAbHRuxrtCqPXa4JvvnVUq1pTNgyZYw==
+  dependencies:
+    "@radix-ui/primitive" "1.1.4"
+    "@radix-ui/react-compose-refs" "1.1.3"
+    "@radix-ui/react-context" "1.1.4"
+    "@radix-ui/react-id" "1.1.2"
+    "@radix-ui/react-presence" "1.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
+    "@radix-ui/react-use-controllable-state" "1.2.3"
+    "@radix-ui/react-use-layout-effect" "1.1.2"
+
+"@radix-ui/react-collection@1.1.11":
+  version "1.1.11"
+  integrity sha512-djW9+zeg137KQdlPtmE8xnaD+K2rcXXMWFrSg0hsmYZ6HRbdTA7tDHFgpaW9+huWVEu0RCabL+985T4TA0BE7g==
   dependencies:
     "@radix-ui/react-compose-refs" "1.1.3"
     "@radix-ui/react-context" "1.1.4"
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
     "@radix-ui/react-slot" "1.3.0"
 
 "@radix-ui/react-compose-refs@1.1.3", "@radix-ui/react-compose-refs@^1.1.1":
@@ -802,20 +815,20 @@
   version "1.1.4"
   integrity sha512-QwH4PO5urrbO+FaGd5Aglg+YJgWTyyuZ3g/6mKvsqraLkglDdckw9JafgL5McL5VEJ6EPNduPaT3ZE9BttDAqg==
 
-"@radix-ui/react-dialog@1.1.17", "@radix-ui/react-dialog@^1.1.15", "@radix-ui/react-dialog@^1.1.6":
-  version "1.1.17"
-  integrity sha512-TDTYmpdq8dI2+Xgvgj9AJ8Ghqq+Eph/TRVEdaFQPDItIY+6QSkU7MJMeevw1568Yw/2Ijz8BTphPSP2XejKphw==
+"@radix-ui/react-dialog@1.1.18", "@radix-ui/react-dialog@^1.1.15", "@radix-ui/react-dialog@^1.1.6":
+  version "1.1.18"
+  integrity sha512-apa28mldjMgORmE6g/w3sCcA0Y9UAVeeDVoozN4i7kOw12mLl9RBchfzK3Nn6qxOWjrZhK1Lfy7f07kyzxtnBw==
   dependencies:
     "@radix-ui/primitive" "1.1.4"
     "@radix-ui/react-compose-refs" "1.1.3"
     "@radix-ui/react-context" "1.1.4"
-    "@radix-ui/react-dismissable-layer" "1.1.13"
+    "@radix-ui/react-dismissable-layer" "1.1.14"
     "@radix-ui/react-focus-guards" "1.1.4"
-    "@radix-ui/react-focus-scope" "1.1.10"
+    "@radix-ui/react-focus-scope" "1.1.11"
     "@radix-ui/react-id" "1.1.2"
-    "@radix-ui/react-portal" "1.1.12"
+    "@radix-ui/react-portal" "1.1.13"
     "@radix-ui/react-presence" "1.1.6"
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
     "@radix-ui/react-slot" "1.3.0"
     "@radix-ui/react-use-controllable-state" "1.2.3"
     aria-hidden "^1.2.4"
@@ -825,38 +838,38 @@
   version "1.1.2"
   integrity sha512-C3vFhbyi4SW3PmbAi6Awpu4OzJtd0MxGurvSsYtr7p7nM8RNB3VAF3CUmnp2j50knpkrRcB7+ycVXzgLgF6yNA==
 
-"@radix-ui/react-dismissable-layer@1.1.13":
-  version "1.1.13"
-  integrity sha512-2v+zNAWWe0ySxgC0D0yeXMPQ23xZVgXZTerTz+JKlmdRj6gfTqmCcR29jb6d290DezXPGgruHWDX/vYUebtErg==
+"@radix-ui/react-dismissable-layer@1.1.14":
+  version "1.1.14"
+  integrity sha512-4lUhWTWAjbDIqFrAPWJ3WqBOpO5YchVZ88X3nh6H9Lu5AFi5nCUeTPj3D8FSDmabmFeRe9ME0BDA4MwKTha5GQ==
   dependencies:
     "@radix-ui/primitive" "1.1.4"
     "@radix-ui/react-compose-refs" "1.1.3"
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
     "@radix-ui/react-use-callback-ref" "1.1.2"
-    "@radix-ui/react-use-escape-keydown" "1.1.2"
+    "@radix-ui/react-use-effect-event" "0.0.3"
 
 "@radix-ui/react-dropdown-menu@^2.1.15":
-  version "2.1.18"
-  integrity sha512-PZGV82gFk0WltDRI//SsG28ZIjlo9ANTmoNYg0jLNzXXiDsAy5PkOOYQaVD1pPxY6t7gxffb1QMD6qaUvsBZdw==
+  version "2.1.19"
+  integrity sha512-HZccBkbK0LOi8nYKIp5jll/zIRW0cCOmG6WWyqsSpmXCU+ZlcBbTqIwlBvPCu886C5RVu6c/kHV7xSP8IgYNHw==
   dependencies:
     "@radix-ui/primitive" "1.1.4"
     "@radix-ui/react-compose-refs" "1.1.3"
     "@radix-ui/react-context" "1.1.4"
     "@radix-ui/react-id" "1.1.2"
-    "@radix-ui/react-menu" "2.1.18"
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-menu" "2.1.19"
+    "@radix-ui/react-primitive" "2.1.7"
     "@radix-ui/react-use-controllable-state" "1.2.3"
 
 "@radix-ui/react-focus-guards@1.1.4":
   version "1.1.4"
   integrity sha512-cot/aB/mOm0IYVYTTmQcEEK1M48lZWi8FlYe5nDPQQ8NYZUlXEFgncJ9p2Kzer3RKSrY7cTTpEMLZKNo9QoP5Q==
 
-"@radix-ui/react-focus-scope@1.1.10":
-  version "1.1.10"
-  integrity sha512-Fas/lXQqhVvqwAb64s5RFeHiHYElZ6SUQbZaNd6EkfhP/Al7wTIQ9WIR4QVX475tlu5yFCEdDcJH6/UwsZjMWw==
+"@radix-ui/react-focus-scope@1.1.11":
+  version "1.1.11"
+  integrity sha512-Mn88Vg2whaRocGJNOH+DKFqYm6ySFPQaiwHNxZPyjn99B52KAEJWWY9NP83+nWdk2HM3rdov+STu9AG471Rt9w==
   dependencies:
     "@radix-ui/react-compose-refs" "1.1.3"
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
     "@radix-ui/react-use-callback-ref" "1.1.2"
 
 "@radix-ui/react-id@1.1.2", "@radix-ui/react-id@^1.1.0":
@@ -866,74 +879,74 @@
     "@radix-ui/react-use-layout-effect" "1.1.2"
 
 "@radix-ui/react-label@^2.1.8":
-  version "2.1.10"
-  integrity sha512-ib0zvq2ZsAqKm5tRnqGJn3vOxSgIts5ToxsXT0q1S/GfLD1Zj7UOEnkw8u2w6sRmn47djpQWuSU1DCL1R29/yw==
+  version "2.1.11"
+  integrity sha512-3PKvDDxOn62k0oV1n4QtNtD2vpu+zYjXR7ojLBPaO6SPvhy53yg0vAmgNeBQeJW5rV3dffoRG+HYfLBZuzw0CQ==
   dependencies:
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
 
-"@radix-ui/react-menu@2.1.18":
-  version "2.1.18"
-  integrity sha512-lj8Rxjtn6zJq1oSbE/uDtAwCbB9BnxgHD+8MwJMuTh6u1dPamYhW9iuELr/Z8d0D/UysFblYYHeBPwi7T4k0YQ==
+"@radix-ui/react-menu@2.1.19":
+  version "2.1.19"
+  integrity sha512-Mht9BVd1AIsNFVQr4KG3bIK7XQn5IXF0TL/2ObsrzOdc1loaly/+kBDL5roSCYn8j8XZkvpOD0WYLz2FQtH1Eg==
   dependencies:
     "@radix-ui/primitive" "1.1.4"
-    "@radix-ui/react-collection" "1.1.10"
+    "@radix-ui/react-collection" "1.1.11"
     "@radix-ui/react-compose-refs" "1.1.3"
     "@radix-ui/react-context" "1.1.4"
     "@radix-ui/react-direction" "1.1.2"
-    "@radix-ui/react-dismissable-layer" "1.1.13"
+    "@radix-ui/react-dismissable-layer" "1.1.14"
     "@radix-ui/react-focus-guards" "1.1.4"
-    "@radix-ui/react-focus-scope" "1.1.10"
+    "@radix-ui/react-focus-scope" "1.1.11"
     "@radix-ui/react-id" "1.1.2"
-    "@radix-ui/react-popper" "1.3.1"
-    "@radix-ui/react-portal" "1.1.12"
+    "@radix-ui/react-popper" "1.3.2"
+    "@radix-ui/react-portal" "1.1.13"
     "@radix-ui/react-presence" "1.1.6"
-    "@radix-ui/react-primitive" "2.1.6"
-    "@radix-ui/react-roving-focus" "1.1.13"
+    "@radix-ui/react-primitive" "2.1.7"
+    "@radix-ui/react-roving-focus" "1.1.14"
     "@radix-ui/react-slot" "1.3.0"
     "@radix-ui/react-use-callback-ref" "1.1.2"
     aria-hidden "^1.2.4"
     react-remove-scroll "^2.7.2"
 
 "@radix-ui/react-popover@^1.1.15":
-  version "1.1.17"
-  integrity sha512-/YSAOdJ7YJvdn7bn5sdSx2egW+SKY+u7O5RyAVs94Ymrg2fg5QTSFPMRkzvhGyFuE4/qsmPBdrwYoZMZh/4f+g==
+  version "1.1.18"
+  integrity sha512-qdXDes+eHlnMUGlBAAAe5EG7oOQvqsXuq4mq585diMudg80iB+jHbsSeG3+Q4eWNsogNyhqU2p/3i+Y0iEepqg==
   dependencies:
     "@radix-ui/primitive" "1.1.4"
     "@radix-ui/react-compose-refs" "1.1.3"
     "@radix-ui/react-context" "1.1.4"
-    "@radix-ui/react-dismissable-layer" "1.1.13"
+    "@radix-ui/react-dismissable-layer" "1.1.14"
     "@radix-ui/react-focus-guards" "1.1.4"
-    "@radix-ui/react-focus-scope" "1.1.10"
+    "@radix-ui/react-focus-scope" "1.1.11"
     "@radix-ui/react-id" "1.1.2"
-    "@radix-ui/react-popper" "1.3.1"
-    "@radix-ui/react-portal" "1.1.12"
+    "@radix-ui/react-popper" "1.3.2"
+    "@radix-ui/react-portal" "1.1.13"
     "@radix-ui/react-presence" "1.1.6"
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
     "@radix-ui/react-slot" "1.3.0"
     "@radix-ui/react-use-controllable-state" "1.2.3"
     aria-hidden "^1.2.4"
     react-remove-scroll "^2.7.2"
 
-"@radix-ui/react-popper@1.3.1":
-  version "1.3.1"
-  integrity sha512-bhnq/0DEPTi2lsOD3J5rTL65qUKHbKbhqHsmN9TMiclSXpipi651ooUKPPp6G5lF/WiHBdn1s0Wuqsn+myVAvw==
+"@radix-ui/react-popper@1.3.2":
+  version "1.3.2"
+  integrity sha512-3QXNeMkdshed1MR3LNoiCirBywRFPkD8ETJa/HlPuLwSajaQixf2ro+isoDNJlGABg9ug41XuZpINZJIle4XWg==
   dependencies:
     "@floating-ui/react-dom" "^2.0.0"
-    "@radix-ui/react-arrow" "1.1.10"
+    "@radix-ui/react-arrow" "1.1.11"
     "@radix-ui/react-compose-refs" "1.1.3"
     "@radix-ui/react-context" "1.1.4"
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
     "@radix-ui/react-use-callback-ref" "1.1.2"
     "@radix-ui/react-use-layout-effect" "1.1.2"
     "@radix-ui/react-use-rect" "1.1.2"
     "@radix-ui/react-use-size" "1.1.2"
     "@radix-ui/rect" "1.1.2"
 
-"@radix-ui/react-portal@1.1.12":
-  version "1.1.12"
-  integrity sha512-m309havGzsjLHHaIX50G5PlvRs3xkgPCsGk/5PTvYm8D5q33yG0J7w/712PTOhid7NTaFETtnSXjngHQavvhVw==
+"@radix-ui/react-portal@1.1.13":
+  version "1.1.13"
+  integrity sha512-z3oXfmaHLJTF1wktbjgD6cn9jiEbq3WSondB10LIuIt2m2Ym4iJlrW04/euMwENDdWDdE7z+OuY7Qyp1YpRSwA==
   dependencies:
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
     "@radix-ui/react-use-layout-effect" "1.1.2"
 
 "@radix-ui/react-presence@1.1.6":
@@ -942,58 +955,58 @@
   dependencies:
     "@radix-ui/react-use-layout-effect" "1.1.2"
 
-"@radix-ui/react-primitive@2.1.6", "@radix-ui/react-primitive@^2.0.2":
-  version "2.1.6"
-  integrity sha512-wetd0QI77DbvrPpTAvH1SqOxsYF2wZe5TNxqwOd5Ty4XDpV3dpV0s8K/1MGMJBeY5o7lg8ub5VIt1Ub+yVen6g==
+"@radix-ui/react-primitive@2.1.7", "@radix-ui/react-primitive@^2.0.2":
+  version "2.1.7"
+  integrity sha512-bC3NiwsprbxKjuon9l7X6BUTw7FPVzEYaL92MPEY5SCd/9hUTPXVFtVwRix7778wtRsVao+zE062gL79FZleeQ==
   dependencies:
     "@radix-ui/react-slot" "1.3.0"
 
-"@radix-ui/react-roving-focus@1.1.13":
-  version "1.1.13"
-  integrity sha512-9gkwneI0guf8JDmrFxPjJF6Ozzgioyw+/lonYNCwefS9ZHA05er0BVHiXr+LbWGHxUfczvMY6G1oiZZi1VzjRw==
+"@radix-ui/react-roving-focus@1.1.14":
+  version "1.1.14"
+  integrity sha512-8Qcnx9447tx/aCBgw6Jenfqg4Skq+vqab9mCBmuGNipIS5YXvL275wbKEu7+ICYHIlAPgCduUMJH1XOYewKF6Q==
   dependencies:
     "@radix-ui/primitive" "1.1.4"
-    "@radix-ui/react-collection" "1.1.10"
+    "@radix-ui/react-collection" "1.1.11"
     "@radix-ui/react-compose-refs" "1.1.3"
     "@radix-ui/react-context" "1.1.4"
     "@radix-ui/react-direction" "1.1.2"
     "@radix-ui/react-id" "1.1.2"
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
     "@radix-ui/react-use-callback-ref" "1.1.2"
     "@radix-ui/react-use-controllable-state" "1.2.3"
 
 "@radix-ui/react-select@^2.2.6":
-  version "2.3.1"
-  integrity sha512-w6eDvY78LE9ZUiNnXCA1QVK8RYN7k9galFv09kjVydJqBAgHd7Y9A6h0UJ/6DCZNGZMZrB2ohcSW1Bo9d8+wWA==
+  version "2.3.2"
+  integrity sha512-brXD6C/V0fVK0DDbscLVw6LsXrjQ+ay8jdOBaN+tLb4vsHsAMm6Gt6eT77wHX1Eq8GPtD5rJ+RxFtfDozsb4+Q==
   dependencies:
     "@radix-ui/number" "1.1.2"
     "@radix-ui/primitive" "1.1.4"
-    "@radix-ui/react-collection" "1.1.10"
+    "@radix-ui/react-collection" "1.1.11"
     "@radix-ui/react-compose-refs" "1.1.3"
     "@radix-ui/react-context" "1.1.4"
     "@radix-ui/react-direction" "1.1.2"
-    "@radix-ui/react-dismissable-layer" "1.1.13"
+    "@radix-ui/react-dismissable-layer" "1.1.14"
     "@radix-ui/react-focus-guards" "1.1.4"
-    "@radix-ui/react-focus-scope" "1.1.10"
+    "@radix-ui/react-focus-scope" "1.1.11"
     "@radix-ui/react-id" "1.1.2"
-    "@radix-ui/react-popper" "1.3.1"
-    "@radix-ui/react-portal" "1.1.12"
+    "@radix-ui/react-popper" "1.3.2"
+    "@radix-ui/react-portal" "1.1.13"
     "@radix-ui/react-presence" "1.1.6"
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
     "@radix-ui/react-slot" "1.3.0"
     "@radix-ui/react-use-callback-ref" "1.1.2"
     "@radix-ui/react-use-controllable-state" "1.2.3"
     "@radix-ui/react-use-layout-effect" "1.1.2"
     "@radix-ui/react-use-previous" "1.1.2"
-    "@radix-ui/react-visually-hidden" "1.2.6"
+    "@radix-ui/react-visually-hidden" "1.2.7"
     aria-hidden "^1.2.4"
     react-remove-scroll "^2.7.2"
 
 "@radix-ui/react-separator@^1.1.7":
-  version "1.1.10"
-  integrity sha512-Y6K6jLQCVfCnTL2MEtGxDLffkhNfEfHsEg3Wa8JU+IWdn3EWbLXd3OuOfQRN7p/W/cUce1WyTk3QeuAoDBzN9g==
+  version "1.1.11"
+  integrity sha512-jRhe86+8PF7VZ1u14eOWVOuh2BuAhALg/FT1VcMC4OHedMTRUazDnDlKTt+yxo5cRNKHMfmvZ4sSQtWDeMV4CQ==
   dependencies:
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
 
 "@radix-ui/react-slot@1.3.0", "@radix-ui/react-slot@^1.2.4":
   version "1.3.0"
@@ -1002,46 +1015,46 @@
     "@radix-ui/react-compose-refs" "1.1.3"
 
 "@radix-ui/react-switch@^1.2.6":
-  version "1.3.1"
-  integrity sha512-55bQtCnOB0BohomSHi6qvQXpJEEqUGDm6hRrM0Bph5OXwhSegqkd8IqgBAQkM1IlgUlWZIxpxRcpOEfRIgimyw==
+  version "1.3.2"
+  integrity sha512-tgRBI3DdNwAJYE4BBZyZcz/HRRCvAsPkRvG1wvKc+41tBGMxPn/a87T/wikXAvyDypNQ9kaZwHbeZe+veHCGpA==
   dependencies:
     "@radix-ui/primitive" "1.1.4"
     "@radix-ui/react-compose-refs" "1.1.3"
     "@radix-ui/react-context" "1.1.4"
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
     "@radix-ui/react-use-controllable-state" "1.2.3"
     "@radix-ui/react-use-previous" "1.1.2"
     "@radix-ui/react-use-size" "1.1.2"
 
 "@radix-ui/react-tabs@^1.1.13":
-  version "1.1.15"
-  integrity sha512-kxc9gI6/HfcU4nfMMVS3AmQK414kbU1IE6UCJmMmxjhO3cRPXOyYnmvyKD+ODt7q56nRq9l7Wovi6uaGwKgMlg==
+  version "1.1.16"
+  integrity sha512-v3Ab2l7z6U7tRB4xA0IyKdq0OsqaO1o9ZjsIEoKKnSZ/l96mZz8aCTX0NCXw+YVHJXr8Km4d+Mn6/Q8YjXa+gw==
   dependencies:
     "@radix-ui/primitive" "1.1.4"
     "@radix-ui/react-context" "1.1.4"
     "@radix-ui/react-direction" "1.1.2"
     "@radix-ui/react-id" "1.1.2"
     "@radix-ui/react-presence" "1.1.6"
-    "@radix-ui/react-primitive" "2.1.6"
-    "@radix-ui/react-roving-focus" "1.1.13"
+    "@radix-ui/react-primitive" "2.1.7"
+    "@radix-ui/react-roving-focus" "1.1.14"
     "@radix-ui/react-use-controllable-state" "1.2.3"
 
 "@radix-ui/react-tooltip@^1.2.8":
-  version "1.2.10"
-  integrity sha512-NlNe8D0dWEpVfXFli90IO6X07Josx/b1iu98tDnx9Xv0HT4wLIL+m2VOheMHhK7qbp2HoTBqALEFzGyZs/levw==
+  version "1.2.11"
+  integrity sha512-8XZ6Py3y3W2nEzAUGCN5cfVKaUi+CVApcz1d6lrNVVf2hvYEixMRkq8k9ggPKnQUpRRuOV5avt8uvxViH2jLwA==
   dependencies:
     "@radix-ui/primitive" "1.1.4"
     "@radix-ui/react-compose-refs" "1.1.3"
     "@radix-ui/react-context" "1.1.4"
-    "@radix-ui/react-dismissable-layer" "1.1.13"
+    "@radix-ui/react-dismissable-layer" "1.1.14"
     "@radix-ui/react-id" "1.1.2"
-    "@radix-ui/react-popper" "1.3.1"
-    "@radix-ui/react-portal" "1.1.12"
+    "@radix-ui/react-popper" "1.3.2"
+    "@radix-ui/react-portal" "1.1.13"
     "@radix-ui/react-presence" "1.1.6"
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
     "@radix-ui/react-slot" "1.3.0"
     "@radix-ui/react-use-controllable-state" "1.2.3"
-    "@radix-ui/react-visually-hidden" "1.2.6"
+    "@radix-ui/react-visually-hidden" "1.2.7"
 
 "@radix-ui/react-use-callback-ref@1.1.2":
   version "1.1.2"
@@ -1059,12 +1072,6 @@
   integrity sha512-6c8ZqvPTWILEKnyVkP53EGRCcpnJiKTC21sS/6R1GF5xKyHJJWQEPfkqlcgUkdRQivd6tb23abUwe4ngWmY0JA==
   dependencies:
     "@radix-ui/react-use-layout-effect" "1.1.2"
-
-"@radix-ui/react-use-escape-keydown@1.1.2":
-  version "1.1.2"
-  integrity sha512-2uVLvLjgO7NZCWw01/FdqRwmA42J0BcjPMUCA+koFEOAb+zjqIP7SiFz/7zWPrKnVmSqr76Omq2ALyCuX4dhLw==
-  dependencies:
-    "@radix-ui/react-use-callback-ref" "1.1.2"
 
 "@radix-ui/react-use-is-hydrated@0.1.1":
   version "0.1.1"
@@ -1090,15 +1097,26 @@
   dependencies:
     "@radix-ui/react-use-layout-effect" "1.1.2"
 
-"@radix-ui/react-visually-hidden@1.2.6":
-  version "1.2.6"
-  integrity sha512-jCE0WljWifTI4niIMCll06kGpsJTAPiZVU9H4WR1N6qW7At9ystHbN7dDB+we2xH535roFHj7qKS+RGj0FMDWQ==
+"@radix-ui/react-visually-hidden@1.2.7":
+  version "1.2.7"
+  integrity sha512-1wNZBggTDK3GRuuQ6nP4k2yi7a6l7I5qbMPbZcRsrGsGVead/f/d5FhEzUvqFs0bcrDLx7n1zKQ3JvLR6whaaw==
   dependencies:
-    "@radix-ui/react-primitive" "2.1.6"
+    "@radix-ui/react-primitive" "2.1.7"
 
 "@radix-ui/rect@1.1.2":
   version "1.1.2"
   integrity sha512-xnXE7wG13PI+cxieVssYXlQJuYVRhH9NBoxt3KNwzghDIA69GMm7d4wXRouHIYjE+KvS6U/MsMO73NdS2MH9ZA==
+
+"@reduxjs/toolkit@^1.9.0 || 2.x.x":
+  version "2.12.0"
+  integrity sha512-KiT+RzZbp6mQET+Mg+h2c97+9j1sNflUxQkIHI7Yuzf6Peu+OYpmkn6nbHWmLLWj+1ZODUJFwGZ7gx3L9R9EOw==
+  dependencies:
+    "@standard-schema/spec" "^1.0.0"
+    "@standard-schema/utils" "^0.3.0"
+    immer "^11.0.0"
+    redux "^5.0.1"
+    redux-thunk "^3.1.0"
+    reselect "^5.1.0"
 
 "@rolldown/pluginutils@1.0.0-rc.3":
   version "1.0.0-rc.3"
@@ -1204,6 +1222,10 @@
   version "4.62.2"
   integrity sha512-BfzEnDJOt9T8M989/lA37EcJgat01wLRnoi5dQf3QzOH7jzpqTAzdDbVfRljVr5r+jzKqpbHeyOfAaXxAd0PAA==
 
+"@scarf/scarf@^1.4.0":
+  version "1.4.0"
+  integrity sha512-xxeapPiUXdZAE3che6f3xogoJPeZgig6omHEy1rIY5WVsB3H2BHNnZH+gHG6x91SCWyQCzWGsuL2Hh3ClO5/qQ==
+
 "@shikijs/engine-oniguruma@^3.23.0":
   version "3.23.0"
   integrity sha512-1nWINwKXxKKLqPibT5f4pAFLej9oZzQTsby8942OTlsJzOBZ0MWKiwzMsd+jhzu8YPCHAswGnnN1YtQfirL35g==
@@ -1233,6 +1255,14 @@
 "@shikijs/vscode-textmate@^10.0.2":
   version "10.0.2"
   integrity sha512-83yeghZ2xxin3Nj8z1NMd/NCuca+gsYXswywDy5bHvwlWL8tpTQmzGeUuHd9FC3E/SBEMvzJRwWEOz5gGes9Qg==
+
+"@standard-schema/spec@^1.0.0":
+  version "1.1.0"
+  integrity sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==
+
+"@standard-schema/utils@^0.3.0":
+  version "0.3.0"
+  integrity sha512-e7Mew686owMaPJVNNLs55PUvgz371nKgwsc4vxE49zsODpJEnxgxRo2y/OKrqueavXgZNMDVj3DdHFlaSAeU8g==
 
 "@stoplight/better-ajv-errors@1.0.3":
   version "1.0.3"
@@ -1282,10 +1312,11 @@
   version "1.3.2"
   integrity sha512-lyIc6JUlUA8Ve5ELywPC8I2Sdnh1zc1zmbYgVarhXIp9YeAB0ReeqmGEOWNtlHkbP2DAA1AL65Wfn2ncjK/jtQ==
 
-"@stoplight/spectral-core@1.23.0", "@stoplight/spectral-core@^1.19.2", "@stoplight/spectral-core@^1.19.4", "@stoplight/spectral-core@^1.20.0":
-  version "1.23.0"
-  integrity sha512-WvdgmiiJrjiMrcw7ByxfcYtUvAXNp2MhAfcEIXP3Mn8ZOVwyAWIsFjLlsE5zRqj0LuN8+7OQM/L+BMcHj6x/BQ==
+"@stoplight/spectral-core@^1.19.2", "@stoplight/spectral-core@^1.19.4", "@stoplight/spectral-core@^1.20.0", "@stoplight/spectral-core@^1.23.0":
+  version "1.23.1"
+  integrity sha512-VLC8OhpO/pMJKb6IHhurxJjXO1qB56Ng1unIb8b+hNxdw0+SEcASvmR+RpjfHYX/jv/DfSaA1x8QhFBJBmqBOQ==
   dependencies:
+    "@scarf/scarf" "^1.4.0"
     "@stoplight/better-ajv-errors" "1.0.3"
     "@stoplight/json" "~3.21.0"
     "@stoplight/path" "1.3.2"
@@ -1318,11 +1349,12 @@
     tslib "^2.8.1"
 
 "@stoplight/spectral-formats@^1.8.1":
-  version "1.8.3"
-  integrity sha512-lfYzkHYS2mZQdm3k+TQ0lvXZ66vdBzJuy6awA4kXgQ0jWBbOC/FHzhBk5BaIVo2QRLUAGjMqWSd72WFryi+EvA==
+  version "1.8.5"
+  integrity sha512-xaC0rCH0p7/bzNJsz+JgLSj+Cp6uwYGWpePQxdLkF2G6a8Zyp3OyS7umkGYNiimEwKrOjvCNNTFJpeuiENZSBA==
   dependencies:
+    "@scarf/scarf" "^1.4.0"
     "@stoplight/json" "^3.17.0"
-    "@stoplight/spectral-core" "1.23.0"
+    "@stoplight/spectral-core" "^1.23.0"
     "@types/json-schema" "^7.0.7"
     tslib "^2.8.1"
 
@@ -1343,12 +1375,13 @@
     tslib "^2.8.1"
 
 "@stoplight/spectral-functions@^1.9.1":
-  version "1.10.3"
-  integrity sha512-AM7Gbh7pv1Mpc6fdVuR7N6C5t5KT3QKDHeBPA27Cw/GAch1VJnHkCV9R/SxDrvOgZ3tL1xrtAGFuNFwRvVdz3g==
+  version "1.10.5"
+  integrity sha512-vDCd0NJ93715bcUpZZ5vNHiyxd4cgHF6tuXsDiXOXKAByg+I1fR5/dMijEo6Ce1Lz95a+RZ22JKYhF1YuzVvuA==
   dependencies:
+    "@scarf/scarf" "^1.4.0"
     "@stoplight/better-ajv-errors" "1.0.3"
     "@stoplight/json" "^3.17.1"
-    "@stoplight/spectral-core" "1.23.0"
+    "@stoplight/spectral-core" "^1.23.0"
     "@stoplight/spectral-formats" "^1.8.1"
     "@stoplight/spectral-runtime" "^1.1.2"
     ajv "^8.18.0"
@@ -1398,13 +1431,12 @@
     tslib "^2.8.1"
 
 "@stoplight/spectral-runtime@^1.1.2":
-  version "1.1.5"
-  integrity sha512-6/HSCQBKnI4M5qonCKos2W7oggXv+U/ml+m/cAd4eJAYfIVEmaLUo03qSWIIl4cBc5ujJPmn2WnCiRrz1++P7Q==
+  version "1.1.6"
+  integrity sha512-Y8rEDyMN4bSMJCrDs2shdcVHYyCnH3FvXRP4dBhha4Z8iJv+JPp7KqOV/hwVB/hWFC209upiwj2oDmLfR0qCDg==
   dependencies:
     "@stoplight/json" "^3.20.1"
     "@stoplight/path" "^1.3.2"
     "@stoplight/types" "^13.6.0"
-    abort-controller "^3.0.0"
     lodash "^4.18.1"
     node-fetch "^2.7.0"
     tslib "^2.8.1"
@@ -1556,12 +1588,12 @@
     "@tanstack/router-devtools-core" "1.168.0"
 
 "@tanstack/react-router@^1.133.36":
-  version "1.170.16"
-  integrity sha512-w6eq1IJklujs1tESazaK/FxH0+H2l8vm/QPuu1cD3oRW/ubgKneQpd7b64ti/8gUyEimzimJQZDmJr6YHfP5+g==
+  version "1.170.17"
+  integrity sha512-ppLkjCfSMaeug9rmFRYzOd4TIqWV+yTE7tzIny7alJsSnM7w4lzEZm6eqCehG0SPetpZ0R3K+UnanSmBgOAVcQ==
   dependencies:
     "@tanstack/history" "1.162.0"
     "@tanstack/react-store" "^0.9.3"
-    "@tanstack/router-core" "1.171.13"
+    "@tanstack/router-core" "1.171.14"
     isbot "^5.1.22"
 
 "@tanstack/react-store@^0.9.3":
@@ -1571,9 +1603,9 @@
     "@tanstack/store" "0.9.3"
     use-sync-external-store "^1.6.0"
 
-"@tanstack/router-core@1.171.13":
-  version "1.171.13"
-  integrity sha512-+NOwEj1kO/6IGmpHRIZHasYxYWpyBQGNIZAST9aNrk9Q3YlU9SgqVnl1pbLa9qAKfeNdXQIRve0RQb/0kyDeDA==
+"@tanstack/router-core@1.171.14":
+  version "1.171.14"
+  integrity sha512-Mo3hwx0qB0cJsVYGDjG0+Ouf7VV74h/vsoDMGztdlyzDanp4gBA2s7IVvm6hFrmQM6GpD9F0Z7SqD7OldfLE7g==
   dependencies:
     "@tanstack/history" "1.162.0"
     cookie-es "^3.0.0"
@@ -1587,12 +1619,12 @@
     clsx "^2.1.1"
     goober "^2.1.16"
 
-"@tanstack/router-generator@1.167.17":
-  version "1.167.17"
-  integrity sha512-xtB9tB2Ws0tWR6Pi7nc3Qk9IYgoh1mQCKWjHqIl9tf6BNUpKoqniJoPAQ4+LGrK8FeZYU0o0p/qlZEyj9FAulA==
+"@tanstack/router-generator@1.167.18":
+  version "1.167.18"
+  integrity sha512-kFvM4caRds9Q3EXg64bZubJ6rbDxyV0YDSBSGvOGzmKspQPdz5Xrh0uj5T1Ov8avUUg+c761u04VQAaEzSBXRw==
   dependencies:
     "@babel/types" "^7.28.5"
-    "@tanstack/router-core" "1.171.13"
+    "@tanstack/router-core" "1.171.14"
     "@tanstack/router-utils" "1.162.2"
     "@tanstack/virtual-file-routes" "1.162.0"
     jiti "^2.7.0"
@@ -1601,14 +1633,14 @@
     zod "^4.4.3"
 
 "@tanstack/router-plugin@^1.133.36":
-  version "1.168.18"
-  integrity sha512-MofS28/axfnfnhOD2RSgJEaU882aX5RsAzhGz5Vc4XhAmvCjy919u9JrNs4QsTWFbTD1P7IJ8WFlFVsrg0pStg==
+  version "1.168.19"
+  integrity sha512-aFglwLc+bbPTgZlkXn3PvOwpjJAfgUyPGSuql4MP3XrqTTh6WkBiy2RYb6oaG5h0s7EKwivEuq85K3Y4V0Mt1g==
   dependencies:
     "@babel/core" "^7.28.5"
     "@babel/template" "^7.27.2"
     "@babel/types" "^7.28.5"
-    "@tanstack/router-core" "1.171.13"
-    "@tanstack/router-generator" "1.167.17"
+    "@tanstack/router-core" "1.171.14"
+    "@tanstack/router-generator" "1.167.18"
     "@tanstack/router-utils" "1.162.2"
     chokidar "^5.0.0"
     unplugin "^3.0.0"
@@ -1670,6 +1702,48 @@
   dependencies:
     "@babel/types" "^7.28.2"
 
+"@types/d3-array@^3.0.3":
+  version "3.2.2"
+  integrity sha512-hOLWVbm7uRza0BYXpIIW5pxfrKe0W+D5lrFiAEYR+pb6w3N2SwSMaJbXdUfSEv+dT4MfHBLtn5js0LAWaO6otw==
+
+"@types/d3-color@*":
+  version "3.1.3"
+  integrity sha512-iO90scth9WAbmgv7ogoq57O9YpKmFBbmoEoCHDB2xMBY0+/KVrqAaCDyCE16dUspeOvIxFFRI+0sEtqDqy2b4A==
+
+"@types/d3-ease@^3.0.0":
+  version "3.0.2"
+  integrity sha512-NcV1JjO5oDzoK26oMzbILE6HW7uVXOHLQvHshBUW4UMdZGfiY6v5BeQwh9a9tCzv+CeefZQHJt5SRgK154RtiA==
+
+"@types/d3-interpolate@^3.0.1":
+  version "3.0.4"
+  integrity sha512-mgLPETlrpVV1YRJIglr4Ez47g7Yxjl1lj7YKsiMCb27VJH9W8NVM6Bb9d8kkpG/uAQS5AmbA48q2IAolKKo1MA==
+  dependencies:
+    "@types/d3-color" "*"
+
+"@types/d3-path@*":
+  version "3.1.1"
+  integrity sha512-VMZBYyQvbGmWyWVea0EHs/BwLgxc+MKi1zLDCONksozI4YJMcTt8ZEuIR4Sb1MMTE8MMW49v0IwI5+b7RmfWlg==
+
+"@types/d3-scale@^4.0.2":
+  version "4.0.9"
+  integrity sha512-dLmtwB8zkAeO/juAMfnV+sItKjlsw2lKdZVVy6LRr0cBmegxSABiLEpGVmSJJ8O08i4+sGR6qQtb6WtuwJdvVw==
+  dependencies:
+    "@types/d3-time" "*"
+
+"@types/d3-shape@^3.1.0":
+  version "3.1.8"
+  integrity sha512-lae0iWfcDeR7qt7rA88BNiqdvPS5pFVPpo5OfjElwNaT2yyekbM0C9vK+yqBqEmHr6lDkRnYNoTBYlAgJa7a4w==
+  dependencies:
+    "@types/d3-path" "*"
+
+"@types/d3-time@*", "@types/d3-time@^3.0.0":
+  version "3.0.4"
+  integrity sha512-yuzZug1nkAAaBlBBikKZTgzCeA+k1uy4ZFwWANOfKw5z5LRhV0gNA7gNkKm7HoK+HRN0wX3EkxGk0fpbWhmB7g==
+
+"@types/d3-timer@^3.0.0":
+  version "3.0.2"
+  integrity sha512-Ps3T8E8dZDam6fUyNiMkekK3XUsaUEik+idO9/YjPtfj2qruF8tFBXS7XhtE4iIXBLxhmLjP3SXpLhVf21I9Lw==
+
 "@types/es-aggregate-error@^1.0.2":
   version "1.0.6"
   integrity sha512-qJ7LIFp06h1QE1aVxbVd+zJP2wdaugYXYfd6JxsyRMrYHaxb6itXPogW2tz+ylUJ1n1b+JF1PHyYCfYHm0dvUg==
@@ -1695,8 +1769,8 @@
   integrity sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==
 
 "@types/node@*":
-  version "26.0.1"
-  integrity sha512-fc3KiUoBt6kie0N9bIW3E47vZsuaMf0PM2AaUpLCLT0s/LvX1nxAim6Fc049cNxODPpGm6qRAuUOB86SkRuPQw==
+  version "26.1.0"
+  integrity sha512-O0A1G3xPGy4w7AgQdAQYUlQ+BKk2Oovw8eRpofyp5KdBZULnbe+WqaOVNrm705SHphCiG4XHsACrSmPu1f+Kgw==
   dependencies:
     undici-types "~8.3.0"
 
@@ -1723,6 +1797,10 @@
 "@types/urijs@^1.19.19":
   version "1.19.26"
   integrity sha512-wkXrVzX5yoqLnndOwFsieJA7oKM8cNkOKJtf/3vVGSUFkWDKZvFHpIl9Pvqb/T9UsawBBFMTTD8xu7sK5MWuvg==
+
+"@types/use-sync-external-store@^0.0.6":
+  version "0.0.6"
+  integrity sha512-zFDAD+tlpf2r4asuHEj0XH6pY6i0g5NeAHPn+15wk3BV6JA69eERFXC1gyGThDkVa1zCyKr5jox1+2LbV/AMLg==
 
 "@uiw/codemirror-extensions-basic-setup@4.25.10":
   version "4.25.10"
@@ -1758,15 +1836,13 @@
     "@types/babel__core" "^7.20.5"
     react-refresh "^0.18.0"
 
-abort-controller@^3.0.0:
-  version "3.0.0"
-  integrity sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==
-  dependencies:
-    event-target-shim "^5.0.0"
-
 acorn@^8.15.0:
   version "8.17.0"
   integrity sha512-xRQbDb9BnwDafYNn6Vwl839DYVjqXYb1XVGtWAZ1kcDc6iwAL4hg3B1dZlRiuENFeO2H53gFG3in621AdERVAg==
+
+adler-32@~1.3.0:
+  version "1.3.1"
+  integrity sha512-ynZ4w/nUUv5rrsR8UUGoe1VC9hZj6V5hU9Qw1HlMDJGEJw5S7TfTErWTjMys6M7vr0YWcPqs3qAr4ss0nDfP+A==
 
 agent-base@6:
   version "6.0.2"
@@ -1893,8 +1969,8 @@ balanced-match@^4.0.2:
   integrity sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==
 
 baseline-browser-mapping@^2.10.38:
-  version "2.10.40"
-  integrity sha512-BSSLZ9/Cjjv7Gtj5B68ZzXcXUg8iOf3fme+FCuh8rC/Go+Kmh8cox7M3A8dolou16s64QjLPOSdngh7GxXvkSw==
+  version "2.10.41"
+  integrity sha512-WwS7MHhqGHHlaVsqRZnhvCEMS0owDX+SxRlve7JkuH7My1Ara3ZriTmCQupPfYjxMZ8I/tgxtJYr2t7taHaH4A==
 
 brace-expansion@^1.1.7:
   version "1.1.15"
@@ -1953,8 +2029,15 @@ call-me-maybe@^1.0.1, call-me-maybe@^1.0.2:
   integrity sha512-HpX65o1Hnr9HH25ojC1YGs7HCQLq0GCOibSaWER0eNpgJ/Z1MZv2mTc7+xh6WOPxbRVcmgbv4hGU+uSQ/2xFZQ==
 
 caniuse-lite@^1.0.30001799:
-  version "1.0.30001799"
-  integrity sha512-hG1bReV+OUU+MOqK4t/ZWI0tZOyz3rqS9XuhOUz1cIcbwBKjOyJEJuw9ER5JuNyqxNk8u/JUVbGibBOL1yrjFw==
+  version "1.0.30001800"
+  integrity sha512-MMHtuAz9Ys840zAY5F4k6fV5GaivZ9sPk+nz0mY+GYVzRBnYkN0mpqkSR92oWRQ19yQWo4HvBV/FnC16AJX8MA==
+
+cfb@~1.2.1:
+  version "1.2.2"
+  integrity sha512-KfdUZsSOw19/ObEWasvBP/Ac4reZvAGauZhs6S/gqNhXhI7cKwvlH7ulj+dOEYnca4bm4SGo8C1bTAQvnTjgQA==
+  dependencies:
+    adler-32 "~1.3.0"
+    crc-32 "~1.2.0"
 
 chalk@4.1.2, chalk@^4.1.2:
   version "4.1.2"
@@ -2014,6 +2097,10 @@ codemirror@^6.0.0:
     "@codemirror/state" "^6.0.0"
     "@codemirror/view" "^6.0.0"
 
+codepage@~1.15.0:
+  version "1.15.0"
+  integrity sha512-3g6NUTPd/YtuuGrhMnOMRjFc+LJw/bnMp3+0r/Wcz3IXUuCosKRJvMphm5+Q+bvTVGcJJuRvVLuYba+WojaFaA==
+
 color-convert@^2.0.1:
   version "2.0.1"
   integrity sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ==
@@ -2050,6 +2137,10 @@ cookie-es@^3.0.0:
   version "3.1.1"
   integrity sha512-UaXxwISYJPTr9hwQxMFYZ7kNhSXboMXP+Z3TRX6f1/NyaGPfuNUZOWP1pUEb75B2HjfklIYLVRfWiFZJyC6Npg==
 
+crc-32@~1.2.0, crc-32@~1.2.1:
+  version "1.2.2"
+  integrity sha512-ROmzCKrTnOwybPcJApAA6WBWij23HVfGVNKqqrZpuyZOHqK2CwHSvpGuyt/UNNvaIjEd8X5IFGp4Mh+Ie1IHJQ==
+
 crelt@^1.0.5, crelt@^1.0.6:
   version "1.0.7"
   integrity sha512-aK6BbWfhf4U/wCcLHKPJl/xa6VkVstRaPywWtMKGwuOLc/wZTyQYuoxgvZnNsBvv7Kg3YTBQYYBCggcviQczuA==
@@ -2065,6 +2156,66 @@ cross-spawn@^7.0.3:
 csstype@^3.2.2:
   version "3.2.3"
   integrity sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==
+
+"d3-array@2 - 3", "d3-array@2.10.0 - 3", d3-array@^3.1.6:
+  version "3.2.4"
+  integrity sha512-tdQAmyA18i4J7wprpYq8ClcxZy3SC31QMeByyCFyRt7BVHdREQZ5lpzoe5mFEYZUWe+oq8HBvk9JjpibyEV4Jg==
+  dependencies:
+    internmap "1 - 2"
+
+"d3-color@1 - 3":
+  version "3.1.0"
+  integrity sha512-zg/chbXyeBtMQ1LbD/WSoW2DpC3I0mpmPdW+ynRTj/x2DAWYrIY7qeZIHidozwV24m4iavr15lNwIwLxRmOxhA==
+
+d3-ease@^3.0.1:
+  version "3.0.1"
+  integrity sha512-wR/XK3D3XcLIZwpbvQwQ5fK+8Ykds1ip7A2Txe0yxncXSdq1L9skcG7blcedkOX+ZcgxGAmLX1FrRGbADwzi0w==
+
+"d3-format@1 - 3":
+  version "3.1.2"
+  integrity sha512-AJDdYOdnyRDV5b6ArilzCPPwc1ejkHcoyFarqlPqT7zRYjhavcT3uSrqcMvsgh2CgoPbK3RCwyHaVyxYcP2Arg==
+
+"d3-interpolate@1.2.0 - 3", d3-interpolate@^3.0.1:
+  version "3.0.1"
+  integrity sha512-3bYs1rOD33uo8aqJfKP3JWPAibgw8Zm2+L9vBKEHJ2Rg+viTR7o5Mmv5mZcieN+FRYaAOWX5SJATX6k1PWz72g==
+  dependencies:
+    d3-color "1 - 3"
+
+d3-path@^3.1.0:
+  version "3.1.0"
+  integrity sha512-p3KP5HCf/bvjBSSKuXid6Zqijx7wIfNW+J/maPs+iwR35at5JCbLUT0LzF1cnjbCHWhqzQTIN2Jpe8pRebIEFQ==
+
+d3-scale@^4.0.2:
+  version "4.0.2"
+  integrity sha512-GZW464g1SH7ag3Y7hXjf8RoUuAFIqklOAq3MRl4OaWabTFJY9PN/E1YklhXLh+OQ3fM9yS2nOkCoS+WLZ6kvxQ==
+  dependencies:
+    d3-array "2.10.0 - 3"
+    d3-format "1 - 3"
+    d3-interpolate "1.2.0 - 3"
+    d3-time "2.1.1 - 3"
+    d3-time-format "2 - 4"
+
+d3-shape@^3.1.0:
+  version "3.2.0"
+  integrity sha512-SaLBuwGm3MOViRq2ABk3eLoxwZELpH6zhl3FbAoJ7Vm1gofKx6El1Ib5z23NUEhF9AsGl7y+dzLe5Cw2AArGTA==
+  dependencies:
+    d3-path "^3.1.0"
+
+"d3-time-format@2 - 4":
+  version "4.1.0"
+  integrity sha512-dJxPBlzC7NugB2PDLwo9Q8JiTR3M3e4/XANkreKSUxF8vvXKqm1Yfq4Q5dl8budlunRVlUUaDUgFt7eA8D6NLg==
+  dependencies:
+    d3-time "1 - 3"
+
+"d3-time@1 - 3", "d3-time@2.1.1 - 3", d3-time@^3.0.0:
+  version "3.1.0"
+  integrity sha512-VqKjzBLejbSMT4IgbmVgDjpkYrNWUYJnbCGo874u7MMKIWsILRX+OpX/gTk8MqjpT1A/c6HY2dCA77ZN0lkQ2Q==
+  dependencies:
+    d3-array "2 - 3"
+
+d3-timer@^3.0.1:
+  version "3.0.1"
+  integrity sha512-ndfJ/JxxMd3nw31uyKoY2naivF+r29V+Lc0svZxe1JvvIRmi8hUsrMvdOwgS1o6uBHmiz91geQ0ylPP0aj1VUA==
 
 data-view-buffer@^1.0.2:
   version "1.0.2"
@@ -2095,6 +2246,10 @@ debug@4, debug@^4.1.0, debug@^4.3.1, debug@^4.4.3:
   integrity sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==
   dependencies:
     ms "^2.1.3"
+
+decimal.js-light@^2.5.1:
+  version "2.5.1"
+  integrity sha512-qIMFpTMZmny+MMIitAB6D7iVPEorVw6YQRWkvarTkT4tBeSLLiHzcwj6q0MmYSFCiVpiqPJTJEYIrpcPzVEIvg==
 
 define-data-property@^1.0.1, define-data-property@^1.1.4:
   version "1.1.4"
@@ -2147,8 +2302,8 @@ dunder-proto@^1.0.0, dunder-proto@^1.0.1:
     gopd "^1.2.0"
 
 electron-to-chromium@^1.5.376:
-  version "1.5.381"
-  integrity sha512-n9Wa6yB+vDsGuA8AKbl/0z7HbvWqt5jxIdvr1IUicd0ryPrk7/xzwqLv8D9AbbvZ6avVNtXYLTfmgFHkwkyelg==
+  version "1.5.385"
+  integrity sha512-78sa/M08MNAYHQfjoWMvOlKQqZ0ElhSm/L5HNUc96VZ3b+KvDVnngFm8sYQy0XrhTRgAhggHr5abA7yTvRdo4Q==
 
 emoji-regex@^8.0.0:
   version "8.0.0"
@@ -2168,7 +2323,7 @@ enquirer@^2.4.1:
     ansi-colors "^4.1.1"
     strip-ansi "^6.0.1"
 
-entities@^4.4.0:
+entities@^4.5.0:
   version "4.5.0"
   integrity sha512-V0hjH4dGPh9Ao5p0MoRY6BVqtwCjhz6vI5LT8AJ55H+4g9/4vbHx1I54fS0XuclLhDHArPQCiMjDxjaL8fPxhw==
 
@@ -2287,6 +2442,10 @@ es-to-primitive@^1.3.0:
     is-date-object "^1.1.0"
     is-symbol "^1.1.1"
 
+es-toolkit@^1.39.3:
+  version "1.49.0"
+  integrity sha512-G5iZ6Pc/FNRY/soKZHC+TxGDD83rHUDXxzaWhGCX44vAv/tMs56WMusnm/KMNK+luUPsgA9U28cGr4RDlSzL2g==
+
 es6-promise@^3.2.1:
   version "3.3.1"
   integrity sha512-SOp9Phqvqn7jtEUxPWdWfWoLmyt2VaJ6MpvP9Comy1MceMXqE6bxvaTu4iaxpYYPzhny28Lc+M87/c2cPK6lDg==
@@ -2361,9 +2520,9 @@ esutils@2.0.3:
   version "2.0.3"
   integrity sha512-kVscqXk4OCp68SZ0dkgEKVi6/8ij300KBWTJq32P/dYeWTSwK41WyTxalN1eRmA5Z9UU/LX9D7FWSmV9SAYx6g==
 
-event-target-shim@^5.0.0:
-  version "5.0.1"
-  integrity sha512-i/2XbnSz/uxRCU6+NdVJgKWDTM427+MqYbkQzD321DuCQJUqOuJKIA0IM2+W2xtYHdKOmZ4dR6fExsd4SXL+WQ==
+eventemitter3@^5.0.1:
+  version "5.0.4"
+  integrity sha512-mlsTRyGaPBjPedk6Bvw+aqbsXDtoAyAzm5MO7JgU+yVRyMQ5O8bD4Kcci7BS85f93veegeCPkL8R4GLClnjLFw==
 
 execa@^5.1.1:
   version "5.1.1"
@@ -2452,17 +2611,21 @@ form-data@^4.0.5:
     hasown "^2.0.4"
     mime-types "^2.1.35"
 
-framer-motion@^12.42.0:
-  version "12.42.0"
-  integrity sha512-wp7EJnfWaaEScVygKv3e20udoRz+LbtxScsuTkakAxfXmt+ReC6WyPW2nINRAGvd+hG9odwcjBLyOTPjH5pBRA==
+frac@~1.1.2:
+  version "1.1.2"
+  integrity sha512-w/XBfkibaTl3YDqASwfDUqkna4Z2p9cFSr1aHDt0WoMTECnRfBOv2WArlZILlqgWlmdIlALXGpM2AOhEk5W3IA==
+
+framer-motion@^12.42.2:
+  version "12.42.2"
+  integrity sha512-5XY9luDiu0oHfHBjpDthFMh0ES+122w6p/papSJBweMkO8Sn+PW2QaEgRblQBpWFnuvZS5qvarpt/hO2pjGmnw==
   dependencies:
-    motion-dom "^12.42.0"
+    motion-dom "^12.42.2"
     motion-utils "^12.39.0"
     tslib "^2.4.0"
 
 fs-extra@^11.3.1, fs-extra@^11.3.2:
-  version "11.3.5"
-  integrity sha512-eKpRKAovdpZtR1WopLHxlBWvAgPny3c4gX1G5Jhwmmw4XJj0ifSD5qB5TOo8hmA0wlRKDAOAhEE1yVPgs6Fgcg==
+  version "11.3.6"
+  integrity sha512-w8ZNZr2mKIc7qeNaQ9AVPT1+iFaI+Avd4xudVOvdDJ8VytREi1Ft5Ih7hd9jjehod8vAM5GMsfQ/TpPf4EyoEA==
   dependencies:
     graceful-fs "^4.2.0"
     jsonfile "^6.0.1"
@@ -2644,12 +2807,16 @@ i18next-browser-languagedetector@^8.2.1:
     "@babel/runtime" "^7.23.2"
 
 i18next@^26.0.8:
-  version "26.3.3"
-  integrity sha512-aYVegyBdXSO93CMMihvr47jI7GHSOcIahMpJX+qzUXDzW4xDJf2uenIA+45vDU+YhiVdcfsql70AC9RVdMNrHg==
+  version "26.3.4"
+  integrity sha512-pa7m0d7pBDqGHZxljT+WPFeyFgQ7P7SciPPo1tTqYuO0z4sqADYhwnBESmmGp/wEof1inwdls/k8ZgTg8rxFHA==
 
 ignore@^5.2.0:
   version "5.3.2"
   integrity sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==
+
+immer@^11.0.0, immer@^11.1.8:
+  version "11.1.9"
+  integrity sha512-sc/z0Cyti70bZa0ZU4sWfAElfovFb9Ni8tArJZLuklYWxegPiK3pDOql1Rq5H0FIRAW9LSQRG6OX4KqBldbhBA==
 
 immer@^9.0.6:
   version "9.0.21"
@@ -2666,6 +2833,10 @@ internal-slot@^1.1.0:
     es-errors "^1.3.0"
     hasown "^2.0.2"
     side-channel "^1.1.0"
+
+"internmap@1 - 2":
+  version "2.0.3"
+  integrity sha512-5Hh7Y1wQbvY5ooGgPbDaL5iYLAPzMTUrjMulskHLH6wnv/A+1q5rgEaiuqEjB+oxGXIVZs1FF+R/KPN3ZSQYYg==
 
 is-array-buffer@^3.0.4, is-array-buffer@^3.0.5:
   version "3.0.5"
@@ -2975,9 +3146,9 @@ lightningcss@1.32.0:
     lightningcss-win32-arm64-msvc "1.32.0"
     lightningcss-win32-x64-msvc "1.32.0"
 
-linkify-it@^5.0.1:
-  version "5.0.1"
-  integrity sha512-wVoTjP4Q6R0NW5hiZkVJaFZPWgtXfoGF+6LucL3/FtiNjmcHhYjEr5f1Kqjirc1nBW07J/ZuRFumqr2oqccEWg==
+linkify-it@^5.0.2:
+  version "5.0.2"
+  integrity sha512-ONTm2jCMAVZjgQa/Fy1kScXsuOoF5NPTsoFBdE1KVIZ2vAh/r9+Bqo+0jINCBYnavTPQZz38QzFTme79ENoN3Q==
   dependencies:
     uc.micro "^2.0.0"
 
@@ -3048,12 +3219,12 @@ magic-string@^0.30.21:
     "@jridgewell/sourcemap-codec" "^1.5.5"
 
 markdown-it@^14.1.1:
-  version "14.2.0"
-  integrity sha512-1TGiQiJVRQ3NPmZH6sx5Cfnmg6GQm9jvC1ch4TK511NjSJvjzKLzn5pPfZRNZkRPZP0HqCioSndqH8v2nRaWVQ==
+  version "14.3.0"
+  integrity sha512-RCEsPjR+sr0x+AuYp601tKTkgFG4YEPLCzHST3cQ/fhlJkqAkz1L2/Qbp1j9qw5SBwQHFBoW8+hoN5xssOF0Tw==
   dependencies:
     argparse "^2.0.1"
-    entities "^4.4.0"
-    linkify-it "^5.0.1"
+    entities "^4.5.0"
+    linkify-it "^5.0.2"
     mdurl "^2.0.0"
     punycode.js "^2.3.1"
     uc.micro "^2.1.0"
@@ -3113,9 +3284,9 @@ minimatch@^3.1.4:
   dependencies:
     brace-expansion "^1.1.7"
 
-motion-dom@^12.42.0:
-  version "12.42.0"
-  integrity sha512-M63h4n8R+quJdNhBwuLlgxM+OLYa9+I/T2pzDRboB9fLXRdbou+Gw7Zury+SkpaCyACP1JHSjHgZ1EgTkBr30w==
+motion-dom@^12.42.2:
+  version "12.42.2"
+  integrity sha512-5gIMWLp/PycBtJRJWRgjxke5n8dlvkSn2DrYW+tr3XcqAZY1xZh6BJyooJXCM8wdfM7wfMjkBJNLge1CKPUIRA==
   dependencies:
     motion-utils "^12.39.0"
 
@@ -3124,10 +3295,10 @@ motion-utils@^12.39.0:
   integrity sha512-8nadJAJjTtqRkmRF36FoJTrywK9nnFmnPwnSMyxaOCU7GDjN9RTMJIxx9De8ErM+vpPhMccr/6fo5WciyQLnMQ==
 
 motion@^12.23.24:
-  version "12.42.0"
-  integrity sha512-Qhwvu9sVl5/URSq5CNzwMCpSKK8Uhnrwb6VO977kZyj/wOCS7mWebJUnBoHx5cZU1Zv8a9BD5CSICWKAlrLJgA==
+  version "12.42.2"
+  integrity sha512-Atvv11yUKIid41cVrRBDVX5m8tF8kNpExRSlbpt6APClhDjtwQssgFHhQzejxw7/7YYbjHSPKBVbHo05BuJT5Q==
   dependencies:
-    framer-motion "^12.42.0"
+    framer-motion "^12.42.2"
     tslib "^2.4.0"
 
 ms@^2.1.3:
@@ -3328,8 +3499,8 @@ picomatch@^2.3.1:
   integrity sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==
 
 picomatch@^4.0.3, picomatch@^4.0.4:
-  version "4.0.4"
-  integrity sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==
+  version "4.0.5"
+  integrity sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A==
 
 pony-cause@^1.1.1:
   version "1.1.1"
@@ -3348,8 +3519,8 @@ postcss@^8.5.6:
     source-map-js "^1.2.1"
 
 prettier@^3.5.0, prettier@^3.7.3:
-  version "3.9.3"
-  integrity sha512-HWmu+K+zvHNpaMfSnYeqdqrDbR16cuIXaPx8WoHaviQkDJh1/0BNtOZmHVQI5jc3wXv0H1yXc9wjvFdXh+n3hQ==
+  version "3.9.4"
+  integrity sha512-yWG/o/4oJfo036EKAfK6ACAoDOfHeRHx4tuxkfBZiauURiaSmYwlpOr5LQqKtIkRD2z1PLteme2WoxEnj4tHTg==
 
 proxy-from-env@^2.1.0:
   version "2.1.0"
@@ -3380,6 +3551,17 @@ react-i18next@^17.0.6:
     "@babel/runtime" "^7.29.2"
     html-parse-stringify "^3.0.1"
     use-sync-external-store "^1.6.0"
+
+react-is@^19.2.0:
+  version "19.2.7"
+  integrity sha512-kZFnouyVv7eP/Phmrlo9FK+zcAdriZJvzxXHF1Sl1P377WSGe2G/JxVolhTrB/jeV47lKImhNUsijjHAAbcl/A==
+
+"react-redux@8.x.x || 9.x.x":
+  version "9.3.0"
+  integrity sha512-KQopgqFo/p/fgmAs5qz6p5RWaNAzq40WAu7fJIXnQpYxFPbJYtsJPWvGeF2rOBaY/kEuV77AVsX8TsQzKm+A/g==
+  dependencies:
+    "@types/use-sync-external-store" "^0.0.6"
+    use-sync-external-store "^1.4.0"
 
 react-refresh@^0.18.0:
   version "0.18.0"
@@ -3421,6 +3603,30 @@ readdirp@^5.0.0:
   version "5.0.0"
   integrity sha512-9u/XQ1pvrQtYyMpZe7DXKv2p5CNvyVwzUB6uhLAnQwHMSgKMBR62lc7AHljaeteeHXn11XTAaLLUVZYVZyuRBQ==
 
+recharts@^3.8.1:
+  version "3.9.1"
+  integrity sha512-WMcwlXcB7l+BbxiEdyClkG+1sxrMHNZpzT577LEvU4+rXPd8oTAy1wXk72hnk2KOOmxuLvw3z5DtXT7HEAydtg==
+  dependencies:
+    "@reduxjs/toolkit" "^1.9.0 || 2.x.x"
+    clsx "^2.1.1"
+    decimal.js-light "^2.5.1"
+    es-toolkit "^1.39.3"
+    eventemitter3 "^5.0.1"
+    immer "^11.1.8"
+    react-redux "8.x.x || 9.x.x"
+    reselect "5.2.0"
+    tiny-invariant "^1.3.3"
+    use-sync-external-store "^1.2.2"
+    victory-vendor "^37.0.2"
+
+redux-thunk@^3.1.0:
+  version "3.1.0"
+  integrity sha512-NW2r5T6ksUKXCabzhL9z+h206HQw/NJkcLm1GPImRQ8IzfXwRGqjVhKJGauHirT0DAuyy6hjdnMZaRoAcy0Klw==
+
+redux@^5.0.1:
+  version "5.0.1"
+  integrity sha512-M9/ELqF6fy8FwmkpnF0S3YKOqMyoWJ4+CS5Efg2ct3oY9daQvd/Pc71FpGZsVsbl3Cpb+IIcjBDUnnyBdQbq4w==
+
 reflect.getprototypeof@^1.0.10, reflect.getprototypeof@^1.0.9:
   version "1.0.10"
   integrity sha512-00o4I+DVrefhv+nX0ulyi3biSHCPDe+yLv5o/p6d/UVlirijB8E16FtfwSAi4g3tcqrQ4lRAqQSoFEZJehYEcw==
@@ -3456,6 +3662,10 @@ require-directory@^2.1.1:
 require-from-string@^2.0.2:
   version "2.0.2"
   integrity sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw==
+
+reselect@5.2.0, reselect@^5.1.0:
+  version "5.2.0"
+  integrity sha512-AgZ3UOZm3YndfrJ4OYjgrT7bmCm/1iqkjvEfH/oYjzh6PD2qw4QuT3jjnXIrpdt4MTpMXclMT3lXbmRY+XRakw==
 
 reusify@^1.0.4:
   version "1.1.0"
@@ -3677,6 +3887,12 @@ source-map-js@^1.2.1:
   version "1.2.1"
   integrity sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==
 
+ssf@~0.11.2:
+  version "0.11.2"
+  integrity sha512-+idbmIXoYET47hH+d7dfm2epdOMUDjqcB4648sTZ+t2JwoyBFL/insLfB/racrDmsKB3diwsDA696pZMieAC5g==
+  dependencies:
+    frac "~1.1.2"
+
 stop-iteration-iterator@^1.1.0:
   version "1.1.0"
   integrity sha512-eLoXW/DHyl62zxY4SCaIgnRhuMr6ri4juEYARS8E6sCEqzKpOiE521Ucofdx+KnDZl5xmvGYaaKCk5FEOxJCoQ==
@@ -3773,6 +3989,10 @@ tailwindcss@4.3.2:
 tapable@^2.3.3:
   version "2.3.3"
   integrity sha512-uxc/zpqFg6x7C8vOE7lh6Lbda8eEL9zmVm/PLeTPBRhh1xCgdWaQ+J1CUieGpIfm2HdtsUpRv+HshiasBMcc6A==
+
+tiny-invariant@^1.3.3:
+  version "1.3.3"
+  integrity sha512-+FbBPE1o9QAYvviau/qC5SE3caw21q3xkvWKBtja5vgqOWIHHJ3ioaq1VPfn/Szqctz2bU/oYeKd9/z5BL+PVg==
 
 tinyglobby@^0.2.15:
   version "0.2.17"
@@ -3927,7 +4147,7 @@ use-sidecar@^1.1.3:
     detect-node-es "^1.1.0"
     tslib "^2.0.0"
 
-use-sync-external-store@^1.6.0:
+use-sync-external-store@^1.2.2, use-sync-external-store@^1.4.0, use-sync-external-store@^1.6.0:
   version "1.6.0"
   integrity sha512-Pp6GSwGP/NrPIrxVFAIkOQeyw8lFenOHijQWkUTrDvrF4ALqylP2C/KCkeS9dpUM3KvYRQhna5vt7IL95+ZQ9w==
 
@@ -3938,6 +4158,25 @@ utility-types@^3.10.0:
 validator@13.15.23:
   version "13.15.23"
   integrity sha512-4yoz1kEWqUjzi5zsPbAS/903QXSYp0UOtHsPpp7p9rHAw/W+dkInskAE386Fat3oKRROwO98d9ZB0G4cObgUyw==
+
+victory-vendor@^37.0.2:
+  version "37.3.6"
+  integrity sha512-SbPDPdDBYp+5MJHhBCAyI7wKM3d5ivekigc2Dk2s7pgbZ9wIgIBYGVw4zGHBml/qTFbexrofXW6Gu4noGxrOwQ==
+  dependencies:
+    "@types/d3-array" "^3.0.3"
+    "@types/d3-ease" "^3.0.0"
+    "@types/d3-interpolate" "^3.0.1"
+    "@types/d3-scale" "^4.0.2"
+    "@types/d3-shape" "^3.1.0"
+    "@types/d3-time" "^3.0.0"
+    "@types/d3-timer" "^3.0.0"
+    d3-array "^3.1.6"
+    d3-ease "^3.0.1"
+    d3-interpolate "^3.0.1"
+    d3-scale "^4.0.2"
+    d3-shape "^3.1.0"
+    d3-time "^3.0.0"
+    d3-timer "^3.0.1"
 
 vite@^7.1.12:
   version "7.3.6"
@@ -4030,6 +4269,14 @@ which@^2.0.1:
   dependencies:
     isexe "^2.0.0"
 
+wmf@~1.0.1:
+  version "1.0.2"
+  integrity sha512-/p9K7bEh0Dj6WbXg4JG0xvLQmIadrner1bi45VMJTfnbVHsc7yIajZyoSoK60/dtVBs12Fm6WkUI5/3WAVsNMw==
+
+word@~0.3.0:
+  version "0.3.0"
+  integrity sha512-OELeY0Q61OXpdUfTp+oweA/vtLVg5VDOXh+3he3PNzLGG/y0oylSOC1xRVj0+l4vQ3tj/bB1HVHv1ocXkQceFA==
+
 wrap-ansi@^7.0.0:
   version "7.0.0"
   integrity sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q==
@@ -4037,6 +4284,18 @@ wrap-ansi@^7.0.0:
     ansi-styles "^4.0.0"
     string-width "^4.1.0"
     strip-ansi "^6.0.0"
+
+xlsx@^0.18.5:
+  version "0.18.5"
+  integrity sha512-dmg3LCjBPHZnQp5/F/+nnTa+miPJxUXB6vtk42YjBBKayDNagxGEeIdWApkYPOf3Z3pm3k62Knjzp7lMeTEtFQ==
+  dependencies:
+    adler-32 "~1.3.0"
+    cfb "~1.2.1"
+    codepage "~1.15.0"
+    crc-32 "~1.2.1"
+    ssf "~0.11.2"
+    wmf "~1.0.1"
+    word "~0.3.0"
 
 y18n@^5.0.5:
   version "5.0.8"

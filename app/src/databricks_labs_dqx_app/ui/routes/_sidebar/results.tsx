@@ -70,7 +70,7 @@ function GlobalResultsContent() {
         ) : (
           <div className="flex flex-col gap-4 max-w-5xl">
             <ScoreBox
-              score={data.overall_score ?? null}
+              passRate={data.overall_score ?? null}
               label={t("globalResults.orgWideScoreLabel", { count: tables.length })}
               totalTests={totalTests}
               failedTests={failedTests}

@@ -30,7 +30,7 @@ export function ProductResultsTab({ productId }: { productId: string }) {
   return (
     <div className="flex flex-col gap-4 max-w-5xl">
       <ScoreBox
-        score={data.score ?? null}
+        passRate={data.score ?? null}
         label={t("dataProducts.resultsAverageScoreLabel")}
         totalTests={totalTests}
         failedTests={failedTests}
