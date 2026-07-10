@@ -1065,6 +1065,51 @@ export interface ExtraParams {
   variables?: ExtraParamsVariables;
 }
 
+export type FailingRecordFailureOutRuleName = string | null;
+
+export type FailingRecordFailureOutMessage = string | null;
+
+/**
+ * One rule failure attached to a quarantined row.
+
+*columns* lists the source columns the failed check inspected (DQX's
+result-struct *columns* field) — the UI uses it for per-cell
+highlighting. Empty for legacy rows without column attribution.
+ */
+export interface FailingRecordFailureOut {
+  rule_name?: FailingRecordFailureOutRuleName;
+  message?: FailingRecordFailureOutMessage;
+  columns?: string[];
+}
+
+export type FailingRecordOutRowValues = {[key: string]: string | null};
+
+/**
+ * One quarantined source row, shaped for per-cell failure highlighting.
+ */
+export interface FailingRecordOut {
+  record_key: string;
+  row_values?: FailingRecordOutRowValues;
+  failed_columns?: string[];
+  failures?: FailingRecordFailureOut[];
+}
+
+/**
+ * Row-level failing sample for one source table.
+
+*suppressed* is True when the source table carries fine-grained access
+controls (row filter / column mask) that the copied sample cannot
+faithfully replicate — the UI shows an explanatory notice instead of
+rows. An empty, non-suppressed response is also what a caller without
+SELECT on the source table receives (deliberately indistinguishable
+from "no failing rows recorded").
+ */
+export interface FailingRecordsOut {
+  source_table_fqn: string;
+  records?: FailingRecordOut[];
+  suppressed?: boolean;
+}
+
 export interface FilterTablesByColumnsIn {
   /** Column names that must exist in the table */
   required_columns: string[];
@@ -3431,6 +3476,14 @@ max_rows?: number;
  * Filter the export to rows that failed only this DQX check.
  */
 check_name?: string | null;
+};
+
+export type GetQuarantineSampleParams = {
+/**
+ * @minimum 1
+ * @maximum 200
+ */
+limit?: number;
 };
 
 export type GetMetricsTrendParams = {
@@ -15451,6 +15504,167 @@ export function useExportQuarantineRecordsSuspense<TData = Awaited<ReturnType<ty
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getExportQuarantineRecordsSuspenseQueryOptions(runId,params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Return the latest failing rows recorded for *table_fqn* (OBO-gated).
+ * @summary Get Quarantine Sample
+ */
+export const getQuarantineSample = (
+    tableFqn: string,
+    params?: GetQuarantineSampleParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<FailingRecordsOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/quarantine-samples/${tableFqn}`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getGetQuarantineSampleQueryKey = (tableFqn?: string,
+    params?: GetQuarantineSampleParams,) => {
+    return [
+    `/api/v1/quarantine-samples/${tableFqn}`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getGetQuarantineSampleQueryOptions = <TData = Awaited<ReturnType<typeof getQuarantineSample>>, TError = AxiosError<HTTPValidationError>>(tableFqn: string,
+    params?: GetQuarantineSampleParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getQuarantineSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetQuarantineSampleQueryKey(tableFqn,params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getQuarantineSample>>> = ({ signal }) => getQuarantineSample(tableFqn,params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(tableFqn), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getQuarantineSample>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetQuarantineSampleQueryResult = NonNullable<Awaited<ReturnType<typeof getQuarantineSample>>>
+export type GetQuarantineSampleQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetQuarantineSample<TData = Awaited<ReturnType<typeof getQuarantineSample>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params: undefined |  GetQuarantineSampleParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getQuarantineSample>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getQuarantineSample>>,
+          TError,
+          Awaited<ReturnType<typeof getQuarantineSample>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetQuarantineSample<TData = Awaited<ReturnType<typeof getQuarantineSample>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetQuarantineSampleParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getQuarantineSample>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getQuarantineSample>>,
+          TError,
+          Awaited<ReturnType<typeof getQuarantineSample>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetQuarantineSample<TData = Awaited<ReturnType<typeof getQuarantineSample>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetQuarantineSampleParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getQuarantineSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Quarantine Sample
+ */
+
+export function useGetQuarantineSample<TData = Awaited<ReturnType<typeof getQuarantineSample>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetQuarantineSampleParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getQuarantineSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetQuarantineSampleQueryOptions(tableFqn,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetQuarantineSampleSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getQuarantineSample>>, TError = AxiosError<HTTPValidationError>>(tableFqn: string,
+    params?: GetQuarantineSampleParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getQuarantineSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetQuarantineSampleQueryKey(tableFqn,params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getQuarantineSample>>> = ({ signal }) => getQuarantineSample(tableFqn,params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getQuarantineSample>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetQuarantineSampleSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getQuarantineSample>>>
+export type GetQuarantineSampleSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetQuarantineSampleSuspense<TData = Awaited<ReturnType<typeof getQuarantineSample>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params: undefined |  GetQuarantineSampleParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getQuarantineSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetQuarantineSampleSuspense<TData = Awaited<ReturnType<typeof getQuarantineSample>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetQuarantineSampleParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getQuarantineSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetQuarantineSampleSuspense<TData = Awaited<ReturnType<typeof getQuarantineSample>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetQuarantineSampleParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getQuarantineSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Quarantine Sample
+ */
+
+export function useGetQuarantineSampleSuspense<TData = Awaited<ReturnType<typeof getQuarantineSample>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetQuarantineSampleParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getQuarantineSample>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetQuarantineSampleSuspenseQueryOptions(tableFqn,params,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

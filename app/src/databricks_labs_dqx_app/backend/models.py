@@ -1281,6 +1281,44 @@ class QuarantineListOut(BaseModel):
     limit: int = 50
 
 
+class FailingRecordFailureOut(BaseModel):
+    """One rule failure attached to a quarantined row.
+
+    *columns* lists the source columns the failed check inspected (DQX's
+    result-struct *columns* field) — the UI uses it for per-cell
+    highlighting. Empty for legacy rows without column attribution.
+    """
+
+    rule_name: str | None = None
+    message: str | None = None
+    columns: list[str] = Field(default_factory=list)
+
+
+class FailingRecordOut(BaseModel):
+    """One quarantined source row, shaped for per-cell failure highlighting."""
+
+    record_key: str
+    row_values: dict[str, str | None] = Field(default_factory=dict)
+    failed_columns: list[str] = Field(default_factory=list)
+    failures: list[FailingRecordFailureOut] = Field(default_factory=list)
+
+
+class FailingRecordsOut(BaseModel):
+    """Row-level failing sample for one source table.
+
+    *suppressed* is True when the source table carries fine-grained access
+    controls (row filter / column mask) that the copied sample cannot
+    faithfully replicate — the UI shows an explanatory notice instead of
+    rows. An empty, non-suppressed response is also what a caller without
+    SELECT on the source table receives (deliberately indistinguishable
+    from "no failing rows recorded").
+    """
+
+    source_table_fqn: str
+    records: list[FailingRecordOut] = Field(default_factory=list)
+    suppressed: bool = False
+
+
 # ---------------------------------------------------------------------------
 # Metrics models
 # ---------------------------------------------------------------------------
