@@ -272,6 +272,29 @@ class RuleCatalogEntryOut(BaseModel):
     updated_at: str | None = None
 
 
+class RuleHistoryEntryOut(BaseModel):
+    """One recorded change from the ``dq_quality_rules_history`` audit log.
+
+    Backs ``getRuleHistory`` — the per-rule change trail that lets Drafts &
+    Review show a previous-vs-proposed diff for a per-table rule draft. Each
+    row carries the post-state ``check`` payload plus the status transition,
+    so the UI can reconstruct what changed without walking the whole log.
+    """
+
+    rule_id: str | None = None
+    table_fqn: str
+    check: dict[str, Any] | None = Field(
+        default=None, description="Post-state DQX check payload recorded at this change (None if not captured)"
+    )
+    version: int | None = None
+    source: str | None = None
+    action: str
+    prev_status: str | None = None
+    new_status: str | None = None
+    changed_by: str | None = None
+    changed_at: str | None = None
+
+
 class SaveRulesIn(BaseModel):
     table_fqn: str = Field(description="Fully qualified table name (catalog.schema.table)")
     checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
@@ -697,6 +720,20 @@ class MonitoredTableVersionOut(BaseModel):
             created_at=version.created_at.isoformat() if version.created_at else None,
             refrozen_at=version.refrozen_at.isoformat() if version.refrozen_at else None,
         )
+
+
+class MonitoredTableVersionChecksOut(BaseModel):
+    """Frozen ``checks_json`` for one monitored-table version snapshot.
+
+    Backs ``getMonitoredTableVersionChecks`` — the heavy per-version payload
+    that ``listMonitoredTableVersions`` deliberately omits. Lets Drafts &
+    Review diff a binding's previously frozen checks (vN-1) against the
+    proposed (current / vN) rule set.
+    """
+
+    binding_id: str
+    version: int
+    checks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class MonitoredTableSummaryOut(BaseModel):
@@ -1236,6 +1273,42 @@ class DataProductOut(BaseModel):
             updated_by=product.updated_by,
             updated_at=product.updated_at.isoformat() if product.updated_at else None,
         )
+
+
+class DataProductReviewMemberOut(BaseModel):
+    """One member of a Table Space under review, with its governed checks.
+
+    Table Spaces have no per-version snapshot store, so the only prior state
+    recoverable for a review diff is each member binding's currently frozen
+    (pinned, else latest-approved) rule set. Backs ``getDataProductReviewChanges``.
+    """
+
+    binding_id: str
+    table_fqn: str
+    pinned_version: int | None = None
+    binding_version: int = 0
+    checks: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DataProductReviewChangesOut(BaseModel):
+    """Recoverable prior/proposed state for a Table Space pending approval.
+
+    NOTE (documented limitation): the app does not persist a per-version
+    snapshot of a Table Space's membership/definition, so there is no true
+    "previous product version" to diff against. What is recoverable is the
+    CURRENT proposed definition — the members being approved and each
+    member's governed (frozen) checks. The UI presents this with a note that
+    no prior product snapshot exists, rather than fabricating a diff.
+    """
+
+    product_id: str
+    name: str
+    version: int
+    has_prior_snapshot: bool = Field(
+        default=False,
+        description="True when at least one member has a frozen approved snapshot to show",
+    )
+    members: list[DataProductReviewMemberOut] = Field(default_factory=list)
 
 
 class DataProductRunSubmissionOut(BaseModel):

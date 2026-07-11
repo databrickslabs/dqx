@@ -20,6 +20,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     CurrentPrincipalIds,
     CurrentUserRole,
     get_data_product_service,
+    get_monitored_table_version_service,
     get_obo_ws,
     get_permissions_service,
     require_role,
@@ -31,10 +32,13 @@ from databricks_labs_dqx_app.backend.models import (
     AddDataProductMemberIn,
     CreateDataProductIn,
     DataProductOut,
+    DataProductReviewChangesOut,
+    DataProductReviewMemberOut,
     RunDataProductIn,
     RunDataProductOut,
     UpdateDataProductIn,
 )
+from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.data_product_service import (
     BindingNotApprovedError,
     DataProductService,
@@ -98,6 +102,65 @@ def get_data_product(
     except Exception as e:
         logger.error(f"Failed to get data product {product_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get data product: {e}")
+
+
+@router.get(
+    "/{product_id}/review-changes",
+    response_model=DataProductReviewChangesOut,
+    operation_id="getDataProductReviewChanges",
+    dependencies=[require_role(*_VIEWERS_PLUS)],
+)
+def get_data_product_review_changes(
+    product_id: str,
+    svc: Annotated[DataProductService, Depends(get_data_product_service)],
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+) -> DataProductReviewChangesOut:
+    """Return the recoverable prior/proposed state for a Table Space under review.
+
+    Table Spaces have no per-version snapshot store, so there is no true
+    "previous product version" to diff against (documented limitation). What
+    is recoverable is the CURRENT proposed definition — the members being
+    approved and each member's frozen (pinned, else latest-approved) checks.
+    The Drafts & Review popout shows this with a note that no prior product
+    snapshot exists, rather than fabricating a diff.
+    """
+    try:
+        detail = svc.get(product_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"Data product not found: {product_id}")
+        members: list[DataProductReviewMemberOut] = []
+        has_prior = False
+        for member in detail.members:
+            effective_version = member.pinned_version or member.binding_version
+            checks: list[dict[str, object]] = []
+            if effective_version and effective_version > 0:
+                try:
+                    checks = version_svc.get_checks(member.binding_id, effective_version)
+                    if checks:
+                        has_prior = True
+                except LookupError:
+                    checks = []
+            members.append(
+                DataProductReviewMemberOut(
+                    binding_id=member.binding_id,
+                    table_fqn=member.table_fqn,
+                    pinned_version=member.pinned_version,
+                    binding_version=member.binding_version,
+                    checks=checks,
+                )
+            )
+        return DataProductReviewChangesOut(
+            product_id=detail.product.product_id,
+            name=detail.product.name,
+            version=detail.product.version,
+            has_prior_snapshot=has_prior,
+            members=members,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get review changes for data product {product_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get data product review changes: {e}")
 
 
 # ------------------------------------------------------------------

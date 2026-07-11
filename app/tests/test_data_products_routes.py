@@ -10,6 +10,7 @@ middleware.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -352,3 +353,55 @@ class TestRun:
         with pytest.raises(HTTPException) as excinfo:
             run_data_product("p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# getDataProductReviewChanges — Table Space change-diff backing
+# ---------------------------------------------------------------------------
+
+
+class TestReviewChanges:
+    def test_review_changes_is_viewer_plus(self):
+        roles = _route_required_roles("getDataProductReviewChanges")
+        assert UserRole.VIEWER in roles
+
+    def test_404_when_missing(self):
+        svc = MagicMock()
+        svc.get.return_value = None
+        version_svc = MagicMock()
+        with pytest.raises(HTTPException) as exc:
+            dp_routes.get_data_product_review_changes("nope", svc, version_svc)
+        assert exc.value.status_code == 404
+
+    def test_resolves_frozen_checks_per_member(self):
+        member = SimpleNamespace(
+            binding_id="b1", table_fqn="c.s.t", pinned_version=None, binding_version=2
+        )
+        detail = DataProductDetail(product=_product(product_id="p1", name="Orders", version=3))
+        detail.members = [member]  # type: ignore[attr-defined]
+        svc = MagicMock()
+        svc.get.return_value = detail
+        version_svc = MagicMock()
+        version_svc.get_checks.return_value = [{"check": {"function": "is_not_null"}}]
+        out = dp_routes.get_data_product_review_changes("p1", svc, version_svc)
+        assert out.product_id == "p1"
+        assert out.version == 3
+        assert out.has_prior_snapshot is True
+        assert len(out.members) == 1
+        assert out.members[0].checks == [{"check": {"function": "is_not_null"}}]
+        # pinned_version None -> effective = binding_version (2)
+        version_svc.get_checks.assert_called_once_with("b1", 2)
+
+    def test_no_prior_snapshot_when_binding_never_approved(self):
+        member = SimpleNamespace(
+            binding_id="b1", table_fqn="c.s.t", pinned_version=None, binding_version=0
+        )
+        detail = DataProductDetail(product=_product(product_id="p1"))
+        detail.members = [member]  # type: ignore[attr-defined]
+        svc = MagicMock()
+        svc.get.return_value = detail
+        version_svc = MagicMock()
+        out = dp_routes.get_data_product_review_changes("p1", svc, version_svc)
+        assert out.has_prior_snapshot is False
+        assert out.members[0].checks == []
+        version_svc.get_checks.assert_not_called()

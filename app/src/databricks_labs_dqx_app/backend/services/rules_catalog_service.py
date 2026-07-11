@@ -606,6 +606,70 @@ class RulesCatalogService:
             rule_id=row[9] if len(row) > 9 and row[9] else None,
         )
 
+    def get_history(self, rule_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Return a rule's recorded change history (newest first).
+
+        Reads the append-only ``dq_quality_rules_history`` audit trail written
+        by :meth:`_record_history`. Each entry carries the post-state ``check``
+        payload and the ``prev_status``/``new_status`` transition, so callers
+        (Drafts & Review's change-diff popout) can reconstruct a
+        previous-vs-proposed diff without walking the whole log.
+
+        Best-effort read: a warehouse hiccup or malformed row yields an empty
+        list rather than raising — the audit trail is a non-critical read path.
+
+        Args:
+            rule_id: The rule whose history to fetch.
+            limit: Maximum number of newest entries to return.
+
+        Returns:
+            A list of history-entry dicts (newest first), each with keys
+            ``rule_id``, ``table_fqn``, ``check``, ``version``, ``source``,
+            ``action``, ``prev_status``, ``new_status``, ``changed_by``,
+            ``changed_at``.
+        """
+        try:
+            e = escape_sql_string(rule_id)
+            check_text = self._sql.select_json_text(self._check_col)
+            changed_at = self._sql.ts_text("changed_at")
+            sql = (
+                f"SELECT rule_id, table_fqn, {check_text} AS check_json, version, source, "  # noqa: S608
+                f"action, prev_status, new_status, changed_by, {changed_at} AS changed_at "
+                f"FROM {self._history_table} WHERE rule_id = '{e}' "
+                f"ORDER BY changed_at DESC LIMIT {int(limit)}"
+            )
+            rows = self._sql.query(sql)
+            return [self._history_row_to_dict(row) for row in rows]
+        except Exception:
+            logger.warning("Failed to read history for rule %s (non-fatal)", rule_id, exc_info=True)
+            return []
+
+    @staticmethod
+    def _history_row_to_dict(row: list[str]) -> dict[str, Any]:
+        """Map a raw ``dq_quality_rules_history`` row to a serializable dict."""
+        check_raw = row[2]
+        check: dict[str, Any] | None = None
+        if check_raw:
+            try:
+                parsed = json.loads(check_raw, strict=False)
+                if isinstance(parsed, dict):
+                    check = parsed
+            except (json.JSONDecodeError, TypeError):
+                check = None
+        version = int(row[3]) if row[3] not in (None, "") else None
+        return {
+            "rule_id": row[0],
+            "table_fqn": row[1],
+            "check": check,
+            "version": version,
+            "source": row[4],
+            "action": row[5],
+            "prev_status": row[6],
+            "new_status": row[7],
+            "changed_by": row[8],
+            "changed_at": row[9],
+        }
+
     def _record_history(
         self,
         *,

@@ -327,3 +327,61 @@ class TestRuleCatalogEntry:
         assert e.version == 4
         assert e.status == "approved"
         assert e.rule_id == "abc123"
+
+
+# ---------------------------------------------------------------------------
+# get_history / _history_row_to_dict — Drafts & Review change-diff backing
+# ---------------------------------------------------------------------------
+
+
+class TestHistoryRowToDict:
+    def test_parses_full_row(self):
+        row = [
+            "rule-1",
+            "cat.sch.tbl",
+            '{"check": {"function": "is_not_null"}, "criticality": "error"}',
+            "3",
+            "ui",
+            "approve",
+            "pending_approval",
+            "approved",
+            "alice@x",
+            "2026-07-01 12:00:00",
+        ]
+        out = RulesCatalogService._history_row_to_dict(row)
+        assert out["rule_id"] == "rule-1"
+        assert out["table_fqn"] == "cat.sch.tbl"
+        assert out["check"] == {"check": {"function": "is_not_null"}, "criticality": "error"}
+        assert out["version"] == 3
+        assert out["action"] == "approve"
+        assert out["prev_status"] == "pending_approval"
+        assert out["new_status"] == "approved"
+        assert out["changed_by"] == "alice@x"
+
+    def test_null_check_and_version_tolerated(self):
+        row = ["rule-1", "cat.sch.tbl", None, "", "ui", "create", None, "draft", "bob@x", None]
+        out = RulesCatalogService._history_row_to_dict(row)
+        assert out["check"] is None
+        assert out["version"] is None
+        assert out["changed_at"] is None
+
+    def test_malformed_check_json_becomes_none(self):
+        row = ["r", "a.b.c", "{not valid json", "1", "ui", "edit", None, None, None, None]
+        out = RulesCatalogService._history_row_to_dict(row)
+        assert out["check"] is None
+
+
+class TestGetHistory:
+    def test_returns_mapped_rows_newest_first(self, svc):
+        svc._sql.query.return_value = [
+            ["r", "a.b.c", '{"function": "is_not_null"}', "2", "ui", "submit", "draft", "pending_approval", "a@x", "t2"],
+            ["r", "a.b.c", '{"function": "is_not_null"}', "1", "ui", "create", None, "draft", "a@x", "t1"],
+        ]
+        out = svc.get_history("r")
+        assert len(out) == 2
+        assert out[0]["action"] == "submit"
+        assert out[1]["action"] == "create"
+
+    def test_swallows_query_error(self, svc):
+        svc._sql.query.side_effect = RuntimeError("warehouse down")
+        assert svc.get_history("r") == []

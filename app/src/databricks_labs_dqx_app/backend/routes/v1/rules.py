@@ -19,6 +19,7 @@ from databricks_labs_dqx_app.backend.models import (
     CheckDuplicatesIn,
     CheckDuplicatesOut,
     RuleCatalogEntryOut,
+    RuleHistoryEntryOut,
     SaveRulesIn,
     SetStatusIn,
 )
@@ -141,6 +142,30 @@ async def list_rules(
     except Exception as e:
         logger.error(f"Failed to list rules: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list rules: {e}")
+
+
+@router.get(
+    "/{rule_id}/history",
+    response_model=list[RuleHistoryEntryOut],
+    operation_id="getRuleHistory",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def get_rule_history(
+    rule_id: str,
+    svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+) -> list[RuleHistoryEntryOut]:
+    """Return a per-table rule's recorded change history (newest first).
+
+    Backs the Drafts & Review change-diff popout: reads the
+    ``dq_quality_rules_history`` audit trail so the UI can diff the two most
+    recent recorded ``check`` payloads (previous vs proposed). Declared BEFORE
+    the ``/{table_fqn:path}`` catch-all so the more-specific pattern wins.
+    """
+    try:
+        return [RuleHistoryEntryOut(**entry) for entry in svc.get_history(rule_id)]
+    except Exception as e:
+        logger.error(f"Failed to get history for rule {rule_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get rule history: {e}")
 
 
 @router.get(

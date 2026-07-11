@@ -41,6 +41,7 @@ from databricks_labs_dqx_app.backend.models import (
     MonitoredTableProfileOut,
     MonitoredTableReviewOut,
     MonitoredTableSummaryOut,
+    MonitoredTableVersionChecksOut,
     MonitoredTableVersionOut,
     RegisterMonitoredTableIn,
     RunMonitoredTableIn,
@@ -332,6 +333,37 @@ def list_monitored_table_versions(
     except Exception as e:
         logger.error(f"Failed to list versions for monitored table {binding_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list monitored table versions: {e}")
+
+
+@router.get(
+    "/{binding_id}/versions/{version}/checks",
+    response_model=MonitoredTableVersionChecksOut,
+    operation_id="getMonitoredTableVersionChecks",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def get_monitored_table_version_checks(
+    binding_id: str,
+    version: int,
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+) -> MonitoredTableVersionChecksOut:
+    """Return the frozen ``checks_json`` for a specific monitored-table version.
+
+    Complements ``listMonitoredTableVersions`` (metadata only): this is the
+    heavy per-version check payload that backs the Drafts & Review change-diff
+    popout, letting the UI diff a binding's previously frozen checks (vN-1)
+    against the proposed (current) rule set. Returns an empty ``checks`` list
+    when no snapshot exists for the requested version.
+    """
+    try:
+        checks = version_svc.get_checks(binding_id, version)
+    except LookupError:
+        checks = []
+    except Exception as e:
+        logger.error(
+            f"Failed to get frozen checks for monitored table {binding_id} v{version}: {e}", exc_info=True
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to get monitored table version checks: {e}")
+    return MonitoredTableVersionChecksOut(binding_id=binding_id, version=version, checks=checks)
 
 
 @router.post(
