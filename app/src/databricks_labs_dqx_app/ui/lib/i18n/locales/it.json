@@ -2292,6 +2292,7 @@
     "failedOfChecks": "{{failed}} falliti su {{total}} controlli",
     "failedChecks": "{{failed}} controlli falliti",
     "latestRun": "Più recente",
+    "draftRunMarker": "(bozza)",
     "runModeAria": "Modalità di esecuzione",
     "runModePublishedOnly": "Solo pubblicate",
     "runModePublishedDraft": "Pubblicate + bozze",

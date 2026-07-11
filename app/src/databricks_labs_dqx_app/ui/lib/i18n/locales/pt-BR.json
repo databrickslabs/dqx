@@ -2292,6 +2292,7 @@
     "failedOfChecks": "{{failed}} reprovadas de {{total}} verificações",
     "failedChecks": "{{failed}} verificações reprovadas",
     "latestRun": "Mais recente",
+    "draftRunMarker": "(rascunho)",
     "runModeAria": "Modo de execução",
     "runModePublishedOnly": "Somente publicadas",
     "runModePublishedDraft": "Publicadas + rascunhos",

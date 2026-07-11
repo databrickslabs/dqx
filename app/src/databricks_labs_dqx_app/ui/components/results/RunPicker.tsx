@@ -13,10 +13,18 @@ export type Run = {
   run_id: string;
   run_ts?: string | null;
   pass_rate?: number | null;
+  /** Run provenance ('draft' | 'published'); only present in Published+Draft
+   *  mode. When 'draft' the label is tagged with `draftMarker`. */
+  run_mode?: string | null;
 };
 
-/** Human-readable run label, e.g. "11 Jun 09:51 · 95%". */
-export function formatRun(run: Run): string {
+/**
+ * Human-readable run label, e.g. "11 Jun 09:51 · 95%". When the run is a draft
+ * run (`run_mode === "draft"`) and a `draftMarker` is supplied, it is appended
+ * (e.g. "11 Jun 09:51 · 95% (draft)") so draft-dated runs are distinguishable
+ * in Published+Draft mode. Published runs are never tagged.
+ */
+export function formatRun(run: Run, draftMarker?: string): string {
   let label = run.run_id;
   if (run.run_ts) {
     const d = new Date(run.run_ts);
@@ -31,6 +39,9 @@ export function formatRun(run: Run): string {
   }
   if (run.pass_rate != null) {
     label += ` · ${Math.round(run.pass_rate * 100)}%`;
+  }
+  if (draftMarker && run.run_mode === "draft") {
+    label += ` ${draftMarker}`;
   }
   return label;
 }
@@ -61,13 +72,14 @@ export function RunPicker({
   onChange: (runId: string | null) => void;
 }) {
   const { t } = useTranslation();
+  const draftMarker = t("resultsUi.draftRunMarker");
   const latestRunId = runs[0]?.run_id ?? null;
   // `null` (no pinned run) AND an explicit pin of the latest run are the same
   // selection — both resolve to the latest run, and both read "Latest".
   const isLatestSelected = value == null || value === latestRunId;
   const selected = value ? runs.find((r) => r.run_id === value) : undefined;
   const triggerLabel =
-    !selected || isLatestSelected ? t("resultsUi.latestRun") : formatRun(selected);
+    !selected || isLatestSelected ? t("resultsUi.latestRun") : formatRun(selected, draftMarker);
 
   return (
     <DropdownMenu>
@@ -95,7 +107,7 @@ export function RunPicker({
               onSelect={() => onChange(isLatest ? null : run.run_id)}
               className={cn("font-mono text-xs", isSelected && "bg-muted")}
             >
-              {formatRun(run)}
+              {formatRun(run, draftMarker)}
             </DropdownMenuItem>
           );
         })}

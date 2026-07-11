@@ -2292,6 +2292,7 @@
     "failedOfChecks": "{{failed}} fallidas de {{total}} comprobaciones",
     "failedChecks": "{{failed}} comprobaciones fallidas",
     "latestRun": "Más reciente",
+    "draftRunMarker": "(borrador)",
     "runModeAria": "Modo de ejecución",
     "runModePublishedOnly": "Solo publicadas",
     "runModePublishedDraft": "Publicadas + borradores",

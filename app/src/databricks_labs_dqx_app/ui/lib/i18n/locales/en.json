@@ -2292,6 +2292,7 @@
     "failedOfChecks": "{{failed}} failed of {{total}} checks",
     "failedChecks": "{{failed}} failed checks",
     "latestRun": "Latest",
+    "draftRunMarker": "(draft)",
     "runModeAria": "Run mode",
     "runModePublishedOnly": "Published only",
     "runModePublishedDraft": "Published + Draft",
