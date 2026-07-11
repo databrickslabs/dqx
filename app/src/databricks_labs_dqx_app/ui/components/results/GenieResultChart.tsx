@@ -59,6 +59,52 @@ const VALUE_PREF_RE = /(pass.?rate|rate|score|pct|percent|delta|count|failed|tes
 // (e.g. record_key, rule_id) — charting them produces nonsense.
 const ID_RE = /(^id$|_id$|record_key|^key$|_key$|version)/i;
 
+// At/above this many points a categorical x-axis is treated as an ordered
+// sequence (a trend) rather than discrete comparison bars: a dozen cramped,
+// angled bar labels read worse than a line, and long axes are almost always
+// ordered in practice (time buckets, top-N rankings). Below it, a few
+// categories stay as bars.
+const LINE_MIN_POINTS = 8;
+
+/** True when the sequence is sorted non-decreasing OR non-increasing — i.e. an
+ *  already-ordered numeric axis (a trend), not a scrambled set of categories. */
+function isMonotonic(nums: number[]): boolean {
+  if (nums.length < 2) return false;
+  let nonDecreasing = true;
+  let nonIncreasing = true;
+  for (let i = 1; i < nums.length; i++) {
+    if (nums[i] < nums[i - 1]) nonDecreasing = false;
+    if (nums[i] > nums[i - 1]) nonIncreasing = false;
+  }
+  return nonDecreasing || nonIncreasing;
+}
+
+/**
+ * Line vs bar. A line reads as a trend over an ORDERED x-axis; a bar reads as a
+ * comparison across discrete, unordered categories. dqlake only ever picked a
+ * line when the label column NAME matched TIME_RE; this broadens it to any
+ * ordered x-axis. Choose a line when:
+ *  - the column NAME is time-like (run_ts / date / month / year / ...), OR
+ *  - the labels are all numeric AND already monotonic (an ordered numeric axis
+ *    such as a bucket index or day-of-month), OR
+ *  - there are many points (>= LINE_MIN_POINTS): a long category axis is
+ *    unreadable as bars and is almost always ordered.
+ * Otherwise (a small, unordered categorical) keep a bar.
+ *
+ * NOTE: the numeric-monotonic branch is a defensive guard — planChart requires
+ * the label axis to be a NON-numeric column, so all-numeric labels normally
+ * never reach here; it still fires for a numeric-looking column that fell below
+ * isNumericColumn's threshold. Exported (with the helper) for the unit tests.
+ */
+export function chooseChartKind(labelColumn: string, labels: string[]): "bar" | "line" {
+  if (TIME_RE.test(labelColumn)) return "line";
+  const nums = labels.map((l) => toNumber(l));
+  const allNumeric = nums.every((n) => n != null);
+  if (allNumeric && isMonotonic(nums as number[])) return "line";
+  if (labels.length >= LINE_MIN_POINTS) return "line";
+  return "bar";
+}
+
 /** Themed tooltip — recharts' default is a solid white box, which hides the
  *  (often light) series text in dark mode. Match the app's popover tokens. */
 function ChartTooltip({
@@ -129,9 +175,9 @@ export function planChart(columns: string[], rows: (string | null)[][]): Plan | 
   }
   if (data.length < 2) return null;
 
-  // A time-like label reads as a trend (line); anything else is a comparison
-  // across categories (bar).
-  const kind = TIME_RE.test(columns[labelIdx] ?? "") ? "line" : "bar";
+  // Line for an ordered x-axis (time-like name / monotonic-numeric / many
+  // points), bar for a small unordered categorical — see chooseChartKind.
+  const kind = chooseChartKind(columns[labelIdx] ?? "", data.map((d) => d.label));
   return { kind, labelIdx, valueIdx, valueName: columns[valueIdx] ?? "value", data };
 }
 

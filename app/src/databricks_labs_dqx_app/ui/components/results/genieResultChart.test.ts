@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { planChart, toNumber } from "./GenieResultChart";
+import { chooseChartKind, planChart, toNumber } from "./GenieResultChart";
 
 describe("toNumber", () => {
   it("parses plain numbers and strips a trailing %", () => {
@@ -52,6 +52,24 @@ describe("planChart", () => {
       [
         ["2026-07-01", "99.1%"],
         ["2026-07-02", "97.4%"],
+      ],
+    );
+    expect(plan?.kind).toBe("bar");
+  });
+
+  it("plans a line when there are many categories (long ordered axis)", () => {
+    const rows = Array.from({ length: 10 }, (_, i) => [`c${i}`, String(i)]);
+    const plan = planChart(["category", "failed_tests"], rows);
+    expect(plan?.kind).toBe("line");
+  });
+
+  it("keeps a bar for a few unordered categories", () => {
+    const plan = planChart(
+      ["rule_name", "failed_tests"],
+      [
+        ["Email Format Valid", "408"],
+        ["Account Tier Valid", "12"],
+        ["Phone Valid", "77"],
       ],
     );
     expect(plan?.kind).toBe("bar");
@@ -113,5 +131,29 @@ describe("planChart", () => {
     const rows = Array.from({ length: 20 }, (_, i) => [`c${i}`, String(i)]);
     const plan = planChart(["category", "failed_tests"], rows);
     expect(plan?.data).toHaveLength(12);
+  });
+});
+
+describe("chooseChartKind", () => {
+  it("chooses line for a time-like column name", () => {
+    expect(chooseChartKind("month", ["Jan", "Feb", "Mar"])).toBe("line");
+  });
+
+  it("chooses line for all-numeric monotonic labels", () => {
+    expect(chooseChartKind("bucket", ["1", "2", "3"])).toBe("line");
+    expect(chooseChartKind("bucket", ["30", "20", "10"])).toBe("line");
+  });
+
+  it("chooses bar for all-numeric but unordered labels", () => {
+    expect(chooseChartKind("bucket", ["3", "1", "2"])).toBe("bar");
+  });
+
+  it("chooses line once there are many categories", () => {
+    const many = Array.from({ length: 8 }, (_, i) => `c${i}`);
+    expect(chooseChartKind("category", many)).toBe("line");
+  });
+
+  it("chooses bar for a few unordered categories", () => {
+    expect(chooseChartKind("severity", ["High", "Low", "Medium"])).toBe("bar");
   });
 });
