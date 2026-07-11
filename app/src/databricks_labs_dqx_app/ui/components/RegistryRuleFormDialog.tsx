@@ -332,7 +332,7 @@ function SectionHeader({
   return (
     <div className="flex items-center justify-between gap-3">
       <div className="flex items-center gap-1.5">
-        <h3 className="text-xs font-medium leading-none">{children}</h3>
+        <h2 className="text-sm font-semibold leading-none">{children}</h2>
         {tooltip && <HelpTooltip text={tooltip} />}
       </div>
       {action}
