@@ -74,7 +74,6 @@ import {
   useListRegistryRules,
   useGetTableColumns,
   useListMonitoredTableVersions,
-  useGetRunSet,
   useRunMonitoredTable,
   useSuggestRulesForTable,
   usePreviewTableData,
@@ -98,12 +97,10 @@ import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
-import {
-  invalidateResultsAfterRuleApplicationChange,
-  invalidateResultsAfterRunCompletion,
-} from "@/lib/results-invalidation";
+import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import { useLabelDefinitions, useWorkspaceHost } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useMonitoredTableRunActivity } from "@/hooks/use-monitored-table-run-activity";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import { formatDateShort } from "@/lib/format-utils";
@@ -260,35 +257,13 @@ function MonitoredTableDetailPage() {
     [queryClient, bindingId],
   );
 
-  // -- Active-run-scoped tracking (P3.6) ----------------------------------
-  // When a run is triggered FROM this page (the header's Run action), poll
-  // THAT run set's status until it settles, then fire the run-completion
-  // invalidation (which also triggers the server-side score-cache refresh)
-  // and stop. This is NOT idle polling: `trackedRunSetId` is null unless a
-  // run was started here, and the query is disabled whenever it is null —
-  // runs triggered elsewhere are still covered by the Runs History /
-  // run-set polls' completion detectors, as before. While tracking, the
-  // Results tab shows dqlake's in-progress banner.
-  const [trackedRunSetId, setTrackedRunSetId] = useState<string | null>(null);
-  const trackedRunSetQuery = useGetRunSet(trackedRunSetId ?? "", {
-    query: {
-      enabled: trackedRunSetId != null,
-      refetchInterval: 4000,
-      refetchIntervalInBackground: false,
-      staleTime: 0,
-    },
-  });
-  const trackedRunSetStatus =
-    trackedRunSetId != null ? trackedRunSetQuery.data?.data?.status : undefined;
-  const tableFqnForInvalidation = table.table_fqn;
-  useEffect(() => {
-    if (trackedRunSetStatus == null || trackedRunSetStatus === "running") return;
-    // Terminal (success/failed/canceled): stop tracking — dropping the id
-    // disables the poll — and refresh the results/score queries for this
-    // table so the tab reflects the finished run without a reload.
-    setTrackedRunSetId(null);
-    invalidateResultsAfterRunCompletion(queryClient, [tableFqnForInvalidation]);
-  }, [trackedRunSetStatus, queryClient, tableFqnForInvalidation]);
+  // Binding-scoped run-in-progress signal (item 69). Tracks a run set
+  // triggered from this page (persisted across reloads via sessionStorage),
+  // polls it to completion, and refreshes this table's results/score once it
+  // settles. Shared by the Run action (spinner/disable) and the Results-tab
+  // in-progress banner — replaces the old in-component `trackedRunSetId` state,
+  // which was lost on reload.
+  const runActivity = useMonitoredTableRunActivity(bindingId, { tableFqn: table.table_fqn });
 
   // ---------------------------------------------------------------------
   // Staged editor (P16-F) — every add/mapping-edit/severity-override/pin/
@@ -548,8 +523,9 @@ function MonitoredTableDetailPage() {
                 bindingId={bindingId}
                 table={table}
                 isDirty={isDirty}
+                runInProgress={runActivity.hasActive}
                 onSaveDraft={saveDraft}
-                onRunStarted={setTrackedRunSetId}
+                onRunStarted={runActivity.registerRun}
                 {...computeRunGating(baseline.length, stagedRows.length)}
               />
             )}
@@ -744,7 +720,7 @@ function MonitoredTableDetailPage() {
               tableName={tableName}
               tableFqn={table.table_fqn}
               neverApproved={(table.version ?? 0) === 0}
-              runInProgress={trackedRunSetId != null}
+              runInProgress={runActivity.hasActive}
             />
           </TabsContent>
 
@@ -842,6 +818,7 @@ function RunTableAction({
   bindingId,
   table,
   isDirty,
+  runInProgress = false,
   onSaveDraft,
   onRunStarted,
   runNowHasRules,
@@ -850,6 +827,10 @@ function RunTableAction({
   bindingId: string;
   table: MonitoredTableOut;
   isDirty: boolean;
+  /** True while a run triggered from this page is still executing (item 69) —
+   *  shows a spinner and (item 58) disables every run affordance so a second
+   *  run can't be launched on top of the in-flight one. */
+  runInProgress?: boolean;
   onSaveDraft: () => Promise<boolean>;
   /** Reports the just-submitted run set's id so the page can track it to
    *  completion (in-progress banner + results refresh on settle). */
@@ -931,7 +912,7 @@ function RunTableAction({
                 disabled={!hasApproved || runMutation.isPending || noRulesRunNow}
                 className="gap-2 rounded-r-none"
               >
-                {runMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                {runMutation.isPending || runInProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                 {hasApproved
                   ? t("monitoredTables.runNowButton", { version: table.version })
                   : t("monitoredTables.runNowButtonNoVersion")}
