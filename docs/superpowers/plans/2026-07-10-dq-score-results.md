@@ -1798,6 +1798,35 @@ User: dqlake's space instructions read wrong ("something's not quite right in th
 
 ### Task P3.12: Genie verification + final whole-branch re-review of Phase 3
 
+---
+
+# PHASE 4 (user-approved 2026-07-11): Genie row-level access via OBO + entitlement cache
+
+Design approved by the user: Genie conversations run as the calling user (OBO), and row-level access flows through a dynamic view gated by a self-verified entitlement cache — no MANAGE grants, no ACL mirroring, drift bounded by TTL. Cold start solved by pre-verifying the tables already on the user's screen (context table / product members / global by_table). Genie load unaffected (verification is fire-and-forget async).
+
+### Task P4.1: Entitlement cache + gated dynamic view (backend)
+
+- New UC Delta table `<catalog>.<schema>.dq_user_table_entitlements(user_email STRING, table_fqn STRING, verified_at TIMESTAMP)` — created idempotently in the same startup ensure step as the score views (it must be a UC object: the dynamic view references it). SP-written only.
+- New dynamic view `v_dq_failing_rows` over `dq_quarantine_records` with `WHERE EXISTS (... e.user_email = current_user() AND e.table_fqn = q.source_table_fqn AND e.verified_at > current_timestamp() - INTERVAL 24 HOURS)` — fail-safe empty. Created in the ensure step.
+- Startup grants (same precedent as the existing `GRANT USE CATALOG` in app.py): `GRANT SELECT` on `mv_dq_scores`, `v_dq_check_results`, `v_dq_check_attribution`, `v_dq_failing_rows` + `USE SCHEMA` to `account users` (required once Genie runs OBO). The entitlement table itself gets NO user grants (SP-only; the dynamic view reads it with definer's rights).
+- `EntitlementService`: `verify_and_record(obo_sql, user_email, fqns)` — for each fqn (validate_fqn first), skip if a fresh cache row exists (one SP read), else run the existing `QuarantineSampleService.user_can_select` OBO probe concurrently (bounded parallelism, e.g. 5), upsert successes SP-side. Never raises to callers; returns per-fqn outcome.
+- `POST /api/v1/genie/verify-entitlements {table_fqns: [...]}` — viewer+, cap 50, fire-and-forget-friendly (fast 202-style response; verification inline but bounded — implementer judgment, note it).
+- Piggyback: the dq-results failed-rows path already runs `user_can_select` — on success, upsert the entitlement row there too.
+- Tests: probe-skip-on-fresh-row, TTL expiry, concurrent bounded verification, fail-closed on probe error, DDL pins for table+view+grants, endpoint cap/validation/RBAC.
+
+### Task P4.2: OBO Genie chat + space row-source restoration
+
+- Chat proxy (`genie_chat_service` + routes): conversation start/poll/ask/feedback switch from the SP client to the caller's OBO `WorkspaceClient` (provisioning stays SP). Verify live on the dev workspace whether the OBO token's scopes permit the Genie conversation API — if blocked, KEEP SP chat, report the exact error, and stop (the user decides on scope expansion; do not silently ship a broken switch).
+- Space update: add `v_dq_failing_rows` as a fourth data source (description grounded in real columns; note VARIANT payload columns); restore the row-source instructions element REWRITTEN in the established voice (one short paragraph: query v_dq_failing_rows for failing-record requests, return whole records via to_json(row_data) style if applicable to our VARIANT schema — check the real quarantine columns; explain empty results may mean the table hasn't been opened in DQX Studio); restore the two dropped sample questions + curated SQLs for them (verify against real columns; run_mode-filtered via the run_id subselect pattern from P3.3).
+- config-hash change self-PATCHes the existing space on next startup (established mechanism).
+- Tests: serialized_space pins updated deliberately; OBO-identity pin on chat calls (mocked); instructions coverage test if one exists.
+
+### Task P4.3: UI pre-verification + E2E verify + deploy
+
+- Fire-and-forget POST to verify-entitlements when: the Genie sidebar opens (context table / product member FQNs — the provider already has them), and when a results surface renders its by_table list (global page: cap the first 25). No UI blocking, silent failure.
+- E2E on the deployed app: entitlement row appears after opening a table's results; Genie (OBO) answers a "show failing rows" question for a verified table; returns empty for an unverified one; aggregate questions still work.
+- Deploy + install-contract check.
+
 ## Deferred (explicitly out of scope)
 
 - Product-level batch run ids in dq_metrics (would restore full product run-picker parity) — requires run-submission changes; backlog.
