@@ -55,7 +55,14 @@ export function MemberVersionPin({ bindingVersion, pinnedVersion, onPinChange }:
       : t("dataProducts.pinLatestVersioned", { version: bindingVersion });
 
   const badge = (
-    <Badge variant="outline" className="font-mono text-[10px] shrink-0 gap-1 whitespace-nowrap">
+    // Item 41(b): the outline badge's transparent fill read as invisible
+    // against the picker row. Give it a subtle fill that inverts per theme —
+    // a faint dark tint in light mode, a faint light tint in dark mode — so
+    // the trigger stays legible as a control in both.
+    <Badge
+      variant="outline"
+      className="font-mono text-[10px] shrink-0 gap-1 whitespace-nowrap bg-foreground/5 dark:bg-foreground/15"
+    >
       {label}
       {stale && <AlertTriangle className="h-3 w-3 text-amber-500" aria-hidden />}
       {onPinChange && hasVersions && <span aria-hidden>&#x25BE;</span>}

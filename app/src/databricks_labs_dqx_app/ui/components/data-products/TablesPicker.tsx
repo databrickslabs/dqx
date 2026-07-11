@@ -208,6 +208,17 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
     onChange(next);
   }
 
+  // Item 41(c): interacting with the version picker also selects the row.
+  // This is an idempotent add (never a toggle), so opening the picker on an
+  // unselected row marks it selected, while the wrapper's stopPropagation
+  // keeps the whole-row onClick from also firing and double-toggling it.
+  function selectRow(key: string) {
+    if (!isSelectable(key) || selected.has(key)) return;
+    const next = new Set(selected);
+    next.add(key);
+    onChange(next);
+  }
+
   function toggleGroup(groupRows: MonitoredTableSummaryOut[]) {
     const selectableKeys = groupRows.map((r) => r.table.binding_id).filter(isSelectable);
     const allSelected = selectableKeys.length > 0 && selectableKeys.every((k) => selected.has(k));
@@ -408,10 +419,18 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                         )}
                         {/* Version pin, inline right after the table name —
                             P24 item 16 (replaces the old standalone "Version
-                            to track" section). Shown once the row is
-                            checked, same reveal condition as "not ready". */}
-                        {!isDisabled && selected.has(key) && (
-                          <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                            to track" section). Item 41(a): always shown for
+                            selectable rows, not only after selection, so the
+                            pin choice is visible up front. Clicking it selects
+                            the row via selectRow (41c). */}
+                        {!isDisabled && (
+                          <span
+                            className="shrink-0"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              selectRow(key);
+                            }}
+                          >
                             <MemberVersionPin
                               bindingVersion={r.table.version ?? 0}
                               pinnedVersion={pins.get(key) ?? null}
@@ -534,11 +553,18 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                                 </Tooltip>
                               )}
                               {/* Version pin, inline right after the table
-                                  name — P24 item 16. Shown once the row is
-                                  checked, same reveal condition as "not
-                                  ready". */}
-                              {!isDisabled && selected.has(key) && (
-                                <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                                  name — P24 item 16. Item 41(a): always shown
+                                  for selectable rows, not only after
+                                  selection. Clicking it selects the row via
+                                  selectRow (41c). */}
+                              {!isDisabled && (
+                                <span
+                                  className="shrink-0"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    selectRow(key);
+                                  }}
+                                >
                                   <MemberVersionPin
                                     bindingVersion={r.table.version ?? 0}
                                     pinnedVersion={pins.get(key) ?? null}
