@@ -9,6 +9,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronUp, Lock, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
@@ -194,7 +195,14 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultWidth: 90,
     sortable: true,
     renderHeader: (label) => label,
-    renderCell: (r) => <span className="text-xs text-muted-foreground font-mono">v{r.version}</span>,
+    renderCell: (r) =>
+      r.version <= 0 ? (
+        <span className="text-muted-foreground">—</span>
+      ) : (
+        <Badge variant="secondary" className="font-mono text-[10px]">
+          v{r.version}
+        </Badge>
+      ),
   },
   steward: {
     labelKey: "rulesRegistry.colSteward",
