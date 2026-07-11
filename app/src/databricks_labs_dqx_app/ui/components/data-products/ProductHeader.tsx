@@ -473,7 +473,13 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
               disabled={runPending || runnableCount === 0}
               size="sm"
               className="gap-2"
-              title={runnableCount === 0 ? t("dataProducts.runNowDisabledHint") : undefined}
+              title={
+                runnableCount === 0
+                  ? t("dataProducts.runNowDisabledHint")
+                  : hasActive
+                    ? t("dataProducts.runInProgressHint")
+                    : undefined
+              }
             >
               {runPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               {runPending ? t("dataProducts.runningLabel") : t("dataProducts.runNowButton")}

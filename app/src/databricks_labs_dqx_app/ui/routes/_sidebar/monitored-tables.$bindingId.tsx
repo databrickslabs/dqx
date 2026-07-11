@@ -906,10 +906,10 @@ function RunTableAction({
       <TooltipProvider delayDuration={200}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className={cn((!hasApproved || noRulesRunNow) && "cursor-not-allowed")}>
+            <span className={cn((!hasApproved || noRulesRunNow || runInProgress) && "cursor-not-allowed")}>
               <Button
                 onClick={() => handleRun("approved")}
-                disabled={!hasApproved || runMutation.isPending || noRulesRunNow}
+                disabled={!hasApproved || runMutation.isPending || noRulesRunNow || runInProgress}
                 className="gap-2 rounded-r-none"
               >
                 {runMutation.isPending || runInProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
@@ -919,7 +919,9 @@ function RunTableAction({
               </Button>
             </span>
           </TooltipTrigger>
-          {noRulesRunNow ? (
+          {runInProgress ? (
+            <TooltipContent side="bottom">{t("monitoredTables.runInProgressHint")}</TooltipContent>
+          ) : noRulesRunNow ? (
             <TooltipContent side="bottom">{t("monitoredTables.runDisabledNoRulesHint")}</TooltipContent>
           ) : (
             !hasApproved && <TooltipContent side="bottom">{t("monitoredTables.runNowDisabledHint")}</TooltipContent>
@@ -930,7 +932,7 @@ function RunTableAction({
         <DropdownMenuTrigger asChild>
           <Button
             className="rounded-l-none border-l border-primary-foreground/20 px-2"
-            disabled={runMutation.isPending}
+            disabled={runMutation.isPending || runInProgress}
             aria-label={t("monitoredTables.runMenuAria")}
           >
             <ChevronDown className="h-4 w-4" />
@@ -943,7 +945,7 @@ function RunTableAction({
               <TooltipTrigger asChild>
                 <span className={cn((!canRunDraft || noRulesRunDraft) && "cursor-not-allowed")}>
                   <DropdownMenuItem
-                    disabled={!canRunDraft || runMutation.isPending || runDraftBusy || noRulesRunDraft}
+                    disabled={!canRunDraft || runMutation.isPending || runDraftBusy || noRulesRunDraft || runInProgress}
                     onSelect={(e) => {
                       e.preventDefault();
                       void handleRunDraft();
@@ -964,7 +966,11 @@ function RunTableAction({
           </TooltipProvider>
           {versions.length > 0 && <DropdownMenuSeparator />}
           {versions.map((v: MonitoredTableVersionOut) => (
-            <DropdownMenuItem key={v.version} onSelect={() => handleRun("approved", v.version)}>
+            <DropdownMenuItem
+              key={v.version}
+              disabled={runMutation.isPending || runInProgress}
+              onSelect={() => handleRun("approved", v.version)}
+            >
               {t("monitoredTables.runVersionOption", { version: v.version })}
             </DropdownMenuItem>
           ))}
