@@ -2317,6 +2317,7 @@
     "downloadExcel": "Excel",
     "noRunsYet": "No runs yet.",
     "passRateSeries": "Pass rate",
+    "resetZoom": "Reset zoom",
     "overallSeries": "Overall",
     "averageSeries": "Average",
     "countInfo": "A <b>rule</b> is a piece of reusable logic. A <b>check</b> is when a rule gets applied to a column/set of columns. A <b>test</b> is when a check runs against a data row",

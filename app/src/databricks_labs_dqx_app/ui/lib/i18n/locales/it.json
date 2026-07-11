@@ -2317,6 +2317,7 @@
     "downloadExcel": "Excel",
     "noRunsYet": "Ancora nessuna esecuzione.",
     "passRateSeries": "Tasso di superamento",
+    "resetZoom": "Reimposta zoom",
     "overallSeries": "Complessivo",
     "averageSeries": "Media",
     "countInfo": "Una <b>regola</b> è una logica riutilizzabile. Un <b>controllo</b> è quando una regola viene applicata a una colonna o a un insieme di colonne. Un <b>test</b> è quando un controllo viene eseguito su una riga di dati",

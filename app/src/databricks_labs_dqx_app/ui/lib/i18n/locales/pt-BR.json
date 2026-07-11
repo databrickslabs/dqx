@@ -2317,6 +2317,7 @@
     "downloadExcel": "Excel",
     "noRunsYet": "Ainda sem execuções.",
     "passRateSeries": "Taxa de aprovação",
+    "resetZoom": "Redefinir zoom",
     "overallSeries": "Geral",
     "averageSeries": "Média",
     "countInfo": "Uma <b>regra</b> é uma lógica reutilizável. Uma <b>verificação</b> é quando uma regra é aplicada a uma coluna ou conjunto de colunas. Um <b>teste</b> é quando uma verificação é executada em uma linha de dados",

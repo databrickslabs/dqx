@@ -8,6 +8,7 @@ import {
   ComposedChart,
   Legend,
   Line,
+  ReferenceArea,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -549,6 +550,65 @@ export function ScoreTrendChart({
   }, [points]);
   const hasTimeTicks = timeTicks.length > 1;
 
+  // ── Drag-select-to-zoom (all modes share the numeric time X-axis, so the
+  // same mechanism is sensible for percent single/multi, count and overall
+  // charts). Mouse-down anchors one edge, dragging tracks the other, and
+  // mouse-up commits a [minTs, maxTs] zoom window. A plain click (no drag →
+  // both edges equal) commits nothing, so per-series onClick still works.
+  const [dragStart, setDragStart] = useState<number | null>(null);
+  const [dragEnd, setDragEnd] = useState<number | null>(null);
+  const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
+  const dragging = dragStart != null && dragEnd != null && dragStart !== dragEnd;
+  const zoomed = zoomDomain != null;
+
+  // Recharts passes the chart state as the first mouse-handler arg; only
+  // `activeLabel` (the ts under the cursor) is needed here.
+  type ChartMouseState = { activeLabel?: string | number } | null;
+  const tsFromState = (s: ChartMouseState): number | null => {
+    const v = s?.activeLabel;
+    return typeof v === "number" ? v : typeof v === "string" ? Number(v) : null;
+  };
+  const handleMouseDown = (s: ChartMouseState) => {
+    const ts = tsFromState(s);
+    if (ts == null) return;
+    setDragStart(ts);
+    setDragEnd(null);
+  };
+  const handleMouseMove = (s: ChartMouseState) => {
+    if (dragStart == null) return;
+    const ts = tsFromState(s);
+    if (ts != null) setDragEnd(ts);
+  };
+  const handleMouseUp = () => {
+    if (dragStart != null && dragEnd != null && dragStart !== dragEnd) {
+      setZoomDomain([Math.min(dragStart, dragEnd), Math.max(dragStart, dragEnd)]);
+    }
+    setDragStart(null);
+    setDragEnd(null);
+  };
+  const resetZoom = () => setZoomDomain(null);
+
+  // Effective X domain + ticks: when zoomed, recompute nice time ticks within
+  // the zoom window (clipped to it); otherwise use the full-range niceTimeTicks
+  // (or the auto domain for ≤1 point). The bespoke OverallLayer reads the axis
+  // scale, so it re-clamps to whichever domain is active for free.
+  const { xDomain, xTicks } = useMemo(() => {
+    if (zoomDomain) {
+      const [lo, hi] = zoomDomain;
+      const ticks = niceTimeTicks(lo, hi).filter((tk) => tk >= lo && tk <= hi);
+      return {
+        xDomain: [lo, hi] as [number, number],
+        xTicks: ticks.length > 1 ? ticks : undefined,
+      };
+    }
+    return {
+      xDomain: (hasTimeTicks
+        ? [timeTicks[0], timeTicks[timeTicks.length - 1]]
+        : ["dataMin", "dataMax"]) as [number, number] | [string, string],
+      xTicks: hasTimeTicks ? timeTicks : undefined,
+    };
+  }, [zoomDomain, hasTimeTicks, timeTicks]);
+
   // Recharts orders the legend/lines by key, not our config order — force the
   // count series into the canonical Rules → Checks → Tests → Rows order so the
   // legend, lines, markers and tooltip all agree.
@@ -689,11 +749,25 @@ export function ScoreTrendChart({
       <p className="text-sm text-muted-foreground">{t("resultsUi.noRunsYet")}</p>
     ) : (
       <>
-      <div className="min-w-0 overflow-hidden rounded-md border p-2 [&_.recharts-surface]:outline-none [&_.recharts-wrapper]:outline-none [&_svg]:outline-none [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
+      <div className="relative min-w-0 overflow-hidden rounded-md border p-2 [&_.recharts-surface]:outline-none [&_.recharts-wrapper]:outline-none [&_svg]:outline-none [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
+          {zoomed && (
+            <button
+              type="button"
+              onClick={resetZoom}
+              className="absolute right-2 top-2 z-10 rounded border bg-background/80 px-2 py-0.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur hover:text-foreground"
+            >
+              {t("resultsUi.resetZoom")}
+            </button>
+          )}
           <ResponsiveContainer width="100%" height={200} minWidth={0}>
             <ComposedChart
               data={points}
               margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
+              style={dragging ? { cursor: "ew-resize", userSelect: "none" } : undefined}
             >
               {isOverallScore && (
                 <defs>
@@ -749,12 +823,9 @@ export function ScoreTrendChart({
                 dataKey="ts"
                 type="number"
                 scale="time"
-                domain={
-                  hasTimeTicks
-                    ? [timeTicks[0], timeTicks[timeTicks.length - 1]]
-                    : ["dataMin", "dataMax"]
-                }
-                ticks={hasTimeTicks ? timeTicks : undefined}
+                allowDataOverflow={zoomed}
+                domain={xDomain}
+                ticks={xTicks}
                 tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
                 tickMargin={8}
                 minTickGap={40}
@@ -781,6 +852,9 @@ export function ScoreTrendChart({
                   as the pointer moves up and down. */}
               <Tooltip
                 cursor={false}
+                // Suppress the tooltip mid drag-select so it doesn't fight the
+                // zoom-region highlight; restore default behaviour otherwise.
+                active={dragging ? false : undefined}
                 isAnimationActive={false}
                 offset={12}
                 position={{ y: 8 }}
@@ -999,6 +1073,18 @@ export function ScoreTrendChart({
               })}
               {overallMode && !hidden.has(overallLabel) && (
                 <OverallLayer points={overall ?? []} />
+              )}
+              {/* Highlight the drag-selected zoom window while the pointer is
+                  down; committed on mouse-up, cleared on release. */}
+              {dragging && (
+                <ReferenceArea
+                  x1={Math.min(dragStart, dragEnd)}
+                  x2={Math.max(dragStart, dragEnd)}
+                  strokeOpacity={0.3}
+                  fill="var(--foreground)"
+                  fillOpacity={0.08}
+                  ifOverflow="hidden"
+                />
               )}
             </ComposedChart>
           </ResponsiveContainer>
