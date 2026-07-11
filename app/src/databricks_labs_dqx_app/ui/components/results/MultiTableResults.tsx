@@ -163,6 +163,16 @@ export function buildTableColorMap(
  * freshly-added table yields one Average point now, growing into a smooth
  * line as runs accrue) — and scales values 0..100.
  *
+ * START GATING — the two halves of the pairing (`_trend` documents the
+ * other side): the BACKEND emits the full series from the first member's
+ * first run; THIS function derives `allRanSince` (the latest first-run
+ * across the required members — the earliest instant at which every member
+ * has at least one run) and drops the points before it. So the Average
+ * line deliberately STARTS later than the per-table dull lines: leading
+ * instants where only some members had run would average a partial member
+ * set, which dqlake never displays. The math on the surviving points is
+ * untouched server truth.
+ *
  * *trendByTable* supplies each member's earliest run; *trend* supplies the
  * server's as-of average points; *requiredFqns* is the member-table universe
  * that must all have run for the Average to exist. Values are scaled 0..100

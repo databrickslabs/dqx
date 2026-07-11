@@ -623,6 +623,139 @@ class TestAsOfAverageTrend:
         ]
 
 
+class TestAsOfGroupedTrends:
+    """``trend_by_dimension`` / ``trend_by_severity`` are AS-OF carry-forward
+    (dqlake's ``_product_trend_grouped`` over ``v_product_check_consolidated``):
+    one point set per distinct run instant across the scope; at each instant
+    every member table contributes the check rows of its most recent run
+    at-or-before that instant, and the series value per group is the POOLED
+    rate over those carried rows — 1 - SUM(failed)/SUM(total) — NOT the
+    equal-weight mean the overall Average uses (dqlake's grouped SQL pools;
+    only its Average AVGs per-table rates).
+    """
+
+    A = "main.sales.orders"
+    B = "main.sales.customers"
+    T1 = "2026-07-01 00:00:00"
+    T2 = "2026-07-02 00:00:00"
+    T3 = "2026-07-03 00:00:00"
+
+    def _misaligned_dimensions(self) -> list[CheckResultRow]:
+        # A runs at t1 (Completeness 0.9, Validity 1.0) and t3 (Completeness
+        # 1.0 — Validity dropped from the run); B runs at t2 only
+        # (Completeness 0.5).
+        return [
+            make_row(
+                "c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Completeness"
+            ),
+            make_row("c2", failed=0, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Validity"),
+            make_row(
+                "c1", failed=50, total=100, run_id="b1", run_date=self.T2, fqn=self.B, dimension="Completeness"
+            ),
+            make_row(
+                "c1", failed=0, total=100, run_id="a2", run_date=self.T3, fqn=self.A, dimension="Completeness"
+            ),
+        ]
+
+    def test_dimension_series_carries_each_table_forward_at_every_instant(self):
+        out = compute_entity_results(self._misaligned_dimensions(), ResultFacets(), table_axis="by_table")
+        completeness = [p for p in out.trend_by_dimension if p.series == "Completeness"]
+        assert [p.run_date for p in completeness] == [self.T1, self.T2, self.T3]
+        # t1: only A has run.
+        assert completeness[0].pass_rate == pytest.approx(0.9)
+        # t2: A carried forward from t1 (10/100) pooled with B's run (50/100).
+        assert completeness[1].pass_rate == pytest.approx(1 - 60 / 200)
+        # t3: A's t3 run (0/100) pooled with B carried from t2 (50/100).
+        assert completeness[2].pass_rate == pytest.approx(1 - 50 / 200)
+
+    def test_grouped_series_pools_counts_not_mean_of_table_rates(self):
+        # dqlake's grouped trend is SUM/SUM over the carried rows — with very
+        # different test volumes the pooled rate diverges from the mean.
+        rows = [
+            make_row(
+                "c1", failed=0, total=1000, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Completeness"
+            ),
+            make_row(
+                "c1", failed=5, total=10, run_id="b1", run_date=self.T1, fqn=self.B, dimension="Completeness"
+            ),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
+        point = next(p for p in out.trend_by_dimension if p.series == "Completeness")
+        assert point.pass_rate == pytest.approx(1 - 5 / 1010)  # pooled, not (1.0 + 0.5) / 2
+        assert point.total_tests == 1010
+
+    def test_carried_rows_pool_rule_counts_across_tables(self):
+        out = compute_entity_results(self._misaligned_dimensions(), ResultFacets(), table_axis="by_table")
+        completeness = [p for p in out.trend_by_dimension if p.series == "Completeness"]
+        # t2 pools A's carried c1 and B's c1 — same check name, so one
+        # distinct rule key; total_tests pools both runs.
+        assert completeness[1].rule_count == 1
+        assert completeness[1].total_tests == 200
+
+    def test_series_absent_from_the_carried_run_does_not_persist(self):
+        # Carry-forward carries each table's WHOLE latest run: A's t3 run has
+        # no Validity check, so Validity gets no t3 point from A's older run
+        # (the consolidated view replaces the table's contribution wholesale).
+        out = compute_entity_results(self._misaligned_dimensions(), ResultFacets(), table_axis="by_table")
+        validity = [p for p in out.trend_by_dimension if p.series == "Validity"]
+        assert [p.run_date for p in validity] == [self.T1, self.T2]
+
+    def test_severity_series_uses_the_same_carry_forward(self):
+        rows = [
+            make_row("c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A, severity="High"),
+            make_row("c1", failed=50, total=100, run_id="b1", run_date=self.T2, fqn=self.B, severity="High"),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
+        high = [p for p in out.trend_by_severity if p.series == "High"]
+        assert [p.run_date for p in high] == [self.T1, self.T2]
+        assert high[1].pass_rate == pytest.approx(1 - 60 / 200)
+
+    def test_single_table_scope_degenerates_to_per_run_grouping(self):
+        # PINNED: for one table the as-of run at each of its instants is that
+        # run, so the series is identical to the pre-P6.1 per-run grouping.
+        rows = [
+            make_row("c1", failed=10, total=100, run_id="r1", run_date=self.T1, dimension="Completeness"),
+            make_row("c2", failed=0, total=50, run_id="r1", run_date=self.T1, dimension="Validity"),
+            make_row("c1", failed=50, total=100, run_id="r2", run_date=self.T2, dimension="Completeness"),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="tables")
+        assert [(p.run_date, p.series, p.pass_rate, p.rule_count, p.total_tests) for p in out.trend_by_dimension] == [
+            (self.T1, "Completeness", pytest.approx(0.9), 1, 100),
+            (self.T1, "Validity", pytest.approx(1.0), 1, 50),
+            (self.T2, "Completeness", pytest.approx(0.5), 1, 100),
+        ]
+
+    def test_facets_scope_the_carried_forward_groups(self):
+        out = compute_entity_results(
+            self._misaligned_dimensions(), ResultFacets(dimensions=("Completeness",)), table_axis="by_table"
+        )
+        assert {p.series for p in out.trend_by_dimension} == {"Completeness"}
+        completeness = [p for p in out.trend_by_dimension if p.series == "Completeness"]
+        assert completeness[1].pass_rate == pytest.approx(1 - 60 / 200)
+
+    def test_dateless_rows_form_isolated_leading_points(self):
+        rows = [
+            make_row("c1", failed=50, total=100, run_id="r0", run_date=None, fqn=self.A, dimension="Validity"),
+            make_row("c1", failed=0, total=100, run_id="b1", run_date=self.T1, fqn=self.B, dimension="Validity"),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
+        validity = [p for p in out.trend_by_dimension if p.series == "Validity"]
+        assert [(p.run_date, p.pass_rate) for p in validity] == [
+            (None, pytest.approx(0.5)),
+            # The dateless run cannot be ordered, so it never carries forward.
+            (self.T1, pytest.approx(1.0)),
+        ]
+
+    def test_trend_by_table_stays_per_run_instant(self):
+        # The dull per-table lines keep raw per-run points — no carry-forward.
+        out = compute_entity_results(self._misaligned_dimensions(), ResultFacets(), table_axis="by_table")
+        assert [(p.run_date, p.series) for p in out.trend_by_table] == [
+            (self.T1, self.A),
+            (self.T2, self.B),
+            (self.T3, self.A),
+        ]
+
+
 class TestAxesSlicing:
     def test_trend_axes_returns_empty_breakdowns(self):
         rows = [make_row("c1", failed=1, total=10)]

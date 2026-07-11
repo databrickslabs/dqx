@@ -167,6 +167,16 @@ class _GroupAcc:
         self.rule_keys.add(_rule_key(row))
         self.check_rows += 1
 
+    def merge(self, other: "_GroupAcc") -> None:
+        """Pool another accumulator's counts into this one (the SUM-over-
+        carried-rows step of the as-of grouped trends). *other* is never
+        mutated — it stays valid for later instants of the walk."""
+        self.failed += other.failed
+        if other.total is not None:
+            self.total = (self.total or 0) + other.total
+        self.rule_keys |= other.rule_keys
+        self.check_rows += other.check_rows
+
     @property
     def pass_rate(self) -> float | None:
         # SQL analogue: 1 - SUM(failed) / NULLIF(SUM(total), 0).
@@ -266,6 +276,15 @@ def _trend(rows: list[CheckResultRow]) -> list[TrendPointOut]:
 
     Rows with no run_date (defensive — legacy/corrupt) cannot be ordered,
     so they form one isolated leading point and never carry forward.
+
+    START GATING lives client-side, not here: this emits the FULL series
+    from the first member's first run, but dqlake only DISPLAYS the
+    Average from the instant every member has run at least once
+    (allRanSince — the latest first-run across members). That display
+    gate is applied by ``computeOverallPoints`` in the UI's
+    ``MultiTableResults.tsx`` (which documents its half of the pairing);
+    trimming here instead would starve the gate of the per-table run
+    extents it derives the cutoff from.
     """
     # (table -> run instant -> pooled accumulator) at the run grain.
     per_table: dict[str, dict[str | None, _GroupAcc]] = defaultdict(lambda: defaultdict(_GroupAcc))
@@ -303,6 +322,12 @@ def _trend_grouped(
     rows: list[CheckResultRow],
     series_of: Callable[[CheckResultRow], str | None],
 ) -> list[TrendPointOut]:
+    """Per-run-instant grouped series — the ``trend_by_table`` dull lines.
+
+    Each point pools only the rows AT that instant (no carry-forward):
+    dqlake's trend_by_table plots each member table's own runs. The
+    dimension/severity popovers use ``_trend_grouped_asof`` instead.
+    """
     groups: dict[tuple[str | None, str | None], _GroupAcc] = defaultdict(_GroupAcc)
     for row in rows:
         groups[(row.run_date, series_of(row))].add(row)
@@ -316,6 +341,90 @@ def _trend_grouped(
         )
         for (run_date, series), acc in sorted(groups.items(), key=lambda kv: (kv[0][0] or "", kv[0][1] or ""))
     ]
+
+
+def _grouped_points(run_date: str | None, groups: dict[str | None, _GroupAcc]) -> list[TrendPointOut]:
+    """One instant's grouped points, series-sorted (None label first —
+    matches ``_trend_grouped``'s ordering for exact single-table
+    degeneration)."""
+    return [
+        TrendPointOut(
+            run_date=run_date,
+            series=series,
+            pass_rate=acc.pass_rate,
+            rule_count=len(acc.rule_keys),
+            total_tests=acc.total,
+        )
+        for series, acc in sorted(groups.items(), key=lambda kv: kv[0] or "")
+    ]
+
+
+def _trend_grouped_asof(
+    rows: list[CheckResultRow],
+    series_of: Callable[[CheckResultRow], str | None],
+) -> list[TrendPointOut]:
+    """AS-OF carry-forward grouped series — trend_by_dimension/severity.
+
+    dqlake's product popover semantics (``_product_trend_grouped`` over
+    ``v_product_check_consolidated``): one point set per distinct run
+    instant across the scope; at each instant every member table
+    contributes the check rows of its most recent run at-or-before that
+    instant, and the series value per group is the POOLED rate over the
+    carried rows — 1 - SUM(failed)/NULLIF(SUM(total), 0) — NOT the
+    equal-weight mean the overall Average uses (dqlake's grouped SQL
+    pools; only its Average AVGs per-table rates). rule_count and
+    total_tests are computed over the same carried rows.
+
+    Carry-forward carries each table's WHOLE latest run (the asof CTE
+    picks a run, then groups its rows): a series absent from that run
+    contributes nothing at the instant, even if an older run had it. A
+    table with no run yet at an instant is excluded until its first run
+    (inner-join semantics). For a single-table scope this degenerates to
+    the pre-existing per-run grouping — the as-of run at each of the
+    table's instants is that run — so the monitored-table popovers are
+    unchanged.
+
+    Like ``_trend``, runs sharing one run_date string pool into a single
+    instant, and dateless rows (defensive — legacy/corrupt) form isolated
+    leading points that never carry forward.
+    """
+    # table -> run instant -> series -> pooled accumulator (run grain).
+    per_table: dict[str, dict[str | None, dict[str | None, _GroupAcc]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(_GroupAcc))
+    )
+    for row in rows:
+        per_table[row.table_fqn][row.run_date][series_of(row)].add(row)
+
+    out: list[TrendPointOut] = []
+    dateless: dict[str | None, _GroupAcc] = defaultdict(_GroupAcc)
+    for runs in per_table.values():
+        for series, acc in runs.get(None, {}).items():
+            dateless[series].merge(acc)
+    if dateless:
+        out.extend(_grouped_points(None, dateless))
+
+    # Each table's dated runs, ascending — the carry-forward walk advances
+    # a per-table cursor instead of re-scanning per instant (see _trend).
+    series_runs: dict[str, list[tuple[str, dict[str | None, _GroupAcc]]]] = {
+        fqn: sorted((run_date, groups) for run_date, groups in runs.items() if run_date is not None)
+        for fqn, runs in per_table.items()
+    }
+    instants = sorted({run_date for table_runs in series_runs.values() for run_date, _ in table_runs})
+    positions: dict[str, int] = dict.fromkeys(series_runs, 0)
+    carried: dict[str, dict[str | None, _GroupAcc]] = {}
+    for instant in instants:
+        for fqn, table_runs in series_runs.items():
+            i = positions[fqn]
+            while i < len(table_runs) and table_runs[i][0] <= instant:
+                carried[fqn] = table_runs[i][1]
+                i += 1
+            positions[fqn] = i
+        pooled: dict[str | None, _GroupAcc] = defaultdict(_GroupAcc)
+        for groups in carried.values():
+            for series, acc in groups.items():
+                pooled[series].merge(acc)
+        out.extend(_grouped_points(instant, pooled))
+    return out
 
 
 def _trend_counts(rows: list[CheckResultRow]) -> list[TrendCountPointOut]:
@@ -421,8 +530,8 @@ def compute_entity_results(
             result.tables = table_groups
     if axes in ("all", "trend"):
         result.trend = _trend(matched)
-        result.trend_by_dimension = _trend_grouped(matched, lambda row: row.dimension)
-        result.trend_by_severity = _trend_grouped(matched, lambda row: row.severity)
+        result.trend_by_dimension = _trend_grouped_asof(matched, lambda row: row.dimension)
+        result.trend_by_severity = _trend_grouped_asof(matched, lambda row: row.severity)
         if table_axis == "by_table":
             result.trend_by_table = _trend_grouped(matched, lambda row: row.table_fqn)
         result.trend_counts = _trend_counts(matched)
