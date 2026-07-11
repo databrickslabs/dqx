@@ -98,6 +98,9 @@ function RuleResultsContent({ ruleId }: { ruleId: string }) {
         hideRuleBreakdown
         includeDrafts={includeDrafts}
         onIncludeDraftsChange={setIncludeDrafts}
+        // Rule results are published-only: drafts are per-authoring-surface,
+        // not a coherent cross-table universe for a single rule.
+        hideRunMode
       />
     </div>
   );

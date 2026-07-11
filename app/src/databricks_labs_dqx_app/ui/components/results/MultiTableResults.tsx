@@ -259,6 +259,14 @@ export interface MultiTableResultsSectionProps {
    *  every query it owns. */
   includeDrafts: boolean;
   onIncludeDraftsChange: (includeDrafts: boolean) => void;
+  /** Suppresses the run-mode (Published only / Published + Draft) dropdown and
+   *  forces published-only results (`include_drafts` never sent). For surfaces
+   *  that are published-only by definition — the global all-tables Results page
+   *  and the rule Results view — where a draft toggle would be misleading
+   *  (drafts are per-authoring-surface, not a coherent cross-table universe).
+   *  The reviewed product/table-space consumers don't pass this and keep the
+   *  dropdown. */
+  hideRunMode?: boolean;
   /** Called (in an effect) when the BASE (unfiltered) by-table rows land or
    *  change. The composition stays Genie/entitlement-agnostic — the global
    *  Results page uses this to pre-verify row entitlements for its
@@ -282,9 +290,14 @@ export function MultiTableResultsSection({
   hideRuleBreakdown,
   includeDrafts,
   onIncludeDraftsChange,
+  hideRunMode,
   onBaseByTable,
 }: MultiTableResultsSectionProps) {
   const { t } = useTranslation();
+  // Published-only surfaces (hideRunMode) never send `include_drafts`,
+  // regardless of the controlled prop — the dropdown that would flip it is
+  // suppressed, so this just hard-guards the query params too.
+  const effectiveIncludeDrafts = hideRunMode ? false : includeDrafts;
   // The active single-table selection (E2). Clicking a By Table row sets it;
   // clicking again clears it. It drives the invalid-samples view AND (P7.2)
   // mirrors into the `table` facet, so the click cross-filters the other
@@ -314,7 +327,7 @@ export function MultiTableResultsSection({
   // tab). NOT run-scoped — see breakdownParams. NON-suspense so the shell +
   // chart frames render first and each widget shows its own spinner while
   // loading (F1).
-  const draftsParam = includeDraftsParam(includeDrafts);
+  const draftsParam = includeDraftsParam(effectiveIncludeDrafts);
   const trendQuery = useEntityResults(
     {
       ...facetQueryParams(filters),
@@ -329,7 +342,7 @@ export function MultiTableResultsSection({
   // The FILTERED breakdowns: cross-filtered by the active facet chips (never
   // run-scoped — see breakdownParams). This is the live result in both modes
   // — the numbers always reflect the active filter.
-  const resultsQuery = useEntityResults(breakdownParams(filters, includeDrafts), {
+  const resultsQuery = useEntityResults(breakdownParams(filters, effectiveIncludeDrafts), {
     placeholderData: keepPreviousData,
     ...RESULTS_QUERY_OPTIONS,
   });
@@ -337,7 +350,7 @@ export function MultiTableResultsSection({
   // The BASE (applicable) breakdowns: NO facet filter. Drives the row set in
   // "All" mode — base rows absent from the filtered result render greyed. In
   // "Applicable" mode it's unused beyond being the same set.
-  const baseQuery = useEntityResults(breakdownParams(EMPTY_FILTERS, includeDrafts), {
+  const baseQuery = useEntityResults(breakdownParams(EMPTY_FILTERS, effectiveIncludeDrafts), {
     placeholderData: keepPreviousData,
     ...RESULTS_QUERY_OPTIONS,
   });
@@ -609,7 +622,9 @@ export function MultiTableResultsSection({
           below the score on very small screens (mirrors the Tables tab). */}
       <div className="relative">
         <div className="z-10 flex items-center gap-2 sm:absolute sm:right-2 sm:top-2 max-sm:mb-2 max-sm:justify-end">
-          <RunModeSelect includeDrafts={includeDrafts} onChange={onIncludeDraftsChange} />
+          {!hideRunMode && (
+            <RunModeSelect includeDrafts={includeDrafts} onChange={onIncludeDraftsChange} />
+          )}
           {runPickerSlot}
         </div>
         <div className="sm:pr-2">{scoreBox}</div>

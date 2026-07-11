@@ -103,6 +103,9 @@ function GlobalResultsContent() {
             scoreLabel={(count) => t("globalResults.orgWideScoreLabel", { count })}
             includeDrafts={includeDrafts}
             onIncludeDraftsChange={setIncludeDrafts}
+            // Global all-tables Results is published-only: a draft toggle
+            // across the org-wide table universe is not a coherent selection.
+            hideRunMode
             onBaseByTable={preverifyByTable}
             // No runPickerSlot: the picker is omitted (see the module
             // comment); the Average line is the server's as-of series over
