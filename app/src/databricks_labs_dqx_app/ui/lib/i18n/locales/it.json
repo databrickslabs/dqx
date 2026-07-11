@@ -750,7 +750,6 @@
     "bulkSucceededWithSkipped_other": "{{msg}} ({{ok}} regole){{skipped}}",
     "cannotSubmitDuplicate": "Impossibile inviare: lo stesso controllo esiste come {{label}}",
     "clearSelection": "Cancella selezione",
-    "createRules": "Crea regole",
     "criticality": "Criticità",
     "delete": "Elimina",
     "deleteBulkBody_one": "Sei sicuro di voler eliminare {{count}} regola selezionata? Questa azione non può essere annullata.",
@@ -857,7 +856,37 @@
     "unrejectTitle": "Sposta regola rifiutata di nuovo a bozza",
     "tableSpacesSectionTitle": "Spazi Tabelle in attesa di approvazione",
     "tableSpacesSectionDescription": "Spazi Tabelle inviati per la revisione. Approva per pubblicare lo spazio alla versione successiva, oppure rifiuta per rimandarlo all'autore.",
-    "tableSpacesFailedLoad": "Impossibile caricare gli Spazi Tabelle: {{error}}"
+    "tableSpacesFailedLoad": "Impossibile caricare gli Spazi Tabelle: {{error}}",
+    "mtSectionTitle": "Tabelle monitorate in attesa di approvazione",
+    "mtSectionDescription": "Tabelle monitorate il cui set di regole è stato inviato per la revisione. L'approvazione pubblica e congela una nuova versione.",
+    "mtFailedLoad": "Impossibile caricare le tabelle monitorate: {{error}}",
+    "mtEmptyState": "Nessuna tabella monitorata in attesa di approvazione.",
+    "mtHeaderChecks": "Controlli",
+    "mtToastApproved": "Tabella monitorata approvata",
+    "mtToastFailedApprove": "Impossibile approvare la tabella monitorata",
+    "mtToastRejected": "Tabella monitorata rifiutata",
+    "mtToastFailedReject": "Impossibile rifiutare la tabella monitorata",
+    "mtApproveTitle": "Approvare questa tabella monitorata?",
+    "mtApproveBody": "Approvare \"{{name}}\"? Verrà pubblicata e congelata una nuova versione approvata del suo set di regole.",
+    "mtRejectTitle": "Rifiutare questa tabella monitorata?",
+    "mtRejectBody": "Rifiutare \"{{name}}\"? Il responsabile può rivedere il set di regole e inviarlo nuovamente per la revisione.",
+    "tableSpacesEmptyState": "Nessun Table Space in attesa di approvazione.",
+    "diff": {
+      "title": "Rivedi le modifiche",
+      "viewChanges": "Vedi modifiche",
+      "previous": "Precedente",
+      "proposed": "Proposto",
+      "proposedDefinition": "Definizione proposta",
+      "proposedMembers": "Membri proposti",
+      "versionLabel": "Versione {{version}}",
+      "empty": "Nessun controllo.",
+      "loadFailed": "Impossibile caricare le modifiche.",
+      "rrNoPrior": "Questa regola non ha ancora una versione pubblicata: viene mostrata la definizione proposta in revisione.",
+      "mtFirstApproval": "Questa tabella non è mai stata approvata, quindi non esiste ancora una versione congelata da confrontare. Verrà congelata come v1 al momento dell'approvazione.",
+      "mtNoPrior": "Questa è la prima versione congelata della tabella: non esiste una versione precedente da confrontare.",
+      "tsNoSnapshot": "I Table Space non conservano snapshot per versione, quindi non esiste una versione precedente da confrontare. Vengono mostrati i membri proposti attuali e i relativi controlli.",
+      "ruleNoPrior": "Nessuna modifica registrata in precedenza per questa regola: viene mostrata la definizione corrente."
+    }
   },
   "rulesSingleTable": {
     "breadcrumb": "Regole su tabella singola",
@@ -2207,7 +2236,9 @@
     "toastRejectFailed": "Impossibile rifiutare lo spazio tabelle.",
     "toastSubmitted": "Inviato per revisione.",
     "toastSubmitFailed": "Impossibile inviare per revisione.",
-    "tabPermissions": "Autorizzazioni"
+    "tabPermissions": "Autorizzazioni",
+    "approveConfirmTitle": "Approvare questo table space?",
+    "approveConfirmDescription": "Approvare \"{{name}}\"? Verrà pubblicato e la sua versione verrà incrementata."
   },
   "permissions": {
     "title": "Autorizzazioni",

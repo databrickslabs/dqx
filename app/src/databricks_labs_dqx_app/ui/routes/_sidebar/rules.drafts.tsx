@@ -49,7 +49,6 @@ import {
   ChevronUp,
   ClipboardCheck,
   ExternalLink,
-  Plus,
   RotateCcw,
   Trash2,
   SendHorizonal,
@@ -62,6 +61,8 @@ import {
   Loader2,
   ShieldCheck,
   Boxes,
+  Table2,
+  GitCompare,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FadeIn } from "@/components/anim/FadeIn";
@@ -87,11 +88,31 @@ import {
   useRejectDataProduct,
   getListDataProductsQueryKey,
   getGetDataProductQueryKey,
+  useListMonitoredTables,
+  useApproveMonitoredTable,
+  useRejectMonitoredTable,
   type RuleCatalogEntryOut,
   type RegistryRuleOut,
   type DataProductOut,
+  type MonitoredTableSummaryOut,
   type User as UserType,
 } from "@/lib/api";
+import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
+import {
+  ApprovalQueueCard,
+  ApprovalTh,
+  ReadOnlyActionHint,
+} from "@/components/drafts/ApprovalQueueCard";
+import {
+  RegistryRuleDiffDialog,
+  MonitoredTableDiffDialog,
+  TableSpaceDiffDialog,
+  RuleHistoryDiffDialog,
+  type RegistryDiffTarget,
+  type MonitoredTableDiffTarget,
+  type TableSpaceDiffTarget,
+  type RuleHistoryDiffTarget,
+} from "@/components/drafts/ChangeDiffDialog";
 import {
   submitRuleForApproval,
   approveRule,
@@ -332,120 +353,110 @@ function RegistryApprovalsSection({
       t("rulesDrafts.registryToastFailedReject"),
     );
 
+  const [diffTarget, setDiffTarget] = useState<RegistryDiffTarget | null>(null);
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5" />
-          {t("rulesDrafts.registrySectionTitle")}
-        </CardTitle>
-        <CardDescription>{t("rulesDrafts.registrySectionDescription")}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {isLoading && (
-          <div className="space-y-2">
-            {[1, 2].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
-          </div>
-        )}
+    <>
+      <ApprovalQueueCard
+        icon={ShieldCheck}
+        title={t("rulesDrafts.registrySectionTitle")}
+        description={t("rulesDrafts.registrySectionDescription")}
+        isLoading={isLoading}
+        error={!!error}
+        errorText={error ? t("rulesDrafts.registryFailedLoad", { error: (error as Error).message }) : ""}
+        isEmpty={rules.length === 0}
+        emptyText={t("rulesDrafts.registryEmptyState")}
+        minWidth="900px"
+        head={
+          <>
+            <ApprovalTh>{t("rulesDrafts.headerName")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.headerDimension")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.headerSeverity")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.headerSteward")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.headerVersion")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.headerModified")}</ApprovalTh>
+            <ApprovalTh align="right">{t("rulesDrafts.headerActions")}</ApprovalTh>
+          </>
+        }
+        rows={rules.map((rule) => {
+          const md = getUserMetadata(rule as unknown as Record<string, unknown>);
+          const name = md.name || rule.rule_id;
+          const dimension = md.dimension;
+          const severity = md.severity;
+          const author = rule.updated_by ?? rule.created_by ?? rule.steward ?? "";
+          const busy = pendingRuleId === rule.rule_id;
+          return (
+            <tr key={rule.rule_id} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
+              <td className="p-3 font-mono text-xs">{name}</td>
+              <td className="p-3">
+                {dimension ? (
+                  <Badge variant="outline" className="text-[10px] font-normal">{dimension}</Badge>
+                ) : (
+                  <span className="text-muted-foreground/50 text-xs">—</span>
+                )}
+              </td>
+              <td className="p-3">
+                <SeverityBadge severity={severity ?? ""} />
+              </td>
+              <td className="p-3 text-xs text-muted-foreground whitespace-nowrap" title={author}>
+                {author || "—"}
+              </td>
+              <td className="p-3 text-xs text-muted-foreground font-mono">v{rule.version}</td>
+              <td className="p-3 text-muted-foreground text-xs whitespace-nowrap" title={rule.updated_at ?? ""}>
+                {formatDate(rule.updated_at)}
+              </td>
+              <td className="p-3 text-right">
+                <div className="flex items-center justify-end gap-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      setDiffTarget({
+                        ruleId: rule.rule_id,
+                        name,
+                        version: rule.version,
+                        definition: rule.definition,
+                      })
+                    }
+                    className="gap-1 h-7 text-xs"
+                  >
+                    <GitCompare className="h-3 w-3" />
+                    {t("rulesDrafts.diff.viewChanges")}
+                  </Button>
+                  {canApproveRules ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => setApproveTarget(rule)}
+                        className="gap-1 h-7 text-xs text-green-600"
+                      >
+                        <CheckCircle2 className="h-3 w-3" />
+                        {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.approveAction")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => setRejectTarget(rule)}
+                        className="gap-1 h-7 text-xs text-red-600"
+                      >
+                        <XCircle className="h-3 w-3" />
+                        {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.rejectAction")}
+                      </Button>
+                    </>
+                  ) : (
+                    <ReadOnlyActionHint author={author} currentUserEmail={currentUserEmail} />
+                  )}
+                </div>
+              </td>
+            </tr>
+          );
+        })}
+      />
 
-        {error && (
-          <p className="text-destructive text-sm">
-            {t("rulesDrafts.registryFailedLoad", { error: (error as Error).message })}
-          </p>
-        )}
-
-        {!isLoading && !error && rules.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-10 text-center">
-            <div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center mb-4">
-              <ShieldCheck className="h-7 w-7 text-muted-foreground" />
-            </div>
-            <p className="text-muted-foreground text-sm">{t("rulesDrafts.registryEmptyState")}</p>
-          </div>
-        )}
-
-        {!isLoading && !error && rules.length > 0 && (
-          <FadeIn duration={0.3}>
-            <div className="border rounded-lg overflow-x-auto">
-              <table className="w-full text-sm" style={{ minWidth: "900px" }}>
-                <thead>
-                  <tr className="border-b bg-muted/50">
-                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerName")}</th>
-                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerDimension")}</th>
-                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerSeverity")}</th>
-                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerSteward")}</th>
-                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerVersion")}</th>
-                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerModified")}</th>
-                    <th className="text-right p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerActions")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rules.map((rule) => {
-                    const md = getUserMetadata(rule as unknown as Record<string, unknown>);
-                    const name = md.name || rule.rule_id;
-                    const dimension = md.dimension;
-                    const severity = md.severity;
-                    const author = rule.updated_by ?? rule.created_by ?? rule.steward ?? "";
-                    const busy = pendingRuleId === rule.rule_id;
-                    const isAuthor = !!currentUserEmail && author.toLowerCase() === currentUserEmail.toLowerCase();
-                    return (
-                      <tr key={rule.rule_id} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
-                        <td className="p-3 font-mono text-xs">{name}</td>
-                        <td className="p-3">
-                          {dimension ? (
-                            <Badge variant="outline" className="text-[10px] font-normal">{dimension}</Badge>
-                          ) : (
-                            <span className="text-muted-foreground/50 text-xs">—</span>
-                          )}
-                        </td>
-                        <td className="p-3">
-                          <SeverityBadge severity={severity ?? ""} />
-                        </td>
-                        <td className="p-3 text-xs text-muted-foreground whitespace-nowrap" title={author}>
-                          {author || "—"}
-                        </td>
-                        <td className="p-3 text-xs text-muted-foreground font-mono">v{rule.version}</td>
-                        <td className="p-3 text-muted-foreground text-xs whitespace-nowrap" title={rule.updated_at ?? ""}>
-                          {formatDate(rule.updated_at)}
-                        </td>
-                        <td className="p-3 text-right">
-                          {canApproveRules ? (
-                            <div className="flex items-center justify-end gap-1">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={busy}
-                                onClick={() => setApproveTarget(rule)}
-                                className="gap-1 h-7 text-xs text-green-600"
-                              >
-                                <CheckCircle2 className="h-3 w-3" />
-                                {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.approveAction")}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={busy}
-                                onClick={() => setRejectTarget(rule)}
-                                className="gap-1 h-7 text-xs text-red-600"
-                              >
-                                <XCircle className="h-3 w-3" />
-                                {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.rejectAction")}
-                              </Button>
-                            </div>
-                          ) : (
-                            <span className="text-[11px] text-muted-foreground italic">
-                              {isAuthor ? t("rulesDrafts.registryYourSubmission") : t("rulesDrafts.registryReadOnly")}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </FadeIn>
-        )}
-      </CardContent>
+      <RegistryRuleDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
       <AlertDialog open={!!approveTarget} onOpenChange={(open) => !open && setApproveTarget(null)}>
         <AlertDialogContent>
@@ -501,7 +512,212 @@ function RegistryApprovalsSection({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Card>
+    </>
+  );
+}
+
+/**
+ * Monitored Tables awaiting approval (Stream J item 13c). A monitored-table
+ * binding carries its own submit-for-review lifecycle
+ * (draft -> pending_approval -> approved/rejected), so a pending binding
+ * belongs in the same single approvals queue as registry rules and Table
+ * Spaces. Driven by ``useListMonitoredTables`` filtered to the
+ * ``pending_approval`` status; the change-diff popout reuses the two most
+ * recent frozen version snapshots (see MonitoredTableDiffDialog).
+ */
+function MonitoredTablesApprovalsSection({
+  canApproveRules,
+  currentUserEmail,
+}: {
+  canApproveRules: boolean;
+  currentUserEmail: string;
+}) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+
+  const { data, isLoading, error } = useListMonitoredTables({ status: "pending_approval" });
+  const tables: MonitoredTableSummaryOut[] = useMemo(() => data?.data ?? [], [data]);
+
+  const approveMutation = useApproveMonitoredTable();
+  const rejectMutation = useRejectMonitoredTable();
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [approveTarget, setApproveTarget] = useState<MonitoredTableSummaryOut | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<MonitoredTableSummaryOut | null>(null);
+  const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
+
+  const runAction = useCallback(
+    (bindingId: string, mutate: () => Promise<unknown>, successMsg: string, errorMsg: string) => {
+      if (pendingId) return;
+      setPendingId(bindingId);
+      mutate()
+        .then(() => {
+          toast.success(successMsg);
+          invalidateAfterMonitoredTableChange(queryClient, bindingId);
+        })
+        .catch((err: unknown) => {
+          const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+          toast.error(detail || errorMsg, { duration: 6000 });
+        })
+        .finally(() => setPendingId(null));
+    },
+    [pendingId, queryClient],
+  );
+
+  const confirmApprove = (row: MonitoredTableSummaryOut) =>
+    runAction(
+      row.table.binding_id,
+      () => approveMutation.mutateAsync({ bindingId: row.table.binding_id }),
+      t("rulesDrafts.mtToastApproved"),
+      t("rulesDrafts.mtToastFailedApprove"),
+    );
+  const confirmReject = (row: MonitoredTableSummaryOut) =>
+    runAction(
+      row.table.binding_id,
+      () => rejectMutation.mutateAsync({ bindingId: row.table.binding_id }),
+      t("rulesDrafts.mtToastRejected"),
+      t("rulesDrafts.mtToastFailedReject"),
+    );
+
+  // Keep the queue focused: hide the whole section when nothing is pending,
+  // but keep it visible while loading/erroring for context (mirrors TS).
+  if (!isLoading && !error && tables.length === 0) return null;
+
+  return (
+    <>
+      <ApprovalQueueCard
+        icon={Table2}
+        title={t("rulesDrafts.mtSectionTitle")}
+        description={t("rulesDrafts.mtSectionDescription")}
+        isLoading={isLoading}
+        error={!!error}
+        errorText={error ? t("rulesDrafts.mtFailedLoad", { error: (error as Error).message }) : ""}
+        isEmpty={tables.length === 0}
+        emptyText={t("rulesDrafts.mtEmptyState")}
+        minWidth="800px"
+        head={
+          <>
+            <ApprovalTh>{t("rulesDrafts.headerTable")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.headerSteward")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.headerVersion")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.mtHeaderChecks")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.headerModified")}</ApprovalTh>
+            <ApprovalTh align="right">{t("rulesDrafts.headerActions")}</ApprovalTh>
+          </>
+        }
+        rows={tables.map((row) => {
+          const tbl = row.table;
+          const busy = pendingId === tbl.binding_id;
+          const author = tbl.steward ?? "";
+          return (
+            <tr key={tbl.binding_id} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
+              <td className="p-3 font-mono text-xs">{tbl.table_fqn}</td>
+              <td className="p-3 text-xs text-muted-foreground whitespace-nowrap" title={author}>
+                {author || "—"}
+              </td>
+              <td className="p-3 text-xs text-muted-foreground font-mono">v{tbl.version ?? 0}</td>
+              <td className="p-3 text-xs text-muted-foreground tabular-nums">{row.check_count ?? 0}</td>
+              <td className="p-3 text-muted-foreground text-xs whitespace-nowrap" title={tbl.updated_at ?? ""}>
+                {formatDate(tbl.updated_at)}
+              </td>
+              <td className="p-3 text-right">
+                <div className="flex items-center justify-end gap-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      setDiffTarget({
+                        bindingId: tbl.binding_id,
+                        name: tbl.table_fqn,
+                        version: tbl.version ?? 0,
+                      })
+                    }
+                    className="gap-1 h-7 text-xs"
+                  >
+                    <GitCompare className="h-3 w-3" />
+                    {t("rulesDrafts.diff.viewChanges")}
+                  </Button>
+                  {canApproveRules ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => setApproveTarget(row)}
+                        className="gap-1 h-7 text-xs text-green-600"
+                      >
+                        <CheckCircle2 className="h-3 w-3" />
+                        {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.approveAction")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => setRejectTarget(row)}
+                        className="gap-1 h-7 text-xs text-red-600"
+                      >
+                        <XCircle className="h-3 w-3" />
+                        {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.rejectAction")}
+                      </Button>
+                    </>
+                  ) : (
+                    <ReadOnlyActionHint author={author} currentUserEmail={currentUserEmail} />
+                  )}
+                </div>
+              </td>
+            </tr>
+          );
+        })}
+      />
+
+      <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+
+      <AlertDialog open={!!approveTarget} onOpenChange={(open) => !open && setApproveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("rulesDrafts.mtApproveTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("rulesDrafts.mtApproveBody", { name: approveTarget?.table.table_fqn ?? "" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const target = approveTarget;
+                setApproveTarget(null);
+                if (target) confirmApprove(target);
+              }}
+            >
+              {t("rulesDrafts.approveAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!rejectTarget} onOpenChange={(open) => !open && setRejectTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("rulesDrafts.mtRejectTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("rulesDrafts.mtRejectBody", { name: rejectTarget?.table.table_fqn ?? "" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const target = rejectTarget;
+                setRejectTarget(null);
+                if (target) confirmReject(target);
+              }}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {t("rulesDrafts.rejectAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -527,7 +743,9 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
   const approveMutation = useApproveDataProduct();
   const rejectMutation = useRejectDataProduct();
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [approveTarget, setApproveTarget] = useState<DataProductOut | null>(null);
   const [rejectTarget, setRejectTarget] = useState<DataProductOut | null>(null);
+  const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
 
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
@@ -572,102 +790,118 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
   if (!isLoading && !error && pending.length === 0) return null;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Boxes className="h-5 w-5" />
-          {t("rulesDrafts.tableSpacesSectionTitle")}
-        </CardTitle>
-        <CardDescription>{t("rulesDrafts.tableSpacesSectionDescription")}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {isLoading && (
-          <div className="space-y-2">
-            {[1, 2].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
-          </div>
-        )}
+    <>
+      <ApprovalQueueCard
+        icon={Boxes}
+        title={t("rulesDrafts.tableSpacesSectionTitle")}
+        description={t("rulesDrafts.tableSpacesSectionDescription")}
+        isLoading={isLoading}
+        error={!!error}
+        errorText={error ? t("rulesDrafts.tableSpacesFailedLoad", { error: (error as Error).message }) : ""}
+        isEmpty={pending.length === 0}
+        emptyText={t("rulesDrafts.tableSpacesEmptyState")}
+        minWidth="760px"
+        head={
+          <>
+            <ApprovalTh>{t("rulesDrafts.headerName")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.headerSteward")}</ApprovalTh>
+            <ApprovalTh>{t("dataProducts.colTables")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.headerVersion")}</ApprovalTh>
+            <ApprovalTh>{t("rulesDrafts.headerModified")}</ApprovalTh>
+            <ApprovalTh align="right">{t("rulesDrafts.headerActions")}</ApprovalTh>
+          </>
+        }
+        rows={pending.map((p) => {
+          const busy = pendingId === p.product_id;
+          return (
+            <tr key={p.product_id} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
+              <td className="p-3">
+                <button
+                  type="button"
+                  className="font-medium hover:underline text-left"
+                  onClick={() =>
+                    navigate({ to: "/table-spaces/$productId", params: { productId: p.product_id } })
+                  }
+                >
+                  {p.name}
+                </button>
+              </td>
+              <td className="p-3 text-xs text-muted-foreground whitespace-nowrap" title={p.steward ?? ""}>
+                {p.steward || "—"}
+              </td>
+              <td className="p-3 text-xs text-muted-foreground tabular-nums">{p.member_count ?? 0}</td>
+              <td className="p-3 text-xs text-muted-foreground font-mono">v{p.version ?? 0}</td>
+              <td className="p-3 text-muted-foreground text-xs whitespace-nowrap" title={p.updated_at ?? ""}>
+                {formatDate(p.updated_at)}
+              </td>
+              <td className="p-3 text-right">
+                <div className="flex items-center justify-end gap-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setDiffTarget({ productId: p.product_id, name: p.name })}
+                    className="gap-1 h-7 text-xs"
+                  >
+                    <GitCompare className="h-3 w-3" />
+                    {t("rulesDrafts.diff.viewChanges")}
+                  </Button>
+                  {canApproveRules ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => setApproveTarget(p)}
+                        className="gap-1 h-7 text-xs text-green-600"
+                      >
+                        <CheckCircle2 className="h-3 w-3" />
+                        {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.approveAction")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => setRejectTarget(p)}
+                        className="gap-1 h-7 text-xs text-red-600"
+                      >
+                        <XCircle className="h-3 w-3" />
+                        {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.rejectAction")}
+                      </Button>
+                    </>
+                  ) : (
+                    <ReadOnlyActionHint />
+                  )}
+                </div>
+              </td>
+            </tr>
+          );
+        })}
+      />
 
-        {error && (
-          <p className="text-destructive text-sm">
-            {t("rulesDrafts.tableSpacesFailedLoad", { error: (error as Error).message })}
-          </p>
-        )}
+      <TableSpaceDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
-        {!isLoading && !error && pending.length > 0 && (
-          <FadeIn duration={0.3}>
-            <div className="border rounded-lg overflow-x-auto">
-              <table className="w-full text-sm" style={{ minWidth: "700px" }}>
-                <thead>
-                  <tr className="border-b bg-muted/50">
-                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerName")}</th>
-                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerSteward")}</th>
-                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("dataProducts.colTables")}</th>
-                    <th className="text-left p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerModified")}</th>
-                    <th className="text-right p-3 font-medium whitespace-nowrap">{t("rulesDrafts.headerActions")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pending.map((p) => {
-                    const busy = pendingId === p.product_id;
-                    return (
-                      <tr key={p.product_id} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
-                        <td className="p-3">
-                          <button
-                            type="button"
-                            className="font-medium hover:underline text-left"
-                            onClick={() =>
-                              navigate({ to: "/table-spaces/$productId", params: { productId: p.product_id } })
-                            }
-                          >
-                            {p.name}
-                          </button>
-                        </td>
-                        <td className="p-3 text-xs text-muted-foreground whitespace-nowrap" title={p.steward ?? ""}>
-                          {p.steward || "—"}
-                        </td>
-                        <td className="p-3 text-xs text-muted-foreground tabular-nums">{p.member_count ?? 0}</td>
-                        <td className="p-3 text-muted-foreground text-xs whitespace-nowrap" title={p.updated_at ?? ""}>
-                          {formatDate(p.updated_at)}
-                        </td>
-                        <td className="p-3 text-right">
-                          {canApproveRules ? (
-                            <div className="flex items-center justify-end gap-1">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={busy}
-                                onClick={() => confirmApprove(p)}
-                                className="gap-1 h-7 text-xs text-green-600"
-                              >
-                                <CheckCircle2 className="h-3 w-3" />
-                                {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.approveAction")}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={busy}
-                                onClick={() => setRejectTarget(p)}
-                                className="gap-1 h-7 text-xs text-red-600"
-                              >
-                                <XCircle className="h-3 w-3" />
-                                {busy ? t("rulesDrafts.ellipsis") : t("rulesDrafts.rejectAction")}
-                              </Button>
-                            </div>
-                          ) : (
-                            <span className="text-[11px] text-muted-foreground italic">
-                              {t("rulesDrafts.registryReadOnly")}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </FadeIn>
-        )}
-      </CardContent>
+      <AlertDialog open={!!approveTarget} onOpenChange={(open) => !open && setApproveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("dataProducts.approveConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("dataProducts.approveConfirmDescription", { name: approveTarget?.name ?? "" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const target = approveTarget;
+                setApproveTarget(null);
+                if (target) confirmApprove(target);
+              }}
+            >
+              {t("rulesDrafts.approveAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!rejectTarget} onOpenChange={(open) => !open && setRejectTarget(null)}>
         <AlertDialogContent>
@@ -692,7 +926,7 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Card>
+    </>
   );
 }
 
@@ -724,6 +958,7 @@ function DraftsPage() {
       return next;
     });
   const pendingActions = usePendingActions();
+  const [historyDiffTarget, setHistoryDiffTarget] = useState<RuleHistoryDiffTarget | null>(null);
   const { canCreateRules, canEditRules, canSubmitRules, canApproveRules } = usePermissions();
   const { data: currentUser } = useCurrentUserSuspense(selector<UserType>());
   const currentUserEmail = currentUser?.user_name ?? "";
@@ -1173,26 +1408,21 @@ function DraftsPage() {
     );
 
   return (
+    <FadeIn>
     <div className="space-y-6">
       <div className="space-y-2">
         <PageBreadcrumb items={[]} page={t("rulesDrafts.breadcrumb")} />
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">{t("rulesDrafts.title")}</h1>
-            <p className="text-muted-foreground">
-              {t("rulesDrafts.subtitle")}
-            </p>
-          </div>
-          {canCreateRules && (
-            <Button onClick={() => navigate({ to: "/rules/create" })} className="gap-2">
-              <Plus className="h-4 w-4" />
-              {t("rulesDrafts.createRules")}
-            </Button>
-          )}
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("rulesDrafts.title")}</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {t("rulesDrafts.subtitle")}
+          </p>
         </div>
       </div>
 
       <RegistryApprovalsSection canApproveRules={canApproveRules} currentUserEmail={currentUserEmail} />
+
+      <MonitoredTablesApprovalsSection canApproveRules={canApproveRules} currentUserEmail={currentUserEmail} />
 
       <TableSpacesApprovalsSection canApproveRules={canApproveRules} />
 
@@ -1460,6 +1690,22 @@ function DraftsPage() {
                             className="flex items-center justify-end gap-1"
                             onClick={(e) => e.stopPropagation()}
                           >
+                            {rule.rule_id && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() =>
+                                  setHistoryDiffTarget({
+                                    ruleId: rule.rule_id!,
+                                    name: rule.display_name || rule.table_fqn,
+                                  })
+                                }
+                                className="gap-1 h-7 text-xs"
+                                title={t("rulesDrafts.diff.viewChanges")}
+                              >
+                                <GitCompare className="h-3 w-3" />
+                              </Button>
+                            )}
                             {!rule.rule_id && (
                               <TooltipProvider>
                                 <Tooltip>
@@ -1706,16 +1952,12 @@ function DraftsPage() {
                   ? t("rulesDrafts.noDraftsAuthor")
                   : t("rulesDrafts.noDraftsViewer")}
               </p>
-              {canCreateRules && (
-                <Button onClick={() => navigate({ to: "/rules/create" })} className="mt-4 gap-2">
-                  <Plus className="h-4 w-4" />
-                  {t("rulesDrafts.createRules")}
-                </Button>
-              )}
             </div>
           )}
         </CardContent>
       </Card>
+
+      <RuleHistoryDiffDialog target={historyDiffTarget} onClose={() => setHistoryDiffTarget(null)} />
 
       <AlertDialog open={!!singleDeleteTarget} onOpenChange={(open) => !open && setSingleDeleteTarget(null)}>
         <AlertDialogContent>
@@ -1885,5 +2127,6 @@ function DraftsPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </FadeIn>
   );
 }

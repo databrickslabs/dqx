@@ -716,7 +716,6 @@
     "breadcrumb": "Drafts & Review",
     "title": "Drafts & review",
     "subtitle": "Rule sets awaiting review, recently created drafts, and rejected sets.",
-    "createRules": "Create rules",
     "ruleSets": "Rule sets",
     "rulesCount_one": "{{count}} rule",
     "rulesCount_other": "{{count}} rules",
@@ -857,7 +856,37 @@
     "bulkAllIneligible": "All {{count}} selected rule(s) are ineligible (duplicate or not authored by you)",
     "tableSpacesSectionTitle": "Table Spaces awaiting approval",
     "tableSpacesSectionDescription": "Table Spaces submitted for review. Approve to publish the space at its next version, or reject to send it back to the author.",
-    "tableSpacesFailedLoad": "Failed to load Table Spaces: {{error}}"
+    "tableSpacesFailedLoad": "Failed to load Table Spaces: {{error}}",
+    "mtSectionTitle": "Monitored tables pending approval",
+    "mtSectionDescription": "Monitored tables whose rule set has been submitted for review. Approving publishes and freezes a new version.",
+    "mtFailedLoad": "Failed to load monitored tables: {{error}}",
+    "mtEmptyState": "No monitored tables are awaiting approval.",
+    "mtHeaderChecks": "Checks",
+    "mtToastApproved": "Monitored table approved",
+    "mtToastFailedApprove": "Failed to approve monitored table",
+    "mtToastRejected": "Monitored table rejected",
+    "mtToastFailedReject": "Failed to reject monitored table",
+    "mtApproveTitle": "Approve this monitored table?",
+    "mtApproveBody": "Approve \"{{name}}\"? This publishes and freezes a new approved version of its rule set.",
+    "mtRejectTitle": "Reject this monitored table?",
+    "mtRejectBody": "Reject \"{{name}}\"? The steward can revise the rule set and submit it for review again.",
+    "tableSpacesEmptyState": "No Table Spaces are awaiting approval.",
+    "diff": {
+      "title": "Review changes",
+      "viewChanges": "View changes",
+      "previous": "Previous",
+      "proposed": "Proposed",
+      "proposedDefinition": "Proposed definition",
+      "proposedMembers": "Proposed members",
+      "versionLabel": "Version {{version}}",
+      "empty": "No checks.",
+      "loadFailed": "Failed to load changes.",
+      "rrNoPrior": "This rule has no published version yet — showing the proposed definition being reviewed.",
+      "mtFirstApproval": "This table has never been approved — there is no frozen version to compare against yet. It will be frozen as v1 on approval.",
+      "mtNoPrior": "This is the table's first frozen version — there is no earlier version to compare against.",
+      "tsNoSnapshot": "Table Spaces don't keep per-version snapshots, so there is no prior version to diff. Showing the current proposed members and their governed checks.",
+      "ruleNoPrior": "No earlier recorded change for this rule — showing its current definition."
+    }
   },
   "rulesSingleTable": {
     "breadcrumb": "Single table rules",
@@ -2207,7 +2236,9 @@
     "toastRejectFailed": "Failed to reject table space.",
     "toastSubmitted": "Submitted for review.",
     "toastSubmitFailed": "Failed to submit for review.",
-    "tabPermissions": "Permissions"
+    "tabPermissions": "Permissions",
+    "approveConfirmTitle": "Approve this table space?",
+    "approveConfirmDescription": "Approve \"{{name}}\"? This publishes it and bumps its version."
   },
   "permissions": {
     "title": "Permissions",

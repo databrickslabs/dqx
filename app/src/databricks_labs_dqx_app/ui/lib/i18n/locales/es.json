@@ -750,7 +750,6 @@
     "bulkSucceededWithSkipped_other": "{{msg}} ({{ok}} reglas){{skipped}}",
     "cannotSubmitDuplicate": "No se puede enviar: la misma verificación existe como {{label}}",
     "clearSelection": "Limpiar selección",
-    "createRules": "Crear reglas",
     "criticality": "Criticidad",
     "delete": "Eliminar",
     "deleteBulkBody_one": "¿Estás seguro de que deseas eliminar {{count}} regla seleccionada? Esta acción no se puede deshacer.",
@@ -857,7 +856,37 @@
     "unrejectTitle": "Mover regla rechazada de nuevo a borrador",
     "tableSpacesSectionTitle": "Espacios de Tablas pendientes de aprobación",
     "tableSpacesSectionDescription": "Espacios de Tablas enviados a revisión. Apruébalos para publicar el espacio en su siguiente versión, o recházalos para devolverlos al autor.",
-    "tableSpacesFailedLoad": "No se pudieron cargar los Espacios de Tablas: {{error}}"
+    "tableSpacesFailedLoad": "No se pudieron cargar los Espacios de Tablas: {{error}}",
+    "mtSectionTitle": "Tablas monitorizadas pendientes de aprobación",
+    "mtSectionDescription": "Tablas monitorizadas cuyo conjunto de reglas se ha enviado a revisión. Al aprobar se publica y congela una nueva versión.",
+    "mtFailedLoad": "No se pudieron cargar las tablas monitorizadas: {{error}}",
+    "mtEmptyState": "No hay tablas monitorizadas pendientes de aprobación.",
+    "mtHeaderChecks": "Comprobaciones",
+    "mtToastApproved": "Tabla monitorizada aprobada",
+    "mtToastFailedApprove": "No se pudo aprobar la tabla monitorizada",
+    "mtToastRejected": "Tabla monitorizada rechazada",
+    "mtToastFailedReject": "No se pudo rechazar la tabla monitorizada",
+    "mtApproveTitle": "¿Aprobar esta tabla monitorizada?",
+    "mtApproveBody": "¿Aprobar \"{{name}}\"? Esto publica y congela una nueva versión aprobada de su conjunto de reglas.",
+    "mtRejectTitle": "¿Rechazar esta tabla monitorizada?",
+    "mtRejectBody": "¿Rechazar \"{{name}}\"? El responsable puede revisar el conjunto de reglas y volver a enviarlo a revisión.",
+    "tableSpacesEmptyState": "No hay Table Spaces pendientes de aprobación.",
+    "diff": {
+      "title": "Revisar cambios",
+      "viewChanges": "Ver cambios",
+      "previous": "Anterior",
+      "proposed": "Propuesto",
+      "proposedDefinition": "Definición propuesta",
+      "proposedMembers": "Miembros propuestos",
+      "versionLabel": "Versión {{version}}",
+      "empty": "Sin comprobaciones.",
+      "loadFailed": "No se pudieron cargar los cambios.",
+      "rrNoPrior": "Esta regla aún no tiene ninguna versión publicada; se muestra la definición propuesta en revisión.",
+      "mtFirstApproval": "Esta tabla nunca se ha aprobado, por lo que aún no hay una versión congelada para comparar. Se congelará como v1 al aprobarla.",
+      "mtNoPrior": "Esta es la primera versión congelada de la tabla; no hay una versión anterior para comparar.",
+      "tsNoSnapshot": "Los Table Spaces no guardan instantáneas por versión, por lo que no hay una versión anterior para comparar. Se muestran los miembros propuestos actuales y sus comprobaciones.",
+      "ruleNoPrior": "No hay ningún cambio registrado anterior para esta regla; se muestra su definición actual."
+    }
   },
   "rulesSingleTable": {
     "breadcrumb": "Reglas de tabla única",
@@ -2207,7 +2236,9 @@
     "toastRejectFailed": "No se pudo rechazar el espacio de tablas.",
     "toastSubmitted": "Enviado a revisión.",
     "toastSubmitFailed": "No se pudo enviar a revisión.",
-    "tabPermissions": "Permisos"
+    "tabPermissions": "Permisos",
+    "approveConfirmTitle": "¿Aprobar este table space?",
+    "approveConfirmDescription": "¿Aprobar \"{{name}}\"? Esto lo publica e incrementa su versión."
   },
   "permissions": {
     "title": "Permisos",
