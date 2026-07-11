@@ -3,7 +3,7 @@ import type * as React from "react";
 import { keepPreviousData } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ExternalLink, Loader2 } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import {
   useGetTableResults,
   useGetDqResultsFailedRows,
@@ -22,7 +22,7 @@ import { ScoreBox } from "@/components/results/ScoreBox";
 import { CollapsibleSection } from "@/components/results/CollapsibleSection";
 import { CollapseRegion } from "@/components/results/CollapseRegion";
 import { ScoreTrendChart, type OverallStep } from "@/components/results/ScoreTrendChart";
-import { DimensionBreakdown } from "@/components/results/DimensionBreakdown";
+import { DimensionBreakdown, TruncatedText } from "@/components/results/DimensionBreakdown";
 import { FilterChips } from "@/components/results/FilterChips";
 import { FailingRecordsTable } from "@/components/results/FailingRecordsTable";
 import { DownloadFailedRecordsMenu } from "@/components/results/DownloadFailedRecordsMenu";
@@ -395,6 +395,14 @@ export function MultiTableResultsSection({
       )
       .map((g) => [friendlyTableName(g.label), g.binding_id] as const),
   );
+  // Registry rule ids present across the by-rule breakdown (filtered + base) —
+  // the By rule names deep-link to the rule's registry detail, but only rows
+  // carrying a genuine registry rule_id are linkable (ad-hoc rules have none).
+  const registryRuleIds = new Set(
+    [...(baseResults?.by_rule ?? []), ...(results?.by_rule ?? [])]
+      .map((g) => g.rule_id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0),
+  );
 
   const { data: dimensions } =
     useListResultDimensionsSuspense<DimensionOut[]>(selector<DimensionOut[]>());
@@ -743,6 +751,23 @@ export function MultiTableResultsSection({
                   collapsed={!ruleColOpen}
                   onToggleCollapse={() => setRuleColOpen((o) => !o)}
                   pageSize={8}
+                  // The rule NAME navigates to that registry rule's detail
+                  // (only for rows with a genuine registry rule_id); clicking
+                  // elsewhere on the row still toggles the rule facet — the
+                  // Link stops propagation so the two gestures stay distinct.
+                  renderLabel={(label, value) =>
+                    value && registryRuleIds.has(value) ? (
+                      <Link
+                        to="/registry-rules/$ruleId"
+                        params={{ ruleId: value }}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={t("resultsUi.openRuleDetailAria", { rule: label })}
+                        className="min-w-0 text-foreground hover:underline"
+                      >
+                        <TruncatedText text={label} className="min-w-0" />
+                      </Link>
+                    ) : null
+                  }
                 />
               </div>
             )}
@@ -762,10 +787,12 @@ export function MultiTableResultsSection({
                 selected={selectedTable ? [selectedTable] : []}
                 onSelect={onTableSelect}
                 pageSize={8}
-                // Rows with a monitored-table binding deep-link to that
-                // table's Results tab; the row click itself still drives the
-                // invalid-samples selection (stopPropagation on the link).
-                rowLink={(label) => {
+                // The table NAME navigates to that monitored table's Results
+                // tab (rows with a binding); clicking elsewhere on the row
+                // still drives the invalid-samples selection / table facet —
+                // the Link stops propagation so the two gestures stay distinct.
+                // (The former "open in new tab" icon is dropped as redundant.)
+                renderLabel={(label) => {
                   const bindingId = bindingIdByFriendly.get(label);
                   if (!bindingId) return null;
                   return (
@@ -775,9 +802,9 @@ export function MultiTableResultsSection({
                       search={{ tab: "results" }}
                       onClick={(e) => e.stopPropagation()}
                       aria-label={t("resultsUi.openTableResultsAria", { table: label })}
-                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                      className="min-w-0 text-foreground hover:underline"
                     >
-                      <ExternalLink className="h-3 w-3" />
+                      <TruncatedText text={label} className="min-w-0" />
                     </Link>
                   );
                 }}

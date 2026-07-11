@@ -37,7 +37,7 @@ export function paginateRows<T>(
  *  tooltip — but only when it's actually clipped (re-checked on hover, the
  *  only time it matters). Mirrors the TruncatedCell used in the rules
  *  registry / tables / data-product tables. */
-function TruncatedText({ text, className }: { text: string; className?: string }) {
+export function TruncatedText({ text, className }: { text: string; className?: string }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [overflow, setOverflow] = useState(false);
   const checkOverflow = () => {
@@ -126,6 +126,7 @@ export function DimensionBreakdown({
   defaultSort,
   pageSize,
   rowLink,
+  renderLabel,
 }: {
   title: string;
   rows: Array<BreakdownRow>;
@@ -172,6 +173,12 @@ export function DimensionBreakdown({
    *  page), rendered after the label. The node must handle its own click
    *  (row clicks still fire `onSelect`; wrap with stopPropagation). */
   rowLink?: (label: string) => React.ReactNode;
+  /** Optional replacement for the label text itself — e.g. wrap the name in a
+   *  navigating `<Link>`. Given the row's label and facet value, returns the
+   *  node to render in place of the default truncated text, or null to fall
+   *  back to it. The returned node MUST stopPropagation on click so the name
+   *  navigates while a click elsewhere on the row still toggles the facet. */
+  renderLabel?: (label: string, value: string | null) => React.ReactNode;
 }) {
   const { t } = useTranslation();
   const [sort, setSort] = useState<SortState>(null);
@@ -332,7 +339,9 @@ export function DimensionBreakdown({
                               style={{ backgroundColor: colorMap[r.label] }}
                             />
                           )}
-                          <TruncatedText text={r.label} className="min-w-0" />
+                          {renderLabel?.(r.label, facetValue) ?? (
+                            <TruncatedText text={r.label} className="min-w-0" />
+                          )}
                           {rowLink?.(r.label)}
                         </span>
                       )}

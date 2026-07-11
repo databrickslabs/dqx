@@ -2384,6 +2384,7 @@
     "draftBindingNotice": "Questa tabella non ha ancora una versione approvata, quindi le sue esecuzioni sono bozze: restano nascoste nella modalità “Solo pubblicate”; passa alla modalità “Pubblicate + bozze” per vederle.",
     "runInProgressBanner": "È in corso un'esecuzione. I risultati si aggiorneranno automaticamente al termine.",
     "openTableResultsAria": "Apri i risultati di {{table}}",
+    "openRuleDetailAria": "Apri i dettagli di {{rule}}",
     "runAria": "Esecuzione",
     "removeFilterAria": "Rimuovi {{label}}",
     "noDataYet": "Ancora nessun dato.",

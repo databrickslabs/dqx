@@ -2384,6 +2384,7 @@
     "draftBindingNotice": "Esta tabela ainda não tem uma versão aprovada, então suas execuções são rascunhos — ficam ocultas no modo “Somente publicadas”; mude o modo de execução para “Publicadas + rascunhos” para vê-las.",
     "runInProgressBanner": "Uma execução está em andamento. Os resultados serão atualizados automaticamente quando ela terminar.",
     "openTableResultsAria": "Abrir resultados de {{table}}",
+    "openRuleDetailAria": "Abrir detalhes de {{rule}}",
     "runAria": "Execução",
     "removeFilterAria": "Remover {{label}}",
     "noDataYet": "Ainda sem dados.",

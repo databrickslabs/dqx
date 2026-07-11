@@ -2384,6 +2384,7 @@
     "draftBindingNotice": "Esta tabla aún no tiene una versión aprobada, por lo que sus ejecuciones son borradores: quedan ocultas en el modo “Solo publicadas”; cambia el modo de ejecución a “Publicadas + borradores” para verlas.",
     "runInProgressBanner": "Hay una ejecución en curso. Los resultados se actualizarán automáticamente cuando termine.",
     "openTableResultsAria": "Abrir resultados de {{table}}",
+    "openRuleDetailAria": "Abrir detalles de {{rule}}",
     "runAria": "Ejecución",
     "removeFilterAria": "Quitar {{label}}",
     "noDataYet": "Aún no hay datos.",
