@@ -341,23 +341,6 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
           onChange={(e) => setSearch(e.target.value)}
           className="w-48 h-8 text-xs"
         />
-
-        {/* Grouped mode's per-group mini header rows are gone (P25 item 3a);
-            the "#Rules"/"Status" column labels render once up here instead
-            (item 3b). Widths + padding mirror the group tables' colgroup
-            (100px right-aligned / 140px) so, right-aligned via ml-auto, the
-            labels sit over their columns. Flat mode keeps its own in-table
-            header, so these only show while grouping. */}
-        {groupBy !== "none" && (
-          <div className="ml-auto flex items-center shrink-0">
-            <span className="w-[100px] px-2 text-right text-xs font-medium text-muted-foreground">
-              {t("dataProducts.colRules")}
-            </span>
-            <span className="w-[140px] px-2 text-xs font-medium text-muted-foreground">
-              {t("dataProducts.colStatus")}
-            </span>
-          </div>
-        )}
       </div>
 
       <div className="space-y-3 min-h-[20rem]">
@@ -483,9 +466,12 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                     </Badge>
                   </div>
                 </div>
-                {/* No per-group header row (P25 item 3a) — the column labels
-                    live once in the toolbar above; the colgroup keeps the
-                    rows aligned with them. */}
+                {/* Per-group header row (P29 item 40, reversing P25 item 3a):
+                    the "#Rules"/"Status" column labels live in a TableHeader
+                    directly above each group's rows so they read as that
+                    group's columns, instead of floating once in the toolbar
+                    detached from the values. Flat mode has its own in-table
+                    header; the colgroup here matches it. */}
                 <Table className="table-fixed w-full">
                   <colgroup>
                     <col style={{ width: 48 }} />
@@ -493,6 +479,14 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                     <col style={{ width: 100 }} />
                     <col style={{ width: 140 }} />
                   </colgroup>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead style={{ width: 48 }} className="text-center" />
+                      <TableHead>{t("monitoredTables.colTableName")}</TableHead>
+                      <TableHead className="text-right">{t("dataProducts.colRules")}</TableHead>
+                      <TableHead>{t("dataProducts.colStatus")}</TableHead>
+                    </TableRow>
+                  </TableHeader>
                   <TableBody>
                     {groupRows.map((r) => {
                       const key = r.table.binding_id;
