@@ -118,7 +118,8 @@
       "tables": "Tabelas monitoradas",
       "rules": "Regras",
       "spaces": "Espaços de tabelas",
-      "score": "Pontuação geral de DQ"
+      "score": "Pontuação geral de DQ",
+      "scoreInfo": "Esta pontuação geral é calculada sobre as tabelas às quais você tem acesso e pode diferir da pontuação da tela de Resultados de uma tabela específica, que reflete os dados com escopo de permissão do Unity Catalog."
     },
     "grid": {
       "rulesRegistryDesc": "Crie um repositório de regras de qualidade de dados reutilizáveis",

@@ -1,10 +1,16 @@
 import { Suspense, useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
-import { ArrowDown, ArrowUp, Boxes, LineChart, Library, Loader2, Minus, Table2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Boxes, HelpCircle, LineChart, Library, Loader2, Minus, Table2 } from "lucide-react";
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ScoreTrendChart } from "@/components/results/ScoreTrendChart";
 import { useGetHomeStatsSuspense } from "@/lib/api";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
@@ -111,6 +117,7 @@ function StatCard({
   delta,
   entered = true,
   enterDelayMs = 0,
+  infoText,
 }: {
   label: string;
   value?: string;
@@ -120,6 +127,8 @@ function StatCard({
   delta?: number | null;
   entered?: boolean;
   enterDelayMs?: number;
+  /** When set, renders a small "?" tooltip next to the label. */
+  infoText?: string;
 }) {
   const { t } = useTranslation();
   return (
@@ -143,6 +152,28 @@ function StatCard({
           >
             {label}
           </span>
+          {infoText && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className={`inline-flex items-center justify-center focus-visible:outline-none ${
+                      inverted
+                        ? "text-background/70 hover:text-background"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    aria-label={infoText}
+                  >
+                    <HelpCircle className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs text-xs">
+                  <p>{infoText}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
         <div className="flex h-9 items-center gap-2 text-3xl font-semibold tabular-nums sm:h-10 sm:text-4xl">
           {loading ? (
@@ -201,6 +232,7 @@ function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) 
               icon={c.icon}
               inverted={c.inverted}
               delta={c.key === "score" ? score_delta : undefined}
+              infoText={c.key === "score" ? t("home.stats.scoreInfo") : undefined}
               entered={mounted}
               enterDelayMs={i * 70}
             />
@@ -243,6 +275,7 @@ function HomeStatsLoading({ sectionLabelClass }: { sectionLabelClass: string }) 
               label={t(c.labelKey)}
               icon={c.icon}
               inverted={c.inverted}
+              infoText={c.key === "score" ? t("home.stats.scoreInfo") : undefined}
               loading
             />
           ))}

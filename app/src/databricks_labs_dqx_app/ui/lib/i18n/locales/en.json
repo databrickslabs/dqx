@@ -118,7 +118,8 @@
       "tables": "Tables monitored",
       "rules": "Rules",
       "spaces": "Table spaces",
-      "score": "Overall DQ score"
+      "score": "Overall DQ score",
+      "scoreInfo": "This overall score is computed across the tables you can access and may differ from an individual table's Results-screen score, which reflects Unity Catalog permission-scoped data."
     },
     "grid": {
       "rulesRegistryDesc": "Create a repository of reusable data quality rules",
