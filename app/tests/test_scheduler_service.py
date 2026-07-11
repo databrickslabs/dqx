@@ -39,6 +39,8 @@ from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _GC_AGE_HOURS,
     _GC_HOUR_UTC,
     _GC_WEEKDAY_SAT,
+    _RUN_SET_SWEEP_MAX_RUNS,
+    _RUN_SET_SWEEP_WINDOW_DAYS,
     _SCORE_RECONCILE_MAX_ATTEMPTS,
     _SCORE_REFRESH_TTL,
     _TMP_VIEW_ID_LEN,
@@ -1180,6 +1182,92 @@ class TestScoreCacheRefreshOnCompletion:
         mocks.sql.query.assert_not_called()  # nothing left to look up
         score_cache.refresh_all_for_tables.assert_not_called()
         assert "never reached a terminal state" in scheduler_caplog.text
+
+    # -- recent-run-set sweep (P5.3) -------------------------------------------
+
+    def test_sweep_tracks_unseen_runs_from_recent_run_sets(self, make_scheduler):
+        """Manual UI runs (tab closed) mint run-set rows but were never in
+        the scheduler's in-memory tracking — the sweep picks them up from
+        the app DB so their completion refreshes the cache too."""
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [("r1",), ("r2",)]
+        mocks.sql.query.return_value = []  # nothing terminal yet
+
+        svc._refresh_scores_for_completed_runs(self.NOW)
+
+        assert set(svc._pending_score_runs) == {"r1", "r2"}
+        stmt = mocks.oltp.query.call_args[0][0]
+        assert "dq_run_set_members" in stmt
+        assert "dq_run_sets" in stmt
+        assert "rs.source = 'approved'" in stmt  # draft runs never move published scores
+        assert f"INTERVAL {_RUN_SET_SWEEP_WINDOW_DAYS} DAY" in stmt  # bounded window
+        assert f"LIMIT {_RUN_SET_SWEEP_MAX_RUNS}" in stmt  # bounded rows
+
+    def test_swept_run_completion_refreshes_once_and_never_reprocesses(self, make_scheduler):
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [("r1",)]
+        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+
+        svc._refresh_scores_for_completed_runs(self.NOW)
+
+        score_cache.refresh_all_for_tables.assert_called_once_with(["main.sales.orders"])
+        assert svc._pending_score_runs == {}
+
+        # Next tick: the run-set row is still inside the 24h window, but
+        # the run was already processed — no re-track, no second refresh.
+        mocks.sql.query.return_value = []
+        svc._refresh_scores_for_completed_runs(self.NOW)
+        score_cache.refresh_all_for_tables.assert_called_once()
+        assert svc._pending_score_runs == {}
+
+    def test_sweep_never_double_tracks_scheduler_launched_runs(self, make_scheduler):
+        svc, mocks, _score_cache = _make_score_scheduler(make_scheduler)
+        svc._track_run_for_score_refresh("r1")
+        started = svc._pending_score_runs["r1"]
+        mocks.oltp.query.return_value = [("r1",)]  # same run, via its run-set row
+        mocks.sql.query.return_value = []
+
+        svc._refresh_scores_for_completed_runs(self.NOW)
+
+        assert set(svc._pending_score_runs) == {"r1"}
+        assert svc._pending_score_runs["r1"] == started  # launch time not reset
+
+    def test_seen_set_is_pruned_once_runs_leave_the_window(self, make_scheduler):
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
+        mocks.oltp.query.return_value = [("r1",)]
+        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+        svc._refresh_scores_for_completed_runs(self.NOW)
+        assert "r1" in svc._seen_score_runs
+
+        mocks.oltp.query.return_value = []  # window moved past r1's run set
+        mocks.sql.query.return_value = []
+        svc._refresh_scores_for_completed_runs(self.NOW)
+        assert svc._seen_score_runs == set()  # bounded across weeks of uptime
+
+    def test_pending_runs_without_run_set_rows_survive_the_prune(self, make_scheduler):
+        """Scope-config launches don't mint run sets; while pending they
+        must stay tracked (and seen) even though the window never lists
+        them."""
+        svc, mocks, _score_cache = _make_score_scheduler(make_scheduler)
+        svc._track_run_for_score_refresh("r1")
+        mocks.oltp.query.return_value = []
+        mocks.sql.query.return_value = []
+
+        svc._refresh_scores_for_completed_runs(self.NOW)
+
+        assert "r1" in svc._pending_score_runs
+        assert "r1" in svc._seen_score_runs
+
+    def test_sweep_failure_is_isolated_from_the_completion_pass(self, make_scheduler, scheduler_caplog):
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
+        svc._track_run_for_score_refresh("r1")
+        mocks.oltp.query.side_effect = RuntimeError("postgres down")
+        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+
+        svc._refresh_scores_for_completed_runs(self.NOW)  # must not raise
+
+        score_cache.refresh_all_for_tables.assert_called_once_with(["main.sales.orders"])
+        assert "sweep" in scheduler_caplog.text.lower()
 
     # -- startup reconcile (P5.3) ---------------------------------------------
 

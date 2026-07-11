@@ -62,6 +62,15 @@ _FAILURE_BACKOFF = timedelta(hours=1)
 # validation run.
 _SCORE_REFRESH_TTL = timedelta(hours=24)
 
+# Recent-run-set sweep bounds (P5.3). Every tick, one bounded OLTP query
+# lists the member run ids of run sets created inside this window so
+# runs launched OUTSIDE the scheduler (manual UI runs with the tab
+# closed) still get a score-cache refresh when they complete. 1 day
+# matches _SCORE_REFRESH_TTL; the row cap keeps a pathological burst of
+# run sets from ballooning the statement or the in-memory tracking.
+_RUN_SET_SWEEP_WINDOW_DAYS = 1
+_RUN_SET_SWEEP_MAX_RUNS = 2000
+
 # Retry budget for the startup score-cache reconcile (P5.3). The
 # reconcile is best-effort: a transient warehouse failure right after
 # boot retries on the next tick, but a persistently broken warehouse
@@ -276,6 +285,13 @@ class SchedulerService:
         # :data:`_SCORE_REFRESH_TTL`.
         self._pending_score_runs: dict[str, datetime] = {}
         self._runs_table = self._sql.fqn("dq_validation_runs")
+        # Run-set sweep state (P5.3): run ids already tracked or
+        # processed this boot, so the recurring 24h-window query never
+        # re-tracks a run it has already handled. Pruned every sweep to
+        # (window ∪ pending) so it stays bounded across long uptimes.
+        self._seen_score_runs: set[str] = set()
+        self._run_sets_table = self._oltp_sql.fqn("dq_run_sets")
+        self._run_set_members_table = self._oltp_sql.fqn("dq_run_set_members")
         # Startup reconcile state (P5.3): whether this boot has healed
         # the whole score cache yet, and how many attempts it has spent
         # trying. Both in-memory only — the reconcile is deliberately
@@ -924,11 +940,14 @@ class SchedulerService:
     #
     # The ``dq_score_cache`` refresh otherwise only fires from the browser
     # (the results-invalidation POST when a user watches a run complete).
-    # A scheduled run finishing with no browser open would leave the list
-    # scores stale/NULL forever, so the scheduler tracks every run it
-    # launches and refreshes the affected tables' scores when it observes
+    # A run finishing with no browser open would leave the list scores
+    # stale/NULL forever, so the scheduler tracks every run it launches
+    # PLUS (P5.3) every run minted into a recent run set by the manual UI
+    # paths, and refreshes the affected tables' scores when it observes
     # the run's terminal ``dq_validation_runs`` row — piggybacking on the
-    # 60s tick, one batched Delta lookup per tick, no new loop.
+    # 60s tick, one bounded OLTP query + one batched Delta lookup per
+    # tick, no new loop. The first pass after boot additionally
+    # reconciles the whole cache (see ``_reconcile_scores``).
 
     def _track_run_for_score_refresh(self, run_id: str) -> None:
         """Remember a scheduler-launched run so its completion refreshes the score cache.
@@ -939,6 +958,9 @@ class SchedulerService:
         if self._score_cache_service is None:
             return
         self._pending_score_runs[run_id] = datetime.now(timezone.utc)
+        # Mark seen so the run-set sweep never re-tracks the same run
+        # (scheduler-launched product/table runs also mint run sets).
+        self._seen_score_runs.add(run_id)
 
     def _refresh_scores_for_completed_runs(self, now: datetime) -> None:
         """Refresh the score cache for tracked runs that reached a terminal state.
@@ -964,6 +986,13 @@ class SchedulerService:
         if self._score_cache_service is None:
             return
 
+        try:
+            self._sweep_recent_run_sets(now)
+        except Exception:
+            logger.exception(
+                "Run-set sweep for the score-cache refresh failed; continuing with in-memory tracking only"
+            )
+
         fqns = self._collect_completed_score_run_fqns(now)
 
         if self._reconcile_due():
@@ -984,6 +1013,37 @@ class SchedulerService:
                 "Score-cache refresh after run completion failed; "
                 "scores stay stale until the next completion or browser refresh"
             )
+
+    def _sweep_recent_run_sets(self, now: datetime) -> None:
+        """Track every unseen run from run sets created in the last 24h.
+
+        Runs launched outside the scheduler — a user clicking Run on a
+        monitored table or table space and closing the tab — mint
+        ``dq_run_sets`` / ``dq_run_set_members`` rows but were invisible
+        to the in-memory tracking, so their completion never refreshed
+        the score cache. One bounded OLTP query per tick reads the
+        window's member run ids; unseen ones join ``_pending_score_runs``
+        and ride the existing batched terminal lookup. ``source =
+        'approved'`` only: draft runs can never move published scores.
+        The seen set guarantees each run is processed at most once per
+        boot, and is pruned to (window ∪ pending) so it stays bounded.
+        """
+        interval = self._oltp_sql.interval_days_expr(_RUN_SET_SWEEP_WINDOW_DAYS)
+        stmt = (
+            f"SELECT m.run_id FROM {self._run_set_members_table} m "  # noqa: S608
+            f"JOIN {self._run_sets_table} rs ON rs.run_set_id = m.run_set_id "
+            f"WHERE rs.source = 'approved' "
+            f"AND rs.created_at >= current_timestamp - {interval} "
+            f"LIMIT {_RUN_SET_SWEEP_MAX_RUNS}"
+        )
+        rows = self._oltp_sql.query(stmt)
+        window_ids = {row[0] for row in rows if row and row[0]}
+        for run_id in window_ids:
+            if run_id in self._seen_score_runs:
+                continue
+            self._pending_score_runs[run_id] = now
+            self._seen_score_runs.add(run_id)
+        self._seen_score_runs &= window_ids | set(self._pending_score_runs)
 
     def _collect_completed_score_run_fqns(self, now: datetime) -> set[str]:
         """Pop every tracked run with a terminal row; return their table FQNs.
