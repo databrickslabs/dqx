@@ -2452,6 +2452,12 @@ export function RegistryRuleFormDialog({
               <HistoryIcon className="h-3.5 w-3.5" />
               {t("rulesRegistry.tabHistory")}
             </TabsTrigger>
+            {/* Muted vertical rule separating Test / History from Results —
+                the same divider MT/TS use, which RR was missing (item 25).
+                Kept OUTSIDE the Results trigger's disabled/enabled conditional
+                below so it renders in both states, and it doubles as item 77's
+                "Results sits in its own group" placement. */}
+            <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
             {/* Results is only meaningful once the rule is applied to at
                 least one monitored table (applied_to_count > 0). Until then
                 the trigger is disabled; the tooltip explains why for the
