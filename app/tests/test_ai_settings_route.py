@@ -37,7 +37,9 @@ class TestGetAiSettings:
     def test_returns_defaults_when_unset(self, svc):
         result = get_ai_settings(svc)
 
-        assert result.ai_enabled is False
+        # AI is ON by default (per explicit product request); the admin
+        # kill-switch (an explicit "false") is what turns it off.
+        assert result.ai_enabled is True
         assert result.ai_endpoint_name == "databricks-gpt-5-5"
         assert result.ai_endpoint_name_default == "databricks-gpt-5-5"
         assert result.ai_rate_limit_per_user_per_hour == 30
@@ -143,10 +145,12 @@ class TestSaveAiSettingsTriggersVectorStoreProvisioning:
         assert captured["thread_id"] != request_thread_id
 
     def test_does_not_invoke_when_ai_stays_disabled(self, svc, sql_executor_mock, provisioner):
+        # AI now defaults ON, so "stays disabled" means the kill-switch is
+        # explicitly held off — pass ai_enabled=False alongside the edit.
         _wire_stateful_store(sql_executor_mock)
 
         result = save_ai_settings(
-            AiSettingsIn(ai_rate_limit_per_user_per_hour=10),
+            AiSettingsIn(ai_enabled=False, ai_rate_limit_per_user_per_hour=10),
             svc,
             provisioner,
             "admin@x",

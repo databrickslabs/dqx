@@ -69,14 +69,24 @@ class TestSeedRunReviewStatuses:
 class TestAiGatewaySettings:
     """AI Gateway settings (Rules Registry Phase 4A) — kill-switch, endpoint, rate limit.
 
-    All three default to a safe "AI is off / unconfigured" state when the underlying
-    setting row is absent, so a fresh deploy with no AI infra never accidentally calls a
-    serving endpoint.
+    AI is ON by default (per explicit product request) so a fresh deploy is usable
+    without an admin opt-in; the endpoint + rate limit default to sensible values.
+    Saving ``ai_enabled = false`` is the kill-switch that turns AI off app-wide.
     """
 
-    def test_ai_enabled_defaults_to_false(self, settings_service):
+    def test_ai_enabled_defaults_to_true(self, settings_service):
+        # AI is ON by default (per explicit product request) so a fresh
+        # deploy is usable without an admin opt-in; the kill-switch (an
+        # explicit "false") is what turns it off.
         svc, sql_executor_mock = settings_service
         sql_executor_mock.query.return_value = []
+
+        assert svc.get_ai_enabled() is True
+
+    def test_ai_enabled_kill_switch_reads_false(self, settings_service):
+        # An explicit "false" (the admin kill-switch) disables AI.
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["false"]]
 
         assert svc.get_ai_enabled() is False
 

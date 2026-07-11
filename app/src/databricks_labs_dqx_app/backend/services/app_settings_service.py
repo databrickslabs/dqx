@@ -645,9 +645,13 @@ class AppSettingsService:
     # ------------------------------------------------------------------
     # AI Gateway settings — Rules Registry Phase 4A. Kill-switch, serving
     # endpoint name, and per-user hourly rate limit for AIGateway
-    # (services/ai_gateway.py). Defaults keep AI OFF and unconfigured until
-    # an admin explicitly turns it on, so a deploy with no AI infra behaves
-    # exactly like today: every AI route returns a clean 503, never a 500.
+    # (services/ai_gateway.py). AI is ON by default (per explicit product
+    # request) so the AI-assisted authoring surfaces work out of the box on
+    # a fresh deploy. The admin kill-switch remains: setting ``ai_enabled``
+    # to ``false`` turns every AI affordance off app-wide. Note the cost
+    # implication — AI serving-endpoint calls run On-Behalf-Of the caller
+    # (see ``get_ai_gateway``), so an enabled default means those calls can
+    # be incurred without an explicit opt-in.
     # ------------------------------------------------------------------
 
     _AI_ENABLED_KEY = "ai_enabled"
@@ -657,18 +661,25 @@ class AppSettingsService:
     AI_RATE_LIMIT_DEFAULT = 30
 
     # Seeded default AI serving endpoint — a reasonable out-of-the-box
-    # selection for the admin dropdown (Rules Registry Phase 7F). AI stays
-    # OFF by default regardless (``ai_enabled`` defaults to ``False``); this
-    # only changes what shows up pre-selected once an admin turns it on. An
-    # admin who explicitly saves an empty value gets that empty value back
-    # (see the ``raw is None`` check below) rather than being forced back to
-    # the default on every read.
+    # selection for the admin dropdown (Rules Registry Phase 7F). AI is ON by
+    # default (see :meth:`get_ai_enabled`) and this endpoint is what shows up
+    # pre-selected. An admin who explicitly saves an empty value gets that
+    # empty value back (see the ``raw is None`` check below) rather than being
+    # forced back to the default on every read.
     AI_ENDPOINT_NAME_DEFAULT = "databricks-gpt-5-5"
 
     def get_ai_enabled(self) -> bool:
-        """Return whether the AI kill-switch is on; defaults to ``False`` (off) when unset."""
+        """Return whether the AI kill-switch is on; defaults to ``True`` (on) when unset.
+
+        AI features are enabled by default so a fresh deploy is usable without
+        an explicit opt-in. An admin can still turn everything off by saving
+        ``ai_enabled = false`` (the kill-switch). Only an explicit ``"false"``
+        disables AI; any other stored value — or no row at all — reads as on.
+        """
         raw = self.get_setting(self._AI_ENABLED_KEY)
-        return raw is not None and raw.strip().lower() == "true"
+        if raw is None:
+            return True
+        return raw.strip().lower() == "true"
 
     def save_ai_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Persist the AI kill-switch setting. Returns the saved value."""
