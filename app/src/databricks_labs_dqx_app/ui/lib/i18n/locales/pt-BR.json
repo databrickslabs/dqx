@@ -1798,7 +1798,7 @@
     "checksCount_other": "{{count}} verificações",
     "viaRulesCount_one": "via {{count}} regra",
     "viaRulesCount_other": "via {{count}} regras",
-    "checksViaRulesTooltip": "Uma regra é um trecho de lógica reutilizável. Uma verificação é quando uma regra é aplicada a uma coluna ou a um conjunto de colunas.",
+    "checksViaRulesTooltip": "Uma regra é um trecho de lógica reutilizável. Uma verificação é quando uma regra é aplicada a uma coluna ou conjunto de colunas. Um teste é quando uma verificação é executada em uma linha de dados.",
     "filterAll": "Todas",
     "filterNeedsAttention": "Requer atenção",
     "searchRulesAndColumnsPlaceholder": "Filtrar colunas e regras…",

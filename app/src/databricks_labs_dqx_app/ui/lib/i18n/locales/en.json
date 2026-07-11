@@ -1798,7 +1798,7 @@
     "checksCount_other": "{{count}} checks",
     "viaRulesCount_one": "via {{count}} rule",
     "viaRulesCount_other": "via {{count}} rules",
-    "checksViaRulesTooltip": "A rule is a piece of reusable logic. A check is when a rule is applied to a column or set of columns.",
+    "checksViaRulesTooltip": "A rule is a piece of reusable logic. A check is when a rule gets applied to a column/set of columns. A test is when a check runs against a data row.",
     "filterAll": "All",
     "filterNeedsAttention": "Needs attention",
     "searchRulesAndColumnsPlaceholder": "Filter columns and rules…",

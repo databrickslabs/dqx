@@ -1798,7 +1798,7 @@
     "checksCount_other": "{{count}} verificaciones",
     "viaRulesCount_one": "mediante {{count}} regla",
     "viaRulesCount_other": "mediante {{count}} reglas",
-    "checksViaRulesTooltip": "Una regla es una pieza de lógica reutilizable. Una verificación es cuando una regla se aplica a una columna o a un conjunto de columnas.",
+    "checksViaRulesTooltip": "Una regla es una lógica reutilizable. Una verificación es cuando una regla se aplica a una columna o conjunto de columnas. Una prueba es cuando una verificación se ejecuta sobre una fila de datos.",
     "filterAll": "Todas",
     "filterNeedsAttention": "Requiere atención",
     "searchRulesAndColumnsPlaceholder": "Filtrar columnas y reglas…",
