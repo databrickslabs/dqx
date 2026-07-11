@@ -44,7 +44,7 @@ import selector from "@/lib/selector";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { GenieMarkdown } from "./GenieMarkdown";
 import { GenieResultTable } from "./GenieResultTable";
-import { GenieResultChart } from "./GenieResultChart";
+import { GenieResultChart, planChart } from "./GenieResultChart";
 import { GenieIcon } from "./GenieIcon";
 import {
   buildSuggestedQuestions,
@@ -79,6 +79,36 @@ import { useGeniePanelWidth } from "./useGeniePanelWidth";
 // The internal "no stage yet" sentinel. Never displayed (the pending bubble
 // suppresses it); backend-provided stage strings replace it as they arrive.
 const PENDING_DEFAULT = "Thinking";
+
+/**
+ * Chart + table for a Genie result, shown only when each actually adds value
+ * (#66). The caller has already suppressed trivial single facts (a one-cell
+ * count/score never reaches here). On top of that:
+ *  - the chart renders only when planChart finds a chartable shape (a clear
+ *    category/time axis + numeric measure); otherwise nothing;
+ *  - the table is suppressed when a chart is shown AND the data is just the two
+ *    columns the chart already plots (label + measure) — the chart conveys the
+ *    same thing. A result with more than two columns keeps its table (the chart
+ *    only plots two of them), and a result with no chart always shows its
+ *    table. Conservative by construction: at least one of the two always
+ *    renders.
+ */
+function GenieResult({
+  columns,
+  rows,
+}: {
+  columns: string[];
+  rows: (string | null)[][];
+}) {
+  const plan = planChart(columns, rows);
+  const showTable = plan == null || columns.length > 2;
+  return (
+    <>
+      {plan && <GenieResultChart columns={columns} rows={rows} />}
+      {showTable && <GenieResultTable columns={columns} rows={rows} />}
+    </>
+  );
+}
 
 /** Three bouncing dots in an assistant bubble — shown while an answer loads. */
 function TypingDots() {
@@ -420,19 +450,12 @@ export function GenieChatBody({
                         // dqlake even though this app's aggregates-only space
                         // never returns row-level data (harmless, faithful).
                         m.resultColumns.includes("failing_record")) && (
-                        <>
-                          {/* A chart when the result has a clear category/time
-                              axis and a numeric measure; renders nothing
-                              otherwise (e.g. raw record values). */}
-                          <GenieResultChart
-                            columns={m.resultColumns}
-                            rows={m.resultRows}
-                          />
-                          <GenieResultTable
-                            columns={m.resultColumns}
-                            rows={m.resultRows}
-                          />
-                        </>
+                        // Chart and/or table, each shown only when it adds
+                        // something (#66) — see GenieResult.
+                        <GenieResult
+                          columns={m.resultColumns}
+                          rows={m.resultRows}
+                        />
                       )}
                   </>
                 )}
