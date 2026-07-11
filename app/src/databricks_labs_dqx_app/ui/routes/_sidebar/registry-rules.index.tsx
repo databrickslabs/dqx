@@ -123,7 +123,6 @@ function RegistryRulesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [dimensionFilter, setDimensionFilter] = useState<string>(ALL);
   const [severityFilter, setSeverityFilter] = useState<string>(ALL);
   const [stewardFilter, setStewardFilter] = useState<string>(ALL);
@@ -148,12 +147,11 @@ function RegistryRulesPage() {
   // dqx Active Rules list, which filtered client-side over one fetched set).
   const serverParams = useMemo(
     () => ({
-      status: statusFilter === ALL ? undefined : statusFilter,
       dimension: dimensionFilter === ALL ? undefined : dimensionFilter,
       severity: severityFilter === ALL ? undefined : severityFilter,
       tag: tagFilter.trim() || undefined,
     }),
-    [statusFilter, dimensionFilter, severityFilter, tagFilter],
+    [dimensionFilter, severityFilter, tagFilter],
   );
 
   // Non-suspense on purpose: the `tag` server param is a free-text input, so
@@ -224,7 +222,6 @@ function RegistryRulesPage() {
   }, [sortedRules, page]);
 
   const hasActiveFilters =
-    statusFilter !== ALL ||
     dimensionFilter !== ALL ||
     severityFilter !== ALL ||
     stewardFilter !== ALL ||
@@ -478,19 +475,6 @@ function RegistryRulesPage() {
           className="h-8 text-xs pl-7"
         />
       </div>
-      <Select value={statusFilter} onValueChange={applyFilter(setStatusFilter)}>
-        <SelectTrigger className={FILTER_CLASS}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL} className="text-xs">{t("rulesRegistry.allStatuses")}</SelectItem>
-          <SelectItem value="draft" className="text-xs">{t("rulesRegistry.statusDraft")}</SelectItem>
-          <SelectItem value="pending_approval" className="text-xs">{t("rulesRegistry.statusPendingApproval")}</SelectItem>
-          <SelectItem value="rejected" className="text-xs">{t("rulesRegistry.statusRejected")}</SelectItem>
-          <SelectItem value="approved" className="text-xs">{t("rulesRegistry.statusApproved")}</SelectItem>
-          <SelectItem value="deprecated" className="text-xs">{t("rulesRegistry.statusDeprecated")}</SelectItem>
-        </SelectContent>
-      </Select>
       <Select value={dimensionFilter} onValueChange={applyFilter(setDimensionFilter)}>
         <SelectTrigger className={FILTER_CLASS}>
           <SelectValue />
@@ -545,7 +529,6 @@ function RegistryRulesPage() {
           size="sm"
           className="h-8 text-xs"
           onClick={() => {
-            setStatusFilter(ALL);
             setDimensionFilter(ALL);
             setSeverityFilter(ALL);
             setStewardFilter(ALL);

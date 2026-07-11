@@ -118,7 +118,6 @@ function MonitoredTablesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [stewardFilter, setStewardFilter] = useState<string>(ALL);
   const [catalogFilter, setCatalogFilter] = useState<string>(ALL);
   const [schemaFilter, setSchemaFilter] = useState<string>(ALL);
@@ -137,12 +136,11 @@ function MonitoredTablesPage() {
   // avoids a refetch per steward change (P25 item 92).
   const queryParams = useMemo(
     () => ({
-      status: statusFilter === ALL ? undefined : statusFilter,
       catalog: catalogFilter === ALL ? undefined : catalogFilter,
       schema: schemaFilter === ALL ? undefined : schemaFilter,
       name: nameSearch.trim() || undefined,
     }),
-    [statusFilter, catalogFilter, schemaFilter, nameSearch],
+    [catalogFilter, schemaFilter, nameSearch],
   );
 
   const { data, isLoading, isError, refetch } = useListMonitoredTables(queryParams);
@@ -219,7 +217,6 @@ function MonitoredTablesPage() {
   }, [sortedTables, page]);
 
   const hasActiveFilters =
-    statusFilter !== ALL ||
     stewardFilter !== ALL ||
     catalogFilter !== ALL ||
     schemaFilter !== ALL ||
@@ -366,18 +363,6 @@ function MonitoredTablesPage() {
                 emptyText={t("common.noMatches")}
                 ariaLabel={t("monitoredTables.colSchema")}
               />
-              <Select value={statusFilter} onValueChange={applyFilter(setStatusFilter)}>
-                <SelectTrigger className={FILTER_TRIGGER_CLASS}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allStatuses")}</SelectItem>
-                  <SelectItem value="draft" className="text-xs">{t("monitoredTables.statusDraft")}</SelectItem>
-                  <SelectItem value="pending_approval" className="text-xs">{t("monitoredTables.statusPendingApproval")}</SelectItem>
-                  <SelectItem value="rejected" className="text-xs">{t("monitoredTables.statusRejected")}</SelectItem>
-                  <SelectItem value="approved" className="text-xs">{t("monitoredTables.statusApproved")}</SelectItem>
-                </SelectContent>
-              </Select>
               <SearchableSelect
                 value={stewardFilter}
                 onChange={applyFilter(setStewardFilter)}
