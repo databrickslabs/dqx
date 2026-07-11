@@ -125,7 +125,7 @@
       "monitoredTablesDesc": "Aplica reglas a tablas específicas y monitoriza su calidad de datos",
       "tableSpacesDesc": "Agrupa tablas relacionadas en espacios con una programación compartida",
       "resultsDesc": "Explora puntuaciones de DQ, desgloses y registros con errores en tus tablas",
-      "config": "Configuración",
+      "config": "Configuración de Administrador",
       "configDesc": "Configura ajustes y preferencias"
     },
     "avgQuality": "Calidad media de todas las tablas",

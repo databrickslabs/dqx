@@ -125,7 +125,7 @@
       "monitoredTablesDesc": "Apply rules to specific tables and monitor their data quality",
       "tableSpacesDesc": "Group related tables into spaces with a shared schedule",
       "resultsDesc": "Explore DQ scores, breakdowns, and failing records across your tables",
-      "config": "Configuration",
+      "config": "Admin Settings",
       "configDesc": "Configure settings and preferences"
     },
     "avgQuality": "Average Quality of All Tables",

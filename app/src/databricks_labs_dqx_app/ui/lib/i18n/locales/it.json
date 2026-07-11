@@ -125,7 +125,7 @@
       "monitoredTablesDesc": "Applica regole a tabelle specifiche e monitora la loro qualità dei dati",
       "tableSpacesDesc": "Raggruppa tabelle correlate in spazi con una pianificazione condivisa",
       "resultsDesc": "Esplora punteggi DQ, suddivisioni e record non conformi nelle tue tabelle",
-      "config": "Configurazione",
+      "config": "Impostazioni Amministratore",
       "configDesc": "Configura impostazioni e preferenze"
     },
     "avgQuality": "Qualità media di tutte le tabelle",
