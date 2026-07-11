@@ -176,6 +176,23 @@ class TestRefreshRules:
         insert = next(s for s in _executed(sql_executor_mock) if DIM_RULES_FQN in s and s.startswith("INSERT INTO"))
         assert "'O''Brien''s rule'" in insert
 
+    def test_trailing_backslash_is_escaped(self, service, sql_executor_mock, registry, monitored_tables) -> None:
+        # escape_sql_string only doubles single quotes; a bare trailing
+        # backslash would otherwise escape the literal's closing quote on
+        # the Databricks SQL string-literal path and break out of the
+        # INSERT statement. Free-text rule metadata (description here) is
+        # never validated as an FQN, so this dim service must escape
+        # backslashes itself before delegating to escape_sql_string.
+        backslash = chr(92)
+        description = "matches paths like C:" + backslash + "data" + backslash
+        registry.list_rules.return_value = [_rule(user_metadata={"description": description})]
+        monitored_tables.list_monitored_tables.return_value = []
+        service.refresh()
+
+        insert = next(s for s in _executed(sql_executor_mock) if DIM_RULES_FQN in s and s.startswith("INSERT INTO"))
+        expected = "'matches paths like C:" + backslash * 2 + "data" + backslash * 2 + "'"
+        assert expected in insert
+
     def test_multiple_rules_join_into_one_insert(self, service, sql_executor_mock, registry, monitored_tables) -> None:
         registry.list_rules.return_value = [_rule(rule_id="r1"), _rule(rule_id="r2")]
         monitored_tables.list_monitored_tables.return_value = []

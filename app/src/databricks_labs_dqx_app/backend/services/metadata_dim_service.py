@@ -162,8 +162,23 @@ class MetadataDimService:
 
     @staticmethod
     def _str_lit(value: str | None) -> str:
-        """Single-quoted, escaped string literal, or the ``NULL`` literal for None."""
-        return "NULL" if value is None else f"'{escape_sql_string(value)}'"
+        """Single-quoted, escaped string literal, or the ``NULL`` literal for None.
+
+        ``escape_sql_string`` deliberately does not escape backslashes (see its
+        docstring) — it relies on ``validate_fqn`` to reject them upstream for
+        the fully-qualified-name call sites it was written for. The values
+        here are free-text rule/table metadata (name, description, steward,
+        ...) authored by app users and never passed through ``validate_fqn``,
+        so a trailing or embedded backslash must be escaped locally first —
+        otherwise it consumes the literal's closing quote on the Databricks
+        SQL string-literal path and breaks (or injects into) the generated
+        INSERT statement.
+        """
+        if value is None:
+            return "NULL"
+        backslash = chr(92)
+        escaped_backslashes = value.replace(backslash, backslash + backslash)
+        return f"'{escape_sql_string(escaped_backslashes)}'"
 
     @staticmethod
     def _int_lit(value: int | None) -> str:
