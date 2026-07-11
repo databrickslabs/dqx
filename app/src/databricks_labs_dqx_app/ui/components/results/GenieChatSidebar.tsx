@@ -382,17 +382,26 @@ export function GenieChatBody({
                   onClick={() => void send(q)}
                   style={{ animationDelay: `${(ci * 2 + qi) * 120}ms` }}
                   className={cn(
-                    "group flex items-start gap-2 rounded-lg px-3 py-2 text-left text-sm shadow-sm transition-colors hover:shadow",
+                    "group flex rounded-lg px-3 py-2 text-left text-sm shadow-sm transition-shadow hover:shadow",
+                    // Entrance stagger — its transform persists (fill-mode-both),
+                    // so the hover "pop" lives on the inner wrapper below (a
+                    // scale here would be overridden by the settled animation).
                     "animate-in fade-in slide-in-from-bottom-2 fill-mode-both duration-700 ease-out",
                     AI_BANNER_BG,
                     AI_BANNER_BORDER,
                   )}
                 >
-                  <Sparkles
-                    className="mt-0.5 h-3.5 w-3.5 shrink-0 opacity-70 transition-opacity group-hover:opacity-100"
-                    stroke={AI_GRADIENT_URL}
-                  />
-                  <span className="font-light">{q}</span>
+                  {/* Subtle hover "pop" (#95), matching the sample-data
+                      suggested-question chips: a gentle spring-scale anchored at
+                      the left edge, with a small press-in on click. Honors
+                      reduced-motion. */}
+                  <span className="flex items-start gap-2 origin-left transition-transform duration-200 ease-out group-hover:scale-[1.02] group-active:scale-[0.99] motion-reduce:transform-none">
+                    <Sparkles
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 opacity-70 transition-opacity group-hover:opacity-100"
+                      stroke={AI_GRADIENT_URL}
+                    />
+                    <span className="font-light">{q}</span>
+                  </span>
                 </button>
               ))}
             </div>
