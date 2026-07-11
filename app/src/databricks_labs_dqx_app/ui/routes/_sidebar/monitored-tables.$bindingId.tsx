@@ -1211,25 +1211,27 @@ function AboutTab({
                     </thead>
                     <tbody>
                       {pagedColumns.map((c) => (
-                        <tr key={c.name} className="border-t h-8">
+                        <tr
+                          key={c.name}
+                          className="border-t h-8 cursor-pointer hover:bg-muted"
+                          role="button"
+                          tabIndex={0}
+                          aria-label={t("monitoredTables.aboutColumnJumpTooltip")}
+                          onClick={() => {
+                            // A click that ends a text selection shouldn't also
+                            // navigate — let the user copy a value in peace.
+                            if (window.getSelection()?.toString()) return;
+                            onColumnClick(c.name);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onColumnClick(c.name);
+                            }
+                          }}
+                        >
                           <td className="px-3 py-1 overflow-hidden">
-                            <TooltipProvider delayDuration={300}>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <button
-                                    type="button"
-                                    onClick={() => onColumnClick(c.name)}
-                                    className="font-mono text-xs text-left hover:underline hover:text-primary focus-visible:underline focus-visible:outline-none block max-w-full truncate"
-                                  >
-                                    {c.name}
-                                  </button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <span className="font-mono">{c.name}</span>
-                                  <span className="block">{t("monitoredTables.aboutColumnJumpTooltip")}</span>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
+                            <span className="font-mono text-xs block max-w-full truncate">{c.name}</span>
                           </td>
                           <td className="px-3 py-1 overflow-hidden">
                             <Badge
