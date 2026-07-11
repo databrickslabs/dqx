@@ -40,6 +40,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductService,
     NoRunnableMembersError,
 )
+from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
 
 logger = get_logger("scheduler")
@@ -52,6 +53,14 @@ _VALID_TRACKER_STATUSES = {"pending", "success", "partial_failure", "failed"}
 # trigger fails *and* its next occurrence cannot be computed. Prevents a
 # deterministic failure from re-firing the schedule on every tick.
 _FAILURE_BACKOFF = timedelta(hours=1)
+
+# How long a scheduler-launched run stays tracked for the completion
+# score-cache refresh (:meth:`SchedulerService._refresh_scores_for_completed_runs`)
+# while waiting for its ``dq_validation_runs`` terminal row. A run whose
+# job dies before the runner writes any terminal result would otherwise
+# be re-checked on every tick forever; 24h comfortably outlives any real
+# validation run.
+_SCORE_REFRESH_TTL = timedelta(hours=24)
 
 # ------------------------------------------------------------------
 # Data Products cron evaluation (design spec §4.3, Task 5)
@@ -169,6 +178,7 @@ class SchedulerService:
         oltp_sql: OltpExecutorProtocol | None = None,
         data_product_service: DataProductService | None = None,
         binding_run_service: BindingRunService | None = None,
+        score_cache_service: ScoreCacheService | None = None,
     ) -> None:
         """Construct the scheduler.
 
@@ -197,6 +207,16 @@ class SchedulerService:
             :meth:`_tick_monitored_tables` is a no-op — a THIRD,
             independent due-ness source that never touches state the
             scope-config or product paths read.
+        score_cache_service:
+            Optional collaborator that recomputes the Lakebase
+            ``dq_score_cache`` rows. When set, every run the scheduler
+            launches is tracked in memory and, once its
+            ``dq_validation_runs`` terminal row lands, the affected
+            tables' scores are refreshed best-effort on the next tick
+            (:meth:`_refresh_scores_for_completed_runs`) — closing the
+            gap where the browser-side refresh-scores POST never fires
+            because no browser observed the scheduled run complete.
+            When ``None`` the refresh step is a no-op.
         """
         self._ws = ws
         self._job_id = job_id
@@ -228,6 +248,15 @@ class SchedulerService:
         self._monitored_tables_table = self._oltp_sql.fqn("dq_monitored_tables")
         self._data_product_service = data_product_service
         self._binding_run_service = binding_run_service
+        self._score_cache_service = score_cache_service
+        # Scheduler-launched runs awaiting their dq_validation_runs
+        # terminal row, run_id -> launch time (UTC). In-memory only:
+        # the scheduler is file-locked to one worker, and a run lost to
+        # an app restart is covered by the browser-side refresh or the
+        # next scheduled completion. Entries expire after
+        # :data:`_SCORE_REFRESH_TTL`.
+        self._pending_score_runs: dict[str, datetime] = {}
+        self._runs_table = self._sql.fqn("dq_validation_runs")
 
         # Orphan-tmp-view GC: fires every Saturday at 01:00 UTC. Held in
         # process memory rather than persisted — a missed Saturday (e.g.
@@ -411,6 +440,16 @@ class SchedulerService:
             await asyncio.to_thread(self._tick_monitored_tables, now)
         except Exception:
             logger.exception("Scheduler failed processing monitored-table schedules")
+
+        # Completion observation: refresh the Lakebase score cache for any
+        # scheduler-launched run whose terminal ``dq_validation_runs`` row
+        # has landed since the last tick. Piggybacks on the 60s tick (no
+        # extra loop) and is fully best-effort — a failure here never
+        # affects the due-ness sources above.
+        try:
+            await asyncio.to_thread(self._refresh_scores_for_completed_runs, now)
+        except Exception:
+            logger.exception("Scheduler failed refreshing the score cache for completed runs")
 
     def _advance_after_failure(self, name: str, cfg: dict[str, Any], now: datetime, run_id: str) -> None:
         """Persist a failed run and push ``next_run_at`` forward after a trigger failure.
@@ -613,6 +652,8 @@ class SchedulerService:
                 len(result.submitted),
                 len(result.skipped),
             )
+            for submission in result.submitted:
+                self._track_run_for_score_refresh(submission.run_id)
             new_next = self._compute_next_cron_run(cron_expr, now, tz_name)
             status = "success" if not result.skipped else "partial_failure"
             self._upsert_tracker(schedule_name, now, new_next, run_id, status)
@@ -809,6 +850,7 @@ class SchedulerService:
                 result.run_id,
                 result.run_set_id,
             )
+            self._track_run_for_score_refresh(result.run_id)
             new_next = self._compute_next_cron_run(cron_expr, now, tz_name)
             self._upsert_tracker(schedule_name, now, new_next, run_id, "success")
         except BindingRunError as e:
@@ -848,6 +890,87 @@ class SchedulerService:
             self._upsert_tracker(schedule_name, now, new_next, run_id, "failed")
         except Exception:
             logger.exception("Table schedule '%s': failed to persist tracker after a failure", schedule_name)
+
+    # ------------------------------------------------------------------
+    # Score-cache refresh on observed run completion
+    # ------------------------------------------------------------------
+    #
+    # The ``dq_score_cache`` refresh otherwise only fires from the browser
+    # (the results-invalidation POST when a user watches a run complete).
+    # A scheduled run finishing with no browser open would leave the list
+    # scores stale/NULL forever, so the scheduler tracks every run it
+    # launches and refreshes the affected tables' scores when it observes
+    # the run's terminal ``dq_validation_runs`` row — piggybacking on the
+    # 60s tick, one batched Delta lookup per tick, no new loop.
+
+    def _track_run_for_score_refresh(self, run_id: str) -> None:
+        """Remember a scheduler-launched run so its completion refreshes the score cache.
+
+        No-op without a :class:`ScoreCacheService` collaborator so the
+        launch paths can call it unconditionally.
+        """
+        if self._score_cache_service is None:
+            return
+        self._pending_score_runs[run_id] = datetime.now(timezone.utc)
+
+    def _refresh_scores_for_completed_runs(self, now: datetime) -> None:
+        """Refresh the score cache for tracked runs that reached a terminal state.
+
+        One batched ``dq_validation_runs`` lookup over the pending run ids:
+        any run with a non-RUNNING row has completed (the runner appends
+        its terminal row next to the app's RUNNING placeholder — see
+        :meth:`RunSetService._fetch_validation_rows`). Completed runs are
+        dropped from tracking and their ``source_table_fqn``s fed to
+        :meth:`ScoreCacheService.refresh_all_for_tables` in a single call.
+        Fully best-effort: a refresh failure is logged and the runs stay
+        untracked (the browser-side refresh or the run's next completion
+        catches up) so a warehouse hiccup can never wedge the tick into a
+        retry loop. Runs whose terminal row never lands (job died before
+        the runner wrote it) expire after :data:`_SCORE_REFRESH_TTL`.
+        """
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        if self._score_cache_service is None or not self._pending_score_runs:
+            return
+
+        expired = [rid for rid, started in self._pending_score_runs.items() if now - started > _SCORE_REFRESH_TTL]
+        for rid in expired:
+            del self._pending_score_runs[rid]
+            logger.warning("Run %s never reached a terminal state; dropping its score-refresh tracking", rid)
+        if not self._pending_score_runs:
+            return
+
+        in_list = ", ".join(f"'{escape_sql_string(rid)}'" for rid in self._pending_score_runs)
+        sql = (
+            f"SELECT DISTINCT run_id, source_table_fqn FROM {self._runs_table} "  # noqa: S608
+            f"WHERE run_id IN ({in_list}) AND UPPER(status) <> 'RUNNING'"
+        )
+        rows = self._sql.query(sql)
+
+        fqns: set[str] = set()
+        for row in rows:
+            run_id = row[0] if row else None
+            if not run_id:
+                continue
+            self._pending_score_runs.pop(run_id, None)
+            fqn = row[1]
+            if fqn and not fqn.startswith(_SQL_CHECK_PREFIX):
+                fqns.add(fqn)
+        if not fqns:
+            return
+
+        try:
+            refreshed_tables, refreshed_products = self._score_cache_service.refresh_all_for_tables(sorted(fqns))
+            logger.info(
+                "Score cache refreshed after run completion: %d table(s), %d product(s)",
+                refreshed_tables,
+                refreshed_products,
+            )
+        except Exception:
+            logger.exception(
+                "Score-cache refresh after run completion failed; "
+                "scores stay stale until the next completion or browser refresh"
+            )
 
     @staticmethod
     def _resolve_cron_token(token: str, names: dict[str, int] | None) -> int:
@@ -1181,6 +1304,10 @@ class SchedulerService:
                     },
                 )
                 logger.info("Schedule '%s': submitted run for %s (run_id=%s)", schedule_name, table_fqn, run_id)
+                # Synthetic cross-table keys never carry a real table FQN,
+                # so there is no score-cache row to refresh for them.
+                if not is_synthetic:
+                    self._track_run_for_score_refresh(run_id)
             except Exception as e:
                 logger.error("Schedule '%s': failed for %s: %s", schedule_name, table_fqn, e)
                 errors.append(f"{table_fqn}: {e}")

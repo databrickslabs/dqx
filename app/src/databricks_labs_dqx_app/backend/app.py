@@ -44,6 +44,7 @@ from .services.data_product_service import DataProductService
 from .services.registry_service import RegistryService
 from .services.rule_embeddings import RuleEmbeddingsService
 from .services.scheduler_service import SchedulerService
+from .services.score_cache_service import ScoreCacheService
 from .services.score_view_service import ScoreViewService
 from .services.vector_store import VectorStoreProvisioner
 from .services.view_service import mark_tmp_schema_ready
@@ -625,6 +626,12 @@ async def lifespan(app: FastAPI):
                 oltp_sql=pg_executor,
                 data_product_service=data_product_service,
                 binding_run_service=binding_run_service,
+                # Same construction as dependencies.get_score_cache_service:
+                # the cache lives on the OLTP executor, the published-score
+                # recompute reads the metric view via the SP warehouse
+                # executor. Lets the scheduler refresh list scores when it
+                # observes a launched run complete server-side (no browser).
+                score_cache_service=ScoreCacheService(oltp=oltp_for_scheduler, warehouse_sql=sp_sql),
             )
             set_scheduler(_scheduler)
             _scheduler.start()

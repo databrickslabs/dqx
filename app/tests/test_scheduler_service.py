@@ -39,11 +39,13 @@ from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _GC_AGE_HOURS,
     _GC_HOUR_UTC,
     _GC_WEEKDAY_SAT,
+    _SCORE_REFRESH_TTL,
     _TMP_VIEW_ID_LEN,
     _TMP_VIEW_NAME_RE,
     SchedulerService,
 )
 from databricks_labs_dqx_app.backend.services.scheduler_service import logger as scheduler_logger
+from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 
 
 @pytest.fixture
@@ -1066,3 +1068,186 @@ class TestTriggerRunViewFqnQuoting:
         svc = self._prepare(make_scheduler, "__sql_check__/my_check", checks=checks)
         svc._extract_sql_query = lambda entry_checks: "SELECT 1"  # type: ignore[method-assign]
         assert self._submitted_view_fqn(svc) == "__sql_check__/my_check"
+
+
+# ---------------------------------------------------------------------------
+# Score-cache refresh on observed run completion
+# ---------------------------------------------------------------------------
+
+
+def _make_score_scheduler(make_scheduler, **kwargs):
+    score_cache = create_autospec(ScoreCacheService, instance=True)
+    svc, mocks = make_scheduler(
+        catalog="main",
+        schema="dqx",
+        tmp_schema="dqx_tmp",
+        distinct_sql=True,
+        score_cache_service=score_cache,
+        **kwargs,
+    )
+    return svc, mocks, score_cache
+
+
+class TestScoreCacheRefreshOnCompletion:
+    """The server-side completion trigger for the ``dq_score_cache`` refresh.
+
+    The browser-side refresh-scores POST only fires when a user watches a
+    run complete; the scheduler must therefore refresh the cache itself
+    when a run it launched reaches its terminal ``dq_validation_runs``
+    row — otherwise scheduled runs completing with no browser open leave
+    the list scores stale/NULL forever.
+    """
+
+    NOW = datetime(2026, 5, 1, 9, 5, 0, tzinfo=timezone.utc)
+
+    def test_completion_triggers_exactly_one_refresh_with_the_right_fqns(self, make_scheduler):
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
+        svc._track_run_for_score_refresh("r1")
+        svc._track_run_for_score_refresh("r2")
+        mocks.sql.query.return_value = [("r1", "main.sales.orders"), ("r2", "main.sales.customers")]
+
+        svc._refresh_scores_for_completed_runs(self.NOW)
+
+        score_cache.refresh_all_for_tables.assert_called_once_with(["main.sales.customers", "main.sales.orders"])
+        # Completed runs are untracked — the next tick must not refresh again.
+        assert svc._pending_score_runs == {}
+        svc._refresh_scores_for_completed_runs(self.NOW)
+        score_cache.refresh_all_for_tables.assert_called_once()
+
+    def test_no_refresh_while_runs_are_still_running(self, make_scheduler):
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
+        svc._track_run_for_score_refresh("r1")
+        mocks.sql.query.return_value = []  # only the RUNNING placeholder exists
+
+        svc._refresh_scores_for_completed_runs(self.NOW)
+
+        score_cache.refresh_all_for_tables.assert_not_called()
+        assert "r1" in svc._pending_score_runs  # re-checked next tick
+
+    def test_partial_completion_refreshes_only_the_finished_run(self, make_scheduler):
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
+        svc._track_run_for_score_refresh("r1")
+        svc._track_run_for_score_refresh("r2")
+        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+
+        svc._refresh_scores_for_completed_runs(self.NOW)
+
+        score_cache.refresh_all_for_tables.assert_called_once_with(["main.sales.orders"])
+        assert set(svc._pending_score_runs) == {"r2"}
+
+    def test_refresh_failure_is_swallowed_and_never_retried_in_a_loop(self, make_scheduler):
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
+        svc._track_run_for_score_refresh("r1")
+        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+        score_cache.refresh_all_for_tables.side_effect = RuntimeError("warehouse hiccup")
+
+        # Best-effort: must not raise out of the tick step.
+        svc._refresh_scores_for_completed_runs(self.NOW)
+
+        # The run stays untracked — a persistent warehouse failure must not
+        # turn into an every-tick retry loop; the browser refresh or the
+        # run's next completion catches up.
+        assert svc._pending_score_runs == {}
+
+    def test_synthetic_sql_check_keys_never_trigger_a_refresh(self, make_scheduler):
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
+        svc._track_run_for_score_refresh("r1")
+        mocks.sql.query.return_value = [("r1", "__sql_check__/my_check")]
+
+        svc._refresh_scores_for_completed_runs(self.NOW)
+
+        score_cache.refresh_all_for_tables.assert_not_called()
+        assert svc._pending_score_runs == {}
+
+    def test_noop_without_a_score_cache_service(self, make_scheduler):
+        svc, mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp", distinct_sql=True)
+
+        svc._track_run_for_score_refresh("r1")
+        assert svc._pending_score_runs == {}
+
+        svc._refresh_scores_for_completed_runs(self.NOW)
+        mocks.sql.query.assert_not_called()
+
+    def test_runs_whose_terminal_row_never_lands_expire_after_the_ttl(self, make_scheduler, scheduler_caplog):
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
+        svc._track_run_for_score_refresh("r_old")
+        svc._pending_score_runs["r_old"] = self.NOW - _SCORE_REFRESH_TTL - timedelta(minutes=1)
+
+        svc._refresh_scores_for_completed_runs(self.NOW)
+
+        assert svc._pending_score_runs == {}
+        mocks.sql.query.assert_not_called()  # nothing left to look up
+        score_cache.refresh_all_for_tables.assert_not_called()
+        assert "never reached a terminal state" in scheduler_caplog.text
+
+    # -- launch-path tracking ------------------------------------------------
+
+    def test_table_tick_tracks_its_launched_run(self, make_scheduler):
+        br_service = create_autospec(BindingRunService, instance=True)
+        svc, mocks, _score_cache = _make_score_scheduler(make_scheduler, binding_run_service=br_service)
+        mocks.oltp.query.return_value = [_tracker_row("table:b1", "2026-05-01T09:00:00+00:00")]
+        br_service.run_binding.return_value = _binding_run_result()
+
+        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, self.NOW)
+
+        assert set(svc._pending_score_runs) == {"r1"}
+
+    def test_product_tick_tracks_every_submitted_member_run(self, make_scheduler):
+        dp_service = create_autospec(DataProductService, instance=True)
+        svc, mocks, _score_cache = _make_score_scheduler(make_scheduler, data_product_service=dp_service)
+        mocks.oltp.query.return_value = [_tracker_row("product:prod1", "2026-05-01T09:00:00+00:00")]
+        dp_service.run.return_value = DataProductRunResult(
+            run_set_id="rs1",
+            submitted=[
+                DataProductRunSubmission(
+                    binding_id="b1", table_fqn="c.s.t1", run_id="r1", job_run_id=1, view_fqn="c.tmp.v1", binding_version=1
+                ),
+                DataProductRunSubmission(
+                    binding_id="b2", table_fqn="c.s.t2", run_id="r2", job_run_id=2, view_fqn="c.tmp.v2", binding_version=1
+                ),
+            ],
+            skipped=[],
+        )
+
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, self.NOW)
+
+        assert set(svc._pending_score_runs) == {"r1", "r2"}
+
+    def test_scope_config_trigger_tracks_real_tables_but_not_synthetic_keys(self, make_scheduler):
+        svc, _mocks, _score_cache = _make_score_scheduler(make_scheduler)
+        svc._job_id = "123"
+        svc._resolve_scope = lambda cfg: ["main.default.orders", "__sql_check__/my_check"]  # type: ignore[method-assign]
+        svc._get_approved_rule = lambda fqn: {  # type: ignore[method-assign]
+            "checks": (
+                [{"check": {"function": "sql_query", "arguments": {"query": "SELECT 1"}}}]
+                if fqn.startswith("__sql_check__/")
+                else [{"check": {"function": "is_not_null", "arguments": {"column": "id"}}}]
+            )
+        }
+        svc._load_custom_metrics = lambda: []  # type: ignore[method-assign]
+
+        errors = svc._trigger_run("nightly", {}, "run")
+
+        assert errors == []
+        assert svc._ws.jobs.run_now.call_count == 2
+        # Only the real table's run (index 0) is tracked — the synthetic
+        # cross-table key has no score-cache row to refresh.
+        assert set(svc._pending_score_runs) == {"run_0"}
+
+    # -- tick integration ----------------------------------------------------
+
+    def test_tick_runs_the_refresh_step_and_isolates_its_failure(self, make_scheduler):
+        import asyncio
+
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
+        svc._track_run_for_score_refresh("r1")
+        mocks.oltp.query.return_value = []  # no schedule configs
+        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+
+        asyncio.run(svc._tick())
+        score_cache.refresh_all_for_tables.assert_called_once_with(["main.sales.orders"])
+
+        # And a hard failure inside the step never breaks the tick.
+        svc._track_run_for_score_refresh("r2")
+        score_cache.refresh_all_for_tables.side_effect = RuntimeError("boom")
+        asyncio.run(svc._tick())  # must not raise
