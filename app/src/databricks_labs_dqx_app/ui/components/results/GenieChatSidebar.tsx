@@ -57,6 +57,7 @@ import {
   resetConversation,
   setConversationId,
   useConversation,
+  type ChatMessage,
 } from "./genieConversationStore";
 import { useGeniePanelWidth } from "./useGeniePanelWidth";
 
@@ -80,28 +81,62 @@ import { useGeniePanelWidth } from "./useGeniePanelWidth";
 // suppresses it); backend-provided stage strings replace it as they arrive.
 const PENDING_DEFAULT = "Thinking";
 
+/** Keyword heuristic on the user's OWN question: did they deliberately ask to
+ *  see a table / rows / list / records? Whole-word matches so "rules" never
+ *  trips "rows"; conservative by design — when unsure, no table. */
+const TABLE_INTENT_RE =
+  /\b(tables?|rows?|lists?|records?|samples?|examples?)\b|show me the (records|rows|data|examples)/i;
+
+function userAskedForTable(question: string | null | undefined): boolean {
+  return question != null && TABLE_INTENT_RE.test(question);
+}
+
+/** Whether a Genie result is literal SAMPLE / raw-row data rather than an
+ *  aggregate the prose already conveys. The SP-owned space is aggregates-only
+ *  (P3.8), so this is rare, but two signals are unambiguous: a `failing_record`
+ *  column (row-level failing records the table expands into the dataset's own
+ *  columns) or a raw `SELECT *` dump of a table's rows. */
+function isSampleDataResult(
+  columns: string[],
+  sql: string | null | undefined,
+): boolean {
+  if (columns.includes("failing_record")) return true;
+  return sql != null && /\bselect\s+\*/i.test(sql);
+}
+
+/** The user question a given assistant message is answering — the nearest
+ *  preceding user turn. Feeds the table-intent heuristic below. */
+function precedingUserText(messages: ChatMessage[], index: number): string | undefined {
+  for (let j = index - 1; j >= 0; j--) {
+    if (messages[j].role === "user") return messages[j].text;
+  }
+  return undefined;
+}
+
 /**
- * Chart + table for a Genie result, shown only when each actually adds value
- * (#66). The caller has already suppressed trivial single facts (a one-cell
- * count/score never reaches here). On top of that:
- *  - the chart renders only when planChart finds a chartable shape (a clear
- *    category/time axis + numeric measure); otherwise nothing;
- *  - the table is suppressed when a chart is shown AND the data is just the two
- *    columns the chart already plots (label + measure) — the chart conveys the
- *    same thing. A result with more than two columns keeps its table (the chart
- *    only plots two of them), and a result with no chart always shows its
- *    table. Conservative by construction: at least one of the two always
- *    renders.
+ * Chart + table for a Genie result. The chart renders whenever planChart finds
+ * a chartable shape (a clear category/time axis + numeric measure) — unchanged
+ * (#66). The TABLE is suppressed BY DEFAULT and shown only when it IS the
+ * answer the prose can't stand in for:
+ *  - the result is literal sample data — a `failing_record` expansion or a raw
+ *    `SELECT *` row dump (see isSampleDataResult); and/or
+ *  - the user deliberately asked to see a table / rows / list / records (a
+ *    keyword heuristic on their own question — see userAskedForTable).
+ * Otherwise no table — conservative by construction. The chart is unaffected.
  */
 function GenieResult({
   columns,
   rows,
+  sql,
+  question,
 }: {
   columns: string[];
   rows: (string | null)[][];
+  sql?: string | null;
+  question?: string | null;
 }) {
   const plan = planChart(columns, rows);
-  const showTable = plan == null || columns.length > 2;
+  const showTable = isSampleDataResult(columns, sql) || userAskedForTable(question);
   return (
     <>
       {plan && <GenieResultChart columns={columns} rows={rows} />}
@@ -449,10 +484,11 @@ export function GenieChatBody({
                       {t("genie.assistantName")}
                     </p>
                     {m.text && <GenieMarkdown text={m.text} />}
-                    {/* Only show the result table when it adds something the
-                        prose can't convey: a multi-row breakdown or a wide row
-                        (e.g. many columns). Hide it for single small facts
-                        (counts, scores) so every turn isn't a one-cell table. */}
+                    {/* Gate on there being result data at all (a non-trivial
+                        row set or a literal failing record). Whether a TABLE
+                        actually renders is decided inside GenieResult — it is
+                        suppressed by default and shown only for sample data or
+                        when the user asked for rows; the chart is independent. */}
                     {m.resultColumns &&
                       m.resultRows &&
                       m.resultRows.length > 0 &&
@@ -464,11 +500,13 @@ export function GenieChatBody({
                         // dqlake even though this app's aggregates-only space
                         // never returns row-level data (harmless, faithful).
                         m.resultColumns.includes("failing_record")) && (
-                        // Chart and/or table, each shown only when it adds
-                        // something (#66) — see GenieResult.
+                        // Chart (when chartable) and/or table (only when it is
+                        // the answer) — see GenieResult.
                         <GenieResult
                           columns={m.resultColumns}
                           rows={m.resultRows}
+                          sql={m.sql}
+                          question={precedingUserText(messages, i)}
                         />
                       )}
                   </>
