@@ -211,7 +211,7 @@ class JobService:
     _PROFILE_COLS = (
         "run_id, requesting_user, source_table_fqn, view_fqn, sample_limit, "
         "rows_profiled, columns_profiled, duration_seconds, summary_json, "
-        "generated_rules_json, status, error_message, canceled_by, "
+        "generated_rules_json, status, error_message, canceled_by, job_run_id, "
         "CAST(updated_at AS STRING) AS updated_at, "
         "CAST(created_at AS STRING) AS created_at"
     )
@@ -219,7 +219,7 @@ class JobService:
     _DRYRUN_COLS = (
         "run_id, requesting_user, source_table_fqn, sample_size, "
         "total_rows, valid_rows, invalid_rows, error_rows, warning_rows, "
-        "status, error_message, canceled_by, "
+        "status, error_message, canceled_by, job_run_id, "
         "CAST(updated_at AS STRING) AS updated_at, "
         "CAST(created_at AS STRING) AS created_at, "
         "COALESCE(run_type, 'dryrun') AS run_type, "

@@ -113,6 +113,7 @@ def list_profile_runs(
                 canceled_by=row.get("canceled_by"),
                 updated_at=row.get("updated_at"),
                 created_at=row.get("created_at"),
+                job_run_id=int(v) if (v := row.get("job_run_id")) else None,
             )
             for row in rows
         ]

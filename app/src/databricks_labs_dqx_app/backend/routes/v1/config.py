@@ -10,8 +10,10 @@ from databricks.sdk.errors.base import DatabricksError
 from fastapi import APIRouter, Depends, HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
+from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
+    get_conf,
     get_sp_ws,
     get_vector_store_provisioner,
     require_role,
@@ -749,6 +751,15 @@ class WorkspaceHostOut(BaseModel):
             "Empty string when unset (local dev)."
         ),
     )
+    job_id: str = Field(
+        default="",
+        description=(
+            "Task-runner Databricks job id (``DQX_JOB_ID``). Combined with the host "
+            "and a run's ``job_run_id`` the UI builds a deep link to the run page: "
+            "``{workspace_host}/jobs/{job_id}/runs/{job_run_id}``. Empty when unset "
+            "(local dev / job not configured)."
+        ),
+    )
 
 
 @router.get(
@@ -756,14 +767,14 @@ class WorkspaceHostOut(BaseModel):
     response_model=WorkspaceHostOut,
     operation_id="getWorkspaceHost",
 )
-def get_workspace_host() -> WorkspaceHostOut:
-    """Return the workspace host (accessible by all authenticated users).
+def get_workspace_host(conf: Annotated[AppConfig, Depends(get_conf)]) -> WorkspaceHostOut:
+    """Return the workspace host + task-runner job id (accessible by all authenticated users).
 
-    The host alone grants no data access — links built from it (e.g. Unity
-    Catalog explorer) still enforce the caller's own workspace/UC
-    permissions on arrival.
+    Neither value grants data access on its own — links built from them (e.g.
+    Unity Catalog explorer, job-run pages) still enforce the caller's own
+    workspace/UC permissions on arrival.
     """
-    return WorkspaceHostOut(workspace_host=_workspace_host())
+    return WorkspaceHostOut(workspace_host=_workspace_host(), job_id=conf.job_id)
 
 
 # ----------------------------------------------------------------------

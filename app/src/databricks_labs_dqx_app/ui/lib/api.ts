@@ -2086,6 +2086,8 @@ export type ProfileRunSummaryOutUpdatedAt = string | null;
 
 export type ProfileRunSummaryOutCreatedAt = string | null;
 
+export type ProfileRunSummaryOutJobRunId = number | null;
+
 export interface ProfileRunSummaryOut {
   run_id: string;
   source_table_fqn: string;
@@ -2097,6 +2099,7 @@ export interface ProfileRunSummaryOut {
   canceled_by?: ProfileRunSummaryOutCanceledBy;
   updated_at?: ProfileRunSummaryOutUpdatedAt;
   created_at?: ProfileRunSummaryOutCreatedAt;
+  job_run_id?: ProfileRunSummaryOutJobRunId;
 }
 
 export type ProfilerConfigSampleFractionAnyOf = {[key: string]: number};
@@ -3583,6 +3586,8 @@ export type ValidationRunSummaryOutCreatedAt = string | null;
 
 export type ValidationRunSummaryOutErrorMessage = string | null;
 
+export type ValidationRunSummaryOutJobRunId = number | null;
+
 export type ValidationRunSummaryOutChecksItem = { [key: string]: unknown };
 
 export type ValidationRunSummaryOutReviewStatus = string | null;
@@ -3607,6 +3612,7 @@ export interface ValidationRunSummaryOut {
   warning_rows?: ValidationRunSummaryOutWarningRows;
   created_at?: ValidationRunSummaryOutCreatedAt;
   error_message?: ValidationRunSummaryOutErrorMessage;
+  job_run_id?: ValidationRunSummaryOutJobRunId;
   checks?: ValidationRunSummaryOutChecksItem[];
   review_status?: ValidationRunSummaryOutReviewStatus;
   review_status_is_default?: boolean;
@@ -3710,6 +3716,8 @@ export interface WorkspaceConfig {
 export interface WorkspaceHostOut {
   /** Workspace host (e.g. 'https://e2-...cloud.databricks.com') used to build links into the workspace UI, such as Unity Catalog explorer pages. Empty string when unset (local dev). */
   workspace_host?: string;
+  /** Task-runner Databricks job id (``DQX_JOB_ID``). Combined with the host and a run's ``job_run_id`` the UI builds a deep link to the run page: ``{workspace_host}/jobs/{job_id}/runs/{job_run_id}``. Empty when unset (local dev / job not configured). */
+  job_id?: string;
 }
 
 export type DeleteSchedule200 = {[key: string]: string};
@@ -6014,11 +6022,11 @@ export const useSaveCustomMetrics = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
- * Return the workspace host (accessible by all authenticated users).
+ * Return the workspace host + task-runner job id (accessible by all authenticated users).
 
-The host alone grants no data access — links built from it (e.g. Unity
-Catalog explorer) still enforce the caller's own workspace/UC
-permissions on arrival.
+Neither value grants data access on its own — links built from them (e.g.
+Unity Catalog explorer, job-run pages) still enforce the caller's own
+workspace/UC permissions on arrival.
  * @summary Get Workspace Host
  */
 export const getWorkspaceHost = (

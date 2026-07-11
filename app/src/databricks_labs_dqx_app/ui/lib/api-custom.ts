@@ -183,6 +183,10 @@ export interface ValidationRunSummaryOut {
   warning_rows: number | null;
   created_at: string | null;
   error_message: string | null;
+  /** Databricks task-runner job run id — combined with the workspace host +
+   *  task-runner job id (from getWorkspaceHost) to build a deep link to the
+   *  run page. Null for runs predating job-run tracking. */
+  job_run_id?: number | null;
   checks: Record<string, unknown>[];
   review_status?: string | null;
   review_status_is_default?: boolean;
@@ -1037,6 +1041,10 @@ export const useSaveRetentionSettings = <
 
 export interface WorkspaceHostOut {
   workspace_host: string;
+  /** Task-runner Databricks job id. Combined with the host and a run's
+   *  job_run_id the UI builds a link to the run page:
+   *  ``{workspace_host}/jobs/{job_id}/runs/{job_run_id}``. Empty when unset. */
+  job_id?: string;
 }
 
 export const getWorkspaceHost = (

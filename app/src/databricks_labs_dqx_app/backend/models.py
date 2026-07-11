@@ -907,6 +907,12 @@ class ProfileRunSummaryOut(BaseModel):
     canceled_by: str | None = None
     updated_at: str | None = None
     created_at: str | None = None
+    # Databricks task-runner job run id (``dq_profiling_results.job_run_id``).
+    # Combined with the workspace host + task-runner ``job_id`` (see
+    # ``GET /config/workspace-host``) the UI builds a deep link to the run
+    # page: ``{host}/jobs/{job_id}/runs/{job_run_id}``. None for runs that
+    # predate job-run tracking or never submitted a job.
+    job_run_id: int | None = None
 
 
 class BatchProfileRunIn(BaseModel):
@@ -993,6 +999,12 @@ class ValidationRunSummaryOut(BaseModel):
     warning_rows: int | None = None
     created_at: str | None = None
     error_message: str | None = None
+    # Databricks task-runner job run id (``dq_validation_runs.job_run_id``).
+    # Combined with the workspace host + task-runner ``job_id`` (see
+    # ``GET /config/workspace-host``) the UI builds a deep link to the run
+    # page: ``{host}/jobs/{job_id}/runs/{job_run_id}``. None for runs that
+    # predate job-run tracking or never submitted a job.
+    job_run_id: int | None = None
     checks: list[dict[str, Any]] = Field(default_factory=list)
     # Per-run review status — set by reviewers on the Runs detail page,
     # filterable on the Runs History page. ``review_status`` is the
