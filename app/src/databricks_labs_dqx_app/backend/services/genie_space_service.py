@@ -155,11 +155,15 @@ TEXT_INSTRUCTIONS = [
         "answer across all tables.\n"
     ),
     (
-        "To explain a change in score — in either direction — compare the latest run with the most "
-        "recent prior run whose value differs, and rank contributors by their change in failed "
-        "tests. A rule with no prior value is a newly added check being evaluated for the first "
-        "time, not one that passed before. If no prior run differs, say the score has been stable "
-        "over the available history.\n"
+        "To explain a change in score — in either direction, and whenever asked how the score has "
+        "changed — always check the contributors before concluding: compare the latest run with "
+        "the most recent prior run whose value differs, and look for newly added rules (no prior "
+        "value — a check evaluated for the first time, not one that passed before), removed rules "
+        "(a prior value but none now), rules whose failure rate moved, and changes in how many "
+        "tests ran. Name what you find in the answer unprompted — the specific rules and numbers, "
+        "ranked by their change in failed tests. The data can almost always say what changed, so "
+        "never settle for reporting that something happened. If no prior run differs, say the "
+        "score has been stable over the available history.\n"
     ),
     (
         "There is no target or SLA in this data: report rates and changes without judging them "
@@ -173,16 +177,18 @@ TEXT_INSTRUCTIONS = [
         "to_json(row_data) so the whole record appears in one cell — never the internal wrapper "
         "columns (quarantine_id, errors, warnings). Read errors and warnings only to explain in "
         "prose which rules failed and why, describing the failure pattern once rather than "
-        "re-listing rows the table already shows. Scope to the table's latest published run via "
-        "its run_id from v_dq_check_results. The view returns rows only for tables whose access "
-        "the asking steward has recently verified: an empty result may simply mean they have not "
-        "opened that table in DQX Studio, where access is verified.\n"
+        "re-listing rows the table already shows. Failing records are per-run: scope to the "
+        "table's latest published run via its run_id from v_dq_check_results (ORDER BY run_time "
+        "DESC LIMIT 1), and show a different run only when the steward asks for a specific one. "
+        "The view returns rows only for tables whose access the asking steward has recently "
+        "verified: an empty result may simply mean they have not opened that table in DQX "
+        "Studio, where access is verified.\n"
     ),
     (
-        "Keep answers short: a paragraph or two, with bullets only for genuine multi-item "
-        "breakdowns. Define a term briefly if the steward may not know it. Each sentence should "
-        "add something new — a number, a cause, a definition, or a next step — and when there is "
-        "nothing more to add, stop.\n"
+        "Keep answers short and write prose as short paragraphs, not lists: bullets are only for "
+        "genuine multi-item breakdowns, never for narrative. Define a term briefly if the steward "
+        "may not know it. Each sentence should add something new — a number, a cause, a "
+        "definition, or a next step — and when there is nothing more to add, stop.\n"
     ),
 ]
 
@@ -855,15 +861,19 @@ def _sql_snippets(catalog: str, schema: str) -> dict:
             ],
         },
         {
-            "display_name": "published failing rows",
+            "display_name": "latest published failing rows",
             "sql": [
-                f"{fr}.`run_id` IN (SELECT `run_id` FROM {v} WHERE `run_mode` = 'published')"
+                f"{fr}.`run_id` = (SELECT `run_id` FROM {v} "
+                f"WHERE `input_location` = {fr}.`source_table_fqn` "
+                "AND `run_mode` = 'published' ORDER BY `run_time` DESC LIMIT 1)"
             ],
-            "synonyms": ["failing rows excluding drafts", "published-run failing records"],
+            "synonyms": ["failing rows excluding drafts", "latest-run failing records"],
             "instruction": [
-                "Apply by DEFAULT when reading v_dq_failing_rows — the view carries no "
-                "run_mode of its own, so published-run scoping goes through the run_id "
-                "subselect. Draft rows only when the question explicitly asks for drafts."
+                "Apply by DEFAULT when reading v_dq_failing_rows — failing records are "
+                "per-run and the view carries no run_mode of its own, so each table scopes "
+                "to its single latest published run via this correlated run_id subselect. "
+                "Pin a specific run_id instead only when the steward asks for a particular "
+                "run (drafts only when explicitly asked)."
             ],
         },
     ]

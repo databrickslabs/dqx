@@ -174,6 +174,43 @@ def test_text_instructions_row_source_and_draft_scoping() -> None:
     assert "explicitly asks for drafts" in joined
 
 
+def test_text_instructions_failing_records_are_per_run() -> None:
+    # P5.5: failing records never stack across runs — the row source scopes
+    # to the SINGLE latest published run, and the steward is told records
+    # are per-run (name a specific run to see another).
+    joined = "".join(gs.TEXT_INSTRUCTIONS)
+    assert "Failing records are per-run" in joined
+    assert "latest published run" in joined
+    assert "specific" in joined
+
+
+def test_text_instructions_change_diagnosis_checks_contributors_before_concluding() -> None:
+    # P5.5 (live user report): the space concluded "a single event or issue
+    # led to the lower score" and only surfaced the newly added rule after
+    # two follow-up prompts. The diagnosis element must require checking
+    # the contributors and NAMING what was found, unprompted.
+    joined = "".join(gs.TEXT_INSTRUCTIONS)
+    assert "check the contributors before concluding" in joined
+    assert "newly added rules" in joined
+    assert "removed rules" in joined
+    assert "failure rate" in joined
+    assert "how many tests ran" in joined
+    assert "unprompted" in joined
+    assert "never settle" in joined
+    # The newly-added-rule reading survives the rewrite.
+    assert "not one that passed before" in joined
+    # ...and so does the stable-history honesty clause.
+    assert "stable over the available history" in joined
+
+
+def test_text_instructions_prefer_paragraphs_over_bullets() -> None:
+    # P5.5 (live user feedback): prose answers as short paragraphs; bullets
+    # only for genuine multi-item breakdowns.
+    joined = "".join(gs.TEXT_INSTRUCTIONS)
+    assert "short paragraphs" in joined
+    assert "genuine multi-item" in joined
+
+
 def test_every_sample_question_has_a_curated_sql() -> None:
     curated = {e["question"][0] for e in gs._curated_sqls(CATALOG, SCHEMA)}
     assert curated == set(gs.SAMPLE_QUESTIONS)
@@ -300,16 +337,21 @@ def test_sql_snippets_shape_and_grounding() -> None:
     assert measures["failed_tests"]["sql"] == [f"MEASURE({mv_quoted}.`failed_tests`)"]
     # Published-by-default building blocks for EVERY table that has a
     # run_mode framing: the metric view, the shaping view, and the gated
-    # failing-rows view (via the run_id subselect — it has no run_mode).
+    # failing-rows view. The failing-rows filter resolves each table's
+    # SINGLE latest published run (correlated subselect — P5.5: failing
+    # records are per-run and never stack across runs).
     filters = {f["display_name"]: f for f in snippets["filters"]}
-    assert set(filters) == {"published runs", "published results", "published failing rows"}
+    assert set(filters) == {"published runs", "published results", "latest published failing rows"}
     assert filters["published runs"]["sql"] == [f"{mv_quoted}.`run_mode` = 'published'"]
     assert filters["published results"]["sql"] == [f"{v_quoted}.`run_mode` = 'published'"]
-    assert filters["published failing rows"]["sql"] == [
-        f"{fr_quoted}.`run_id` IN (SELECT `run_id` FROM {v_quoted} WHERE `run_mode` = 'published')"
+    assert filters["latest published failing rows"]["sql"] == [
+        f"{fr_quoted}.`run_id` = (SELECT `run_id` FROM {v_quoted} "
+        f"WHERE `input_location` = {fr_quoted}.`source_table_fqn` "
+        "AND `run_mode` = 'published' ORDER BY `run_time` DESC LIMIT 1)"
     ]
     for f in filters.values():
         assert "DEFAULT" in f["instruction"][0]
+    assert "per-run" in filters["latest published failing rows"]["instruction"][0]
     (severity_rank,) = snippets["expressions"]
     assert severity_rank["sql"][0].startswith(f"CASE {mv_quoted}.`severity` ")
     assert "WHEN 'Critical' THEN 0" in severity_rank["sql"][0]
