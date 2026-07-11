@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft } from "lucide-react";
 import { useCreateDataProduct } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
 import { ProductTabsShell, type ProductTabKey } from "@/components/data-products/ProductTabsShell";
@@ -79,16 +78,13 @@ function NewDataProductPage() {
       <div className="space-y-4 max-w-5xl">
         <PageBreadcrumb items={[{ label: t("dataProducts.title"), to: "/table-spaces" }]} page={t("dataProducts.newProduct")} />
 
-        <div className="border-b pb-4 flex items-start justify-between gap-4">
-          <div className="space-y-1">
-            <h1 className="text-xl text-muted-foreground italic">{t("dataProducts.untitledProduct")}</h1>
-            <Link
-              to="/table-spaces"
-              className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
-            >
-              <ArrowLeft className="h-4 w-4 mr-1" /> {t("dataProducts.backToList")}
-            </Link>
-          </div>
+        {/* Plain page title — the old "Untitled table space" italic
+            placeholder + manual "Back to table spaces" ArrowLeft link were
+            redundant now the PageBreadcrumb above already provides back-nav.
+            Mirrors the Rules Registry create page (`registry-rules.new.tsx`),
+            which shows just a `createTitle` heading under the breadcrumb. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight truncate">{t("dataProducts.createTitle")}</h1>
         </div>
 
         {/* The create form renders INSIDE the shell's About slot so the gap
