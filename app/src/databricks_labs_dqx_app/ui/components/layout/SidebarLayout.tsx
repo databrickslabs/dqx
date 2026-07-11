@@ -1,6 +1,5 @@
 import { Outlet, useLocation } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { useTranslation } from "react-i18next";
 import {
   Sidebar,
   SidebarContent,
@@ -14,16 +13,12 @@ import Logo from "@/components/layout/Logo";
 import HeaderUserMenu from "@/components/layout/HeaderUserMenu";
 import { InsightsDashboardHost } from "@/components/insights/InsightsDashboard";
 import { cn } from "@/lib/utils";
-import { useGetVersion } from "@/lib/api";
 
 interface SidebarLayoutProps {
   children?: ReactNode;
 }
 
 function SidebarLayout({ children }: SidebarLayoutProps) {
-  const { t } = useTranslation();
-  const { data: resp } = useGetVersion();
-  const appVersion = resp?.data?.version;
   // The Insights dashboard iframe is hosted persistently (see
   // ``InsightsDashboardHost``) so it doesn't reload on every navigation.
   // While Insights is active we hide the empty route ``<Outlet/>`` wrapper
@@ -76,22 +71,6 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
             </div>
             <InsightsDashboardHost />
           </div>
-          <footer className="shrink-0 border-t bg-background py-2 px-6">
-            <div className="max-w-7xl mx-auto flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>
-                {t("footer.tagline")}
-                {appVersion ? ` · v${appVersion}` : ""}
-              </span>
-              <a
-                href="https://github.com/databrickslabs/dqx"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:text-foreground transition-colors"
-              >
-                github.com/databrickslabs/dqx
-              </a>
-            </div>
-          </footer>
         </SidebarInset>
       </SidebarProvider>
     </div>

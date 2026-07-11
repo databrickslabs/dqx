@@ -82,7 +82,7 @@
   },
   "userMenu": {
     "profile": "Perfil",
-    "configuration": "Configuración"
+    "adminSettings": "Configuración de Administrador"
   },
   "profile": {
     "breadcrumb": "Perfil",
@@ -148,9 +148,6 @@
   "navbar": {
     "aiAssistant": "Generar reglas",
     "toggleTheme": "Cambiar tema"
-  },
-  "footer": {
-    "tagline": "DQX Studio — Explorador de Calidad de Datos"
   },
   "sidebarUser": {
     "configuration": "Configuración"
