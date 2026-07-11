@@ -123,6 +123,7 @@ import {
 } from "@/lib/api-custom";
 import { invalidateAfterRegistryRuleApprovalChange } from "@/lib/registry-rule-invalidation";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
 
@@ -960,6 +961,9 @@ function DraftsPage() {
   const pendingActions = usePendingActions();
   const [historyDiffTarget, setHistoryDiffTarget] = useState<RuleHistoryDiffTarget | null>(null);
   const { canCreateRules, canEditRules, canSubmitRules, canApproveRules } = usePermissions();
+  // #94: when the approvals mode will auto-approve this user's submit, the
+  // submit actions publish in one step — relabel them.
+  const { willAutoApprove } = useApprovalsMode();
   const { data: currentUser } = useCurrentUserSuspense(selector<UserType>());
   const currentUserEmail = currentUser?.user_name ?? "";
 
@@ -1565,7 +1569,8 @@ function DraftsPage() {
                     <>
                       {canSubmitRules && selectedRules.some((r) => r.status === "draft") && (
                         <Button size="sm" variant="outline" className="gap-1 h-7 text-xs" onClick={handleBulkSubmit}>
-                          <SendHorizonal className="h-3 w-3" /> {t("rulesDrafts.submit")}
+                          <SendHorizonal className="h-3 w-3" />{" "}
+                          {willAutoApprove ? t("rulesDrafts.publish") : t("rulesDrafts.submit")}
                         </Button>
                       )}
                       {canApproveRules && selectedRules.some((r) => r.status === "pending_approval") && (
@@ -1734,7 +1739,11 @@ function DraftsPage() {
                                         className="gap-1 h-7 text-xs"
                                       >
                                         <SendHorizonal className="h-3 w-3 shrink-0" />
-                                        {busy ? t("rulesDrafts.submitting") : t("rulesDrafts.submit")}
+                                        {busy
+                                          ? t("rulesDrafts.submitting")
+                                          : willAutoApprove
+                                            ? t("rulesDrafts.publish")
+                                            : t("rulesDrafts.submit")}
                                       </Button>
                                     </span>
                                   </TooltipTrigger>

@@ -110,6 +110,7 @@ import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-inval
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import { useLabelDefinitions, useWorkspaceHost } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { useMonitoredTableRunActivity } from "@/hooks/use-monitored-table-run-activity";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
@@ -223,6 +224,7 @@ function DetailSkeleton() {
 function MonitoredTableDetailPage() {
   const { t } = useTranslation();
   const perms = usePermissions();
+  const { willAutoApprove } = useApprovalsMode();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { bindingId } = useParams({ from: "/_sidebar/monitored-tables/$bindingId" });
@@ -515,7 +517,11 @@ function MonitoredTableDetailPage() {
                           ) : (
                             <Send className="h-4 w-4" />
                           )}
-                          {submitMutation.isPending ? t("monitoredTables.submitting") : t("monitoredTables.submitButton")}
+                          {submitMutation.isPending
+                            ? t("monitoredTables.submitting")
+                            : willAutoApprove
+                              ? t("monitoredTables.saveAndPublishButton")
+                              : t("monitoredTables.submitButton")}
                         </Button>
                       </span>
                     </TooltipTrigger>

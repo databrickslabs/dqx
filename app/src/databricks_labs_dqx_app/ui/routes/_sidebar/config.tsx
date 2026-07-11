@@ -52,6 +52,9 @@ import {
   useGetRulesRegistrySettings,
   useSaveRulesRegistrySettings,
   getGetRulesRegistrySettingsQueryKey,
+  useGetApprovalsMode,
+  useSaveApprovalsMode,
+  getGetApprovalsModeQueryKey,
   useGetComputeSettings,
   useSaveComputeSettings,
   getGetComputeSettingsQueryKey,
@@ -1901,6 +1904,86 @@ function RulesRegistrySettingsCard() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Approvals mode (#94) — the app-wide submit→approve gate. A 3-state select:
+// enabled (author submits, approver approves), auto_bypass (submit auto-approves
+// when the caller could approve it themselves), disabled (every submit
+// auto-approves). Read by all submit/approve surfaces to pick the right button.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const APPROVAL_MODES = ["enabled", "auto_bypass", "disabled"] as const;
+
+function ApprovalsModeCard() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useGetApprovalsMode();
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveApprovalsMode();
+  const { isAdmin } = usePermissions();
+
+  const mode = data?.data?.mode;
+
+  if (isLoading || !mode) return <Skeleton className="h-40 w-full" />;
+
+  const save = (next: string) => {
+    saveMutation.mutate(
+      { data: { mode: next } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetApprovalsModeQueryKey() });
+          toast.success(t("config.approvalsModeSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.approvalsModeFailedSave"));
+        },
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5" />
+          {t("config.approvalsModeTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.approvalsModeDescription")}
+        </p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="approvals-mode" className="text-sm">
+              {t("config.approvalsModeLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">
+              {t(`config.approvalsMode_${mode}_hint`)}
+            </p>
+          </div>
+          <Select value={mode} onValueChange={save} disabled={!isAdmin || saveMutation.isPending}>
+            <SelectTrigger id="approvals-mode" className="h-8 w-52 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {APPROVAL_MODES.map((m) => (
+                <SelectItem key={m} value={m} className="text-xs">
+                  {t(`config.approvalsMode_${m}_option`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.approvalsModeAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Permissions — admin default for the per-grant inheritance toggle. When on,
 // a new grant on a table space defaults to flowing down to its member tables.
 // Individual grants can still override this per-grant in the Permissions tab.
@@ -2246,6 +2329,7 @@ function ConfigPage() {
       { id: "ai", tab: "ai", title: t("config.aiSettingsTitle"), keywords: t("config.kwAi"), render: () => <AiSettingsCard /> },
       { id: "labels", tab: "rules", title: t("config.labelsTitle"), keywords: t("config.kwLabels"), render: () => <LabelDefinitionsSettings /> },
       { id: "rulesRegistry", tab: "rules", title: t("config.rulesRegistrySettingsTitle"), keywords: t("config.kwRulesRegistry"), render: () => <RulesRegistrySettingsCard /> },
+      { id: "approvalsMode", tab: "rules", title: t("config.approvalsModeTitle"), keywords: t("config.kwApprovalsMode"), render: () => <ApprovalsModeCard /> },
       { id: "entitlements", tab: "entitlements", title: t("roleManagement.title"), keywords: t("config.kwEntitlements"), render: () => <RoleManagement /> },
       { id: "permissions", tab: "entitlements", title: t("config.permissionsDefaultInheritTitle"), keywords: t("config.kwPermissions"), render: () => <PermissionsSettingsCard /> },
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },

@@ -31,6 +31,7 @@ import {
   type DataProductMemberOut,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { useProductRunSets } from "@/hooks/use-product-run-sets";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -286,6 +287,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const perms = usePermissions();
+  const { willAutoApprove } = useApprovalsMode();
   const canRun = perms.canRunRules;
   const canApprove = perms.canApproveRules;
 
@@ -475,7 +477,9 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
               title={submitDisabledNoChanges ? t("dataProducts.submitDisabledNoChangesHint") : undefined}
             >
               {editState.submitPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              {t("dataProducts.submitForReviewButton")}
+              {willAutoApprove
+                ? t("dataProducts.saveAndPublishButton")
+                : t("dataProducts.submitForReviewButton")}
             </Button>
           )}
 

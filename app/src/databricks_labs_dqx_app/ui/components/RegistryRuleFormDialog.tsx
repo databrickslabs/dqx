@@ -53,6 +53,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { LabelsEditor } from "@/components/Labels";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
@@ -1138,6 +1139,9 @@ export function RegistryRuleFormDialog({
   const createMutation = useCreateRegistryRule();
   const updateMutation = useUpdateRegistryRule();
   const submitMutation = useSubmitRegistryRule();
+  // When the approvals mode will auto-approve this user's submit (#94), the
+  // submit buttons publish in one step — relabel them accordingly.
+  const { willAutoApprove } = useApprovalsMode();
   const [saving, setSaving] = useState(false);
 
   // Published version lineage for the History tab. Only queried for a rule
@@ -2643,7 +2647,11 @@ export function RegistryRuleFormDialog({
             withMissingFieldsTooltip(
               <Button onClick={handleSubmitOnly} disabled={saving || !canSubmit} className="gap-2">
                 {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {isPublishedRevision ? t("rulesRegistry.submitForReview") : t("rulesRegistry.actionSubmit")}
+                {willAutoApprove
+                  ? t("rulesRegistry.publishNow")
+                  : isPublishedRevision
+                    ? t("rulesRegistry.submitForReview")
+                    : t("rulesRegistry.actionSubmit")}
               </Button>,
               !canSubmit,
               missingSubmitFieldLabels,
@@ -2653,7 +2661,11 @@ export function RegistryRuleFormDialog({
             withMissingFieldsTooltip(
               <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit} className="gap-2">
                 {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {isPublishedRevision ? t("rulesRegistry.saveAndSubmitReview") : t("rulesRegistry.saveAndSubmit")}
+                {willAutoApprove
+                  ? t("rulesRegistry.saveAndPublish")
+                  : isPublishedRevision
+                    ? t("rulesRegistry.saveAndSubmitReview")
+                    : t("rulesRegistry.saveAndSubmit")}
               </Button>,
               !canSubmit,
               missingSubmitFieldLabels,
