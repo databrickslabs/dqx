@@ -215,7 +215,7 @@ class TestSubmission:
             requesting_user="alice@x",
             source_table_fqn="cat.schema.tbl",
             view_fqn="dqx_studio_tmp.tmp_view_1",
-            sample_size=1000,
+            sample_size=0,
             job_run_id=555,
         )
 
@@ -241,14 +241,24 @@ class TestSubmission:
         _, started_kwargs = job_service.record_dryrun_started.call_args
         assert started_kwargs["sample_size"] == 250
 
-    def test_defaults_sample_size_when_not_supplied(self, service, monitored_tables, version_service, job_service):
+    def test_defaults_to_full_table_when_sample_size_not_supplied(
+        self, service, monitored_tables, version_service, job_service
+    ):
+        """Monitoring runs must scan the whole table by default.
+
+        ``sample_size=0`` is the runner's "no sampling" convention; a
+        1000-row default here would silently turn scheduled/product
+        monitoring into a sample scan (regression pin).
+        """
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
         version_service.get_checks.return_value = _CHECKS
 
         service.run_binding("b1", source="approved", version=2, user_email="alice@x")
 
         _, submit_kwargs = job_service.submit_run.call_args
-        assert submit_kwargs["config"]["sample_size"] == 1000
+        assert submit_kwargs["config"]["sample_size"] == 0
+        _, started_kwargs = job_service.record_dryrun_started.call_args
+        assert started_kwargs["sample_size"] == 0
 
 
 class TestRunProvenanceStamping:

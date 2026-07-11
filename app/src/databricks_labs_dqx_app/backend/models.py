@@ -1020,7 +1020,15 @@ class RunMonitoredTableIn(BaseModel):
         default=None,
         description="Pin to a specific approved snapshot version. Ignored when source='draft'.",
     )
-    sample_size: int = Field(default=1000, le=10_000, description="Number of rows to sample")
+    sample_size: int = Field(
+        default=0,
+        ge=0,
+        le=10_000,
+        description=(
+            "0 (default) checks the whole table; a positive value samples that many rows. "
+            "Monitoring runs should scan the full table — sampling is for previews."
+        ),
+    )
 
 
 class RunMonitoredTableOut(BaseModel):

@@ -2789,7 +2789,8 @@ export interface RunMonitoredTableIn {
   /** Pin to a specific approved snapshot version. Ignored when source='draft'. */
   version?: RunMonitoredTableInVersion;
   /**
-   * Number of rows to sample
+   * 0 (default) checks the whole table; a positive value samples that many rows. Monitoring runs should scan the full table — sampling is for previews.
+   * @minimum 0
    * @maximum 10000
    */
   sample_size?: number;

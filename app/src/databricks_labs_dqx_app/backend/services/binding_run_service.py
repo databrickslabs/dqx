@@ -40,7 +40,9 @@ from databricks_labs_dqx_app.backend.services.view_service import ViewService
 logger = logging.getLogger(__name__)
 
 _SQL_CHECK_PREFIX = "__sql_check__/"
-_DEFAULT_SAMPLE_SIZE = 1000
+# 0 means "no sampling" — monitoring runs scan the whole table by default.
+# Explicit sampling (previews / dry runs) passes a positive value.
+_DEFAULT_SAMPLE_SIZE = 0
 
 RunSource = Literal["approved", "draft"]
 
@@ -174,10 +176,13 @@ class BindingRunService:
         Mints a new run set when *run_set_id* is None (a run set of one);
         otherwise joins the caller-supplied run set (product fan-out).
 
-        *sample_size* bounds the number of rows sampled for the run
-        (default 1000); callers should enforce the same upper bound as
-        the dryrun batch route (``BatchRunFromCatalogIn.sample_size``,
-        <= 10,000) before calling this method.
+        *sample_size* bounds the number of rows sampled for the run.
+        The default is 0, which means no sampling — the whole table is
+        checked (monitoring runs must scan every row). Callers passing
+        a positive value (explicit sampling) should enforce the same
+        upper bound as the dryrun batch route
+        (``BatchRunFromCatalogIn.sample_size``, <= 10,000) before
+        calling this method.
 
         Raises:
             BindingNotFoundError: *binding_id* does not exist.

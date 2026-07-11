@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from databricks_labs_dqx_app.backend.models import (
     ApplyRuleIn,
@@ -754,8 +755,10 @@ class TestRunMonitoredTable:
         assert result.run_id == "run-1"
         assert result.job_run_id == 42
         assert result.view_fqn == "dqx_studio_tmp.tmp_1"
+        # Default body omits sample_size → 0 = full-table scan (monitoring
+        # runs check every row; sampling is opt-in for previews).
         svc.run_binding.assert_called_once_with(
-            "b1", source="approved", version=None, user_email="alice@x", trigger="manual", sample_size=1000
+            "b1", source="approved", version=None, user_email="alice@x", trigger="manual", sample_size=0
         )
 
     def test_custom_sample_size_is_passed_through(self):
@@ -817,3 +820,24 @@ class TestRunMonitoredTable:
                 "b1", body=RunMonitoredTableIn(source="draft"), obo_ws=_mock_obo_ws(), run_svc=svc
             )
         assert excinfo.value.status_code == 500
+
+
+class TestRunMonitoredTableInSampleSize:
+    """Pin ``RunMonitoredTableIn.sample_size`` default and bounds.
+
+    0 (the default) means "check the whole table" — monitoring runs must
+    not silently sample. A positive value is explicit sampling, capped at
+    10,000 to match the dryrun batch route.
+    """
+
+    def test_default_is_zero_full_table(self):
+        assert RunMonitoredTableIn(source="approved").sample_size == 0
+
+    def test_negative_rejected(self):
+        with pytest.raises(ValidationError):
+            RunMonitoredTableIn(source="approved", sample_size=-1)
+
+    def test_upper_bound_enforced(self):
+        assert RunMonitoredTableIn(source="approved", sample_size=10_000).sample_size == 10_000
+        with pytest.raises(ValidationError):
+            RunMonitoredTableIn(source="approved", sample_size=10_001)

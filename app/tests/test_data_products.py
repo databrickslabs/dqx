@@ -815,6 +815,9 @@ class TestRun:
         assert result.run_set_id == "rs-new"
         assert len(result.submitted) == 1
         assert result.skipped == []
+        # assert_called_once_with is an exact-match: no ``sample_size`` kwarg
+        # means the product fan-out relies on run_binding's default of 0
+        # (full-table scan) — monitoring runs must not silently sample.
         binding_run_service.run_binding.assert_called_once_with(
             "b1", source="draft", version=None, user_email="bob@x", trigger="manual", run_set_id="rs-new"
         )
