@@ -1974,6 +1974,7 @@
     "versionBadge": "v{{version}}",
     "modifiedSinceVersion": "Modified since v{{version}}",
     "runNowButton": "Run now (v{{version}})",
+    "runNowTooltip": "Run the latest approved version (v{{version}})",
     "runNowButtonNoVersion": "Run now",
     "runNowApprovedOption": "Run now (approved)",
     "runNowDisabledHint": "Approve this table's checks first, then run its approved version.",

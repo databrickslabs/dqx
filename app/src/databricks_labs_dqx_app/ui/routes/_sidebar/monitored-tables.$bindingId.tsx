@@ -920,13 +920,15 @@ function RunTableAction({
   const menuHasActionable = versions.length > 0 || demotedActionable;
 
   const approvedDisabled = !hasApproved || noRulesRunNow || busy;
+  // Even when enabled, the approved run shows a tooltip naming the version it
+  // runs (item 52) — the button label itself is a plain "Run now".
   const approvedTooltip = runInProgress
     ? t("monitoredTables.runInProgressHint")
     : noRulesRunNow
       ? t("monitoredTables.runDisabledNoRulesHint")
       : !hasApproved
         ? t("monitoredTables.runNowDisabledHint")
-        : null;
+        : t("monitoredTables.runNowTooltip", { version: table.version });
   const draftDisabled = !canRunDraft || noRulesRunDraft || busy;
   const draftTooltip = runInProgress
     ? t("monitoredTables.runInProgressHint")
@@ -952,9 +954,7 @@ function RunTableAction({
             className="gap-2 rounded-r-none"
           >
             {spinnerOrPlay}
-            {hasApproved
-              ? t("monitoredTables.runNowButton", { version: table.version })
-              : t("monitoredTables.runNowButtonNoVersion")}
+            {t("monitoredTables.runNowButtonNoVersion")}
           </Button>
         </span>
       </TooltipTrigger>
