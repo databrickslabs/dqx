@@ -164,8 +164,8 @@ def _fetch_check_rows(
     *table_fqns* None means "every table" (the global endpoint filters
     by catalog app-side afterwards); an empty list short-circuits.
     Draft runs are excluded unless *include_drafts* — the view's
-    ``run_mode`` column already resolves the stamped run-level tag with
-    the legacy run_type heuristic as fallback.
+    ``run_mode`` column already resolves the stamped run-level tag
+    (untagged legacy runs classify as published).
     """
     if table_fqns is not None and not table_fqns:
         return []
@@ -663,8 +663,8 @@ def get_dq_results_failed_rows(
     ``dq_quarantine_records`` carries no run_mode of its own, but it does
     carry ``run_id`` — so the default published-only filter is a subselect
     of the table's published run ids from ``v_dq_check_results`` (the one
-    place run_mode is resolved: stamped tag first, legacy run_type
-    heuristic as fallback). ``include_drafts=true`` drops the subselect.
+    place run_mode is resolved: stamped tag first, untagged legacy runs
+    classify as published). ``include_drafts=true`` drops the subselect.
 
     SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
     in the same load-bearing order:

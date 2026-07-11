@@ -83,8 +83,8 @@ def _compute_score_for_table(
     """Read the row-weighted DQ score for *table_fqn*'s latest run.
 
     By default the latest PUBLISHED run is scored (``run_mode`` filter on
-    the metric view — stamped run-level tag, legacy run_type heuristic as
-    fallback), so a newer draft run never displaces the published score.
+    the metric view — stamped run-level tag, untagged legacy runs
+    classify as published), so a newer draft run never displaces the published score.
     The latest run within the selected mode set is picked via
     ``ORDER BY run_time DESC LIMIT 1`` rather than the view's
     ``is_latest_run`` flag, which is computed over ALL runs regardless of

@@ -1499,8 +1499,8 @@ class RunRowOut(BaseModel):
     """One run's rollup for the run picker (newest first).
 
     *run_mode* is the run's provenance ('draft' | 'published') — the
-    stamped run-level tag, with the legacy run_type heuristic as fallback
-    (resolved in the shaping view). Only meaningful to display when the
+    stamped run-level tag, with untagged legacy runs resolved to
+    'published' (in the shaping view). Only meaningful to display when the
     caller requested ``include_drafts=true``; the default filter already
     restricts rows to published runs.
     """

@@ -29,7 +29,7 @@ row (NULL score) so "computed, nothing found" is distinguishable from
 
 Scores are PUBLISHED-only by construction (``run_mode = 'published'``
 filter on the metric view — the run-level tag stamped at run assembly,
-with the legacy run_type heuristic resolved inside the shaping view).
+with untagged legacy runs resolved to 'published' inside the shaping view).
 
 P3.5 addition — ``dq_score_history``: every SCORED upsert (any scope)
 also appends one append-only trend row and count-trims the scope to

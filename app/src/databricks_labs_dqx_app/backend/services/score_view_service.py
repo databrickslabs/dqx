@@ -224,20 +224,21 @@ class ScoreViewService:
           ``dq_metrics.user_metadata`` map (the run-provenance tag the
           app stamps uniformly onto every check at run-assembly time —
           the map repeats per metric row of a run, so MAX over the
-          grouped rows picks it from any row). LEGACY-RUN HEURISTIC:
-          runs predating the tag fall back to the
-          ``dq_validation_runs.run_type`` join — 'scheduled' maps to
-          'published', 'dryrun'/'preview' to 'draft' (pre-tag manual
-          binding runs are indistinguishable from ad-hoc dry runs, so
-          they conservatively count as drafts). Runs with no runs-table
-          row or an unknown run_type default to 'published' so
-          pre-existing/externally-written metrics stay visible in the
-          default published-only endpoint filters.
+          grouped rows picks it from any row). Untagged (legacy) runs
+          classify as 'published', full stop: the draft concept did not
+          exist when they ran (every pre-tag app run was a real,
+          user-visible result), and preview runs never persist metrics
+          so they can never appear here. A run_type-based heuristic
+          (scheduled -> published, dryrun -> draft) was tried and
+          reverted: before the tag existed EVERY app run was submitted
+          with task_type='dryrun' (only promoted to 'scheduled' when
+          sample_size == 0), so that heuristic reclassified the entire
+          pre-upgrade run history as drafts and hid it under the
+          endpoints' published-only default.
         - *binding_version* is the approved snapshot version the run
           executed (tag-only — NULL for draft runs and every legacy run).
         """
         metrics_table = f"{self._catalog_q}.{self._schema_q}.dq_metrics"
-        validation_runs = f"{self._catalog_q}.{self._schema_q}.dq_validation_runs"
         return (
             f"CREATE OR REPLACE VIEW {self.shaping_view_fqn_quoted} AS\n"
             "WITH per_run AS (\n"
@@ -251,11 +252,6 @@ class ScoreViewService:
             f"    MAX(user_metadata['{BINDING_VERSION_TAG}']) AS binding_version_tag\n"
             f"  FROM {metrics_table}\n"
             "  GROUP BY run_id, input_location\n"
-            "),\n"
-            "run_types AS (\n"
-            "  SELECT run_id, MAX(run_type) AS run_type\n"
-            f"  FROM {validation_runs}\n"
-            "  GROUP BY run_id\n"
             "),\n"
             "ranked AS (\n"
             "  SELECT\n"
@@ -294,15 +290,10 @@ class ScoreViewService:
             "       ELSE COALESCE(e.warning_count, 0) END AS warning_count,\n"
             "  CASE WHEN e.is_placeholder THEN CAST(NULL AS BIGINT)\n"
             "       ELSE TRY_CAST(TRY_CAST(e.input_row_count_str AS DOUBLE) AS BIGINT) END AS input_row_count,\n"
-            # Run-mode resolution: the run-level tag wins; legacy runs
-            # (no tag) fall back to the run_type heuristic (scheduled ->
-            # published, dryrun/preview -> draft); unknown provenance
-            # defaults to published so legacy data stays visible.
-            "  COALESCE(\n"
-            "    e.run_mode_tag,\n"
-            f"    CASE WHEN rt.run_type = 'scheduled' THEN '{RUN_MODE_PUBLISHED}'\n"
-            f"         WHEN rt.run_type IN ('dryrun', 'preview') THEN '{RUN_MODE_DRAFT}' END,\n"
-            f"    '{RUN_MODE_PUBLISHED}') AS run_mode,\n"
+            # Run-mode resolution: the run-level tag wins; untagged
+            # (legacy) runs classify as published — see the docstring
+            # for why no run_type heuristic is applied here.
+            f"  COALESCE(e.run_mode_tag, '{RUN_MODE_PUBLISHED}') AS run_mode,\n"
             "  TRY_CAST(e.binding_version_tag AS INT) AS binding_version,\n"
             "  a.criticality,\n"
             "  a.severity,\n"
@@ -310,8 +301,6 @@ class ScoreViewService:
             "  a.registry_rule_id,\n"
             "  a.columns\n"
             "FROM exploded e\n"
-            "LEFT JOIN run_types rt\n"
-            "  ON rt.run_id = e.run_id\n"
             f"LEFT JOIN {self.attribution_view_fqn_quoted} a\n"
             "  ON a.run_id = e.run_id\n"
             "  AND a.source_table_fqn = e.input_location\n"
@@ -335,8 +324,9 @@ class ScoreViewService:
             "    expr: run_time\n"
             "  - name: is_latest_run\n"
             "    expr: is_latest_run\n"
-            # Run provenance ('draft' | 'published') — tag-first with the
-            # legacy run_type heuristic resolved in the shaping view.
+            # Run provenance ('draft' | 'published') — the stamped tag,
+            # with untagged legacy runs resolved to 'published' in the
+            # shaping view.
             "  - name: run_mode\n"
             "    expr: run_mode\n"
             "  - name: check_name\n"

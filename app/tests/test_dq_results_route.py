@@ -1064,8 +1064,8 @@ class TestIncludeDrafts:
     """Every dq-results read defaults to published runs only; the
     ``include_drafts=true`` escape hatch drops the run_mode filter. The
     view's ``run_mode`` column already resolves the stamped run-level tag
-    with the legacy run_type heuristic, so the routes filter one column —
-    which is exactly what these tests pin."""
+    (untagged legacy runs classify as published), so the routes filter one
+    column — which is exactly what these tests pin."""
 
     CHECK_ROW_ENDPOINTS = [
         f"/api/v1/dq-results/table/{FQN}",
@@ -1104,10 +1104,11 @@ class TestIncludeDrafts:
         for stmt in self._shaping_stmts(sql_mock):
             assert "run_mode" not in stmt
 
-    def test_legacy_heuristic_rows_flow_through_unchanged(self, client, sql_mock):
-        # The heuristic lives in the VIEW (COALESCE over the stamped tag and
-        # the runs-join run_type) — a legacy run the view resolved to
-        # 'published' arrives as an ordinary row and is served normally.
+    def test_legacy_untagged_rows_flow_through_unchanged(self, client, sql_mock):
+        # Untagged-run resolution lives in the VIEW (COALESCE over the
+        # stamped tag, defaulting to 'published') — a legacy run the view
+        # resolved to 'published' arrives as an ordinary row and is served
+        # normally.
         sql_dispatch(sql_mock, check_rows=[check_row("legacy_check", errors=2, total=10)])
         body = client.get(f"/api/v1/dq-results/table/{FQN}").json()
         assert [g["label"] for g in body["by_rule"]] == ["legacy_check"]
