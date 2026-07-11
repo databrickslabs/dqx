@@ -155,15 +155,21 @@ TEXT_INSTRUCTIONS = [
         "answer across all tables.\n"
     ),
     (
-        "To explain a change in score — in either direction, and whenever asked how the score has "
-        "changed — always check the contributors before concluding: compare the latest run with "
-        "the most recent prior run whose value differs, and look for newly added rules (no prior "
-        "value — a check evaluated for the first time, not one that passed before), removed rules "
-        "(a prior value but none now), rules whose failure rate moved, and changes in how many "
-        "tests ran. Name what you find in the answer unprompted — the specific rules and numbers, "
-        "ranked by their change in failed tests. The data can almost always say what changed, so "
-        "never settle for reporting that something happened. If no prior run differs, say the "
-        "score has been stable over the available history.\n"
+        "To explain a change in score — in either direction, and whenever asked how or why it "
+        "changed — always compute the contributors before concluding, and name each material one "
+        "unprompted with its category and magnitude: the data can almost always say what changed, "
+        "so never settle for reporting that something happened. Compare the latest run with the "
+        "most recent prior run whose value differs, pairing rules by identity — registry_rule_id "
+        "where present, check_name otherwise. The contributor categories: rules added (no prior "
+        "value — a check evaluated for the first time, not one that passed before), rules removed, "
+        "rules renamed (the same registry_rule_id under a new check_name — a rename, not an add), "
+        "rule definitions changed (same rule, different mapped columns), failure-rate changes (a "
+        "rule's failed share of tests moved), and test-volume changes (more or less data evaluated "
+        "at a steady rate). The curated decomposition already categorizes every rule this way — "
+        "reuse it for any change or why question, organize the prose by category, and when "
+        "contributors span several dimensions or severities, say which dimension or severity "
+        "moved most. If no prior run differs, say the score has been stable over the available "
+        "history.\n"
     ),
     (
         "There is no target or SLA in this data: report rates and changes without judging them "
@@ -424,12 +430,30 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     # the latest run and `prev` the most recent PRIOR run whose table-level
     # failed_tests actually DIFFERS, falling back to the immediately-prior
     # run so the grid stays non-empty and Genie can say "no change over the
-    # available history". Joins are null-safe (<=>) because `dimension` is
-    # NULL for untagged checks.
+    # available history".
+    #
+    # Grain: RULE IDENTITY — registry_rule_id where present, check_name
+    # otherwise (the P5.2 identity rule) — so a renamed rule pairs with its
+    # prior self instead of reading as one removal plus one addition. That
+    # identity lives only on v_dq_check_results (the metric view carries no
+    # registry_rule_id), so this reads the shaping view: failed tests per
+    # check = error_count + warning_count, tests = input_row_count.
+    #
+    # The reason column carries the COMPLETE change-contributor taxonomy so
+    # Genie narrates categories the SQL hands it instead of inferring them:
+    # rule added / rule removed / rule definition changed (same identity,
+    # different mapped columns — both runs must carry attribution, legacy
+    # NULLs never read as a definition change) / failure rate
+    # worsened|improved (the failed share moved beyond float noise) /
+    # more|less data (volume moved at a steady rate — the mix effect) /
+    # rule renamed (identity unchanged, name changed, numbers static) /
+    # unchanged. prev_rule_name rides along so a rename stays visible even
+    # when a numeric reason outranks it; severity/dimension ride along for
+    # the rollup framing. Ranked by |delta| (polarity-neutral).
     diagnose = (
         "WITH run_totals AS (\n"
-        "  SELECT `run_time` AS run_ts, MEASURE(`failed_tests`) AS failed_tests\n"
-        f"  FROM {mv} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
+        "  SELECT `run_time` AS run_ts, SUM(`error_count` + `warning_count`) AS failed_tests\n"
+        f"  FROM {v} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "  GROUP BY `run_time`\n"
         "),\n"
         "cur_ts AS (SELECT MAX(run_ts) AS run_ts FROM run_totals),\n"
@@ -446,30 +470,52 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  ) AS run_ts\n"
         "),\n"
         "cur AS (\n"
-        "  SELECT `check_name` AS rule, `dimension` AS dim,\n"
-        "         MEASURE(`failed_tests`) AS failed_tests, MEASURE(`total_tests`) AS total_tests\n"
-        f"  FROM {mv} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
+        "  SELECT COALESCE(`registry_rule_id`, `check_name`) AS rule_key,\n"
+        "         MAX(`check_name`) AS rule_name, MAX(`dimension`) AS dim,\n"
+        "         MAX(`severity`) AS sev, MAX(to_json(`columns`)) AS cols,\n"
+        "         SUM(`error_count` + `warning_count`) AS failed_tests,\n"
+        "         SUM(`input_row_count`) AS total_tests\n"
+        f"  FROM {v} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "    AND `run_time` = (SELECT run_ts FROM cur_ts)\n"
-        "  GROUP BY `check_name`, `dimension`\n"
+        "  GROUP BY COALESCE(`registry_rule_id`, `check_name`)\n"
         "),\n"
         "prev AS (\n"
-        "  SELECT `check_name` AS rule, `dimension` AS dim,\n"
-        "         MEASURE(`failed_tests`) AS failed_tests, MEASURE(`total_tests`) AS total_tests\n"
-        f"  FROM {mv} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
+        "  SELECT COALESCE(`registry_rule_id`, `check_name`) AS rule_key,\n"
+        "         MAX(`check_name`) AS rule_name, MAX(`dimension`) AS dim,\n"
+        "         MAX(`severity`) AS sev, MAX(to_json(`columns`)) AS cols,\n"
+        "         SUM(`error_count` + `warning_count`) AS failed_tests,\n"
+        "         SUM(`input_row_count`) AS total_tests\n"
+        f"  FROM {v} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "    AND `run_time` = (SELECT run_ts FROM prev_ts)\n"
-        "  GROUP BY `check_name`, `dimension`\n"
+        "  GROUP BY COALESCE(`registry_rule_id`, `check_name`)\n"
         ")\n"
-        "SELECT COALESCE(c.rule, p.rule) AS rule_name,\n"
+        "SELECT COALESCE(c.rule_name, p.rule_name) AS rule_name,\n"
+        "       p.rule_name AS prev_rule_name,\n"
         "       COALESCE(c.dim, p.dim) AS dimension,\n"
+        "       COALESCE(c.sev, p.sev) AS severity,\n"
         "       COALESCE(p.failed_tests, 0) AS prev_failed_tests,\n"
         "       COALESCE(c.failed_tests, 0) AS curr_failed_tests,\n"
         "       COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0) AS delta_failed_tests,\n"
-        "       CASE WHEN COALESCE(p.total_tests, 0) = 0 AND COALESCE(c.total_tests, 0) > 0 THEN 'new rule'\n"
-        "            WHEN COALESCE(c.total_tests, 0) > COALESCE(p.total_tests, 0)\n"
-        "                 AND COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0) > 0 THEN 'more data'\n"
-        "            ELSE 'fail rate changed' END AS reason\n"
-        "FROM cur c FULL OUTER JOIN prev p ON c.rule <=> p.rule AND c.dim <=> p.dim\n"
-        "ORDER BY delta_failed_tests DESC"
+        "       TRY_DIVIDE(p.failed_tests, p.total_tests) AS prev_fail_rate,\n"
+        "       TRY_DIVIDE(c.failed_tests, c.total_tests) AS curr_fail_rate,\n"
+        "       COALESCE(p.total_tests, 0) AS prev_total_tests,\n"
+        "       COALESCE(c.total_tests, 0) AS curr_total_tests,\n"
+        "       CASE WHEN p.rule_key IS NULL THEN 'rule added'\n"
+        "            WHEN c.rule_key IS NULL THEN 'rule removed'\n"
+        "            WHEN c.cols IS NOT NULL AND p.cols IS NOT NULL AND c.cols <> p.cols\n"
+        "                 THEN 'rule definition changed'\n"
+        "            WHEN ABS(COALESCE(TRY_DIVIDE(c.failed_tests, c.total_tests), 0)\n"
+        "                     - COALESCE(TRY_DIVIDE(p.failed_tests, p.total_tests), 0)) > 0.0001\n"
+        "                 THEN CASE WHEN COALESCE(TRY_DIVIDE(c.failed_tests, c.total_tests), 0)\n"
+        "                                > COALESCE(TRY_DIVIDE(p.failed_tests, p.total_tests), 0)\n"
+        "                           THEN 'failure rate worsened' ELSE 'failure rate improved' END\n"
+        "            WHEN COALESCE(c.total_tests, 0) <> COALESCE(p.total_tests, 0)\n"
+        "                 THEN CASE WHEN COALESCE(c.total_tests, 0) > COALESCE(p.total_tests, 0)\n"
+        "                           THEN 'more data' ELSE 'less data' END\n"
+        "            WHEN NOT (c.rule_name <=> p.rule_name) THEN 'rule renamed'\n"
+        "            ELSE 'unchanged' END AS reason\n"
+        "FROM cur c FULL OUTER JOIN prev p ON c.rule_key = p.rule_key\n"
+        "ORDER BY ABS(COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0)) DESC"
     )
 
     dim_diagnose = (
@@ -658,10 +704,15 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "usage_guidance": [
                 "Period-over-period decomposition (polarity-neutral): compares the latest "
                 "published run against the most recent prior run whose table-level failed_tests "
-                "differs (the two newest runs are often identical), ranking contributors by the "
-                "change in failed_tests. The reason column distinguishes a changed fail rate, a "
-                "new rule, and more data at the same rate. Reuse for any 'why did quality "
-                "change / biggest factor' question."
+                "differs (the two newest runs are often identical), one row per rule IDENTITY "
+                "(registry_rule_id, else check_name), ranked by the absolute change in failed "
+                "tests. The reason column carries the full contributor taxonomy — rule added, "
+                "rule removed, rule definition changed, rule renamed, failure rate "
+                "worsened/improved, more data, less data, unchanged — and prev_rule_name exposes "
+                "a rename even when a numeric reason outranks it. Narrate the categories and "
+                "magnitudes it hands you, and use the dimension/severity columns to say which "
+                "dimension or severity moved most. Reuse for any 'why did quality change / "
+                "biggest factor' question."
             ],
         },
         {
@@ -670,8 +721,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "parameters": table_param,
             "usage_guidance": [
                 "Same latest-vs-latest-differing-prior decomposition as 'what is driving my "
-                "changes' — state whether the pass rate went up or down and name the top "
-                "contributors."
+                "changes' — state whether the pass rate went up or down and name each material "
+                "contributor with its reason category (added/removed/renamed/definition "
+                "changed/rate/volume) and magnitude."
             ],
         },
         {
@@ -688,8 +740,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "sql": _lines(diagnose),
             "parameters": table_param,
             "usage_guidance": [
-                "The top contributor from the latest-vs-latest-differing-prior decomposition — "
-                "the rule / dimension with the largest change in failed_tests."
+                "The top row of the latest-vs-latest-differing-prior decomposition — the rule "
+                "with the largest absolute change in failed tests — named with its reason "
+                "category."
             ],
         },
         {

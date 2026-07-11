@@ -184,19 +184,29 @@ def test_text_instructions_failing_records_are_per_run() -> None:
     assert "specific" in joined
 
 
-def test_text_instructions_change_diagnosis_checks_contributors_before_concluding() -> None:
+def test_text_instructions_change_diagnosis_enumerates_the_contributor_taxonomy() -> None:
     # P5.5 (live user report): the space concluded "a single event or issue
     # led to the lower score" and only surfaced the newly added rule after
-    # two follow-up prompts. The diagnosis element must require checking
-    # the contributors and NAMING what was found, unprompted.
+    # two follow-up prompts. The diagnosis element must require computing
+    # the contributors, and it must enumerate the COMPLETE taxonomy by
+    # name — the categories the curated decomposition's reason column
+    # emits — so the space names what it finds, unprompted.
     joined = "".join(gs.TEXT_INSTRUCTIONS)
-    assert "check the contributors before concluding" in joined
-    assert "newly added rules" in joined
-    assert "removed rules" in joined
-    assert "failure rate" in joined
-    assert "how many tests ran" in joined
+    assert "compute the contributors before concluding" in joined
     assert "unprompted" in joined
     assert "never settle" in joined
+    assert "category and magnitude" in joined
+    # The taxonomy, category by category.
+    assert "rules added" in joined
+    assert "rules removed" in joined
+    assert "rules renamed" in joined
+    assert "a rename, not an add" in joined
+    assert "rule definitions changed" in joined
+    assert "failure-rate changes" in joined
+    assert "test-volume changes" in joined
+    # Identity discipline (P5.2) and the dimension/severity rollup ask.
+    assert "registry_rule_id where present" in joined
+    assert "which dimension or severity moved most" in joined
     # The newly-added-rule reading survives the rewrite.
     assert "not one that passed before" in joined
     # ...and so does the stable-history honesty clause.
@@ -294,10 +304,55 @@ def test_diagnose_family_reuses_one_decomposition_sql() -> None:
     assert by_q["Why did my DQ score change since the last run?"]["sql"] == diagnose
     assert by_q["What is the biggest factor affecting my DQ score?"]["sql"] == diagnose
     joined = "".join(diagnose)
-    for marker in ("run_totals", "prev_ts", "'new rule'", "'more data'", "'fail rate changed'", "FULL OUTER JOIN"):
+    for marker in ("run_totals", "prev_ts", "FULL OUTER JOIN"):
         assert marker in joined
-    # Null-safe join — dimension is NULL for untagged checks.
+    # Null-safe comparisons — attribution columns are NULL for untagged runs.
     assert "<=>" in joined
+
+
+def test_diagnose_reason_column_carries_the_full_contributor_taxonomy() -> None:
+    # P5.5 follow-up: the reason column must categorize every rule with the
+    # complete change-contributor taxonomy so Genie NARRATES categories the
+    # SQL hands it rather than inferring them (teaching the query beats
+    # exhorting the model).
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    joined = "".join(by_q["What is driving my changes in score over time?"]["sql"])
+    for reason in (
+        "'rule added'",
+        "'rule removed'",
+        "'rule definition changed'",
+        "'rule renamed'",
+        "'failure rate worsened'",
+        "'failure rate improved'",
+        "'more data'",
+        "'less data'",
+        "'unchanged'",
+    ):
+        assert reason in joined
+    # dqlake's coarse categories are fully superseded.
+    for stale in ("'new rule'", "'fail rate changed'"):
+        assert stale not in joined
+
+
+def test_diagnose_pairs_rules_by_registry_identity() -> None:
+    # Identity across renames (P5.2): rows pair on registry_rule_id where
+    # present (check_name only as the legacy fallback), so a renamed rule
+    # matches its prior self instead of reading as one removal plus one
+    # addition. That requires v_dq_check_results — the metric view carries
+    # no registry_rule_id.
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    joined = "".join(by_q["What is driving my changes in score over time?"]["sql"])
+    assert f"`{CATALOG}`.`{SCHEMA}`.v_dq_check_results" in joined
+    assert "COALESCE(`registry_rule_id`, `check_name`) AS rule_key" in joined
+    assert "ON c.rule_key = p.rule_key" in joined
+    # The prior name rides along so a rename stays visible even when a
+    # numeric reason outranks it; severity rides along for the rollups.
+    assert "prev_rule_name" in joined
+    assert "AS severity" in joined
+    # Definition change compares the mapped columns arrays, but only when
+    # both runs actually carry them (legacy runs have NULL attribution).
+    assert "to_json(`columns`)" in joined
+    assert "c.cols IS NOT NULL AND p.cols IS NOT NULL" in joined
 
 
 def test_benchmarks_reuse_curated_sql_verbatim_and_cover_all_questions() -> None:
