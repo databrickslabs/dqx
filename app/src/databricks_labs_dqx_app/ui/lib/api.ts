@@ -17983,6 +17983,9 @@ export function useGetTableResultsSuspense<TData = Awaited<ReturnType<typeof get
 
 /**
  * Blocking one-shot: start a message and poll it to a terminal state.
+
+Runs as the CALLING user, degrading to the SP when the OBO token is
+rejected (see the module docstring).
  * @summary Ask Genie
  */
 export const askGenie = (
@@ -18046,7 +18049,8 @@ export const useAskGenie = <TError = AxiosError<HTTPValidationError>,
     
 /**
  * Kick off a question and return ids immediately; the UI then polls
-/poll to show live progress.
+/poll to show live progress. Runs as the CALLING user, degrading to the
+SP when the OBO token is rejected (see the module docstring).
  * @summary Start Genie Message
  */
 export const startGenieMessage = (
@@ -18110,6 +18114,8 @@ export const useStartGenieMessage = <TError = AxiosError<HTTPValidationError>,
     
 /**
  * Fetch the current state of an in-flight message (partial or final).
+Runs as the CALLING user, degrading to the SP when the OBO token is
+rejected (see the module docstring).
  * @summary Poll Genie Message
  */
 export const pollGenieMessage = (
