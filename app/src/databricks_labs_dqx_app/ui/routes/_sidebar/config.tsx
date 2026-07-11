@@ -83,8 +83,9 @@ import type { AxiosError } from "axios";
 import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
 import { usePermissions } from "@/hooks/use-permissions";
-import { Suspense, useMemo, useState, useRef, useEffect } from "react";
+import { Suspense, useMemo, useState, useRef, useEffect, type ComponentType, type ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import {
   Popover,
@@ -1010,7 +1011,7 @@ function RetentionSettings() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Clock className="h-5 w-5" />
-          Data Retention
+          {t("config.retentionTitle")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -1426,7 +1427,7 @@ function RunReviewStatusesSettings() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <ShieldCheck className="h-5 w-5" />
-          Run review statuses
+          {t("config.reviewStatusesTitle")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -2194,10 +2195,29 @@ function ComputeSettingsCard() {
 const NO_WAREHOUSE_VALUE = "__default__";
 const NO_CLUSTER_VALUE = "__none__";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Settings page shell — dqlake-style tabs, one card per setting, plus a
+// client-side search that filters cards across every tab by title/keyword.
+// The individual setting cards above are unchanged; this only regroups them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type SettingsTabId = "general" | "ai" | "rules" | "entitlements" | "compute" | "data";
+
+/** ErrorBoundary + Suspense wrapper shared by every setting card. */
+function SettingSection({ reset, children }: { reset: () => void; children: ReactNode }) {
+  return (
+    <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
+      <Suspense fallback={<Skeleton className="h-40 w-full" />}>{children}</Suspense>
+    </ErrorBoundary>
+  );
+}
+
 function ConfigPage() {
   const { t } = useTranslation();
   const { isAdmin } = usePermissions();
   const navigate = useNavigate();
+  const [search, setSearch] = useState("");
+  const [activeTab, setActiveTab] = useState<SettingsTabId>("general");
 
   useEffect(() => {
     if (!isAdmin) {
@@ -2205,97 +2225,128 @@ function ConfigPage() {
     }
   }, [isAdmin, navigate]);
 
+  const tabs = useMemo<{ id: SettingsTabId; label: string; icon: ComponentType<{ className?: string }> }[]>(
+    () => [
+      { id: "general", label: t("config.tabGeneral"), icon: Globe },
+      { id: "ai", label: t("config.tabAi"), icon: Sparkles },
+      { id: "rules", label: t("config.tabRules"), icon: Tags },
+      { id: "entitlements", label: t("config.tabEntitlements"), icon: KeyRound },
+      { id: "compute", label: t("config.tabCompute"), icon: Cpu },
+      { id: "data", label: t("config.tabData"), icon: Clock },
+    ],
+    [t],
+  );
+
+  const entries = useMemo<
+    { id: string; tab: SettingsTabId; title: string; keywords: string; render: () => ReactNode }[]
+  >(
+    () => [
+      { id: "timezone", tab: "general", title: t("config.timezoneTitle"), keywords: t("config.kwTimezone"), render: () => <TimezoneSettings /> },
+      { id: "reviewStatuses", tab: "general", title: t("config.reviewStatusesTitle"), keywords: t("config.kwReviewStatuses"), render: () => <RunReviewStatusesSettings /> },
+      { id: "ai", tab: "ai", title: t("config.aiSettingsTitle"), keywords: t("config.kwAi"), render: () => <AiSettingsCard /> },
+      { id: "labels", tab: "rules", title: t("config.labelsTitle"), keywords: t("config.kwLabels"), render: () => <LabelDefinitionsSettings /> },
+      { id: "rulesRegistry", tab: "rules", title: t("config.rulesRegistrySettingsTitle"), keywords: t("config.kwRulesRegistry"), render: () => <RulesRegistrySettingsCard /> },
+      { id: "entitlements", tab: "entitlements", title: t("roleManagement.title"), keywords: t("config.kwEntitlements"), render: () => <RoleManagement /> },
+      { id: "permissions", tab: "entitlements", title: t("config.permissionsDefaultInheritTitle"), keywords: t("config.kwPermissions"), render: () => <PermissionsSettingsCard /> },
+      { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
+      { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
+      { id: "retention", tab: "data", title: t("config.retentionTitle"), keywords: t("config.kwRetention"), render: () => <RetentionSettings /> },
+    ],
+    [t],
+  );
+
   if (!isAdmin) {
     return null;
   }
+
+  const query = search.trim().toLowerCase();
+  const matches = query
+    ? entries.filter(
+        (e) => e.title.toLowerCase().includes(query) || e.keywords.toLowerCase().includes(query),
+      )
+    : [];
 
   return (
     <div className="space-y-6">
       <div className="space-y-2">
         <PageBreadcrumb page={t("config.breadcrumb")} />
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            <ShinyText text={t("config.title")} speed={6} className="font-bold" />
-          </h1>
-          <p className="text-muted-foreground">
-            {t("config.subtitle")}
-          </p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">
+              <ShinyText text={t("config.title")} speed={6} className="font-bold" />
+            </h1>
+            <p className="text-muted-foreground">{t("config.subtitle")}</p>
+          </div>
+          <div className="relative w-full sm:w-72">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={t("config.searchPlaceholder")}
+              className="h-9 pl-9"
+              aria-label={t("config.searchPlaceholder")}
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                aria-label={t("common.close")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       <QueryErrorResetBoundary>
-        {({ reset }) => (
-          <div className="space-y-6 pb-8">
-            <FadeIn delay={0.05}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <TimezoneSettings />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.1}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <LabelDefinitionsSettings />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.15}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <RunReviewStatusesSettings />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.17}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <AiSettingsCard />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.18}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <RulesRegistrySettingsCard />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.185}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <PermissionsSettingsCard />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.19}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <ComputeSettingsCard />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.25}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <RetentionSettings />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.28}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <DraftRunSampleLimitSettings />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.3}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <RoleManagement />
-              </ErrorBoundary>
-            </FadeIn>
-          </div>
-        )}
+        {({ reset }) =>
+          query ? (
+            matches.length > 0 ? (
+              <div className="space-y-6 pb-8">
+                {matches.map((e) => (
+                  <FadeIn key={e.id}>
+                    <SettingSection reset={reset}>{e.render()}</SettingSection>
+                  </FadeIn>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-md border border-dashed p-10 text-center text-sm text-muted-foreground">
+                {t("config.searchNoResults", { query: search.trim() })}
+              </div>
+            )
+          ) : (
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as SettingsTabId)}>
+              <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 bg-transparent p-0">
+                {tabs.map((tab) => {
+                  const Icon = tab.icon;
+                  return (
+                    <TabsTrigger
+                      key={tab.id}
+                      value={tab.id}
+                      className="gap-1.5 data-[state=active]:bg-muted"
+                    >
+                      <Icon className="h-4 w-4 shrink-0" />
+                      {tab.label}
+                    </TabsTrigger>
+                  );
+                })}
+              </TabsList>
+              {tabs.map((tab) => (
+                <TabsContent key={tab.id} value={tab.id} className="mt-4 space-y-6 pb-8">
+                  {entries
+                    .filter((e) => e.tab === tab.id)
+                    .map((e) => (
+                      <FadeIn key={e.id}>
+                        <SettingSection reset={reset}>{e.render()}</SettingSection>
+                      </FadeIn>
+                    ))}
+                </TabsContent>
+              ))}
+            </Tabs>
+          )
+        }
       </QueryErrorResetBoundary>
     </div>
   );
