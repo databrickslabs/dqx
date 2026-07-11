@@ -34,6 +34,7 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_u
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
     get_entitlement_service,
+    get_obo_ws,
     get_preview_sql_executor,
     get_sp_ws,
     require_role,
@@ -179,23 +180,28 @@ async def verify_genie_entitlements(
     body: GenieVerifyEntitlementsIn,
     email: Annotated[str, Depends(get_user_email)],
     obo_sql: Annotated[SqlExecutor, Depends(get_preview_sql_executor)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     entitlements: Annotated[EntitlementService, Depends(get_entitlement_service)],
 ) -> GenieVerifyEntitlementsOut:
     """Self-verify row-level (failing-rows) access for up to 50 tables (P4.1).
 
-    Each FQN is validated before any probe; the live SELECT self-check runs
-    through the CALLER's OBO executor (verifying your own access needs no
-    elevated privilege) with bounded concurrency, and successes are cached
-    SP-side so ``v_dq_failing_rows`` opens for this user for the TTL window.
+    Each FQN is validated before any probe; then BOTH Task 7 gates run AS
+    THE CALLER with bounded concurrency — the live SELECT self-check via the
+    OBO executor, then the fine-grained-access-control check via the OBO
+    client (verifying your own access needs no elevated privilege). Only
+    tables passing both gates are cached SP-side, so ``v_dq_failing_rows``
+    opens for this user for the TTL window — and never for a table whose
+    quarantine rows the in-app failed-rows endpoint would suppress.
 
     Fire-and-forget friendly: the UI ignores the response, and the service
     never raises — every failure mode degrades to a per-FQN outcome
-    (``verified`` | ``denied`` | ``error``). Verification runs INLINE rather
-    than as a background 202: the 50-FQN cap plus the probe semaphore keeps
-    the worst case bounded, and inline execution keeps the per-FQN outcomes
-    deterministic for callers (and tests) that do read them.
+    (``verified`` | ``denied`` | ``suppressed`` | ``error``). Verification
+    runs INLINE rather than as a background 202: the 50-FQN cap plus the
+    probe semaphore keeps the worst case bounded, and inline execution keeps
+    the per-FQN outcomes deterministic for callers (and tests) that do read
+    them.
     """
-    results = await entitlements.verify_and_record(obo_sql, email, body.table_fqns)
+    results = await entitlements.verify_and_record(obo_sql, obo_ws, email, body.table_fqns)
     return GenieVerifyEntitlementsOut(results=results)
 
 

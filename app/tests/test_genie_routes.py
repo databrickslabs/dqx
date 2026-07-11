@@ -20,6 +20,7 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_u
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
     get_entitlement_service,
+    get_obo_ws,
     get_preview_sql_executor,
     get_sp_ws,
     get_user_role,
@@ -69,8 +70,17 @@ def obo_sql_mock() -> MagicMock:
 
 
 @pytest.fixture
+def obo_ws_mock() -> MagicMock:
+    return MagicMock(name="obo_ws")
+
+
+@pytest.fixture
 def client(
-    settings_mock: MagicMock, sp_ws_mock: MagicMock, entitlement_mock: MagicMock, obo_sql_mock: MagicMock
+    settings_mock: MagicMock,
+    sp_ws_mock: MagicMock,
+    entitlement_mock: MagicMock,
+    obo_sql_mock: MagicMock,
+    obo_ws_mock: MagicMock,
 ) -> TestClient:
     from databricks_labs_dqx_app.backend.routes.v1.genie import router
 
@@ -81,6 +91,7 @@ def client(
     app.dependency_overrides[get_user_role] = lambda: UserRole.VIEWER
     app.dependency_overrides[get_user_email] = lambda: "viewer@example.com"
     app.dependency_overrides[get_preview_sql_executor] = lambda: obo_sql_mock
+    app.dependency_overrides[get_obo_ws] = lambda: obo_ws_mock
     app.dependency_overrides[get_entitlement_service] = lambda: entitlement_mock
     return TestClient(app)
 
@@ -289,24 +300,34 @@ def test_ask_rejects_empty_question(client: TestClient) -> None:
 
 
 def test_verify_entitlements_returns_per_fqn_outcomes(
-    client: TestClient, entitlement_mock: MagicMock, obo_sql_mock: MagicMock
+    client: TestClient, entitlement_mock: MagicMock, obo_sql_mock: MagicMock, obo_ws_mock: MagicMock
 ) -> None:
     entitlement_mock.verify_and_record.return_value = {
         "main.sales.orders": "verified",
         "main.sales.secret": "denied",
+        "main.sales.masked": "suppressed",
         "bad name": "error",
     }
     resp = client.post(
         "/api/v1/genie/verify-entitlements",
-        json={"table_fqns": ["main.sales.orders", "main.sales.secret", "bad name"]},
+        json={"table_fqns": ["main.sales.orders", "main.sales.secret", "main.sales.masked", "bad name"]},
     )
     assert resp.status_code == 200
     assert resp.json() == {
-        "results": {"main.sales.orders": "verified", "main.sales.secret": "denied", "bad name": "error"}
+        "results": {
+            "main.sales.orders": "verified",
+            "main.sales.secret": "denied",
+            "main.sales.masked": "suppressed",
+            "bad name": "error",
+        }
     }
-    # The service runs as the resolved caller with the caller's OBO executor.
+    # The service runs as the resolved caller with BOTH the caller's OBO
+    # executor (SELECT probe) and OBO client (fine-grained-control check).
     entitlement_mock.verify_and_record.assert_awaited_once_with(
-        obo_sql_mock, "viewer@example.com", ["main.sales.orders", "main.sales.secret", "bad name"]
+        obo_sql_mock,
+        obo_ws_mock,
+        "viewer@example.com",
+        ["main.sales.orders", "main.sales.secret", "main.sales.masked", "bad name"],
     )
 
 

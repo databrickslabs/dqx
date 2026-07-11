@@ -16,10 +16,20 @@ Phase 4 gives Genie row-level access without granting any user SELECT on
   SELECT on, and run-mode filtering is a presentation concern handled in
   Genie's curated SQL (P4.2), not a permission boundary.
 
-Verification is a self-check: :meth:`QuarantineSampleService.user_can_select`
-runs a zero-row probe through the CALLER's OBO SQL executor, which needs no
-elevated privilege. Successful probes are upserted SP-side with a
-``verified_at`` timestamp; the view's 24-hour TTL bounds revocation drift.
+Verification is a self-check running BOTH Task 7 gates, in the same order
+as the in-app failed-rows endpoint: :meth:`QuarantineSampleService.user_can_select`
+(a zero-row probe through the CALLER's OBO SQL executor) first, then
+:meth:`QuarantineSampleService.has_fine_grained_access_control` (a metadata
+read via the caller's OBO client) — neither needs elevated privilege. An
+entitlement is recorded only when SELECT passes AND no fine-grained
+controls (row filter / column mask) exist: copied quarantine rows cannot
+replicate those policies, the in-app failed-rows path suppresses such
+tables, and the Genie view must never serve rows the app itself refuses to
+show. Passing verifications are upserted SP-side with a ``verified_at``
+timestamp; the view's 24-hour TTL bounds revocation drift — and equally
+bounds FGAC drift: a row filter or column mask ADDED to a table after an
+entitlement was granted stays exposed for at most the TTL window, until
+re-verification runs both gates again.
 
 PII note: the entitlement table stores user emails in a UC table. It is an
 SP-only object (no user grants; the dynamic view reads it with definer's
@@ -31,6 +41,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.services.quarantine_sample_service import QuarantineSampleService
 from databricks_labs_dqx_app.backend.sql_executor import RawSql, SqlExecutor
@@ -59,9 +71,12 @@ PROBE_CONCURRENCY = 5
 
 # Per-FQN outcomes of verify_and_record. Deterministic strings — the UI
 # treats the endpoint as fire-and-forget but tests (and any curious caller)
-# rely on these.
+# rely on these. "suppressed" mirrors the failed-rows endpoint's semantics:
+# SELECT passed, but fine-grained access controls make row-level exposure
+# unsafe, so no entitlement is granted.
 OUTCOME_VERIFIED = "verified"
 OUTCOME_DENIED = "denied"
+OUTCOME_SUPPRESSED = "suppressed"
 OUTCOME_ERROR = "error"
 
 
@@ -69,8 +84,8 @@ class EntitlementService:
     """Owns the entitlement cache table + gated view, and the verify flow.
 
     Constructed over the app SERVICE PRINCIPAL's warehouse executor (the SP
-    owns both UC objects). The caller's OBO executor is passed per call to
-    :meth:`verify_and_record` — never stored.
+    owns both UC objects). The caller's OBO executor and OBO WorkspaceClient
+    are passed per call to :meth:`verify_and_record` — never stored.
     """
 
     def __init__(self, sql: SqlExecutor) -> None:
@@ -219,23 +234,30 @@ class EntitlementService:
     # ------------------------------------------------------------------
 
     async def verify_and_record(
-        self, obo_sql: SqlExecutor, user_email: str, table_fqns: list[str]
+        self, obo_sql: SqlExecutor, obo_ws: WorkspaceClient, user_email: str, table_fqns: list[str]
     ) -> dict[str, str]:
-        """Verify SELECT on each table AS THE CALLER and cache the successes.
+        """Run BOTH permission gates per table AS THE CALLER; cache the passes.
 
         Per FQN (deduplicated; every input FQN appears exactly once in the
         result):
 
         1. validate the FQN — malformed names get ``error`` and never touch
            SQL (validate-before-probe);
-        2. skip the probe when a fresh cache row exists (one batched SP
-           read) — ``verified``;
+        2. skip the gates when a fresh cache row exists (one batched SP
+           read) — ``verified`` (a fresh row means both gates passed within
+           the TTL window);
         3. otherwise run the live *user_can_select* OBO probe (bounded to
-           :data:`PROBE_CONCURRENCY` concurrent probes) — the probe fails
-           closed, so any failure is ``denied``;
-        4. upsert the entitlement SP-side on success — ``verified``, or
-           ``error`` when the row could not be written (the view would stay
-           closed, so reporting ``verified`` would lie).
+           :data:`PROBE_CONCURRENCY` concurrent verifications) — the probe
+           fails closed, so any failure is ``denied``;
+        4. then — same order as the failed-rows endpoint — check
+           *has_fine_grained_access_control* via the caller's OBO client;
+           a row filter / column mask (or an unverifiable state — it fails
+           closed too) yields ``suppressed`` and NO entitlement, keeping the
+           Genie view consistent with the app's own suppression;
+        5. upsert the entitlement SP-side only when both gates passed —
+           ``verified``, or ``error`` when the row could not be written
+           (the view would stay closed, so reporting ``verified`` would
+           lie).
 
         Never raises: every failure mode degrades to a per-FQN outcome.
         """
@@ -259,11 +281,18 @@ class EntitlementService:
 
         async def probe(fqn: str) -> tuple[str, str]:
             async with semaphore:
-                # user_can_select fails closed (returns False on ANY probe
-                # failure), so no exception can escape this call.
+                # Gate 1 — user_can_select fails closed (returns False on
+                # ANY probe failure), so no exception can escape this call.
                 allowed = await asyncio.to_thread(QuarantineSampleService.user_can_select, obo_sql, fqn)
                 if not allowed:
                     return fqn, OUTCOME_DENIED
+                # Gate 2 — fine-grained controls; fails closed too (an
+                # unverifiable state reads as "present").
+                fgac = await asyncio.to_thread(
+                    QuarantineSampleService.has_fine_grained_access_control, obo_ws, fqn
+                )
+                if fgac:
+                    return fqn, OUTCOME_SUPPRESSED
                 recorded = await asyncio.to_thread(self.record_entitlement, user_email, fqn)
             return fqn, OUTCOME_VERIFIED if recorded else OUTCOME_ERROR
 

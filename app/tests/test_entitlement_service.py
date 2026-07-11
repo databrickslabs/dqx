@@ -3,17 +3,21 @@
 Pins the security-relevant DDL of the two UC objects (the SP-only
 entitlement cache table and the ``current_user()``-gated
 ``v_dq_failing_rows`` dynamic view), the verify-and-record flow
-(validate-before-probe, fresh-row skip, TTL agreement, fail-closed
-denials, bounded probe concurrency, never-raises), and the best-effort
-startup ensure + grant steps in ``backend.app``.
+(validate-before-probe, fresh-row skip, TTL agreement, BOTH Task 7 gates
+in the failed-rows order with fail-closed denial/suppression, bounded
+probe concurrency, never-raises), and the best-effort startup ensure +
+grant steps in ``backend.app``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import threading
+from unittest.mock import create_autospec
 
 import pytest
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.catalog import ColumnInfo, ColumnMask, TableInfo, TableRowFilter
 
 from databricks_labs_dqx_app.backend.services.entitlement_service import (
     ENTITLEMENT_TTL_HOURS,
@@ -21,6 +25,7 @@ from databricks_labs_dqx_app.backend.services.entitlement_service import (
     FAILING_ROWS_VIEW_NAME,
     OUTCOME_DENIED,
     OUTCOME_ERROR,
+    OUTCOME_SUPPRESSED,
     OUTCOME_VERIFIED,
     PROBE_CONCURRENCY,
     VERIFY_ENTITLEMENTS_MAX_FQNS,
@@ -30,6 +35,7 @@ from databricks_labs_dqx_app.backend.services.entitlement_service import (
 FQN = "main.sales.orders"
 FQN2 = "main.sales.customers"
 EMAIL = "steward@example.com"
+PLAIN_TABLE = TableInfo(row_filter=None, columns=[ColumnInfo(name="id"), ColumnInfo(name="amount")])
 
 
 @pytest.fixture
@@ -41,14 +47,20 @@ def svc(sql_executor_mock) -> EntitlementService:
 
 @pytest.fixture
 def obo_sql_mock():
-    """A separate OBO executor mock; probes succeed by default."""
-    from unittest.mock import create_autospec
-
+    """A separate OBO executor mock; SELECT probes succeed by default."""
     from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
     mock = create_autospec(SqlExecutor, instance=True)
     mock.query.return_value = []
     return mock
+
+
+@pytest.fixture
+def obo_ws_mock():
+    """OBO WorkspaceClient mock — no fine-grained controls by default."""
+    ws = create_autospec(WorkspaceClient, instance=True)
+    ws.tables.get.return_value = PLAIN_TABLE
+    return ws
 
 
 # ---------------------------------------------------------------------------
@@ -209,37 +221,92 @@ class TestRecordEntitlement:
 
 
 class TestVerifyAndRecord:
-    async def test_fresh_row_skips_the_probe(self, svc, sql_executor_mock, obo_sql_mock):
+    async def test_fresh_row_skips_both_gates(self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock):
+        # A fresh row means both gates passed within the TTL window —
+        # neither the SELECT probe nor the FGAC metadata read runs.
         sql_executor_mock.query.return_value = [[FQN]]
-        outcomes = await svc.verify_and_record(obo_sql_mock, EMAIL, [FQN])
+        outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, [FQN])
         assert outcomes == {FQN: OUTCOME_VERIFIED}
         obo_sql_mock.query.assert_not_called()
+        obo_ws_mock.tables.get.assert_not_called()
         sql_executor_mock.upsert.assert_not_called()
 
-    async def test_stale_row_probes_and_upserts_on_success(self, svc, sql_executor_mock, obo_sql_mock):
+    async def test_stale_row_runs_both_gates_and_upserts_on_pass(
+        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
+    ):
         sql_executor_mock.query.return_value = []  # nothing fresh
-        outcomes = await svc.verify_and_record(obo_sql_mock, EMAIL, [FQN])
+        outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, [FQN])
         assert outcomes == {FQN: OUTCOME_VERIFIED}
-        # The probe ran as the CALLER (OBO executor), zero-row and quoted.
+        # Gate 1 ran as the CALLER (OBO executor), zero-row and quoted.
         probe = obo_sql_mock.query.call_args.args[0]
         assert probe == "SELECT 1 FROM `main`.`sales`.`orders` LIMIT 0"
+        # Gate 2 ran as the CALLER too (OBO metadata read).
+        obo_ws_mock.tables.get.assert_called_once_with(FQN)
         assert sql_executor_mock.upsert.call_args.args[1] == {"user_email": EMAIL, "table_fqn": FQN}
 
-    async def test_denied_probe_fails_closed_and_writes_nothing(self, svc, sql_executor_mock, obo_sql_mock):
+    async def test_gates_run_in_the_failed_rows_order(self, svc, obo_sql_mock, obo_ws_mock):
+        # Same load-bearing order as the failed-rows endpoint: the cheap
+        # SELECT self-check first, the FGAC metadata read second.
+        order: list[str] = []
+        obo_sql_mock.query.side_effect = lambda *a, **k: order.append("obo_select_check") or []
+        obo_ws_mock.tables.get.side_effect = lambda *a, **k: order.append("fine_grained_check") or PLAIN_TABLE
+        await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, [FQN])
+        assert order == ["obo_select_check", "fine_grained_check"]
+
+    async def test_denied_probe_fails_closed_and_skips_the_fgac_gate(
+        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
+    ):
         obo_sql_mock.query.side_effect = PermissionError("no SELECT")
-        outcomes = await svc.verify_and_record(obo_sql_mock, EMAIL, [FQN])
+        outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, [FQN])
         assert outcomes == {FQN: OUTCOME_DENIED}
+        obo_ws_mock.tables.get.assert_not_called()
         sql_executor_mock.upsert.assert_not_called()
 
-    async def test_upsert_failure_reports_error_not_verified(self, svc, sql_executor_mock, obo_sql_mock):
+    async def test_row_filter_suppresses_and_writes_nothing(
+        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
+    ):
+        # SELECT passes, but the table carries a row filter: the in-app
+        # failed-rows path suppresses such tables, so NO entitlement — the
+        # Genie view must never serve rows the app refuses to show.
+        obo_ws_mock.tables.get.return_value = TableInfo(
+            row_filter=TableRowFilter(function_name="main.sales.f", input_column_names=["region"])
+        )
+        outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, [FQN])
+        assert outcomes == {FQN: OUTCOME_SUPPRESSED}
+        sql_executor_mock.upsert.assert_not_called()
+
+    async def test_column_mask_suppresses_and_writes_nothing(
+        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
+    ):
+        obo_ws_mock.tables.get.return_value = TableInfo(
+            row_filter=None,
+            columns=[ColumnInfo(name="ssn", mask=ColumnMask(function_name="main.sales.m"))],
+        )
+        outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, [FQN])
+        assert outcomes == {FQN: OUTCOME_SUPPRESSED}
+        sql_executor_mock.upsert.assert_not_called()
+
+    async def test_fgac_metadata_failure_fails_closed_to_suppression(
+        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
+    ):
+        obo_ws_mock.tables.get.side_effect = RuntimeError("transient UC failure")
+        outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, [FQN])
+        assert outcomes == {FQN: OUTCOME_SUPPRESSED}
+        sql_executor_mock.upsert.assert_not_called()
+
+    async def test_upsert_failure_reports_error_not_verified(
+        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
+    ):
         # The view stays closed when the row was not written — claiming
         # "verified" would lie to the caller.
         sql_executor_mock.upsert.side_effect = RuntimeError("merge failed")
-        outcomes = await svc.verify_and_record(obo_sql_mock, EMAIL, [FQN])
+        outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, [FQN])
         assert outcomes == {FQN: OUTCOME_ERROR}
 
-    async def test_invalid_fqn_is_error_and_never_probed(self, svc, sql_executor_mock, obo_sql_mock):
-        outcomes = await svc.verify_and_record(obo_sql_mock, EMAIL, ["bad name", FQN])
+    async def test_invalid_fqn_is_error_and_never_probed(
+        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
+    ):
+        outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, ["bad name", FQN])
         assert outcomes["bad name"] == OUTCOME_ERROR
         assert outcomes[FQN] == OUTCOME_VERIFIED
         # validate-before-probe: only the valid FQN reached SQL anywhere.
@@ -248,24 +315,29 @@ class TestVerifyAndRecord:
         freshness_stmt = sql_executor_mock.query.call_args.args[0]
         assert "bad name" not in freshness_stmt
 
-    async def test_duplicates_are_verified_once(self, svc, sql_executor_mock, obo_sql_mock):
-        outcomes = await svc.verify_and_record(obo_sql_mock, EMAIL, [FQN, FQN])
+    async def test_duplicates_are_verified_once(self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock):
+        outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, [FQN, FQN])
         assert outcomes == {FQN: OUTCOME_VERIFIED}
         assert obo_sql_mock.query.call_count == 1
 
-    async def test_freshness_read_failure_degrades_to_probing(self, svc, sql_executor_mock, obo_sql_mock):
+    async def test_freshness_read_failure_degrades_to_probing(
+        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
+    ):
         sql_executor_mock.query.side_effect = RuntimeError("warehouse down")
-        outcomes = await svc.verify_and_record(obo_sql_mock, EMAIL, [FQN])
+        outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, [FQN])
         assert outcomes == {FQN: OUTCOME_VERIFIED}
         obo_sql_mock.query.assert_called_once()
 
-    async def test_every_input_gets_exactly_one_outcome(self, svc, sql_executor_mock, obo_sql_mock):
+    async def test_every_input_gets_exactly_one_outcome(
+        self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock
+    ):
         fqns = [f"main.sales.t{i}" for i in range(12)] + ["oops"]
-        outcomes = await svc.verify_and_record(obo_sql_mock, EMAIL, fqns)
+        outcomes = await svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, fqns)
         assert set(outcomes) == set(fqns)
-        assert all(v in {OUTCOME_VERIFIED, OUTCOME_DENIED, OUTCOME_ERROR} for v in outcomes.values())
+        valid_outcomes = {OUTCOME_VERIFIED, OUTCOME_DENIED, OUTCOME_SUPPRESSED, OUTCOME_ERROR}
+        assert all(v in valid_outcomes for v in outcomes.values())
 
-    async def test_probe_concurrency_is_bounded(self, svc, sql_executor_mock, obo_sql_mock):
+    async def test_probe_concurrency_is_bounded(self, svc, sql_executor_mock, obo_sql_mock, obo_ws_mock):
         """No more than PROBE_CONCURRENCY probes may be in flight at once.
 
         The probe side_effect blocks every probe thread on an Event; the
@@ -289,7 +361,7 @@ class TestVerifyAndRecord:
 
         obo_sql_mock.query.side_effect = blocking_probe
         fqns = [f"main.sales.t{i}" for i in range(PROBE_CONCURRENCY * 3)]
-        task = asyncio.create_task(svc.verify_and_record(obo_sql_mock, EMAIL, fqns))
+        task = asyncio.create_task(svc.verify_and_record(obo_sql_mock, obo_ws_mock, EMAIL, fqns))
 
         async def saturated() -> None:
             while True:

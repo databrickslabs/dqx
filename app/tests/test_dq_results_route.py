@@ -974,6 +974,21 @@ class TestFailedRowsEntitlementPiggyback:
         client.get("/api/v1/dq-results/failed-rows/not-a-three-part-name")
         entitlement_mock.record_entitlement.assert_not_called()
 
+    def test_upsert_sits_after_both_gates(
+        self, client, obo_sql_mock, obo_ws_mock, sql_mock, entitlement_mock
+    ):
+        # Placement pin: the entitlement is recorded only once BOTH Task 7
+        # gates have passed — never between them — and before the SP fetch.
+        order: list[str] = []
+        obo_sql_mock.query.side_effect = lambda *a, **k: order.append("obo_select_check") or []
+        obo_ws_mock.tables.get.side_effect = lambda *a, **k: order.append("fine_grained_check") or PLAIN_TABLE
+        entitlement_mock.record_entitlement.side_effect = (
+            lambda *a, **k: order.append("entitlement_upsert") or True
+        )
+        sql_mock.query_dicts.side_effect = lambda *a, **k: order.append("sp_fetch") or []
+        assert client.get(FAILED_ROWS_URL).status_code == 200
+        assert order == ["obo_select_check", "fine_grained_check", "entitlement_upsert", "sp_fetch"]
+
 
 class TestFailedRowsShapeAndFilters:
     def test_rows_carry_struct_enriched_failures_and_run_ts(self, client, sql_mock, monitored_tables_mock):

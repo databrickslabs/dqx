@@ -1994,6 +1994,11 @@ class GenieVerifyEntitlementsIn(BaseModel):
 
 
 class GenieVerifyEntitlementsOut(BaseModel):
-    """Per-FQN verification outcome: ``verified`` | ``denied`` | ``error``."""
+    """Per-FQN verification outcome.
+
+    ``verified`` | ``denied`` (no SELECT) | ``suppressed`` (SELECT passed
+    but the table carries fine-grained access controls, mirroring the
+    failed-rows endpoint's suppression) | ``error``.
+    """
 
     results: dict[str, str] = Field(default_factory=dict)

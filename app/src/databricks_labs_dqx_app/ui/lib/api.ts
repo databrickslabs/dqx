@@ -1393,7 +1393,11 @@ export interface GenieVerifyEntitlementsIn {
 export type GenieVerifyEntitlementsOutResults = {[key: string]: string};
 
 /**
- * Per-FQN verification outcome: ``verified`` | ``denied`` | ``error``.
+ * Per-FQN verification outcome.
+
+``verified`` | ``denied`` (no SELECT) | ``suppressed`` (SELECT passed
+but the table carries fine-grained access controls, mirroring the
+failed-rows endpoint's suppression) | ``error``.
  */
 export interface GenieVerifyEntitlementsOut {
   results?: GenieVerifyEntitlementsOutResults;
@@ -18317,17 +18321,21 @@ export function useGetGenieSpaceSuspense<TData = Awaited<ReturnType<typeof getGe
 /**
  * Self-verify row-level (failing-rows) access for up to 50 tables (P4.1).
 
-Each FQN is validated before any probe; the live SELECT self-check runs
-through the CALLER's OBO executor (verifying your own access needs no
-elevated privilege) with bounded concurrency, and successes are cached
-SP-side so ``v_dq_failing_rows`` opens for this user for the TTL window.
+Each FQN is validated before any probe; then BOTH Task 7 gates run AS
+THE CALLER with bounded concurrency — the live SELECT self-check via the
+OBO executor, then the fine-grained-access-control check via the OBO
+client (verifying your own access needs no elevated privilege). Only
+tables passing both gates are cached SP-side, so ``v_dq_failing_rows``
+opens for this user for the TTL window — and never for a table whose
+quarantine rows the in-app failed-rows endpoint would suppress.
 
 Fire-and-forget friendly: the UI ignores the response, and the service
 never raises — every failure mode degrades to a per-FQN outcome
-(``verified`` | ``denied`` | ``error``). Verification runs INLINE rather
-than as a background 202: the 50-FQN cap plus the probe semaphore keeps
-the worst case bounded, and inline execution keeps the per-FQN outcomes
-deterministic for callers (and tests) that do read them.
+(``verified`` | ``denied`` | ``suppressed`` | ``error``). Verification
+runs INLINE rather than as a background 202: the 50-FQN cap plus the
+probe semaphore keeps the worst case bounded, and inline execution keeps
+the per-FQN outcomes deterministic for callers (and tests) that do read
+them.
  * @summary Verify Genie Entitlements
  */
 export const verifyGenieEntitlements = (
