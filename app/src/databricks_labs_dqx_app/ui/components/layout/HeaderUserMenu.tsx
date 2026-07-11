@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import selector from "@/lib/selector";
 import { type User, type UserRoleOut } from "@/lib/api";
-import { Settings, User as UserIcon, ChevronDown } from "lucide-react";
+import { Settings, User as UserIcon, ChevronDown, Upload } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 
@@ -41,6 +41,7 @@ function HeaderUserMenuContent() {
 
   const isConfigActive = location.pathname === "/config";
   const isProfileActive = location.pathname === "/profile";
+  const isImportActive = location.pathname.startsWith("/rules/import");
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -77,6 +78,17 @@ function HeaderUserMenuContent() {
           >
             <UserIcon className="h-4 w-4" />
             {t("userMenu.profile")}
+          </Link>
+          <Link
+            to="/rules/import"
+            onClick={() => setOpen(false)}
+            className={cn(
+              "flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors",
+              isImportActive && "bg-accent",
+            )}
+          >
+            <Upload className="h-4 w-4" />
+            {t("sidebar.importRules")}
           </Link>
           {isAdmin && (
             <Link

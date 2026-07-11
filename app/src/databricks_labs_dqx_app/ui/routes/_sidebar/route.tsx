@@ -12,7 +12,6 @@ import {
   Library,
   Table2,
   Boxes,
-  Upload,
 } from "lucide-react";
 import {
   SidebarGroup,
@@ -117,30 +116,16 @@ function Layout() {
               </Link>
             </SidebarMenuItem>
 
-            {/* Import Rules — bulk DQX YAML import or data-contract-driven
-                generation. ``/rules/from-contract`` still resolves (it
-                redirects into ``/rules/import?tab=contract``), so it's
-                included in the active-route check. Placed immediately
-                above Drafts & Review since it's the thing that feeds
-                drafts into that queue. */}
-            <SidebarMenuItem>
-              <Link
-                to="/rules/import"
-                className={cn(
-                  "flex items-center gap-2 p-2 rounded-lg",
-                  location.pathname.startsWith("/rules/import") ||
-                    location.pathname.startsWith("/rules/from-contract")
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                )}
-              >
-                <Upload size={16} />
-                <span>{t("sidebar.importRules")}</span>
-              </Link>
-            </SidebarMenuItem>
+            {/* Divider before the review group — separates the build/apply
+                surfaces (Rules Registry, Monitored Tables, Table Spaces)
+                from the approval queue below (#11). */}
+            <hr className="my-2 border-sidebar-border" />
 
-            {/* Drafts & Review — approvals for registry rules AND
-                per-table applications. */}
+            {/* Review and Approve — approvals for registry rules AND
+                per-table applications. Renamed from "Drafts & Review" (#11).
+                Import Rules used to sit just above this item; it now lives in
+                the username dropdown since it's a bulk-registry operation,
+                not a daily nav destination (see HeaderUserMenu). */}
             <SidebarMenuItem>
               <Link
                 to="/rules/drafts"
@@ -152,10 +137,12 @@ function Layout() {
                 )}
               >
                 <ClipboardCheck size={16} />
-                <span>{t("sidebar.draftsAndReview")}</span>
+                <span>{t("sidebar.reviewAndApprove")}</span>
               </Link>
             </SidebarMenuItem>
 
+            {/* Divider before the observability group (Runs History,
+                Results, Insights). */}
             <hr className="my-2 border-sidebar-border" />
 
             {/* Runs History — visible to all */}
