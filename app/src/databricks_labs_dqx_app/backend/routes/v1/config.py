@@ -10,7 +10,6 @@ from databricks.sdk.errors.base import DatabricksError
 from fastapi import APIRouter, Depends, HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
-from databricks_labs_dqx_app.backend.config import conf
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
     get_sp_ws,
@@ -31,14 +30,6 @@ from databricks_labs_dqx_app.backend.services.app_settings_service import (
     AppSettingsService,
 )
 from databricks_labs_dqx_app.backend.services.vector_store import VectorStoreProvisioner
-
-# Everyone except VIEWER. Used to gate the embedded-dashboard GET: the
-# Lakeview iframe is published with ``embed_credentials: true``
-# (app/databricks.yml), so it renders with the publisher's credentials
-# rather than the caller's — the "underlying dashboard enforces UC
-# permissions" assumption does not hold, and a VIEWER could otherwise see
-# data they lack UC grants for. Mirrors ``_NON_VIEWERS`` in routes/v1/dryrun.py.
-_NON_VIEWERS = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
 
 _TZ_SETTING_KEY = "display_timezone"
 _TZ_DEFAULT = "UTC"
@@ -728,55 +719,10 @@ def save_custom_metrics(
 
 
 # ----------------------------------------------------------------------
-# Embedded dashboard — the Insights page renders a Databricks AI/BI
-# dashboard inside an iframe. Admins set the dashboard ID (and an
-# optional display title) here; the GET endpoint falls back to the env
-# default (``conf.default_dashboard_id`` from ``DQX_DEFAULT_DASHBOARD_ID``)
-# so the bundle can ship a starter dashboard without preventing
-# customer overrides. The workspace host is read from
-# ``DATABRICKS_HOST`` (always set inside a Databricks App container)
-# and included in the response so the frontend can build the embed
-# URL without a second roundtrip.
+# Workspace host — read from ``DATABRICKS_HOST`` (always set inside a
+# Databricks App container) and exposed so the frontend can build deep
+# links into the workspace UI (e.g. Unity Catalog explorer, run pages).
 # ----------------------------------------------------------------------
-
-# Conservative ID validation: Databricks AI/BI dashboard IDs are
-# UUIDs or shorter slugs, so we accept letters, digits, hyphens, and
-# underscores. We deliberately reject anything that could be a URL
-# fragment or path traversal so admins can't accidentally paste a full
-# URL and break iframe rendering downstream.
-_DASHBOARD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-
-
-class EmbeddedDashboardOut(BaseModel):
-    """Current embedded-dashboard configuration + the bits the UI needs to render the iframe."""
-
-    dashboard_id: str = Field(
-        default="",
-        description="Effective dashboard ID. Empty string means 'nothing configured'.",
-    )
-    title: str | None = Field(
-        default=None,
-        description="Optional admin-provided display title. The UI falls back to a generic label when null.",
-    )
-    workspace_host: str = Field(
-        default="",
-        description="Workspace host (e.g. 'https://e2-...cloud.databricks.com') used to build the iframe URL.",
-    )
-    is_set: bool = Field(
-        default=False,
-        description="True when the admin has saved an explicit setting (independent of the env default).",
-    )
-    is_default: bool = Field(
-        default=False,
-        description="True when the response is serving the env-provided default rather than an admin override.",
-    )
-
-
-class EmbeddedDashboardIn(BaseModel):
-    """Update payload — admins write the dashboard ID and optionally a display title."""
-
-    dashboard_id: str
-    title: str | None = None
 
 
 def _workspace_host() -> str:
@@ -813,109 +759,11 @@ class WorkspaceHostOut(BaseModel):
 def get_workspace_host() -> WorkspaceHostOut:
     """Return the workspace host (accessible by all authenticated users).
 
-    Unlike the embedded-dashboard config, the host alone grants no data
-    access — links built from it (e.g. Unity Catalog explorer) still
-    enforce the caller's own workspace/UC permissions on arrival.
+    The host alone grants no data access — links built from it (e.g. Unity
+    Catalog explorer) still enforce the caller's own workspace/UC
+    permissions on arrival.
     """
     return WorkspaceHostOut(workspace_host=_workspace_host())
-
-
-@router.get(
-    "/embedded-dashboard",
-    response_model=EmbeddedDashboardOut,
-    operation_id="getEmbeddedDashboard",
-    dependencies=[require_role(*_NON_VIEWERS)],
-)
-def get_embedded_dashboard(
-    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
-) -> EmbeddedDashboardOut:
-    """Return the current embedded-dashboard config.
-
-    Gated to non-VIEWER roles. The Lakeview iframe is published with
-    ``embed_credentials: true`` (app/databricks.yml), so it renders with
-    the publisher's credentials rather than the caller's — the dashboard
-    does NOT re-enforce UC permissions per viewer, so handing a VIEWER the
-    dashboard id + workspace host would let them see data they lack UC
-    grants for. See ``_NON_VIEWERS``.
-    """
-    saved = svc.get_embedded_dashboard()
-    workspace_host = _workspace_host()
-    if saved:
-        return EmbeddedDashboardOut(
-            dashboard_id=saved["dashboard_id"],
-            title=saved.get("title"),
-            workspace_host=workspace_host,
-            is_set=True,
-            is_default=False,
-        )
-    env_default = (conf.default_dashboard_id or "").strip()
-    return EmbeddedDashboardOut(
-        dashboard_id=env_default,
-        title=None,
-        workspace_host=workspace_host,
-        is_set=False,
-        is_default=bool(env_default),
-    )
-
-
-@router.put(
-    "/embedded-dashboard",
-    response_model=EmbeddedDashboardOut,
-    operation_id="saveEmbeddedDashboard",
-    dependencies=[require_role(UserRole.ADMIN)],
-)
-def save_embedded_dashboard(
-    body: EmbeddedDashboardIn,
-    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
-    email: Annotated[str, Depends(get_user_email)],
-) -> EmbeddedDashboardOut:
-    """Save the embedded-dashboard configuration (admin only)."""
-    dashboard_id = (body.dashboard_id or "").strip()
-    if not dashboard_id:
-        raise HTTPException(status_code=400, detail="dashboard_id is required.")
-    if not _DASHBOARD_ID_RE.match(dashboard_id):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Invalid dashboard_id. Paste the ID portion only "
-                "(letters, digits, hyphens, underscores; up to 128 chars) — "
-                "not a full dashboard URL."
-            ),
-        )
-    title = (body.title or "").strip() or None
-    if title and len(title) > 200:
-        raise HTTPException(status_code=400, detail="title must be 200 characters or fewer.")
-
-    svc.save_embedded_dashboard(dashboard_id, title, user_email=email)
-    logger.info("Saved embedded dashboard id=%s title=%r (by=%s)", dashboard_id, title, email)
-    return EmbeddedDashboardOut(
-        dashboard_id=dashboard_id,
-        title=title,
-        workspace_host=_workspace_host(),
-        is_set=True,
-        is_default=False,
-    )
-
-
-@router.delete(
-    "/embedded-dashboard",
-    response_model=EmbeddedDashboardOut,
-    operation_id="deleteEmbeddedDashboard",
-    dependencies=[require_role(UserRole.ADMIN)],
-)
-def delete_embedded_dashboard(
-    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
-    email: Annotated[str, Depends(get_user_email)],
-) -> EmbeddedDashboardOut:
-    """Clear the admin override (admin only).
-
-    The env-provided default — if any — takes over again. Useful when
-    the bundle ships a starter dashboard and the admin wants to revert
-    to it after a botched custom ID.
-    """
-    svc.delete_embedded_dashboard(user_email=email)
-    logger.info("Cleared embedded dashboard override (by=%s)", email)
-    return get_embedded_dashboard(svc)
 
 
 # ----------------------------------------------------------------------

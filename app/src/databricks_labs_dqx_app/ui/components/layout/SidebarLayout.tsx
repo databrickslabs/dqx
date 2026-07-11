@@ -1,4 +1,4 @@
-import { Outlet, useLocation } from "@tanstack/react-router";
+import { Outlet } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import {
   Sidebar,
@@ -11,21 +11,12 @@ import {
 import { ModeToggle } from "@/components/layout/mode-toggle";
 import Logo from "@/components/layout/Logo";
 import HeaderUserMenu from "@/components/layout/HeaderUserMenu";
-import { InsightsDashboardHost } from "@/components/insights/InsightsDashboard";
-import { cn } from "@/lib/utils";
 
 interface SidebarLayoutProps {
   children?: ReactNode;
 }
 
 function SidebarLayout({ children }: SidebarLayoutProps) {
-  // The Insights dashboard iframe is hosted persistently (see
-  // ``InsightsDashboardHost``) so it doesn't reload on every navigation.
-  // While Insights is active we hide the empty route ``<Outlet/>`` wrapper
-  // and show the persistent host instead.
-  const location = useLocation();
-  const onInsights = location.pathname.startsWith("/insights");
-
   return (
     <div className="flex flex-col h-screen overflow-x-hidden">
       {/* Fixed top banner — independent of sidebar, never shifts */}
@@ -66,10 +57,9 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
               this scroller, and `mx-auto` re-centers the content a few px
               LEFT of its position on shorter sibling tabs (P23 item 15). */}
           <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]">
-            <div className={cn("flex flex-col gap-4 p-6 pt-0 max-w-7xl mx-auto min-w-0", onInsights && "hidden")}>
+            <div className="flex flex-col gap-4 p-6 pt-0 max-w-7xl mx-auto min-w-0">
               <Outlet />
             </div>
-            <InsightsDashboardHost />
           </div>
         </SidebarInset>
       </SidebarProvider>

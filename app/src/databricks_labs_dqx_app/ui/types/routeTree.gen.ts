@@ -17,7 +17,6 @@ import { Route as SidebarRulesRouteImport } from './../routes/_sidebar/rules'
 import { Route as SidebarResultsRouteImport } from './../routes/_sidebar/results'
 import { Route as SidebarProfilerRouteImport } from './../routes/_sidebar/profiler'
 import { Route as SidebarProfileRouteImport } from './../routes/_sidebar/profile'
-import { Route as SidebarInsightsRouteImport } from './../routes/_sidebar/insights'
 import { Route as SidebarHomeRouteImport } from './../routes/_sidebar/home'
 import { Route as SidebarDiscoveryRouteImport } from './../routes/_sidebar/discovery'
 import { Route as SidebarConfigRouteImport } from './../routes/_sidebar/config'
@@ -82,11 +81,6 @@ const SidebarProfilerRoute = SidebarProfilerRouteImport.update({
 const SidebarProfileRoute = SidebarProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
-  getParentRoute: () => SidebarRouteRoute,
-} as any)
-const SidebarInsightsRoute = SidebarInsightsRouteImport.update({
-  id: '/insights',
-  path: '/insights',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
 const SidebarHomeRoute = SidebarHomeRouteImport.update({
@@ -235,7 +229,6 @@ export interface FileRoutesByFullPath {
   '/config': typeof SidebarConfigRoute
   '/discovery': typeof SidebarDiscoveryRoute
   '/home': typeof SidebarHomeRoute
-  '/insights': typeof SidebarInsightsRoute
   '/profile': typeof SidebarProfileRoute
   '/profiler': typeof SidebarProfilerRoute
   '/results': typeof SidebarResultsRoute
@@ -271,7 +264,6 @@ export interface FileRoutesByTo {
   '/config': typeof SidebarConfigRoute
   '/discovery': typeof SidebarDiscoveryRoute
   '/home': typeof SidebarHomeRoute
-  '/insights': typeof SidebarInsightsRoute
   '/profile': typeof SidebarProfileRoute
   '/profiler': typeof SidebarProfilerRoute
   '/results': typeof SidebarResultsRoute
@@ -307,7 +299,6 @@ export interface FileRoutesById {
   '/_sidebar/config': typeof SidebarConfigRoute
   '/_sidebar/discovery': typeof SidebarDiscoveryRoute
   '/_sidebar/home': typeof SidebarHomeRoute
-  '/_sidebar/insights': typeof SidebarInsightsRoute
   '/_sidebar/profile': typeof SidebarProfileRoute
   '/_sidebar/profiler': typeof SidebarProfilerRoute
   '/_sidebar/results': typeof SidebarResultsRoute
@@ -345,7 +336,6 @@ export interface FileRouteTypes {
     | '/config'
     | '/discovery'
     | '/home'
-    | '/insights'
     | '/profile'
     | '/profiler'
     | '/results'
@@ -381,7 +371,6 @@ export interface FileRouteTypes {
     | '/config'
     | '/discovery'
     | '/home'
-    | '/insights'
     | '/profile'
     | '/profiler'
     | '/results'
@@ -416,7 +405,6 @@ export interface FileRouteTypes {
     | '/_sidebar/config'
     | '/_sidebar/discovery'
     | '/_sidebar/home'
-    | '/_sidebar/insights'
     | '/_sidebar/profile'
     | '/_sidebar/profiler'
     | '/_sidebar/results'
@@ -509,13 +497,6 @@ declare module '@tanstack/react-router' {
       path: '/profile'
       fullPath: '/profile'
       preLoaderRoute: typeof SidebarProfileRouteImport
-      parentRoute: typeof SidebarRouteRoute
-    }
-    '/_sidebar/insights': {
-      id: '/_sidebar/insights'
-      path: '/insights'
-      fullPath: '/insights'
-      preLoaderRoute: typeof SidebarInsightsRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
     '/_sidebar/home': {
@@ -749,7 +730,6 @@ interface SidebarRouteRouteChildren {
   SidebarConfigRoute: typeof SidebarConfigRoute
   SidebarDiscoveryRoute: typeof SidebarDiscoveryRoute
   SidebarHomeRoute: typeof SidebarHomeRoute
-  SidebarInsightsRoute: typeof SidebarInsightsRoute
   SidebarProfileRoute: typeof SidebarProfileRoute
   SidebarProfilerRoute: typeof SidebarProfilerRoute
   SidebarResultsRoute: typeof SidebarResultsRoute
@@ -774,7 +754,6 @@ const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
   SidebarConfigRoute: SidebarConfigRoute,
   SidebarDiscoveryRoute: SidebarDiscoveryRoute,
   SidebarHomeRoute: SidebarHomeRoute,
-  SidebarInsightsRoute: SidebarInsightsRoute,
   SidebarProfileRoute: SidebarProfileRoute,
   SidebarProfilerRoute: SidebarProfilerRoute,
   SidebarResultsRoute: SidebarResultsRoute,

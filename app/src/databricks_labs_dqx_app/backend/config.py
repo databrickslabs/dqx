@@ -64,20 +64,6 @@ class AppConfig(BaseSettings):
     dryrun_default_sample_size: int = Field(default=1_000)
 
     # ------------------------------------------------------------------
-    # Embedded dashboard (Insights page)
-    # ------------------------------------------------------------------
-    # The Insights page renders a Databricks AI/BI dashboard inside an
-    # iframe. Admins set the dashboard ID via the Configuration page,
-    # which writes to ``dq_app_settings`` and overrides this default.
-    # When unset, this env var lets the bundle ship a starter
-    # dashboard ID so the page works out-of-the-box.
-    default_dashboard_id: str = Field(
-        default="",
-        validation_alias="DQX_DEFAULT_DASHBOARD_ID",
-        description="Fallback dashboard ID for the Insights page when no admin override is set.",
-    )
-
-    # ------------------------------------------------------------------
     # Lakebase (Postgres) backend
     # ------------------------------------------------------------------
     # When ``lakebase_endpoint`` is set the OLTP-style tables

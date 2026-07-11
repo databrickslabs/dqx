@@ -359,57 +359,6 @@ class AppSettingsService:
         return current_version
 
     # ------------------------------------------------------------------
-    # Embedded dashboard — Insights page renders a Databricks AI/BI
-    # dashboard inside an iframe. Admins set the dashboard ID + an
-    # optional display title via the Configuration page; the GET
-    # endpoint falls back to ``conf.default_dashboard_id`` (env) when
-    # this setting is unset, so a bundle can ship a starter dashboard
-    # ID without preventing customer overrides.
-    # ------------------------------------------------------------------
-
-    _EMBEDDED_DASHBOARD_KEY = "embedded_dashboard_v1"
-
-    def get_embedded_dashboard(self) -> dict | None:
-        """Return ``{"dashboard_id": str, "title": str | None}`` or ``None`` if unset."""
-        raw = self.get_setting(self._EMBEDDED_DASHBOARD_KEY)
-        if not raw:
-            return None
-        try:
-            parsed = json.loads(raw)
-        except (TypeError, json.JSONDecodeError):
-            logger.warning("embedded_dashboard_v1 setting is not valid JSON; ignoring")
-            return None
-        if not isinstance(parsed, dict):
-            logger.warning("embedded_dashboard_v1 setting is not a dict; ignoring")
-            return None
-        dashboard_id = parsed.get("dashboard_id")
-        if not isinstance(dashboard_id, str) or not dashboard_id.strip():
-            return None
-        title = parsed.get("title")
-        return {
-            "dashboard_id": dashboard_id.strip(),
-            "title": title.strip() if isinstance(title, str) and title.strip() else None,
-        }
-
-    def save_embedded_dashboard(
-        self,
-        dashboard_id: str,
-        title: str | None = None,
-        *,
-        user_email: str | None = None,
-    ) -> dict:
-        """Persist the embedded dashboard ID + optional title. Returns the saved payload."""
-        cleaned_id = (dashboard_id or "").strip()
-        cleaned_title = (title or "").strip() or None
-        payload = {"dashboard_id": cleaned_id, "title": cleaned_title}
-        self.save_setting(self._EMBEDDED_DASHBOARD_KEY, json.dumps(payload), user_email=user_email)
-        return payload
-
-    def delete_embedded_dashboard(self, *, user_email: str | None = None) -> None:
-        """Clear the embedded dashboard setting so the env default takes over again."""
-        self.save_setting(self._EMBEDDED_DASHBOARD_KEY, "", user_email=user_email)
-
-    # ------------------------------------------------------------------
     # Run review statuses — admin-managed list of labels surfaced on the
     # Runs detail page (next to comments) and as a Runs History filter.
     # Stored as a JSON array under ``run_review_statuses_v1``. One entry

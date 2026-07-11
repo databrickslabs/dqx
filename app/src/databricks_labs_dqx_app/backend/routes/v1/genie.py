@@ -1,9 +1,8 @@
 """Ask-Genie chat proxy over the SP-owned DQ Genie space.
 
 Six dqlake endpoints ported as five (start/poll/ask/space/feedback; the
-dqlake ``embeds`` endpoint is intentionally omitted — this app already
-serves its embedded dashboard through the config routes, and the Genie
-space id/url is served by GET /space here).
+dqlake ``embeds`` endpoint is intentionally omitted — the Genie space
+id/url is served by GET /space here).
 
 Identity (P4.2): the chat endpoints (start/poll/ask) run OBO — as the
 CALLING user — so Genie executes SQL with the asker's own credentials and

@@ -17,7 +17,6 @@ ui/
 │       ├── home.tsx            # Landing page (welcome, primary CTAs)
 │       ├── config.tsx          # Workspace config + storage settings
 │       ├── discovery.tsx       # Catalog browser (catalog → schema → table → columns)
-│       ├── insights.tsx        # Stub route (renders null); dashboard hosted persistently in the layout (see components/insights/)
 │       ├── profile.tsx         # User profile + language preference
 │       ├── profiler.tsx        # Profiler launch + Profiler & Generate results modal
 │       ├── rules.tsx           # Rules layout (tabs)
@@ -38,7 +37,6 @@ ui/
 │   ├── ui/                     # shadcn/ui primitives (button, card, dialog, select, etc.)
 │   ├── layout/                 # Shell components (Navbar, SidebarLayout, ThemeProvider, Logo)
 │   ├── anim/                   # Animation components (FadeIn, ShinyText)
-│   ├── insights/               # Persistent Insights dashboard host (iframe survives navigation)
 │   ├── backgrounds/            # Decorative backgrounds (gradient, stars)
 │   ├── AuthGuard.tsx           # Blocks render until OBO auth confirmed (exponential backoff)
 │   ├── AIAssistantProvider.tsx # Context + Sheet modal for AI rule generator
@@ -181,10 +179,6 @@ There is **no** separate schema-validation route — `has_valid_schema` is just 
 ### Import rules: tabbed page (?tab=yaml|contract)
 
 `/rules/import` is a single tabbed page hosting two flows; `/rules/from-contract` is now just a `Navigate` redirect to `/rules/import?tab=contract` to keep old bookmarks working. The contract flow's main component (`ContractWorkspace`) is exported from `rules.from-contract.tsx` and imported by `rules.import.tsx`. If you split or rename either file, update both the redirect and the import — and remember to re-run `make app-build` (or the dev server) so `routeTree.gen.ts` picks up new files.
-
-### Insights dashboard: persistent iframe host
-
-The Insights page embeds a Lakeview dashboard in an `<iframe>`, and a browser reloads an iframe whenever it is detached/re-attached to the DOM. To stop the dashboard reloading on every visit, the iframe is **not** rendered by the `/insights` route — that route is a stub (`component: () => null`). Instead `components/insights/InsightsDashboard.tsx` exports `InsightsDashboardHost`, rendered once inside the persistent `_sidebar` layout (`components/layout/SidebarLayout.tsx`). The host lazily mounts the iframe on first visit and then keeps it mounted, toggling `display` with the route (`display:none` keeps the iframe's document alive). While on `/insights` the layout hides the empty route `<Outlet/>` wrapper and shows the host. Don't move the iframe back into the route component or wrap it in anything that reparents it, or the reload-on-navigation regression returns.
 
 ## Vite Config Notes
 

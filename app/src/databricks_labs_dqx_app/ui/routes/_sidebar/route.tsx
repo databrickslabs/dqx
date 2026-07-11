@@ -5,7 +5,6 @@ import {
   ClipboardCheck,
   LineChart,
   History,
-  LayoutDashboard,
   BookOpen,
   ExternalLink,
   Library,
@@ -134,7 +133,7 @@ function Layout() {
             </SidebarMenuItem>
 
             {/* Divider before the observability group (Runs History,
-                Results, Insights). */}
+                Results). */}
             <hr className="my-2 border-sidebar-border" />
 
             {/* Runs History — visible to all */}
@@ -163,23 +162,6 @@ function Layout() {
                 <Link to="/results">
                   <LineChart />
                   <span>{t("sidebar.results")}</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-
-            {/* Insights — embedded Databricks AI/BI dashboard. Visible to all;
-                the dashboard itself enforces UC permissions on its data so a
-                viewer who can't read e.g. dq_quarantine_records just sees an
-                empty tile rather than being blocked at the app layer. */}
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                asChild
-                isActive={location.pathname.startsWith("/insights")}
-                tooltip={t("sidebar.insights")}
-              >
-                <Link to="/insights">
-                  <LayoutDashboard />
-                  <span>{t("sidebar.insights")}</span>
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
