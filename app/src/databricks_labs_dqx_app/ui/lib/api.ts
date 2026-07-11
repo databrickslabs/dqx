@@ -823,7 +823,26 @@ export interface CustomMetricsOut {
 export type DataProductMemberOutPinnedVersion = number | null;
 
 /**
+ * Cached DQ score in [0, 1]; None = never computed
+ */
+export type DataProductMemberOutScore = number | null;
+
+export type DataProductMemberOutFailedTests = number | null;
+
+export type DataProductMemberOutTotalTests = number | null;
+
+/**
+ * When the cached score was last recomputed
+ */
+export type DataProductMemberOutScoreComputedAt = string | null;
+
+/**
  * A ``dq_data_product_members`` row joined with its binding's live state.
+
+The ``score*`` fields carry the binding's cached table-scope DQ score
+from ``dq_score_cache`` (P5.3) — same round-trip as the member
+counters, never a warehouse recompute. All None when the table has
+never been scored.
  */
 export interface DataProductMemberOut {
   id: string;
@@ -837,6 +856,12 @@ export interface DataProductMemberOut {
   checks_count: number;
   /** binding status == 'approved' AND binding_version > 0 */
   runnable: boolean;
+  /** Cached DQ score in [0, 1]; None = never computed */
+  score?: DataProductMemberOutScore;
+  failed_tests?: DataProductMemberOutFailedTests;
+  total_tests?: DataProductMemberOutTotalTests;
+  /** When the cached score was last recomputed */
+  score_computed_at?: DataProductMemberOutScoreComputedAt;
 }
 
 export type DataProductOutDescription = string | null;

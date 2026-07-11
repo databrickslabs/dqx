@@ -105,11 +105,19 @@ def _table_summary(
     version: int = 2,
     applied_rule_count: int = 3,
     check_count: int = 5,
+    score: float | None = None,
+    failed_tests: int | None = None,
+    total_tests: int | None = None,
+    score_computed_at: str | None = None,
 ) -> MonitoredTableSummary:
     return MonitoredTableSummary(
         table=MonitoredTable(binding_id=binding_id, table_fqn=table_fqn, status=status, version=version),
         applied_rule_count=applied_rule_count,
         check_count=check_count,
+        score=score,
+        failed_tests=failed_tests,
+        total_tests=total_tests,
+        score_computed_at=score_computed_at,
     )
 
 
@@ -253,6 +261,49 @@ class TestListAndGet:
         assert detail.failed_tests is None
         assert detail.total_tests is None
         assert detail.score_computed_at is None
+
+    def test_members_carry_the_binding_cached_score_from_the_same_round_trip(
+        self, service, sql, monitored_tables
+    ):
+        """P5.3: the Tables tab's per-member DQ score column rides the
+        monitored-table summaries already fetched for the counters — the
+        summary list LEFT JOINs dq_score_cache, so no extra query."""
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [_member_row("m1", "b1")],
+        ]
+        monitored_tables.list_monitored_tables.return_value = [
+            _table_summary(
+                binding_id="b1",
+                score=0.9876,
+                failed_tests=12,
+                total_tests=1000,
+                score_computed_at="2026-07-10T00:00:00",
+            )
+        ]
+        detail = service.get("p1")
+        assert detail is not None
+        member = detail.members[0]
+        assert member.score == 0.9876
+        assert member.failed_tests == 12
+        assert member.total_tests == 1000
+        assert member.score_computed_at == "2026-07-10T00:00:00"
+
+    def test_member_score_fields_none_when_the_binding_was_never_scored(
+        self, service, sql, monitored_tables
+    ):
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [_member_row("m1", "b1")],
+        ]
+        monitored_tables.list_monitored_tables.return_value = [_table_summary(binding_id="b1")]
+        detail = service.get("p1")
+        assert detail is not None
+        member = detail.members[0]
+        assert member.score is None
+        assert member.failed_tests is None
+        assert member.total_tests is None
+        assert member.score_computed_at is None
 
     def test_get_carries_cached_score(self, service, sql, monitored_tables):
         sql.query.side_effect = [

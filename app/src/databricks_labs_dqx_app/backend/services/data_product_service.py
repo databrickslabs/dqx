@@ -96,7 +96,14 @@ class InvalidStatusTransitionError(ValueError):
 
 @dataclass
 class DataProductMemberDetail:
-    """A ``dq_data_product_members`` row joined with its binding's live state."""
+    """A ``dq_data_product_members`` row joined with its binding's live state.
+
+    The ``score*`` fields carry the binding's cached table-scope DQ score
+    (P5.3) — sourced from the monitored-table summaries the member build
+    already fetches (which LEFT JOIN ``dq_score_cache`` in their own
+    round-trip), so the Tables tab's score column costs no extra query.
+    All ``None`` when the table has never been scored.
+    """
 
     id: str
     binding_id: str
@@ -107,6 +114,10 @@ class DataProductMemberDetail:
     rules_count: int
     checks_count: int
     runnable: bool
+    score: float | None = None
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    score_computed_at: str | None = None
 
 
 @dataclass
@@ -657,6 +668,10 @@ class DataProductService:
                     rules_count=rules_count,
                     checks_count=checks_count,
                     runnable=_is_runnable(table.status, table.version),
+                    score=summary.score,
+                    failed_tests=summary.failed_tests,
+                    total_tests=summary.total_tests,
+                    score_computed_at=summary.score_computed_at,
                 )
             )
         last_run_at = self._last_run_at(product.product_id)

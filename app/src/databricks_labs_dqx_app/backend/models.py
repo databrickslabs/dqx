@@ -1124,7 +1124,13 @@ class RunDataProductIn(BaseModel):
 
 
 class DataProductMemberOut(BaseModel):
-    """A ``dq_data_product_members`` row joined with its binding's live state."""
+    """A ``dq_data_product_members`` row joined with its binding's live state.
+
+    The ``score*`` fields carry the binding's cached table-scope DQ score
+    from ``dq_score_cache`` (P5.3) — same round-trip as the member
+    counters, never a warehouse recompute. All None when the table has
+    never been scored.
+    """
 
     id: str
     binding_id: str
@@ -1135,6 +1141,10 @@ class DataProductMemberOut(BaseModel):
     rules_count: int
     checks_count: int
     runnable: bool = Field(description="binding status == 'approved' AND binding_version > 0")
+    score: float | None = Field(default=None, description="Cached DQ score in [0, 1]; None = never computed")
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    score_computed_at: str | None = Field(default=None, description="When the cached score was last recomputed")
 
     @classmethod
     def from_domain(cls, member: DataProductMemberDetail) -> "DataProductMemberOut":
@@ -1148,6 +1158,10 @@ class DataProductMemberOut(BaseModel):
             rules_count=member.rules_count,
             checks_count=member.checks_count,
             runnable=member.runnable,
+            score=member.score,
+            failed_tests=member.failed_tests,
+            total_tests=member.total_tests,
+            score_computed_at=member.score_computed_at,
         )
 
 
