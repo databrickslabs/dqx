@@ -2340,7 +2340,6 @@
     "ruleHeader": "Regla",
     "columnHeader": "Columna",
     "failedRecordsTitle": "Registros fallidos",
-    "failedRecordsLatestOnly": "Los registros fallidos solo pueden verse para la ejecución más reciente.",
     "chipDimension": "Dimensión: {{value}}",
     "chipSeverity": "Severidad: {{value}}",
     "chipRule": "Regla: {{value}}",

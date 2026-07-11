@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   EMPTY_FILTERS,
   facetQueryParams,
+  failedRowsRunParam,
   ruleChipDisplay,
   ruleFacetValue,
   toggleFacet,
@@ -92,6 +93,25 @@ describe("toNum", () => {
     expect(toNum("n/a")).toBeNull();
     expect(toNum(Number.NaN)).toBeNull();
     expect(toNum(Number.POSITIVE_INFINITY)).toBeNull();
+  });
+});
+
+describe("failedRowsRunParam (run picker → failed-rows run_id, P5.5)", () => {
+  it("omits the param for 'Latest' (no pinned run) so the backend resolves it", () => {
+    expect(failedRowsRunParam(null, "r-latest")).toBeUndefined();
+    expect(failedRowsRunParam(undefined, "r-latest")).toBeUndefined();
+  });
+
+  it("omits the param when the pinned run IS the latest (one cache entry for both spellings)", () => {
+    expect(failedRowsRunParam("r-latest", "r-latest")).toBeUndefined();
+  });
+
+  it("passes an older pinned run through so exactly that run's records load", () => {
+    expect(failedRowsRunParam("r-old", "r-latest")).toBe("r-old");
+  });
+
+  it("passes the pinned run through when the runs list has not resolved yet", () => {
+    expect(failedRowsRunParam("r-old", undefined)).toBe("r-old");
   });
 });
 

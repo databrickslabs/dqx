@@ -2340,7 +2340,6 @@
     "ruleHeader": "Regra",
     "columnHeader": "Coluna",
     "failedRecordsTitle": "Registros reprovados",
-    "failedRecordsLatestOnly": "Os registros reprovados só podem ser visualizados para a execução mais recente.",
     "chipDimension": "Dimensão: {{value}}",
     "chipSeverity": "Severidade: {{value}}",
     "chipRule": "Regra: {{value}}",

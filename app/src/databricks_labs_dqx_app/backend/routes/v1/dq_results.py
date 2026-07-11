@@ -659,16 +659,21 @@ def get_dq_results_failed_rows(
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
+    run_id: str | None = Query(None),
     limit: int = Query(200, ge=1, le=100000),
     include_drafts: bool = Query(False),
 ) -> FailedRowsOut:
-    """Latest failing rows for *table_fqn*, filtered server-side (OBO-gated).
+    """One run's failing rows for *table_fqn*, filtered server-side (OBO-gated).
 
-    ``dq_quarantine_records`` carries no run_mode of its own, but it does
-    carry ``run_id`` — so the default published-only filter is a subselect
-    of the table's published run ids from ``v_dq_check_results`` (the one
-    place run_mode is resolved: stamped tag first, untagged legacy runs
-    classify as published). ``include_drafts=true`` drops the subselect.
+    Failing records are PER-RUN — the response never stacks rows across
+    runs. An explicit *run_id* pins exactly that run; otherwise the
+    default is the table's LATEST run, resolved the way the dq-score
+    endpoints resolve it (``ORDER BY run_time DESC LIMIT 1`` under
+    run_mode filtering). ``dq_quarantine_records`` carries no run_mode of
+    its own, so the resolve is a subselect against ``v_dq_check_results``
+    (the one place run_mode is resolved: stamped tag first, untagged
+    legacy runs classify as published). ``include_drafts=true`` widens
+    which runs QUALIFY as "latest" — never how many runs are returned.
 
     SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
     in the same load-bearing order:
@@ -681,6 +686,7 @@ def get_dq_results_failed_rows(
     4. Only then does the app's service principal read the quarantine
        table. Filters are applied AFTER the gates, over the parsed rows.
     """
+    _validate_run_id(run_id)
     try:
         validate_fqn(table_fqn)
     except ValueError as exc:
@@ -714,20 +720,28 @@ def get_dq_results_failed_rows(
     # surfaced as the run_ts.
     quarantine_table = _app_object_fqn(app_conf, "dq_quarantine_records")
     e_fqn = escape_sql_string(table_fqn)
-    run_mode_cond = ""
-    if not include_drafts:
-        # Quarantine rows have no run_mode column; scope them to the
-        # table's published run ids via the shaping view instead.
-        run_mode_cond = (
-            f"AND run_id IN (SELECT run_id FROM {_shaping_view_fqn(app_conf)} "
-            f"WHERE input_location = '{e_fqn}' AND run_mode = '{RUN_MODE_PUBLISHED}') "
+    if run_id:
+        # A pinned run: exactly that run's rows (run_id is charset-validated
+        # above — the _RUN_ID_SAFE precondition escape_sql_string relies on).
+        run_cond = f"AND run_id = '{escape_sql_string(run_id)}' "
+    else:
+        # Default: exactly the table's LATEST run, resolved the way the
+        # dq-score endpoints resolve it. Quarantine rows have no run_mode
+        # column, so the resolve subselect goes through the shaping view;
+        # include_drafts widens which runs qualify as "latest" — the
+        # response is always a single run's rows.
+        mode_cond = "" if include_drafts else f"AND run_mode = '{RUN_MODE_PUBLISHED}' "
+        run_cond = (
+            f"AND run_id = (SELECT run_id FROM {_shaping_view_fqn(app_conf)} "
+            f"WHERE input_location = '{e_fqn}' {mode_cond}"
+            f"ORDER BY run_time DESC LIMIT 1) "
         )
     stmt = (
         f"SELECT quarantine_id, run_id, to_json(row_data) AS row_data, "
         f"to_json(errors) AS errors, to_json(warnings) AS warnings, "
         f"CAST(created_at AS STRING) AS created_at "
         f"FROM {quarantine_table} WHERE source_table_fqn = '{e_fqn}' "  # noqa: S608
-        f"{run_mode_cond}"
+        f"{run_cond}"
         f"ORDER BY created_at DESC LIMIT {int(scan_limit)}"
     )
     try:

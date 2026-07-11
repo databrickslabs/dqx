@@ -3956,6 +3956,7 @@ dimension?: string[] | null;
 severity?: string[] | null;
 rule?: string[] | null;
 column?: string[] | null;
+run_id?: string | null;
 /**
  * @minimum 1
  * @maximum 100000
@@ -17506,13 +17507,17 @@ export function useGetProductResultsSuspense<TData = Awaited<ReturnType<typeof g
 
 
 /**
- * Latest failing rows for *table_fqn*, filtered server-side (OBO-gated).
+ * One run's failing rows for *table_fqn*, filtered server-side (OBO-gated).
 
-``dq_quarantine_records`` carries no run_mode of its own, but it does
-carry ``run_id`` — so the default published-only filter is a subselect
-of the table's published run ids from ``v_dq_check_results`` (the one
-place run_mode is resolved: stamped tag first, untagged legacy runs
-classify as published). ``include_drafts=true`` drops the subselect.
+Failing records are PER-RUN — the response never stacks rows across
+runs. An explicit *run_id* pins exactly that run; otherwise the
+default is the table's LATEST run, resolved the way the dq-score
+endpoints resolve it (``ORDER BY run_time DESC LIMIT 1`` under
+run_mode filtering). ``dq_quarantine_records`` carries no run_mode of
+its own, so the resolve is a subselect against ``v_dq_check_results``
+(the one place run_mode is resolved: stamped tag first, untagged
+legacy runs classify as published). ``include_drafts=true`` widens
+which runs QUALIFY as "latest" — never how many runs are returned.
 
 SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
 in the same load-bearing order:

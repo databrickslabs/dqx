@@ -2340,7 +2340,6 @@
     "ruleHeader": "Rule",
     "columnHeader": "Column",
     "failedRecordsTitle": "Failed Records",
-    "failedRecordsLatestOnly": "Failed records can only be viewed for the latest run.",
     "chipDimension": "Dimension: {{value}}",
     "chipSeverity": "Severity: {{value}}",
     "chipRule": "Rule: {{value}}",

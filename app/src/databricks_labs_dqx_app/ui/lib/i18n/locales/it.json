@@ -2340,7 +2340,6 @@
     "ruleHeader": "Regola",
     "columnHeader": "Colonna",
     "failedRecordsTitle": "Record falliti",
-    "failedRecordsLatestOnly": "I record falliti possono essere visualizzati solo per l'esecuzione più recente.",
     "chipDimension": "Dimensione: {{value}}",
     "chipSeverity": "Severità: {{value}}",
     "chipRule": "Regola: {{value}}",

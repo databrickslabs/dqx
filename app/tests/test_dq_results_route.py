@@ -1222,27 +1222,34 @@ class TestIncludeDrafts:
         # Each row still carries its run_mode so the picker can badge drafts.
         assert [r["run_mode"] for r in body["rows"]] == ["draft", "published"]
 
-    def test_failed_rows_default_scopes_to_published_run_ids(self, client, sql_mock, app_config):
-        # dq_quarantine_records has no run_mode column — the published-only
-        # default filters by run_id against the shaping view instead.
+    def test_failed_rows_default_scopes_to_the_latest_published_run(self, client, sql_mock, app_config):
+        # dq_quarantine_records has no run_mode column — the default resolves
+        # the table's single LATEST published run via the shaping view (the
+        # /dq-score latest-run pattern), never the accumulated pile of every
+        # published run's rows.
         sql_dispatch(sql_mock, quarantine_rows=[quarantine_row("q1")])
         body = client.get(FAILED_ROWS_URL).json()
         assert body["total"] == 1
         stmt = sql_mock.query_dicts.call_args[0][0]
         assert "dq_quarantine_records" in stmt
         assert (
-            f"run_id IN (SELECT run_id FROM "
+            f"run_id = (SELECT run_id FROM "
             f"`{app_config.catalog}`.`{app_config.schema_name}`.{SHAPING_VIEW_NAME} "
-            f"WHERE input_location = '{FQN}' AND run_mode = 'published')" in stmt
+            f"WHERE input_location = '{FQN}' AND run_mode = 'published' "
+            f"ORDER BY run_time DESC LIMIT 1)" in stmt
         )
 
-    def test_failed_rows_include_drafts_reads_all_runs(self, client, sql_mock):
+    def test_failed_rows_include_drafts_widens_which_run_is_latest(self, client, sql_mock):
+        # include_drafts widens which runs QUALIFY as "latest" (the run_mode
+        # filter drops from the resolve subselect) — never the run count.
         sql_dispatch(sql_mock, quarantine_rows=[quarantine_row("q1")])
         body = client.get(FAILED_ROWS_URL, params={"include_drafts": "true"}).json()
         assert body["total"] == 1
         stmt = sql_mock.query_dicts.call_args[0][0]
         assert "run_mode" not in stmt
-        assert SHAPING_VIEW_NAME not in stmt
+        assert SHAPING_VIEW_NAME in stmt
+        assert "run_id = (SELECT run_id FROM" in stmt
+        assert "ORDER BY run_time DESC LIMIT 1)" in stmt
 
     def test_failed_records_lookup_is_not_run_mode_filtered(self, client, sql_mock):
         # _fetch_failed_records_by_run is a lookup map consulted only for
@@ -1257,6 +1264,80 @@ class TestIncludeDrafts:
             if "dq_metrics" in call[0][0] and SHAPING_VIEW_NAME not in call[0][0]
         ]
         assert metrics_stmts and all("run_mode" not in stmt for stmt in metrics_stmts)
+
+
+# ---------------------------------------------------------------------------
+# Failed rows — single-run scoping (P5.5: no stacking across runs)
+# ---------------------------------------------------------------------------
+
+
+class TestFailedRowsRunScoping:
+    """Failing records are per-run: the endpoint returns exactly ONE run's
+    rows. Default = the table's latest run (resolved backend-side, the
+    dq-score ``ORDER BY run_time DESC LIMIT 1`` pattern); an explicit
+    ``run_id`` pins exactly that run."""
+
+    def _two_run_dispatch(self, sql_mock) -> None:
+        """Emulate the warehouse over quarantine rows from TWO runs: an
+        explicit run equality returns that run's rows; the latest-run
+        resolve subselect returns the newest run's (r2)."""
+        rows_by_run = {
+            "r1": quarantine_row("q-old", created_at="2026-07-01 00:00:00"),
+            "r2": quarantine_row("q-new", created_at="2026-07-10 00:00:00"),
+        }
+
+        def dispatch(stmt: str, **_kwargs: object) -> list[dict[str, str | None]]:
+            assert "dq_quarantine_records" in stmt
+            for run, row in rows_by_run.items():
+                if f"run_id = '{run}'" in stmt:
+                    return [row]
+            if "ORDER BY run_time DESC LIMIT 1" in stmt:
+                return [rows_by_run["r2"]]
+            # An unscoped read would stack both runs — the failure mode
+            # this task removes.
+            return list(rows_by_run.values())
+
+        sql_mock.query_dicts.side_effect = dispatch
+
+    def test_default_returns_only_the_newest_runs_rows(self, client, sql_mock):
+        self._two_run_dispatch(sql_mock)
+        body = client.get(FAILED_ROWS_URL).json()
+        assert [r["record_key"] for r in body["rows"]] == ["q-new"]
+        assert body["total"] == 1
+
+    def test_default_never_uses_the_stacking_in_subselect(self, client, sql_mock):
+        sql_dispatch(sql_mock, quarantine_rows=[quarantine_row("q1")])
+        client.get(FAILED_ROWS_URL)
+        stmt = sql_mock.query_dicts.call_args[0][0]
+        assert "run_id IN (" not in stmt
+        assert "run_id = (SELECT run_id FROM" in stmt
+
+    def test_explicit_run_id_returns_exactly_that_run(self, client, sql_mock):
+        self._two_run_dispatch(sql_mock)
+        body = client.get(FAILED_ROWS_URL, params={"run_id": "r1"}).json()
+        assert [r["record_key"] for r in body["rows"]] == ["q-old"]
+        stmt = sql_mock.query_dicts.call_args[0][0]
+        assert "run_id = 'r1'" in stmt
+        # A pinned run needs no latest-run resolve.
+        assert SHAPING_VIEW_NAME not in stmt
+
+    def test_explicit_run_id_wins_over_include_drafts(self, client, sql_mock):
+        self._two_run_dispatch(sql_mock)
+        body = client.get(
+            FAILED_ROWS_URL, params={"run_id": "r1", "include_drafts": "true"}
+        ).json()
+        assert [r["record_key"] for r in body["rows"]] == ["q-old"]
+        assert "run_id = 'r1'" in sql_mock.query_dicts.call_args[0][0]
+
+    @pytest.mark.parametrize("run_id", ["ab'c", "x' OR '1'='1", "run id"])
+    def test_unsafe_run_id_is_rejected_before_the_obo_gates(
+        self, client, sql_mock, obo_sql_mock, obo_ws_mock, run_id
+    ):
+        resp = client.get(FAILED_ROWS_URL, params={"run_id": run_id})
+        assert resp.status_code == 400
+        obo_sql_mock.query.assert_not_called()
+        obo_ws_mock.tables.get.assert_not_called()
+        sql_mock.query_dicts.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1284,6 +1365,7 @@ class TestRunIdValidation:
         "/api/v1/dq-results/product/p1",
         "/api/v1/dq-results/rule/rule-1",
         "/api/v1/dq-results/global",
+        FAILED_ROWS_URL,
     ]
 
     @pytest.mark.parametrize("url", ENDPOINTS)

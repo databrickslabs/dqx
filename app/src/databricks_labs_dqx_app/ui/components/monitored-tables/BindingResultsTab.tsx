@@ -122,6 +122,18 @@ export function facetQueryParams(filters: MultiFilters): {
   };
 }
 
+/** The run_id param for the failed-rows queries (list + download). The
+ *  backend returns exactly ONE run's records: an explicit run_id pins that
+ *  run; omitting it resolves the table's latest run backend-side. "Latest"
+ *  (no pinned run) therefore omits the param — as does an explicit pin of
+ *  the run that IS the latest, so both spellings share one cache entry. */
+export function failedRowsRunParam(
+  runId: string | null | undefined,
+  latestRunId: string | undefined,
+): string | undefined {
+  return !runId || runId === latestRunId ? undefined : runId;
+}
+
 /** The facet value a By rule row toggles/filters on: the frozen registry
  *  rule_id when the group carries one (stable across renames — the backend
  *  matches it against every run of that rule identity, old names included),
@@ -363,8 +375,10 @@ function ResultsBody({
     (r): r is typeof r & { run_id: string } => typeof r.run_id === "string",
   );
   const latestRunId = runs[0]?.run_id;
-  const isLatest = !filters.runId || filters.runId === latestRunId;
   const effectiveRunId = filters.runId ?? latestRunId;
+  // Failed-records run scope: the picked run, or omitted for "Latest" (the
+  // backend resolves the latest run — records are per-run, never stacked).
+  const failedRowsRunId = failedRowsRunParam(filters.runId, latestRunId);
 
   // Filter-INDEPENDENT, ALL-RUNS trends. NON-suspense so the chart frames can
   // render immediately and each shows its own spinner while loading (F1).
@@ -441,6 +455,7 @@ function ResultsBody({
     tableFqn,
     {
       ...facetQueryParams(filters),
+      run_id: failedRowsRunId,
       limit: 200,
       include_drafts: draftsParam,
     },
@@ -593,10 +608,12 @@ function ResultsBody({
 
   const failingRows = toFailingRecords(failedRows?.rows);
 
-  // Download fetches the WHOLE undrilled set for the table (no facet filters,
-  // high limit) — independent of the 200-capped, filtered on-screen table.
+  // Download fetches the WHOLE undrilled set for the selected run (no facet
+  // filters, high limit) — independent of the 200-capped, filtered on-screen
+  // table, but scoped to the same single run.
   const fetchAllFailedRows = async () => {
     const res = await getDqResultsFailedRows(tableFqn, {
+      run_id: failedRowsRunId,
       limit: EXPORT_ROW_LIMIT,
       include_drafts: draftsParam,
     });
@@ -802,7 +819,7 @@ function ResultsBody({
                   }`}
                 />
               </button>
-              {isLatest && !failedRows?.suppressed && (
+              {!failedRows?.suppressed && (
                 <DownloadFailedRecordsMenu
                   fetchRows={fetchAllFailedRows}
                   tableName={tableName}
@@ -810,11 +827,7 @@ function ResultsBody({
               )}
             </div>
             <CollapseRegion open={failedRecordsOpen}>
-              {!isLatest ? (
-                <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                  {t("resultsUi.failedRecordsLatestOnly")}
-                </div>
-              ) : failedRows?.suppressed ? (
+              {failedRows?.suppressed ? (
                 // Our failed-rows envelope carries an extra `suppressed`
                 // flag (fine-grained access controls on the source table —
                 // Task 7 semantics); surface the standing suppression
