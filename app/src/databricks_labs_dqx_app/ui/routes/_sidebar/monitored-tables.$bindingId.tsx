@@ -2229,7 +2229,6 @@ function DataGrid({ columns, rows, emptyLabel }: { columns: string[]; rows: Reco
                 <td
                   key={col}
                   className="p-2 max-w-[240px] truncate font-mono"
-                  title={String(row[col] ?? "")}
                 >
                   {String(row[col] ?? "")}
                 </td>
