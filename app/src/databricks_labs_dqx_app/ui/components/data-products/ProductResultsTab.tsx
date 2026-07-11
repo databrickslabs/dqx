@@ -13,7 +13,9 @@ import selector from "@/lib/selector";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { GenieChatProvider } from "@/components/results/AskGenieButton";
 import { RunPicker, type Run } from "@/components/results/RunPicker";
+import { RunInProgressBanner } from "@/components/results/RunInProgressBanner";
 import { includeDraftsParam } from "@/components/results/RunModeSelect";
+import { useProductRunSets } from "@/hooks/use-product-run-sets";
 import {
   MultiTableResultsSection,
   type UseEntityResults,
@@ -31,9 +33,11 @@ import {
 // RESULTS_QUERY_OPTIONS + run-completion invalidation only, dqlake's
 // resultsPolling / useDataProductRunsActivity / useDataProductMemberActivity
 // 5s/15s refetch loops deliberately not ported) live in the shared
-// composition. The RunInProgressBanner is omitted with them (same as the
-// monitored-table tab): deriving run activity here would mean reintroducing
-// an idle poll.
+// composition. The RunInProgressBanner IS shown here, driven by the shared
+// `useProductRunSets(productId).hasActive` signal (the same cached query the
+// product header and Runs tab already consume — it polls ONLY while a run
+// set is running, never idle). It is the banner form, not a true X-of-Y
+// progress bar: the run-set summary carries no per-member status to count.
 //
 // RUN-PICKER SEMANTIC ADAPTATION (contract difference disclosed by P2.1):
 // dqlake's product runs endpoint returns batch-keyed ProductRunsOut rows
@@ -115,6 +119,11 @@ function ResultsBody({ productId }: { productId: string }) {
   // inside the composition (next to the run picker).
   const [includeDrafts, setIncludeDrafts] = useState(false);
 
+  // Run-in-progress signal: the shared run-set activity query (deduped with
+  // the product header and Runs tab — same params, one cached poll that only
+  // ticks while a run set is running). Drives the banner below.
+  const { hasActive } = useProductRunSets(productId);
+
   // The product run history for the run picker (newest-first). Our rows are
   // already RunPicker-shaped (run_id/run_ts/pass_rate). NON-suspense so the
   // picker fills in once available without blocking the rest of the shell.
@@ -155,18 +164,23 @@ function ResultsBody({ productId }: { productId: string }) {
       contextSubject={product.name}
       contextTables={memberFqns}
     >
-      <MultiTableResultsSection
-        useEntityResults={useEntityResults}
-        scoreLabel={() => t("resultsUi.averageScoreLabel")}
-        includeDrafts={includeDrafts}
-        onIncludeDraftsChange={setIncludeDrafts}
-        // Fixed to "Latest": only the newest entry is offered, and selecting it
-        // resolves to the latest path anyway, so onChange is a no-op (see the
-        // run-picker adaptation note in the module comment).
-        runPickerSlot={
-          <RunPicker runs={productRunPickerRuns(runs)} value={null} onChange={() => {}} />
-        }
-      />
+      <div className="space-y-6">
+        <RunInProgressBanner show={hasActive}>
+          {t("resultsUi.runInProgressBanner")}
+        </RunInProgressBanner>
+        <MultiTableResultsSection
+          useEntityResults={useEntityResults}
+          scoreLabel={() => t("resultsUi.averageScoreLabel")}
+          includeDrafts={includeDrafts}
+          onIncludeDraftsChange={setIncludeDrafts}
+          // Fixed to "Latest": only the newest entry is offered, and selecting it
+          // resolves to the latest path anyway, so onChange is a no-op (see the
+          // run-picker adaptation note in the module comment).
+          runPickerSlot={
+            <RunPicker runs={productRunPickerRuns(runs)} value={null} onChange={() => {}} />
+          }
+        />
+      </div>
     </GenieChatProvider>
   );
 }
