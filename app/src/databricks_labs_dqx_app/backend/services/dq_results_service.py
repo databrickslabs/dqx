@@ -136,14 +136,17 @@ def row_matches_facets(row: CheckResultRow, facets: ResultFacets) -> bool:
     Untagged checks (attribution field None) never match an active
     dimension/severity facet — the SQL analogue is ``col = 'v'`` on a
     NULL column. The column facet is a membership test over the check's
-    as-of-run mapped columns. The rule facet is keyed on the check name
-    (the registry rule's name tag, frozen at materialization time).
+    as-of-run mapped columns. The rule facet matches on rule IDENTITY:
+    a value matches the row's frozen registry rule id (preferred — one
+    id selects every run of the rule, old names included) or its check
+    name (backward compat for label-only callers and the only handle
+    legacy NULL-rule_id rows have).
     """
     if facets.dimensions and row.dimension not in facets.dimensions:
         return False
     if facets.severities and row.severity not in facets.severities:
         return False
-    if facets.rules and row.check_name not in facets.rules:
+    if facets.rules and row.check_name not in facets.rules and (row.rule_id is None or row.rule_id not in facets.rules):
         return False
     if facets.columns and not any(c in facets.columns for c in row.columns):
         return False
@@ -194,6 +197,37 @@ def _group_rows(
     ]
     # dqlake: ORDER BY failed_tests DESC.
     out.sort(key=lambda g: (g.failed_tests or 0), reverse=True)
+    return out
+
+
+def _by_rule_rows(rows: list[CheckResultRow]) -> list[GroupRowOut]:
+    """By-rule breakdown grouped by RULE IDENTITY, not display name.
+
+    The grouping key is ``_rule_key``: the frozen registry rule id when
+    the run carried one, else the check name (legacy/untagged rows have
+    nothing better) — so a rule renamed between versions stays ONE row
+    across runs. Each group is LABELLED with the check name from the
+    NEWEST run in scope, collapsing renames into the current display
+    name (rows with no run_date order oldest; ties keep the first-seen
+    name). The additive *rule_id* is set on identity-keyed groups so the
+    UI can facet-filter by identity instead of the version-dependent
+    label; name-keyed (legacy) groups keep it None.
+    """
+    newest_name: dict[str, tuple[str, str]] = {}  # key -> (run_date, check_name)
+    identity_ids: dict[str, str] = {}
+    for row in rows:
+        key = _rule_key(row)
+        candidate = (row.run_date or "", row.check_name)
+        if key not in newest_name or candidate[0] > newest_name[key][0]:
+            newest_name[key] = candidate
+        if row.rule_id is not None:
+            identity_ids[key] = row.rule_id
+    out = _group_rows(rows, _rule_key)
+    for group in out:
+        if group.label is None:  # defensive: _rule_key never yields None
+            continue
+        group.rule_id = identity_ids.get(group.label)
+        group.label = newest_name[group.label][1]
     return out
 
 
@@ -374,7 +408,7 @@ def compute_entity_results(
     if axes in ("all", "breakdown"):
         result.by_dimension = _group_rows(matched, lambda row: row.dimension)
         result.by_severity = _group_rows(matched, lambda row: row.severity)
-        result.by_rule = _group_rows(matched, lambda row: row.check_name)
+        result.by_rule = _by_rule_rows(matched)
         result.by_column = _by_column_rows(matched)
         table_groups = _group_rows(matched, lambda row: row.table_fqn)
         if table_axis == "by_table":

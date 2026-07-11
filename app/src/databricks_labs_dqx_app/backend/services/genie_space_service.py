@@ -135,6 +135,12 @@ TEXT_INSTRUCTIONS = [
         "business framing; prefer them when summarising what kind of quality problem exists.\n"
     ),
     (
+        "A rule's check_name is its display name AS OF each run and can change when the rule is "
+        "renamed; registry_rule_id is the rule's stable identity. When grouping or comparing "
+        "rules ACROSS runs, group by registry_rule_id where it is present (fall back to "
+        "check_name when it is NULL) and display the check_name from the newest run.\n"
+    ),
+    (
         "Results carry a run_mode of published or draft. Never include draft-run data in an "
         "answer unless the question explicitly asks for drafts: filter to published runs by "
         "default, and say which you used when it matters.\n"

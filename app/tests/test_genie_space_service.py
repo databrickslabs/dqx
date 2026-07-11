@@ -149,12 +149,15 @@ def test_text_instructions_single_entry_with_newline_terminated_paragraphs() -> 
     assert len(text_instructions) == 1
     content = text_instructions[0]["content"]
     assert content == list(gs.TEXT_INSTRUCTIONS)
-    assert len(content) == 10
+    assert len(content) == 11
     assert all(p.endswith("\n") for p in content)
     joined = "".join(content)
     assert "MEASURE()" in joined
     assert "published" in joined and "draft" in joined
     assert "(Data product: <name> — tables: ...)" in joined
+    # P5.2: rule identity across renames — group by registry_rule_id where
+    # present, display the newest run's check_name.
+    assert "registry_rule_id" in joined and "newest run" in joined
 
 
 def test_text_instructions_row_source_and_draft_scoping() -> None:

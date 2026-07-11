@@ -231,13 +231,17 @@ class QuarantineSampleService:
         values (``exists(failures, f -> f.<field> = v)``), the column facet
         is a membership test over the row's *failed_columns*, and the
         facets are ANDed together. Untagged failures (None fields) never
-        match an active dimension/severity facet.
+        match an active dimension/severity facet. The rule facet matches
+        on rule IDENTITY: a value matches the failure's frozen
+        registry rule id (preferred — one id selects the rule under any
+        historical name) or its rule name (backward compat for
+        label-only callers and legacy failures without a rule id).
         """
         if dimensions and not any(f.quality_dimension in dimensions for f in failures):
             return False
         if severities and not any(f.severity in severities for f in failures):
             return False
-        if rules and not any(f.rule_name in rules for f in failures):
+        if rules and not any(f.rule_name in rules or (f.rule_id is not None and f.rule_id in rules) for f in failures):
             return False
         if columns and not any(c in columns for c in failed_columns):
             return False

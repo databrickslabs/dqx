@@ -38,6 +38,8 @@ import {
   COUNT_INFO,
   EMPTY_FILTERS,
   facetQueryParams,
+  ruleChipDisplay,
+  ruleFacetValue,
   toggleFacet,
   type Facet,
   type MultiFilters,
@@ -447,6 +449,9 @@ export function MultiTableResultsSection({
   const toRows = (groups: EntityResultsOut["by_dimension"]) =>
     (groups ?? []).map((g) => ({
       label: g.label ?? null,
+      // rule_id is a by_rule-only enrichment (null elsewhere), so value
+      // degenerates to the label on every other facet box.
+      value: ruleFacetValue(g),
       pass_rate: g.pass_rate ?? null,
       failed_tests: g.failed_tests ?? null,
       rule_count: g.rule_count ?? null,
@@ -487,10 +492,13 @@ export function MultiTableResultsSection({
     if (applicableOnly || !hasActiveFilter) {
       return { rows: filteredRows, mutedLabels: [] };
     }
-    const filteredByLabel = new Map(filteredRows.map((r) => [r.label, r]));
-    const rows = toRows(baseGroups).map((b) => filteredByLabel.get(b.label) ?? b);
+    // Keyed on the facet VALUE (rule identity on the By rule box, label
+    // elsewhere) so a filtered/base pair whose newest-run labels diverge
+    // still pairs up by identity.
+    const filteredByValue = new Map(filteredRows.map((r) => [r.value ?? r.label, r]));
+    const rows = toRows(baseGroups).map((b) => filteredByValue.get(b.value ?? b.label) ?? b);
     const mutedLabels = rows
-      .filter((r) => r.label != null && !filteredByLabel.has(r.label))
+      .filter((r) => r.label != null && !filteredByValue.has(r.value ?? r.label))
       .map((r) => r.label as string);
     return { rows, mutedLabels };
   };
@@ -503,11 +511,16 @@ export function MultiTableResultsSection({
     ? toRows(tableColumnsQuery.data?.data?.by_column)
     : [];
 
+  // Rule chips may carry a registry rule_id as their value — show the
+  // matching by_rule row's (newest-run) label instead of the opaque id.
+  const ruleChipRows = [...(baseResults?.by_rule ?? []), ...(results?.by_rule ?? [])];
   const chips = (["dimension", "severity", "rule", "column"] as const).flatMap(
     (facet) =>
       filters[facet].map((value) => ({
         key: `${facet}:${value}`,
-        label: t(CHIP_LABEL_KEYS[facet], { value }),
+        label: t(CHIP_LABEL_KEYS[facet], {
+          value: facet === "rule" ? ruleChipDisplay(value, ruleChipRows) : value,
+        }),
       })),
   );
 
@@ -704,7 +717,9 @@ export function MultiTableResultsSection({
                   mutedLabels={ruleFacet.mutedLabels}
                   loading={breakdownRefetching}
                   selected={filters.rule}
-                  onSelect={(label) => onRowToggle("rule", label)}
+                  // The row's facet value is its rule identity (rule_id
+                  // when present), so the filter spans renames.
+                  onSelect={(value) => onRowToggle("rule", value)}
                   collapsed={!ruleColOpen}
                   onToggleCollapse={() => setRuleColOpen((o) => !o)}
                   pageSize={8}
@@ -718,6 +733,10 @@ export function MultiTableResultsSection({
                 rows={toRows(results?.by_table).map((r) => ({
                   ...r,
                   label: r.label == null ? null : friendlyTableName(r.label),
+                  // Selection is keyed on the friendly name (see
+                  // fqnByFriendly) — null the value so clicks/selection
+                  // fall back to the friendly label, not the full FQN.
+                  value: null,
                 }))}
                 loading={breakdownRefetching}
                 selected={selectedTable ? [selectedTable] : []}

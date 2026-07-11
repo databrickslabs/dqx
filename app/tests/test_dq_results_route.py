@@ -467,6 +467,23 @@ class TestTableResults:
         assert {g["label"] for g in body["by_severity"]} == {"Low", "Critical"}
         monitored_tables_mock.get_by_table_fqn.assert_not_called()
 
+    def test_renamed_rule_is_one_by_rule_row_and_rule_id_facet_spans_the_rename(self, client, sql_mock):
+        # P5.2: the same registry rule renamed between runs is ONE by_rule
+        # row labeled with the newest run's name and carrying the additive
+        # rule_id; faceting on that rule_id selects the old-name runs too.
+        sql_dispatch(
+            sql_mock,
+            check_rows=[
+                check_row("old_name", errors=10, total=100, run_id="r1", run_date="d1", rule_id="rule-1"),
+                check_row("new_name", errors=5, total=100, run_id="r2", run_date="d2", rule_id="rule-1"),
+            ],
+        )
+        body = client.get(f"/api/v1/dq-results/table/{FQN}").json()
+        assert [(g["label"], g["rule_id"]) for g in body["by_rule"]] == [("new_name", "rule-1")]
+        assert body["by_rule"][0]["failed_tests"] == 15
+        filtered = client.get(f"/api/v1/dq-results/table/{FQN}", params={"rule": "rule-1"}).json()
+        assert filtered["by_rule"][0]["failed_tests"] == 15  # both runs matched
+
     def test_failed_records_derived_from_input_minus_valid(self, client, sql_mock, monitored_tables_mock):
         sql_dispatch(
             sql_mock,

@@ -122,6 +122,30 @@ export function facetQueryParams(filters: MultiFilters): {
   };
 }
 
+/** The facet value a By rule row toggles/filters on: the frozen registry
+ *  rule_id when the group carries one (stable across renames — the backend
+ *  matches it against every run of that rule identity, old names included),
+ *  else the label (legacy name-keyed groups). Mirrors the backend's by_rule
+ *  identity grouping; other facet boxes always use the label. */
+export function ruleFacetValue(g: {
+  label?: string | null;
+  rule_id?: string | null;
+}): string | null {
+  return g.rule_id ?? g.label ?? null;
+}
+
+/** Display text for a rule facet chip: an active rule filter value may be a
+ *  registry rule_id (opaque), so resolve it back to the matching by_rule
+ *  row's label. Falls back to the raw value for label-only filters or when
+ *  no row matches (e.g. the run scope changed under an active chip). */
+export function ruleChipDisplay(
+  value: string,
+  byRule: Array<{ label?: string | null; rule_id?: string | null }>,
+): string {
+  const row = byRule.find((g) => ruleFacetValue(g) === value);
+  return row?.label ?? value;
+}
+
 /** Coerce a pass-rate that may arrive as a number or a numeric string into a
  *  number; anything non-finite (incl. null/undefined) becomes null. */
 export function toNum(value: unknown): number | null {
@@ -448,6 +472,9 @@ function ResultsBody({
   const toRows = (groups: EntityResultsOut["by_dimension"]) =>
     (groups ?? []).map((g) => ({
       label: g.label ?? null,
+      // rule_id is a by_rule-only enrichment (null elsewhere), so value
+      // degenerates to the label on every other facet box.
+      value: ruleFacetValue(g),
       pass_rate: g.pass_rate ?? null,
       failed_tests: g.failed_tests ?? null,
       rule_count: g.rule_count ?? null,
@@ -468,10 +495,13 @@ function ResultsBody({
     if (applicableOnly || !hasActiveFilter) {
       return { rows: filteredRows, mutedLabels: [] };
     }
-    const filteredByLabel = new Map(filteredRows.map((r) => [r.label, r]));
-    const rows = toRows(baseGroups).map((b) => filteredByLabel.get(b.label) ?? b);
+    // Keyed on the facet VALUE (rule identity on the By rule box, label
+    // elsewhere) so a filtered/base pair whose newest-run labels diverge
+    // still pairs up by identity.
+    const filteredByValue = new Map(filteredRows.map((r) => [r.value ?? r.label, r]));
+    const rows = toRows(baseGroups).map((b) => filteredByValue.get(b.value ?? b.label) ?? b);
     const mutedLabels = rows
-      .filter((r) => r.label != null && !filteredByLabel.has(r.label))
+      .filter((r) => r.label != null && !filteredByValue.has(r.value ?? r.label))
       .map((r) => r.label as string);
     return { rows, mutedLabels };
   };
@@ -540,11 +570,16 @@ function ResultsBody({
     { key: "failed_records", label: "Rows" },
   ]);
 
+  // Rule chips may carry a registry rule_id as their value — show the
+  // matching by_rule row's (newest-run) label instead of the opaque id.
+  const ruleChipRows = [...base.by_rule, ...filtered.by_rule];
   const chips = (["dimension", "severity", "rule", "column"] as const).flatMap(
     (facet) =>
       filters[facet].map((value) => ({
         key: `${facet}:${value}`,
-        label: t(CHIP_LABEL_KEYS[facet], { value }),
+        label: t(CHIP_LABEL_KEYS[facet], {
+          value: facet === "rule" ? ruleChipDisplay(value, ruleChipRows) : value,
+        }),
       })),
   );
 
@@ -715,7 +750,9 @@ function ResultsBody({
               mutedLabels={ruleFacet.mutedLabels}
               loading={breakdownRefetching}
               selected={filters.rule}
-              onSelect={(label) => onRowToggle("rule", label)}
+              // The row's facet value is its rule identity (rule_id when
+              // present), so the filter spans renames.
+              onSelect={(value) => onRowToggle("rule", value)}
               collapsed={!ruleColOpen}
               onToggleCollapse={() => setRuleColOpen((o) => !o)}
               pageSize={8}

@@ -284,6 +284,86 @@ class TestBreakdowns:
         assert out.by_table[0].binding_id is None
 
 
+class TestRuleIdentityGrouping:
+    """P5.2: by_rule groups by RULE IDENTITY (registry_rule_id, else the
+    check name) and labels each group with the name from the NEWEST run
+    in scope — a rule renamed between versions is ONE row showing its
+    current display name, never two rows split by name."""
+
+    def _renamed(self) -> list[CheckResultRow]:
+        return [
+            make_row("old_name", failed=10, total=100, run_id="r1", run_date="2026-07-01 00:00:00", rule_id="rule-1"),
+            make_row("new_name", failed=5, total=100, run_id="r2", run_date="2026-07-02 00:00:00", rule_id="rule-1"),
+        ]
+
+    def test_renamed_rule_collapses_to_one_row_labeled_with_newest_name(self):
+        out = compute_entity_results(self._renamed(), ResultFacets())
+        assert len(out.by_rule) == 1
+        group = out.by_rule[0]
+        assert group.label == "new_name"
+        assert group.rule_id == "rule-1"
+        assert group.failed_tests == 15
+        assert group.total_tests == 200
+        assert group.check_count == 2
+        assert group.rule_count == 1
+
+    def test_newest_label_is_order_independent(self):
+        out = compute_entity_results(list(reversed(self._renamed())), ResultFacets())
+        assert [g.label for g in out.by_rule] == ["new_name"]
+
+    def test_dateless_rows_order_oldest_for_labeling(self):
+        rows = [
+            make_row("dateless_name", failed=1, total=10, run_id="r0", run_date=None, rule_id="rule-1"),
+            make_row("dated_name", failed=1, total=10, run_id="r1", run_date="2026-07-01 00:00:00", rule_id="rule-1"),
+        ]
+        out = compute_entity_results(rows, ResultFacets())
+        assert [g.label for g in out.by_rule] == ["dated_name"]
+
+    def test_legacy_null_rule_id_rows_still_group_by_name(self):
+        rows = [
+            make_row("legacy_check", failed=1, total=10, run_id="r1", run_date="d1"),
+            make_row("legacy_check", failed=2, total=10, run_id="r2", run_date="d2"),
+            make_row("other_check", failed=0, total=10, run_id="r2", run_date="d2"),
+        ]
+        out = compute_entity_results(rows, ResultFacets())
+        by_rule = {g.label: g for g in out.by_rule}
+        assert set(by_rule) == {"legacy_check", "other_check"}
+        assert by_rule["legacy_check"].failed_tests == 3
+        assert by_rule["legacy_check"].rule_id is None
+
+    def test_same_name_under_different_rule_ids_stays_two_rows(self):
+        # Two DIFFERENT registry rules that happen to share a display name
+        # must not merge — identity wins over label.
+        rows = [
+            make_row("same_name", failed=1, total=10, run_id="r1", rule_id="rule-1"),
+            make_row("same_name", failed=2, total=10, run_id="r1", rule_id="rule-2"),
+        ]
+        out = compute_entity_results(rows, ResultFacets())
+        assert [g.label for g in out.by_rule] == ["same_name", "same_name"]
+        assert {g.rule_id for g in out.by_rule} == {"rule-1", "rule-2"}
+
+    def test_rule_id_absent_on_other_axes(self):
+        out = compute_entity_results(self._renamed(), ResultFacets(), table_axis="by_table")
+        assert out.by_table[0].rule_id is None
+        assert out.by_dimension[0].rule_id is None
+
+    def test_rule_facet_by_rule_id_selects_all_runs_including_old_names(self):
+        # Clicking the labeled by_rule row sends the rule_id — every run of
+        # that identity matches, old-name runs included.
+        out = compute_entity_results(self._renamed(), ResultFacets(rules=("rule-1",)))
+        assert len(out.by_rule) == 1
+        assert out.by_rule[0].failed_tests == 15
+
+    def test_rule_facet_by_label_still_works_but_stays_name_scoped(self):
+        # Backward compat: a label-only value keeps matching by check name
+        # (and only the runs that carried that name).
+        out = compute_entity_results(self._renamed(), ResultFacets(rules=("old_name",)))
+        assert len(out.by_rule) == 1
+        assert out.by_rule[0].failed_tests == 10
+        # The surviving group is still labeled by ITS newest matched run.
+        assert out.by_rule[0].label == "old_name"
+
+
 class TestVersionAccuracy:
     def test_same_check_attributes_per_run_not_per_current_rule(self):
         # THE POINT of the as-of-run design: the same check name carries

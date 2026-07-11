@@ -1427,11 +1427,16 @@ class GroupRowOut(BaseModel):
     which does not compute it. *binding_id* is filled on the by_table
     axis only (additive — the monitored-table binding for the row's
     table, so the UI can link the row; None when the table is not
-    monitored or on every other axis).
+    monitored or on every other axis). *rule_id* is filled on the
+    by_rule axis only (additive — the frozen registry rule id the group
+    is keyed on, so the UI can facet-filter by rule IDENTITY across
+    renames; None for legacy/untagged name-keyed groups and on every
+    other axis).
     """
 
     label: str | None = None
     binding_id: str | None = None
+    rule_id: str | None = None
     pass_rate: float | None = None
     failed_tests: int | None = None
     rule_count: int | None = None

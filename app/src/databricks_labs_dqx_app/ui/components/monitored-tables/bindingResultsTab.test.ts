@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 import {
   EMPTY_FILTERS,
   facetQueryParams,
+  ruleChipDisplay,
+  ruleFacetValue,
   toggleFacet,
   toNum,
   type MultiFilters,
@@ -37,6 +39,40 @@ describe("toggleFacet", () => {
   it("does not mutate its input (EMPTY_FILTERS stays empty)", () => {
     toggleFacet(EMPTY_FILTERS, "rule", "r1");
     expect(EMPTY_FILTERS.rule).toEqual([]);
+  });
+});
+
+describe("ruleFacetValue (by-rule identity value, P5.2)", () => {
+  it("prefers the registry rule_id when the group carries one", () => {
+    expect(ruleFacetValue({ label: "new_name", rule_id: "rule-1" })).toBe("rule-1");
+  });
+
+  it("falls back to the label for legacy name-keyed groups", () => {
+    expect(ruleFacetValue({ label: "legacy_check", rule_id: null })).toBe("legacy_check");
+    expect(ruleFacetValue({ label: "legacy_check" })).toBe("legacy_check");
+  });
+
+  it("is null only when both are absent", () => {
+    expect(ruleFacetValue({})).toBeNull();
+  });
+});
+
+describe("ruleChipDisplay (rule chip shows the newest-run label, not the id)", () => {
+  const byRule = [
+    { label: "new_name", rule_id: "rule-1" },
+    { label: "legacy_check", rule_id: null },
+  ];
+
+  it("resolves an active rule_id filter to its row's label", () => {
+    expect(ruleChipDisplay("rule-1", byRule)).toBe("new_name");
+  });
+
+  it("passes label-only filter values through (legacy rows)", () => {
+    expect(ruleChipDisplay("legacy_check", byRule)).toBe("legacy_check");
+  });
+
+  it("falls back to the raw value when no row matches", () => {
+    expect(ruleChipDisplay("rule-gone", byRule)).toBe("rule-gone");
   });
 });
 

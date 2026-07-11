@@ -1423,6 +1423,8 @@ export type GroupRowOutLabel = string | null;
 
 export type GroupRowOutBindingId = string | null;
 
+export type GroupRowOutRuleId = string | null;
+
 export type GroupRowOutPassRate = number | null;
 
 export type GroupRowOutFailedTests = number | null;
@@ -1442,11 +1444,16 @@ None on the by-column breakdown, matching dqlake's by_column query
 which does not compute it. *binding_id* is filled on the by_table
 axis only (additive — the monitored-table binding for the row's
 table, so the UI can link the row; None when the table is not
-monitored or on every other axis).
+monitored or on every other axis). *rule_id* is filled on the
+by_rule axis only (additive — the frozen registry rule id the group
+is keyed on, so the UI can facet-filter by rule IDENTITY across
+renames; None for legacy/untagged name-keyed groups and on every
+other axis).
  */
 export interface GroupRowOut {
   label?: GroupRowOutLabel;
   binding_id?: GroupRowOutBindingId;
+  rule_id?: GroupRowOutRuleId;
   pass_rate?: GroupRowOutPassRate;
   failed_tests?: GroupRowOutFailedTests;
   rule_count?: GroupRowOutRuleCount;

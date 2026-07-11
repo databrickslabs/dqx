@@ -66,6 +66,11 @@ function TruncatedText({ text, className }: { text: string; className?: string }
 
 export type BreakdownRow = {
   label: string | null;
+  /** The facet VALUE clicking this row toggles (and that `selected` is
+   *  matched against); defaults to the label. The By rule box passes the
+   *  row's registry rule_id here so the filter follows the rule's stable
+   *  identity across renames while the label shows the newest name. */
+  value?: string | null;
   pass_rate: number | null;
   failed_tests: number | null;
   rule_count?: number | null;
@@ -128,9 +133,11 @@ export function DimensionBreakdown({
    *  a small swatch is shown next to it. */
   colorMap?: Record<string, string>;
   /** When provided, each labelled row becomes clickable and fires this
-   *  with the row's label (the parent toggles the filter). */
-  onSelect?: (label: string) => void;
-  /** Labels currently active as filters; marks matching rows aria-pressed. */
+   *  with the row's facet value (its `value`, defaulting to the label —
+   *  the parent toggles the filter). */
+  onSelect?: (value: string) => void;
+  /** Facet values currently active as filters (matched against each row's
+   *  `value ?? label`); marks matching rows aria-pressed. */
   selected?: string[];
   /** Header text for the first (value) column. Defaults to "Label". */
   valueHeader?: string;
@@ -289,7 +296,11 @@ export function DimensionBreakdown({
             </thead>
             <tbody>
               {pageRows.map((r, i) => {
-                const isSelected = r.label != null && selectedSet.has(r.label);
+                // The facet value the row toggles/matches on — the rule box
+                // passes the registry rule_id; every other box defaults to
+                // the label.
+                const facetValue = r.value ?? r.label;
+                const isSelected = facetValue != null && selectedSet.has(facetValue);
                 // A muted row ("All" mode: a base row excluded by the active
                 // facet filter): render it dimmed + thinner so it reads as
                 // out-of-scope, not a live result.
@@ -306,7 +317,7 @@ export function DimensionBreakdown({
                       ? {
                           role: "button",
                           "aria-pressed": isSelected,
-                          onClick: () => r.label != null && onSelect(r.label),
+                          onClick: () => facetValue != null && onSelect(facetValue),
                         }
                       : {})}
                   >

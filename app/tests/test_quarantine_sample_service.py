@@ -121,8 +121,10 @@ def failure(
     quality_dimension: str | None = None,
     severity: str | None = None,
     columns: list[str] | None = None,
+    rule_id: str | None = None,
 ) -> FailedRowFailureOut:
     return FailedRowFailureOut(
+        rule_id=rule_id,
         rule_name=rule_name,
         quality_dimension=quality_dimension,
         severity=severity,
@@ -275,6 +277,18 @@ class TestRowMatchesFilters:
         failures = [failure(rule_name="c1"), failure(rule_name="c2")]
         assert QuarantineSampleService.row_matches_filters(failures, [], rules=("c2",)) is True
         assert QuarantineSampleService.row_matches_filters(failures, [], rules=("c3",)) is False
+
+    def test_rule_filter_matches_frozen_rule_id_across_renames(self):
+        # P5.2: the by_rule row click sends the registry rule id — it must
+        # select failures recorded under the rule's OLD name too, while a
+        # label-only value keeps matching by name (backward compat).
+        failures = [failure(rule_name="old_name", rule_id="rule-1")]
+        assert QuarantineSampleService.row_matches_filters(failures, [], rules=("rule-1",)) is True
+        assert QuarantineSampleService.row_matches_filters(failures, [], rules=("old_name",)) is True
+        assert QuarantineSampleService.row_matches_filters(failures, [], rules=("new_name",)) is False
+        legacy = [failure(rule_name="legacy_check", rule_id=None)]
+        assert QuarantineSampleService.row_matches_filters(legacy, [], rules=("legacy_check",)) is True
+        assert QuarantineSampleService.row_matches_filters(legacy, [], rules=("rule-1",)) is False
 
     def test_severity_filter(self):
         failures = [failure(severity="High")]
