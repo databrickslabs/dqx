@@ -12,7 +12,7 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from databricks_labs_dqx_app.backend.common.approvals import mark_auto_approver, should_auto_approve
+from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
@@ -56,6 +56,7 @@ from databricks_labs_dqx_app.backend.models import (
     SetAppliedRuleSeverityOverrideIn,
     SuggestRulesOut,
 )
+from databricks_labs_dqx_app.backend.registry_models import MonitoredTable
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     ApplyRulesService,
     DesiredAppliedRule,
@@ -76,7 +77,6 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
     MonitoredTableSummary,
 )
-from databricks_labs_dqx_app.backend.registry_models import MonitoredTable
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggester
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
@@ -811,7 +811,10 @@ def submit_monitored_table(
         # Approvals mode (issue #94): in ``disabled`` mode, or ``auto_bypass``
         # when the caller can edit AND approve this binding, publish in the same
         # call — the caller is recorded as the approver with an ``(auto)`` marker.
-        can_edit_and_approve = perms.can_edit_and_approve(
+        # ``enabled`` never auto-approves, so skip the predicate's permission +
+        # owner lookups entirely in that (default) mode.
+        mode = app_settings.get_approvals_mode()
+        can_edit_and_approve = mode != ApprovalMode.ENABLED and perms.can_edit_and_approve(
             ObjectType.MONITORED_TABLE.value,
             binding_id,
             role=role,
@@ -819,7 +822,7 @@ def submit_monitored_table(
             owner_email=perms.get_object_owner(ObjectType.MONITORED_TABLE.value, binding_id),
             principal_email=user_email,
         )
-        if should_auto_approve(app_settings.get_approvals_mode(), can_edit_and_approve=can_edit_and_approve):
+        if should_auto_approve(mode, can_edit_and_approve=can_edit_and_approve):
             table, approved, new_version = _approve_binding_checks(
                 monitored_tables_svc, rules_catalog, version_svc, binding_id, mark_auto_approver(user_email)
             )

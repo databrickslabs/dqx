@@ -14,7 +14,7 @@ Covers, in order:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 from fastapi import HTTPException
@@ -38,6 +38,7 @@ from databricks_labs_dqx_app.backend.services.app_settings_service import AppSet
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductDetail
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RuleCatalogEntry
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 
 
 def _registry_rule(status: str = "pending_approval", version: int = 0) -> RegistryRule:
@@ -175,11 +176,17 @@ class TestApprovalsModeRoute:
 # ---------------------------------------------------------------------------
 
 
-def _perms_service() -> PermissionsService:
-    sql = MagicMock()
+def _perms_service() -> tuple[PermissionsService, MagicMock]:
+    """Build a PermissionsService over a stubbed SQL executor.
+
+    Returns the service together with its ``sql`` mock so tests can assert on
+    the executor's call surface directly, rather than reaching into the
+    service's private ``_sql`` attribute.
+    """
+    sql = create_autospec(OltpExecutorProtocol, instance=True)
     sql.fqn.side_effect = lambda t: t
     sql.query.return_value = []  # no object grants stored
-    return PermissionsService(sql=sql, app_settings=MagicMock())
+    return PermissionsService(sql=sql, app_settings=MagicMock()), sql
 
 
 class TestCanEditAndApprove:
@@ -193,7 +200,7 @@ class TestCanEditAndApprove:
         ],
     )
     def test_predicate_by_role(self, role, expected):
-        perms = _perms_service()
+        perms, _sql = _perms_service()
         result = perms.can_edit_and_approve(
             ObjectType.REGISTRY_RULE.value,
             "obj-1",
@@ -205,7 +212,7 @@ class TestCanEditAndApprove:
         assert result is expected
 
     def test_admin_short_circuits_without_grant_lookup(self):
-        perms = _perms_service()
+        perms, sql = _perms_service()
         perms.can_edit_and_approve(
             ObjectType.MONITORED_TABLE.value,
             "b1",
@@ -213,7 +220,7 @@ class TestCanEditAndApprove:
             principal_ids=set(),
         )
         # ADMIN returns True before any privilege resolution query.
-        perms._sql.query.assert_not_called()  # type: ignore[attr-defined]
+        sql.query.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

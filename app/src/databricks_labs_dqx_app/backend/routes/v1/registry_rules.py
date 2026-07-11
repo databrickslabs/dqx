@@ -12,7 +12,7 @@ from typing import Annotated
 from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from databricks_labs_dqx_app.backend.common.approvals import mark_auto_approver, should_auto_approve
+from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import CurrentUser, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
@@ -39,12 +39,12 @@ from databricks_labs_dqx_app.backend.models import (
     RegistryRuleVersionOut,
     UpdateRegistryRuleIn,
 )
+from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
-from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 
@@ -357,7 +357,11 @@ def submit_registry_rule(
     """
     try:
         rule = svc.submit(rule_id, user_email)
-        can_edit_and_approve = perms.can_edit_and_approve(
+        # Only the auto-approving modes (``disabled`` / ``auto_bypass``) consult
+        # the object-aware predicate; ``enabled`` never auto-approves, so skip
+        # its permission + owner lookups entirely.
+        mode = app_settings.get_approvals_mode()
+        can_edit_and_approve = mode != ApprovalMode.ENABLED and perms.can_edit_and_approve(
             ObjectType.REGISTRY_RULE.value,
             rule_id,
             role=role,
@@ -365,7 +369,7 @@ def submit_registry_rule(
             owner_email=perms.get_object_owner(ObjectType.REGISTRY_RULE.value, rule_id),
             principal_email=user_email,
         )
-        if should_auto_approve(app_settings.get_approvals_mode(), can_edit_and_approve=can_edit_and_approve):
+        if should_auto_approve(mode, can_edit_and_approve=can_edit_and_approve):
             rule = _publish_registry_rule(
                 rule_id,
                 mark_auto_approver(user_email),

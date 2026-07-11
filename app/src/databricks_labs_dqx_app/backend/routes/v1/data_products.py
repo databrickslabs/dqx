@@ -14,7 +14,7 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
-from databricks_labs_dqx_app.backend.common.approvals import mark_auto_approver, should_auto_approve
+from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
@@ -390,7 +390,11 @@ def submit_data_product(
     try:
         user_email = _current_user_email(obo_ws)
         svc.submit(product_id, user_email)
-        can_edit_and_approve = perms.can_edit_and_approve(
+        # Only the auto-approving modes (``disabled`` / ``auto_bypass``) consult
+        # the object-aware predicate; ``enabled`` never auto-approves, so skip
+        # its permission + owner lookups entirely.
+        mode = app_settings.get_approvals_mode()
+        can_edit_and_approve = mode != ApprovalMode.ENABLED and perms.can_edit_and_approve(
             ObjectType.DATA_PRODUCT.value,
             product_id,
             role=role,
@@ -398,7 +402,7 @@ def submit_data_product(
             owner_email=perms.get_object_owner(ObjectType.DATA_PRODUCT.value, product_id),
             principal_email=user_email,
         )
-        if should_auto_approve(app_settings.get_approvals_mode(), can_edit_and_approve=can_edit_and_approve):
+        if should_auto_approve(mode, can_edit_and_approve=can_edit_and_approve):
             svc.approve(product_id, mark_auto_approver(user_email))
         detail = svc.get(product_id)
         assert detail is not None  # just submitted it
