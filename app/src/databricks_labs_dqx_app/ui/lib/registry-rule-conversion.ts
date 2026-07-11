@@ -72,6 +72,22 @@ const SEVERITY_TO_CRITICALITY: Record<string, "warn" | "error"> = {
 };
 
 /**
+ * Default inverse of {@link SEVERITY_TO_CRITICALITY}, used only on import
+ * (item 56) when a hand-crafted check JSON carries a top-level `criticality`
+ * but no `user_metadata.severity`. criticality -> severity is many-to-one, so
+ * this picks one representative severity per criticality; each representative
+ * maps straight back to the same criticality via {@link resolveCriticality},
+ * so a criticality-only import round-trips stably. `user_metadata.severity`
+ * always wins when present (see {@link reconcileSeverityFromCriticality}) —
+ * this is only the fallback. Admin-renamed severity values are not inverted
+ * here; the primary, lossless path is `user_metadata.severity`.
+ */
+const CRITICALITY_TO_SEVERITY_DEFAULT: Record<"warn" | "error", string> = {
+  warn: "Medium",
+  error: "High",
+};
+
+/**
  * Extract the admin-edited severity -> criticality map from the fetched
  * label definitions (the reserved `severity` definition's
  * `value_criticality`), for threading into {@link resolveCriticality} /
@@ -200,6 +216,27 @@ export function nativeArguments(slots: RuleSlot[], fn?: ApiCheckFunctionDef): Re
   return args;
 }
 
+const SLOT_TOKEN_RE = /^\{\{\s*(.+?)\s*\}\}$/;
+
+/**
+ * Extract the author's `{{name}}` slot tokens from a native argument value, in
+ * order (item 32). A bare `{{name}}` string yields one name; a list of
+ * `{{name}}` strings yields several. Any element that isn't a `{{...}}`
+ * placeholder is skipped — a registry rule's slot argument can only ever be a
+ * placeholder, never a real column value.
+ */
+function extractSlotNames(argValue: unknown): string[] {
+  const names: string[] = [];
+  const take = (v: unknown): void => {
+    if (typeof v !== "string") return;
+    const match = SLOT_TOKEN_RE.exec(v.trim());
+    if (match && match[1]) names.push(match[1]);
+  };
+  if (Array.isArray(argValue)) argValue.forEach(take);
+  else take(argValue);
+  return names;
+}
+
 export function parseParamValue(type: RuleParameterType, raw: string): RuleParameter["value"] {
   const trimmed = raw.trim();
   if (trimmed === "") return null;
@@ -321,17 +358,25 @@ export interface ParsedCheckDefinition {
  * Validates the function name against *checkFunctions* (the same
  * `CHECK_FUNC_REGISTRY`-backed list the visual form's function picker uses)
  * so an edited JSON can never reference a function the DQX engine doesn't
- * know about. Native slot arguments are always rewritten to canonical
- * `{{slot}}` placeholders regardless of what the user typed there — a
- * registry rule is table-agnostic, so a slot argument can never carry a
- * real value. SQL safety is enforced server-side (`RegistryService.update_draft`)
- * on save, since `is_sql_query_safe` has no frontend equivalent.
+ * know about. A native slot argument must still be a `{{name}}` placeholder
+ * (a registry rule is table-agnostic, so a slot argument can never carry a
+ * real value) — but the author's chosen `{{name}}` tokens are now PRESERVED
+ * as the slot names (item 32), so renaming a reusable column in the edited
+ * `arguments` survives the round-trip. A list argument keeps one slot per
+ * `{{token}}`; an argument with no recognizable placeholder falls back to the
+ * canonical `column_N` name. SQL safety is enforced server-side
+ * (`RegistryService.update_draft`) on save, since `is_sql_query_safe` has no
+ * frontend equivalent.
  *
  * `user_metadata` round-trips: if the top-level `user_metadata` object is
  * present, it fully REPLACES *currentUserMetadata* (add/edit/remove a tag —
  * including the reserved name/description/dimension/severity keys — and it
  * persists); if the key is absent or not a plain object, *currentUserMetadata*
- * is kept as-is so a save can never silently drop existing tags.
+ * is kept as-is so a save can never silently drop existing tags. Severity is
+ * authoritative on import (item 56): `user_metadata.severity` always wins, but
+ * when it is absent a top-level `criticality` back-fills a representative
+ * severity so a criticality-only JSON still lands a severity on the form (see
+ * {@link reconcileSeverityFromCriticality}).
  *
  * Throws a plain `Error` with a user-facing message on any validation
  * failure; callers should catch and surface `error.message` inline.
@@ -374,7 +419,10 @@ export function parseDqxCheckJson(
       : {};
 
   const errorMessage = typeof dict.message_expr === "string" ? dict.message_expr : undefined;
-  const userMetadata = parseUserMetadata(dict.user_metadata, currentUserMetadata);
+  const userMetadata = reconcileSeverityFromCriticality(
+    parseUserMetadata(dict.user_metadata, currentUserMetadata),
+    dict.criticality,
+  );
 
   if (SQL_FUNCTION_NAMES.has(functionName)) {
     const polarity: "pass" | "fail" = args.negate === true ? "fail" : "pass";
@@ -419,7 +467,30 @@ export function parseDqxCheckJson(
     };
   }
 
-  const { slots, parameters: derivedParams } = deriveSlotsAndParameters(fn);
+  const { slots: templateSlots, parameters: derivedParams } = deriveSlotsAndParameters(fn);
+  // item 32: adopt the author's `{{name}}` tokens from the edited `arguments`
+  // as slot names instead of re-canonicalizing to `column_N`, so reusable
+  // column renames survive the round-trip. Each derived slot is a `column_N`
+  // template carrying the real family/arg_key/cardinality; we keep those but
+  // swap in the authored name. The list argument (`listColumnArgKey`) expands
+  // to one slot per token; a scalar column arg takes the first token; an
+  // argument with no `{{token}}` keeps its canonical `column_N` name.
+  const listArgKey = listColumnArgKey(fn);
+  const slots: RuleSlot[] = [];
+  let slotPosition = 0;
+  for (const template of templateSlots) {
+    const argKey = template.arg_key ?? template.name;
+    const authored = extractSlotNames(args[argKey]);
+    if (authored.length === 0) {
+      slots.push({ ...template, position: slotPosition++ });
+    } else if (argKey === listArgKey) {
+      for (const authoredName of authored) {
+        slots.push({ ...template, name: authoredName, position: slotPosition++ });
+      }
+    } else {
+      slots.push({ ...template, name: authored[0], position: slotPosition++ });
+    }
+  }
   const parameters: RuleParameter[] = derivedParams.map((p) => {
     const raw = args[p.name];
     const rawStr = raw === undefined || raw === null ? "" : Array.isArray(raw) ? raw.join(", ") : String(raw);
@@ -456,6 +527,28 @@ export function parseDqxCheckJson(
  * existing tags dict is preserved unchanged so a save can never silently
  * wipe tags the user didn't intend to touch.
  */
+/**
+ * Make severity authoritative on import (item 56). `user_metadata.severity`
+ * always wins when present; only when it is absent do we back-fill a
+ * representative severity from a top-level `criticality` (via
+ * {@link CRITICALITY_TO_SEVERITY_DEFAULT}), so a hand-crafted check JSON that
+ * sets only `criticality` still lands a matching severity on the form. A
+ * `criticality` that conflicts with a present `user_metadata.severity` is
+ * ignored — severity is the source of truth and `criticality` is re-derived
+ * from it by {@link buildDqxCheckJson}. Kept DRY with the built-in
+ * {@link SEVERITY_TO_CRITICALITY} used by {@link resolveCriticality}.
+ */
+function reconcileSeverityFromCriticality(
+  userMetadata: Record<string, string>,
+  rawCriticality: unknown,
+): Record<string, string> {
+  if (userMetadata[RESERVED_SEVERITY_KEY]) return userMetadata;
+  if (rawCriticality === "warn" || rawCriticality === "error") {
+    return { ...userMetadata, [RESERVED_SEVERITY_KEY]: CRITICALITY_TO_SEVERITY_DEFAULT[rawCriticality] };
+  }
+  return userMetadata;
+}
+
 function parseUserMetadata(
   raw: unknown,
   current: Record<string, unknown> | null | undefined,
