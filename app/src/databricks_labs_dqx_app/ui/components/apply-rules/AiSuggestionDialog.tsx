@@ -207,7 +207,13 @@ export function AiSuggestionDialog({
               className="flex items-center gap-2 outline-none"
             >
               <Sparkles className="h-4 w-4" stroke={AI_GRADIENT_URL} />
-              <span className={AI_TEXT_GRADIENT}>{t("monitoredTables.suggestRulesDialogTitle")}</span>
+              {/* leading-normal + pb-0.5: the DialogTitle's leading-none clips
+                  the gradient text's descenders (the "g") under bg-clip-text.
+                  Local fix only — the shared AI_TEXT_GRADIENT token is reused
+                  elsewhere and must stay untouched. */}
+              <span className={cn(AI_TEXT_GRADIENT, "leading-normal pb-0.5")}>
+                {t("monitoredTables.suggestRulesDialogTitle")}
+              </span>
             </DialogTitle>
             {showToggle && <GroupByToggle value={groupBy} onChange={setGroupBy} />}
           </div>
