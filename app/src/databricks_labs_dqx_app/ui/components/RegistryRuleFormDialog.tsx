@@ -1999,6 +1999,17 @@ export function RegistryRuleFormDialog({
             label={t("rulesRegistry.advancedSectionLabel")}
             defaultOpen={!!groupBy || lowcodeAst.joins.length > 0}
           >
+            {/* Joins come first: they widen the set of columns available to
+                the condition (and to group-by below) by pulling in
+                joined-table columns, so configuring them before grouping
+                matches the data-flow the compiled SQL follows. Gets the full
+                `lowcodeColumns` (declared slots + joined-table columns). */}
+            <JoinsBuilder
+              ast={lowcodeAst}
+              onChange={setLowcodeAst}
+              declaredColumns={lowcodeColumns}
+              readOnly={readOnly}
+            />
             {/* Group-by is restricted to declared `{{slot}}` columns (not
                 joined-table columns): a grouping key becomes a `merge_column`,
                 and DQX's row-level merge-back requires those columns to exist
@@ -2008,12 +2019,6 @@ export function RegistryRuleFormDialog({
               onChange={setGroupBy}
               declaredColumns={lowcodeColumns.filter((c) => !c.name.includes("."))}
               disabled={readOnly}
-            />
-            <JoinsBuilder
-              ast={lowcodeAst}
-              onChange={setLowcodeAst}
-              declaredColumns={lowcodeColumns}
-              readOnly={readOnly}
             />
           </AdvancedDisclosure>
           <div className="flex flex-wrap items-center gap-3">
