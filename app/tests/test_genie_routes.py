@@ -2,10 +2,11 @@
 
 Follows the route-test convention (minimal FastAPI app + dependency
 overrides): pins the availability-when-no-space contract (200 with
-``available=false``, never an error), the SP-identity wiring (the chat
-proxy drives the SP WorkspaceClient's raw REST surface), the /space
-payload (status fallback, sample questions, deep link), input validation
-on the feedback/poll bodies, and viewer-level RBAC.
+``available=false``, never an error), the OBO-identity wiring (the chat
+proxy drives the CALLER's WorkspaceClient, with the SP client only as the
+scope fallback), the /space payload (status fallback, sample questions,
+deep link), input validation on the feedback/poll bodies, and viewer-level
+RBAC.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
+from databricks.sdk.errors import PermissionDenied
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -138,15 +140,15 @@ def test_space_unavailable_without_space(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Happy paths — driven end-to-end through the mocked SP REST surface
+# Happy paths — driven end-to-end through the mocked OBO REST surface
 # ---------------------------------------------------------------------------
 
 
-def test_start_proxies_to_genie_and_returns_ids(
-    client: TestClient, settings_store: dict[str, str], sp_ws_mock: MagicMock
+def test_start_proxies_to_genie_as_the_caller(
+    client: TestClient, settings_store: dict[str, str], obo_ws_mock: MagicMock, sp_ws_mock: MagicMock
 ) -> None:
     provision(settings_store)
-    sp_ws_mock.api_client.do.return_value = {
+    obo_ws_mock.api_client.do.return_value = {
         "conversation_id": "c1",
         "message_id": "m1",
         "status": "SUBMITTED",
@@ -158,25 +160,42 @@ def test_start_proxies_to_genie_and_returns_ids(
     assert body["conversation_id"] == "c1"
     assert body["message_id"] == "m1"
     assert body["stage"] == "Understanding your question"
-    sp_ws_mock.api_client.do.assert_called_once_with(
+    obo_ws_mock.api_client.do.assert_called_once_with(
         "POST", f"{BASE}/start-conversation", body={"content": "What is my score?"}
     )
+    # OBO identity: the SP client is only the fallback and stays untouched.
+    sp_ws_mock.api_client.do.assert_not_called()
 
 
 def test_start_continues_existing_conversation(
-    client: TestClient, settings_store: dict[str, str], sp_ws_mock: MagicMock
+    client: TestClient, settings_store: dict[str, str], obo_ws_mock: MagicMock
 ) -> None:
     provision(settings_store)
-    sp_ws_mock.api_client.do.return_value = {"conversation_id": "c1", "message_id": "m2"}
+    obo_ws_mock.api_client.do.return_value = {"conversation_id": "c1", "message_id": "m2"}
     resp = client.post("/api/v1/genie/start", json={"question": "and now?", "conversation_id": "c1"})
     assert resp.status_code == 200
-    sp_ws_mock.api_client.do.assert_called_once_with(
+    obo_ws_mock.api_client.do.assert_called_once_with(
         "POST", f"{BASE}/conversations/c1/messages", body={"content": "and now?"}
     )
 
 
+def test_start_falls_back_to_sp_when_obo_is_rejected(
+    client: TestClient, settings_store: dict[str, str], obo_ws_mock: MagicMock, sp_ws_mock: MagicMock
+) -> None:
+    provision(settings_store)
+    obo_ws_mock.api_client.do.side_effect = PermissionDenied("Token missing required scopes")
+    sp_ws_mock.api_client.do.return_value = {"conversation_id": "c1", "message_id": "m1"}
+    resp = client.post("/api/v1/genie/start", json={"question": "q"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["available"] is True
+    assert body["error"] is None
+    assert body["conversation_id"] == "c1"
+    sp_ws_mock.api_client.do.assert_called_once_with("POST", f"{BASE}/start-conversation", body={"content": "q"})
+
+
 def test_poll_returns_partial_answer_payload(
-    client: TestClient, settings_store: dict[str, str], sp_ws_mock: MagicMock
+    client: TestClient, settings_store: dict[str, str], obo_ws_mock: MagicMock
 ) -> None:
     provision(settings_store)
     message = {
@@ -192,7 +211,7 @@ def test_poll_returns_partial_answer_payload(
             "result": {"data_array": [["2"]]},
         }
     }
-    sp_ws_mock.api_client.do.side_effect = [message, query_result]
+    obo_ws_mock.api_client.do.side_effect = [message, query_result]
     resp = client.post("/api/v1/genie/poll", json={"conversation_id": "c1", "message_id": "m1"})
     assert resp.status_code == 200
     body = resp.json()
@@ -204,9 +223,9 @@ def test_poll_returns_partial_answer_payload(
     assert body["stage"] == "Done"
 
 
-def test_ask_blocking_flow(client: TestClient, settings_store: dict[str, str], sp_ws_mock: MagicMock) -> None:
+def test_ask_blocking_flow(client: TestClient, settings_store: dict[str, str], obo_ws_mock: MagicMock) -> None:
     provision(settings_store)
-    sp_ws_mock.api_client.do.side_effect = [
+    obo_ws_mock.api_client.do.side_effect = [
         {"conversation_id": "c1", "message_id": "m1", "status": "SUBMITTED"},
         {"status": "COMPLETED", "attachments": [{"text": {"content": "All good."}}]},
     ]
@@ -219,15 +238,17 @@ def test_ask_blocking_flow(client: TestClient, settings_store: dict[str, str], s
 
 
 def test_genie_error_is_a_clean_payload_not_a_500(
-    client: TestClient, settings_store: dict[str, str], sp_ws_mock: MagicMock
+    client: TestClient, settings_store: dict[str, str], obo_ws_mock: MagicMock, sp_ws_mock: MagicMock
 ) -> None:
     provision(settings_store)
-    sp_ws_mock.api_client.do.side_effect = RuntimeError("genie down")
+    obo_ws_mock.api_client.do.side_effect = RuntimeError("genie down")
     resp = client.post("/api/v1/genie/start", json={"question": "q"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["available"] is True
     assert body["error"] == "genie down"
+    # Non-permission failures never silently switch identity.
+    sp_ws_mock.api_client.do.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +378,7 @@ def test_verify_entitlements_accepts_exactly_50(client: TestClient, entitlement_
 
 @pytest.mark.parametrize("role", [UserRole.VIEWER, UserRole.RULE_AUTHOR, UserRole.RULE_APPROVER, UserRole.ADMIN])
 def test_every_role_may_use_the_chat(
-    role: UserRole, settings_mock: MagicMock, sp_ws_mock: MagicMock
+    role: UserRole, settings_mock: MagicMock, sp_ws_mock: MagicMock, obo_ws_mock: MagicMock
 ) -> None:
     from databricks_labs_dqx_app.backend.routes.v1.genie import router
 
@@ -365,6 +386,7 @@ def test_every_role_may_use_the_chat(
     app.include_router(router, prefix="/api/v1/genie")
     app.dependency_overrides[get_app_settings_service] = lambda: settings_mock
     app.dependency_overrides[get_sp_ws] = lambda: sp_ws_mock
+    app.dependency_overrides[get_obo_ws] = lambda: obo_ws_mock
     app.dependency_overrides[get_user_role] = lambda: role
     client = TestClient(app)
     assert client.get("/api/v1/genie/space").status_code == 200

@@ -3,15 +3,19 @@
 Pins the Genie Conversation-API request paths + payload shapes, the
 message/attachment parsing (both start-response shapes, text + query
 attachments, query-result fetching), the result caps (200 rows / 50 cols /
-500 chars per cell), the stage labelling, and the never-raise error
-contract — all against a mocked ``ws.api_client.do``.
+500 chars per cell), the stage labelling, the never-raise error contract,
+and the P4.2 identity ladder (OBO first; stale-conversation restart; SP
+fallback on 403/404 with a once-per-process warning) — all against mocked
+``ws.api_client.do`` surfaces.
 """
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
+from databricks.sdk.errors import NotFound, PermissionDenied
 
 from databricks_labs_dqx_app.backend.services import genie_chat_service as gc
 
@@ -19,10 +23,21 @@ SPACE = "space-1"
 BASE = f"/api/2.0/genie/spaces/{SPACE}"
 
 
+@pytest.fixture(autouse=True)
+def _reset_obo_fallback_warning() -> None:
+    """The OBO->SP warning fires once per process — reset it per test."""
+    gc._obo_fallback_state["warned"] = False
+
+
 @pytest.fixture
 def ws() -> MagicMock:
     ws = MagicMock(name="WorkspaceClient")
     return ws
+
+
+@pytest.fixture
+def sp_ws() -> MagicMock:
+    return MagicMock(name="sp_WorkspaceClient")
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +167,115 @@ def test_start_never_raises(ws: MagicMock) -> None:
     ws.api_client.do.side_effect = RuntimeError("genie down")
     state = gc.start(ws, SPACE, "q")
     assert state.error == "genie down"
+
+
+# ---------------------------------------------------------------------------
+# P4.2 identity ladder — stale conversations + OBO->SP fallback
+# ---------------------------------------------------------------------------
+
+
+def test_start_stale_conversation_restarts_as_a_new_one(ws: MagicMock) -> None:
+    """An id minted under another identity 404s — degrade to a NEW thread."""
+    ws.api_client.do.side_effect = [
+        NotFound("conversation not found"),
+        {"conversation_id": "c-new", "message_id": "m1", "status": "SUBMITTED"},
+    ]
+    state = gc.start(ws, SPACE, "again?", conversation_id="c-sp-era")
+    first, second = ws.api_client.do.call_args_list
+    assert first.args == ("POST", f"{BASE}/conversations/c-sp-era/messages")
+    assert second.args == ("POST", f"{BASE}/start-conversation")
+    assert state.error is None
+    assert state.conversation_id == "c-new"
+
+
+def test_start_falls_back_to_sp_when_obo_is_rejected(
+    ws: MagicMock, sp_ws: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    ws.api_client.do.side_effect = PermissionDenied("Token missing required scopes")
+    sp_ws.api_client.do.return_value = {"conversation_id": "c1", "message_id": "m1", "status": "SUBMITTED"}
+    with caplog.at_level(logging.WARNING, logger=gc.__name__):
+        state = gc.start(ws, SPACE, "q", sp_ws=sp_ws)
+    assert state.error is None
+    assert state.conversation_id == "c1"
+    sp_ws.api_client.do.assert_called_once_with("POST", f"{BASE}/start-conversation", body={"content": "q"})
+    warnings = [r for r in caplog.records if "service-principal identity" in r.message]
+    assert len(warnings) == 1
+    assert "dashboards.genie" in warnings[0].message
+    assert "DEPLOYMENT.md" in warnings[0].message
+
+
+def test_sp_fallback_preserves_sp_owned_conversation_continuity(ws: MagicMock, sp_ws: MagicMock) -> None:
+    """Scope-blocked OBO + an SP-era conversation id: SP continues the thread."""
+    ws.api_client.do.side_effect = PermissionDenied("no scope")
+    sp_ws.api_client.do.return_value = {"conversation_id": "c-sp", "message_id": "m2"}
+    state = gc.start(ws, SPACE, "and now?", conversation_id="c-sp", sp_ws=sp_ws)
+    assert state.error is None
+    assert ws.api_client.do.call_count == 2  # (obo, c-sp) then (obo, new)
+    sp_ws.api_client.do.assert_called_once_with(
+        "POST", f"{BASE}/conversations/c-sp/messages", body={"content": "and now?"}
+    )
+
+
+def test_fallback_warning_fires_once_per_process(
+    ws: MagicMock, sp_ws: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    ws.api_client.do.side_effect = PermissionDenied("no scope")
+    sp_ws.api_client.do.return_value = {"conversation_id": "c1", "message_id": "m1"}
+    with caplog.at_level(logging.WARNING, logger=gc.__name__):
+        gc.start(ws, SPACE, "q", sp_ws=sp_ws)
+        gc.start(ws, SPACE, "q again", sp_ws=sp_ws)
+    assert sum("service-principal identity" in r.message for r in caplog.records) == 1
+
+
+def test_start_non_permission_errors_do_not_fall_back(ws: MagicMock, sp_ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = RuntimeError("genie down")
+    state = gc.start(ws, SPACE, "q", sp_ws=sp_ws)
+    assert state.error == "genie down"
+    sp_ws.api_client.do.assert_not_called()
+
+
+def test_start_error_state_when_every_rung_is_rejected(ws: MagicMock, sp_ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = PermissionDenied("obo rejected")
+    sp_ws.api_client.do.side_effect = PermissionDenied("sp rejected too")
+    state = gc.start(ws, SPACE, "q", sp_ws=sp_ws)
+    assert state.error == "sp rejected too"
+
+
+def test_poll_falls_back_to_sp_on_permission_error(ws: MagicMock, sp_ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = PermissionDenied("no scope")
+    message = {
+        "status": "COMPLETED",
+        "attachments": [
+            {"text": {"content": "Done."}},
+            {"attachment_id": "att-1", "query": {"query": "SELECT 1"}},
+        ],
+    }
+    sp_ws.api_client.do.side_effect = [message, {}]
+    state = gc.poll(ws, SPACE, "c1", "m1", sp_ws=sp_ws)
+    assert state.error is None
+    assert state.answer_text == "Done."
+    # The attachment query-result fetch rides the SAME (fallback) client.
+    get_msg, get_result = sp_ws.api_client.do.call_args_list
+    assert get_msg.args == ("GET", f"{BASE}/conversations/c1/messages/m1")
+    assert get_result.args[1].endswith("/attachments/att-1/query-result")
+
+
+def test_poll_stale_conversation_without_fallback_is_a_clean_error(ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = NotFound("gone")
+    state = gc.poll(ws, SPACE, "c1", "m1")
+    assert state.error == "gone"
+
+
+def test_ask_polls_with_the_client_that_won_the_start(ws: MagicMock, sp_ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = PermissionDenied("no scope")
+    sp_ws.api_client.do.side_effect = [
+        {"conversation_id": "c1", "message_id": "m1", "status": "SUBMITTED"},
+        {"status": "COMPLETED", "attachments": [{"text": {"content": "All good."}}]},
+    ]
+    state = gc.ask(ws, SPACE, "q", sp_ws=sp_ws, max_polls=3, poll_s=0)
+    assert state.answer_text == "All good."
+    assert ws.api_client.do.call_count == 1  # only the rejected start rung
+    assert sp_ws.api_client.do.call_count == 2  # SP start + SP poll
 
 
 # ---------------------------------------------------------------------------

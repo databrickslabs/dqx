@@ -5,11 +5,15 @@ dqlake ``embeds`` endpoint is intentionally omitted — this app already
 serves its embedded dashboard through the config routes, and the Genie
 space id/url is served by GET /space here).
 
-Identity: everything runs as the app SERVICE PRINCIPAL. The space points
-only at the SP-owned aggregate score objects (mv_dq_scores /
-v_dq_check_results / v_dq_check_attribution) by design — see
-``services/genie_space_service`` — so answering with SP credentials never
-exposes row-level data the caller couldn't already see in aggregate.
+Identity (P4.2): the chat endpoints (start/poll/ask) run OBO — as the
+CALLING user — so Genie executes SQL with the asker's own credentials and
+the entitlement-gated ``v_dq_failing_rows`` view opens for exactly the
+tables that user self-verified. When the OBO token is rejected (the
+``dashboards.genie`` scope is not in the app's baseline user_api_scopes),
+the service degrades per call to the app SERVICE PRINCIPAL — safe, because
+under the SP the gated view is fail-closed empty and the rest of the space
+is aggregates only — see ``services/genie_chat_service``. Space
+provisioning (and the /space availability probe) stays SP.
 
 Phase 4 adds POST /verify-entitlements: the UI fire-and-forgets it with the
 tables on screen so the caller's row-level access (via the entitlement-gated
@@ -68,6 +72,7 @@ _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, User
 
 SettingsDep = Annotated[AppSettingsService, Depends(get_app_settings_service)]
 SpWsDep = Annotated[WorkspaceClient, Depends(get_sp_ws)]
+OboWsDep = Annotated[WorkspaceClient, Depends(get_obo_ws)]
 
 
 def _to_answer(state: GenieChatState) -> GenieAnswerOut:
@@ -96,12 +101,17 @@ async def _space_id(settings: AppSettingsService) -> str | None:
     operation_id="askGenie",
     dependencies=[require_role(*_ALL_ROLES)],
 )
-async def ask_genie(body: GenieAskIn, settings: SettingsDep, sp_ws: SpWsDep) -> GenieAnswerOut:
-    """Blocking one-shot: start a message and poll it to a terminal state."""
+async def ask_genie(body: GenieAskIn, settings: SettingsDep, obo_ws: OboWsDep, sp_ws: SpWsDep) -> GenieAnswerOut:
+    """Blocking one-shot: start a message and poll it to a terminal state.
+
+    Runs as the CALLING user, degrading to the SP when the OBO token is
+    rejected (see the module docstring)."""
     space_id = await _space_id(settings)
     if not space_id:
         return GenieAnswerOut(available=False)
-    state = await asyncio.to_thread(genie_chat_service.ask, sp_ws, space_id, body.question, body.conversation_id)
+    state = await asyncio.to_thread(
+        genie_chat_service.ask, obo_ws, space_id, body.question, body.conversation_id, sp_ws=sp_ws
+    )
     return _to_answer(state)
 
 
@@ -111,13 +121,18 @@ async def ask_genie(body: GenieAskIn, settings: SettingsDep, sp_ws: SpWsDep) -> 
     operation_id="startGenieMessage",
     dependencies=[require_role(*_ALL_ROLES)],
 )
-async def start_genie_message(body: GenieAskIn, settings: SettingsDep, sp_ws: SpWsDep) -> GenieAnswerOut:
+async def start_genie_message(
+    body: GenieAskIn, settings: SettingsDep, obo_ws: OboWsDep, sp_ws: SpWsDep
+) -> GenieAnswerOut:
     """Kick off a question and return ids immediately; the UI then polls
-    /poll to show live progress."""
+    /poll to show live progress. Runs as the CALLING user, degrading to the
+    SP when the OBO token is rejected (see the module docstring)."""
     space_id = await _space_id(settings)
     if not space_id:
         return GenieAnswerOut(available=False)
-    state = await asyncio.to_thread(genie_chat_service.start, sp_ws, space_id, body.question, body.conversation_id)
+    state = await asyncio.to_thread(
+        genie_chat_service.start, obo_ws, space_id, body.question, body.conversation_id, sp_ws=sp_ws
+    )
     return _to_answer(state)
 
 
@@ -127,13 +142,17 @@ async def start_genie_message(body: GenieAskIn, settings: SettingsDep, sp_ws: Sp
     operation_id="pollGenieMessage",
     dependencies=[require_role(*_ALL_ROLES)],
 )
-async def poll_genie_message(body: GeniePollIn, settings: SettingsDep, sp_ws: SpWsDep) -> GenieAnswerOut:
-    """Fetch the current state of an in-flight message (partial or final)."""
+async def poll_genie_message(
+    body: GeniePollIn, settings: SettingsDep, obo_ws: OboWsDep, sp_ws: SpWsDep
+) -> GenieAnswerOut:
+    """Fetch the current state of an in-flight message (partial or final).
+    Runs as the CALLING user, degrading to the SP when the OBO token is
+    rejected (see the module docstring)."""
     space_id = await _space_id(settings)
     if not space_id:
         return GenieAnswerOut(available=False)
     state = await asyncio.to_thread(
-        genie_chat_service.poll, sp_ws, space_id, body.conversation_id, body.message_id
+        genie_chat_service.poll, obo_ws, space_id, body.conversation_id, body.message_id, sp_ws=sp_ws
     )
     return _to_answer(state)
 
