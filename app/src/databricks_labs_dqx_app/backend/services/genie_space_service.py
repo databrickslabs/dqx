@@ -93,6 +93,7 @@ SAMPLE_QUESTIONS = [
     "Which tables have the lowest pass rate?",
     "Which quality dimensions are weakest?",
     "How has the score changed over recent runs?",
+    "How has the average score across tables changed over time?",
     "How has my DQ score by severity been changing over time?",
     "What is driving my changes in score over time?",
     "Why did my DQ score change since the last run?",
@@ -141,8 +142,11 @@ TEXT_INSTRUCTIONS = [
     (
         "The message may name its subject: `(Table: <fqn>)` scopes to that table; "
         "`(Data product: <name> — tables: ...)` scopes to those member tables, and the product's "
-        "headline score is the mean of its member tables' pass rates, not the pooled rate. Without "
-        "a subject, answer across all tables.\n"
+        "headline score is the mean of its member tables' pass rates, not the pooled rate. For the "
+        "average over time, use the as-of pattern from the curated example: at each run instant "
+        "every table contributes its most recent published run at-or-before that instant "
+        "(carry-forward), scoped with input_location IN (the member tables). Without a subject, "
+        "answer across all tables.\n"
     ),
     (
         "To explain a change in score — in either direction — compare the latest run with the most "
@@ -356,6 +360,37 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         f"FROM {mv}\n"
         "WHERE `input_location` = :table_name\n"
         "  AND `run_mode` = 'published'\n"
+        "GROUP BY `run_time`\n"
+        "ORDER BY `run_time`"
+    )
+
+    # AS-OF carry-forward average across tables — the pattern behind the app's
+    # product/global "Average" trendline (dqlake's mv_product_results
+    # consolidation). At each run instant every table contributes its most
+    # recent published run at-or-before that instant; the point is the
+    # equal-weight mean of those carried-forward rates. Deliberately
+    # UNPARAMETERIZED: the member set is a table LIST, which Genie's scalar
+    # trusted-asset parameters cannot express — the example spans all tables
+    # and the usage guidance + text instructions teach scoping it with
+    # `input_location IN (...)` for a data product's members.
+    asof_average_trend = (
+        "WITH runs AS (\n"
+        "  SELECT `input_location`, `run_time`,\n"
+        "         1 - TRY_DIVIDE(SUM(`error_count` + `warning_count`), SUM(`input_row_count`)) AS pass_rate\n"
+        f"  FROM {v}\n"
+        "  WHERE `run_mode` = 'published'\n"
+        "  GROUP BY `input_location`, `run_time`\n"
+        "),\n"
+        "instants AS (SELECT DISTINCT `run_time` FROM runs),\n"
+        "asof AS (\n"
+        "  SELECT i.`run_time`, r.`input_location`, r.pass_rate,\n"
+        "         ROW_NUMBER() OVER (PARTITION BY i.`run_time`, r.`input_location`\n"
+        "                            ORDER BY r.`run_time` DESC) AS rn\n"
+        "  FROM instants i JOIN runs r ON r.`run_time` <= i.`run_time`\n"
+        ")\n"
+        "SELECT `run_time`, AVG(pass_rate) AS average_pass_rate\n"
+        "FROM asof\n"
+        "WHERE rn = 1 AND pass_rate IS NOT NULL\n"
         "GROUP BY `run_time`\n"
         "ORDER BY `run_time`"
     )
@@ -581,6 +616,18 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "parameters": table_param,
             "usage_guidance": [
                 "Pass-rate trend over published runs for one table. Render as a time-series line."
+            ],
+        },
+        {
+            "question": ["How has the average score across tables changed over time?"],
+            "sql": _lines(asof_average_trend),
+            "usage_guidance": [
+                "The as-of average across a set of tables — the app's product/global Average "
+                "line: at each run instant every table contributes its most recent published "
+                "run at-or-before that instant (carry-forward); the point is the equal-weight "
+                "mean of those rates. Tables with no run yet are excluded until their first "
+                "run. Scope to a data product by adding `input_location` IN (its member "
+                "tables) inside the runs CTE. Render as a time-series line."
             ],
         },
         {

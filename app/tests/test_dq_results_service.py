@@ -429,6 +429,120 @@ class TestTrends:
         assert {p.series for p in product_out.trend_by_table} == {FQN}
 
 
+class TestAsOfAverageTrend:
+    """The overall ``trend`` is the AS-OF carry-forward average (dqlake's
+    mv_product_results / _product_trend semantics): one point per distinct
+    run instant across the scope; at each instant every member table
+    contributes the pass rate of its most recent run at-or-before that
+    instant, and the point is the EQUAL-WEIGHT mean of those carried
+    values. dqlake's exclusion choices, pinned here:
+
+    - a table with no run yet at an instant is excluded until its first
+      run (inner-join semantics in dqlake's asof CTE);
+    - a table whose as-of run has a NULL pass rate (zero tests) is
+      excluded at that instant — never substituted with an older run.
+    """
+
+    A = "main.sales.orders"
+    B = "main.sales.customers"
+    T1 = "2026-07-01 00:00:00"
+    T2 = "2026-07-02 00:00:00"
+    T3 = "2026-07-03 00:00:00"
+
+    def _misaligned(self) -> list[CheckResultRow]:
+        # A runs at t1 (0.9) and t3 (1.0); B runs at t2 only (0.5).
+        return [
+            make_row("c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A),
+            make_row("c1", failed=50, total=100, run_id="b1", run_date=self.T2, fqn=self.B),
+            make_row("c1", failed=0, total=100, run_id="a2", run_date=self.T3, fqn=self.A),
+        ]
+
+    def test_average_carries_each_table_forward_at_every_instant(self):
+        out = compute_entity_results(self._misaligned(), ResultFacets(), table_axis="by_table")
+        assert [p.run_date for p in out.trend] == [self.T1, self.T2, self.T3]
+        # t1: only A has run (B excluded until its first run).
+        assert out.trend[0].pass_rate == pytest.approx(0.9)
+        # t2: A carried forward from t1 (0.9), B's own run (0.5).
+        assert out.trend[1].pass_rate == pytest.approx((0.9 + 0.5) / 2)
+        # t3: A's t3 run (1.0), B carried forward from t2 (0.5).
+        assert out.trend[2].pass_rate == pytest.approx((1.0 + 0.5) / 2)
+
+    def test_average_is_equal_weight_across_tables_not_test_weighted(self):
+        rows = [
+            make_row("c1", failed=0, total=1000, run_id="a1", run_date=self.T1, fqn=self.A),
+            make_row("c1", failed=5, total=10, run_id="b1", run_date=self.T1, fqn=self.B),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
+        # Mean of the table rates (1.0 and 0.5) — not the pooled 1 - 5/1010.
+        assert out.trend[0].pass_rate == pytest.approx(0.75)
+
+    def test_null_rate_asof_run_is_excluded_not_substituted_with_older_run(self):
+        rows = [
+            make_row("c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A),
+            # A's latest run at t2 has no derivable rate (zero/absent totals).
+            make_row("c1", failed=0, total=None, run_id="a2", run_date=self.T2, fqn=self.A),
+            make_row("c1", failed=50, total=100, run_id="b1", run_date=self.T2, fqn=self.B),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
+        # t2: A's as-of run is the NULL-rate one — A drops out (dqlake filters
+        # NULL AFTER picking the as-of run); only B contributes.
+        assert out.trend[1].pass_rate == pytest.approx(0.5)
+
+    def test_point_is_null_when_no_table_has_a_rate_at_the_instant(self):
+        rows = [make_row("c1", failed=0, total=None, run_id="a1", run_date=self.T1, fqn=self.A)]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
+        assert [p.run_date for p in out.trend] == [self.T1]
+        assert out.trend[0].pass_rate is None
+
+    def test_facets_scope_the_carried_forward_rates(self):
+        rows = [
+            make_row(
+                "c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Completeness"
+            ),
+            make_row("c2", failed=90, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Validity"),
+            make_row(
+                "c1", failed=50, total=100, run_id="b1", run_date=self.T2, fqn=self.B, dimension="Completeness"
+            ),
+        ]
+        out = compute_entity_results(rows, ResultFacets(dimensions=("Completeness",)), table_axis="by_table")
+        # A's carried-forward rate at t2 is its Completeness-only rate (0.9),
+        # not the all-checks rate — carry-forward runs over the matched rows.
+        assert out.trend[1].pass_rate == pytest.approx((0.9 + 0.5) / 2)
+
+    def test_single_table_scope_degenerates_to_per_run_rates(self):
+        rows = [
+            make_row("c1", failed=10, total=100, run_id="r1", run_date=self.T1),
+            make_row("c1", failed=50, total=100, run_id="r2", run_date=self.T2),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="tables")
+        assert [(p.run_date, p.pass_rate) for p in out.trend] == [
+            (self.T1, pytest.approx(0.9)),
+            (self.T2, pytest.approx(0.5)),
+        ]
+
+    def test_dateless_rows_form_one_isolated_leading_point(self):
+        rows = [
+            make_row("c1", failed=50, total=100, run_id="r0", run_date=None, fqn=self.A),
+            make_row("c1", failed=0, total=100, run_id="b1", run_date=self.T1, fqn=self.B),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
+        assert [p.run_date for p in out.trend] == [None, self.T1]
+        assert out.trend[0].pass_rate == pytest.approx(0.5)
+        # The dateless run cannot be ordered, so it never carries forward.
+        assert out.trend[1].pass_rate == pytest.approx(1.0)
+
+    def test_trend_by_table_stays_per_run_instant(self):
+        # The dull per-table lines keep their raw per-run points — no
+        # carry-forward there (dqlake's trend_by_table is each table's own
+        # runs).
+        out = compute_entity_results(self._misaligned(), ResultFacets(), table_axis="by_table")
+        assert [(p.run_date, p.series) for p in out.trend_by_table] == [
+            (self.T1, self.A),
+            (self.T2, self.B),
+            (self.T3, self.A),
+        ]
+
+
 class TestAxesSlicing:
     def test_trend_axes_returns_empty_breakdowns(self):
         rows = [make_row("c1", failed=1, total=10)]

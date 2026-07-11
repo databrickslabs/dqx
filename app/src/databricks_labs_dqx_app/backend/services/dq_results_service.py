@@ -208,13 +208,61 @@ def _by_column_rows(rows: list[CheckResultRow]) -> list[GroupRowOut]:
 
 
 def _trend(rows: list[CheckResultRow]) -> list[TrendPointOut]:
-    groups: dict[str | None, _GroupAcc] = defaultdict(_GroupAcc)
+    """AS-OF carry-forward average — the overall "Average" series.
+
+    dqlake's product-trend semantics (its ``_product_trend`` reader /
+    ``v_product_check_consolidated`` view): one point per distinct run
+    instant across the scope; at each instant every member table
+    contributes the pass rate of its most recent run at-or-before that
+    instant, and the point is the EQUAL-WEIGHT mean of those carried
+    values. Exclusion choices follow dqlake exactly:
+
+    - a table with no run yet at an instant is excluded until its first
+      run (the inner join in dqlake's asof CTE yields it no row);
+    - a table whose as-of run has a NULL pass rate (zero tests) is
+      excluded at that instant — never substituted with an older run
+      (dqlake filters NULL AFTER picking the as-of run, rn = 1).
+
+    For a single-table scope this degenerates to the table's own per-run
+    rates (its as-of run at each of its instants is that run). Computed
+    in Python over the already-fetched rows rather than as warehouse SQL:
+    every axis shares one fetch, the row counts are page-sized, and the
+    pure function keeps the carry-forward math unit-testable (the SQL
+    analogue is documented in the Genie space's curated as-of example).
+
+    Rows with no run_date (defensive — legacy/corrupt) cannot be ordered,
+    so they form one isolated leading point and never carry forward.
+    """
+    # (table -> run instant -> pooled accumulator) at the run grain.
+    per_table: dict[str, dict[str | None, _GroupAcc]] = defaultdict(lambda: defaultdict(_GroupAcc))
     for row in rows:
-        groups[row.run_date].add(row)
-    return [
-        TrendPointOut(run_date=run_date, pass_rate=groups[run_date].pass_rate)
-        for run_date in sorted(groups, key=lambda d: d or "")
-    ]
+        per_table[row.table_fqn][row.run_date].add(row)
+
+    out: list[TrendPointOut] = []
+    dateless = [runs[None].pass_rate for runs in per_table.values() if None in runs]
+    if dateless:
+        rated = [rate for rate in dateless if rate is not None]
+        out.append(TrendPointOut(run_date=None, pass_rate=sum(rated) / len(rated) if rated else None))
+
+    # Each table's dated runs, ascending — the carry-forward walk below
+    # advances a per-table cursor instead of re-scanning per instant.
+    series: dict[str, list[tuple[str, float | None]]] = {
+        fqn: sorted((run_date, acc.pass_rate) for run_date, acc in runs.items() if run_date is not None)
+        for fqn, runs in per_table.items()
+    }
+    instants = sorted({run_date for table_runs in series.values() for run_date, _ in table_runs})
+    positions: dict[str, int] = dict.fromkeys(series, 0)
+    carried: dict[str, float | None] = {}
+    for instant in instants:
+        for fqn, table_runs in series.items():
+            i = positions[fqn]
+            while i < len(table_runs) and table_runs[i][0] <= instant:
+                carried[fqn] = table_runs[i][1]
+                i += 1
+            positions[fqn] = i
+        values = [rate for rate in carried.values() if rate is not None]
+        out.append(TrendPointOut(run_date=instant, pass_rate=sum(values) / len(values) if values else None))
+    return out
 
 
 def _trend_grouped(

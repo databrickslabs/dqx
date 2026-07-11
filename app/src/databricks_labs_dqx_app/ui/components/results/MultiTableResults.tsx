@@ -152,15 +152,19 @@ export function buildTableColorMap(
 }
 
 /**
- * Average points for the overall-mode trend chart: the as-of mean plotted
- * ONLY at run instants where every monitored member table has run as-of then
- * (so a freshly-added table yields one Average point now, growing into a
- * smooth line as runs accrue). Mirrors dqlake's inline computation.
+ * Average points for the overall-mode trend chart. The server's `trend` IS
+ * the as-of carry-forward average (at each run instant every member table
+ * contributes its most recent published run at-or-before that instant;
+ * equal-weight mean — see backend `dq_results_service._trend`), so this does
+ * NO averaging of its own: it only applies dqlake's display gate — plot the
+ * Average ONLY from the instant every monitored member has run (so a
+ * freshly-added table yields one Average point now, growing into a smooth
+ * line as runs accrue) — and scales values 0..100.
  *
  * *trendByTable* supplies each member's earliest run; *trend* supplies the
- * entity-mean points; *requiredFqns* is the member-table universe that must
- * all have run for the Average to exist. Values are scaled 0..100 for the
- * chart's OverallStep contract.
+ * server's as-of average points; *requiredFqns* is the member-table universe
+ * that must all have run for the Average to exist. Values are scaled 0..100
+ * for the chart's OverallStep contract.
  */
 export function computeOverallPoints(
   trendByTable: TrendPointOut[] | undefined,
@@ -523,7 +527,8 @@ export function MultiTableResultsSection({
     }));
 
   // Entity average score (dqlake behaviour) = the latest point on the entity
-  // trend (the mean across members). Failed/total tests both sum the same
+  // trend — the as-of mean across members (every member's latest run
+  // contributes there by construction). Failed/total tests both sum the same
   // filtered by_table rows — see sumTestCounts for the documented dqlake
   // deviation (the original's totalTests={0} hid the subtitle).
   const lastTrend = (trends?.trend ?? []).at(-1);
@@ -531,11 +536,12 @@ export function MultiTableResultsSection({
   const { failedTests, totalTests } = sumTestCounts(results?.by_table);
 
   // Over-time chart: a prominent foreground "Average" trendline drawn on top of
-  // dull, thin per-table lines. The Average is the mean of the member tables,
-  // plotted ONLY at run instants where every monitored member has run as-of then
-  // (so a freshly-added table yields one Average point now, growing into a smooth
-  // line as runs accrue). Each table's latest run links to the latest Average
-  // point with a dotted line.
+  // dull, thin per-table lines. The Average is the SERVER's as-of carry-forward
+  // mean of the member tables (each member contributes its most recent run
+  // at-or-before every instant), plotted ONLY at run instants where every
+  // monitored member has run as-of then (so a freshly-added table yields one
+  // Average point now, growing into a smooth line as runs accrue). Each table's
+  // latest run links to the latest Average point with a dotted line.
   const perTable = toTrendSeries(trends?.trend_by_table);
   const tableColorMap = buildTableColorMap(trends?.trend_by_table);
   const overallPoints = computeOverallPoints(
