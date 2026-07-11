@@ -45,6 +45,7 @@ import {
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { usePermissions } from "@/hooks/use-permissions";
 import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
+import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
@@ -319,28 +320,26 @@ function MonitoredTablesPage() {
                   className="h-8 text-xs pl-7"
                 />
               </div>
-              <Select value={catalogFilter} onValueChange={applyFilter(setCatalogFilter)}>
-                <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colCatalog")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allCatalogs")}</SelectItem>
-                  {catalogOptions.map((c) => (
-                    <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={schemaFilter} onValueChange={applyFilter(setSchemaFilter)}>
-                <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colSchema")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allSchemas")}</SelectItem>
-                  {schemaOptions.map((s) => (
-                    <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={catalogFilter}
+                onChange={applyFilter(setCatalogFilter)}
+                options={catalogOptions.map((c) => ({ value: c, label: c }))}
+                allValue={ALL}
+                allLabel={t("monitoredTables.allCatalogs")}
+                searchPlaceholder={t("common.search")}
+                emptyText={t("common.noMatches")}
+                ariaLabel={t("monitoredTables.colCatalog")}
+              />
+              <SearchableSelect
+                value={schemaFilter}
+                onChange={applyFilter(setSchemaFilter)}
+                options={schemaOptions.map((s) => ({ value: s, label: s }))}
+                allValue={ALL}
+                allLabel={t("monitoredTables.allSchemas")}
+                searchPlaceholder={t("common.search")}
+                emptyText={t("common.noMatches")}
+                ariaLabel={t("monitoredTables.colSchema")}
+              />
               <Select value={statusFilter} onValueChange={applyFilter(setStatusFilter)}>
                 <SelectTrigger className={FILTER_TRIGGER_CLASS}>
                   <SelectValue />
@@ -353,17 +352,16 @@ function MonitoredTablesPage() {
                   <SelectItem value="approved" className="text-xs">{t("monitoredTables.statusApproved")}</SelectItem>
                 </SelectContent>
               </Select>
-              <Select value={stewardFilter} onValueChange={applyFilter(setStewardFilter)}>
-                <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colSteward")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allStewards")}</SelectItem>
-                  {stewardOptions.map((s) => (
-                    <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={stewardFilter}
+                onChange={applyFilter(setStewardFilter)}
+                options={stewardOptions.map((s) => ({ value: s, label: s }))}
+                allValue={ALL}
+                allLabel={t("monitoredTables.allStewards")}
+                searchPlaceholder={t("common.search")}
+                emptyText={t("common.noMatches")}
+                ariaLabel={t("monitoredTables.colSteward")}
+              />
             </>
           }
           renderActions={

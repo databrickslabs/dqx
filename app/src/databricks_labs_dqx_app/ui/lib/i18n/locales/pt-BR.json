@@ -43,7 +43,9 @@
     "relativeJustNow": "agora mesmo",
     "relativeMinutesAgo": "há {{count}}m",
     "relativeHoursAgo": "há {{count}}h",
-    "relativeDaysAgo": "há {{count}}d"
+    "relativeDaysAgo": "há {{count}}d",
+    "search": "Buscar…",
+    "noMatches": "Nenhuma correspondência"
   },
   "language": {
     "label": "Idioma",

@@ -43,7 +43,9 @@
     "relativeJustNow": "proprio ora",
     "relativeMinutesAgo": "{{count}}m fa",
     "relativeHoursAgo": "{{count}}h fa",
-    "relativeDaysAgo": "{{count}}g fa"
+    "relativeDaysAgo": "{{count}}g fa",
+    "search": "Cerca…",
+    "noMatches": "Nessun risultato"
   },
   "language": {
     "label": "Lingua",

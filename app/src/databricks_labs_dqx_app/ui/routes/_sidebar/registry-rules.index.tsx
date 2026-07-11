@@ -58,6 +58,7 @@ import { invalidateAfterRegistryRuleApprovalChange } from "@/lib/registry-rule-i
 import { cn } from "@/lib/utils";
 import { Pagination } from "@/components/Pagination";
 import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
+import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { RulesTable, getRulesTableSortValue, type RulesTableSortKey } from "@/components/rules/RulesTable";
 import {
   RESERVED_NAME_KEY,
@@ -522,17 +523,16 @@ function RegistryRulesPage() {
           ))}
         </SelectContent>
       </Select>
-      <Select value={stewardFilter} onValueChange={applyFilter(setStewardFilter)}>
-        <SelectTrigger className={FILTER_CLASS}>
-          <SelectValue placeholder={t("rulesRegistry.stewardPlaceholder")} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL} className="text-xs">{t("rulesRegistry.allStewards")}</SelectItem>
-          {stewardValues.map((v) => (
-            <SelectItem key={v} value={v} className="text-xs">{v}</SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <SearchableSelect
+        value={stewardFilter}
+        onChange={applyFilter(setStewardFilter)}
+        options={stewardValues.map((v) => ({ value: v, label: v }))}
+        allValue={ALL}
+        allLabel={t("rulesRegistry.allStewards")}
+        searchPlaceholder={t("common.search")}
+        emptyText={t("common.noMatches")}
+        ariaLabel={t("rulesRegistry.stewardPlaceholder")}
+      />
       <Input
         placeholder={t("rulesRegistry.tagPlaceholder")}
         value={tagFilter}

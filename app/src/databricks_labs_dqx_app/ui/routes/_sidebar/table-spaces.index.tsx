@@ -17,13 +17,6 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -44,7 +37,7 @@ import {
   type DataProductOut,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
-import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
+import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { cn } from "@/lib/utils";
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -345,17 +338,16 @@ function DataProductsPage() {
                   className="h-8 text-xs pl-7"
                 />
               </div>
-              <Select value={stewardFilter} onValueChange={applyFilter(setStewardFilter)}>
-                <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("dataProducts.colSteward")}>
-                  <SelectValue placeholder={t("dataProducts.stewardPlaceholder")} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL} className="text-xs">{t("dataProducts.allStewards")}</SelectItem>
-                  {stewardOptions.map((s) => (
-                    <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={stewardFilter}
+                onChange={applyFilter(setStewardFilter)}
+                options={stewardOptions.map((s) => ({ value: s, label: s }))}
+                allValue={ALL}
+                allLabel={t("dataProducts.allStewards")}
+                searchPlaceholder={t("common.search")}
+                emptyText={t("common.noMatches")}
+                ariaLabel={t("dataProducts.colSteward")}
+              />
             </>
           }
           emptyState={
