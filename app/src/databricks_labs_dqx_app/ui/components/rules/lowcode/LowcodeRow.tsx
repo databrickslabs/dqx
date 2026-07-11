@@ -40,10 +40,18 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
   return (
     <div
       className={cn(
-        "gap-2 items-center py-1",
+        // Left-packed row (item 3). `max-w-2xl` caps the grid so on wide
+        // layouts (e.g. the routed detail page) the controls stop stretching
+        // edge-to-edge ("fully justified"); the block is left-aligned so the
+        // slack sits on the right. Each control fills its `fr` track (the
+        // triggers carry `w-full`) so the columns read as a flush, aligned
+        // table — matching dqlake's LowcodeRow, whose base SelectTrigger is
+        // `w-full` (DQX's is `w-fit`, which is what left the earlier build
+        // looking ragged with controls pinned to the left of each track).
+        "grid max-w-2xl gap-2 items-center py-1",
         readOnly
-          ? "grid grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.4fr)]"
-          : "grid grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.4fr)_28px]",
+          ? "grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.4fr)]"
+          : "grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.4fr)_28px]",
       )}
     >
       {isFirst ? (
@@ -89,11 +97,11 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
 
       {row.kind === "row" ? (
         <Select value={row.column_ref || ""} onValueChange={(v) => onChange({ ...row, column_ref: v } as AnyRow)}>
-          {/* Content-width (no `w-full`) so the picker sizes to its column
-              value rather than stretching to fill its grid track — matches
-              dqlake's LowcodeRow, de-justifying the condition builder (item 4,
-              partially reversing P23-A's `w-full` sweep on this control). */}
-          <SelectTrigger className="h-8 font-mono text-xs">
+          {/* `w-full` so the picker fills its grid track — matching dqlake's
+              LowcodeRow (whose base SelectTrigger is `w-full`), so the column
+              pickers line up flush down the stack instead of floating
+              content-width at the left of each track (item 3). */}
+          <SelectTrigger className="h-8 w-full font-mono text-xs">
             <SelectValue placeholder={t("rulesRegistry.lowcodeColumnPlaceholder")} />
           </SelectTrigger>
           <SelectContent>

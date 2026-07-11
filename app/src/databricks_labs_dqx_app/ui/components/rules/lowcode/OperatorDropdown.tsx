@@ -39,10 +39,10 @@ export function OperatorDropdown({ value, family, onChange }: Props) {
 
   return (
     <Select value={value || ""} onValueChange={onChange}>
-      {/* Content-width (no `w-full`) per dqlake — the operator dropdown sizes
-          to its selected operator instead of filling its grid track, de-
-          justifying the condition builder (item 4). */}
-      <SelectTrigger className="h-8 font-mono text-xs">
+      {/* `w-full` so the operator dropdown fills its grid track and lines up
+          flush with the column picker and value cell — matching dqlake's row,
+          whose base SelectTrigger is `w-full` (item 3). */}
+      <SelectTrigger className="h-8 w-full font-mono text-xs">
         <SelectValue placeholder={t("rulesRegistry.lowcodeOperatorPlaceholder")} />
       </SelectTrigger>
       <SelectContent>
