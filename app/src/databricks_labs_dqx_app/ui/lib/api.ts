@@ -3377,8 +3377,17 @@ export type TrendPointOutRuleCount = number | null;
 
 export type TrendPointOutTotalTests = number | null;
 
+export type TrendPointOutVersion = number | null;
+
 /**
  * One over-time point; *series* is set on grouped trends only.
+
+*version* is the monitored-table binding version active at this run
+instant (the highest approved version whose freeze time is at/-before
+the run); 0 before the first approval, None when not applicable
+(grouped trends, or scopes without a single binding). Only the
+single-table overall trend populates it — the UI marks the runs where
+it increments.
  */
 export interface TrendPointOut {
   run_date?: TrendPointOutRunDate;
@@ -3386,6 +3395,7 @@ export interface TrendPointOut {
   pass_rate?: TrendPointOutPassRate;
   rule_count?: TrendPointOutRuleCount;
   total_tests?: TrendPointOutTotalTests;
+  version?: TrendPointOutVersion;
 }
 
 export type UpdateDataProductInName = string | null;

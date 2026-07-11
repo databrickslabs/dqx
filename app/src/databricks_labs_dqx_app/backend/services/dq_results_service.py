@@ -35,6 +35,7 @@ import json
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 
 from databricks_labs_dqx_app.backend.metrics_utils import safe_int
 from databricks_labs_dqx_app.backend.models import (
@@ -289,6 +290,62 @@ def _trend_asof(rows: list[CheckResultRow]) -> list[TrendPointOut]:
         rates = [acc.pass_rate for acc in per_instant[run_date].values() if acc.pass_rate is not None]
         out.append(TrendPointOut(run_date=run_date, pass_rate=sum(rates) / len(rates) if rates else None))
     return out
+
+
+def _parse_run_instant(raw: str | None) -> datetime | None:
+    """Parse a trend point's ``run_date`` into a UTC-aware datetime.
+
+    Runs surface ``run_date`` as ``CAST(run_time AS STRING)`` —
+    ``'YYYY-MM-DD HH:MM:SS[.ffffff]'``, assumed UTC — but an ISO-8601
+    string (``'…T…Z'`` / with an offset) parses too. Returns None when
+    unparseable so callers can leave the point untouched.
+    """
+    if not raw:
+        return None
+    text = raw.strip().replace(" ", "T")
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
+def annotate_trend_versions(
+    trend: list[TrendPointOut],
+    version_freezes: list[tuple[int, datetime | None]],
+) -> None:
+    """Stamp each overall-trend point with the binding version active then.
+
+    *version_freezes* is the monitored-table binding's ``(version,
+    frozen_at)`` history (order-independent). Each point gets the highest
+    version whose freeze time is at/-before its run instant; points before
+    the first approval get version 0. Mutates *trend* in place. A point
+    whose ``run_date`` is unparseable is left as-is (version stays None),
+    and the whole call is a no-op when no freeze carries a timestamp.
+    """
+    freezes = sorted(
+        (
+            (ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc), ver)
+            for ver, ts in version_freezes
+            if ts is not None
+        ),
+        key=lambda kv: kv[0],
+    )
+    if not freezes:
+        return
+    for point in trend:
+        run_dt = _parse_run_instant(point.run_date)
+        if run_dt is None:
+            continue
+        active = 0
+        for ts, ver in freezes:
+            if ts <= run_dt:
+                active = ver
+            else:
+                break
+        point.version = active
 
 
 def _trend_grouped(

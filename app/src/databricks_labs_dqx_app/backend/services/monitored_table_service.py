@@ -124,6 +124,7 @@ class MonitoredTableService:
         self._sql = sql
         self._profiling_sql = profiling_sql
         self._table = sql.fqn("dq_monitored_tables")
+        self._versions_table = sql.fqn("dq_monitored_table_versions")
         self._applied_table = sql.fqn("dq_applied_rules")
         self._rules_table = sql.fqn("dq_rules")
         self._quality_rules_table = sql.fqn("dq_quality_rules")
@@ -468,6 +469,28 @@ class MonitoredTableService:
         if not rows:
             return None
         return self._row_to_table(rows[0])
+
+    def get_version_freezes(self, binding_id: str) -> list[tuple[int, datetime | None]]:
+        """The binding's ``(version, frozen_at)`` approval history.
+
+        One entry per frozen approved rule-set snapshot in
+        ``dq_monitored_table_versions`` (``created_at`` is when that
+        version was first approved). Feeds the results trend's
+        version-increment markers. Returns an empty list for a binding
+        with no approved versions.
+        """
+        e = escape_sql_string(binding_id)
+        created_at = self._sql.ts_text("created_at")
+        sql = (
+            f"SELECT version, {created_at} AS created_at "  # noqa: S608
+            f"FROM {self._versions_table} WHERE binding_id = '{e}' ORDER BY version"
+        )
+        out: list[tuple[int, datetime | None]] = []
+        for row in self._sql.query(sql):
+            if row[0] in (None, ""):
+                continue
+            out.append((int(row[0]), self._parse_timestamp(row[1])))
+        return out
 
     def _list_applied_rules(self, binding_id: str) -> list[AppliedRuleSummary]:
         e = escape_sql_string(binding_id)

@@ -1462,13 +1462,22 @@ class GroupRowOut(BaseModel):
 
 
 class TrendPointOut(BaseModel):
-    """One over-time point; *series* is set on grouped trends only."""
+    """One over-time point; *series* is set on grouped trends only.
+
+    *version* is the monitored-table binding version active at this run
+    instant (the highest approved version whose freeze time is at/-before
+    the run); 0 before the first approval, None when not applicable
+    (grouped trends, or scopes without a single binding). Only the
+    single-table overall trend populates it — the UI marks the runs where
+    it increments.
+    """
 
     run_date: str | None = None
     series: str | None = None
     pass_rate: float | None = None
     rule_count: int | None = None
     total_tests: int | None = None
+    version: int | None = None
 
 
 class TrendCountPointOut(BaseModel):

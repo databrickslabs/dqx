@@ -9,6 +9,7 @@ import {
   Legend,
   Line,
   ReferenceArea,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -495,6 +496,7 @@ export function ScoreTrendChart({
   collapsed,
   onToggleCollapse,
   animate = false,
+  versionMarkers,
 }: {
   data?: Array<TrendRow>;
   countData?: Array<CountRow>;
@@ -529,6 +531,11 @@ export function ScoreTrendChart({
   /** When true, animate the overall-score line drawing in left→right on mount
    *  (recharts' native reveal). Used by the homepage. */
   animate?: boolean;
+  /** Optional subtle vertical markers at the runs where the monitored-table
+   *  binding version incremented (#65). Each `run_date` is matched to its `ts`
+   *  on the time axis; `label` is the pre-formatted tag (e.g. "v2"). Only the
+   *  single-table overall-score trend passes these. */
+  versionMarkers?: Array<{ run_date: string; label: string }>;
 }) {
   const { t } = useTranslation();
   const overallLabel = overallLabelProp ?? t("resultsUi.overallSeries");
@@ -1074,6 +1081,29 @@ export function ScoreTrendChart({
               {overallMode && !hidden.has(overallLabel) && (
                 <OverallLayer points={overall ?? []} />
               )}
+              {/* Subtle version-increment markers (#65): a dashed vertical rule
+                  with a small "v{n}" tag at each run where the binding version
+                  bumped. Clipped when the run falls outside the zoom window. */}
+              {(versionMarkers ?? []).map((m) => {
+                const x = Date.parse(m.run_date);
+                if (!Number.isFinite(x)) return null;
+                return (
+                  <ReferenceLine
+                    key={`vm-${m.run_date}`}
+                    x={x}
+                    stroke="var(--muted-foreground)"
+                    strokeDasharray="2 3"
+                    strokeOpacity={0.5}
+                    ifOverflow="hidden"
+                    label={{
+                      value: m.label,
+                      position: "insideTopLeft",
+                      fontSize: 10,
+                      fill: "var(--muted-foreground)",
+                    }}
+                  />
+                );
+              })}
               {/* Highlight the drag-selected zoom window while the pointer is
                   down; committed on mouse-up, cleared on release. */}
               {dragging && (

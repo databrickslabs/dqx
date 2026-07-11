@@ -600,6 +600,25 @@ function ResultsBody({
     { key: "failed_records", label: "Rows" },
   ]);
 
+  // #65: mark the runs where the binding version incremented vs the previous
+  // point. The overall trend is sorted ascending by run; a point carries the
+  // version active as-of its run (backend-stamped), so a strict increase is a
+  // new approval. Kept subtle and only on this single-table overall trend.
+  const versionMarkers: Array<{ run_date: string; label: string }> = [];
+  {
+    let prevVersion: number | null = null;
+    for (const point of trend?.trend ?? []) {
+      const version = point.version ?? null;
+      if (version != null && prevVersion != null && version > prevVersion && point.run_date) {
+        versionMarkers.push({
+          run_date: String(point.run_date),
+          label: t("resultsUi.versionMarker", { version }),
+        });
+      }
+      if (version != null) prevVersion = version;
+    }
+  }
+
   // Rule chips may carry a registry rule_id as their value — show the
   // matching by_rule row's (newest-run) label instead of the opaque id.
   const ruleChipRows = [...base.by_rule, ...filtered.by_rule];
@@ -698,6 +717,7 @@ function ResultsBody({
             <ScoreTrendChart
               data={toTrend(trend?.trend)}
               title={t("resultsUi.overallDqScoreTitle")}
+              versionMarkers={versionMarkers}
             />
           </ChartFrame>
           <div className="grid gap-6 md:grid-cols-2">

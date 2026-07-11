@@ -2318,6 +2318,7 @@
     "noRunsYet": "Aún no hay ejecuciones.",
     "passRateSeries": "Tasa de aprobación",
     "resetZoom": "Restablecer zoom",
+    "versionMarker": "v{{version}}",
     "overallSeries": "General",
     "averageSeries": "Promedio",
     "countInfo": "Una <b>regla</b> es una lógica reutilizable. Una <b>comprobación</b> es cuando una regla se aplica a una columna o conjunto de columnas. Una <b>prueba</b> es cuando una comprobación se ejecuta sobre una fila de datos",

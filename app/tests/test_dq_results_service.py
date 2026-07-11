@@ -19,12 +19,15 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from dataclasses import replace
+from datetime import datetime
 
 import pytest
 
+from databricks_labs_dqx_app.backend.models import TrendPointOut
 from databricks_labs_dqx_app.backend.services.dq_results_service import (
     CheckResultRow,
     ResultFacets,
+    annotate_trend_versions,
     compute_entity_results,
     parse_check_rows,
 )
@@ -979,3 +982,61 @@ class TestAxesSlicing:
         rows = [make_row("c1", failed=1, total=10)]
         out = compute_entity_results(rows, ResultFacets(), axes="bogus")
         assert out.by_rule != [] and out.trend != []
+
+
+class TestAnnotateTrendVersions:
+    """`annotate_trend_versions` stamps each overall-trend point with the
+    binding version active at its run instant (#65)."""
+
+    @staticmethod
+    def _pts(*run_dates: str) -> list[TrendPointOut]:
+        return [TrendPointOut(run_date=d, pass_rate=1.0) for d in run_dates]
+
+    def test_stamps_active_version_per_run(self):
+        # v1 frozen 06-10, v2 frozen 06-20.
+        freezes = [
+            (1, datetime.fromisoformat("2026-06-10T00:00:00+00:00")),
+            (2, datetime.fromisoformat("2026-06-20T00:00:00+00:00")),
+        ]
+        pts = self._pts(
+            "2026-06-05 00:00:00",  # before any approval -> 0
+            "2026-06-15 00:00:00",  # under v1
+            "2026-06-25 00:00:00",  # under v2
+        )
+        annotate_trend_versions(pts, freezes)
+        assert [p.version for p in pts] == [0, 1, 2]
+
+    def test_run_exactly_at_freeze_is_inclusive(self):
+        freezes = [(1, datetime.fromisoformat("2026-06-10T00:00:00+00:00"))]
+        pts = self._pts("2026-06-10 00:00:00")
+        annotate_trend_versions(pts, freezes)
+        assert pts[0].version == 1
+
+    def test_iso_and_z_suffixed_run_dates_parse(self):
+        freezes = [(3, datetime.fromisoformat("2026-06-01T00:00:00+00:00"))]
+        pts = [
+            TrendPointOut(run_date="2026-06-02T12:00:00Z", pass_rate=1.0),
+            TrendPointOut(run_date="2026-06-02T12:00:00+00:00", pass_rate=1.0),
+        ]
+        annotate_trend_versions(pts, freezes)
+        assert [p.version for p in pts] == [3, 3]
+
+    def test_freeze_order_independent(self):
+        freezes = [
+            (2, datetime.fromisoformat("2026-06-20T00:00:00+00:00")),
+            (1, datetime.fromisoformat("2026-06-10T00:00:00+00:00")),
+        ]
+        pts = self._pts("2026-06-25 00:00:00")
+        annotate_trend_versions(pts, freezes)
+        assert pts[0].version == 2
+
+    def test_no_dated_freezes_is_noop(self):
+        pts = self._pts("2026-06-25 00:00:00")
+        annotate_trend_versions(pts, [(1, None)])
+        assert pts[0].version is None
+
+    def test_unparseable_run_date_left_untouched(self):
+        freezes = [(1, datetime.fromisoformat("2026-06-10T00:00:00+00:00"))]
+        pts = [TrendPointOut(run_date="not-a-date", pass_rate=1.0)]
+        annotate_trend_versions(pts, freezes)
+        assert pts[0].version is None

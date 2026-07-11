@@ -68,6 +68,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import DataPr
 from databricks_labs_dqx_app.backend.services.dq_results_service import (
     CheckResultRow,
     ResultFacets,
+    annotate_trend_versions,
     compute_entity_results,
     parse_check_rows,
 )
@@ -959,6 +960,7 @@ def get_table_results(
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -989,7 +991,7 @@ def get_table_results(
     except Exception as exc:
         logger.exception(f"Failed to compute results for {table_fqn}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return compute_entity_results(
+    result = compute_entity_results(
         rows,
         _facets(dimension, severity, rule, column),
         axes=axes,
@@ -997,3 +999,14 @@ def get_table_results(
         failed_records_by_run=failed_records,
         failures_ignore_facets=True,
     )
+    # Stamp the overall-score trend with the binding version active at each
+    # run (#65) so the UI can mark version increments. Best-effort: a lookup
+    # failure or an unmonitored table just leaves version=None.
+    if _wants_trends(axes) and result.trend:
+        try:
+            binding_id = monitored_tables.get_binding_ids_by_table_fqn([table_fqn]).get(table_fqn)
+            if binding_id:
+                annotate_trend_versions(result.trend, monitored_tables.get_version_freezes(binding_id))
+        except Exception:  # noqa: BLE001
+            logger.warning(f"Skipping trend version markers for {table_fqn}: lookup failed", exc_info=True)
+    return result
