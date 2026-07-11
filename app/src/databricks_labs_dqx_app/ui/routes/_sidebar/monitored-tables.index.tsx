@@ -129,26 +129,37 @@ function MonitoredTablesPage() {
   const [page, setPage] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
 
+  // Steward is filtered CLIENT-SIDE (below), not pushed down as a server
+  // param, to match how the Rules Registry and Table Spaces overviews handle
+  // it — and the client-side DQ-score bucket. The backend list route does
+  // honor a `steward` query param, but keeping all facet filtering over the
+  // one already-fetched row set keeps the three overviews consistent and
+  // avoids a refetch per steward change (P25 item 92).
   const queryParams = useMemo(
     () => ({
       status: statusFilter === ALL ? undefined : statusFilter,
-      steward: stewardFilter === ALL ? undefined : stewardFilter,
       catalog: catalogFilter === ALL ? undefined : catalogFilter,
       schema: schemaFilter === ALL ? undefined : schemaFilter,
       name: nameSearch.trim() || undefined,
     }),
-    [statusFilter, stewardFilter, catalogFilter, schemaFilter, nameSearch],
+    [statusFilter, catalogFilter, schemaFilter, nameSearch],
   );
 
   const { data, isLoading, isError, refetch } = useListMonitoredTables(queryParams);
   const tables = useMemo(() => data?.data ?? [], [data]);
 
-  // DQ-score bucket is applied client-side over the server-filtered rows —
-  // the cached score is already LEFT-JOINed onto each row by the list
-  // endpoint, so no extra fetch is needed (P25 item 91, matching dqlake).
+  // Steward and DQ-score bucket are applied client-side over the
+  // server-filtered rows — the steward and cached score are already on each
+  // row, so no extra fetch is needed (P25 items 91/92, matching how RR/TS
+  // filter steward client-side).
   const visibleTables = useMemo(
-    () => tables.filter((r) => matchesDqScoreBucket(r.score, scoreFilter)),
-    [tables, scoreFilter],
+    () =>
+      tables.filter(
+        (r) =>
+          (stewardFilter === ALL || (r.table.steward ?? "") === stewardFilter) &&
+          matchesDqScoreBucket(r.score, scoreFilter),
+      ),
+    [tables, stewardFilter, scoreFilter],
   );
 
   // Cascading: schema options restricted to whatever catalog is selected —
