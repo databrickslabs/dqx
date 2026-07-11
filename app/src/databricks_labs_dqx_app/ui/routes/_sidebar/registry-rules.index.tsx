@@ -484,8 +484,8 @@ function RegistryRulesPage() {
           <SelectItem value={ALL} className="text-xs">{t("rulesRegistry.allStatuses")}</SelectItem>
           <SelectItem value="draft" className="text-xs">{t("rulesRegistry.statusDraft")}</SelectItem>
           <SelectItem value="pending_approval" className="text-xs">{t("rulesRegistry.statusPendingApproval")}</SelectItem>
-          <SelectItem value="approved" className="text-xs">{t("rulesRegistry.statusApproved")}</SelectItem>
           <SelectItem value="rejected" className="text-xs">{t("rulesRegistry.statusRejected")}</SelectItem>
+          <SelectItem value="approved" className="text-xs">{t("rulesRegistry.statusApproved")}</SelectItem>
           <SelectItem value="deprecated" className="text-xs">{t("rulesRegistry.statusDeprecated")}</SelectItem>
         </SelectContent>
       </Select>
