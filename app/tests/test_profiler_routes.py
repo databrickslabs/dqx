@@ -16,14 +16,19 @@ covered by their own service-level tests, so we focus the suite on:
 
 from __future__ import annotations
 
-import pytest
+from unittest.mock import MagicMock, create_autospec
 
+import pytest
+from fastapi import HTTPException
+
+from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.models import (
     BatchProfileRunFailure,
     BatchProfileRunOut,
     ProfileRunOut,
 )
-from databricks_labs_dqx_app.backend.routes.v1.profiler import _classify_table_error
+from databricks_labs_dqx_app.backend.routes.v1.profiler import _classify_table_error, list_profile_runs
+from databricks_labs_dqx_app.backend.services.job_service import JobService
 
 
 # ---------------------------------------------------------------------------
@@ -198,40 +203,64 @@ def test_classify_returns_documented_status_codes(raw_error: str, expected_statu
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def job_service(sql_executor_mock: MagicMock, workspace_client_mock: MagicMock) -> JobService:
+    """A ``JobService`` wired to the shared spec-bound mocks from conftest."""
+    return JobService(ws=workspace_client_mock, job_id="123", sql=sql_executor_mock)
+
+
 class TestListRunRowsSourceTableFilter:
     """The single-table profile view scopes the runs query server-side rather
     than pulling the full history (limit 500) and filtering in the browser."""
 
-    @staticmethod
-    def _job_service() -> tuple[object, MagicMock]:
-        from databricks.sdk import WorkspaceClient
-        from unittest.mock import create_autospec
-
-        from databricks_labs_dqx_app.backend.services.job_service import JobService
-        from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-
-        sql = create_autospec(SqlExecutor, instance=True)
-        sql.query_dicts.return_value = []
-        ws = create_autospec(WorkspaceClient, instance=True)
-        return JobService(ws=ws, job_id="123", sql=sql), sql
-
-    def test_no_filter_emits_no_where_clause(self) -> None:
-        svc, sql = self._job_service()
-        svc.list_run_rows("main.dqx.dq_profiling_results")
-        emitted = sql.query_dicts.call_args.args[0]
+    def test_no_filter_emits_no_where_clause(self, job_service: JobService, sql_executor_mock: MagicMock) -> None:
+        job_service.list_run_rows("main.dqx.dq_profiling_results")
+        emitted = sql_executor_mock.query_dicts.call_args.args[0]
         assert "WHERE source_table_fqn" not in emitted
 
-    def test_filter_scopes_by_source_table_fqn(self) -> None:
-        svc, sql = self._job_service()
-        svc.list_run_rows("main.dqx.dq_profiling_results", source_table_fqn="cat.sch.orders")
-        emitted = sql.query_dicts.call_args.args[0]
+    def test_filter_scopes_by_source_table_fqn(self, job_service: JobService, sql_executor_mock: MagicMock) -> None:
+        job_service.list_run_rows("main.dqx.dq_profiling_results", source_table_fqn="cat.sch.orders")
+        emitted = sql_executor_mock.query_dicts.call_args.args[0]
         assert "WHERE source_table_fqn = 'cat.sch.orders'" in emitted
 
-    def test_filter_escapes_single_quotes(self) -> None:
+    def test_filter_escapes_single_quotes(self, job_service: JobService, sql_executor_mock: MagicMock) -> None:
         """A source FQN can't legitimately contain a quote, but the literal
         must still be escaped (doubled) so it can never break out of the
         string — matching every other literal on the Delta SQL path."""
-        svc, sql = self._job_service()
-        svc.list_run_rows("main.dqx.dq_profiling_results", source_table_fqn="a.b.o'x")
-        emitted = sql.query_dicts.call_args.args[0]
+        job_service.list_run_rows("main.dqx.dq_profiling_results", source_table_fqn="a.b.o'x")
+        emitted = sql_executor_mock.query_dicts.call_args.args[0]
         assert "'a.b.o''x'" in emitted
+
+
+# ---------------------------------------------------------------------------
+# list_profile_runs — table_fqn is validated before it reaches the WHERE builder
+# ---------------------------------------------------------------------------
+
+
+class TestListProfileRunsTableFqnValidation:
+    """``escape_sql_string`` does not escape backslashes and relies on
+    ``validate_fqn`` upstream. The route must reject a backslash-containing /
+    otherwise-invalid ``table_fqn`` with a 400 before it hits ``list_run_rows``.
+    """
+
+    def test_backslash_table_fqn_rejected_before_query(self, app_config: AppConfig) -> None:
+        job_svc = create_autospec(JobService, instance=True)
+        with pytest.raises(HTTPException) as exc_info:
+            list_profile_runs(job_svc, app_config, table_fqn="cat.sch.tab\\x")
+        assert exc_info.value.status_code == 400
+        job_svc.list_run_rows.assert_not_called()
+
+    def test_non_three_part_table_fqn_rejected(self, app_config: AppConfig) -> None:
+        job_svc = create_autospec(JobService, instance=True)
+        with pytest.raises(HTTPException) as exc_info:
+            list_profile_runs(job_svc, app_config, table_fqn="not_a_fqn")
+        assert exc_info.value.status_code == 400
+        job_svc.list_run_rows.assert_not_called()
+
+    def test_valid_table_fqn_reaches_service(self, app_config: AppConfig) -> None:
+        job_svc = create_autospec(JobService, instance=True)
+        job_svc.list_run_rows.return_value = []
+        result = list_profile_runs(job_svc, app_config, table_fqn="cat.sch.orders")
+        assert result == []
+        job_svc.list_run_rows.assert_called_once()
+        assert job_svc.list_run_rows.call_args.kwargs["source_table_fqn"] == "cat.sch.orders"

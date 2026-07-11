@@ -33,6 +33,7 @@ from databricks_labs_dqx_app.backend.models import (
 from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, has_terminal_result, update_run_status
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
+from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 
 router = APIRouter()
 
@@ -104,6 +105,17 @@ def list_profile_runs(
     returned (server-side filter) so single-table views don't pull the full
     history and filter client-side.
     """
+    # Validate before the value reaches the WHERE builder: the filter literal
+    # is embedded via ``escape_sql_string``, which deliberately does NOT escape
+    # backslashes and relies on ``validate_fqn`` upstream to reject them (see
+    # its docstring). This mirrors the POST ``/run`` path where ``create_view``
+    # validates the FQN. Kept outside the ``try`` below so the ValueError maps
+    # to a clean 400 instead of being re-wrapped as a generic 500.
+    if table_fqn:
+        try:
+            validate_fqn(table_fqn)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     try:
         table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
         rows = job_svc.list_run_rows(table, source_table_fqn=table_fqn)
