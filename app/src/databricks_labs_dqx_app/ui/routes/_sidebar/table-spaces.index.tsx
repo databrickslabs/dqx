@@ -344,19 +344,17 @@ function DataProductsPage() {
                   className="h-8 text-xs pl-7"
                 />
               </div>
-              {stewardOptions.length > 0 && (
-                <Select value={stewardFilter} onValueChange={applyFilter(setStewardFilter)}>
-                  <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("dataProducts.colSteward")}>
-                    <SelectValue placeholder={t("dataProducts.stewardPlaceholder")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL} className="text-xs">{t("dataProducts.allStewards")}</SelectItem>
-                    {stewardOptions.map((s) => (
-                      <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
+              <Select value={stewardFilter} onValueChange={applyFilter(setStewardFilter)}>
+                <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("dataProducts.colSteward")}>
+                  <SelectValue placeholder={t("dataProducts.stewardPlaceholder")} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL} className="text-xs">{t("dataProducts.allStewards")}</SelectItem>
+                  {stewardOptions.map((s) => (
+                    <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </>
           }
           emptyState={
