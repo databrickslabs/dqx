@@ -1,11 +1,12 @@
 """Unit tests for ``backend.services.genie_space_service``.
 
 Pins the serialized_space v2 JSON contract (the REST payload shapes the
-Genie API expects), the aggregates-only permission boundary (no
-quarantine / row-level objects anywhere in the space), the config-hash
-idempotency semantics including retry-on-PATCH-failure, and the status
-setting transitions — all against a mocked ``ws.api_client.do`` and an
-in-memory settings fake (no live workspace).
+Genie API expects), the permission boundary (the only row-level object is
+the entitlement-gated ``v_dq_failing_rows`` view — never the raw
+quarantine table), the config-hash idempotency semantics including
+retry-on-PATCH-failure, and the status setting transitions — all against
+a mocked ``ws.api_client.do`` and an in-memory settings fake (no live
+workspace).
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ SCHEMA = "dq"
 MV_FQN = f"{CATALOG}.{SCHEMA}.mv_dq_scores"
 RESULTS_FQN = f"{CATALOG}.{SCHEMA}.v_dq_check_results"
 ATTRIBUTION_FQN = f"{CATALOG}.{SCHEMA}.v_dq_check_attribution"
+FAILING_FQN = f"{CATALOG}.{SCHEMA}.v_dq_failing_rows"
 
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 
@@ -94,32 +96,49 @@ def test_serialized_space_top_level_shape() -> None:
     assert space["instructions"]["sql_functions"] == []
 
 
-def test_data_sources_are_exactly_the_three_score_objects() -> None:
+def test_data_sources_are_exactly_the_four_score_objects() -> None:
     space = build()
     tables = space["data_sources"]["tables"]
-    assert [t["identifier"] for t in tables] == sorted([ATTRIBUTION_FQN, RESULTS_FQN])
+    assert [t["identifier"] for t in tables] == sorted([ATTRIBUTION_FQN, RESULTS_FQN, FAILING_FQN])
     mvs = space["data_sources"]["metric_views"]
     assert [m["identifier"] for m in mvs] == [MV_FQN]
     for src in [*tables, *mvs]:
         assert src["description"] and all(isinstance(d, str) for d in src["description"])
 
 
-def test_space_never_references_row_level_objects() -> None:
-    """The SP-owned space must expose aggregates only (permission model)."""
+def test_space_never_references_ungated_row_level_objects() -> None:
+    """The only row-level object is the entitlement-gated view — the raw
+    quarantine table (and dqlake's row objects) must never appear."""
     dump = json.dumps(build())
-    for forbidden in ("quarantine", "dq_quarantine_records", "row_values", "failed_rows"):
+    for forbidden in ("dq_quarantine_records", "row_values", "failed_rows_latest", "record_key"):
         assert forbidden not in dump
+    assert FAILING_FQN in dump
 
 
-def test_sample_questions_match_and_drop_row_level_ones() -> None:
+def test_failing_rows_source_description_grounded_in_real_columns() -> None:
+    space = build()
+    by_id = {t["identifier"]: t for t in space["data_sources"]["tables"]}
+    desc = "".join(by_id[FAILING_FQN]["description"])
+    # The REAL view columns (entitlement_service.failing_rows_view_ddl),
+    # requesting_user excluded there by design.
+    for col in ("quarantine_id", "run_id", "source_table_fqn", "row_data", "errors", "warnings", "created_at"):
+        assert col in desc
+    assert "requesting_user" not in desc
+    assert "VARIANT" in desc
+    assert "to_json(row_data)" in desc
+    # Entitlement honesty: empty may mean unverified, not clean.
+    assert "DQX Studio" in desc
+
+
+def test_sample_questions_restore_the_row_level_ones() -> None:
     space = build()
     entries = space["config"]["sample_questions"]
     assert sorted(q["question"][0] for q in entries) == sorted(gs.SAMPLE_QUESTIONS)
     assert [e["id"] for e in entries] == sorted(e["id"] for e in entries)
     assert all(_HEX32.fullmatch(e["id"]) for e in entries)
-    # dqlake's row-level chips are gone.
-    assert "Show me the rows that failed." not in gs.SAMPLE_QUESTIONS
-    assert "What are the failing rows with the most number of rules failed?" not in gs.SAMPLE_QUESTIONS
+    # dqlake's row-level chips are restored over the gated view (P4.2).
+    assert "Show me the rows that failed." in gs.SAMPLE_QUESTIONS
+    assert "What are the failing rows with the most rules failed?" in gs.SAMPLE_QUESTIONS
     # The one deliberate addition.
     assert "How many draft runs happened recently?" in gs.SAMPLE_QUESTIONS
 
@@ -130,13 +149,26 @@ def test_text_instructions_single_entry_with_newline_terminated_paragraphs() -> 
     assert len(text_instructions) == 1
     content = text_instructions[0]["content"]
     assert content == list(gs.TEXT_INSTRUCTIONS)
-    assert len(content) == 9
+    assert len(content) == 10
     assert all(p.endswith("\n") for p in content)
     joined = "".join(content)
     assert "MEASURE()" in joined
     assert "published" in joined and "draft" in joined
     assert "(Data product: <name> — tables: ...)" in joined
-    assert "Row-level failing records are not available here" in joined
+
+
+def test_text_instructions_row_source_and_draft_scoping() -> None:
+    joined = "".join(gs.TEXT_INSTRUCTIONS)
+    # Row source: whole record per row, wrapper columns stay internal,
+    # published-run scoping, and honesty about the entitlement gate.
+    assert "v_dq_failing_rows" in joined
+    assert "to_json(row_data)" in joined
+    assert "quarantine_id" in joined
+    assert "one row per failing record" in joined
+    assert "opened that table in DQX Studio" in joined
+    # Strengthened draft scoping (user requirement).
+    assert "Never include draft-run data" in joined
+    assert "explicitly asks for drafts" in joined
 
 
 def test_every_sample_question_has_a_curated_sql() -> None:
@@ -180,6 +212,34 @@ def test_curated_sqls_use_real_columns_not_dqlake_names() -> None:
         assert stale not in dump
 
 
+def test_failing_rows_question_returns_whole_records_from_the_gated_view() -> None:
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    sql = "".join(by_q["Show me the rows that failed."]["sql"])
+    assert f"`{CATALOG}`.`{SCHEMA}`.v_dq_failing_rows" in sql
+    assert "to_json(fr.`row_data`) AS failing_record" in sql
+    assert "fr.`source_table_fqn` = :table_name" in sql
+    # Latest-published-run scoping via the run_id subselect (the gated view
+    # has no run_mode of its own).
+    assert f"SELECT `run_id` FROM `{CATALOG}`.`{SCHEMA}`.v_dq_check_results" in sql
+    assert "`run_mode` = 'published'" in sql
+    assert "ORDER BY `run_time` DESC LIMIT 1" in sql
+    # Wrapper columns are never selected.
+    assert "SELECT to_json(fr.`row_data`) AS failing_record\n" == by_q["Show me the rows that failed."]["sql"][0]
+
+
+def test_top_failing_rows_question_counts_rules_from_the_variant_arrays() -> None:
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    sql = "".join(by_q["What are the failing rows with the most rules failed?"]["sql"])
+    assert f"`{CATALOG}`.`{SCHEMA}`.v_dq_failing_rows" in sql
+    assert "to_json(fr.`row_data`) AS failing_record" in sql
+    # errors/warnings are VARIANT arrays of failure structs — count = the
+    # combined array sizes (cast VARIANT -> ARRAY<VARIANT>, live-validated).
+    assert "array_size(CAST(fr.`errors` AS ARRAY<VARIANT>))" in sql
+    assert "array_size(CAST(fr.`warnings` AS ARRAY<VARIANT>))" in sql
+    assert "ORDER BY rules_failed DESC" in sql
+    assert "ORDER BY `run_time` DESC LIMIT 1" in sql
+
+
 def test_columns_question_explodes_the_attribution_array() -> None:
     by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
     sql = "".join(by_q["Which columns have the most failures?"]["sql"])
@@ -211,6 +271,10 @@ def test_benchmarks_reuse_curated_sql_verbatim_and_cover_all_questions() -> None
     # Rephrasings reuse the flagship SQL verbatim.
     flagship_sql = curated["What is driving my changes in score over time?"]["sql"]
     assert by_q["Why did my DQ score change since the last run?"]["answer"][0]["content"] == flagship_sql
+    # The restored row-level flagship + rephrasings (P4.2).
+    rows_sql = curated["Show me the rows that failed."]["sql"]
+    assert by_q["List the failing records for this table."]["answer"][0]["content"] == rows_sql
+    assert by_q["Which records failed the data-quality checks?"]["answer"][0]["content"] == rows_sql
     for b in benchmarks:
         assert b["answer"][0]["format"] == "SQL"
 
@@ -226,11 +290,23 @@ def test_sql_snippets_shape_and_grounding() -> None:
     # single identifier and fails to resolve (live-confirmed
     # UNRESOLVED_COLUMN).
     mv_quoted = f"`{CATALOG}`.`{SCHEMA}`.mv_dq_scores"
+    v_quoted = f"`{CATALOG}`.`{SCHEMA}`.v_dq_check_results"
+    fr_quoted = f"`{CATALOG}`.`{SCHEMA}`.v_dq_failing_rows"
     measures = {m["alias"]: m for m in snippets["measures"]}
     assert measures["pass_rate"]["sql"] == [f"MEASURE({mv_quoted}.`score`)"]
     assert measures["failed_tests"]["sql"] == [f"MEASURE({mv_quoted}.`failed_tests`)"]
-    (published,) = snippets["filters"]
-    assert published["sql"] == [f"{mv_quoted}.`run_mode` = 'published'"]
+    # Published-by-default building blocks for EVERY table that has a
+    # run_mode framing: the metric view, the shaping view, and the gated
+    # failing-rows view (via the run_id subselect — it has no run_mode).
+    filters = {f["display_name"]: f for f in snippets["filters"]}
+    assert set(filters) == {"published runs", "published results", "published failing rows"}
+    assert filters["published runs"]["sql"] == [f"{mv_quoted}.`run_mode` = 'published'"]
+    assert filters["published results"]["sql"] == [f"{v_quoted}.`run_mode` = 'published'"]
+    assert filters["published failing rows"]["sql"] == [
+        f"{fr_quoted}.`run_id` IN (SELECT `run_id` FROM {v_quoted} WHERE `run_mode` = 'published')"
+    ]
+    for f in filters.values():
+        assert "DEFAULT" in f["instruction"][0]
     (severity_rank,) = snippets["expressions"]
     assert severity_rank["sql"][0].startswith(f"CASE {mv_quoted}.`severity` ")
     assert "WHEN 'Critical' THEN 0" in severity_rank["sql"][0]
@@ -262,7 +338,11 @@ def test_column_configs_enable_prompt_matching_sorted_by_name() -> None:
         "severity",
         "source_table_fqn",
     }
-    for c in [*results_cols, *attribution_cols]:
+    failing_cols = by_id[FAILING_FQN]["column_configs"]
+    # Only the string filter column users name by value — the ids and
+    # VARIANT payloads get no entity matching.
+    assert {c["column_name"] for c in failing_cols} == {"source_table_fqn"}
+    for c in [*results_cols, *attribution_cols, *failing_cols]:
         assert c["enable_format_assistance"] is True
         assert c["enable_entity_matching"] is True
 
