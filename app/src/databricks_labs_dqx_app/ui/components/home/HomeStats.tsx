@@ -246,10 +246,16 @@ function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) 
       <section className="space-y-3">
         <h2 className={sectionLabelClass}>{t("home.avgQuality")}</h2>
         {trend.length >= 2 ? (
-          <ScoreTrendChart
-            data={trend.map((p) => ({ run_date: p.ts, pass_rate: p.score }))}
-            animate
-          />
+          // Home renders inside a narrow `max-w-4xl` column. ScoreTrendChart
+          // already clamps itself (`min-w-0 overflow-hidden`), but we wrap it
+          // in a local `min-w-0` container here too so the responsive chart
+          // can never push past the column and wrap/overflow.
+          <div className="min-w-0 overflow-hidden">
+            <ScoreTrendChart
+              data={trend.map((p) => ({ run_date: p.ts, pass_rate: p.score }))}
+              animate
+            />
+          </div>
         ) : (
           <div className="rounded-md border p-6 text-center text-sm text-muted-foreground">
             {t("home.notEnoughHistory")}
