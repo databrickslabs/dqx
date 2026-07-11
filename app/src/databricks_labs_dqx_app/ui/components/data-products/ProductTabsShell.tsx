@@ -62,11 +62,11 @@ function Separator() {
 }
 
 // Groups define the visual separator layout:
-// [About] | [Sharing, Tables] | [Results]  →gap→  [Schedule, History]
+// [About, Permissions] | [Tables] | [Results]  →gap→  [Schedule, History]
 // Runs is intentionally absent from the strip — it lives in the header ⋮
 // menu (P21 item 29) and is still reachable by `?tab=runs`.
-const GROUP_A: ProductTabKey[] = ["about"];
-const GROUP_B: ProductTabKey[] = ["permissions", "tables"];
+const GROUP_A: ProductTabKey[] = ["about", "permissions"];
+const GROUP_B: ProductTabKey[] = ["tables"];
 const GROUP_C: ProductTabKey[] = ["results"];
 const RIGHT_TABS: ProductTabKey[] = ["scheduling", "history"];
 
