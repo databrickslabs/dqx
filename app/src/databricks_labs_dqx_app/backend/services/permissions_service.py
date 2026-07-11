@@ -42,7 +42,7 @@ from datetime import datetime
 
 from fastapi import HTTPException, status
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_permissions_for_role
 from databricks_labs_dqx_app.backend.common.permissions import (
     DEFAULT_USERS_GROUP_PRIVILEGES,
     USERS_GROUP_PRINCIPAL_ID,
@@ -435,6 +435,46 @@ class PermissionsService:
         if owner_email and principal_email and owner_email.strip().lower() == principal_email.strip().lower():
             return True
         return False
+
+    def can_edit_and_approve(
+        self,
+        object_type: str,
+        object_id: str,
+        *,
+        role: UserRole,
+        principal_ids: set[str],
+        owner_email: str | None = None,
+        principal_email: str | None = None,
+    ) -> bool:
+        """Auto-bypass predicate (issue #94): may the caller edit AND approve this object?
+
+        Used by the ``auto_bypass`` approvals mode to decide whether a submit
+        can auto-approve within the same call. True when the caller is an
+        ``ADMIN``, or holds the ``approve_rules`` role permission *and* ``MODIFY``
+        on the object.
+
+        Note: the only roles carrying ``approve_rules`` (``ADMIN`` /
+        ``RULE_APPROVER``) are exactly the roles that bypass object grants
+        (:data:`_ROLE_BYPASS`), so an approver always satisfies the ``MODIFY``
+        check — in the current model this reduces to "the caller may approve".
+        Roles are the hard ceiling (object grants can never confer
+        ``approve_rules``), so no grant can promote a lower role into
+        auto-bypass. The ``MODIFY`` check is kept explicit so the predicate
+        stays correct if approve ever becomes grantable per-object.
+        """
+        if role == UserRole.ADMIN:
+            return True
+        if "approve_rules" not in get_permissions_for_role(role):
+            return False
+        return self.has_privilege(
+            object_type,
+            object_id,
+            Privilege.MODIFY,
+            role=role,
+            principal_ids=principal_ids,
+            owner_email=owner_email,
+            principal_email=principal_email,
+        )
 
     # ------------------------------------------------------------------
     # Write

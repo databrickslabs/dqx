@@ -14,11 +14,13 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
+from databricks_labs_dqx_app.backend.common.approvals import mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentPrincipalIds,
     CurrentUserRole,
+    get_app_settings_service,
     get_data_product_service,
     get_monitored_table_version_service,
     get_obo_ws,
@@ -26,6 +28,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     require_role,
     require_runner,
 )
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
@@ -367,16 +370,36 @@ def remove_data_product_member(
 def submit_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> DataProductOut:
     """Submit a Table Space for review — moves ``draft``/``rejected`` -> ``pending_approval``.
 
     409 if the space is already ``approved`` with no changes since publish
     (:meth:`DataProductService.submit`).
+
+    Honours the app-wide approvals mode (issue #94): in ``disabled`` mode, or in
+    ``auto_bypass`` mode when the caller can edit AND approve the space
+    (:meth:`PermissionsService.can_edit_and_approve`), the space is approved in
+    the same call (bumping its version) with the caller recorded as the approver
+    carrying an ``(auto)`` marker.
     """
     try:
         user_email = _current_user_email(obo_ws)
         svc.submit(product_id, user_email)
+        can_edit_and_approve = perms.can_edit_and_approve(
+            ObjectType.DATA_PRODUCT.value,
+            product_id,
+            role=role,
+            principal_ids=set(principal_ids),
+            owner_email=perms.get_object_owner(ObjectType.DATA_PRODUCT.value, product_id),
+            principal_email=user_email,
+        )
+        if should_auto_approve(app_settings.get_approvals_mode(), can_edit_and_approve=can_edit_and_approve):
+            svc.approve(product_id, mark_auto_approver(user_email))
         detail = svc.get(product_id)
         assert detail is not None  # just submitted it
         return DataProductOut.from_domain(detail)

@@ -82,6 +82,23 @@ def _mock_obo_ws(user_email: str = "alice@x") -> MagicMock:
     return obo
 
 
+def _submit_mt_extra() -> dict:
+    """Extra submit-route deps with approvals mode = ``enabled`` (no auto-approve).
+
+    Keeps the pre-existing submit tests asserting today's pending-approval
+    behaviour; the auto-approve modes are covered in ``test_approvals_mode.py``.
+    """
+    app_settings = MagicMock()
+    app_settings.get_approvals_mode.return_value = "enabled"
+    return {
+        "version_svc": MagicMock(),
+        "app_settings": app_settings,
+        "perms": MagicMock(),
+        "role": UserRole.RULE_AUTHOR,
+        "principal_ids": frozenset(),
+    }
+
+
 def _mock_discovery(owner: str | None = None) -> MagicMock:
     discovery = MagicMock()
     discovery.get_table_owner.return_value = owner
@@ -460,6 +477,7 @@ class TestSubmitMonitoredTable:
             materializer=materializer,
             rules_catalog=rules_catalog,
             obo_ws=_mock_obo_ws(),
+            **_submit_mt_extra(),
         )
         assert result.table.status == "pending_approval"
         assert result.affected_check_count == 2
@@ -483,6 +501,7 @@ class TestSubmitMonitoredTable:
             materializer=MagicMock(),
             rules_catalog=rules_catalog,
             obo_ws=_mock_obo_ws(),
+            **_submit_mt_extra(),
         )
         assert result.affected_check_count == 1
         rules_catalog.set_status.assert_called_once_with("r1", "pending_approval", "alice@x")
@@ -510,6 +529,7 @@ class TestSubmitMonitoredTable:
             materializer=materializer,
             rules_catalog=rules_catalog,
             obo_ws=_mock_obo_ws(),
+            **_submit_mt_extra(),
         )
         assert result.table.status == "pending_approval"
         assert result.affected_check_count == 2
@@ -536,6 +556,7 @@ class TestSubmitMonitoredTable:
             materializer=MagicMock(),
             rules_catalog=rules_catalog,
             obo_ws=_mock_obo_ws(),
+            **_submit_mt_extra(),
         )
         # r1 failed and was skipped; r2 counted.
         assert result.affected_check_count == 1
@@ -551,6 +572,7 @@ class TestSubmitMonitoredTable:
                 materializer=materializer,
                 rules_catalog=MagicMock(),
                 obo_ws=_mock_obo_ws(),
+                **_submit_mt_extra(),
             )
         assert excinfo.value.status_code == 404
 

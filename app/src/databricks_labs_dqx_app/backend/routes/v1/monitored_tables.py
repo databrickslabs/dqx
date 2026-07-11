@@ -12,11 +12,13 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from databricks_labs_dqx_app.backend.common.approvals import mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentPrincipalIds,
     CurrentUserRole,
+    get_app_settings_service,
     get_apply_rules_service,
     get_binding_run_service,
     get_discovery_service,
@@ -30,6 +32,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     require_role,
     require_runner,
 )
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
@@ -73,6 +76,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
     MonitoredTableSummary,
 )
+from databricks_labs_dqx_app.backend.registry_models import MonitoredTable
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggester
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
@@ -713,6 +717,36 @@ def _rollup_binding_status(monitored_tables_svc: MonitoredTableService, binding_
     return "draft"
 
 
+def _approve_binding_checks(
+    monitored_tables_svc: MonitoredTableService,
+    rules_catalog: RulesCatalogService,
+    version_svc: MonitoredTableVersionService,
+    binding_id: str,
+    approver: str,
+) -> tuple[MonitoredTable, int, int | None]:
+    """Approve a binding's ``pending_approval`` checks, roll up, and freeze a version.
+
+    The approval half shared by :func:`approve_monitored_table` (explicit
+    approve) and :func:`submit_monitored_table` (auto-approve under the
+    ``auto_bypass`` / ``disabled`` approvals modes). Assumes the binding's
+    checks are already at ``pending_approval`` (the submit half puts them there).
+    Returns ``(table, approved_count, new_version)``.
+    """
+    approved = _transition_binding_checks(
+        monitored_tables_svc,
+        rules_catalog,
+        binding_id,
+        from_status="pending_approval",
+        to_status="approved",
+        user_email=approver,
+    )
+    table = monitored_tables_svc.set_status(
+        binding_id, _rollup_binding_status(monitored_tables_svc, binding_id), approver
+    )
+    new_version = version_svc.freeze_new_version(binding_id, approver)
+    return table, approved, new_version
+
+
 @router.post(
     "/{binding_id}/submit",
     response_model=MonitoredTableReviewOut,
@@ -724,6 +758,11 @@ def submit_monitored_table(
     monitored_tables_svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     materializer: Annotated[Materializer, Depends(get_materializer)],
     rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> MonitoredTableReviewOut:
     """Submit a monitored table for review.
@@ -769,6 +808,26 @@ def submit_monitored_table(
         table = monitored_tables_svc.set_status(
             binding_id, _rollup_binding_status(monitored_tables_svc, binding_id), user_email
         )
+        # Approvals mode (issue #94): in ``disabled`` mode, or ``auto_bypass``
+        # when the caller can edit AND approve this binding, publish in the same
+        # call — the caller is recorded as the approver with an ``(auto)`` marker.
+        can_edit_and_approve = perms.can_edit_and_approve(
+            ObjectType.MONITORED_TABLE.value,
+            binding_id,
+            role=role,
+            principal_ids=set(principal_ids),
+            owner_email=perms.get_object_owner(ObjectType.MONITORED_TABLE.value, binding_id),
+            principal_email=user_email,
+        )
+        if should_auto_approve(app_settings.get_approvals_mode(), can_edit_and_approve=can_edit_and_approve):
+            table, approved, new_version = _approve_binding_checks(
+                monitored_tables_svc, rules_catalog, version_svc, binding_id, mark_auto_approver(user_email)
+            )
+            return MonitoredTableReviewOut(
+                table=MonitoredTableOut.from_domain(table),
+                affected_check_count=approved,
+                new_version=new_version,
+            )
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=submitted)
     except MaterializationError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -823,18 +882,9 @@ def approve_monitored_table(
                 ),
             )
         user_email = _current_user_email(obo_ws)
-        approved = _transition_binding_checks(
-            monitored_tables_svc,
-            rules_catalog,
-            binding_id,
-            from_status="pending_approval",
-            to_status="approved",
-            user_email=user_email,
+        table, approved, new_version = _approve_binding_checks(
+            monitored_tables_svc, rules_catalog, version_svc, binding_id, user_email
         )
-        table = monitored_tables_svc.set_status(
-            binding_id, _rollup_binding_status(monitored_tables_svc, binding_id), user_email
-        )
-        new_version = version_svc.freeze_new_version(binding_id, user_email)
         return MonitoredTableReviewOut(
             table=MonitoredTableOut.from_domain(table),
             affected_check_count=approved,

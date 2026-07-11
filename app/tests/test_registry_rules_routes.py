@@ -232,17 +232,34 @@ class TestDelete:
 
 
 class TestLifecycleRoutes:
+    @staticmethod
+    def _submit_deps() -> dict:
+        """Common submit-route deps with approvals mode = ``enabled`` (no auto-approve)."""
+        app_settings = _no_auto_upgrade()
+        app_settings.get_approvals_mode.return_value = "enabled"
+        return {
+            "embeddings": MagicMock(),
+            "materializer": MagicMock(),
+            "version_svc": MagicMock(),
+            "monitored_tables": MagicMock(),
+            "app_settings": app_settings,
+            "perms": MagicMock(),
+            "role": UserRole.RULE_AUTHOR,
+            "principal_ids": frozenset(),
+        }
+
     def test_submit_success(self):
         svc = MagicMock()
         svc.submit.return_value = _rule(status="pending_approval")
-        result = submit_registry_rule("r1", svc=svc, user_email="alice@x")
+        result = submit_registry_rule("r1", svc=svc, user_email="alice@x", **self._submit_deps())
         assert result.status == "pending_approval"
+        svc.approve.assert_not_called()
 
     def test_submit_invalid_transition_raises_400(self):
         svc = MagicMock()
         svc.submit.side_effect = ValueError("Cannot transition from 'approved' to 'pending_approval'")
         with pytest.raises(HTTPException) as excinfo:
-            submit_registry_rule("r1", svc=svc, user_email="alice@x")
+            submit_registry_rule("r1", svc=svc, user_email="alice@x", **self._submit_deps())
         assert excinfo.value.status_code == 400
 
     def test_approve_success(self):

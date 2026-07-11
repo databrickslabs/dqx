@@ -370,6 +370,21 @@ export interface ApplyRuleIn {
 }
 
 /**
+ * Update payload for the approvals mode.
+ */
+export interface ApprovalsModeIn {
+  mode: string;
+}
+
+/**
+ * Effective approvals-workflow mode.
+ */
+export interface ApprovalsModeOut {
+  /** One of 'enabled' (authors submit, approvers approve), 'auto_bypass' (submit auto-approves when the caller could approve it themselves), or 'disabled' (every submit auto-approves). */
+  mode: string;
+}
+
+/**
  * Result of a manual re-embed pass over every published registry rule (Rules Registry Phase 4B).
  */
 export interface BackfillRuleEmbeddingsOut {
@@ -3953,11 +3968,11 @@ export type CancelProfileRun200 = {[key: string]: string};
 
 export type ListCommentsParams = {
 /**
- * Entity type: 'run' or 'rule'
+ * Entity type: 'run', 'rule', 'monitored_table' or 'data_product'
  */
 entity_type: string;
 /**
- * Entity identifier: run_id or table_fqn
+ * Entity identifier: run_id, rule_id, binding_id or product_id
  */
 entity_id: string;
 };
@@ -7066,6 +7081,219 @@ export const useSaveRulesRegistrySettings = <TError = AxiosError<HTTPValidationE
       > => {
 
       const mutationOptions = getSaveRulesRegistrySettingsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Return the current approvals mode (defaults to ``enabled`` when unset).
+
+Available to any authenticated user — every submit/approve surface reads it
+to decide whether to show "Submit for review" vs "Save & publish".
+ * @summary Get Approvals Mode
+ */
+export const getApprovalsMode = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ApprovalsModeOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/config/approvals-mode`,options
+    );
+  }
+
+
+
+
+export const getGetApprovalsModeQueryKey = () => {
+    return [
+    `/api/v1/config/approvals-mode`
+    ] as const;
+    }
+
+    
+export const getGetApprovalsModeQueryOptions = <TData = Awaited<ReturnType<typeof getApprovalsMode>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalsMode>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetApprovalsModeQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApprovalsMode>>> = ({ signal }) => getApprovalsMode({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getApprovalsMode>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetApprovalsModeQueryResult = NonNullable<Awaited<ReturnType<typeof getApprovalsMode>>>
+export type GetApprovalsModeQueryError = AxiosError<unknown>
+
+
+export function useGetApprovalsMode<TData = Awaited<ReturnType<typeof getApprovalsMode>>, TError = AxiosError<unknown>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalsMode>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApprovalsMode>>,
+          TError,
+          Awaited<ReturnType<typeof getApprovalsMode>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApprovalsMode<TData = Awaited<ReturnType<typeof getApprovalsMode>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalsMode>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApprovalsMode>>,
+          TError,
+          Awaited<ReturnType<typeof getApprovalsMode>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApprovalsMode<TData = Awaited<ReturnType<typeof getApprovalsMode>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalsMode>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Approvals Mode
+ */
+
+export function useGetApprovalsMode<TData = Awaited<ReturnType<typeof getApprovalsMode>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalsMode>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetApprovalsModeQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetApprovalsModeSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getApprovalsMode>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getApprovalsMode>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetApprovalsModeQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApprovalsMode>>> = ({ signal }) => getApprovalsMode({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getApprovalsMode>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetApprovalsModeSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getApprovalsMode>>>
+export type GetApprovalsModeSuspenseQueryError = AxiosError<unknown>
+
+
+export function useGetApprovalsModeSuspense<TData = Awaited<ReturnType<typeof getApprovalsMode>>, TError = AxiosError<unknown>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getApprovalsMode>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApprovalsModeSuspense<TData = Awaited<ReturnType<typeof getApprovalsMode>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getApprovalsMode>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApprovalsModeSuspense<TData = Awaited<ReturnType<typeof getApprovalsMode>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getApprovalsMode>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Approvals Mode
+ */
+
+export function useGetApprovalsModeSuspense<TData = Awaited<ReturnType<typeof getApprovalsMode>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getApprovalsMode>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetApprovalsModeSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Update the approvals mode (admin only). 400 on an unrecognised value.
+ * @summary Save Approvals Mode
+ */
+export const saveApprovalsMode = (
+    approvalsModeIn: ApprovalsModeIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ApprovalsModeOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/approvals-mode`,
+      approvalsModeIn,options
+    );
+  }
+
+
+
+export const getSaveApprovalsModeMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveApprovalsMode>>, TError,{data: ApprovalsModeIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveApprovalsMode>>, TError,{data: ApprovalsModeIn}, TContext> => {
+
+const mutationKey = ['saveApprovalsMode'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveApprovalsMode>>, {data: ApprovalsModeIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveApprovalsMode(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveApprovalsModeMutationResult = NonNullable<Awaited<ReturnType<typeof saveApprovalsMode>>>
+    export type SaveApprovalsModeMutationBody = ApprovalsModeIn
+    export type SaveApprovalsModeMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Approvals Mode
+ */
+export const useSaveApprovalsMode = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveApprovalsMode>>, TError,{data: ApprovalsModeIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveApprovalsMode>>,
+        TError,
+        {data: ApprovalsModeIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveApprovalsModeMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
@@ -10776,6 +11004,14 @@ export const useDeleteRule = <TError = AxiosError<HTTPValidationError>,
 
 Authors can only submit rules they themselves drafted. Admins and
 approvers may submit any rule.
+
+Honours the app-wide approvals mode (issue #94): in ``disabled`` mode, or in
+``auto_bypass`` mode when the caller could approve the rule themselves (any
+role holding ``approve_rules`` — i.e. admin/approver), the rule transitions
+straight through ``pending_approval`` to ``approved`` in the same call and
+the caller is recorded as the approver with an ``(auto)`` marker. A
+per-table rule has no object-grant surface of its own, so the auto-bypass
+predicate here is the role-level ``approve_rules`` permission.
  * @summary Submit For Approval
  */
 export const submitRuleForApproval = (
@@ -11749,6 +11985,13 @@ export function useListRegistryRuleVersionsSuspense<TData = Awaited<ReturnType<t
 
 /**
  * Submit a draft registry rule for approval.
+
+Honours the app-wide approvals mode (issue #94): in ``disabled`` mode, or in
+``auto_bypass`` mode when the caller can edit AND approve the rule
+(:meth:`PermissionsService.can_edit_and_approve`), the rule is submitted and
+then published in the same call — running the identical publish side effects
+as the explicit approve route — with the caller recorded as the approver
+carrying an ``(auto)`` marker.
  * @summary Submit Registry Rule
  */
 export const submitRegistryRule = (
@@ -12296,6 +12539,11 @@ export function useListMonitoredTablesSuspense<TData = Awaited<ReturnType<typeof
 
 /**
  * Register a table under Rules Registry governance (status ``draft``).
+
+When the caller does not pin a steward, default it to the table's Unity
+Catalog owner (resolved on-behalf-of the caller, so UC permissions are
+honoured), falling back to the creator when the owner can't be read. The
+owner may be a user, group, or service principal — it is stored verbatim.
  * @summary Register Monitored Table
  */
 export const registerMonitoredTable = (
@@ -12579,6 +12827,13 @@ export const useDeleteMonitoredTable = <TError = AxiosError<HTTPValidationError>
 Already-monitored tables and syntactically invalid FQNs are reported
 back in the summary rather than failing the whole batch — see
 :meth:`MonitoredTableService.bulk_register`.
+
+Unlike single register, bulk register does **not** resolve each table's
+Unity Catalog owner: that would be one ``tables.get`` round-trip per table
+(N calls, plus rate-limit exposure) on a path meant for onboarding many
+tables quickly. When no steward is pinned, every binding defaults to the
+creator; a per-table owner can be assigned afterwards from the table's
+Permissions tab.
  * @summary Bulk Register Monitored Tables
  */
 export const bulkRegisterMonitoredTables = (
@@ -15606,7 +15861,7 @@ export const useSaveSettings = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
- * Add a comment to a run or rule.
+ * Add a comment to a run, rule, monitored table or table space.
  * @summary Add Comment
  */
 export const addComment = (
@@ -15669,7 +15924,7 @@ export const useAddComment = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
- * List comments for a specific run or rule.
+ * List comments for a specific run, rule, monitored table or table space.
  * @summary List Comments
  */
 export const listComments = (
@@ -20540,6 +20795,12 @@ export const useRemoveDataProductMember = <TError = AxiosError<HTTPValidationErr
 
 409 if the space is already ``approved`` with no changes since publish
 (:meth:`DataProductService.submit`).
+
+Honours the app-wide approvals mode (issue #94): in ``disabled`` mode, or in
+``auto_bypass`` mode when the caller can edit AND approve the space
+(:meth:`PermissionsService.can_edit_and_approve`), the space is approved in
+the same call (bumping its version) with the caller recorded as the approver
+carrying an ``(auto)`` marker.
  * @summary Submit Data Product
  */
 export const submitDataProduct = (

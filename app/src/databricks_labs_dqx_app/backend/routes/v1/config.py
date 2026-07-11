@@ -1182,6 +1182,67 @@ def save_rules_registry_settings(
 
 
 # ----------------------------------------------------------------------
+# Approvals mode (issue #94) — the app-wide submit→approve gate. A 3-value
+# enum string: ``enabled`` (default), ``auto_bypass``, ``disabled`` (see
+# ``backend.common.approvals.ApprovalMode``). Read at VIEWER+ (every submit/
+# approve surface needs to know the effective mode to render the right button)
+# and written ADMIN-only, matching the other governance settings above.
+# ----------------------------------------------------------------------
+
+
+class ApprovalsModeOut(BaseModel):
+    """Effective approvals-workflow mode."""
+
+    mode: str = Field(
+        description="One of 'enabled' (authors submit, approvers approve), "
+        "'auto_bypass' (submit auto-approves when the caller could approve it "
+        "themselves), or 'disabled' (every submit auto-approves)."
+    )
+
+
+class ApprovalsModeIn(BaseModel):
+    """Update payload for the approvals mode."""
+
+    mode: str
+
+
+@router.get(
+    "/approvals-mode",
+    response_model=ApprovalsModeOut,
+    operation_id="getApprovalsMode",
+)
+def get_approvals_mode(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> ApprovalsModeOut:
+    """Return the current approvals mode (defaults to ``enabled`` when unset).
+
+    Available to any authenticated user — every submit/approve surface reads it
+    to decide whether to show "Submit for review" vs "Save & publish".
+    """
+    return ApprovalsModeOut(mode=svc.get_approvals_mode())
+
+
+@router.put(
+    "/approvals-mode",
+    response_model=ApprovalsModeOut,
+    operation_id="saveApprovalsMode",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_approvals_mode(
+    body: ApprovalsModeIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> ApprovalsModeOut:
+    """Update the approvals mode (admin only). 400 on an unrecognised value."""
+    try:
+        saved = svc.save_approvals_mode(body.mode, user_email=email)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info("Saved approvals mode = %s (by=%s)", saved, email)
+    return ApprovalsModeOut(mode=saved)
+
+
+# ----------------------------------------------------------------------
 # Vector Search auto-provisioning trigger — Rules Registry Phase 7F. A
 # dedicated endpoint (rather than folding this into ``save_ai_settings``)
 # so provisioning can be retried independently of a settings save, and so

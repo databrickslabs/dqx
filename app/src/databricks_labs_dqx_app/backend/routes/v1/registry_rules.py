@@ -12,6 +12,7 @@ from typing import Annotated
 from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from databricks_labs_dqx_app.backend.common.approvals import mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import CurrentUser, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
@@ -43,6 +44,7 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRu
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 
@@ -284,6 +286,47 @@ def delete_registry_rule(
 # ------------------------------------------------------------------
 
 
+def _publish_registry_rule(
+    rule_id: str,
+    approver: str,
+    *,
+    svc: RegistryService,
+    embeddings: RuleEmbeddingsService,
+    materializer: Materializer,
+    version_svc: MonitoredTableVersionService,
+    monitored_tables: MonitoredTableService,
+    app_settings: AppSettingsService,
+) -> RegistryRule:
+    """Publish (approve) a pending registry rule and run its side effects.
+
+    Shared by :func:`approve_registry_rule` (explicit approve) and
+    :func:`submit_registry_rule` (auto-approve under the ``auto_bypass`` /
+    ``disabled`` approvals modes) so both paths re-embed, re-materialize
+    followers, and re-freeze/roll-up affected bindings identically. See
+    :func:`approve_registry_rule` for the full behaviour contract. Returns the
+    published rule.
+    """
+    rule = svc.approve(rule_id, approver)
+    embeddings.embed_and_store(rule)
+    rematerialized = materializer.rematerialize_for_rule(rule_id)
+    auto_upgrade = app_settings.get_auto_upgrade_without_approval()
+    for binding_id in rematerialized:
+        try:
+            if auto_upgrade:
+                version_svc.refreeze_current(binding_id)
+            else:
+                monitored_tables.rollup_status(binding_id, approver)
+        except Exception:  # bookkeeping must not fail the publish
+            logger.warning(
+                "Post-publish binding sync for %s after publishing rule %s failed (auto_upgrade=%s)",
+                binding_id,
+                rule_id,
+                auto_upgrade,
+                exc_info=True,
+            )
+    return rule
+
+
 @router.post(
     "/{rule_id}/submit",
     response_model=RegistryRuleOut,
@@ -293,11 +336,46 @@ def delete_registry_rule(
 def submit_registry_rule(
     rule_id: str,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
+    embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
+    materializer: Annotated[Materializer, Depends(get_materializer)],
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
     user_email: CurrentUser,
 ) -> RegistryRuleOut:
-    """Submit a draft registry rule for approval."""
+    """Submit a draft registry rule for approval.
+
+    Honours the app-wide approvals mode (issue #94): in ``disabled`` mode, or in
+    ``auto_bypass`` mode when the caller can edit AND approve the rule
+    (:meth:`PermissionsService.can_edit_and_approve`), the rule is submitted and
+    then published in the same call — running the identical publish side effects
+    as the explicit approve route — with the caller recorded as the approver
+    carrying an ``(auto)`` marker.
+    """
     try:
         rule = svc.submit(rule_id, user_email)
+        can_edit_and_approve = perms.can_edit_and_approve(
+            ObjectType.REGISTRY_RULE.value,
+            rule_id,
+            role=role,
+            principal_ids=set(principal_ids),
+            owner_email=perms.get_object_owner(ObjectType.REGISTRY_RULE.value, rule_id),
+            principal_email=user_email,
+        )
+        if should_auto_approve(app_settings.get_approvals_mode(), can_edit_and_approve=can_edit_and_approve):
+            rule = _publish_registry_rule(
+                rule_id,
+                mark_auto_approver(user_email),
+                svc=svc,
+                embeddings=embeddings,
+                materializer=materializer,
+                version_svc=version_svc,
+                monitored_tables=monitored_tables,
+                app_settings=app_settings,
+            )
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -350,34 +428,16 @@ def approve_registry_rule(
     re-freeze failure never turns a successful publish into a 5xx.
     """
     try:
-        rule = svc.approve(rule_id, user_email)
-        embeddings.embed_and_store(rule)
-        rematerialized = materializer.rematerialize_for_rule(rule_id)
-        auto_upgrade = app_settings.get_auto_upgrade_without_approval()
-        for binding_id in rematerialized:
-            try:
-                if auto_upgrade:
-                    # ON: the follower's approved rows silently pick up the new
-                    # content and STAY approved, so the binding's snapshot is
-                    # re-frozen in place (its status is unchanged).
-                    version_svc.refreeze_current(binding_id)
-                else:
-                    # OFF: a changed follower check dropped to pending_approval
-                    # (materializer Behaviour B). Roll the binding status up so
-                    # it reflects "review needed" instead of silently claiming
-                    # approved while the frozen snapshot serves the stale
-                    # version — otherwise the table-level approve path (which
-                    # requires pending_approval) stays blocked and the run keeps
-                    # using the old checks (P23 item 1).
-                    monitored_tables.rollup_status(binding_id, user_email)
-            except Exception:  # bookkeeping must not fail the publish
-                logger.warning(
-                    "Post-publish binding sync for %s after publishing rule %s failed (auto_upgrade=%s)",
-                    binding_id,
-                    rule_id,
-                    auto_upgrade,
-                    exc_info=True,
-                )
+        rule = _publish_registry_rule(
+            rule_id,
+            user_email,
+            svc=svc,
+            embeddings=embeddings,
+            materializer=materializer,
+            version_svc=version_svc,
+            monitored_tables=monitored_tables,
+            app_settings=app_settings,
+        )
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

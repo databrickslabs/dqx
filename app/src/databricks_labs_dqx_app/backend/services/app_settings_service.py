@@ -5,6 +5,7 @@ import re
 from databricks.labs.dqx.config import WorkspaceConfig
 from pydantic import TypeAdapter, ValidationError
 
+from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, normalize_approvals_mode
 from databricks_labs_dqx_app.backend.config import conf
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 
@@ -267,6 +268,38 @@ class AppSettingsService:
             self._AUTO_UPGRADE_WITHOUT_APPROVAL_KEY, "true" if enabled else "false", user_email=user_email
         )
         return enabled
+
+    # ------------------------------------------------------------------
+    # Approvals mode — app-wide submit→approve gate (issue #94). A 3-value
+    # enum string (see :class:`~backend.common.approvals.ApprovalMode`):
+    #   * ``enabled`` (default) — authors submit, approvers/admins approve.
+    #   * ``auto_bypass`` — gate stays on, but a submit auto-approves when the
+    #     acting user could approve it themselves (admin, or approve_rules +
+    #     edit rights on the object). Everyone else still lands in
+    #     ``pending_approval``.
+    #   * ``disabled`` — no approval step; every submit auto-approves.
+    # An unset/corrupt row reads back as ``enabled`` so the gate can never be
+    # silently disabled by a bad value (see ``normalize_approvals_mode``).
+    # ------------------------------------------------------------------
+
+    _APPROVALS_MODE_KEY = "approvals_mode"
+
+    def get_approvals_mode(self) -> str:
+        """Return the configured approvals mode; defaults to ``enabled`` when unset."""
+        return normalize_approvals_mode(self.get_setting(self._APPROVALS_MODE_KEY))
+
+    def save_approvals_mode(self, mode: str, *, user_email: str | None = None) -> str:
+        """Persist the approvals mode. Returns the normalised (validated) value.
+
+        Raises:
+            ValueError: *mode* is not one of the accepted values (mapped to a
+                400 by the route).
+        """
+        candidate = (mode or "").strip().lower()
+        if candidate not in ApprovalMode.ALL:
+            raise ValueError(f"Invalid approvals mode: {mode!r}. Must be one of {sorted(ApprovalMode.ALL)}.")
+        self.save_setting(self._APPROVALS_MODE_KEY, candidate, user_email=user_email)
+        return candidate
 
     # ------------------------------------------------------------------
     # Object permissions — default per-grant inheritance (P22-D item 10).

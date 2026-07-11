@@ -3,15 +3,18 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.approvals import mark_auto_approver, should_auto_approve
+from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_permissions_for_role
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentUserRole,
+    get_app_settings_service,
     get_monitored_table_version_service,
     get_obo_ws,
     get_rules_catalog_service,
     get_user_catalog_names,
     require_role,
 )
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     BatchSaveRulesIn,
@@ -357,6 +360,8 @@ def delete_rule(
 def submit_for_approval(
     rule_id: str,
     svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     user_role: CurrentUserRole,
     body: SetStatusIn | None = None,
@@ -365,6 +370,14 @@ def submit_for_approval(
 
     Authors can only submit rules they themselves drafted. Admins and
     approvers may submit any rule.
+
+    Honours the app-wide approvals mode (issue #94): in ``disabled`` mode, or in
+    ``auto_bypass`` mode when the caller could approve the rule themselves (any
+    role holding ``approve_rules`` — i.e. admin/approver), the rule transitions
+    straight through ``pending_approval`` to ``approved`` in the same call and
+    the caller is recorded as the approver with an ``(auto)`` marker. A
+    per-table rule has no object-grant surface of its own, so the auto-bypass
+    predicate here is the role-level ``approve_rules`` permission.
     """
     try:
         user = obo_ws.current_user.me()
@@ -372,6 +385,10 @@ def submit_for_approval(
         _ensure_owner_or_privileged(svc, rule_id, user_email, user_role, "submit")
         expected_version = body.expected_version if body else None
         entry = svc.set_status(rule_id, "pending_approval", user_email, expected_version)
+        can_edit_and_approve = "approve_rules" in get_permissions_for_role(user_role)
+        if should_auto_approve(app_settings.get_approvals_mode(), can_edit_and_approve=can_edit_and_approve):
+            entry = svc.set_status(rule_id, "approved", mark_auto_approver(user_email))
+            _refreeze_binding_for_rule(version_svc, rule_id)
         return _entry_to_out(entry)
     except HTTPException:
         raise

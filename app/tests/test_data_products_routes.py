@@ -64,6 +64,13 @@ def _mock_obo_ws(user_email: str = "alice@x") -> MagicMock:
     return obo
 
 
+def _enabled_settings() -> MagicMock:
+    """App-settings mock with approvals mode = ``enabled`` (no auto-approve)."""
+    app_settings = MagicMock()
+    app_settings.get_approvals_mode.return_value = "enabled"
+    return app_settings
+
+
 def _route_required_roles(operation_id: str) -> set[UserRole]:
     """Extract the ``require_role(...)`` role set declared on a route (see
     ``test_monitored_tables_routes.py``'s identical helper)."""
@@ -269,7 +276,7 @@ class TestSubmit:
     def test_submit_success(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1", status="pending_approval", version=0)
-        result = submit_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+        result = submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
         assert result.status == "pending_approval"
         svc.submit.assert_called_once_with("p1", "alice@x")
 
@@ -277,7 +284,7 @@ class TestSubmit:
         svc = MagicMock()
         svc.submit.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            submit_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+            submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
 
     def test_submit_approved_unchanged_raises_409(self):
@@ -289,7 +296,7 @@ class TestSubmit:
         svc = MagicMock()
         svc.submit.side_effect = InvalidStatusTransitionError("boom")
         with pytest.raises(HTTPException) as excinfo:
-            submit_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+            submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 409
 
 
