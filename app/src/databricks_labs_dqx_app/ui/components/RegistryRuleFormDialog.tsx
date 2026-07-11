@@ -937,6 +937,13 @@ export function RegistryRuleFormDialog({
   const [lowcodeAst, setLowcodeAst] = useState<LowcodeAstV2>(EMPTY_LOWCODE_AST);
   const [groupBy, setGroupBy] = useState("");
   const [modeSwitch, setModeSwitch] = useState<{ direction: ModeSwitchDirection; next: RegistryMode } | null>(null);
+  // item 5: cache the last Low-Code AST + group-by when leaving Low-Code for
+  // SQL, so switching back RESTORES the built conditions instead of a blank
+  // stack (covers flitting between the two). The cache is honored only when the
+  // SQL still matches what the cached AST compiles to; if the SQL was
+  // hand-edited away from that, the built conditions can't be reconstructed —
+  // the cache is dropped and the builder is cleared with a warning.
+  const lowcodeCacheRef = useRef<{ ast: LowcodeAstV2; groupBy: string } | null>(null);
   // Joined-table columns feed the Low-Code row/aggregate/group-by pickers
   // alongside the declared `{{slot}}` placeholders — qualified as
   // `<fqn>.<col>` so the compiler emits them as raw SQL, not placeholders.
@@ -1001,6 +1008,9 @@ export function RegistryRuleFormDialog({
     const key = `${open}:${sourceRule?.rule_id ?? "new"}`;
     if (rehydrateKeyRef.current === key) return;
     rehydrateKeyRef.current = key;
+    // Drop any Low-Code cache from a previous rule/session (item 5) so a
+    // reopened dialog never restores conditions that belong to another rule.
+    lowcodeCacheRef.current = null;
 
     const md = (sourceRule?.user_metadata ?? {}) as Record<string, unknown>;
     const asString = (k: string) => (typeof md[k] === "string" ? (md[k] as string) : "");
@@ -1881,8 +1891,10 @@ export function RegistryRuleFormDialog({
   // preserve; otherwise switches immediately.
   const performModeSwitch = (next: RegistryMode) => {
     // Low-Code -> SQL: translate the built rows + joins into the SQL editor
-    // so the author keeps their work instead of retyping it.
+    // so the author keeps their work instead of retyping it, and cache the
+    // AST + group-by so switching back can restore it (item 5).
     if (mode === "lowcode" && next === "sql") {
+      lowcodeCacheRef.current = { ast: lowcodeAst, groupBy };
       const predicate = compileAstToSql(lowcodeAst);
       const joinsSql = compileJoinsToSql(lowcodeAst.joins);
       if (predicate) setSqlPredicate(predicate);
@@ -1892,6 +1904,32 @@ export function RegistryRuleFormDialog({
         // nothing is silently dropped.
         setSqlPredicate((prev) => prev || predicate);
       }
+    }
+    // SQL -> Low-Code with a cached AST (item 5): restore the built conditions
+    // when the SQL still matches what that AST compiles to. If the SQL was
+    // hand-edited away from the compiled output, the structured rows can't be
+    // recovered from free SQL — drop the cache, clear the builder and warn,
+    // rather than silently restoring a stale, mismatched AST. With no cache
+    // (SQL authored from scratch) this falls through to the blank seed below.
+    if (mode === "sql" && next === "lowcode" && lowcodeCacheRef.current) {
+      const cache = lowcodeCacheRef.current;
+      const compiledFromCache = compileAstToSql(cache.ast).trim();
+      const currentSql = stripSqlLineComments(sqlPredicate).trim();
+      if (compiledFromCache === currentSql) {
+        setLowcodeAst(cache.ast);
+        setGroupBy(cache.groupBy);
+      } else {
+        lowcodeCacheRef.current = null;
+        setGroupBy("");
+        setLowcodeAst({
+          ...EMPTY_LOWCODE_AST,
+          rows: [seededFirstLowcodeRow(lowcodeColumns[0]?.name ?? "column_1")],
+        });
+        toast.warning(t("rulesRegistry.lowcodeSqlDivergedWarning"));
+      }
+      setMode(next);
+      setModeSwitch(null);
+      return;
     }
     // Landing in Low-Code with nothing translated over (e.g. from a blank SQL
     // predicate) — seed the first condition row (item 7) rather than leaving

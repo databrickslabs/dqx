@@ -1530,6 +1530,7 @@
     "aiSuggestNoContextYet": "No details yet — fill in a few fields first.",
     "lowcodeNoConditions": "No conditions defined.",
     "lowcodeAddFirstCondition": "Add a condition to start building the rule.",
+    "lowcodeSqlDivergedWarning": "The SQL was edited by hand, so your built conditions couldn't be recovered. Start building again from a blank condition.",
     "lowcodeAddCondition": "Add condition",
     "lowcodeAddAggregatedCondition": "Add aggregated condition",
     "lowcodeOperatorPlaceholder": "operator",

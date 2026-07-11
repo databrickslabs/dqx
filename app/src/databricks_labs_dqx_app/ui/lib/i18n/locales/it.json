@@ -1530,6 +1530,7 @@
     "aiSuggestNoContextYet": "Ancora nessun dettaglio — compila prima alcuni campi.",
     "lowcodeNoConditions": "Nessuna condizione definita.",
     "lowcodeAddFirstCondition": "Aggiungi una condizione per iniziare a costruire la regola.",
+    "lowcodeSqlDivergedWarning": "L'SQL è stato modificato a mano, quindi le condizioni che avevi creato non è stato possibile recuperarle. Ricomincia a costruire da una condizione vuota.",
     "lowcodeAddCondition": "Aggiungi condizione",
     "lowcodeAddAggregatedCondition": "Aggiungi condizione aggregata",
     "lowcodeOperatorPlaceholder": "operatore",
