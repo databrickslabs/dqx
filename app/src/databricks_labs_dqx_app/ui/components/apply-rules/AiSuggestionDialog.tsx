@@ -13,10 +13,10 @@
 // missing/misconfigured AI backend degrades to an "unavailable" empty state via
 // `available`/`reason` on the response.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { ArrowRight, Check, Loader2, Minus, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowRight, Check, Loader2, Minus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -67,7 +67,9 @@ interface AiSuggestionDialogProps {
   state: SuggestRulesState | null;
   /** True while a (pre)fetch is in flight and no result is available yet. */
   loading: boolean;
-  /** Manual re-run of the suggestion request (the "Refresh" affordance). */
+  /** Manual re-run of the suggestion request. Retained for caller
+   *  compatibility; the dialog no longer surfaces a Refresh affordance
+   *  (prefetch-on-tab-entry keeps the result fresh). */
   onRefresh: () => void;
   /** The tab's staged applied-rule rows — used to hide suggestions the steward
    *  has ALREADY applied this session (unsaved), which the backend can't know
@@ -86,7 +88,6 @@ export function AiSuggestionDialog({
   labelDefinitions,
   state,
   loading,
-  onRefresh,
   appliedRules,
   onAdd,
   onApplied,
@@ -208,20 +209,7 @@ export function AiSuggestionDialog({
               <Sparkles className="h-4 w-4" stroke={AI_GRADIENT_URL} />
               <span className={AI_TEXT_GRADIENT}>{t("monitoredTables.suggestRulesDialogTitle")}</span>
             </DialogTitle>
-            <div className="flex items-center gap-2">
-              {showToggle && <GroupByToggle value={groupBy} onChange={setGroupBy} />}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="gap-1.5 text-muted-foreground"
-                onClick={onRefresh}
-                disabled={loading}
-                aria-label={t("monitoredTables.suggestRulesRefresh")}
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-                {t("monitoredTables.suggestRulesRefresh")}
-              </Button>
-            </div>
+            {showToggle && <GroupByToggle value={groupBy} onChange={setGroupBy} />}
           </div>
           <DialogDescription>{t("monitoredTables.suggestRulesDialogDescription")}</DialogDescription>
         </DialogHeader>
@@ -282,46 +270,20 @@ export function AiSuggestionDialog({
             </div>
           ) : state ? (
             <div className="space-y-4">
-              {groupSuggestions(suggestions, "column", t("monitoredTables.suggestRulesUnmappedGroup")).map((group) => {
-                const groupLabel = t("monitoredTables.suggestRulesToggleAll", { label: group.label });
-                return (
-                  <div key={group.key} className="space-y-2">
-                    <h3
-                      role="button"
-                      tabIndex={0}
-                      aria-label={groupLabel}
-                      onClick={() => toggleGroup(group.items)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          toggleGroup(group.items);
-                        }
-                      }}
-                      className="flex items-center gap-2 text-xs font-semibold text-muted-foreground cursor-pointer select-none w-fit hover:text-foreground transition-colors"
-                    >
-                      <GroupHeaderCheckbox
-                        state={groupSelectState(group.items, selected)}
-                        onToggle={() => toggleGroup(group.items)}
-                        label={groupLabel}
-                      />
-                      <span className="font-mono">{group.label}</span>
-                    </h3>
-                    <div className="space-y-2">
-                      {group.items.map((s, i) => (
-                        <SuggestionCard
-                          key={suggestionKey(s)}
-                          suggestion={s}
-                          index={i}
-                          selected={selected.has(suggestionKey(s))}
-                          dimensionColor={dimColor(s.dimension)}
-                          severityColor={s.severity ? colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, s.severity) : undefined}
-                          onToggle={() => toggle(suggestionKey(s))}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
+              {groupSuggestions(suggestions, "column", t("monitoredTables.suggestRulesUnmappedGroup")).map((group, gi) => (
+                <ColumnGroupCard
+                  key={group.key}
+                  column={group.label}
+                  items={group.items}
+                  groupIndex={gi}
+                  groupState={groupSelectState(group.items, selected)}
+                  toggleAllLabel={t("monitoredTables.suggestRulesToggleAll", { label: group.label })}
+                  labelDefinitions={labelDefinitions}
+                  onToggleGroup={() => toggleGroup(group.items)}
+                  isSelected={(s) => selected.has(suggestionKey(s))}
+                  onToggle={(s) => toggle(suggestionKey(s))}
+                />
+              ))}
             </div>
           ) : null}
         </div>
@@ -436,6 +398,96 @@ function MappingChipsInline({ suggestion: s }: { suggestion: SuggestedRuleMappin
 }
 
 /**
+ * Bordered card shell for one suggestion group — shared by the by-rule and
+ * by-column lenses so both read as the same "inverted" card: a clickable
+ * tri-state header (checkbox + `header` node, optional `subhead`) over a
+ * compact list of toggleable rows. Clicking the header toggles the whole group.
+ */
+function SuggestionGroupCard({
+  groupIndex,
+  groupState,
+  toggleAllLabel,
+  onToggleGroup,
+  header,
+  subhead,
+  children,
+}: {
+  groupIndex: number;
+  groupState: GroupSelectState;
+  toggleAllLabel: string;
+  onToggleGroup: () => void;
+  header: ReactNode;
+  subhead?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className="rounded-md border bg-card p-3 space-y-3 [animation:dq-suggestion-in_280ms_ease-out_both]"
+      style={{ animationDelay: `${groupIndex * 60}ms` }}
+    >
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label={toggleAllLabel}
+        onClick={onToggleGroup}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggleGroup();
+          }
+        }}
+        className="space-y-1 cursor-pointer select-none"
+      >
+        <div className="flex items-center gap-2 flex-wrap">
+          <GroupHeaderCheckbox state={groupState} onToggle={onToggleGroup} label={toggleAllLabel} />
+          {header}
+        </div>
+        {subhead}
+      </div>
+
+      <div className="space-y-1.5">{children}</div>
+    </div>
+  );
+}
+
+/** Toggleable compact row shell shared by the by-rule and by-column rows. */
+function SuggestionRow({
+  label,
+  selected,
+  onToggle,
+  children,
+}: {
+  label: string;
+  selected: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      aria-label={label}
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
+      className={cn(
+        "rounded p-2 space-y-1 cursor-pointer select-none transition-colors",
+        selected
+          ? "border border-fuchsia-500/60 bg-fuchsia-500/5 dark:border-fuchsia-400/50"
+          : "border border-border hover:border-muted-foreground/40",
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
  * By-rule presentation: the rule's name, dimension, severity, and description
  * appear ONCE in a header; below it, one compact row per column-mapping option
  * — each row shows its mapping chip(s), the per-mapping explanation, and its own
@@ -471,38 +523,24 @@ function RuleGroupCard({
   onToggle: (s: SuggestedRuleMappingOut) => void;
 }) {
   return (
-    <div
-      className="rounded-md border bg-card p-3 space-y-3 [animation:dq-suggestion-in_280ms_ease-out_both]"
-      style={{ animationDelay: `${groupIndex * 60}ms` }}
-    >
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label={toggleAllLabel}
-        onClick={onToggleGroup}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onToggleGroup();
-          }
-        }}
-        className="space-y-1 cursor-pointer select-none"
-      >
-        <div className="flex items-center gap-2 flex-wrap">
-          <GroupHeaderCheckbox state={groupState} onToggle={onToggleGroup} label={toggleAllLabel} />
+    <SuggestionGroupCard
+      groupIndex={groupIndex}
+      groupState={groupState}
+      toggleAllLabel={toggleAllLabel}
+      onToggleGroup={onToggleGroup}
+      header={
+        <>
           <span className="text-sm font-semibold">{ruleName}</span>
           {dimension && <TagBadge label={dimension} color={dimensionColor} />}
           {severity && <SeverityBadge severity={severity} color={severityColor} />}
-        </div>
-        {ruleDescription && <p className="text-xs text-muted-foreground">{ruleDescription}</p>}
-      </div>
-
-      <div className="space-y-1.5">
-        {items.map((s) => (
-          <MappingRow key={suggestionKey(s)} suggestion={s} selected={isSelected(s)} onToggle={() => onToggle(s)} />
-        ))}
-      </div>
-    </div>
+        </>
+      }
+      subhead={ruleDescription ? <p className="text-xs text-muted-foreground">{ruleDescription}</p> : undefined}
+    >
+      {items.map((s) => (
+        <MappingRow key={suggestionKey(s)} suggestion={s} selected={isSelected(s)} onToggle={() => onToggle(s)} />
+      ))}
+    </SuggestionGroupCard>
   );
 }
 
@@ -518,69 +556,79 @@ function MappingRow({
 }) {
   const cols = Object.values(s.column_mapping ?? {}).join(", ");
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      aria-pressed={selected}
-      aria-label={cols || s.rule_name || s.rule_id}
-      onClick={onToggle}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onToggle();
-        }
-      }}
-      className={cn(
-        "rounded p-2 space-y-1 cursor-pointer select-none transition-colors",
-        selected
-          ? "border border-fuchsia-500/60 bg-fuchsia-500/5 dark:border-fuchsia-400/50"
-          : "border border-border hover:border-muted-foreground/40",
-      )}
-    >
+    <SuggestionRow label={cols || s.rule_name || s.rule_id} selected={selected} onToggle={onToggle}>
       <MappingChipsInline suggestion={s} />
       {s.explanation && <p className="text-xs text-muted-foreground">{s.explanation}</p>}
-    </div>
+    </SuggestionRow>
   );
 }
 
-/** By-column presentation: a full card per suggestion (rule name + badges +
- *  explanation + mapping chips), toggled by clicking anywhere on it. */
-function SuggestionCard({
+/**
+ * By-column presentation — the inverse of the by-rule card: the column name is
+ * the card header, and each rule suggested for that column is a compact row
+ * (rule name + badges + explanation + mapping chip(s)). Reuses the same card and
+ * row shells as the by-rule lens so both read identically.
+ */
+function ColumnGroupCard({
+  column,
+  items,
+  groupIndex,
+  groupState,
+  toggleAllLabel,
+  labelDefinitions,
+  onToggleGroup,
+  isSelected,
+  onToggle,
+}: {
+  column: string;
+  items: SuggestedRuleMappingOut[];
+  groupIndex: number;
+  groupState: GroupSelectState;
+  toggleAllLabel: string;
+  labelDefinitions: LabelDefinition[];
+  onToggleGroup: () => void;
+  isSelected: (s: SuggestedRuleMappingOut) => boolean;
+  onToggle: (s: SuggestedRuleMappingOut) => void;
+}) {
+  return (
+    <SuggestionGroupCard
+      groupIndex={groupIndex}
+      groupState={groupState}
+      toggleAllLabel={toggleAllLabel}
+      onToggleGroup={onToggleGroup}
+      header={<span className="font-mono text-sm font-semibold">{column}</span>}
+    >
+      {items.map((s) => (
+        <ColumnRuleRow
+          key={suggestionKey(s)}
+          suggestion={s}
+          selected={isSelected(s)}
+          dimensionColor={s.dimension ? colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, s.dimension) : undefined}
+          severityColor={s.severity ? colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, s.severity) : undefined}
+          onToggle={() => onToggle(s)}
+        />
+      ))}
+    </SuggestionGroupCard>
+  );
+}
+
+/** One rule suggested for a column (by-column view): rule name + badges +
+ *  explanation + mapping chip(s), as a compact toggleable row. */
+function ColumnRuleRow({
   suggestion: s,
-  index,
   selected,
   dimensionColor,
   severityColor,
   onToggle,
 }: {
   suggestion: SuggestedRuleMappingOut;
-  index: number;
   selected: boolean;
   dimensionColor?: string;
   severityColor?: string;
   onToggle: () => void;
 }) {
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      aria-pressed={selected}
-      onClick={onToggle}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onToggle();
-        }
-      }}
-      className={cn(
-        "rounded-md p-3 space-y-2 cursor-pointer select-none transition-colors bg-card",
-        "[animation:dq-suggestion-in_280ms_ease-out_both]",
-        selected
-          ? "border-2 border-fuchsia-500/60 dark:border-fuchsia-400/50"
-          : "border-2 border-border hover:border-muted-foreground/40",
-      )}
-      style={{ animationDelay: `${index * 60}ms` }}
-    >
+    <SuggestionRow label={s.rule_name || s.rule_id} selected={selected} onToggle={onToggle}>
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-sm font-semibold">{s.rule_name || s.rule_id}</span>
         {s.dimension && <TagBadge label={s.dimension} color={dimensionColor} />}
@@ -588,6 +636,6 @@ function SuggestionCard({
       </div>
       {s.explanation && <p className="text-xs text-muted-foreground">{s.explanation}</p>}
       <MappingChipsInline suggestion={s} />
-    </div>
+    </SuggestionRow>
   );
 }
