@@ -756,6 +756,107 @@ class TestAsOfGroupedTrends:
         ]
 
 
+class TestLatestRunBreakdowns:
+    """Multi-table (``by_table`` axis) breakdown TABLES reflect exactly each
+    member table's LATEST run — dqlake's ``latest_only=True``
+    (``v_table_scores.is_latest_for_table``) on every product breakdown (By
+    dimension/severity/rule/column/table) — so the numbers match the
+    Invalid-samples view (single latest run) instead of stacking every run
+    in history. Single-table scope (``tables`` axis) keeps the caller's
+    scoping (the monitored-table tab pins a run_id itself).
+    """
+
+    A = "main.sales.orders"
+    B = "main.sales.customers"
+    T1 = "2026-07-01 00:00:00"
+    T2 = "2026-07-02 00:00:00"
+
+    def _two_runs_each(self) -> list[CheckResultRow]:
+        return [
+            make_row(
+                "c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Completeness"
+            ),
+            make_row(
+                "c1", failed=20, total=100, run_id="a2", run_date=self.T2, fqn=self.A, dimension="Completeness"
+            ),
+            make_row("c2", failed=5, total=50, run_id="b1", run_date=self.T1, fqn=self.B, severity="High"),
+            make_row("c2", failed=0, total=50, run_id="b2", run_date=self.T2, fqn=self.B, severity="High"),
+        ]
+
+    def test_by_table_reflects_each_members_latest_run_only(self):
+        out = compute_entity_results(self._two_runs_each(), ResultFacets(), table_axis="by_table")
+        by_table = {g.label: g for g in out.by_table}
+        # A's latest run only (20/100) — not 30/200 stacked across both runs.
+        assert by_table[self.A].failed_tests == 20
+        assert by_table[self.A].total_tests == 100
+        assert by_table[self.B].failed_tests == 0
+        assert by_table[self.B].total_tests == 50
+
+    def test_dimension_and_severity_breakdowns_are_latest_run_scoped(self):
+        out = compute_entity_results(self._two_runs_each(), ResultFacets(), table_axis="by_table")
+        completeness = next(g for g in out.by_dimension if g.label == "Completeness")
+        assert completeness.failed_tests == 20
+        assert completeness.total_tests == 100
+        high = next(g for g in out.by_severity if g.label == "High")
+        assert high.failed_tests == 0
+
+    def test_members_on_misaligned_instants_each_contribute_their_own_latest(self):
+        rows = [
+            make_row("c1", failed=10, total=100, run_id="a1", run_date=self.T2, fqn=self.A),
+            # B's only (and therefore latest) run is OLDER than A's.
+            make_row("c2", failed=5, total=50, run_id="b1", run_date=self.T1, fqn=self.B),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
+        by_table = {g.label: g for g in out.by_table}
+        assert by_table[self.A].failed_tests == 10
+        assert by_table[self.B].failed_tests == 5
+
+    def test_facet_never_resurrects_an_older_run(self):
+        # dqlake's is_latest_for_table is computed BEFORE the facet WHERE: a
+        # facet excluding every row of a table's latest run leaves that table
+        # empty — it never falls back to an older run that had the facet.
+        rows = [
+            make_row(
+                "c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Validity"
+            ),
+            make_row(
+                "c1", failed=0, total=100, run_id="a2", run_date=self.T2, fqn=self.A, dimension="Completeness"
+            ),
+        ]
+        out = compute_entity_results(rows, ResultFacets(dimensions=("Validity",)), table_axis="by_table")
+        assert out.by_table == []
+        assert out.by_dimension == []
+
+    def test_trends_keep_every_run_in_history(self):
+        # dqlake: latest_only applies to the breakdown TABLES only — the
+        # over-time series keep the full history.
+        out = compute_entity_results(self._two_runs_each(), ResultFacets(), table_axis="by_table")
+        assert [p.run_date for p in out.trend] == [self.T1, self.T2]
+        assert {p.run_date for p in out.trend_counts} == {self.T1, self.T2}
+        assert {p.run_date for p in out.trend_failures} == {self.T1, self.T2}
+
+    def test_single_table_axis_keeps_all_runs_pooled(self):
+        # PINNED: the table endpoint's breakdowns are run-scoped by the
+        # caller (run_id param); without one they pool history as before.
+        rows = [
+            make_row("c1", failed=10, total=100, run_id="r1", run_date=self.T1),
+            make_row("c1", failed=20, total=100, run_id="r2", run_date=self.T2),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="tables")
+        assert out.tables[0].failed_tests == 30
+        assert out.tables[0].total_tests == 200
+
+    def test_dateless_only_table_still_appears(self):
+        rows = [
+            make_row("c1", failed=5, total=50, run_id="r0", run_date=None, fqn=self.A),
+            make_row("c1", failed=10, total=100, run_id="b1", run_date=self.T1, fqn=self.B),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
+        by_table = {g.label: g for g in out.by_table}
+        assert by_table[self.A].failed_tests == 5
+        assert by_table[self.B].failed_tests == 10
+
+
 class TestAxesSlicing:
     def test_trend_axes_returns_empty_breakdowns(self):
         rows = [make_row("c1", failed=1, total=10)]

@@ -476,6 +476,21 @@ def _trend_failures(
     return out
 
 
+def _latest_instant_by_table(rows: list[CheckResultRow]) -> dict[str, str | None]:
+    """Each table's latest run instant (max run_date; None orders first).
+
+    The Python analogue of dqlake's ``v_table_scores.is_latest_for_table``
+    window flag: computed over EVERY run in scope, independent of the
+    active facet chips — a facet can hide a latest run's rows but never
+    resurrect an older run in its place.
+    """
+    latest: dict[str, str | None] = {}
+    for row in rows:
+        if row.table_fqn not in latest or (row.run_date or "") > (latest[row.table_fqn] or ""):
+            latest[row.table_fqn] = row.run_date
+    return latest
+
+
 def compute_entity_results(
     rows: list[CheckResultRow],
     facets: ResultFacets,
@@ -515,11 +530,24 @@ def compute_entity_results(
     result = EntityResultsOut()
     records_by_run = failed_records_by_run or {}
     if axes in ("all", "breakdown"):
-        result.by_dimension = _group_rows(matched, lambda row: row.dimension)
-        result.by_severity = _group_rows(matched, lambda row: row.severity)
-        result.by_rule = _by_rule_rows(matched)
-        result.by_column = _by_column_rows(matched)
-        table_groups = _group_rows(matched, lambda row: row.table_fqn)
+        # Multi-table scopes (product/global/rule): the breakdown TABLES
+        # reflect exactly each member table's LATEST run — dqlake's
+        # ``latest_only=True`` (is_latest_for_table) on every product
+        # breakdown — so the numbers match the per-member Invalid-samples
+        # view (a single latest run) instead of stacking every run in
+        # history. The over-time series below keep the full history
+        # (dqlake leaves latest_only False on the trends). The single-table
+        # endpoint keeps the caller's scoping: the monitored-table tab pins
+        # a run_id itself, and without one it pools history as before.
+        breakdown_rows = matched
+        if table_axis == "by_table":
+            latest = _latest_instant_by_table(rows)
+            breakdown_rows = [row for row in matched if row.run_date == latest.get(row.table_fqn)]
+        result.by_dimension = _group_rows(breakdown_rows, lambda row: row.dimension)
+        result.by_severity = _group_rows(breakdown_rows, lambda row: row.severity)
+        result.by_rule = _by_rule_rows(breakdown_rows)
+        result.by_column = _by_column_rows(breakdown_rows)
+        table_groups = _group_rows(breakdown_rows, lambda row: row.table_fqn)
         if table_axis == "by_table":
             if binding_ids_by_table:
                 for group in table_groups:
