@@ -45,7 +45,15 @@
     "relativeHoursAgo": "{{count}}h ago",
     "relativeDaysAgo": "{{count}}d ago",
     "search": "Search…",
-    "noMatches": "No matches"
+    "noMatches": "No matches",
+    "dqScoreFilter": {
+      "any": "Any DQ score",
+      "b75_100": "75–100%",
+      "b50_75": "50–75%",
+      "b25_50": "25–50%",
+      "b0_25": "0–25%",
+      "none": "No score"
+    }
   },
   "language": {
     "label": "Language",

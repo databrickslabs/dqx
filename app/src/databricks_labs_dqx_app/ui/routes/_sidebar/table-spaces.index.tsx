@@ -17,6 +17,13 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -37,6 +44,12 @@ import {
   type DataProductOut,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
+import {
+  DQ_SCORE_BUCKETS,
+  DQ_SCORE_FILTER_ALL,
+  FILTER_TRIGGER_CLASS,
+  matchesDqScoreBucket,
+} from "@/components/data-table/filter-bar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { cn } from "@/lib/utils";
 
@@ -104,6 +117,7 @@ function DataProductsPage() {
   const products = useMemo(() => data?.data ?? [], [data]);
 
   const [stewardFilter, setStewardFilter] = useState<string>(ALL);
+  const [scoreFilter, setScoreFilter] = useState<string>(DQ_SCORE_FILTER_ALL);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
 
@@ -116,11 +130,12 @@ function DataProductsPage() {
     const q = search.trim().toLowerCase();
     return products.filter((p) => {
       if (stewardFilter !== ALL && (p.steward ?? "") !== stewardFilter) return false;
+      if (!matchesDqScoreBucket(p.score, scoreFilter)) return false;
       if (!q) return true;
       const hay = `${p.name} ${p.description ?? ""} ${p.steward ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [products, stewardFilter, search]);
+  }, [products, stewardFilter, scoreFilter, search]);
 
   const [sortKey, setSortKey] = useState<DataProductsSortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -159,7 +174,7 @@ function DataProductsPage() {
     return sorted.slice(start, start + PAGE_SIZE);
   }, [sorted, page]);
 
-  const hasActiveFilters = stewardFilter !== ALL || search.trim() !== "";
+  const hasActiveFilters = stewardFilter !== ALL || scoreFilter !== DQ_SCORE_FILTER_ALL || search.trim() !== "";
 
   const applyFilter = useCallback(
     <T,>(setter: (v: T) => void) =>
@@ -348,6 +363,18 @@ function DataProductsPage() {
                 emptyText={t("common.noMatches")}
                 ariaLabel={t("dataProducts.colSteward")}
               />
+              <Select value={scoreFilter} onValueChange={applyFilter(setScoreFilter)}>
+                <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("dataProducts.colDqScore")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DQ_SCORE_BUCKETS.map((b) => (
+                    <SelectItem key={b.value} value={b.value} className="text-xs">
+                      {t(b.labelKey)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </>
           }
           emptyState={

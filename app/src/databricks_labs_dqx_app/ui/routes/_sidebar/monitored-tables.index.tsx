@@ -44,7 +44,12 @@ import {
 } from "@/lib/api";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { usePermissions } from "@/hooks/use-permissions";
-import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
+import {
+  DQ_SCORE_BUCKETS,
+  DQ_SCORE_FILTER_ALL,
+  FILTER_TRIGGER_CLASS,
+  matchesDqScoreBucket,
+} from "@/components/data-table/filter-bar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { cn } from "@/lib/utils";
 
@@ -117,6 +122,7 @@ function MonitoredTablesPage() {
   const [stewardFilter, setStewardFilter] = useState<string>(ALL);
   const [catalogFilter, setCatalogFilter] = useState<string>(ALL);
   const [schemaFilter, setSchemaFilter] = useState<string>(ALL);
+  const [scoreFilter, setScoreFilter] = useState<string>(DQ_SCORE_FILTER_ALL);
   const [nameSearch, setNameSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<MonitoredTableSummaryOut | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -136,6 +142,14 @@ function MonitoredTablesPage() {
 
   const { data, isLoading, isError, refetch } = useListMonitoredTables(queryParams);
   const tables = useMemo(() => data?.data ?? [], [data]);
+
+  // DQ-score bucket is applied client-side over the server-filtered rows —
+  // the cached score is already LEFT-JOINed onto each row by the list
+  // endpoint, so no extra fetch is needed (P25 item 91, matching dqlake).
+  const visibleTables = useMemo(
+    () => tables.filter((r) => matchesDqScoreBucket(r.score, scoreFilter)),
+    [tables, scoreFilter],
+  );
 
   // Cascading: schema options restricted to whatever catalog is selected —
   // derived from the (server-filtered) row set rather than a separate
@@ -176,8 +190,8 @@ function MonitoredTablesPage() {
   );
 
   const sortedTables = useMemo(() => {
-    if (!sortKey) return tables;
-    const copy = [...tables];
+    if (!sortKey) return visibleTables;
+    const copy = [...visibleTables];
     copy.sort((a, b) => {
       const av = getMonitoredTablesSortValue(sortKey, a);
       const bv = getMonitoredTablesSortValue(sortKey, b);
@@ -186,7 +200,7 @@ function MonitoredTablesPage() {
       return 0;
     });
     return copy;
-  }, [tables, sortKey, sortDir]);
+  }, [visibleTables, sortKey, sortDir]);
 
   const pagedTables = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
@@ -198,6 +212,7 @@ function MonitoredTablesPage() {
     stewardFilter !== ALL ||
     catalogFilter !== ALL ||
     schemaFilter !== ALL ||
+    scoreFilter !== DQ_SCORE_FILTER_ALL ||
     nameSearch.trim() !== "";
 
   const applyFilter = useCallback(
@@ -362,6 +377,18 @@ function MonitoredTablesPage() {
                 emptyText={t("common.noMatches")}
                 ariaLabel={t("monitoredTables.colSteward")}
               />
+              <Select value={scoreFilter} onValueChange={applyFilter(setScoreFilter)}>
+                <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colDqScore")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DQ_SCORE_BUCKETS.map((b) => (
+                    <SelectItem key={b.value} value={b.value} className="text-xs">
+                      {t(b.labelKey)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </>
           }
           renderActions={
@@ -458,8 +485,8 @@ function MonitoredTablesPage() {
           }
         />
 
-        {tables.length > 0 && (
-          <Pagination page={page} totalItems={tables.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
+        {visibleTables.length > 0 && (
+          <Pagination page={page} totalItems={visibleTables.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
         )}
       </div>
 
