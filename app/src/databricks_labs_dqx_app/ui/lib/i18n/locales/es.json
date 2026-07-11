@@ -1562,32 +1562,32 @@
     "modeSwitch": {
       "LOWCODE_TO_SQL": {
         "title": "¿Cambiar a SQL?",
-        "body": "Traduciremos las condiciones que has creado a SQL y las colocaremos en el editor. Si vuelves a Low-Code más tarde, empezarás con una pila de filas en blanco — tus filas no se reconstruirán automáticamente.",
+        "body": "Traduciremos las condiciones que has creado a SQL y las colocaremos en el editor.",
         "confirm": "Cambiar a SQL"
       },
       "LOWCODE_TO_NATIVE": {
         "title": "¿Cambiar a DQX Native?",
-        "body": "Se borrarán las condiciones que has creado en Low-Code. DQX Native usa una función de comprobación integrada en lugar de un predicado hecho a mano.",
+        "body": "Se borrarán las condiciones que has creado en Low-Code.",
         "confirm": "Cambiar a DQX Native"
       },
       "SQL_TO_LOWCODE": {
         "title": "¿Cambiar a Low-Code?",
-        "body": "Empezarás con una pila de condiciones vacía. El SQL que escribiste permanece guardado en la regla, así que puedes volver a él cuando quieras.",
+        "body": "Se restaurarán las condiciones que habías creado antes en Low-Code; el SQL que editaste a mano no se puede reconstruir como condiciones.",
         "confirm": "Cambiar a Low-Code"
       },
       "SQL_TO_NATIVE": {
         "title": "¿Cambiar a DQX Native?",
-        "body": "Se borrará el predicado SQL que escribiste. DQX Native usa en su lugar una función de comprobación integrada.",
+        "body": "Se borrará el predicado SQL que escribiste.",
         "confirm": "Cambiar a DQX Native"
       },
       "NATIVE_TO_LOWCODE": {
         "title": "¿Cambiar a Low-Code?",
-        "body": "Se borrará la función de comprobación que seleccionaste. Low-Code te permite crear condiciones de forma visual.",
+        "body": "Se borrará la función de comprobación que seleccionaste.",
         "confirm": "Cambiar a Low-Code"
       },
       "NATIVE_TO_SQL": {
         "title": "¿Cambiar a SQL?",
-        "body": "Se borrará la función de comprobación que seleccionaste. SQL te permite escribir el predicado a mano.",
+        "body": "Se borrará la función de comprobación que seleccionaste.",
         "confirm": "Cambiar a SQL"
       }
     },

@@ -1562,32 +1562,32 @@
     "modeSwitch": {
       "LOWCODE_TO_SQL": {
         "title": "Switch to SQL?",
-        "body": "We'll translate the conditions you've built into SQL and drop them into the editor. Switching back to Low-Code later starts from a blank row stack — your rows won't be rebuilt automatically.",
+        "body": "We'll translate the conditions you've built into SQL and drop them into the editor.",
         "confirm": "Switch to SQL"
       },
       "LOWCODE_TO_NATIVE": {
         "title": "Switch to DQX Native?",
-        "body": "The conditions you've built in Low-Code will be cleared. DQX Native uses a built-in check function instead of a hand-built predicate.",
+        "body": "The conditions you've built in Low-Code will be cleared.",
         "confirm": "Switch to DQX Native"
       },
       "SQL_TO_LOWCODE": {
         "title": "Switch to Low-Code?",
-        "body": "You'll start with an empty condition stack. The SQL you wrote stays saved on the rule, so you can switch back to it any time.",
+        "body": "Any conditions you previously built in Low-Code will be restored; SQL you edited by hand can't be rebuilt into conditions.",
         "confirm": "Switch to Low-Code"
       },
       "SQL_TO_NATIVE": {
         "title": "Switch to DQX Native?",
-        "body": "The SQL predicate you wrote will be cleared. DQX Native uses a built-in check function instead.",
+        "body": "The SQL predicate you wrote will be cleared.",
         "confirm": "Switch to DQX Native"
       },
       "NATIVE_TO_LOWCODE": {
         "title": "Switch to Low-Code?",
-        "body": "The check function you selected will be cleared. Low-Code lets you build conditions visually instead.",
+        "body": "The check function you selected will be cleared.",
         "confirm": "Switch to Low-Code"
       },
       "NATIVE_TO_SQL": {
         "title": "Switch to SQL?",
-        "body": "The check function you selected will be cleared. SQL lets you write the predicate by hand instead.",
+        "body": "The check function you selected will be cleared.",
         "confirm": "Switch to SQL"
       }
     },

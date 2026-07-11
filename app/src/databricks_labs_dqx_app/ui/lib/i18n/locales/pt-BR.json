@@ -1562,32 +1562,32 @@
     "modeSwitch": {
       "LOWCODE_TO_SQL": {
         "title": "Mudar para SQL?",
-        "body": "Vamos traduzir as condições que você criou para SQL e colocá-las no editor. Se você voltar para Low-Code depois, começará com uma pilha de linhas em branco — suas linhas não serão reconstruídas automaticamente.",
+        "body": "Vamos traduzir as condições que você criou para SQL e colocá-las no editor.",
         "confirm": "Mudar para SQL"
       },
       "LOWCODE_TO_NATIVE": {
         "title": "Mudar para DQX Native?",
-        "body": "As condições que você criou no Low-Code serão apagadas. O DQX Native usa uma função de verificação integrada em vez de um predicado feito à mão.",
+        "body": "As condições que você criou no Low-Code serão apagadas.",
         "confirm": "Mudar para DQX Native"
       },
       "SQL_TO_LOWCODE": {
         "title": "Mudar para Low-Code?",
-        "body": "Você começará com uma pilha de condições vazia. O SQL que você escreveu permanece salvo na regra, então você pode voltar a ele quando quiser.",
+        "body": "As condições que você criou antes no Low-Code serão restauradas; o SQL que você editou à mão não pode ser reconstruído como condições.",
         "confirm": "Mudar para Low-Code"
       },
       "SQL_TO_NATIVE": {
         "title": "Mudar para DQX Native?",
-        "body": "O predicado SQL que você escreveu será apagado. O DQX Native usa uma função de verificação integrada em vez disso.",
+        "body": "O predicado SQL que você escreveu será apagado.",
         "confirm": "Mudar para DQX Native"
       },
       "NATIVE_TO_LOWCODE": {
         "title": "Mudar para Low-Code?",
-        "body": "A função de verificação que você selecionou será apagada. O Low-Code permite criar condições visualmente.",
+        "body": "A função de verificação que você selecionou será apagada.",
         "confirm": "Mudar para Low-Code"
       },
       "NATIVE_TO_SQL": {
         "title": "Mudar para SQL?",
-        "body": "A função de verificação que você selecionou será apagada. O SQL permite escrever o predicado à mão.",
+        "body": "A função de verificação que você selecionou será apagada.",
         "confirm": "Mudar para SQL"
       }
     },
