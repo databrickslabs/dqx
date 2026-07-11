@@ -51,10 +51,10 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Save,
   Send,
   Sparkles,
   Trash2,
-  UploadCloud,
   X,
   XCircle,
 } from "lucide-react";
@@ -487,7 +487,7 @@ function MonitoredTableDetailPage() {
                   disabled={!isDirty || lifecycleBusy}
                   className="gap-2"
                 >
-                  {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                   {t("monitoredTables.saveAsDraftButton")}
                 </Button>
                 <TooltipProvider delayDuration={200}>
@@ -502,7 +502,7 @@ function MonitoredTableDetailPage() {
                           {saveMutation.isPending || submitMutation.isPending ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
                           ) : (
-                            <UploadCloud className="h-4 w-4" />
+                            <Send className="h-4 w-4" />
                           )}
                           {submitMutation.isPending ? t("monitoredTables.submitting") : t("monitoredTables.submitButton")}
                         </Button>

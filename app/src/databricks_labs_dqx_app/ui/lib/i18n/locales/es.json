@@ -1714,7 +1714,7 @@
     "saveAsDraftButton": "Guardar como borrador",
     "publishButton": "Publicar",
     "publishing": "Publicando…",
-    "submitButton": "Enviar para revisión",
+    "submitButton": "Enviar a revisión",
     "submitting": "Enviando…",
     "submitDisabledNoChangesHint": "No hay cambios que enviar — los controles de esta tabla ya están aprobados.",
     "toastPublished": "Tabla monitorizada publicada.",
