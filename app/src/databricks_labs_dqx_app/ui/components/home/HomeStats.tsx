@@ -59,8 +59,8 @@ function useCountUp(target: number, durationMs = 800): number {
  *  the numbers (feels more responsive than skeleton boxes). The last card is
  *  the emphasised inverse card. Icons match our sidebar's per-page icons. */
 const CARDS: { key: string; labelKey: string; icon: LucideIcon; inverted?: boolean }[] = [
-  { key: "tables", labelKey: "home.stats.tables", icon: Table2 },
   { key: "rules", labelKey: "home.stats.rules", icon: Library },
+  { key: "tables", labelKey: "home.stats.tables", icon: Table2 },
   { key: "spaces", labelKey: "home.stats.spaces", icon: Boxes },
   { key: "score", labelKey: "home.stats.score", icon: Gauge, inverted: true },
 ];
