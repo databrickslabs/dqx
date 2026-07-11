@@ -23,6 +23,7 @@ import pytest
 
 from databricks_labs_dqx_app.backend.services.score_cache_service import (
     GLOBAL_SCOPE_KEY,
+    RECONCILE_MAX_TABLES,
     CachedScore,
     ScoreCacheService,
     parse_cached_score,
@@ -221,6 +222,25 @@ class TestRefreshAllForTables:
         warehouse.query_dicts.assert_not_called()
         upserts = _upsert_by_key(oltp)
         assert list(upserts) == [("global", GLOBAL_SCOPE_KEY)]
+
+
+class TestListMonitoredTableFqns:
+    def test_reads_bounded_fqn_list_from_the_app_db(self, svc, oltp):
+        oltp.query.return_value = [[FQN_A], [FQN_B]]
+        fqns = svc.list_monitored_table_fqns()
+        assert fqns == [FQN_A, FQN_B]
+        stmt = oltp.query.call_args[0][0]
+        assert _MONITORED in stmt
+        assert "table_fqn" in stmt
+        assert f"LIMIT {RECONCILE_MAX_TABLES}" in stmt
+
+    def test_blank_rows_are_dropped(self, svc, oltp):
+        oltp.query.return_value = [[FQN_A], [None], [""], []]
+        assert svc.list_monitored_table_fqns() == [FQN_A]
+
+    def test_custom_limit_is_applied_as_int(self, svc, oltp):
+        svc.list_monitored_table_fqns(limit=25)
+        assert "LIMIT 25" in oltp.query.call_args[0][0]
 
 
 class TestGetMany:

@@ -712,6 +712,15 @@ async def lifespan(app: FastAPI):
                 # executor. Lets the scheduler refresh list scores when it
                 # observes a launched run complete server-side (no browser).
                 score_cache_service=ScoreCacheService(oltp=oltp_for_scheduler, warehouse_sql=sp_sql),
+                # Startup reconcile (P5.3): the scheduler's first refresh
+                # pass recomputes EVERY monitored table's cached score
+                # (then products + global), healing rows left stale/NULL
+                # by semantic changes or cold deploys. Lives here — not a
+                # lifespan task — so the file-lock lease guarantees it
+                # runs exactly once per host even with multiple uvicorn
+                # workers, it naturally sequences after _ensure_score_views
+                # above, and its failure can never block startup.
+                reconcile_scores_on_start=True,
             )
             set_scheduler(_scheduler)
             _scheduler.start()

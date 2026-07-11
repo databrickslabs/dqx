@@ -39,6 +39,7 @@ from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _GC_AGE_HOURS,
     _GC_HOUR_UTC,
     _GC_WEEKDAY_SAT,
+    _SCORE_RECONCILE_MAX_ATTEMPTS,
     _SCORE_REFRESH_TTL,
     _TMP_VIEW_ID_LEN,
     _TMP_VIEW_NAME_RE,
@@ -1179,6 +1180,76 @@ class TestScoreCacheRefreshOnCompletion:
         mocks.sql.query.assert_not_called()  # nothing left to look up
         score_cache.refresh_all_for_tables.assert_not_called()
         assert "never reached a terminal state" in scheduler_caplog.text
+
+    # -- startup reconcile (P5.3) ---------------------------------------------
+
+    def test_first_pass_reconciles_every_monitored_table_once(self, make_scheduler):
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler, reconcile_scores_on_start=True)
+        score_cache.list_monitored_table_fqns.return_value = ["main.sales.orders", "main.hr.people"]
+        score_cache.refresh_all_for_tables.return_value = (2, 1)
+
+        svc._refresh_scores_for_completed_runs(self.NOW)
+
+        score_cache.refresh_all_for_tables.assert_called_once_with(["main.hr.people", "main.sales.orders"])
+        # Reconciled this boot — the next pass must not reconcile again.
+        svc._refresh_scores_for_completed_runs(self.NOW)
+        score_cache.refresh_all_for_tables.assert_called_once()
+        score_cache.list_monitored_table_fqns.assert_called_once()
+
+    def test_reconcile_supersedes_the_per_run_refresh_for_boot_backlog_runs(self, make_scheduler):
+        """A run completing on the reconcile pass is folded into the SAME
+        batched recompute (union of monitored + completed-run fqns) — boot
+        never runs the warehouse recompute twice for the same tables."""
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler, reconcile_scores_on_start=True)
+        score_cache.list_monitored_table_fqns.return_value = ["main.sales.orders"]
+        score_cache.refresh_all_for_tables.return_value = (2, 0)
+        svc._track_run_for_score_refresh("r1")
+        mocks.sql.query.return_value = [("r1", "legacy.scope.table")]  # not a monitored table
+
+        svc._refresh_scores_for_completed_runs(self.NOW)
+
+        score_cache.refresh_all_for_tables.assert_called_once_with(["legacy.scope.table", "main.sales.orders"])
+        assert svc._pending_score_runs == {}
+
+    def test_reconcile_runs_even_with_no_pending_runs(self, make_scheduler):
+        """The whole point of the reconcile: a cold boot with nothing in
+        flight still heals stale/NULL cache rows (and the global mean)."""
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler, reconcile_scores_on_start=True)
+        score_cache.list_monitored_table_fqns.return_value = []
+        score_cache.refresh_all_for_tables.return_value = (0, 0)
+
+        svc._refresh_scores_for_completed_runs(self.NOW)
+
+        # Zero monitored tables still refreshes the derived global row.
+        score_cache.refresh_all_for_tables.assert_called_once_with([])
+
+    def test_reconcile_failure_retries_next_pass_then_gives_up_after_the_cap(
+        self, make_scheduler, scheduler_caplog
+    ):
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler, reconcile_scores_on_start=True)
+        score_cache.list_monitored_table_fqns.return_value = ["main.sales.orders"]
+        score_cache.refresh_all_for_tables.side_effect = RuntimeError("warehouse down")
+
+        for _ in range(_SCORE_RECONCILE_MAX_ATTEMPTS):
+            svc._refresh_scores_for_completed_runs(self.NOW)  # must not raise
+        assert score_cache.refresh_all_for_tables.call_count == _SCORE_RECONCILE_MAX_ATTEMPTS
+
+        # Budget exhausted: no further reconcile attempts this boot, and the
+        # normal per-run refresh path resumes.
+        score_cache.refresh_all_for_tables.side_effect = None
+        score_cache.refresh_all_for_tables.return_value = (1, 0)
+        svc._track_run_for_score_refresh("r1")
+        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+        svc._refresh_scores_for_completed_runs(self.NOW)
+        assert score_cache.refresh_all_for_tables.call_count == _SCORE_RECONCILE_MAX_ATTEMPTS + 1
+        assert score_cache.refresh_all_for_tables.call_args[0][0] == ["main.sales.orders"]
+        assert "reconcile" in scheduler_caplog.text
+
+    def test_reconcile_off_by_default_preserves_the_per_run_refresh(self, make_scheduler):
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
+        svc._refresh_scores_for_completed_runs(self.NOW)
+        score_cache.list_monitored_table_fqns.assert_not_called()
+        score_cache.refresh_all_for_tables.assert_not_called()
 
     # -- launch-path tracking ------------------------------------------------
 

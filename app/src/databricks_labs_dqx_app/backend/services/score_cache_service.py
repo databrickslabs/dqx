@@ -65,6 +65,14 @@ GLOBAL_SCOPE_KEY = "global"
 # 200 comfortably covers the homepage trend read (last ~30 points).
 HISTORY_KEEP_ROWS = 200
 
+# Bound on the monitored-table FQNs one startup reconcile will recompute
+# (P5.3). The batched metric-view query interpolates every FQN into one
+# IN-list, so an unbounded read of ``dq_monitored_tables`` could build a
+# pathological statement on a huge install; 1000 comfortably covers any
+# realistic Studio deployment while keeping the statement sane. Tables
+# past the cap heal on their next run completion or browser refresh.
+RECONCILE_MAX_TABLES = 1000
+
 
 @dataclass(frozen=True)
 class CachedScore:
@@ -250,6 +258,23 @@ class ScoreCacheService:
             self.refresh_product(product_id)
         self.refresh_global()
         return refreshed_tables, len(product_ids)
+
+    def list_monitored_table_fqns(self, limit: int = RECONCILE_MAX_TABLES) -> list[str]:
+        """Every monitored table's FQN from the app DB, capped at *limit*.
+
+        The input set for the startup score-cache reconcile (P5.3): the
+        scheduler feeds these to :meth:`refresh_all_for_tables` on its
+        first tick so stale/NULL cache rows (semantic changes, cold
+        deployments) heal without waiting for a run to complete. One
+        cheap OLTP read; deterministic order so the cap truncates
+        stably.
+        """
+        stmt = (
+            f"SELECT table_fqn FROM {self._monitored_table} "  # noqa: S608
+            f"ORDER BY table_fqn LIMIT {int(limit)}"
+        )
+        rows = self._oltp.query(stmt)
+        return [row[0] for row in rows if row and row[0]]
 
     def product_ids_containing_tables(self, table_fqns: list[str]) -> list[str]:
         """Product ids with at least one member bound to any of *table_fqns*."""

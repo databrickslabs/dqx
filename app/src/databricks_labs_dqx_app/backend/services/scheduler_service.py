@@ -62,6 +62,14 @@ _FAILURE_BACKOFF = timedelta(hours=1)
 # validation run.
 _SCORE_REFRESH_TTL = timedelta(hours=24)
 
+# Retry budget for the startup score-cache reconcile (P5.3). The
+# reconcile is best-effort: a transient warehouse failure right after
+# boot retries on the next tick, but a persistently broken warehouse
+# must not turn the 60s tick into an indefinite retry storm — after
+# this many failed attempts the reconcile is skipped for the rest of
+# the boot (run completions and browser refreshes still heal scores).
+_SCORE_RECONCILE_MAX_ATTEMPTS = 3
+
 # ------------------------------------------------------------------
 # Data Products cron evaluation (design spec §4.3, Task 5)
 # ------------------------------------------------------------------
@@ -179,6 +187,7 @@ class SchedulerService:
         data_product_service: DataProductService | None = None,
         binding_run_service: BindingRunService | None = None,
         score_cache_service: ScoreCacheService | None = None,
+        reconcile_scores_on_start: bool = False,
     ) -> None:
         """Construct the scheduler.
 
@@ -217,6 +226,16 @@ class SchedulerService:
             gap where the browser-side refresh-scores POST never fires
             because no browser observed the scheduled run complete.
             When ``None`` the refresh step is a no-op.
+        reconcile_scores_on_start:
+            When True (production wiring — set by the app lifespan),
+            the first score-refresh pass after boot recomputes EVERY
+            monitored table's cached score in one batched warehouse
+            query (then products + global) instead of only the runs it
+            observed complete — healing rows left stale or NULL by
+            semantic changes and cold deployments. Runs at most once
+            per boot (the "reconciled this boot" flag), best-effort
+            with a small retry budget. Default False keeps legacy /
+            unit-test constructions on the pure per-run refresh.
         """
         self._ws = ws
         self._job_id = job_id
@@ -257,6 +276,14 @@ class SchedulerService:
         # :data:`_SCORE_REFRESH_TTL`.
         self._pending_score_runs: dict[str, datetime] = {}
         self._runs_table = self._sql.fqn("dq_validation_runs")
+        # Startup reconcile state (P5.3): whether this boot has healed
+        # the whole score cache yet, and how many attempts it has spent
+        # trying. Both in-memory only — the reconcile is deliberately
+        # per-boot (each deploy may ship semantic changes that
+        # invalidate cached rows).
+        self._reconcile_scores_on_start = reconcile_scores_on_start
+        self._scores_reconciled = False
+        self._score_reconcile_attempts = 0
 
         # Orphan-tmp-view GC: fires every Saturday at 01:00 UTC. Held in
         # process memory rather than persisted — a missed Saturday (e.g.
@@ -927,18 +954,55 @@ class SchedulerService:
         catches up) so a warehouse hiccup can never wedge the tick into a
         retry loop. Runs whose terminal row never lands (job died before
         the runner wrote it) expire after :data:`_SCORE_REFRESH_TTL`.
+
+        Startup reconcile (P5.3): while this boot has not yet reconciled
+        (and the retry budget isn't spent), the per-run refresh is
+        replaced by :meth:`_reconcile_scores` — one batched recompute of
+        the union of ALL monitored tables and any completed-run tables,
+        so boot never performs the same warehouse recompute twice.
+        """
+        if self._score_cache_service is None:
+            return
+
+        fqns = self._collect_completed_score_run_fqns(now)
+
+        if self._reconcile_due():
+            self._reconcile_scores(fqns)
+            return
+        if not fqns:
+            return
+
+        try:
+            refreshed_tables, refreshed_products = self._score_cache_service.refresh_all_for_tables(sorted(fqns))
+            logger.info(
+                "Score cache refreshed after run completion: %d table(s), %d product(s)",
+                refreshed_tables,
+                refreshed_products,
+            )
+        except Exception:
+            logger.exception(
+                "Score-cache refresh after run completion failed; "
+                "scores stay stale until the next completion or browser refresh"
+            )
+
+    def _collect_completed_score_run_fqns(self, now: datetime) -> set[str]:
+        """Pop every tracked run with a terminal row; return their table FQNs.
+
+        The expiry + batched terminal lookup extracted from
+        :meth:`_refresh_scores_for_completed_runs` so the reconcile pass
+        can fold the completed runs' tables into its own recompute.
         """
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
-        if self._score_cache_service is None or not self._pending_score_runs:
-            return
+        if not self._pending_score_runs:
+            return set()
 
         expired = [rid for rid, started in self._pending_score_runs.items() if now - started > _SCORE_REFRESH_TTL]
         for rid in expired:
             del self._pending_score_runs[rid]
             logger.warning("Run %s never reached a terminal state; dropping its score-refresh tracking", rid)
         if not self._pending_score_runs:
-            return
+            return set()
 
         in_list = ", ".join(f"'{escape_sql_string(rid)}'" for rid in self._pending_score_runs)
         sql = (
@@ -956,21 +1020,57 @@ class SchedulerService:
             fqn = row[1]
             if fqn and not fqn.startswith(_SQL_CHECK_PREFIX):
                 fqns.add(fqn)
-        if not fqns:
-            return
+        return fqns
 
+    def _reconcile_due(self) -> bool:
+        """Whether this pass should run the startup score-cache reconcile."""
+        return (
+            self._reconcile_scores_on_start
+            and not self._scores_reconciled
+            and self._score_reconcile_attempts < _SCORE_RECONCILE_MAX_ATTEMPTS
+        )
+
+    def _reconcile_scores(self, completed_fqns: set[str]) -> None:
+        """Recompute the cached score of EVERY monitored table (once per boot).
+
+        Heals ``dq_score_cache`` rows left stale or NULL by semantic
+        changes shipped in a deploy (e.g. the run_mode reclassification)
+        and cold deployments where nothing has recomputed since boot —
+        and, transitively, the product and global means derived from
+        them. Runs on the scheduler's first refresh pass (single worker,
+        seconds after startup, after the lifespan ensured the score
+        views), bounded by :data:`~.score_cache_service.RECONCILE_MAX_TABLES`
+        and merged with *completed_fqns* so a boot-backlog run completing
+        on the same pass shares the ONE batched warehouse query. Success
+        sets the reconciled-this-boot flag; failure retries next tick up
+        to :data:`_SCORE_RECONCILE_MAX_ATTEMPTS` attempts.
+        """
+        if self._score_cache_service is None:  # pragma: no cover — caller guards
+            return
+        self._score_reconcile_attempts += 1
         try:
-            refreshed_tables, refreshed_products = self._score_cache_service.refresh_all_for_tables(sorted(fqns))
+            monitored = self._score_cache_service.list_monitored_table_fqns()
+            fqns = sorted(set(monitored) | completed_fqns)
+            refreshed_tables, refreshed_products = self._score_cache_service.refresh_all_for_tables(fqns)
+            self._scores_reconciled = True
             logger.info(
-                "Score cache refreshed after run completion: %d table(s), %d product(s)",
+                "Startup score-cache reconcile complete: %d table(s), %d product(s), global",
                 refreshed_tables,
                 refreshed_products,
             )
         except Exception:
-            logger.exception(
-                "Score-cache refresh after run completion failed; "
-                "scores stay stale until the next completion or browser refresh"
-            )
+            if self._score_reconcile_attempts >= _SCORE_RECONCILE_MAX_ATTEMPTS:
+                logger.exception(
+                    "Startup score-cache reconcile failed %d time(s); giving up for this boot "
+                    "(run completions and browser refreshes still heal scores)",
+                    self._score_reconcile_attempts,
+                )
+            else:
+                logger.exception(
+                    "Startup score-cache reconcile failed (attempt %d/%d); retrying next tick",
+                    self._score_reconcile_attempts,
+                    _SCORE_RECONCILE_MAX_ATTEMPTS,
+                )
 
     @staticmethod
     def _resolve_cron_token(token: str, names: dict[str, int] | None) -> int:
