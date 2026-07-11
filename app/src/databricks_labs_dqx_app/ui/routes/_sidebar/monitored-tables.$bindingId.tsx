@@ -2243,6 +2243,41 @@ function DataGrid({ columns, rows, emptyLabel }: { columns: string[]; rows: Reco
   );
 }
 
+// Composed loading skeleton mirroring the real View Data layout (item 70):
+// the ask bar (icon + input + button), a row of ~3 pill chips, and a table
+// with a header row and eight body rows — far closer to the eventual content
+// than the old flat 256px block.
+function ViewDataSkeleton() {
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2 rounded-lg border px-3 py-3">
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-3.5 w-3.5 shrink-0 rounded-full" />
+          <Skeleton className="h-8 flex-1" />
+          <Skeleton className="h-8 w-20 shrink-0" />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-6 w-44 rounded-full" />
+          ))}
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-md border">
+        <div className="border-b bg-muted/30 p-2">
+          <Skeleton className="h-4 w-full" />
+        </div>
+        <div className="divide-y">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="p-2">
+              <Skeleton className="h-4 w-full" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Rendered inside the About tab since P26 item 3 (below the About/Schema
 // card row) — no longer a Radix TabsContent of its own, so no pt-4 here;
 // the hosting <section> owns the spacing.
@@ -2323,7 +2358,7 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
   const suggestions = aiQuestions.length > 0 ? aiQuestions : staticSuggestions;
 
   if (previewMutation.isPending && !preview) {
-    return <Skeleton className="h-64 w-full" />;
+    return <ViewDataSkeleton />;
   }
 
   if (previewMutation.isError && !preview) {
