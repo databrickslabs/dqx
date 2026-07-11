@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import {
   ClipboardCheck,
-  Gauge,
+  LineChart,
   History,
   Home,
   LayoutDashboard,
@@ -205,7 +205,7 @@ function Layout() {
                     : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 )}
               >
-                <Gauge size={16} />
+                <LineChart size={16} />
                 <span>{t("sidebar.results")}</span>
               </Link>
             </SidebarMenuItem>

@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
-import { Boxes, Gauge, Library, Settings, Table2 } from "lucide-react";
+import { Boxes, LineChart, Library, Settings, Table2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -37,7 +37,7 @@ const TABS: { nameKey: string; descriptionKey: string; href: string; icon: Lucid
     nameKey: "sidebar.results",
     descriptionKey: "home.grid.resultsDesc",
     href: "/results",
-    icon: Gauge,
+    icon: LineChart,
   },
   {
     nameKey: "home.grid.config",

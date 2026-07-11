@@ -11,11 +11,11 @@
  * Tab order: About | Sharing, Tables | Results  ‖  Schedule, History
  * `|` characters render as visible muted dividers inside the TabsList.
  * Results mirrors the Monitored Tables detail page (Task 9): last
- * left-aligned group, ClipboardList icon.
+ * left-aligned group, LineChart icon.
  */
 import { useTranslation } from "react-i18next";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { CalendarClock, ClipboardList, History, Info, KeyRound, ListChecks, Table2, type LucideIcon } from "lucide-react";
+import { CalendarClock, LineChart, History, Info, KeyRound, ListChecks, Table2, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type ProductTabKey = "about" | "permissions" | "tables" | "results" | "runs" | "scheduling" | "history";
@@ -27,7 +27,7 @@ const TAB_ICONS: Record<ProductTabKey, LucideIcon> = {
   about: Info,
   permissions: KeyRound,
   tables: Table2,
-  results: ClipboardList,
+  results: LineChart,
   runs: ListChecks,
   scheduling: CalendarClock,
   history: History,

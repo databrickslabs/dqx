@@ -43,7 +43,7 @@ import {
   Braces,
   Check,
   ChevronDown,
-  ClipboardList,
+  LineChart,
   FlaskConical,
   History as HistoryIcon,
   Info,
@@ -2517,7 +2517,7 @@ export function RegistryRuleFormDialog({
                     onClick={resultsScoreError ? () => void ruleScoreQuery.refetch() : undefined}
                   >
                     <TabsTrigger value="results" className="gap-1.5" disabled aria-disabled="true">
-                      <ClipboardList className="h-3.5 w-3.5" />
+                      <LineChart className="h-3.5 w-3.5" />
                       {t("rulesRegistry.tabResults")}
                     </TabsTrigger>
                   </span>
@@ -2535,7 +2535,7 @@ export function RegistryRuleFormDialog({
                 disabled={resultsDisabled}
                 aria-disabled={resultsDisabled}
               >
-                <ClipboardList className="h-3.5 w-3.5" />
+                <LineChart className="h-3.5 w-3.5" />
                 {t("rulesRegistry.tabResults")}
               </TabsTrigger>
             )}

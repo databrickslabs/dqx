@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
-import { ArrowDown, ArrowUp, Boxes, Gauge, Library, Loader2, Minus, Table2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Boxes, LineChart, Library, Loader2, Minus, Table2 } from "lucide-react";
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
@@ -62,7 +62,7 @@ const CARDS: { key: string; labelKey: string; icon: LucideIcon; inverted?: boole
   { key: "rules", labelKey: "home.stats.rules", icon: Library },
   { key: "tables", labelKey: "home.stats.tables", icon: Table2 },
   { key: "spaces", labelKey: "home.stats.spaces", icon: Boxes },
-  { key: "score", labelKey: "home.stats.score", icon: Gauge, inverted: true },
+  { key: "score", labelKey: "home.stats.score", icon: LineChart, inverted: true },
 ];
 
 /** Direction-of-change badge for the score card: green ▲ / red ▼ / grey =,
