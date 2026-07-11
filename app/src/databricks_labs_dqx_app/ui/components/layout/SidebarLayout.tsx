@@ -48,7 +48,7 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
           layout past 100vh and causing a second (body-level) scrollbar in
           addition to the intended inner one. */}
       <SidebarProvider className="flex-1 min-h-0">
-        <Sidebar className="top-12 h-[calc(100vh-3rem)]">
+        <Sidebar collapsible="icon" className="top-12 h-[calc(100vh-3rem)]">
           <SidebarContent className="flex flex-col justify-between">
             {children}
           </SidebarContent>
