@@ -233,6 +233,29 @@ def test_text_instructions_prefer_paragraphs_over_bullets() -> None:
     assert "genuine multi-item" in joined
 
 
+def test_text_instructions_rates_always_as_percentages() -> None:
+    # P6.2: the views emit scores/rates as fractions of 1 — Genie must
+    # convert and present them as percentages with one decimal, never a
+    # bare fraction.
+    joined = "".join(gs.TEXT_INSTRUCTIONS)
+    assert "percentage" in joined
+    assert "one decimal" in joined
+    assert '"91.5%"' in joined
+    assert "0.915" in joined
+    assert "never" in joined
+
+
+def test_text_instructions_headline_then_blank_line_then_breakdown() -> None:
+    # P6.2: answers open with a one-sentence headline carrying the key
+    # finding and its number, then a blank line, then the breakdown
+    # paragraphs (the UI renders blank-line-separated paragraphs).
+    joined = "".join(gs.TEXT_INSTRUCTIONS)
+    assert "headline" in joined
+    assert "one sentence" in joined
+    assert "key finding" in joined
+    assert "blank line" in joined
+
+
 def test_every_sample_question_has_a_curated_sql() -> None:
     curated = {e["question"][0] for e in gs._curated_sqls(CATALOG, SCHEMA)}
     assert curated == set(gs.SAMPLE_QUESTIONS)

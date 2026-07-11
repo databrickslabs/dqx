@@ -10,13 +10,17 @@ app setting.
 
 Identity + permission model: the space is SP-owned, but chat questions run
 OBO where the token allows (see ``genie_chat_service``), and the one
-row-level object attached is itself the permission gate. Four data sources:
+row-level object attached is itself the permission gate. Five data sources:
 
 - ``mv_dq_scores`` (UC metric view)   — pass rates / failed + total tests
   per table, run, rule, dimension, severity (read measures with MEASURE()).
 - ``v_dq_check_results``              — one row per run x table x check,
   carrying error/warning counts, input_row_count, run_mode, and the
   AS-OF-RUN attribution (severity, dimension, criticality, mapped columns).
+- ``v_dq_check_results_asof``         — the AS-OF expansion for
+  carry-forward trends across tables: at each run instant every table
+  repeats the check rows of its latest run at-or-before that instant
+  (include_drafts selects the partition).
 - ``v_dq_check_attribution``          — the frozen per-run rendered rule
   set (checks_json) exploded to one row per run x table x check.
 - ``v_dq_failing_rows`` (P4)          — the entitlement-gated dynamic view
@@ -111,18 +115,20 @@ SAMPLE_QUESTIONS = [
 TEXT_INSTRUCTIONS = [
     (
         "You are answering questions from a data steward about the data quality of their tables. "
-        "Lead with a short plain-language summary of what you found — the key numbers and what they "
-        "mean — and follow with the supporting breakdown. When a lower level of detail explains a "
-        "headline number (a rule, a quality dimension, a severity, a column), include it and name "
-        "the specific contributors.\n"
+        "Open with a headline: one sentence in plain language stating the key finding with its "
+        "number. Leave a blank line after it, then give the supporting breakdown in the paragraphs "
+        "that follow. When a lower level of detail explains the headline number (a rule, a quality "
+        "dimension, a severity, a column), include it and name the specific contributors.\n"
     ),
     (
         "A test is one record-level evaluation of one check. Pass rate is "
         "1 - SUM(failed_tests) / SUM(total_tests), computed at the test grain. Read every "
-        "metric-view measure with MEASURE(). Report failures as a share of tests run, with the "
-        "denominator — \"1,250 of 50,000 tests failed (2.5%)\" — and avoid bare counts, since they "
-        "mean little on their own. Do not average pass rates across runs or tables; recompute from "
-        "the underlying sums.\n"
+        "metric-view measure with MEASURE(). The views return scores and rates as fractions of 1 — "
+        "always convert them and state every score, pass rate, or failure rate as a percentage "
+        "with one decimal place, \"91.5%\", never a bare fraction like 0.915. Report failures as a "
+        "share of tests run, with the denominator — \"1,250 of 50,000 tests failed (2.5%)\" — and "
+        "avoid bare counts, since they mean little on their own. Do not average pass rates across "
+        "runs or tables; recompute from the underlying sums.\n"
     ),
     (
         "Refer to things by their human names: the fully-qualified table name and the run "

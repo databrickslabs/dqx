@@ -19,6 +19,24 @@ describe("toBlocks", () => {
     ]);
   });
 
+  it("keeps a headline and its breakdown as separate paragraph blocks (P6.2 answer shape)", () => {
+    // The space instructions demand: one-sentence headline, blank line,
+    // breakdown paragraphs. The renderer must keep them as distinct <p>
+    // blocks (the space-y container gives them visible spacing).
+    const answer =
+      "The pass rate is 91.5%.\n\nCompleteness drives the gap: 1,250 of 50,000 tests failed (2.5%).\nTwo rules worsened since the prior run.";
+    expect(toBlocks(answer)).toEqual([
+      { kind: "p", lines: ["The pass rate is 91.5%."] },
+      {
+        kind: "p",
+        lines: [
+          "Completeness drives the gap: 1,250 of 50,000 tests failed (2.5%).",
+          "Two rules worsened since the prior run.",
+        ],
+      },
+    ]);
+  });
+
   it("collects - and * bullets into one ul", () => {
     expect(toBlocks("- one\n* two")).toEqual([
       { kind: "ul", items: ["one", "two"] },
