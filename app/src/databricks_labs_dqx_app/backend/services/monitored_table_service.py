@@ -175,7 +175,12 @@ class MonitoredTableService:
         binding = MonitoredTable(
             binding_id=uuid4().hex[:16],
             table_fqn=table_fqn,
-            steward=steward,
+            # Default the steward to the creator when none was resolved, so a
+            # freshly registered table always has an accountable owner (mirrors
+            # table spaces). The route prefers the UC table owner and passes it
+            # here as ``steward``; this fallback covers the owner-unavailable
+            # case. An explicit steward always wins.
+            steward=steward or user_email,
             status="draft",
             last_profiled_at=None,
             created_by=user_email,
@@ -222,7 +227,10 @@ class MonitoredTableService:
             binding = MonitoredTable(
                 binding_id=uuid4().hex[:16],
                 table_fqn=fqn,
-                steward=steward,
+                # Bulk register defaults every binding's steward to the creator
+                # (no per-table UC owner lookup — see route docstring for the
+                # cost trade-off). An explicit shared steward always wins.
+                steward=steward or user_email,
                 status="draft",
                 last_profiled_at=None,
                 created_by=user_email,

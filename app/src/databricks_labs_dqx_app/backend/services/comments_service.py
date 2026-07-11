@@ -28,7 +28,12 @@ class Comment:
 
 
 class CommentsService:
-    VALID_ENTITY_TYPES = {"run", "rule"}
+    # Comment threads are keyed by a generic ``(entity_type, entity_id)`` pair,
+    # so widening the set of supported entities needs no storage migration —
+    # only this allowlist. ``run`` = validation run, ``rule`` = registry rule,
+    # ``monitored_table`` = a table binding (keyed on binding_id),
+    # ``data_product`` = a table space (keyed on product_id).
+    VALID_ENTITY_TYPES = {"run", "rule", "monitored_table", "data_product"}
 
     def __init__(self, sql: OltpExecutorProtocol) -> None:
         self._sql = sql

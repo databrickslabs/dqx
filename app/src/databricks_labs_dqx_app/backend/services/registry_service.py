@@ -334,7 +334,11 @@ class RegistryService:
             author_kind=author_kind,
             definition=definition,
             user_metadata=dict(user_metadata or {}),
-            steward=steward,
+            # Default the steward to the creator when none was supplied, so a
+            # freshly authored rule always has an accountable owner (mirrors
+            # how table spaces default steward -> creator). An explicit steward
+            # from the caller always wins.
+            steward=steward or user_email,
             is_builtin=False,
             source="ui",
             created_by=user_email,

@@ -38,7 +38,7 @@ def add_comment(
     svc: Annotated[CommentsService, Depends(get_comments_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> CommentOut:
-    """Add a comment to a run or rule."""
+    """Add a comment to a run, rule, monitored table or table space."""
     try:
         user = obo_ws.current_user.me()
         user_email = user.user_name or "unknown"
@@ -59,10 +59,12 @@ def add_comment(
 )
 def list_comments(
     svc: Annotated[CommentsService, Depends(get_comments_service)],
-    entity_type: Annotated[str, Query(description="Entity type: 'run' or 'rule'")],
-    entity_id: Annotated[str, Query(description="Entity identifier: run_id or table_fqn")],
+    entity_type: Annotated[
+        str, Query(description="Entity type: 'run', 'rule', 'monitored_table' or 'data_product'")
+    ],
+    entity_id: Annotated[str, Query(description="Entity identifier: run_id, rule_id, binding_id or product_id")],
 ) -> list[CommentOut]:
-    """List comments for a specific run or rule."""
+    """List comments for a specific run, rule, monitored table or table space."""
     try:
         comments = svc.list_comments(entity_type, entity_id)
         return [_comment_to_out(c) for c in comments]

@@ -19,6 +19,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     CurrentUserRole,
     get_apply_rules_service,
     get_binding_run_service,
+    get_discovery_service,
     get_materializer,
     get_monitored_table_service,
     get_monitored_table_version_service,
@@ -65,6 +66,7 @@ from databricks_labs_dqx_app.backend.services.binding_run_service import (
     MissingSnapshotError,
     NeverApprovedError,
 )
+from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
 from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     DuplicateMonitoredTableError,
@@ -155,11 +157,19 @@ def register_monitored_table(
     body: RegisterMonitoredTableIn,
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
 ) -> MonitoredTableSummaryOut:
-    """Register a table under Rules Registry governance (status ``draft``)."""
+    """Register a table under Rules Registry governance (status ``draft``).
+
+    When the caller does not pin a steward, default it to the table's Unity
+    Catalog owner (resolved on-behalf-of the caller, so UC permissions are
+    honoured), falling back to the creator when the owner can't be read. The
+    owner may be a user, group, or service principal — it is stored verbatim.
+    """
     try:
         user_email = _current_user_email(obo_ws)
-        table = svc.register(body.table_fqn, user_email, steward=body.steward)
+        steward = body.steward or discovery.get_table_owner(body.table_fqn)
+        table = svc.register(body.table_fqn, user_email, steward=steward)
         return MonitoredTableSummaryOut.from_domain(MonitoredTableSummary(table=table, applied_rule_count=0))
     except DuplicateMonitoredTableError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -186,6 +196,13 @@ def bulk_register_monitored_tables(
     Already-monitored tables and syntactically invalid FQNs are reported
     back in the summary rather than failing the whole batch — see
     :meth:`MonitoredTableService.bulk_register`.
+
+    Unlike single register, bulk register does **not** resolve each table's
+    Unity Catalog owner: that would be one ``tables.get`` round-trip per table
+    (N calls, plus rate-limit exposure) on a path meant for onboarding many
+    tables quickly. When no steward is pinned, every binding defaults to the
+    creator; a per-table owner can be assigned afterwards from the table's
+    Permissions tab.
     """
     try:
         user_email = _current_user_email(obo_ws)

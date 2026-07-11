@@ -82,6 +82,12 @@ def _mock_obo_ws(user_email: str = "alice@x") -> MagicMock:
     return obo
 
 
+def _mock_discovery(owner: str | None = None) -> MagicMock:
+    discovery = MagicMock()
+    discovery.get_table_owner.return_value = owner
+    return discovery
+
+
 class TestListAndGet:
     def test_list_maps_domain_summaries_to_dto(self):
         svc = MagicMock()
@@ -119,17 +125,39 @@ class TestRegister:
         svc = MagicMock()
         svc.register.return_value = _table()
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", steward="bob@x")
-        result = register_monitored_table(body=body, svc=svc, obo_ws=_mock_obo_ws())
+        discovery = _mock_discovery(owner="owner@x")
+        result = register_monitored_table(body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery)
         assert result.table.table_fqn == "cat.schema.tbl"
         assert result.applied_rule_count == 0
+        # An explicit steward wins — the UC owner lookup is skipped entirely.
         svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", steward="bob@x")
+        discovery.get_table_owner.assert_not_called()
+
+    def test_register_defaults_steward_to_uc_owner(self):
+        svc = MagicMock()
+        svc.register.return_value = _table()
+        body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
+        discovery = _mock_discovery(owner="owner@x")
+        register_monitored_table(body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery)
+        discovery.get_table_owner.assert_called_once_with("cat.schema.tbl")
+        svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", steward="owner@x")
+
+    def test_register_falls_back_to_none_when_owner_unavailable(self):
+        # Owner unresolved (permission denied / missing) -> route passes None,
+        # and the service layer defaults the steward to the creator.
+        svc = MagicMock()
+        svc.register.return_value = _table()
+        body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
+        discovery = _mock_discovery(owner=None)
+        register_monitored_table(body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery)
+        svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", steward=None)
 
     def test_register_duplicate_raises_409(self):
         svc = MagicMock()
         svc.register.side_effect = DuplicateMonitoredTableError("Table already monitored")
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
         with pytest.raises(HTTPException) as excinfo:
-            register_monitored_table(body=body, svc=svc, obo_ws=_mock_obo_ws())
+            register_monitored_table(body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery())
         assert excinfo.value.status_code == 409
 
     def test_register_invalid_fqn_raises_400(self):
@@ -137,7 +165,7 @@ class TestRegister:
         svc.register.side_effect = ValueError("Invalid fully qualified name")
         body = RegisterMonitoredTableIn(table_fqn="bad-fqn")
         with pytest.raises(HTTPException) as excinfo:
-            register_monitored_table(body=body, svc=svc, obo_ws=_mock_obo_ws())
+            register_monitored_table(body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery())
         assert excinfo.value.status_code == 400
 
 

@@ -135,6 +135,15 @@ class TestRegister:
         assert "INSERT INTO dqx_test.dqx_app_test.dq_monitored_tables" in insert_sql
         assert "cat.schema.tbl" in insert_sql
 
+    def test_defaults_steward_to_creator_when_unset(self, svc, sql):
+        # No steward supplied (owner unresolved upstream) -> the creator becomes
+        # the accountable steward so no binding is ever left ownerless.
+        sql.query.return_value = []
+        table = svc.register("cat.schema.tbl", "alice@x")
+        assert table.steward == "alice@x"
+        insert_sql = sql.execute.call_args[0][0]
+        assert "alice@x" in insert_sql
+
     def test_rejects_duplicate_table_fqn(self, svc, sql):
         sql.query.return_value = [_table_row(table_fqn="cat.schema.tbl")]
         with pytest.raises(DuplicateMonitoredTableError):
@@ -198,6 +207,14 @@ class TestBulkRegister:
         inserted_fqns = {call.args[0].split("VALUES")[1] for call in sql.execute.call_args_list}
         assert any("cat.schema.new1" in v for v in inserted_fqns)
         assert any("cat.schema.new2" in v for v in inserted_fqns)
+
+    def test_defaults_steward_to_creator_when_unset(self, svc, sql):
+        # Bulk register with no shared steward -> each binding defaults to the
+        # creator (no per-table UC owner lookup on the bulk path).
+        sql.query.return_value = []
+        svc.bulk_register(["cat.schema.new1"], "alice@x")
+        insert_sql = sql.execute.call_args[0][0]
+        assert "alice@x" in insert_sql
 
     def test_dedupes_within_input(self, svc, sql):
         sql.query.return_value = []
