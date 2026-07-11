@@ -388,6 +388,21 @@ class ApplyRulesService:
         rows = self._sql.query(sql)
         return [self._row_to_applied_rule(row) for row in rows]
 
+    def list_bindings_for_rule(self, rule_id: str) -> list[AppliedRule]:
+        """List every application of *rule_id*, across all monitored-table bindings.
+
+        Reverse lookup of :meth:`list_applied` — same row shape, filtered on
+        ``rule_id`` instead of ``binding_id``. Used by the rule-level DQ score
+        aggregate to fan out to each binding's source table.
+        """
+        e = escape_sql_string(rule_id)
+        sql = (
+            f"SELECT {self._select_cols} FROM {self._table} "  # noqa: S608
+            f"WHERE rule_id = '{e}' ORDER BY created_at"
+        )
+        rows = self._sql.query(sql)
+        return [self._row_to_applied_rule(row) for row in rows]
+
     def count_applications_for_rule(self, rule_id: str) -> int:
         """Count how many monitored tables currently have *rule_id* applied.
 

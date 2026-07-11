@@ -12,6 +12,12 @@ logger = logging.getLogger(__name__)
 
 _CONFIG_KEY = "workspace_config"
 
+# Compiled-in fallback for the ``draft_run_sample_limit`` setting — the
+# row cap applied to DRAFT monitored-table runs when the admin has not
+# configured one. 0 means unlimited. Shared by ``BindingRunService`` and
+# the ``/config/draft-run-sample-limit`` admin endpoints.
+DRAFT_RUN_SAMPLE_LIMIT_DEFAULT = 1000
+
 # Module-level adapter so we pay the type-tree walk once at import time
 # rather than on every ``get_config`` call. ``TypeAdapter`` is Pydantic's
 # public v2 surface for validating non-BaseModel types against a target
@@ -192,6 +198,38 @@ class AppSettingsService:
         self.save_setting(self._QUARANTINE_RETENTION_KEY, str(int(days)), user_email=user_email)
         return int(days)
 
+    # ------------------------------------------------------------------
+    # Draft-run sampling — bounds the rows a DRAFT monitored-table run
+    # reads (``BindingRunService.run_binding`` with ``source='draft'``).
+    # Approved/published runs NEVER sample — they always scan the whole
+    # table; this knob exists only so exploratory draft runs on large
+    # tables stay cheap. Stored as a plain integer string:
+    #   * unset / invalid → consumer falls back to
+    #     ``DRAFT_RUN_SAMPLE_LIMIT_DEFAULT`` (1000)
+    #   * 0               → unlimited (draft runs scan the whole table)
+    #   * positive N      → draft runs read at most N rows
+    # ------------------------------------------------------------------
+
+    _DRAFT_RUN_SAMPLE_LIMIT_KEY = "draft_run_sample_limit"
+
+    def get_draft_run_sample_limit(self) -> int | None:
+        """Return the configured draft-run sample limit, or ``None`` if unset.
+
+        0 means unlimited (whole table). Negative stored values are
+        treated as unset so a corrupt row can never disable sampling by
+        accident.
+        """
+        value = self._get_int_setting(self._DRAFT_RUN_SAMPLE_LIMIT_KEY)
+        if value is not None and value < 0:
+            logger.warning("Setting %s is negative (%d); treating as unset", self._DRAFT_RUN_SAMPLE_LIMIT_KEY, value)
+            return None
+        return value
+
+    def save_draft_run_sample_limit(self, limit: int, *, user_email: str | None = None) -> int:
+        """Persist the draft-run sample limit (0 = unlimited). Returns the saved value."""
+        self.save_setting(self._DRAFT_RUN_SAMPLE_LIMIT_KEY, str(int(limit)), user_email=user_email)
+        return int(limit)
+
     def _get_int_setting(self, key: str) -> int | None:
         raw = self.get_setting(key)
         if raw is None or raw == "":
@@ -249,9 +287,7 @@ class AppSettingsService:
 
     def save_permissions_default_inherit(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Persist the default per-grant inheritance setting. Returns the saved value."""
-        self.save_setting(
-            self._PERMISSIONS_DEFAULT_INHERIT_KEY, "true" if enabled else "false", user_email=user_email
-        )
+        self.save_setting(self._PERMISSIONS_DEFAULT_INHERIT_KEY, "true" if enabled else "false", user_email=user_email)
         return enabled
 
     # ------------------------------------------------------------------
@@ -601,8 +637,41 @@ class AppSettingsService:
                 "High": "#EA580C",
                 "Critical": "#DC2626",
             },
+            # Admin-editable severity -> DQX criticality mapping consumed by
+            # ``registry_models.resolve_criticality`` (materializer). Matches
+            # the historical hardcoded defaults
+            # (``registry_models.SEVERITY_TO_CRITICALITY``).
+            "value_criticality": {
+                "Low": "warn",
+                "Medium": "warn",
+                "High": "error",
+                "Critical": "error",
+            },
         },
     ]
+
+    def get_label_definitions(self) -> list[dict]:
+        """Return the stored ``label_definitions`` list as raw dicts.
+
+        Defensive read shared by the seeding path below and
+        ``registry_models.resolve_criticality``: malformed JSON, a
+        non-list payload, or non-dict entries degrade to an empty /
+        filtered list with a WARNING rather than propagating. Kept as
+        raw dicts (not the ``LabelDefinition`` pydantic model) to avoid
+        a services -> routes import cycle — see the class-level note.
+        """
+        raw = self.get_setting(self._LABEL_DEFINITIONS_KEY)
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("label_definitions setting is not valid JSON; treating as empty")
+            return []
+        if not isinstance(parsed, list):
+            logger.warning("label_definitions setting is not a list; treating as empty")
+            return []
+        return [item for item in parsed if isinstance(item, dict)]
 
     def seed_reserved_label_definitions_if_absent(self, *, user_email: str | None = None) -> bool:
         """Ensure the reserved ``dimension``/``severity`` label keys exist.
@@ -613,18 +682,7 @@ class AppSettingsService:
         entry (admin-edited or not) untouched. Returns ``True`` iff a
         write happened.
         """
-        raw = self.get_setting(self._LABEL_DEFINITIONS_KEY)
-        existing: list[dict] = []
-        if raw:
-            try:
-                parsed = json.loads(raw)
-                if isinstance(parsed, list):
-                    existing = [item for item in parsed if isinstance(item, dict)]
-                else:
-                    logger.warning("label_definitions setting is not a list; seeding onto an empty list")
-            except (TypeError, json.JSONDecodeError):
-                logger.warning("label_definitions setting is not valid JSON; seeding onto an empty list")
-
+        existing = self.get_label_definitions()
         existing_keys = {item.get("key") for item in existing}
         missing = [seed for seed in self._RESERVED_LABEL_DEFINITION_SEEDS if seed["key"] not in existing_keys]
         if not missing:

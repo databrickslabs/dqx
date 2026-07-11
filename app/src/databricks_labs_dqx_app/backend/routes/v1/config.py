@@ -26,7 +26,10 @@ from databricks_labs_dqx_app.backend.models import (
     RunConfigIn,
     RunConfigOut,
 )
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    DRAFT_RUN_SAMPLE_LIMIT_DEFAULT,
+    AppSettingsService,
+)
 from databricks_labs_dqx_app.backend.services.vector_store import VectorStoreProvisioner
 
 # Everyone except VIEWER. Used to gate the embedded-dashboard GET: the
@@ -94,6 +97,14 @@ class LabelDefinition(BaseModel):
     picked (e.g. the ``dimension`` key's per-dimension descriptions). Both
     maps are pruned to keys present in ``values`` on save.
 
+    ``value_criticality`` optionally maps a subset (or all) of ``values`` to a
+    DQX ``criticality`` (``"warn"`` or ``"error"``). Only meaningful on the
+    reserved ``severity`` key today: the materializer reads it to decide which
+    criticality a registry rule's effective severity renders as (see
+    ``registry_models.resolve_criticality``). Unmapped values fall back to the
+    built-in defaults. Pruned to keys present in ``values`` on save, like the
+    other per-value maps.
+
     ``is_builtin`` flags a reserved, pre-seeded key (e.g. the Rules Registry
     ``dimension``/``severity`` tags) — such keys cannot be deleted or renamed
     via :func:`save_label_definitions`, though their values, colors, and
@@ -108,6 +119,7 @@ class LabelDefinition(BaseModel):
     allow_custom_values: bool = False
     value_colors: dict[str, str] | None = None
     value_descriptions: dict[str, str] | None = None
+    value_criticality: dict[str, str] | None = None
     is_builtin: bool = False
 
     @field_validator("value_colors")
@@ -118,6 +130,18 @@ class LabelDefinition(BaseModel):
         for label_value, color in value.items():
             if not _HEX_COLOR_RE.match(color):
                 raise ValueError(f"Invalid color {color!r} for value {label_value!r}; expected '#RRGGBB' hex format.")
+        return value
+
+    @field_validator("value_criticality")
+    @classmethod
+    def _validate_value_criticality(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        for label_value, criticality in value.items():
+            if criticality not in ("warn", "error"):
+                raise ValueError(
+                    f"Invalid criticality {criticality!r} for value {label_value!r}; expected 'warn' or 'error'."
+                )
         return value
 
 
@@ -389,6 +413,70 @@ def save_retention_settings(
 
 
 # ---------------------------------------------------------------------------
+# Draft-run sample limit — admin knob capping the rows a DRAFT monitored-
+# table run reads. Approved/published runs never sample (they always scan
+# the whole table — see ``BindingRunService.run_binding``); this setting
+# exists only so exploratory draft runs on large tables stay cheap.
+# 0 = unlimited (draft runs also scan the whole table).
+# ---------------------------------------------------------------------------
+
+# Generous ceiling — a draft "sample" past ten million rows is almost
+# certainly a typo; admins wanting full scans should use 0 (unlimited).
+_DRAFT_SAMPLE_LIMIT_MAX = 10_000_000
+
+
+class DraftRunSampleLimitOut(BaseModel):
+    """Effective draft-run sample limit + the default/bounds for the UI."""
+
+    draft_run_sample_limit: int
+    draft_run_sample_limit_default: int = DRAFT_RUN_SAMPLE_LIMIT_DEFAULT
+    draft_run_sample_limit_max: int = _DRAFT_SAMPLE_LIMIT_MAX
+    draft_run_sample_limit_set: bool
+
+
+class DraftRunSampleLimitIn(BaseModel):
+    draft_run_sample_limit: int = Field(
+        ge=0,
+        le=_DRAFT_SAMPLE_LIMIT_MAX,
+        description="Draft runs sample at most this many rows; 0 checks the whole table.",
+    )
+
+
+@router.get(
+    "/draft-run-sample-limit",
+    response_model=DraftRunSampleLimitOut,
+    operation_id="getDraftRunSampleLimit",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def get_draft_run_sample_limit(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> DraftRunSampleLimitOut:
+    """Return the current draft-run sample limit + default (admin only)."""
+    limit = svc.get_draft_run_sample_limit()
+    return DraftRunSampleLimitOut(
+        draft_run_sample_limit=limit if limit is not None else DRAFT_RUN_SAMPLE_LIMIT_DEFAULT,
+        draft_run_sample_limit_set=limit is not None,
+    )
+
+
+@router.put(
+    "/draft-run-sample-limit",
+    response_model=DraftRunSampleLimitOut,
+    operation_id="saveDraftRunSampleLimit",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_draft_run_sample_limit(
+    body: DraftRunSampleLimitIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> DraftRunSampleLimitOut:
+    """Update the draft-run sample limit (admin only). 0 = unlimited."""
+    svc.save_draft_run_sample_limit(body.draft_run_sample_limit, user_email=email)
+    logger.info("Saved draft_run_sample_limit=%d", body.draft_run_sample_limit)
+    return get_draft_run_sample_limit(svc)
+
+
+# ---------------------------------------------------------------------------
 # Label definitions — admin-managed catalog of label keys + allowed values.
 # Powers the constrained-mode label picker on rule authoring pages, and
 # (via the reserved ``weight`` key) the weight selector. Storage is one JSON
@@ -510,8 +598,11 @@ def save_label_definitions(
 
         cleaned_colors = {v: c for v, c in (d.value_colors or {}).items() if v in seen_values} or None
         cleaned_descriptions = {
-            v: desc.strip() for v, desc in (d.value_descriptions or {}).items() if v in seen_values and (desc or "").strip()
+            v: desc.strip()
+            for v, desc in (d.value_descriptions or {}).items()
+            if v in seen_values and (desc or "").strip()
         } or None
+        cleaned_criticality = {v: c for v, c in (d.value_criticality or {}).items() if v in seen_values} or None
 
         cleaned.append(
             LabelDefinition(
@@ -521,6 +612,7 @@ def save_label_definitions(
                 allow_custom_values=False if key in _NO_CUSTOM_VALUE_BUILTIN_KEYS else bool(d.allow_custom_values),
                 value_colors=cleaned_colors,
                 value_descriptions=cleaned_descriptions,
+                value_criticality=cleaned_criticality,
                 # Authoritative from the previously-persisted state, never
                 # from the client payload — a caller cannot grant or strip
                 # ``is_builtin`` protection via the request body.

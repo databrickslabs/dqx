@@ -150,6 +150,11 @@ resources:
         - catalog.schemas:read
         - catalog.tables:read
         - serving.serving-endpoints
+        # Ask Genie chat runs on-behalf-of the signed-in user (P4.2), so the
+        # OBO token must carry the Genie API scope. The chat service keeps
+        # its SP fallback regardless — harmless once OBO works, and it
+        # protects workspaces whose OAuth integration strips scopes.
+        - dashboards.genie
 
       resources:
         # Binding the bundle-managed warehouse to the app grants the app SP CAN_USE.

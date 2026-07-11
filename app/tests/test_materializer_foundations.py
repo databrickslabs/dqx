@@ -23,6 +23,16 @@ from databricks_labs_dqx_app.backend.services.registry_service import RegistrySe
 
 
 class TestResolveCriticality:
+    @pytest.fixture
+    def make_settings(self, sql_executor_mock):
+        """Build a real AppSettingsService whose stored ``label_definitions`` is *raw*."""
+
+        def _make(raw: str | None) -> AppSettingsService:
+            sql_executor_mock.query.return_value = [(raw,)] if raw is not None else []
+            return AppSettingsService(sql_executor_mock)
+
+        return _make
+
     @pytest.mark.parametrize(
         "severity,expected",
         [
@@ -32,14 +42,47 @@ class TestResolveCriticality:
             ("Critical", "error"),
         ],
     )
-    def test_maps_known_severities(self, severity, expected):
-        assert resolve_criticality(severity) == expected
+    def test_maps_known_severities_via_builtin_defaults_when_unconfigured(self, make_settings, severity, expected):
+        # No stored label definitions at all — pre-existing installs keep the
+        # historical hardcoded mapping.
+        assert resolve_criticality(severity, make_settings(None)) == expected
 
-    def test_none_falls_back_to_default(self):
-        assert resolve_criticality(None) == DEFAULT_CRITICALITY
+    @pytest.mark.parametrize(
+        "severity,expected",
+        [
+            ("Low", "warn"),
+            ("High", "error"),
+        ],
+    )
+    def test_builtin_defaults_when_stored_definition_has_no_mapping(self, make_settings, severity, expected):
+        # A severity definition seeded before value_criticality existed —
+        # behaves exactly like the historical hardcoded mapping.
+        raw = json.dumps([{"key": "severity", "values": ["Low", "Medium", "High", "Critical"]}])
+        assert resolve_criticality(severity, make_settings(raw)) == expected
 
-    def test_unknown_value_falls_back_to_default(self):
-        assert resolve_criticality("Unheard-of") == DEFAULT_CRITICALITY
+    def test_reads_admin_edited_mapping(self, make_settings):
+        # Admin flipped the default mapping — resolve_criticality must honor it.
+        raw = json.dumps(
+            [
+                {
+                    "key": "severity",
+                    "values": ["Low", "Critical"],
+                    "value_criticality": {"Low": "error", "Critical": "warn"},
+                }
+            ]
+        )
+        assert resolve_criticality("Low", make_settings(raw)) == "error"
+        assert resolve_criticality("Critical", make_settings(raw)) == "warn"
+
+    def test_falls_back_to_default_for_unmapped_value(self, make_settings):
+        assert resolve_criticality("SomeCustomValue", make_settings("[]")) == DEFAULT_CRITICALITY
+
+    def test_none_falls_back_to_default(self, make_settings):
+        assert resolve_criticality(None, make_settings("[]")) == DEFAULT_CRITICALITY
+
+    def test_malformed_settings_json_falls_back_to_builtin_defaults(self, make_settings):
+        assert resolve_criticality("High", make_settings("{not json")) == "error"
+        assert resolve_criticality("Unheard-of", make_settings("{not json")) == DEFAULT_CRITICALITY
 
 
 class TestRegistryServiceGetVersion:
@@ -63,7 +106,11 @@ class TestRegistryServiceGetVersion:
         assert svc.get_version("r1", 3) is None
 
     def test_returns_specific_historical_version(self, svc, sql):
-        definition = {"body": {"function": "is_not_null", "arguments": {"column": "{{column}}"}}, "slots": [], "parameters": []}
+        definition = {
+            "body": {"function": "is_not_null", "arguments": {"column": "{{column}}"}},
+            "slots": [],
+            "parameters": [],
+        }
         sql.query.return_value = [
             [
                 "r1",

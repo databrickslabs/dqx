@@ -256,3 +256,34 @@ class TestListVersions:
         assert versions[0].checks_json == []  # omitted by the listing
         assert versions[0].refrozen_at is not None
         assert versions[1].refrozen_at is None
+
+
+class TestSnapshotCountsMany:
+    def test_resolves_all_pins_in_one_query(self, service, sql):
+        sql.query.return_value = [
+            ["b1", "1", json.dumps([_check("ar1", "id"), _check("ar2", "name")]),
+             json.dumps({"applied_rules": [{"applied_rule_id": "ar1"}]})],
+            ["b2", "3", json.dumps([_check("ar9", "id")]),
+             json.dumps({"applied_rules": [{"applied_rule_id": "ar9"}, {"applied_rule_id": "ar10"}]})],
+        ]
+        result = service.snapshot_counts_many([("b1", 1), ("b2", 3)])
+        assert result == {("b1", 1): (1, 2), ("b2", 3): (2, 1)}
+        assert sql.query.call_count == 1
+        stmt = sql.query.call_args[0][0]
+        assert f"FROM {_VERSIONS}" in stmt
+        assert "(binding_id = 'b1' AND version = 1)" in stmt
+        assert "(binding_id = 'b2' AND version = 3)" in stmt
+
+    def test_missing_snapshot_is_absent_from_result(self, service, sql):
+        sql.query.return_value = []
+        assert service.snapshot_counts_many([("b1", 9)]) == {}
+
+    def test_empty_pins_short_circuits_without_sql(self, service, sql):
+        assert service.snapshot_counts_many([]) == {}
+        sql.query.assert_not_called()
+
+    def test_duplicate_pins_are_deduplicated_in_the_predicate(self, service, sql):
+        sql.query.return_value = []
+        service.snapshot_counts_many([("b1", 1), ("b1", 1)])
+        stmt = sql.query.call_args[0][0]
+        assert stmt.count("binding_id = 'b1'") == 1

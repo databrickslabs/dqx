@@ -38,6 +38,7 @@ from databricks_labs_dqx_app.backend.routes.v1.data_products import (
     update_data_product,
 )
 from databricks_labs_dqx_app.backend.services.data_product_service import (
+    BindingNotApprovedError,
     DataProductDetail,
     DataProductRunResult,
     DuplicateDataProductNameError,
@@ -233,6 +234,20 @@ class TestMembers:
         with pytest.raises(HTTPException) as excinfo:
             add_data_product_member("p1", body=AddDataProductMemberIn(binding_id="invalid_binding"), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
+
+    def test_add_member_non_approved_binding_raises_400(self):
+        """P3.2: a draft/pending/rejected/never-approved binding cannot join —
+        the service's BindingNotApprovedError maps to a clear 400."""
+        svc = MagicMock()
+        svc.add_member.side_effect = BindingNotApprovedError(
+            "Cannot add table 'cat.schema.tbl' to this table space: its status is 'draft', expected 'approved'. "
+            "Only approved tables can join a table space."
+        )
+        with pytest.raises(HTTPException) as excinfo:
+            add_data_product_member("p1", body=AddDataProductMemberIn(binding_id="b1"), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
+        assert excinfo.value.status_code == 400
+        assert "cat.schema.tbl" in excinfo.value.detail
+        assert "'draft'" in excinfo.value.detail
 
     def test_remove_member_success(self):
         svc = MagicMock()

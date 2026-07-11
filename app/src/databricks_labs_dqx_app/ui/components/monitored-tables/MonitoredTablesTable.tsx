@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
+import { ScoreBarCell, scoreSortValue } from "@/components/data-table/ScoreBarCell";
 import { STICKY_ACTIONS_HEAD_CLASS, STICKY_ACTIONS_CELL_CLASS } from "@/components/data-table/sticky-actions";
 import type { MonitoredTableSummaryOut } from "@/lib/api";
 
@@ -171,16 +172,17 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     renderCell: (r) => <span className="tabular-nums">{r.applied_rule_count ?? 0}</span>,
   },
   dqScore: {
-    // No quality-score aggregate is exposed on MonitoredTableSummaryOut
-    // yet; column is present (hidden by default) for layout parity with
-    // dqlake and to avoid another localStorage-key migration once it lands.
+    // Cached DQ score of the latest published run, LEFT-JOINed from the
+    // dq_score_cache OLTP table by the list endpoint (P3.4) — no warehouse
+    // hit on page load. Cell presentation copied from dqlake's
+    // BindingsTable dqScore column (bar + whole-number percent).
     labelKey: "monitoredTables.colDqScore",
     toggleable: true,
-    defaultVisible: false,
+    defaultVisible: true,
     defaultWidth: 140,
-    sortable: false,
+    sortable: true,
     renderHeader: (label) => label,
-    renderCell: () => <span className="text-muted-foreground">—</span>,
+    renderCell: (r) => <ScoreBarCell score={r.score} />,
   },
   version: {
     // The binding's approved snapshot version (Data Products Task 1/2):
@@ -275,7 +277,7 @@ export function getMonitoredTablesSortValue(
     case "rulesCount":
       return r.applied_rule_count ?? 0;
     case "dqScore":
-      return -1;
+      return scoreSortValue(r.score);
     case "version":
       return r.table.version ?? 0;
     case "lastRun":
@@ -289,7 +291,11 @@ export function getMonitoredTablesSortValue(
   }
 }
 
-const LS_KEY_LAYOUT = "dqx.monitoredTables.layout";
+// v2: DQ Score went live (visible + sortable by default) — bumping the key
+// makes the new default visibility take effect for users whose stored
+// layout still carries the old hidden-placeholder preference (the dqlake
+// `dqlake.products.layout.vN` convention).
+const LS_KEY_LAYOUT = "dqx.monitoredTables.layout.v2";
 
 export interface MonitoredTablesTableProps {
   /** Rows to render — already filtered, sorted, and paginated by the caller. */

@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
@@ -6,13 +6,6 @@ import { ErrorBoundary } from "react-error-boundary";
 import { toast } from "sonner";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -80,8 +73,8 @@ import {
   useSaveAppliedRules,
   useListRegistryRules,
   useGetTableColumns,
-  useGetRules,
   useListMonitoredTableVersions,
+  useGetRunSet,
   useRunMonitoredTable,
   useSuggestRulesForTable,
   usePreviewTableData,
@@ -105,6 +98,10 @@ import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
+import {
+  invalidateResultsAfterRuleApplicationChange,
+  invalidateResultsAfterRunCompletion,
+} from "@/lib/results-invalidation";
 import { useLabelDefinitions, useWorkspaceHost } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useJobPolling } from "@/hooks/use-job-polling";
@@ -130,6 +127,7 @@ import {
 } from "@/components/apply-rules/shared";
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
+import { BindingResultsTab } from "@/components/monitored-tables/BindingResultsTab";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 import { MonitoredTableHistoryTab } from "@/components/monitored-tables/MonitoredTableHistoryTab";
 
@@ -262,6 +260,36 @@ function MonitoredTableDetailPage() {
     [queryClient, bindingId],
   );
 
+  // -- Active-run-scoped tracking (P3.6) ----------------------------------
+  // When a run is triggered FROM this page (the header's Run action), poll
+  // THAT run set's status until it settles, then fire the run-completion
+  // invalidation (which also triggers the server-side score-cache refresh)
+  // and stop. This is NOT idle polling: `trackedRunSetId` is null unless a
+  // run was started here, and the query is disabled whenever it is null —
+  // runs triggered elsewhere are still covered by the Runs History /
+  // run-set polls' completion detectors, as before. While tracking, the
+  // Results tab shows dqlake's in-progress banner.
+  const [trackedRunSetId, setTrackedRunSetId] = useState<string | null>(null);
+  const trackedRunSetQuery = useGetRunSet(trackedRunSetId ?? "", {
+    query: {
+      enabled: trackedRunSetId != null,
+      refetchInterval: 4000,
+      refetchIntervalInBackground: false,
+      staleTime: 0,
+    },
+  });
+  const trackedRunSetStatus =
+    trackedRunSetId != null ? trackedRunSetQuery.data?.data?.status : undefined;
+  const tableFqnForInvalidation = table.table_fqn;
+  useEffect(() => {
+    if (trackedRunSetStatus == null || trackedRunSetStatus === "running") return;
+    // Terminal (success/failed/canceled): stop tracking — dropping the id
+    // disables the poll — and refresh the results/score queries for this
+    // table so the tab reflects the finished run without a reload.
+    setTrackedRunSetId(null);
+    invalidateResultsAfterRunCompletion(queryClient, [tableFqnForInvalidation]);
+  }, [trackedRunSetStatus, queryClient, tableFqnForInvalidation]);
+
   // ---------------------------------------------------------------------
   // Staged editor (P16-F) — every add/mapping-edit/severity-override/pin/
   // removal on the Apply Rules tab mutates `stagedRows` ONLY (no network).
@@ -333,12 +361,19 @@ function MonitoredTableDetailPage() {
       setBaseline(normalized);
       justSavedRef.current = true;
       invalidateLifecycleQueries();
+      // The persisted applied-rule set changed (apply/unapply/severity
+      // override), which moves the dq-score / dq-results aggregates —
+      // notably a rule score's `applied_to_count`, which gates the registry
+      // rule's Results tab. Those queries never refetch on their own
+      // (staleTime Infinity), so invalidate them here or the tab stays
+      // stale-disabled until a full reload.
+      invalidateResultsAfterRuleApplicationChange(queryClient);
       return true;
     } catch (err: unknown) {
       toast.error(extractApiError(err, t("monitoredTables.toastSaveFailed")), { duration: 6000 });
       return false;
     }
-  }, [persistStagedRows, invalidateLifecycleQueries, t]);
+  }, [persistStagedRows, invalidateLifecycleQueries, queryClient, t]);
 
   const handleSaveAsDraft = () => {
     void saveDraft().then((ok) => {
@@ -356,6 +391,13 @@ function MonitoredTableDetailPage() {
           const normalized = normalizeStagedRows(resp.data);
           setStagedRows(normalized);
           setBaseline(normalized);
+          // Invalidate HERE — as soon as the persist succeeds — not in the
+          // shared success handler below: the applied-rule set has already
+          // changed server-side at this point, so if the follow-on submit
+          // fails the score/results caches must still refresh (staleTime
+          // Infinity — see saveDraft for the full rationale). The !isDirty
+          // branch persists nothing, so it needs no invalidation.
+          invalidateResultsAfterRuleApplicationChange(queryClient);
         })
       : Promise.resolve();
     persistFirst
@@ -402,6 +444,10 @@ function MonitoredTableDetailPage() {
       () => {
         toast.success(t("monitoredTables.toastDeleted"));
         invalidateLifecycleQueries();
+        // Deleting the binding unapplies every rule that was applied to it —
+        // see saveDraft for why the score/results caches must be invalidated
+        // when the applied-rule set changes.
+        invalidateResultsAfterRuleApplicationChange(queryClient);
         justSavedRef.current = true;
         void navigate({ to: "/monitored-tables" });
       },
@@ -503,6 +549,7 @@ function MonitoredTableDetailPage() {
                 table={table}
                 isDirty={isDirty}
                 onSaveDraft={saveDraft}
+                onRunStarted={setTrackedRunSetId}
                 {...computeRunGating(baseline.length, stagedRows.length)}
               />
             )}
@@ -692,7 +739,13 @@ function MonitoredTableDetailPage() {
           </TabsContent>
 
           <TabsContent value="results">
-            <ResultsTab tableFqn={table.table_fqn} status={table.status} />
+            <BindingResultsTab
+              bindingId={bindingId}
+              tableName={tableName}
+              tableFqn={table.table_fqn}
+              neverApproved={(table.version ?? 0) === 0}
+              runInProgress={trackedRunSetId != null}
+            />
           </TabsContent>
 
           <TabsContent value="schedule">
@@ -790,6 +843,7 @@ function RunTableAction({
   table,
   isDirty,
   onSaveDraft,
+  onRunStarted,
   runNowHasRules,
   runDraftHasRules,
 }: {
@@ -797,6 +851,9 @@ function RunTableAction({
   table: MonitoredTableOut;
   isDirty: boolean;
   onSaveDraft: () => Promise<boolean>;
+  /** Reports the just-submitted run set's id so the page can track it to
+   *  completion (in-progress banner + results refresh on settle). */
+  onRunStarted?: (runSetId: string) => void;
   /** True when there is a persisted (approved) applied-rule set to run —
    *  i.e. the last-saved baseline is non-empty. "Run now" executes that
    *  server-side snapshot, so it must gate on the baseline, NOT on the
@@ -832,6 +889,7 @@ function RunTableAction({
       { bindingId, data: { source, version } },
       {
         onSuccess: (resp) => {
+          onRunStarted?.(resp.data.run_set_id);
           toast.success(t("monitoredTables.toastRunStarted"), {
             action: {
               label: t("monitoredTables.toastRunStartedViewAction"),
@@ -2361,67 +2419,3 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
 
 // The preview row cap mirrors the backend TableDataService.PREVIEW_LIMIT.
 const TableDataService_PREVIEW_LIMIT = 500;
-
-// ---------------------------------------------------------------------------
-// Results tab
-// ---------------------------------------------------------------------------
-
-function ResultsTab({ tableFqn, status }: { tableFqn: string; status: string }) {
-  const { t } = useTranslation();
-
-  // Submitting the table materializes its applied rules into dq_quality_rules
-  // and moves them into the pending_approval queue; they only actually run
-  // once an approver flips them to `approved`, exactly like a manually
-  // authored rule. Nothing runs while the binding is still `draft` (nothing
-  // has been materialized yet), so only fetch/count checks once it has left
-  // draft, and point the steward at the existing Drafts & Review queue for
-  // any still awaiting review.
-  const materialized = status !== "draft";
-  const rulesQuery = useGetRules(tableFqn, {
-    query: { enabled: materialized, retry: false },
-  });
-  const checks = rulesQuery.data?.data ?? [];
-  const pendingCount = checks.filter((c) => c.status === "draft" || c.status === "pending_approval").length;
-
-  return (
-    <Card className="mt-4">
-      <CardHeader>
-        <CardTitle className="text-sm flex items-center gap-2">
-          <ClipboardList className="h-4 w-4" />
-          {t("monitoredTables.resultsTitle")}
-        </CardTitle>
-        <CardDescription>{t("monitoredTables.resultsDescription")}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {!materialized && (
-          <p className="text-sm text-muted-foreground">{t("monitoredTables.notYetPublishedResultsHint")}</p>
-        )}
-        {pendingCount > 0 && (
-          <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700">
-            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-                {t("monitoredTables.resultsApprovalBannerTitle")}
-              </p>
-              <p className="text-sm text-amber-800/90 dark:text-amber-300/90">
-                {t("monitoredTables.resultsApprovalBannerBody", { count: pendingCount })}
-              </p>
-              <Button asChild size="sm" variant="outline" className="gap-1.5 h-7 text-xs border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900">
-                <Link to="/rules/drafts">{t("monitoredTables.resultsApprovalBannerCta")}</Link>
-              </Button>
-            </div>
-          </div>
-        )}
-        <p className="text-sm text-muted-foreground">
-          {t("monitoredTables.resultsTableFqnHint", { table: tableFqn })}
-        </p>
-        <Button asChild variant="outline" size="sm" className="gap-2">
-          <Link to="/runs-history">
-            <ArrowLeft className="h-3.5 w-3.5 rotate-180" />
-            {t("monitoredTables.viewRunsHistory")}
-          </Link>
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}

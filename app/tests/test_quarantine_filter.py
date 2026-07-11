@@ -120,3 +120,52 @@ class TestQueryQuarantine:
         _query_quarantine(sql, _AppConf(), "run-1", offset=20, limit=5, check_name="my_check")
         data_call = sql.query_dicts.call_args.args[0]
         assert "LIMIT 5 OFFSET 20" in data_call
+
+
+class TestHyphenatedAppCatalog:
+    """The dq_quarantine_records read FQNs must backtick-quote the
+    config-sourced catalog/schema (quote_object_fqn) so a hyphenated app
+    catalog stays parseable — same convention as the dq_results reads."""
+
+    QUOTED_TABLE = "`prod-east`.`dqx-studio`.dq_quarantine_records"
+
+    class _HyphenConf:
+        def __init__(self):
+            self.catalog = "prod-east"
+            self.schema_name = "dqx-studio"
+
+    def test_query_quarantine_reads_are_quoted(self):
+        sql = _sql(count=0)
+        _query_quarantine(sql, self._HyphenConf(), "run-1", offset=0, limit=10)
+        assert self.QUOTED_TABLE in sql.query.call_args.args[0]
+        assert self.QUOTED_TABLE in sql.query_dicts.call_args.args[0]
+
+    def test_export_read_is_quoted(self, app_config):
+        from unittest.mock import create_autospec
+
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from databricks_labs_dqx_app.backend.common.authorization import UserRole
+        from databricks_labs_dqx_app.backend.dependencies import (
+            get_conf,
+            get_sp_sql_executor,
+            get_user_role,
+        )
+        from databricks_labs_dqx_app.backend.routes.v1.quarantine import router
+        from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+
+        sql = create_autospec(SqlExecutor, instance=True)
+        sql.query_dicts.return_value = []
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1/quarantine")
+        app.dependency_overrides[get_sp_sql_executor] = lambda: sql
+        app.dependency_overrides[get_conf] = lambda: app_config.model_copy(
+            update={"catalog": "prod-east", "schema_name": "dqx-studio"}
+        )
+        app.dependency_overrides[get_user_role] = lambda: UserRole.ADMIN
+        client = TestClient(app)
+
+        resp = client.get("/api/v1/quarantine/runs/run-1/export", params={"format": "json"})
+        assert resp.status_code == 200
+        assert self.QUOTED_TABLE in sql.query_dicts.call_args.args[0]

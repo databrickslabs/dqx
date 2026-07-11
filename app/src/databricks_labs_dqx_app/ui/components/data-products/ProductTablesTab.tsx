@@ -3,10 +3,13 @@
  *
  * Adapted to DQX's flatter member shape (`DataProductMemberOut` carries a
  * single `table_fqn` plus `rules_count`/`checks_count`/`runnable`, no
- * catalog/schema split and no `dq_score`) and the app's own monitored-table
- * detail route/tabs. Per the Data Products design spec §8, the score
- * summary footer row is a sanctioned cut — DQX has no quality-score
- * aggregate on data-product members yet.
+ * catalog/schema split) and the app's own monitored-table detail
+ * route/tabs. The per-member DQ Score column (P5.3) matches dqlake's:
+ * the cached table-scope score rendered with the shared `ScoreBarCell`
+ * (same bar as the Monitored Tables / Table Spaces lists), linking to the
+ * member's Results tab. Per the Data Products design spec §8, dqlake's
+ * "Average score" summary footer row remains a sanctioned cut — the
+ * space's own cached score is already shown on the list page.
  */
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
@@ -26,6 +29,7 @@ import {
 import { Plus, X } from "lucide-react";
 import { type DataProductMemberOut } from "@/lib/api";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
+import { ScoreBarCell } from "@/components/data-table/ScoreBarCell";
 import { AddTablesDialog } from "@/components/data-products/AddTablesDialog";
 import { MemberVersionPin } from "@/components/data-products/MemberVersionPin";
 
@@ -74,6 +78,7 @@ export function ProductTablesTab({ editState, canEdit }: Props) {
                 <TableHead>{t("monitoredTables.colTableName")}</TableHead>
                 <TableHead className="w-[90px] text-right">{t("dataProducts.colRules")}</TableHead>
                 <TableHead className="w-[90px] text-right">{t("dataProducts.colChecks")}</TableHead>
+                <TableHead className="w-[160px]">{t("dataProducts.colDqScore")}</TableHead>
                 <TableHead className="w-[150px]">{t("dataProducts.colVersion")}</TableHead>
                 {canEdit && <TableHead className="w-[48px]" />}
               </TableRow>
@@ -114,6 +119,16 @@ export function ProductTablesTab({ editState, canEdit }: Props) {
                       className="hover:underline"
                     >
                       {m.checks_count}
+                    </Link>
+                  </TableCell>
+                  <TableCell>
+                    <Link
+                      to="/monitored-tables/$bindingId"
+                      params={{ bindingId: m.binding_id }}
+                      search={{ tab: "results" }}
+                      className="hover:underline"
+                    >
+                      <ScoreBarCell score={m.score} />
                     </Link>
                   </TableCell>
                   <TableCell>

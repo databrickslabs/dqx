@@ -10,6 +10,8 @@ from databricks_labs_dqx_app.backend.sql_utils import (
     escape_sql_string,
     fqn_needs_quoting,
     quote_fqn,
+    quote_ident,
+    quote_object_fqn,
     strip_sql_line_comments,
     validate_entity_type,
     validate_fqn,
@@ -177,6 +179,25 @@ class TestQuoteFqn:
         fqn = "main.'ftr_mv_test'.'ftr_gold_mv_bkp'"
         assert validate_fqn(fqn) == fqn
         assert quote_fqn(fqn) == "`main`.`'ftr_mv_test'`.`'ftr_gold_mv_bkp'`"
+
+    def test_quote_ident_quotes_a_single_part(self):
+        assert quote_ident("prod-east") == "`prod-east`"
+
+    def test_quote_ident_strips_one_existing_backtick_layer(self):
+        assert quote_ident("`prod-east`") == "`prod-east`"
+
+    def test_quote_ident_never_resplits_a_dotted_part(self):
+        # The reason quote_ident exists: an exotic part containing a dot
+        # must stay ONE identifier — quote_fqn would split it in two.
+        assert quote_ident("team.data") == "`team.data`"
+
+    def test_quote_ident_doubles_embedded_backticks(self):
+        assert quote_ident("wei`rd") == "`wei``rd`"
+
+    def test_quote_object_fqn_quotes_catalog_and_schema_only(self):
+        # The object name is a trusted app constant and stays bare,
+        # matching the view-DDL convention.
+        assert quote_object_fqn("prod-east", "dqx-studio", "dq_metrics") == "`prod-east`.`dqx-studio`.dq_metrics"
 
     def test_embedded_backtick_is_doubled_as_defense_in_depth(self):
         # validate_fqn() rejects raw backticks before this is ever reached in

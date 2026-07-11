@@ -12,6 +12,7 @@ zero-runnable, per-member submission failures collected into ``skipped``).
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import create_autospec
 
 import pytest
@@ -24,6 +25,7 @@ from databricks_labs_dqx_app.backend.services.binding_run_service import (
     NeverApprovedError,
 )
 from databricks_labs_dqx_app.backend.services.data_product_service import (
+    BindingNotApprovedError,
     DataProductService,
     DuplicateDataProductNameError,
     InvalidStatusTransitionError,
@@ -64,7 +66,15 @@ def _product_row(
     schedule_tz: str | None = None,
     status: str = "draft",
     version: str = "0",
+    score: str | None = None,
+    failed_tests: str | None = None,
+    total_tests: str | None = None,
+    score_computed_at: str | None = None,
 ) -> list[str | None]:
+    # The trailing 4 cells are the dq_score_cache LEFT-JOIN columns the
+    # list/get read paths select (P3.4) — all None when the product has
+    # never been scored. The other read paths select only the first 12
+    # columns; the extra cells are ignored by _row_to_product.
     return [
         product_id,
         name,
@@ -78,11 +88,23 @@ def _product_row(
         "2026-07-07T00:00:00",
         "alice@x",
         "2026-07-07T00:00:00",
+        score,
+        failed_tests,
+        total_tests,
+        score_computed_at,
     ]
 
 
 def _member_row(member_id: str, binding_id: str, pinned_version: str | None = None) -> list[str | None]:
     return [member_id, binding_id, pinned_version]
+
+
+def _list_member_row(
+    member_id: str, product_id: str, binding_id: str, pinned_version: str | None = None
+) -> list[str | None]:
+    # The batched list-path members query selects product_id too, so rows can
+    # be grouped app-side (one IN (...) query for ALL products' members).
+    return [member_id, product_id, binding_id, pinned_version]
 
 
 def _table_summary(
@@ -92,17 +114,27 @@ def _table_summary(
     version: int = 2,
     applied_rule_count: int = 3,
     check_count: int = 5,
+    score: float | None = None,
+    failed_tests: int | None = None,
+    total_tests: int | None = None,
+    score_computed_at: str | None = None,
 ) -> MonitoredTableSummary:
     return MonitoredTableSummary(
         table=MonitoredTable(binding_id=binding_id, table_fqn=table_fqn, status=status, version=version),
         applied_rule_count=applied_rule_count,
         check_count=check_count,
+        score=score,
+        failed_tests=failed_tests,
+        total_tests=total_tests,
+        score_computed_at=score_computed_at,
     )
 
 
-def _monitored_table_detail(binding_id: str = "b1", version: int = 2) -> MonitoredTableDetail:
+def _monitored_table_detail(
+    binding_id: str = "b1", version: int = 2, status: str = "approved"
+) -> MonitoredTableDetail:
     return MonitoredTableDetail(
-        table=MonitoredTable(binding_id=binding_id, table_fqn="cat.schema.tbl", status="approved", version=version)
+        table=MonitoredTable(binding_id=binding_id, table_fqn="cat.schema.tbl", status=status, version=version)
     )
 
 
@@ -119,7 +151,7 @@ def monitored_tables():
 @pytest.fixture
 def run_set_service():
     mock = create_autospec(RunSetService, instance=True)
-    mock.list_for_product.return_value = []
+    mock.latest_created_at_by_product.return_value = {}
     mock.create.return_value = "rs-new"
     return mock
 
@@ -133,7 +165,7 @@ def binding_run_service():
 def version_service():
     mock = create_autospec(MonitoredTableVersionService, instance=True)
     # Default: no frozen snapshot resolves, so members fall back to live counts.
-    mock.snapshot_counts.return_value = None
+    mock.snapshot_counts_many.return_value = {}
     return mock
 
 
@@ -187,12 +219,11 @@ class TestListAndGet:
     def test_list_products_resolves_members_and_counters(self, service, sql, monitored_tables, run_set_service):
         sql.query.side_effect = [
             [_product_row(product_id="p1", status="draft", version="0")],
-            [_member_row("m1", "b1")],
+            [_list_member_row("m1", "p1", "b1")],
         ]
         monitored_tables.list_monitored_tables.return_value = [
             _table_summary(binding_id="b1", status="approved", version=2)
         ]
-        run_set_service.list_for_product.return_value = []
 
         result = service.list_products()
         assert len(result) == 1
@@ -203,14 +234,151 @@ class TestListAndGet:
         assert detail.members[0].binding_status == "approved"
         assert detail.members[0].runnable is True
 
+    def test_list_products_issues_bounded_queries_independent_of_product_count(
+        self, service, sql, monitored_tables, run_set_service, version_service
+    ):
+        """The list path must issue a BOUNDED number of OLTP queries no matter
+        how many products exist (regression: it used to fan out per product —
+        members + run sets + run-set members + a Delta scan each, plus one
+        snapshot query per pinned member)."""
+        sql.query.side_effect = [
+            [
+                _product_row(product_id="p1"),
+                _product_row(product_id="p2", name="Payments"),
+                _product_row(product_id="p3", name="Refunds"),
+            ],
+            [
+                _list_member_row("m1", "p1", "b1"),
+                _list_member_row("m2", "p2", "b2", pinned_version="1"),
+                _list_member_row("m3", "p3", "b3"),
+            ],
+        ]
+        monitored_tables.list_monitored_tables.return_value = [
+            _table_summary(binding_id="b1", table_fqn="cat.s.t1", applied_rule_count=3, check_count=5),
+            _table_summary(binding_id="b2", table_fqn="cat.s.t2", applied_rule_count=0, check_count=0),
+            _table_summary(binding_id="b3", table_fqn="cat.s.t3", applied_rule_count=7, check_count=9),
+        ]
+        run_set_service.latest_created_at_by_product.return_value = {"p2": datetime(2026, 7, 9, 12, 0, 0)}
+        version_service.snapshot_counts_many.return_value = {("b2", 1): (1, 2)}
+
+        result = service.list_products()
+
+        # Exactly 2 direct OLTP queries: products+scores, all-members-in-one.
+        assert sql.query.call_count == 2
+        members_query = sql.query.call_args_list[1][0][0]
+        assert f"FROM {_MEMBERS}" in members_query
+        assert "IN ('p1', 'p2', 'p3')" in members_query
+        # Collaborator round-trips are batched across ALL products/pins.
+        run_set_service.latest_created_at_by_product.assert_called_once_with(["p1", "p2", "p3"])
+        version_service.snapshot_counts_many.assert_called_once_with([("b2", 1)])
+        # The response shape is unchanged: same per-product details as before.
+        by_id = {d.product.product_id: d for d in result}
+        assert by_id["p1"].members[0].rules_count == 3
+        assert by_id["p1"].members[0].checks_count == 5
+        assert by_id["p1"].last_run_at is None
+        assert by_id["p2"].members[0].pinned_version == 1
+        assert by_id["p2"].members[0].rules_count == 1  # frozen snapshot, not live 0
+        assert by_id["p2"].members[0].checks_count == 2
+        assert by_id["p2"].last_run_at == datetime(2026, 7, 9, 12, 0, 0)
+        assert by_id["p3"].members[0].rules_count == 7
+        assert all(d.member_count == 1 for d in result)
+
     def test_list_products_empty(self, service, sql):
         sql.query.return_value = []
         assert service.list_products() == []
 
+    def test_list_products_left_joins_score_cache_in_same_round_trip(self, service, sql, monitored_tables):
+        """P3.4: the cached score columns ride along the products query —
+        no extra round trip and NEVER a warehouse recompute on page load."""
+        sql.query.side_effect = [
+            [_product_row(product_id="p1", score="0.9876", failed_tests="12", total_tests="1000",
+                          score_computed_at="2026-07-10T00:00:00")],
+            [],  # members
+        ]
+        monitored_tables.list_monitored_tables.return_value = []
+        result = service.list_products()
+        products_query = sql.query.call_args_list[0][0][0]
+        assert "LEFT JOIN dqx_test.dqx_app_test.dq_score_cache" in products_query
+        assert "sc.scope_type = 'product'" in products_query
+        assert "sc.scope_key = p.product_id" in products_query
+        detail = result[0]
+        assert detail.score == 0.9876
+        assert detail.failed_tests == 12
+        assert detail.total_tests == 1000
+        assert detail.score_computed_at == "2026-07-10T00:00:00"
+
+    def test_list_products_score_fields_none_when_never_scored(self, service, sql, monitored_tables):
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [],  # members
+        ]
+        monitored_tables.list_monitored_tables.return_value = []
+        detail = service.list_products()[0]
+        assert detail.score is None
+        assert detail.failed_tests is None
+        assert detail.total_tests is None
+        assert detail.score_computed_at is None
+
+    def test_members_carry_the_binding_cached_score_from_the_same_round_trip(
+        self, service, sql, monitored_tables
+    ):
+        """P5.3: the Tables tab's per-member DQ score column rides the
+        monitored-table summaries already fetched for the counters — the
+        summary list LEFT JOINs dq_score_cache, so no extra query."""
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [_member_row("m1", "b1")],
+        ]
+        monitored_tables.list_monitored_tables.return_value = [
+            _table_summary(
+                binding_id="b1",
+                score=0.9876,
+                failed_tests=12,
+                total_tests=1000,
+                score_computed_at="2026-07-10T00:00:00",
+            )
+        ]
+        detail = service.get("p1")
+        assert detail is not None
+        member = detail.members[0]
+        assert member.score == 0.9876
+        assert member.failed_tests == 12
+        assert member.total_tests == 1000
+        assert member.score_computed_at == "2026-07-10T00:00:00"
+
+    def test_member_score_fields_none_when_the_binding_was_never_scored(
+        self, service, sql, monitored_tables
+    ):
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [_member_row("m1", "b1")],
+        ]
+        monitored_tables.list_monitored_tables.return_value = [_table_summary(binding_id="b1")]
+        detail = service.get("p1")
+        assert detail is not None
+        member = detail.members[0]
+        assert member.score is None
+        assert member.failed_tests is None
+        assert member.total_tests is None
+        assert member.score_computed_at is None
+
+    def test_get_carries_cached_score(self, service, sql, monitored_tables):
+        sql.query.side_effect = [
+            [_product_row(product_id="p1", score="0.5", failed_tests="1", total_tests="2",
+                          score_computed_at="2026-07-10T00:00:00")],
+            [],  # members
+        ]
+        monitored_tables.list_monitored_tables.return_value = []
+        detail = service.get("p1")
+        assert detail is not None
+        assert detail.score == 0.5
+        assert detail.failed_tests == 1
+        assert detail.total_tests == 2
+
     def test_member_referencing_missing_binding_is_skipped(self, service, sql, monitored_tables, run_set_service):
         sql.query.side_effect = [
             [_product_row(product_id="p1")],
-            [_member_row("m1", "b-deleted")],
+            [_list_member_row("m1", "p1", "b-deleted")],
         ]
         monitored_tables.list_monitored_tables.return_value = []
         result = service.list_products()
@@ -245,7 +413,7 @@ class TestListAndGet:
         assert detail.members[0].rules_count == 3
         assert detail.members[0].checks_count == 5
         # No pin -> never consults the frozen snapshot.
-        version_service.snapshot_counts.assert_not_called()
+        version_service.snapshot_counts_many.assert_not_called()
 
     def test_pinned_member_reports_pinned_snapshot_counts(self, service, sql, monitored_tables, version_service):
         # Live binding has moved on to v2 and its live counts differ from the
@@ -258,10 +426,10 @@ class TestListAndGet:
         monitored_tables.list_monitored_tables.return_value = [
             _table_summary(binding_id="b1", status="approved", version=2, applied_rule_count=0, check_count=0)
         ]
-        version_service.snapshot_counts.return_value = (1, 2)
+        version_service.snapshot_counts_many.return_value = {("b1", 1): (1, 2)}
         detail = service.get("p1")
         assert detail is not None
-        version_service.snapshot_counts.assert_called_once_with("b1", 1)
+        version_service.snapshot_counts_many.assert_called_once_with([("b1", 1)])
         assert detail.members[0].rules_count == 1
         assert detail.members[0].checks_count == 2
         # The pin itself is still surfaced unchanged.
@@ -277,7 +445,7 @@ class TestListAndGet:
         monitored_tables.list_monitored_tables.return_value = [
             _table_summary(binding_id="b1", status="approved", version=2, applied_rule_count=3, check_count=5)
         ]
-        version_service.snapshot_counts.return_value = None  # snapshot not found
+        version_service.snapshot_counts_many.return_value = {}  # snapshot not found
         detail = service.get("p1")
         assert detail is not None
         assert detail.members[0].rules_count == 3
@@ -366,7 +534,8 @@ class TestDelete:
 
 
 class TestMembers:
-    def test_add_member_inserts_new_and_flips_to_draft(self, service, sql):
+    def test_add_member_inserts_new_and_flips_to_draft(self, service, sql, monitored_tables):
+        monitored_tables.get.return_value = _monitored_table_detail()
         sql.query.side_effect = [
             [_product_row(product_id="p1", status="published")],
             [],  # no existing member row
@@ -465,6 +634,71 @@ class TestMembers:
         member = service.add_member("p1", "b1", 2, "bob@x")
         assert member.binding_id == "b1"
         assert member.pinned_version == 2
+
+    @pytest.mark.parametrize(
+        ("status", "version"),
+        [
+            ("draft", 0),  # brand-new, never approved
+            ("pending_approval", 0),  # submitted, not yet approved
+            ("rejected", 0),  # rejected without any prior approval
+            ("pending_approval", 2),  # previously approved, resubmitted — status alone blocks
+            ("rejected", 2),  # previously approved, later rejected — status alone blocks
+            ("approved", 0),  # rollup edge: status flag approved but never binding-approved
+        ],
+    )
+    def test_add_member_non_approved_binding_raises_400(self, service, sql, monitored_tables, status, version):
+        """P3.2: only bindings passing _is_runnable (approved AND version > 0) can JOIN a space."""
+        monitored_tables.get.return_value = _monitored_table_detail(status=status, version=version)
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [],  # no existing member row — new-member branch
+        ]
+        with pytest.raises(BindingNotApprovedError, match="cat.schema.tbl"):
+            service.add_member("p1", "b1", None, "bob@x")
+        # Nothing was inserted and the space's status was left untouched.
+        sql.execute.assert_not_called()
+
+    def test_add_member_never_approved_message_names_table_and_reason(self, service, sql, monitored_tables):
+        monitored_tables.get.return_value = _monitored_table_detail(status="draft", version=0)
+        sql.query.side_effect = [[_product_row(product_id="p1")], []]
+        with pytest.raises(BindingNotApprovedError, match="never been approved"):
+            service.add_member("p1", "b1", None, "bob@x")
+
+    def test_add_member_non_approved_status_message_names_status(self, service, sql, monitored_tables):
+        monitored_tables.get.return_value = _monitored_table_detail(status="pending_approval", version=2)
+        sql.query.side_effect = [[_product_row(product_id="p1")], []]
+        with pytest.raises(BindingNotApprovedError, match="'pending_approval'"):
+            service.add_member("p1", "b1", None, "bob@x")
+
+    def test_add_member_modified_underneath_binding_stays_eligible(self, service, sql, monitored_tables):
+        """A binding shown as "modified" in the UI (approved rules with
+        unapproved edits) still has persisted status 'approved' and version > 0
+        — it has a frozen approved snapshot, so it remains eligible (P3.2)."""
+        monitored_tables.get.return_value = _monitored_table_detail(status="approved", version=3)
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [],  # no existing member row
+        ]
+        member = service.add_member("p1", "b1", 3, "bob@x")
+        assert member.binding_id == "b1"
+        calls = [c[0][0] for c in sql.execute.call_args_list]
+        assert any(f"INSERT INTO {_MEMBERS}" in c for c in calls)
+
+    def test_add_member_pin_change_on_existing_member_skips_approval_check(self, service, sql, monitored_tables):
+        """No retroactive eviction (P3.2): a binding that left 'approved' after
+        joining can still have its pin changed — the UPDATE branch never
+        consults the binding's status (run() already skips it under
+        source='approved')."""
+        monitored_tables.get.return_value = _monitored_table_detail(status="draft", version=0)
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [["m-existing"]],  # already a member
+        ]
+        member = service.add_member("p1", "b1", 4, "bob@x")
+        assert member.id == "m-existing"
+        monitored_tables.get.assert_not_called()
+        calls = [c[0][0] for c in sql.execute.call_args_list]
+        assert any(f"UPDATE {_MEMBERS}" in c and "pinned_version = 4" in c for c in calls)
 
     def test_remove_member_success_flips_to_draft(self, service, sql):
         sql.query.side_effect = [
@@ -581,6 +815,11 @@ class TestRun:
         assert result.run_set_id == "rs-new"
         assert len(result.submitted) == 1
         assert result.skipped == []
+        # assert_called_once_with is an exact-match: the fan-out passes NO
+        # sampling knob (run_binding has none). Sampling resolves per
+        # resolved source inside run_binding — approved members always
+        # scan the whole table; draft members are capped by the admin
+        # ``draft_run_sample_limit`` setting.
         binding_run_service.run_binding.assert_called_once_with(
             "b1", source="draft", version=None, user_email="bob@x", trigger="manual", run_set_id="rs-new"
         )

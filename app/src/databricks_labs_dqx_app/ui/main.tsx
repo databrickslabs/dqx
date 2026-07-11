@@ -2,6 +2,10 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import "@/styles/globals.css";
+// Side-effect import: installs the axios defaults the generated client
+// relies on — notably the repeated-key array-param serializer that the
+// FastAPI list query params (results drilldown facet filters) require.
+import "@/lib/axios-config";
 import { i18nReady } from "@/lib/i18n";
 import { routeTree } from "@/types/routeTree.gen";
 

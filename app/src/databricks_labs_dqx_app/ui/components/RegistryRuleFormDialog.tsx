@@ -43,6 +43,7 @@ import {
   Braces,
   Check,
   ChevronDown,
+  ClipboardList,
   FlaskConical,
   History as HistoryIcon,
   Info,
@@ -55,6 +56,9 @@ import {
 import { LabelsEditor } from "@/components/Labels";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
+import { RuleResultsTab } from "@/components/registry-rules/RuleResultsTab";
+import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
+import { ruleResultsState } from "@/lib/results-display";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { PredicatePolaritySwitch } from "@/components/rules/PredicatePolaritySwitch";
 import { PredicateEditorExplainer } from "@/components/rules/PredicateEditorExplainer";
@@ -83,6 +87,7 @@ import {
   useUpdateRegistryRule,
   useSubmitRegistryRule,
   useListRegistryRuleVersions,
+  useGetRuleScore,
   useListCheckFunctions,
   useGetTableColumns,
   useAiGenerateRule,
@@ -115,6 +120,7 @@ import {
   nativeArguments,
   parseParamValue,
   paramValueToRaw,
+  severityValueCriticality,
   type ParsedCheckDefinition,
 } from "@/lib/registry-rule-conversion";
 import { RegistryRuleFormJsonDialog } from "@/components/registry-rules/RegistryRuleFormJsonDialog";
@@ -131,7 +137,7 @@ type Polarity = "pass" | "fail";
 // Top-level page tabs. Persisted to the URL (`?tab=`) by the routed detail
 // page so browser back/forward moves between them, mirroring the old dqx
 // editor's page-based structure.
-export type PageTab = "about" | "permissions" | "implementation" | "test" | "history";
+export type PageTab = "about" | "permissions" | "implementation" | "test" | "history" | "results";
 
 // Mirrors the backend's `forbidden_statements` list verbatim — see
 // `is_sql_query_safe()` in `src/databricks/labs/dqx/utils.py`, the source of
@@ -1132,6 +1138,28 @@ export function RegistryRuleFormDialog({
     query: { enabled: open && Boolean(sourceRule && sourceRule.version > 0) },
   });
   const publishedVersions = useMemo(() => versionsQuery.data?.data ?? [], [versionsQuery.data]);
+
+  // Rule-level DQ score, fetched here (non-suspending) only to decide the
+  // Results tab trigger's enabled state: a rule with zero current
+  // applications has no results, so the trigger is disabled with a tooltip
+  // telling the steward to apply the rule to a monitored table first. The
+  // tab CONTENT re-reads the same query via its own suspense boundary
+  // (RuleResultsTab), so the two never disagree. Never refetches on its own
+  // (RESULTS_QUERY_OPTIONS) — run-completion invalidation is the only
+  // refresh, same as every other score query.
+  const ruleScoreQuery = useGetRuleScore(versionsRuleId, undefined, {
+    query: { enabled: open && Boolean(sourceRule), select: (d) => d.data, ...RESULTS_QUERY_OPTIONS },
+  });
+  const ruleScore = ruleScoreQuery.data;
+  const resultsNotApplied = ruleScore !== undefined && ruleResultsState(ruleScore) === "not-applied";
+  // A FAILED score fetch also leaves the trigger disabled, but with its own
+  // explanatory tooltip + click-to-retry — previously it was silently
+  // disabled, indistinguishable from the still-loading state (P3.6).
+  const resultsScoreError = ruleScoreQuery.isError;
+  // Disabled while there's no saved rule (create flow, like History) or the
+  // score hasn't loaded yet — the tooltip only shows for the definitive
+  // "not applied anywhere" / fetch-error states.
+  const resultsDisabled = !sourceRule || ruleScore === undefined || resultsNotApplied;
 
   // -- Dirty (unsaved-changes) tracking -------------------------------------
   // Editing an existing rule diffs against the last-persisted rule (mirrors
@@ -2419,6 +2447,49 @@ export function RegistryRuleFormDialog({
               <HistoryIcon className="h-3.5 w-3.5" />
               {t("rulesRegistry.tabHistory")}
             </TabsTrigger>
+            {/* Results is only meaningful once the rule is applied to at
+                least one monitored table (applied_to_count > 0). Until then
+                the trigger is disabled; the tooltip explains why for the
+                definitive not-applied state. The wrapping <span> is the
+                tooltip trigger because the disabled button itself swallows
+                pointer events (`disabled:pointer-events-none`). */}
+            {resultsNotApplied || resultsScoreError ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    tabIndex={0}
+                    className={cn(
+                      "inline-flex h-full",
+                      resultsScoreError ? "cursor-pointer" : "cursor-not-allowed",
+                    )}
+                    aria-disabled="true"
+                    // On a fetch error the wrapper doubles as the retry
+                    // affordance (the disabled trigger swallows clicks).
+                    onClick={resultsScoreError ? () => void ruleScoreQuery.refetch() : undefined}
+                  >
+                    <TabsTrigger value="results" className="gap-1.5" disabled aria-disabled="true">
+                      <ClipboardList className="h-3.5 w-3.5" />
+                      {t("rulesRegistry.tabResults")}
+                    </TabsTrigger>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  {resultsScoreError
+                    ? t("rulesRegistry.resultsScoreErrorTooltip")
+                    : t("rulesRegistry.resultsNotAppliedTooltip")}
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <TabsTrigger
+                value="results"
+                className="gap-1.5"
+                disabled={resultsDisabled}
+                aria-disabled={resultsDisabled}
+              >
+                <ClipboardList className="h-3.5 w-3.5" />
+                {t("rulesRegistry.tabResults")}
+              </TabsTrigger>
+            )}
           </TabsList>
         </div>
         <TabsContent value="about" className="pt-4">{aboutTabContent}</TabsContent>
@@ -2426,19 +2497,25 @@ export function RegistryRuleFormDialog({
         <TabsContent value="implementation" className="pt-4">{implementationTabContent}</TabsContent>
         <TabsContent value="test" className="pt-4">{testTabContent}</TabsContent>
         <TabsContent value="history" className="pt-4">{historyTabContent}</TabsContent>
+        <TabsContent value="results" className="pt-4">
+          {sourceRule && <RuleResultsTab ruleId={sourceRule.rule_id} />}
+        </TabsContent>
       </Tabs>
       {jsonDialogOpen && !readOnly && (
         <RegistryRuleFormJsonDialog
           open={jsonDialogOpen}
           onOpenChange={setJsonDialogOpen}
           description={t("rulesRegistry.jsonDialogDescriptionApply")}
-          checkJson={buildDqxCheckJson({
-            ...(sourceRule ?? {}),
-            mode,
-            definition: buildDefinition(),
-            polarity: polarityIsMeaningful ? polarity : null,
-            user_metadata: buildUserMetadata(),
-          } as RegistryRuleOut)}
+          checkJson={buildDqxCheckJson(
+            {
+              ...(sourceRule ?? {}),
+              mode,
+              definition: buildDefinition(),
+              polarity: polarityIsMeaningful ? polarity : null,
+              user_metadata: buildUserMetadata(),
+            } as RegistryRuleOut,
+            severityValueCriticality(labelDefinitions),
+          )}
           currentDefinition={buildDefinition()}
           currentUserMetadata={buildUserMetadata()}
           currentMode={mode}

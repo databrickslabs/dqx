@@ -912,18 +912,30 @@ class TestRulesRoutesWrite:
         assert exc.value.status_code == 409
 
     def test_approve_rules_success(self, mock_svc, mock_obo_ws, sample_entry):
+        from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+
         sample_entry.status = "approved"
         mock_svc.set_status.return_value = sample_entry
-        result = approve_rules(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
+        mock_version_svc = create_autospec(MonitoredTableVersionService, instance=True)
+        result = approve_rules(
+            rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, version_svc=mock_version_svc, body=None
+        )
         assert result.status == "approved"
         mock_svc.set_status.assert_called_once_with("rule-1", "approved", "alice@example.com", None)
+        mock_version_svc.refreeze_for_quality_rule.assert_called_once_with("rule-1")
 
     def test_reject_rules_success(self, mock_svc, mock_obo_ws, sample_entry):
+        from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+
         sample_entry.status = "rejected"
         mock_svc.set_status.return_value = sample_entry
-        result = reject_rules(rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
+        mock_version_svc = create_autospec(MonitoredTableVersionService, instance=True)
+        result = reject_rules(
+            rule_id="rule-1", svc=mock_svc, obo_ws=mock_obo_ws, version_svc=mock_version_svc, body=None
+        )
         assert result.status == "rejected"
         mock_svc.set_status.assert_called_once_with("rule-1", "rejected", "alice@example.com", None)
+        mock_version_svc.refreeze_for_quality_rule.assert_called_once_with("rule-1")
 
 
 # ============================================================================

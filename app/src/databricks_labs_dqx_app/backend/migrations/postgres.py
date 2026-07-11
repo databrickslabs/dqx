@@ -813,6 +813,75 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"  ON {_S}.dq_object_grants_history (object_type, object_id, changed_at DESC);"
         ),
     ),
+    PgMigration(
+        version=11,
+        description="DQ score cache (dq_score_cache) — list-page score columns, refreshed on run completion (P3.4)",
+        sql=(
+            # ----------------------------------------------------------
+            # dq_score_cache — one row per scored scope, PK (scope_type,
+            # scope_key). ``scope_type`` 'table' rows are keyed by the
+            # three-part table FQN and recomputed from the mv_dq_scores
+            # metric view (latest PUBLISHED run per table, one batched
+            # warehouse query — see ScoreCacheService.refresh_for_tables);
+            # 'product' rows are keyed by dq_data_products.product_id and
+            # 'global' by the literal 'global', both derived from the
+            # cached 'table' rows (unweighted means, no warehouse hit).
+            #
+            # The cache is SHARED/GLOBAL (viewer-independent): the list
+            # endpoints LEFT JOIN it and the existing app-side catalog
+            # filtering scopes what each viewer sees. ``computed_at`` is
+            # surfaced so the UI can show staleness; refresh is triggered
+            # by POST /api/v1/dq-results/refresh-scores at the frontend's
+            # run-completion invalidation moments — no polling, no cron.
+            # ``latest_run_id``/``run_time`` identify the scored run on
+            # 'table' rows and stay NULL on the derived scopes.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_score_cache ("
+            "  scope_type    TEXT NOT NULL,"
+            "  scope_key     TEXT NOT NULL,"
+            "  score         DOUBLE PRECISION,"
+            "  failed_tests  BIGINT,"
+            "  total_tests   BIGINT,"
+            "  latest_run_id TEXT,"
+            "  run_time      TIMESTAMPTZ,"
+            "  computed_at   TIMESTAMPTZ,"
+            "  PRIMARY KEY (scope_type, scope_key),"
+            "  CONSTRAINT chk_dq_score_cache_scope_type "
+            "    CHECK (scope_type IN ('table','product','global'))"
+            ");"
+        ),
+    ),
+    PgMigration(
+        version=12,
+        description="DQ score history (dq_score_history) — append-only trend points for the homepage chart (P3.5)",
+        sql=(
+            # ----------------------------------------------------------
+            # dq_score_history — append-only companion to dq_score_cache:
+            # every scored recompute (non-NULL score) appends one row, so
+            # the homepage can chart the global score over time without a
+            # warehouse query. Same scope keying as the cache; run_time is
+            # the scored run's instant on 'table' rows and NULL on the
+            # derived scopes (whose x-axis is computed_at). Growth is
+            # capped by ScoreCacheService (count-trim to the newest
+            # HISTORY_KEEP_ROWS rows per scope on every append), so no
+            # retention sweep is needed.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_score_history ("
+            "  scope_type    TEXT NOT NULL,"
+            "  scope_key     TEXT NOT NULL,"
+            "  score         DOUBLE PRECISION NOT NULL,"
+            "  failed_tests  BIGINT,"
+            "  total_tests   BIGINT,"
+            "  run_time      TIMESTAMPTZ,"
+            "  computed_at   TIMESTAMPTZ NOT NULL,"
+            "  CONSTRAINT chk_dq_score_history_scope_type "
+            "    CHECK (scope_type IN ('table','product','global'))"
+            ");"
+            # The only read is "last N points for one scope, newest first".
+            f"CREATE INDEX IF NOT EXISTS idx_dq_score_history_scope_computed_at "
+            f"  ON {_S}.dq_score_history (scope_type, scope_key, computed_at DESC);"
+        ),
+    ),
 ]
 
 

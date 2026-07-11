@@ -40,6 +40,8 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductService,
     NoRunnableMembersError,
 )
+from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
+from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
 
 logger = get_logger("scheduler")
@@ -52,6 +54,31 @@ _VALID_TRACKER_STATUSES = {"pending", "success", "partial_failure", "failed"}
 # trigger fails *and* its next occurrence cannot be computed. Prevents a
 # deterministic failure from re-firing the schedule on every tick.
 _FAILURE_BACKOFF = timedelta(hours=1)
+
+# How long a scheduler-launched run stays tracked for the completion
+# score-cache refresh (:meth:`SchedulerService._refresh_scores_for_completed_runs`)
+# while waiting for its ``dq_validation_runs`` terminal row. A run whose
+# job dies before the runner writes any terminal result would otherwise
+# be re-checked on every tick forever; 24h comfortably outlives any real
+# validation run.
+_SCORE_REFRESH_TTL = timedelta(hours=24)
+
+# Recent-run-set sweep bounds (P5.3). Every tick, one bounded OLTP query
+# lists the member run ids of run sets created inside this window so
+# runs launched OUTSIDE the scheduler (manual UI runs with the tab
+# closed) still get a score-cache refresh when they complete. 1 day
+# matches _SCORE_REFRESH_TTL; the row cap keeps a pathological burst of
+# run sets from ballooning the statement or the in-memory tracking.
+_RUN_SET_SWEEP_WINDOW_DAYS = 1
+_RUN_SET_SWEEP_MAX_RUNS = 2000
+
+# Retry budget for the startup score-cache reconcile (P5.3). The
+# reconcile is best-effort: a transient warehouse failure right after
+# boot retries on the next tick, but a persistently broken warehouse
+# must not turn the 60s tick into an indefinite retry storm — after
+# this many failed attempts the reconcile is skipped for the rest of
+# the boot (run completions and browser refreshes still heal scores).
+_SCORE_RECONCILE_MAX_ATTEMPTS = 3
 
 # ------------------------------------------------------------------
 # Data Products cron evaluation (design spec §4.3, Task 5)
@@ -137,6 +164,14 @@ _RETENTION_INTERVAL_HOURS = 24
 _QUARANTINE_RETENTION_DAYS_DEFAULT = 30
 _QUARANTINE_TABLE_NAME = "dq_quarantine_records"
 
+# The rule + monitored-table metadata dims (``dim_dq_rules`` /
+# ``dim_dq_monitored_tables``) are full-refreshed from the Rules Registry
+# once per ``_METADATA_DIM_REFRESH_INTERVAL_HOURS`` so the Genie space's
+# authoring/ownership data sources stay current between deploys. Hourly
+# (vs. retention's daily) because registry edits are user-facing and cheap
+# to re-materialize at page scale.
+_METADATA_DIM_REFRESH_INTERVAL_HOURS = 1
+
 # Retention is split per-backend: analytical (Delta) tables are
 # trimmed via the SQL warehouse executor, OLTP tables via the OLTP
 # executor (Lakebase if enabled, Delta otherwise).  Both lists are
@@ -169,6 +204,9 @@ class SchedulerService:
         oltp_sql: OltpExecutorProtocol | None = None,
         data_product_service: DataProductService | None = None,
         binding_run_service: BindingRunService | None = None,
+        score_cache_service: ScoreCacheService | None = None,
+        metadata_dim_service: MetadataDimService | None = None,
+        reconcile_scores_on_start: bool = False,
     ) -> None:
         """Construct the scheduler.
 
@@ -197,6 +235,35 @@ class SchedulerService:
             :meth:`_tick_monitored_tables` is a no-op — a THIRD,
             independent due-ness source that never touches state the
             scope-config or product paths read.
+        score_cache_service:
+            Optional collaborator that recomputes the Lakebase
+            ``dq_score_cache`` rows. When set, every run the scheduler
+            launches is tracked in memory and, once its
+            ``dq_validation_runs`` terminal row lands, the affected
+            tables' scores are refreshed best-effort on the next tick
+            (:meth:`_refresh_scores_for_completed_runs`) — closing the
+            gap where the browser-side refresh-scores POST never fires
+            because no browser observed the scheduled run complete.
+            When ``None`` the refresh step is a no-op.
+        metadata_dim_service:
+            Optional collaborator that full-refreshes the rule +
+            monitored-table metadata dims (``dim_dq_rules`` /
+            ``dim_dq_monitored_tables``) the Genie space queries. When set,
+            :meth:`_maybe_refresh_metadata_dims` re-materializes them once
+            per ``_METADATA_DIM_REFRESH_INTERVAL_HOURS`` so registry edits
+            reach Genie without a redeploy. When ``None`` (legacy
+            deployments, unit tests) the tick is a no-op — a fourth,
+            independent timer that touches no state the other ticks read.
+        reconcile_scores_on_start:
+            When True (production wiring — set by the app lifespan),
+            the first score-refresh pass after boot recomputes EVERY
+            monitored table's cached score in one batched warehouse
+            query (then products + global) instead of only the runs it
+            observed complete — healing rows left stale or NULL by
+            semantic changes and cold deployments. Runs at most once
+            per boot (the "reconciled this boot" flag), best-effort
+            with a small retry budget. Default False keeps legacy /
+            unit-test constructions on the pure per-run refresh.
         """
         self._ws = ws
         self._job_id = job_id
@@ -228,6 +295,31 @@ class SchedulerService:
         self._monitored_tables_table = self._oltp_sql.fqn("dq_monitored_tables")
         self._data_product_service = data_product_service
         self._binding_run_service = binding_run_service
+        self._score_cache_service = score_cache_service
+        self._metadata_dim_service = metadata_dim_service
+        # Scheduler-launched runs awaiting their dq_validation_runs
+        # terminal row, run_id -> launch time (UTC). In-memory only:
+        # the scheduler is file-locked to one worker, and a run lost to
+        # an app restart is covered by the browser-side refresh or the
+        # next scheduled completion. Entries expire after
+        # :data:`_SCORE_REFRESH_TTL`.
+        self._pending_score_runs: dict[str, datetime] = {}
+        self._runs_table = self._sql.fqn("dq_validation_runs")
+        # Run-set sweep state (P5.3): run ids already tracked or
+        # processed this boot, so the recurring 24h-window query never
+        # re-tracks a run it has already handled. Pruned every sweep to
+        # (window ∪ pending) so it stays bounded across long uptimes.
+        self._seen_score_runs: set[str] = set()
+        self._run_sets_table = self._oltp_sql.fqn("dq_run_sets")
+        self._run_set_members_table = self._oltp_sql.fqn("dq_run_set_members")
+        # Startup reconcile state (P5.3): whether this boot has healed
+        # the whole score cache yet, and how many attempts it has spent
+        # trying. Both in-memory only — the reconcile is deliberately
+        # per-boot (each deploy may ship semantic changes that
+        # invalidate cached rows).
+        self._reconcile_scores_on_start = reconcile_scores_on_start
+        self._scores_reconciled = False
+        self._score_reconcile_attempts = 0
 
         # Orphan-tmp-view GC: fires every Saturday at 01:00 UTC. Held in
         # process memory rather than persisted — a missed Saturday (e.g.
@@ -240,6 +332,14 @@ class SchedulerService:
         # (default 24h). Held in process memory like the view GC; a
         # missed sweep is harmless since the next one catches up.
         self._next_retention_at: datetime = datetime.now(timezone.utc) + timedelta(hours=_RETENTION_INTERVAL_HOURS)
+
+        # Metadata-dim refresh: fires every
+        # ``_METADATA_DIM_REFRESH_INTERVAL_HOURS`` (default 1h). Held in
+        # process memory like the retention sweep; the app also refreshes once
+        # at startup, so a missed tick is harmless.
+        self._next_metadata_dim_refresh_at: datetime = datetime.now(timezone.utc) + timedelta(
+            hours=_METADATA_DIM_REFRESH_INTERVAL_HOURS
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -282,6 +382,7 @@ class SchedulerService:
                 await self._tick(recalc=recalc)
                 await self._maybe_gc_orphan_views(datetime.now(timezone.utc))
                 await self._maybe_run_retention(datetime.now(timezone.utc))
+                await self._maybe_refresh_metadata_dims(datetime.now(timezone.utc))
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -412,6 +513,16 @@ class SchedulerService:
         except Exception:
             logger.exception("Scheduler failed processing monitored-table schedules")
 
+        # Completion observation: refresh the Lakebase score cache for any
+        # scheduler-launched run whose terminal ``dq_validation_runs`` row
+        # has landed since the last tick. Piggybacks on the 60s tick (no
+        # extra loop) and is fully best-effort — a failure here never
+        # affects the due-ness sources above.
+        try:
+            await asyncio.to_thread(self._refresh_scores_for_completed_runs, now)
+        except Exception:
+            logger.exception("Scheduler failed refreshing the score cache for completed runs")
+
     def _advance_after_failure(self, name: str, cfg: dict[str, Any], now: datetime, run_id: str) -> None:
         """Persist a failed run and push ``next_run_at`` forward after a trigger failure.
 
@@ -491,9 +602,7 @@ class SchedulerService:
             try:
                 self._tick_one_product(product, now)
             except Exception:
-                logger.exception(
-                    "Scheduler failed processing product schedule 'product:%s'", product["product_id"]
-                )
+                logger.exception("Scheduler failed processing product schedule 'product:%s'", product["product_id"])
 
     def _load_scheduled_products(self) -> list[dict[str, Any]]:
         """Return cron-scheduled Table Spaces that have an approved (frozen) snapshot.
@@ -575,8 +684,7 @@ class SchedulerService:
                     )
                 else:
                     logger.warning(
-                        "Product schedule '%s': could not compute next_run_at for cron '%s'; "
-                        "seeding backoff tracker",
+                        "Product schedule '%s': could not compute next_run_at for cron '%s'; seeding backoff tracker",
                         schedule_name,
                         cron_expr,
                     )
@@ -594,9 +702,7 @@ class SchedulerService:
             return
 
         run_id = uuid4().hex[:16]
-        logger.info(
-            "Product schedule '%s' is due (next_run_at=%s), triggering run %s", schedule_name, next_run, run_id
-        )
+        logger.info("Product schedule '%s' is due (next_run_at=%s), triggering run %s", schedule_name, next_run, run_id)
 
         assert self._data_product_service is not None  # guarded by _tick_products
         try:
@@ -613,6 +719,8 @@ class SchedulerService:
                 len(result.submitted),
                 len(result.skipped),
             )
+            for submission in result.submitted:
+                self._track_run_for_score_refresh(submission.run_id)
             new_next = self._compute_next_cron_run(cron_expr, now, tz_name)
             status = "success" if not result.skipped else "partial_failure"
             self._upsert_tracker(schedule_name, now, new_next, run_id, status)
@@ -693,9 +801,7 @@ class SchedulerService:
             try:
                 self._tick_one_table(table, now)
             except Exception:
-                logger.exception(
-                    "Scheduler failed processing table schedule 'table:%s'", table["binding_id"]
-                )
+                logger.exception("Scheduler failed processing table schedule 'table:%s'", table["binding_id"])
 
     def _load_scheduled_tables(self) -> list[dict[str, Any]]:
         """Return cron-scheduled monitored tables that have an approved (frozen) snapshot.
@@ -771,8 +877,7 @@ class SchedulerService:
                     )
                 else:
                     logger.warning(
-                        "Table schedule '%s': could not compute next_run_at for cron '%s'; "
-                        "seeding backoff tracker",
+                        "Table schedule '%s': could not compute next_run_at for cron '%s'; seeding backoff tracker",
                         schedule_name,
                         cron_expr,
                     )
@@ -790,9 +895,7 @@ class SchedulerService:
             return
 
         run_id = uuid4().hex[:16]
-        logger.info(
-            "Table schedule '%s' is due (next_run_at=%s), triggering run %s", schedule_name, next_run, run_id
-        )
+        logger.info("Table schedule '%s' is due (next_run_at=%s), triggering run %s", schedule_name, next_run, run_id)
 
         assert self._binding_run_service is not None  # guarded by _tick_monitored_tables
         try:
@@ -809,6 +912,7 @@ class SchedulerService:
                 result.run_id,
                 result.run_set_id,
             )
+            self._track_run_for_score_refresh(result.run_id)
             new_next = self._compute_next_cron_run(cron_expr, now, tz_name)
             self._upsert_tracker(schedule_name, now, new_next, run_id, "success")
         except BindingRunError as e:
@@ -848,6 +952,204 @@ class SchedulerService:
             self._upsert_tracker(schedule_name, now, new_next, run_id, "failed")
         except Exception:
             logger.exception("Table schedule '%s': failed to persist tracker after a failure", schedule_name)
+
+    # ------------------------------------------------------------------
+    # Score-cache refresh on observed run completion
+    # ------------------------------------------------------------------
+    #
+    # The ``dq_score_cache`` refresh otherwise only fires from the browser
+    # (the results-invalidation POST when a user watches a run complete).
+    # A run finishing with no browser open would leave the list scores
+    # stale/NULL forever, so the scheduler tracks every run it launches
+    # PLUS (P5.3) every run minted into a recent run set by the manual UI
+    # paths, and refreshes the affected tables' scores when it observes
+    # the run's terminal ``dq_validation_runs`` row — piggybacking on the
+    # 60s tick, one bounded OLTP query + one batched Delta lookup per
+    # tick, no new loop. The first pass after boot additionally
+    # reconciles the whole cache (see ``_reconcile_scores``).
+
+    def _track_run_for_score_refresh(self, run_id: str) -> None:
+        """Remember a scheduler-launched run so its completion refreshes the score cache.
+
+        No-op without a :class:`ScoreCacheService` collaborator so the
+        launch paths can call it unconditionally.
+        """
+        if self._score_cache_service is None:
+            return
+        self._pending_score_runs[run_id] = datetime.now(timezone.utc)
+        # Mark seen so the run-set sweep never re-tracks the same run
+        # (scheduler-launched product/table runs also mint run sets).
+        self._seen_score_runs.add(run_id)
+
+    def _refresh_scores_for_completed_runs(self, now: datetime) -> None:
+        """Refresh the score cache for tracked runs that reached a terminal state.
+
+        One batched ``dq_validation_runs`` lookup over the pending run ids:
+        any run with a non-RUNNING row has completed (the runner appends
+        its terminal row next to the app's RUNNING placeholder — see
+        :meth:`RunSetService._fetch_validation_rows`). Completed runs are
+        dropped from tracking and their ``source_table_fqn``s fed to
+        :meth:`ScoreCacheService.refresh_all_for_tables` in a single call.
+        Fully best-effort: a refresh failure is logged and the runs stay
+        untracked (the browser-side refresh or the run's next completion
+        catches up) so a warehouse hiccup can never wedge the tick into a
+        retry loop. Runs whose terminal row never lands (job died before
+        the runner wrote it) expire after :data:`_SCORE_REFRESH_TTL`.
+
+        Startup reconcile (P5.3): while this boot has not yet reconciled
+        (and the retry budget isn't spent), the per-run refresh is
+        replaced by :meth:`_reconcile_scores` — one batched recompute of
+        the union of ALL monitored tables and any completed-run tables,
+        so boot never performs the same warehouse recompute twice.
+        """
+        if self._score_cache_service is None:
+            return
+
+        try:
+            self._sweep_recent_run_sets(now)
+        except Exception:
+            logger.exception(
+                "Run-set sweep for the score-cache refresh failed; continuing with in-memory tracking only"
+            )
+
+        fqns = self._collect_completed_score_run_fqns(now)
+
+        if self._reconcile_due():
+            self._reconcile_scores(fqns)
+            return
+        if not fqns:
+            return
+
+        try:
+            refreshed_tables, refreshed_products = self._score_cache_service.refresh_all_for_tables(sorted(fqns))
+            logger.info(
+                "Score cache refreshed after run completion: %d table(s), %d product(s)",
+                refreshed_tables,
+                refreshed_products,
+            )
+        except Exception:
+            logger.exception(
+                "Score-cache refresh after run completion failed; "
+                "scores stay stale until the next completion or browser refresh"
+            )
+
+    def _sweep_recent_run_sets(self, now: datetime) -> None:
+        """Track every unseen run from run sets created in the last 24h.
+
+        Runs launched outside the scheduler — a user clicking Run on a
+        monitored table or table space and closing the tab — mint
+        ``dq_run_sets`` / ``dq_run_set_members`` rows but were invisible
+        to the in-memory tracking, so their completion never refreshed
+        the score cache. One bounded OLTP query per tick reads the
+        window's member run ids; unseen ones join ``_pending_score_runs``
+        and ride the existing batched terminal lookup. ``source =
+        'approved'`` only: draft runs can never move published scores.
+        The seen set guarantees each run is processed at most once per
+        boot, and is pruned to (window ∪ pending) so it stays bounded.
+        """
+        interval = self._oltp_sql.interval_days_expr(_RUN_SET_SWEEP_WINDOW_DAYS)
+        stmt = (
+            f"SELECT m.run_id FROM {self._run_set_members_table} m "  # noqa: S608
+            f"JOIN {self._run_sets_table} rs ON rs.run_set_id = m.run_set_id "
+            f"WHERE rs.source = 'approved' "
+            f"AND rs.created_at >= current_timestamp - {interval} "
+            f"LIMIT {_RUN_SET_SWEEP_MAX_RUNS}"
+        )
+        rows = self._oltp_sql.query(stmt)
+        window_ids = {row[0] for row in rows if row and row[0]}
+        for run_id in window_ids:
+            if run_id in self._seen_score_runs:
+                continue
+            self._pending_score_runs[run_id] = now
+            self._seen_score_runs.add(run_id)
+        self._seen_score_runs &= window_ids | set(self._pending_score_runs)
+
+    def _collect_completed_score_run_fqns(self, now: datetime) -> set[str]:
+        """Pop every tracked run with a terminal row; return their table FQNs.
+
+        The expiry + batched terminal lookup extracted from
+        :meth:`_refresh_scores_for_completed_runs` so the reconcile pass
+        can fold the completed runs' tables into its own recompute.
+        """
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        if not self._pending_score_runs:
+            return set()
+
+        expired = [rid for rid, started in self._pending_score_runs.items() if now - started > _SCORE_REFRESH_TTL]
+        for rid in expired:
+            del self._pending_score_runs[rid]
+            logger.warning("Run %s never reached a terminal state; dropping its score-refresh tracking", rid)
+        if not self._pending_score_runs:
+            return set()
+
+        in_list = ", ".join(f"'{escape_sql_string(rid)}'" for rid in self._pending_score_runs)
+        sql = (
+            f"SELECT DISTINCT run_id, source_table_fqn FROM {self._runs_table} "  # noqa: S608
+            f"WHERE run_id IN ({in_list}) AND UPPER(status) <> 'RUNNING'"
+        )
+        rows = self._sql.query(sql)
+
+        fqns: set[str] = set()
+        for row in rows:
+            run_id = row[0] if row else None
+            if not run_id:
+                continue
+            self._pending_score_runs.pop(run_id, None)
+            fqn = row[1]
+            if fqn and not fqn.startswith(_SQL_CHECK_PREFIX):
+                fqns.add(fqn)
+        return fqns
+
+    def _reconcile_due(self) -> bool:
+        """Whether this pass should run the startup score-cache reconcile."""
+        return (
+            self._reconcile_scores_on_start
+            and not self._scores_reconciled
+            and self._score_reconcile_attempts < _SCORE_RECONCILE_MAX_ATTEMPTS
+        )
+
+    def _reconcile_scores(self, completed_fqns: set[str]) -> None:
+        """Recompute the cached score of EVERY monitored table (once per boot).
+
+        Heals ``dq_score_cache`` rows left stale or NULL by semantic
+        changes shipped in a deploy (e.g. the run_mode reclassification)
+        and cold deployments where nothing has recomputed since boot —
+        and, transitively, the product and global means derived from
+        them. Runs on the scheduler's first refresh pass (single worker,
+        seconds after startup, after the lifespan ensured the score
+        views), bounded by :data:`~.score_cache_service.RECONCILE_MAX_TABLES`
+        and merged with *completed_fqns* so a boot-backlog run completing
+        on the same pass shares the ONE batched warehouse query. Success
+        sets the reconciled-this-boot flag; failure retries next tick up
+        to :data:`_SCORE_RECONCILE_MAX_ATTEMPTS` attempts.
+        """
+        if self._score_cache_service is None:  # pragma: no cover — caller guards
+            return
+        self._score_reconcile_attempts += 1
+        try:
+            monitored = self._score_cache_service.list_monitored_table_fqns()
+            fqns = sorted(set(monitored) | completed_fqns)
+            refreshed_tables, refreshed_products = self._score_cache_service.refresh_all_for_tables(fqns)
+            self._scores_reconciled = True
+            logger.info(
+                "Startup score-cache reconcile complete: %d table(s), %d product(s), global",
+                refreshed_tables,
+                refreshed_products,
+            )
+        except Exception:
+            if self._score_reconcile_attempts >= _SCORE_RECONCILE_MAX_ATTEMPTS:
+                logger.exception(
+                    "Startup score-cache reconcile failed %d time(s); giving up for this boot "
+                    "(run completions and browser refreshes still heal scores)",
+                    self._score_reconcile_attempts,
+                )
+            else:
+                logger.exception(
+                    "Startup score-cache reconcile failed (attempt %d/%d); retrying next tick",
+                    self._score_reconcile_attempts,
+                    _SCORE_RECONCILE_MAX_ATTEMPTS,
+                )
 
     @staticmethod
     def _resolve_cron_token(token: str, names: dict[str, int] | None) -> int:
@@ -1181,6 +1483,10 @@ class SchedulerService:
                     },
                 )
                 logger.info("Schedule '%s': submitted run for %s (run_id=%s)", schedule_name, table_fqn, run_id)
+                # Synthetic cross-table keys never carry a real table FQN,
+                # so there is no score-cache row to refresh for them.
+                if not is_synthetic:
+                    self._track_run_for_score_refresh(run_id)
             except Exception as e:
                 logger.error("Schedule '%s': failed for %s: %s", schedule_name, table_fqn, e)
                 errors.append(f"{table_fqn}: {e}")
@@ -1566,6 +1872,32 @@ class SchedulerService:
         except Exception:
             logger.exception("Retention sweep failed (non-fatal)")
 
+    async def _maybe_refresh_metadata_dims(self, now: datetime) -> None:
+        """Full-refresh the metadata dims if the hourly timer has elapsed.
+
+        No-op when no ``metadata_dim_service`` was wired (legacy deployments,
+        unit tests). Cheap to skip (one comparison) and runs in a background
+        thread so it doesn't block the loop. Failures are logged but never
+        fatal — the next tick re-tries.
+        """
+        if self._metadata_dim_service is None:
+            return
+        if now < self._next_metadata_dim_refresh_at:
+            return
+
+        scheduled_for = self._next_metadata_dim_refresh_at
+        # Advance the timer first so a slow refresh can't double-fire.
+        self._next_metadata_dim_refresh_at = now + timedelta(hours=_METADATA_DIM_REFRESH_INTERVAL_HOURS)
+        logger.info(
+            "Metadata-dim refresh: triggering hourly rebuild (was due at %s); next run scheduled for %s",
+            scheduled_for.isoformat(),
+            self._next_metadata_dim_refresh_at.isoformat(),
+        )
+        try:
+            await asyncio.to_thread(self._metadata_dim_service.refresh)
+        except Exception:
+            logger.exception("Metadata-dim refresh failed (non-fatal)")
+
     def _run_retention(self) -> None:
         """DELETE rows older than ``retention_days`` from each high-volume table.
 
@@ -1596,7 +1928,7 @@ class SchedulerService:
         for table_name, time_col in _DELTA_RETENTION_TABLES:
             table = f"`{self._catalog}`.`{self._schema}`.{table_name}"
             cutoff = quarantine_days if table_name == _QUARANTINE_TABLE_NAME else days
-            stmt = f"DELETE FROM {table} " f"WHERE {time_col} < current_timestamp() - INTERVAL {cutoff} DAY"
+            stmt = f"DELETE FROM {table} WHERE {time_col} < current_timestamp() - INTERVAL {cutoff} DAY"
             try:
                 self._sql.execute(stmt)
                 logger.info("Retention sweep (Delta): cleaned %s (cutoff=%dd)", table_name, cutoff)
@@ -1609,7 +1941,7 @@ class SchedulerService:
         interval = self._oltp_sql.interval_days_expr(days)
         for table_name, time_col in _OLTP_RETENTION_TABLES:
             table = self._oltp_sql.fqn(table_name)
-            stmt = f"DELETE FROM {table} " f"WHERE {time_col} < CURRENT_TIMESTAMP - {interval}"
+            stmt = f"DELETE FROM {table} WHERE {time_col} < CURRENT_TIMESTAMP - {interval}"
             try:
                 self._oltp_sql.execute(stmt)
                 logger.info("Retention sweep (OLTP): cleaned %s (cutoff=%dd)", table_name, days)

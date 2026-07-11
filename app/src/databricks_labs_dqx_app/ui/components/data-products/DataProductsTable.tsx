@@ -15,12 +15,14 @@ import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
+import { ScoreBarCell, scoreSortValue } from "@/components/data-table/ScoreBarCell";
 import { STICKY_ACTIONS_HEAD_CLASS, STICKY_ACTIONS_CELL_CLASS } from "@/components/data-table/sticky-actions";
 import type { DataProductOut } from "@/lib/api";
 
 /** Column keys that carry a comparable value and can drive client sort.
- *  NO DQ Score column — dqlake's `dqScore` column is intentionally omitted
- *  (design spec §8: no quality-score dashboard in this port). */
+ *  `dqScore` renders the cached score LEFT-JOINed from dq_score_cache by
+ *  the list endpoint (P3.4) — dqlake's `dqScore` column, restored now that
+ *  the DQ Score / Results work landed the backing aggregate. */
 export type DataProductsSortKey =
   | "name"
   | "description"
@@ -30,6 +32,7 @@ export type DataProductsSortKey =
   | "tables"
   | "rules"
   | "checks"
+  | "dqScore"
   | "lastRun"
   | "schedule";
 
@@ -244,6 +247,19 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     renderHeader: (label) => label,
     renderCell: (p) => <span className="tabular-nums">{sumMembers(p, (_r, c) => c)}</span>,
   },
+  dqScore: {
+    // Cached unweighted mean of member tables' latest published scores,
+    // LEFT-JOINed from the dq_score_cache OLTP table by the list endpoint
+    // (P3.4) — no warehouse hit on page load. Cell presentation copied
+    // from dqlake's DataProductsTable dqScore column.
+    labelKey: "dataProducts.colDqScore",
+    toggleable: true,
+    defaultVisible: true,
+    defaultWidth: 140,
+    sortable: true,
+    renderHeader: (label) => label,
+    renderCell: (p) => <ScoreBarCell score={p.score} />,
+  },
   lastRun: {
     labelKey: "dataProducts.colLastRun",
     toggleable: true,
@@ -285,6 +301,8 @@ export function getDataProductsSortValue(key: DataProductsSortKey, p: DataProduc
       return sumMembers(p, (r) => r);
     case "checks":
       return sumMembers(p, (_r, c) => c);
+    case "dqScore":
+      return scoreSortValue(p.score);
     case "lastRun":
       return p.last_run_at ? new Date(p.last_run_at).getTime() : -1;
     case "schedule":
@@ -301,11 +319,15 @@ const DEFAULT_ORDER: DataProductsSortKey[] = [
   "tables",
   "rules",
   "checks",
+  "dqScore",
   "lastRun",
   "schedule",
 ];
 
-const LS_KEY_LAYOUT = "dqx.products.layout.v1";
+// v2: added the DQ Score column (visible by default) — bumping the key
+// slots it into its DEFAULT_ORDER position for users with a stored v1
+// layout (the dqlake `dqlake.products.layout.vN` convention).
+const LS_KEY_LAYOUT = "dqx.products.layout.v2";
 
 export interface DataProductsTableProps {
   /** Rows to render — already filtered, sorted, and paginated by the caller. */
@@ -325,10 +347,11 @@ export interface DataProductsTableProps {
  * The Data Products list table: selectable + drag-reorderable columns
  * (persisted to localStorage), stable widths across sort clicks. Ported
  * from dqlake's `DataProductsTable` and adapted to DQX's `DataProductOut`
- * shape — the DQ Score column is cut (design spec §8) and #Rules/#Checks
- * are summed client-side from `members` (DQX's list endpoint doesn't
- * surface aggregate rule/check counts on the product itself the way
- * dqlake's `DataProductOutBrief` does).
+ * shape — #Rules/#Checks are summed client-side from `members` (DQX's
+ * list endpoint doesn't surface aggregate rule/check counts on the
+ * product itself the way dqlake's `DataProductOutBrief` does), and the
+ * DQ Score column reads the cached aggregate the list endpoint LEFT
+ * JOINs from dq_score_cache (P3.4).
  */
 export function DataProductsTable({
   rows,

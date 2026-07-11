@@ -46,10 +46,17 @@ import {
   useRunReviewStatuses,
   useSaveRunReviewStatuses,
   getRunReviewStatusesQueryKey,
-  type LabelDefinition,
   type RetentionSettingsOut,
   type RunReviewStatusOption,
 } from "@/lib/api-custom";
+import {
+  HEX_COLOR_RE,
+  defToDraft,
+  draftToDef,
+  type CriticalityValue,
+  type DraftDefinition,
+} from "@/lib/label-definition-drafts";
+import { resolveCriticality } from "@/lib/registry-rule-conversion";
 import {
   useGetAiSettings,
   useSaveAiSettings,
@@ -70,6 +77,9 @@ import {
   useGetWarehouseAccess,
   getGetWarehouseAccessQueryKey,
   useGrantWarehouseAccess,
+  useGetDraftRunSampleLimit,
+  useSaveDraftRunSampleLimit,
+  getGetDraftRunSampleLimitQueryKey,
   type AiSettingsIn,
   type RulesRegistrySettingsIn,
   type ComputeSettingsIn,
@@ -286,7 +296,6 @@ function TimezoneSettings() {
 
 const LABEL_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
 const RESERVED_WEIGHT_KEY = "weight";
-const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
 const RESERVED_SEVERITY_KEY = "severity";
 
 /** Red asterisk marking a required field — pair with a label, no annotation needed for optional fields. */
@@ -320,44 +329,9 @@ function LockedFieldHint({ text }: { text: string }) {
   );
 }
 
-interface DraftDefinition extends LabelDefinition {
-  draftId: string;
-}
-
-function defToDraft(d: LabelDefinition): DraftDefinition {
-  return {
-    draftId: crypto.randomUUID(),
-    key: d.key,
-    description: d.description ?? "",
-    values: [...d.values],
-    allow_custom_values: !!d.allow_custom_values,
-    value_colors: d.value_colors ? { ...d.value_colors } : null,
-    value_descriptions: d.value_descriptions ? { ...d.value_descriptions } : null,
-    is_builtin: !!d.is_builtin,
-  };
-}
-
-function draftToDef(d: DraftDefinition): LabelDefinition {
-  const values = d.values.map((v) => v.trim()).filter(Boolean);
-  const valueSet = new Set(values);
-  const colors: Record<string, string> = {};
-  for (const [value, color] of Object.entries(d.value_colors ?? {})) {
-    if (valueSet.has(value) && HEX_COLOR_RE.test(color)) colors[value] = color;
-  }
-  const descriptions: Record<string, string> = {};
-  for (const [value, desc] of Object.entries(d.value_descriptions ?? {})) {
-    if (valueSet.has(value) && desc.trim()) descriptions[value] = desc;
-  }
-  return {
-    key: d.key.trim(),
-    description: (d.description ?? "").trim(),
-    values,
-    allow_custom_values: d.allow_custom_values,
-    value_colors: Object.keys(colors).length > 0 ? colors : null,
-    value_descriptions: Object.keys(descriptions).length > 0 ? descriptions : null,
-    is_builtin: !!d.is_builtin,
-  };
-}
+// Draft <-> API mapping (`DraftDefinition` / `defToDraft` / `draftToDef`)
+// lives in `lib/label-definition-drafts.ts` so it's unit-testable without
+// rendering this route.
 
 function LabelDefinitionsSettings() {
   const { t } = useTranslation();
@@ -419,6 +393,7 @@ function LabelDefinitionsSettings() {
         allow_custom_values: false,
         value_colors: null,
         value_descriptions: null,
+        value_criticality: null,
         is_builtin: false,
       },
     ]);
@@ -650,6 +625,7 @@ function AllowedValuesEditor({
   const values = draft.values;
   const colors = draft.value_colors ?? {};
   const descriptions = draft.value_descriptions ?? {};
+  const criticalities = draft.value_criticality ?? {};
 
   // Severity values are stored/seeded lowest-first (Low..Critical) so they
   // read as an ascending scale when authored, but every display surface
@@ -662,12 +638,16 @@ function AllowedValuesEditor({
     ? values.map((_, i) => i).reverse()
     : values.map((_, i) => i);
 
-  const patchValue = (i: number, patch: { name?: string; color?: string | null; description?: string }) => {
+  const patchValue = (
+    i: number,
+    patch: { name?: string; color?: string | null; description?: string; criticality?: CriticalityValue },
+  ) => {
     const current = values[i];
     if (current === undefined) return;
     let nextValues = values;
     let nextColors = colors;
     let nextDescriptions = descriptions;
+    let nextCriticalities = criticalities;
 
     if (patch.name !== undefined && patch.name !== current) {
       nextValues = values.map((v, idx) => (idx === i ? patch.name! : v));
@@ -680,6 +660,11 @@ function AllowedValuesEditor({
         nextDescriptions = { ...descriptions };
         nextDescriptions[patch.name] = nextDescriptions[current];
         delete nextDescriptions[current];
+      }
+      if (criticalities[current] !== undefined) {
+        nextCriticalities = { ...criticalities };
+        nextCriticalities[patch.name] = nextCriticalities[current];
+        delete nextCriticalities[current];
       }
     }
     const targetKey = patch.name ?? current;
@@ -694,11 +679,15 @@ function AllowedValuesEditor({
       if (patch.description.trim()) nextDescriptions[targetKey] = patch.description;
       else delete nextDescriptions[targetKey];
     }
+    if (patch.criticality !== undefined) {
+      nextCriticalities = { ...nextCriticalities, [targetKey]: patch.criticality };
+    }
 
     onChange({
       values: nextValues,
       value_colors: Object.keys(nextColors).length > 0 ? nextColors : null,
       value_descriptions: Object.keys(nextDescriptions).length > 0 ? nextDescriptions : null,
+      value_criticality: Object.keys(nextCriticalities).length > 0 ? nextCriticalities : null,
     });
   };
 
@@ -708,10 +697,13 @@ function AllowedValuesEditor({
     delete nextColors[current];
     const nextDescriptions = { ...descriptions };
     delete nextDescriptions[current];
+    const nextCriticalities = { ...criticalities };
+    delete nextCriticalities[current];
     onChange({
       values: values.filter((_, idx) => idx !== i),
       value_colors: Object.keys(nextColors).length > 0 ? nextColors : null,
       value_descriptions: Object.keys(nextDescriptions).length > 0 ? nextDescriptions : null,
+      value_criticality: Object.keys(nextCriticalities).length > 0 ? nextCriticalities : null,
     });
     if (expanded === i) setExpanded(null);
   };
@@ -741,7 +733,12 @@ function AllowedValuesEditor({
             )}
             onClick={() => setExpanded(isOpen ? null : i)}
           >
-            <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 px-2.5 py-1.5">
+            <div
+              className={cn(
+                "grid items-center gap-2 px-2.5 py-1.5",
+                isSeverity ? "grid-cols-[auto_1fr_auto_auto]" : "grid-cols-[auto_1fr_auto]",
+              )}
+            >
               <ValueColorEditor value={v} color={color} onSetColor={(c) => patchValue(i, { color: c })} />
               <span className="flex items-baseline gap-2 min-w-0">
                 <span className="font-mono text-xs shrink-0">{v}</span>
@@ -749,6 +746,36 @@ function AllowedValuesEditor({
                   <span className="truncate text-[11px] text-muted-foreground">{description}</span>
                 )}
               </span>
+              {/* Severity values additionally carry the admin-editable DQX
+                  criticality they materialize as (warn/error) — read by the
+                  backend's `resolve_criticality`; unset values fall back to
+                  the built-in defaults, which is what `resolveCriticality`
+                  renders here so the selector always shows the effective
+                  criticality. */}
+              {isSeverity && (
+                <span onClick={(e) => e.stopPropagation()}>
+                  <Select
+                    value={resolveCriticality(v, draft.value_criticality)}
+                    onValueChange={(next) => patchValue(i, { criticality: next as CriticalityValue })}
+                  >
+                    <SelectTrigger
+                      aria-label={t("config.valueCriticalityAria", { value: v })}
+                      title={t("config.valueCriticalityTitle", { value: v })}
+                      className="h-6 w-24 text-xs"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="warn" className="text-xs">
+                        {t("config.criticalityWarn")}
+                      </SelectItem>
+                      <SelectItem value="error" className="text-xs">
+                        {t("config.criticalityError")}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </span>
+              )}
               <button
                 type="button"
                 aria-label={t("config.removeValueAria", { value: v })}
@@ -1101,6 +1128,117 @@ function RetentionSettings() {
               Only admins can change retention.
             </span>
           )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Draft-run sample limit — admin knob capping the rows a DRAFT monitored-table
+// run reads (0 = whole table). Approved/published runs never sample; they
+// always scan the full table, so there is deliberately no knob for them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DraftRunSampleLimitSettings() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { data: resp, isLoading } = useGetDraftRunSampleLimit();
+  const settings = resp?.data;
+  const saveMutation = useSaveDraftRunSampleLimit();
+  const { data: role } = useCurrentUserRoleSuspense();
+  const isAdmin = role?.data?.role === "admin";
+
+  const [limit, setLimit] = useState<string>("");
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (settings && !hydrated) {
+      setLimit(String(settings.draft_run_sample_limit));
+      setHydrated(true);
+    }
+  }, [settings, hydrated]);
+
+  const max = settings?.draft_run_sample_limit_max ?? 10_000_000;
+  const parsed = Number.parseInt(limit, 10);
+  const isInvalid = Number.isNaN(parsed) || parsed < 0 || parsed > max;
+  const isDirty = settings != null && !Number.isNaN(parsed) && parsed !== settings.draft_run_sample_limit;
+
+  const handleSave = () => {
+    if (!settings || isInvalid || !isDirty) return;
+    saveMutation.mutate(
+      { data: { draft_run_sample_limit: parsed } },
+      {
+        onSuccess: (saved) => {
+          queryClient.invalidateQueries({ queryKey: getGetDraftRunSampleLimitQueryKey() });
+          setLimit(String(saved.data.draft_run_sample_limit));
+          toast.success(t("config.draftSampleSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveDraftSample"));
+        },
+      },
+    );
+  };
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Database className="h-5 w-5" />
+          {t("config.draftSampleTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.draftSampleDescription")}
+        </p>
+        <div className="space-y-1.5 max-w-sm">
+          <Label htmlFor="draft-sample-limit" className="text-xs">
+            {t("config.draftSampleLabel")}
+          </Label>
+          <Input
+            id="draft-sample-limit"
+            type="number"
+            min={0}
+            max={max}
+            step={1}
+            value={limit}
+            disabled={!isAdmin || saveMutation.isPending}
+            onChange={(e) => setLimit(e.target.value)}
+            className="h-8"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            {t("config.draftSampleDefaultHint", { value: settings.draft_run_sample_limit_default })}
+            {!settings.draft_run_sample_limit_set && ` ${t("config.draftSampleNotCustomised")}`}
+          </p>
+        </div>
+        {isInvalid && (
+          <p className="text-xs text-destructive flex items-start gap-1.5">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <span>{t("config.draftSampleInvalid", { max })}</span>
+          </p>
+        )}
+        <div className="flex items-center gap-2 pt-2 border-t">
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!isAdmin || !isDirty || isInvalid || saveMutation.isPending}
+          >
+            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+            {t("config.draftSampleSave")}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setLimit(String(settings.draft_run_sample_limit))}
+            disabled={!isAdmin || !isDirty || saveMutation.isPending}
+          >
+            {t("config.draftSampleReset")}
+          </Button>
         </div>
       </CardContent>
     </Card>
@@ -2408,6 +2546,13 @@ function ConfigPage() {
               <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <RetentionSettings />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.28}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <DraftRunSampleLimitSettings />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>

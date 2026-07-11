@@ -4,7 +4,9 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import {
   ClipboardCheck,
+  Gauge,
   History,
+  Home,
   LayoutDashboard,
   BookOpen,
   ExternalLink,
@@ -47,6 +49,24 @@ function Layout() {
       <SidebarGroup className="pt-2">
         <SidebarGroupContent>
           <SidebarMenu>
+            {/* Home — the dqlake-style landing page (P3.5): welcome, "At a
+                Glance" stat cards with the cached overall DQ score, and the
+                Get Started nav grid. Top of the nav, matching dqlake. */}
+            <SidebarMenuItem>
+              <Link
+                to="/home"
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded-lg",
+                  location.pathname.startsWith("/home")
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
+              >
+                <Home size={16} />
+                <span>{t("sidebar.home")}</span>
+              </Link>
+            </SidebarMenuItem>
+
             {/* Rules Registry — reusable, versioned, governed rule
                 definitions (Phase 2). Target sidebar per the design
                 spec (§10): Rules Registry · Monitored Tables · Import
@@ -166,6 +186,27 @@ function Layout() {
               >
                 <History size={16} />
                 <span>{t("sidebar.runsHistory")}</span>
+              </Link>
+            </SidebarMenuItem>
+
+            {/* Results — org-wide DQ results composition over all monitored
+                tables (dq-results endpoints). Visible to all; the backend
+                filters to the viewer's accessible catalogs. Sits
+                between Runs History and Insights: it's the outcome view of
+                the runs above it, at a higher altitude than the per-run
+                history. */}
+            <SidebarMenuItem>
+              <Link
+                to="/results"
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded-lg",
+                  location.pathname.startsWith("/results")
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
+              >
+                <Gauge size={16} />
+                <span>{t("sidebar.results")}</span>
               </Link>
             </SidebarMenuItem>
 

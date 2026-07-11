@@ -56,8 +56,9 @@ import {
 import { ShieldCheck } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { useState, useCallback, useEffect, Suspense, useMemo, type ReactNode } from "react";
-import { QueryErrorResetBoundary } from "@tanstack/react-query";
+import { useState, useCallback, useEffect, useRef, Suspense, useMemo, type ReactNode } from "react";
+import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
+import { invalidateResultsAfterRunCompletion } from "@/lib/results-invalidation";
 import { ErrorBoundary } from "react-error-boundary";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ArrowDown, ArrowUp, ArrowUpDown, CircleStop, ShieldAlert } from "lucide-react";
@@ -390,6 +391,26 @@ function RunHistoryContent() {
 
   const rawRuns: ValidationRunSummaryOut[] = Array.isArray(runsResp?.data) ? runsResp.data : [];
   const runningRuns = rawRuns.filter((r) => r.status === "RUNNING");
+
+  // Run-completion detection: the score / failing-records queries never
+  // refetch on their own (staleTime: Infinity — see lib/results-invalidation),
+  // so when a run this page saw as RUNNING settles (or drops off the list),
+  // invalidate those queries for its table. This is the page that already
+  // polls RUNNING runs, which makes it the run-completion observer.
+  const queryClient = useQueryClient();
+  const runningFqnByIdRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    const runs: ValidationRunSummaryOut[] = Array.isArray(runsResp?.data) ? runsResp.data : [];
+    const current = new Map(
+      runs.filter((r) => r.status === "RUNNING").map((r) => [r.run_id, r.source_table_fqn]),
+    );
+    const completedFqns: string[] = [];
+    for (const [runId, fqn] of runningFqnByIdRef.current) {
+      if (!current.has(runId)) completedFqns.push(fqn);
+    }
+    runningFqnByIdRef.current = current;
+    if (completedFqns.length > 0) invalidateResultsAfterRunCompletion(queryClient, completedFqns);
+  }, [runsResp, queryClient]);
 
   useEffect(() => {
     if (runningRuns.length === 0) return;

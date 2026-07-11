@@ -180,8 +180,13 @@ def render_check(
     registry_rule_id: str,
     registry_version: int,
     applied_rule_id: str,
+    app_settings: AppSettingsService,
 ) -> tuple[dict[str, Any], bool]:
     """Render one materialized ``dq_quality_rules.check`` dict for one mapping group.
+
+    *app_settings* is only read to resolve the rendered ``criticality``: the
+    severity -> criticality mapping is admin-editable via the reserved
+    ``severity`` label definition (see ``registry_models.resolve_criticality``).
 
     Returns ``(check_dict, is_tableless)`` — *is_tableless* is ``True`` only
     for a dataset-level ``sql`` rule with no column slots at all (a genuine
@@ -271,7 +276,7 @@ def render_check(
     )
 
     check_dict: dict[str, Any] = {
-        "criticality": resolve_criticality(effective_severity),
+        "criticality": resolve_criticality(effective_severity, app_settings),
         "check": check_inner,
         "user_metadata": user_metadata,
     }
@@ -407,9 +412,7 @@ class Materializer:
             return None
 
         effective_severity = (
-            applied.severity_override
-            or get_rule_severity(version_snapshot.user_metadata)
-            or _DEFAULT_SEVERITY
+            applied.severity_override or get_rule_severity(version_snapshot.user_metadata) or _DEFAULT_SEVERITY
         )
         # Render with the mode FROZEN into the version snapshot, not the live
         # rule's mode: an approved rule is editable in place (its mode can be
@@ -432,6 +435,7 @@ class Materializer:
                     registry_rule_id=applied.rule_id,
                     registry_version=version_number,
                     applied_rule_id=applied.id,
+                    app_settings=self._app_settings,
                 )
             except (ValueError, UnsafeSqlQueryError):
                 logger.warning("Failed to render applied rule %s group %d", applied.id, idx, exc_info=True)
@@ -440,9 +444,7 @@ class Materializer:
             rendered.append((row_id, row_table_fqn, check))
         return rendered
 
-    def _materialize_applied_rule(
-        self, table_fqn: str, applied: AppliedRule, auto_upgrade: bool
-    ) -> set[str]:
+    def _materialize_applied_rule(self, table_fqn: str, applied: AppliedRule, auto_upgrade: bool) -> set[str]:
         rendered = self._iter_rendered_checks(table_fqn, applied)
         if rendered is None:
             return set()

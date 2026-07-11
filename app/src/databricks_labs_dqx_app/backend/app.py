@@ -41,9 +41,20 @@ from .routes import api_router
 from .services.app_settings_service import AppSettingsService
 from .services.binding_run_service import BindingRunService
 from .services.data_product_service import DataProductService
+from .services.entitlement_service import FAILING_ROWS_VIEW_NAME, EntitlementService
+from .services.metadata_dim_service import MetadataDimService
+from .services.monitored_table_service import MonitoredTableService
 from .services.registry_service import RegistryService
 from .services.rule_embeddings import RuleEmbeddingsService
 from .services.scheduler_service import SchedulerService
+from .services.score_cache_service import ScoreCacheService
+from .services.score_view_service import (
+    ASOF_VIEW_NAME,
+    ATTRIBUTION_VIEW_NAME,
+    METRIC_VIEW_NAME,
+    SHAPING_VIEW_NAME,
+    ScoreViewService,
+)
 from .services.vector_store import VectorStoreProvisioner
 from .services.view_service import mark_tmp_schema_ready
 from .sql_executor import OltpExecutorProtocol, SqlExecutor
@@ -268,6 +279,161 @@ async def _build_scheduler_data_product_service(
     return data_product_service, binding_run_service
 
 
+def _ensure_score_views(sp_sql: SqlExecutor) -> None:
+    """Create/refresh the DQ score shaping + metric views (best-effort).
+
+    Runs after the Delta migrations so ``dq_metrics`` is guaranteed to
+    exist, and uses CREATE OR REPLACE on every startup so view
+    definition changes ship with the app. Best-effort: a warehouse that
+    cannot create metric views (or a transient DDL failure) degrades to
+    failing dq-score endpoints rather than a crash-looping app — same
+    contract as the other post-migration startup steps.
+    """
+    try:
+        service = ScoreViewService(sql=sp_sql)
+        service.ensure_views()
+        logger.info(
+            "Ensured DQ score views exist: %s and %s",
+            service.shaping_view_fqn_quoted,
+            service.metric_view_fqn_quoted,
+        )
+    except Exception as e:
+        logger.warning(
+            "Could not create the DQ score views over dq_metrics — the dq-score "
+            "endpoints will fail until the next successful startup: %s",
+            e,
+            exc_info=True,
+        )
+
+
+def _ensure_metadata_dims(sp_sql: SqlExecutor, oltp: OltpExecutorProtocol) -> None:
+    """Full-refresh the rule + monitored-table metadata dims (best-effort).
+
+    Runs after ``_ensure_score_views`` so the Genie space's authoring/
+    ownership data sources (``dim_dq_rules`` / ``dim_dq_monitored_tables``)
+    exist and are populated from the Rules Registry — same best-effort
+    contract as the score views: a warehouse hiccup or transient DDL failure
+    degrades to stale/empty dims (and Genie answering those questions less
+    well) rather than a crash-looping app. The scheduler re-refreshes them
+    hourly thereafter.
+    """
+    try:
+        registry = RegistryService(sql=oltp)
+        monitored_tables = MonitoredTableService(sql=oltp, profiling_sql=sp_sql)
+        MetadataDimService(sp_sql=sp_sql, registry=registry, monitored_tables=monitored_tables).refresh()
+        logger.info("Ensured DQ metadata dims exist and are refreshed")
+    except Exception as e:
+        logger.warning(
+            "Could not refresh the DQ metadata dims — Genie authoring/ownership "
+            "questions may be stale until the next successful refresh: %s",
+            e,
+            exc_info=True,
+        )
+
+
+def _ensure_entitlement_objects(sp_sql: SqlExecutor) -> None:
+    """Create/refresh the entitlement cache table + gated failing-rows view (best-effort).
+
+    Runs after the Delta migrations (``dq_quarantine_records`` must exist for
+    the view) alongside ``_ensure_score_views`` — same best-effort contract:
+    a DDL failure degrades to Genie row-level questions returning nothing
+    rather than a crash-looping app. The entitlement table MUST be a UC
+    Delta object (the dynamic view references it with definer's rights), so
+    it is deliberately NOT part of the Lakebase/OLTP data model.
+    """
+    try:
+        service = EntitlementService(sql=sp_sql)
+        service.ensure_objects()
+        logger.info(
+            "Ensured entitlement objects exist: %s and %s",
+            service.entitlements_table_fqn_quoted,
+            service.failing_rows_view_fqn_quoted,
+        )
+    except Exception as e:
+        logger.warning(
+            "Could not create the entitlement table / gated failing-rows view — "
+            "Genie row-level access will stay closed until the next successful startup: %s",
+            e,
+            exc_info=True,
+        )
+
+
+# The user-facing read surface for OBO Genie: the score views (including
+# the as-of expansion behind average-over-time questions) + the gated
+# failing-rows view. The entitlement table is deliberately absent — it is
+# SP-only (the dynamic view reads it with definer's rights; user emails
+# inside are not for general reading).
+_USER_READABLE_VIEWS = (
+    METRIC_VIEW_NAME,
+    SHAPING_VIEW_NAME,
+    ASOF_VIEW_NAME,
+    ATTRIBUTION_VIEW_NAME,
+    FAILING_ROWS_VIEW_NAME,
+)
+
+
+def _grant_user_view_access(sp_sql: SqlExecutor) -> None:
+    """GRANT the read path for OBO Genie to ``account users`` (best-effort).
+
+    Once Genie conversations run as the calling user (Phase 4), every user
+    needs USE SCHEMA on the app schema plus SELECT on the five views the
+    space queries — same precedent as the startup ``GRANT USE CATALOG``
+    below. Row-level protection does NOT depend on these grants: the
+    failing-rows view carries its own current_user() entitlement gate, and
+    the other four views are aggregate-only by design. Each statement is
+    individually best-effort so one failing grant cannot block the rest.
+    """
+    cat = conf.catalog.replace("`", "")
+    sch = conf.schema_name.replace("`", "")
+    statements = [
+        f"GRANT USE SCHEMA ON SCHEMA `{cat}`.`{sch}` TO `account users`",
+        *(
+            f"GRANT SELECT ON TABLE `{cat}`.`{sch}`.{view_name} TO `account users`"
+            for view_name in _USER_READABLE_VIEWS
+        ),
+    ]
+    for stmt in statements:
+        try:
+            sp_sql.execute_no_schema(stmt)
+        except Exception as grant_e:
+            logger.warning("Startup grant failed (%s): %s (users may need this granted manually)", stmt, grant_e)
+
+
+def _ensure_genie_space(sp_ws: WorkspaceClient, warehouse_id: str, settings_sql: OltpExecutorProtocol) -> None:
+    """Provision (or update) the Ask-Genie space over the score views (best-effort).
+
+    Runs after ``_ensure_score_views`` so the objects the space points at
+    exist. ``ensure_dq_genie_space`` itself is idempotent (config-hash no-op /
+    in-place PATCH / find-or-create by title) and never raises; this wrapper
+    only guards the collaborator wiring around it. Requires a warehouse to
+    bind a freshly-created space to — skipped (with a log) when none is
+    bound, same contract as the other best-effort startup steps.
+    """
+    try:
+        from .services.genie_space_service import ensure_dq_genie_space
+
+        if not warehouse_id:
+            logger.info("Genie space provisioning skipped: no SQL warehouse bound (DATABRICKS_WAREHOUSE_ID)")
+            return
+        settings = AppSettingsService(sql=settings_sql)
+        try:
+            parent_path = f"/Users/{sp_ws.current_user.me().user_name}"
+        except Exception:
+            # Best-effort: the parent folder is cosmetic — fall back to a
+            # location every workspace has rather than skip provisioning.
+            parent_path = "/Shared"
+        ensure_dq_genie_space(
+            settings=settings,
+            ws=sp_ws,
+            warehouse_id=warehouse_id,
+            parent_path=parent_path,
+            catalog=conf.catalog,
+            schema=conf.schema_name,
+        )
+    except Exception as e:
+        logger.warning("Could not provision the DQ Genie space: %s", e, exc_info=True)
+
+
 def _maybe_start_vector_store_provisioning(
     app: FastAPI,
     *,
@@ -431,6 +597,28 @@ async def lifespan(app: FastAPI):
 
     # Best-effort below — the app can recover from these failing.
 
+    # DQ score views (shaping view + UC metric view over dq_metrics) —
+    # must come after the Delta migrations above so dq_metrics exists.
+    _ensure_score_views(sp_sql)
+
+    # Rule + monitored-table metadata dims (P8.1) — SP-owned UC tables the
+    # Genie space queries for authoring/ownership questions, full-refreshed
+    # from the Rules Registry (Genie cannot reach Lakebase directly). After
+    # the migrations so the registry tables exist; the scheduler re-refreshes
+    # hourly from here on.
+    _ensure_metadata_dims(sp_sql, pg_executor if pg_executor is not None else sp_sql)
+
+    # Entitlement cache + gated failing-rows view (P4.1) — after the Delta
+    # migrations (dq_quarantine_records) — then the user-facing grants, which
+    # need every view to exist first.
+    _ensure_entitlement_objects(sp_sql)
+    _grant_user_view_access(sp_sql)
+
+    # Ask-Genie space over the score views — after the views so a freshly
+    # created space points at objects that exist. Blocking Genie REST calls
+    # run in a thread; the ensure itself is idempotent + best-effort.
+    await asyncio.to_thread(_ensure_genie_space, sp_ws, wh_id, pg_executor if pg_executor is not None else sp_sql)
+
     # Seed the run-review-status catalogue once, here at startup, rather
     # than lazily on first read. This keeps ``get_run_review_statuses``
     # (called on the Runs listing GET path) side-effect free. Best-effort:
@@ -535,11 +723,20 @@ async def lifespan(app: FastAPI):
                 # and table ticks in that case — see
                 # ``SchedulerService._tick_products`` /
                 # ``_tick_monitored_tables``.
-                logger.warning(
-                    "Could not wire scheduler product/table tick collaborators: %s", dp_e, exc_info=True
-                )
+                logger.warning("Could not wire scheduler product/table tick collaborators: %s", dp_e, exc_info=True)
                 data_product_service = None
                 binding_run_service = None
+
+            # Metadata-dim refresher (P8.1): the scheduler re-materializes the
+            # rule + monitored-table dims hourly so Genie's authoring/ownership
+            # data sources stay fresh long after the startup refresh above.
+            # Same OLTP executor as the other scheduler collaborators; the
+            # dims themselves are SP-owned UC tables written via sp_sql.
+            metadata_dim_service = MetadataDimService(
+                sp_sql=sp_sql,
+                registry=RegistryService(sql=oltp_for_scheduler),
+                monitored_tables=MonitoredTableService(sql=oltp_for_scheduler, profiling_sql=sp_sql),
+            )
 
             _scheduler = SchedulerService(
                 ws=sp_ws,
@@ -553,6 +750,22 @@ async def lifespan(app: FastAPI):
                 oltp_sql=pg_executor,
                 data_product_service=data_product_service,
                 binding_run_service=binding_run_service,
+                metadata_dim_service=metadata_dim_service,
+                # Same construction as dependencies.get_score_cache_service:
+                # the cache lives on the OLTP executor, the published-score
+                # recompute reads the metric view via the SP warehouse
+                # executor. Lets the scheduler refresh list scores when it
+                # observes a launched run complete server-side (no browser).
+                score_cache_service=ScoreCacheService(oltp=oltp_for_scheduler, warehouse_sql=sp_sql),
+                # Startup reconcile (P5.3): the scheduler's first refresh
+                # pass recomputes EVERY monitored table's cached score
+                # (then products + global), healing rows left stale/NULL
+                # by semantic changes or cold deploys. Lives here — not a
+                # lifespan task — so the file-lock lease guarantees it
+                # runs exactly once per host even with multiple uvicorn
+                # workers, it naturally sequences after _ensure_score_views
+                # above, and its failure can never block startup.
+                reconcile_scores_on_start=True,
             )
             set_scheduler(_scheduler)
             _scheduler.start()

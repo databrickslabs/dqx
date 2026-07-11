@@ -36,6 +36,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_name,
     get_rule_severity,
 )
+from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
@@ -77,11 +78,20 @@ class MonitoredTableDetail:
 
 @dataclass
 class MonitoredTableSummary:
-    """A monitored table binding plus lightweight list-view counters."""
+    """A monitored table binding plus lightweight list-view counters.
+
+    The ``score*`` fields carry the cached DQ score LEFT-JOINed from
+    ``dq_score_cache`` (P3.4) — all ``None`` when the table has never been
+    scored. ``score_computed_at`` is the executor's ``ts_text`` string.
+    """
 
     table: MonitoredTable
     applied_rule_count: int = 0
     check_count: int = 0
+    score: float | None = None
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    score_computed_at: str | None = None
 
 
 @dataclass
@@ -117,18 +127,21 @@ class MonitoredTableService:
         self._applied_table = sql.fqn("dq_applied_rules")
         self._rules_table = sql.fqn("dq_rules")
         self._quality_rules_table = sql.fqn("dq_quality_rules")
+        self._score_cache_table = sql.fqn("dq_score_cache")
         self._profiling_table = profiling_sql.fqn("dq_profiling_results")
         self._select_cols = self._build_select_cols()
         self._applied_select_cols = self._build_applied_select_cols()
 
-    def _build_select_cols(self) -> str:
-        created_at = self._sql.ts_text("created_at")
-        updated_at = self._sql.ts_text("updated_at")
-        last_profiled_at = self._sql.ts_text("last_profiled_at")
+    def _build_select_cols(self, prefix: str = "") -> str:
+        created_at = self._sql.ts_text(f"{prefix}created_at")
+        updated_at = self._sql.ts_text(f"{prefix}updated_at")
+        last_profiled_at = self._sql.ts_text(f"{prefix}last_profiled_at")
         return (
-            f"binding_id, table_fqn, steward, status, version, schedule_cron, schedule_tz, "
+            f"{prefix}binding_id, {prefix}table_fqn, {prefix}steward, {prefix}status, "
+            f"{prefix}version, {prefix}schedule_cron, {prefix}schedule_tz, "
             f"{last_profiled_at} AS last_profiled_at, "
-            f"created_by, {created_at} AS created_at, updated_by, {updated_at} AS updated_at"
+            f"{prefix}created_by, {created_at} AS created_at, "
+            f"{prefix}updated_by, {updated_at} AS updated_at"
         )
 
     def _build_applied_select_cols(self) -> str:
@@ -248,6 +261,11 @@ class MonitoredTableService:
     # List / Get
     # ------------------------------------------------------------------
 
+    def count(self) -> int:
+        """Total monitored table bindings, any status (homepage stat card)."""
+        rows = self._sql.query(f"SELECT COUNT(*) FROM {self._table}")  # noqa: S608
+        return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+
     def list_monitored_tables(
         self,
         *,
@@ -263,32 +281,50 @@ class MonitoredTableService:
         ``schema``, and ``name`` filter over ``table_fqn`` in Python
         (matching how :class:`RegistryService.list_rules` handles
         JSON-blob metadata filters).
+
+        The cached DQ score columns are LEFT-JOINed from ``dq_score_cache``
+        in the same round-trip (P3.4) — never recomputed here; a page load
+        must not touch the warehouse. NULLs (no cache row yet) surface as
+        ``None`` score fields on the summary.
         """
         clauses: list[str] = []
         if status:
-            clauses.append(f"status = '{escape_sql_string(status)}'")
+            clauses.append(f"mt.status = '{escape_sql_string(status)}'")
         if steward:
-            clauses.append(f"steward = '{escape_sql_string(steward)}'")
-        sql = f"SELECT {self._select_cols} FROM {self._table}"
+            clauses.append(f"mt.steward = '{escape_sql_string(steward)}'")
+        score_computed_at = self._sql.ts_text("sc.computed_at")
+        sql = (
+            f"SELECT {self._build_select_cols('mt.')}, "
+            f"sc.score, sc.failed_tests, sc.total_tests, {score_computed_at} AS score_computed_at "
+            f"FROM {self._table} mt "
+            f"LEFT JOIN {self._score_cache_table} sc "
+            f"ON sc.scope_type = 'table' AND sc.scope_key = mt.table_fqn"
+        )
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY updated_at DESC LIMIT 2000"
+        sql += " ORDER BY mt.updated_at DESC LIMIT 2000"
         rows = self._sql.query(sql)
-        tables = [self._row_to_table(row) for row in rows]
+        tables = [(self._row_to_table(row), parse_cached_score(row[12], row[13], row[14], row[15])) for row in rows]
         if catalog:
-            tables = [t for t in tables if self._fqn_part(t.table_fqn, 0) == catalog]
+            tables = [(t, s) for t, s in tables if self._fqn_part(t.table_fqn, 0) == catalog]
         if schema:
-            tables = [t for t in tables if self._fqn_part(t.table_fqn, 1) == schema]
+            tables = [(t, s) for t, s in tables if self._fqn_part(t.table_fqn, 1) == schema]
         if name:
             needle = name.lower()
-            tables = [t for t in tables if needle in t.table_fqn.lower()]
+            tables = [(t, s) for t, s in tables if needle in t.table_fqn.lower()]
+        applied_counts = self._applied_rule_counts([t.binding_id for t, _ in tables])
+        check_counts = self._materialized_check_counts([t.table_fqn for t, _ in tables])
         return [
             MonitoredTableSummary(
                 table=t,
-                applied_rule_count=self._count_applied_rules(t.binding_id),
-                check_count=self._count_materialized_checks(t.table_fqn),
+                applied_rule_count=applied_counts.get(t.binding_id, 0),
+                check_count=check_counts.get(t.table_fqn, 0),
+                score=cached.score,
+                failed_tests=cached.failed_tests,
+                total_tests=cached.total_tests,
+                score_computed_at=cached.computed_at,
             )
-            for t in tables
+            for t, cached in tables
         ]
 
     @staticmethod
@@ -296,14 +332,23 @@ class MonitoredTableService:
         parts = table_fqn.split(".")
         return parts[index] if len(parts) > index else None
 
-    def _count_applied_rules(self, binding_id: str) -> int:
-        e = escape_sql_string(binding_id)
-        sql = f"SELECT COUNT(*) FROM {self._applied_table} WHERE binding_id = '{e}'"  # noqa: S608
+    def _applied_rule_counts(self, binding_ids: list[str]) -> dict[str, int]:
+        """Applied-rule counts for all *binding_ids* in ONE grouped query (no per-binding round-trip)."""
+        if not binding_ids:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(b)}'" for b in binding_ids)
+        sql = (
+            f"SELECT binding_id, COUNT(*) FROM {self._applied_table} "  # noqa: S608
+            f"WHERE binding_id IN ({in_list}) GROUP BY binding_id"
+        )
         rows = self._sql.query(sql)
-        return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+        return {row[0]: int(row[1]) for row in rows if row and row[0] is not None and row[1] is not None}
 
-    def _count_materialized_checks(self, table_fqn: str) -> int:
-        """Count active ``dq_quality_rules`` rows for *table_fqn*, regardless of authoring source.
+    def _materialized_check_counts(self, table_fqns: list[str]) -> dict[str, int]:
+        """Count active ``dq_quality_rules`` rows per *table_fqns* entry, regardless of authoring source.
+
+        One grouped query for all listed tables (no per-table round-trip); a
+        table with zero active rows is simply absent from the result.
 
         ``dq_quality_rules`` holds every check for a table — authored
         directly (``source`` in ``ui``/``sql``/``profiler``/``import``/``ai``)
@@ -315,13 +360,15 @@ class MonitoredTableService:
         active, mirroring :data:`RulesCatalogService.VALID_STATUSES`'s
         terminal "dead" state.
         """
-        e = escape_sql_string(table_fqn)
+        if not table_fqns:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(f)}'" for f in table_fqns)
         sql = (
-            f"SELECT COUNT(*) FROM {self._quality_rules_table} "  # noqa: S608
-            f"WHERE table_fqn = '{e}' AND status != 'rejected'"
+            f"SELECT table_fqn, COUNT(*) FROM {self._quality_rules_table} "  # noqa: S608
+            f"WHERE table_fqn IN ({in_list}) AND status != 'rejected' GROUP BY table_fqn"
         )
         rows = self._sql.query(sql)
-        return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+        return {row[0]: int(row[1]) for row in rows if row and row[0] is not None and row[1] is not None}
 
     def get(self, binding_id: str) -> MonitoredTableDetail | None:
         """Get a monitored table binding plus its applied rules (with joined rule tags)."""
@@ -330,6 +377,45 @@ class MonitoredTableService:
             return None
         applied_rules = self._list_applied_rules(binding_id)
         return MonitoredTableDetail(table=table, applied_rules=applied_rules)
+
+    def get_by_table_fqn(self, table_fqn: str) -> MonitoredTableDetail | None:
+        """Like :meth:`get`, but keyed by the bound table's FQN.
+
+        Used by the dq-results endpoints to attribute a table's check
+        results (keyed by ``input_location``) back to the binding's
+        applied-rule metadata. None when the table is not monitored.
+        """
+        table = self._get_by_table_fqn(table_fqn)
+        if table is None:
+            return None
+        return MonitoredTableDetail(table=table, applied_rules=self._list_applied_rules(table.binding_id))
+
+    def get_binding_ids_by_table_fqn(self, table_fqns: list[str]) -> dict[str, str]:
+        """Batched ``table_fqn -> binding_id`` lookup in ONE ``IN (...)`` query.
+
+        Used by the dq-results global endpoint to enrich its ``by_table``
+        rows with a link target without a per-table round-trip (the
+        table_fqn column is unique, so at most one binding per FQN).
+        Tables that are not monitored are simply absent from the result.
+
+        Inputs may be warehouse-sourced (``dq_metrics.input_location``), so
+        anything failing :func:`validate_fqn` is silently dropped before
+        interpolation — an unmonitorable name can never match anyway.
+        """
+        candidates: list[str] = []
+        for fqn in table_fqns:
+            try:
+                validate_fqn(fqn)
+            except ValueError:
+                logger.warning("Dropping invalid table FQN from binding-id lookup")
+                continue
+            candidates.append(fqn)
+        if not candidates:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(fqn)}'" for fqn in candidates)
+        sql = f"SELECT table_fqn, binding_id FROM {self._table} WHERE table_fqn IN ({in_list})"  # noqa: S608
+        rows = self._sql.query(sql)
+        return {row[0]: row[1] for row in rows if row and row[0] and row[1]}
 
     def _get(self, binding_id: str) -> MonitoredTable | None:
         e = escape_sql_string(binding_id)

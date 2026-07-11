@@ -214,6 +214,34 @@ def fqn_needs_quoting(fqn: str) -> bool:
     return not all(_SIMPLE_IDENT_RE.match(p) for p in parts)
 
 
+def quote_ident(part: str) -> str:
+    """Backtick-quote a single identifier part for Delta / Databricks SQL.
+
+    Strips one existing layer of backtick wrapping first (the backticks are
+    the quoting, not part of the identifier), then doubles any backtick left
+    inside per Spark's escaping rule as defense in depth. This is the
+    single-part building block behind :func:`quote_fqn`; use it directly when
+    assembling an FQN from parts that may themselves contain dots (a dotted
+    part must not be re-split by ``quote_fqn``) — e.g. a hyphenated or
+    otherwise exotic catalog/schema name read from app config.
+    """
+    unwrapped = part[1:-1] if len(part) >= 2 and part.startswith("`") and part.endswith("`") else part
+    return f"`{unwrapped.replace('`', '``')}`"
+
+
+def quote_object_fqn(catalog: str, schema: str, name: str) -> str:
+    """Backtick-quoted three-part FQN of an app-schema object.
+
+    *catalog* and *schema* come from app config and are quoted per part
+    (:func:`quote_ident`) so hyphenated or otherwise exotic names stay
+    parseable; *name* must be a TRUSTED constant identifier (a table or
+    view name owned by the app, e.g. ``dq_metrics``) and stays bare —
+    the same convention as the view-DDL side. Never pass user input as
+    *name*.
+    """
+    return f"{quote_ident(catalog)}.{quote_ident(schema)}.{name}"
+
+
 def quote_fqn(fqn: str) -> str:
     """Quote a validated FQN for safe embedding in SQL.
 
@@ -223,9 +251,7 @@ def quote_fqn(fqn: str) -> str:
     doubled per Spark's escaping rule, as defense in depth. Call
     ``validate_fqn()`` first.
     """
-    parts = fqn.split(".")
-    unwrapped = (p[1:-1] if len(p) >= 2 and p.startswith("`") and p.endswith("`") else p for p in parts)
-    return ".".join(f"`{p.replace('`', '``')}`" for p in unwrapped)
+    return ".".join(quote_ident(p) for p in fqn.split("."))
 
 
 def validate_schedule_name(name: str) -> str:

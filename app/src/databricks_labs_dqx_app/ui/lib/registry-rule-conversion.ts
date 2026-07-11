@@ -60,7 +60,10 @@ export const PARAM_KIND_TO_TYPE: Record<string, RuleParameterType> = {
   ref_columns: "ref_column",
 };
 
-/** Mirrors `registry_models.SEVERITY_TO_CRITICALITY` / `resolve_criticality`. */
+/** Built-in defaults — mirrors `registry_models.SEVERITY_TO_CRITICALITY`.
+ * Fallback only: the admin-editable `value_criticality` map stored on the
+ * reserved `severity` label definition (pass it via *valueCriticality*)
+ * takes precedence, exactly like the backend's `resolve_criticality`. */
 const SEVERITY_TO_CRITICALITY: Record<string, "warn" | "error"> = {
   Low: "warn",
   Medium: "warn",
@@ -68,8 +71,35 @@ const SEVERITY_TO_CRITICALITY: Record<string, "warn" | "error"> = {
   Critical: "error",
 };
 
-export function resolveCriticality(severity: string | undefined): "warn" | "error" {
+/**
+ * Extract the admin-edited severity -> criticality map from the fetched
+ * label definitions (the reserved `severity` definition's
+ * `value_criticality`), for threading into {@link resolveCriticality} /
+ * {@link buildDqxCheckJson}. Structural parameter type so both the
+ * hand-written (`api-custom`) and orval-generated (`api`) `LabelDefinition`
+ * shapes are accepted. Returns `undefined` when no mapping is stored — the
+ * built-in defaults then apply.
+ */
+export function severityValueCriticality(
+  labelDefinitions:
+    | readonly { key: string; value_criticality?: Record<string, string> | null }[]
+    | undefined,
+): Record<string, string> | undefined {
+  return labelDefinitions?.find((d) => d.key === RESERVED_SEVERITY_KEY)?.value_criticality ?? undefined;
+}
+
+/**
+ * Mirrors `registry_models.resolve_criticality`'s resolution order: the
+ * stored *valueCriticality* entry (when valid) → the built-in
+ * `SEVERITY_TO_CRITICALITY` default → `"warn"`.
+ */
+export function resolveCriticality(
+  severity: string | undefined,
+  valueCriticality?: Record<string, string> | null,
+): "warn" | "error" {
   if (!severity) return "warn";
+  const stored = valueCriticality?.[severity];
+  if (stored === "warn" || stored === "error") return stored;
   return SEVERITY_TO_CRITICALITY[severity] ?? "warn";
 }
 
@@ -208,8 +238,15 @@ const SQL_FUNCTION_NAMES = new Set(["sql_query", "sql_expression"]);
  * to the user faithfully mirrors what flows into the materialized
  * `dq_quality_rules.check` row (see the module docstring for exactly which
  * per-application keys are intentionally excluded).
+ *
+ * Pass *severityCriticality* (see {@link severityValueCriticality}) so the
+ * rendered `criticality` reflects the admin-edited severity mapping rather
+ * than only the built-in defaults.
  */
-export function buildDqxCheckJson(rule: RegistryRuleOut): Record<string, unknown> {
+export function buildDqxCheckJson(
+  rule: RegistryRuleOut,
+  severityCriticality?: Record<string, string> | null,
+): Record<string, unknown> {
   const definition = rule.definition ?? ({} as RuleDefinition);
   const body = (definition.body ?? {}) as Record<string, unknown>;
   const parameters = definition.parameters ?? [];
@@ -252,7 +289,7 @@ export function buildDqxCheckJson(rule: RegistryRuleOut): Record<string, unknown
 
   const severity = getTag(rule, RESERVED_SEVERITY_KEY);
   const check: Record<string, unknown> = {
-    criticality: resolveCriticality(severity || undefined),
+    criticality: resolveCriticality(severity || undefined, severityCriticality),
     check: checkInner,
     user_metadata: rule.user_metadata ?? {},
   };

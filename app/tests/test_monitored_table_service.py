@@ -64,7 +64,15 @@ def _table_row(
     schedule_cron: str | None = None,
     schedule_tz: str | None = None,
     last_profiled_at: str | None = None,
+    score: str | None = None,
+    failed_tests: str | None = None,
+    total_tests: str | None = None,
+    score_computed_at: str | None = None,
 ) -> list[str]:
+    # The trailing 4 cells are the dq_score_cache LEFT-JOIN columns the list
+    # query selects (P3.4) — all None when the table has never been scored.
+    # The single-row read paths select only the first 12 columns; the extra
+    # cells are simply ignored by _row_to_table.
     return [
         binding_id,
         table_fqn,
@@ -78,6 +86,10 @@ def _table_row(
         "2026-07-02T00:00:00+00:00",
         "alice@x",
         "2026-07-02T00:00:00+00:00",
+        score,
+        failed_tests,
+        total_tests,
+        score_computed_at,
     ]
 
 
@@ -218,11 +230,12 @@ class TestBulkRegister:
 class TestListMonitoredTables:
     def test_lists_with_applied_rule_counts(self, svc, sql):
         sql.query.side_effect = [
-            [_table_row(binding_id="b1"), _table_row(binding_id="b2")],
-            [["2"]],  # applied-rule count for b1
-            [["3"]],  # materialized-check count for b1
-            [["0"]],  # applied-rule count for b2
-            [["0"]],  # materialized-check count for b2
+            [
+                _table_row(binding_id="b1", table_fqn="cat.schema.t1"),
+                _table_row(binding_id="b2", table_fqn="cat.schema.t2"),
+            ],
+            [["b1", "2"]],  # grouped applied-rule counts (b2 absent -> 0)
+            [["cat.schema.t1", "3"]],  # grouped materialized-check counts (t2 absent -> 0)
         ]
         summaries = svc.list_monitored_tables()
         assert len(summaries) == 2
@@ -230,6 +243,16 @@ class TestListMonitoredTables:
         assert summaries[0].check_count == 3
         assert summaries[1].applied_rule_count == 0
         assert summaries[1].check_count == 0
+        # Counts are batched: bindings query + ONE grouped query per count
+        # kind, regardless of how many bindings are listed (no per-binding N+1).
+        assert sql.query.call_count == 3
+        applied_sql = sql.query.call_args_list[1][0][0]
+        assert "GROUP BY binding_id" in applied_sql
+        assert "IN ('b1', 'b2')" in applied_sql
+        checks_sql = sql.query.call_args_list[2][0][0]
+        assert "GROUP BY table_fqn" in checks_sql
+        assert "IN ('cat.schema.t1', 'cat.schema.t2')" in checks_sql
+        assert "status != 'rejected'" in checks_sql
 
     def test_filters_by_status_pushed_to_sql(self, svc, sql):
         sql.query.return_value = []
@@ -249,8 +272,8 @@ class TestListMonitoredTables:
                 _table_row(binding_id="b1", table_fqn="cat1.schema.tbl"),
                 _table_row(binding_id="b2", table_fqn="cat2.schema.tbl"),
             ],
-            [["0"]],  # applied-rule count for the one row surviving the filter
-            [["0"]],  # materialized-check count for the one row surviving the filter
+            [],  # grouped applied-rule counts — none for the surviving row
+            [],  # grouped materialized-check counts — none for the surviving row
         ]
         summaries = svc.list_monitored_tables(catalog="cat1")
         assert len(summaries) == 1
@@ -262,12 +285,51 @@ class TestListMonitoredTables:
                 _table_row(binding_id="b1", table_fqn="cat.schema.orders"),
                 _table_row(binding_id="b2", table_fqn="cat.schema.customers"),
             ],
-            [["0"]],  # applied-rule count for the one row surviving the filter
-            [["0"]],  # materialized-check count for the one row surviving the filter
+            [],  # grouped applied-rule counts — none for the surviving row
+            [],  # grouped materialized-check counts — none for the surviving row
         ]
         summaries = svc.list_monitored_tables(name="order")
         assert len(summaries) == 1
         assert summaries[0].table.table_fqn == "cat.schema.orders"
+
+    def test_list_left_joins_score_cache_in_same_round_trip(self, svc, sql):
+        """P3.4: the cached score columns ride along the bindings query —
+        no extra round trip and NEVER a warehouse recompute on page load."""
+        sql.query.side_effect = [
+            [
+                _table_row(
+                    binding_id="b1",
+                    score="0.9876",
+                    failed_tests="12",
+                    total_tests="1000",
+                    score_computed_at="2026-07-10T00:00:00",
+                )
+            ],
+            [["b1", "2"]],  # grouped applied-rule counts
+            [["cat.schema.tbl", "3"]],  # grouped materialized-check counts
+        ]
+        summaries = svc.list_monitored_tables()
+        list_sql = sql.query.call_args_list[0][0][0]
+        assert "LEFT JOIN dqx_test.dqx_app_test.dq_score_cache" in list_sql
+        assert "sc.scope_type = 'table'" in list_sql
+        assert "sc.scope_key = mt.table_fqn" in list_sql
+        summary = summaries[0]
+        assert summary.score == 0.9876
+        assert summary.failed_tests == 12
+        assert summary.total_tests == 1000
+        assert summary.score_computed_at == "2026-07-10T00:00:00"
+
+    def test_list_score_fields_none_when_never_scored(self, svc, sql):
+        sql.query.side_effect = [
+            [_table_row(binding_id="b1")],
+            [],  # grouped applied-rule counts
+            [],  # grouped materialized-check counts
+        ]
+        summary = svc.list_monitored_tables()[0]
+        assert summary.score is None
+        assert summary.failed_tests is None
+        assert summary.total_tests is None
+        assert summary.score_computed_at is None
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +371,37 @@ class TestGet:
         assert summary.rule_name is None
         assert summary.rule_dimension is None
         assert summary.rule_severity is None
+
+
+class TestGetBindingIdsByTableFqn:
+    """Batched ``table_fqn -> binding_id`` lookup for the by_table axis."""
+
+    def test_maps_fqns_to_binding_ids_in_one_query(self, svc, sql):
+        sql.query.return_value = [["main.a.t1", "b1"], ["main.a.t2", "b2"]]
+        out = svc.get_binding_ids_by_table_fqn(["main.a.t1", "main.a.t2", "main.a.unmonitored"])
+        assert out == {"main.a.t1": "b1", "main.a.t2": "b2"}
+        assert sql.query.call_count == 1
+        stmt = sql.query.call_args[0][0]
+        assert "SELECT table_fqn, binding_id FROM dqx_test.dqx_app_test.dq_monitored_tables" in stmt
+        assert "IN ('main.a.t1', 'main.a.t2', 'main.a.unmonitored')" in stmt
+
+    def test_empty_input_short_circuits_without_sql(self, svc, sql):
+        assert svc.get_binding_ids_by_table_fqn([]) == {}
+        sql.query.assert_not_called()
+
+    def test_invalid_fqns_are_dropped_before_interpolation(self, svc, sql):
+        # Inputs can be warehouse-sourced (dq_metrics.input_location):
+        # anything failing validate_fqn never reaches the IN list.
+        sql.query.return_value = [["main.a.t1", "b1"]]
+        out = svc.get_binding_ids_by_table_fqn(["main.a.t1", "main.a.evil\\", "not-three-parts"])
+        assert out == {"main.a.t1": "b1"}
+        stmt = sql.query.call_args[0][0]
+        assert "evil" not in stmt
+        assert "not-three-parts" not in stmt
+
+    def test_all_invalid_input_short_circuits_without_sql(self, svc, sql):
+        assert svc.get_binding_ids_by_table_fqn(["main.a.evil\\"]) == {}
+        sql.query.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

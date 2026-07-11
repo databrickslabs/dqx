@@ -1,9 +1,10 @@
 """Unit tests for ``backend.routes.v1.metrics``.
 
-Exercises only the pure helpers (``_safe_int``, ``_parse_check_metrics``,
-``_pivot_rows``, ``_check_metrics_to_error_breakdown``) — the FastAPI
-endpoints themselves are thin wrappers around SQL execution and would
-require a live warehouse to exercise end-to-end.
+Exercises only the pure helpers (``safe_int`` / ``parse_check_metrics``
+from ``backend.metrics_utils``, plus the module-local ``_pivot_rows`` and
+``_check_metrics_to_error_breakdown``) — the FastAPI endpoints themselves
+are thin wrappers around SQL execution and would require a live warehouse
+to exercise end-to-end.
 """
 
 from __future__ import annotations
@@ -20,12 +21,19 @@ def metrics_module():
     return metrics
 
 
-class TestSafeInt:
-    """``_safe_int`` is the universal coercion for stringified observation values."""
+@pytest.fixture
+def metrics_utils_module():
+    from databricks_labs_dqx_app.backend import metrics_utils
 
-    def test_returns_none_for_blank_inputs(self, metrics_module):
-        assert metrics_module._safe_int(None) is None
-        assert metrics_module._safe_int("") is None
+    return metrics_utils
+
+
+class TestSafeInt:
+    """``safe_int`` is the universal coercion for stringified observation values."""
+
+    def test_returns_none_for_blank_inputs(self, metrics_utils_module):
+        assert metrics_utils_module.safe_int(None) is None
+        assert metrics_utils_module.safe_int("") is None
 
     @pytest.mark.parametrize(
         "value,expected",
@@ -37,63 +45,63 @@ class TestSafeInt:
             (123.7, 123),  # float→int truncates as int(float()) does
         ],
     )
-    def test_coerces_numeric_inputs(self, metrics_module, value, expected):
-        assert metrics_module._safe_int(value) == expected
+    def test_coerces_numeric_inputs(self, metrics_utils_module, value, expected):
+        assert metrics_utils_module.safe_int(value) == expected
 
     @pytest.mark.parametrize("value", ["abc", "12abc", [], {}, object()])
-    def test_returns_none_for_invalid(self, metrics_module, value):
-        assert metrics_module._safe_int(value) is None
+    def test_returns_none_for_invalid(self, metrics_utils_module, value):
+        assert metrics_utils_module.safe_int(value) is None
 
 
 class TestParseCheckMetrics:
     """``check_metrics`` arrives as a JSON-encoded string from Spark Observation."""
 
-    def test_empty_inputs_yield_empty_list(self, metrics_module):
-        assert metrics_module._parse_check_metrics(None) == []
-        assert metrics_module._parse_check_metrics("") == []
-        assert metrics_module._parse_check_metrics("[]") == []
+    def test_empty_inputs_yield_empty_list(self, metrics_utils_module):
+        assert metrics_utils_module.parse_check_metrics(None) == []
+        assert metrics_utils_module.parse_check_metrics("") == []
+        assert metrics_utils_module.parse_check_metrics("[]") == []
 
-    def test_parses_well_formed_json_string(self, metrics_module):
+    def test_parses_well_formed_json_string(self, metrics_utils_module):
         raw = json.dumps(
             [
                 {"check_name": "not_null", "error_count": 5, "warning_count": 0},
                 {"check_name": "in_range", "error_count": 0, "warning_count": 3},
             ]
         )
-        out = metrics_module._parse_check_metrics(raw)
+        out = metrics_utils_module.parse_check_metrics(raw)
         assert len(out) == 2
         assert out[0].check_name == "not_null"
         assert out[0].error_count == 5
         assert out[0].warning_count == 0
         assert out[1].warning_count == 3
 
-    def test_accepts_already_parsed_list(self, metrics_module):
+    def test_accepts_already_parsed_list(self, metrics_utils_module):
         items = [{"check_name": "x", "error_count": 1, "warning_count": 2}]
-        out = metrics_module._parse_check_metrics(items)
+        out = metrics_utils_module.parse_check_metrics(items)
         assert len(out) == 1
         assert out[0].error_count == 1
 
-    def test_invalid_json_yields_empty(self, metrics_module):
-        assert metrics_module._parse_check_metrics("{not json}") == []
+    def test_invalid_json_yields_empty(self, metrics_utils_module):
+        assert metrics_utils_module.parse_check_metrics("{not json}") == []
 
-    def test_non_list_top_level_yields_empty(self, metrics_module):
-        assert metrics_module._parse_check_metrics(json.dumps({"foo": "bar"})) == []
+    def test_non_list_top_level_yields_empty(self, metrics_utils_module):
+        assert metrics_utils_module.parse_check_metrics(json.dumps({"foo": "bar"})) == []
 
-    def test_skips_non_dict_items(self, metrics_module):
-        out = metrics_module._parse_check_metrics(
+    def test_skips_non_dict_items(self, metrics_utils_module):
+        out = metrics_utils_module.parse_check_metrics(
             json.dumps(["not a dict", {"check_name": "ok", "error_count": 1, "warning_count": 0}])
         )
         assert len(out) == 1
         assert out[0].check_name == "ok"
 
-    def test_defaults_missing_fields(self, metrics_module):
-        out = metrics_module._parse_check_metrics(json.dumps([{"check_name": "x"}]))
+    def test_defaults_missing_fields(self, metrics_utils_module):
+        out = metrics_utils_module.parse_check_metrics(json.dumps([{"check_name": "x"}]))
         assert len(out) == 1
         assert out[0].error_count == 0
         assert out[0].warning_count == 0
 
-    def test_unknown_name_falls_back_to_unknown(self, metrics_module):
-        out = metrics_module._parse_check_metrics(json.dumps([{"error_count": 4}]))
+    def test_unknown_name_falls_back_to_unknown(self, metrics_utils_module):
+        out = metrics_utils_module.parse_check_metrics(json.dumps([{"error_count": 4}]))
         assert out[0].check_name == "unknown"
 
 
@@ -235,3 +243,61 @@ class TestPivotRows:
         ]
         out = metrics_module._pivot_rows(rows)
         assert out[0].run_type == "scheduled"
+
+
+class TestHyphenatedAppCatalog:
+    """The app's own catalog/schema come from config and can be hyphenated
+    (``prod-east``). The dq_metrics / dq_validation_runs read FQNs must
+    backtick-quote their parts (quote_object_fqn) or the SELECTs won't
+    parse — same convention as the dq_results read paths."""
+
+    QUOTED_METRICS = "`prod-east`.`dqx-studio`.dq_metrics"
+    QUOTED_RUNS = "`prod-east`.`dqx-studio`.dq_validation_runs"
+
+    @pytest.fixture
+    def sql_mock(self):
+        from unittest.mock import create_autospec
+
+        from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+
+        mock = create_autospec(SqlExecutor, instance=True)
+        mock.query_dicts.return_value = []
+        return mock
+
+    @pytest.fixture
+    def client(self, sql_mock, app_config):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from databricks_labs_dqx_app.backend.common.authorization import UserRole
+        from databricks_labs_dqx_app.backend.dependencies import (
+            get_conf,
+            get_sp_sql_executor,
+            get_user_catalog_names,
+            get_user_role,
+        )
+        from databricks_labs_dqx_app.backend.routes.v1.metrics import router
+
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1/metrics")
+        app.dependency_overrides[get_sp_sql_executor] = lambda: sql_mock
+        app.dependency_overrides[get_conf] = lambda: app_config.model_copy(
+            update={"catalog": "prod-east", "schema_name": "dqx-studio"}
+        )
+        app.dependency_overrides[get_user_catalog_names] = lambda: frozenset({"main"})
+        app.dependency_overrides[get_user_role] = lambda: UserRole.VIEWER
+        return TestClient(app)
+
+    def test_metrics_trend_reads_are_quoted(self, client, sql_mock):
+        resp = client.get("/api/v1/metrics/main.sales.orders")
+        assert resp.status_code == 200
+        stmt = sql_mock.query_dicts.call_args[0][0]
+        assert self.QUOTED_METRICS in stmt
+        assert self.QUOTED_RUNS in stmt
+
+    def test_metrics_summary_reads_are_quoted(self, client, sql_mock):
+        resp = client.get("/api/v1/metrics")
+        assert resp.status_code == 200
+        stmt = sql_mock.query_dicts.call_args[0][0]
+        assert self.QUOTED_METRICS in stmt
+        assert self.QUOTED_RUNS in stmt
