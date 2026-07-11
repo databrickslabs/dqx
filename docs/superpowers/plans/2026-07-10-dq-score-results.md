@@ -1827,6 +1827,28 @@ Design approved by the user: Genie conversations run as the calling user (OBO), 
 - E2E on the deployed app: entitlement row appears after opening a table's results; Genie (OBO) answers a "show failing rows" question for a verified table; returns empty for an unverified one; aggregate questions still work.
 - Deploy + install-contract check.
 
+---
+
+# PHASE 5 (user reports, 2026-07-11): trend semantics, rule identity, score-cache correctness
+
+### Task P5.1: As-of average trendline (data-side, Genie-teachable)
+
+The product/global "Average" trendline misbehaves with multiple runs across multiple tables: our trend is per-run-instant (each point = one table's run), while dqlake's product trend is AS-OF carry-forward (at each timestamp, every member contributes its most recent score at-or-before that instant; average those). Read dqlake's product trend construction (mv_product_results / as_of semantics) closely. Fix DATA-SIDE: compute the as-of average series in the backend service SQL (window functions over the shaping view: per member table, last score at-or-before each distinct run_time across the member set; then mean per instant) so the API's `trend` for product/global scope carries the correct average line; the frontend's client-side computeOverallPoints then consumes server truth (simplify/remove the client math where superseded — keep per-table dull lines). Teach Genie the same as-of pattern: curated SQL (parameterized by the preamble's member-table list where applicable) + a short instructions addition. Tests: multi-table misaligned-run fixtures pinning the carry-forward math.
+
+### Task P5.2: Rule-identity grouping in By rule (version-aware)
+
+By rule currently groups by check_name — a rule renamed between versions shows as two rows. Group by `registry_rule_id` (as-of attribution carries it; fall back to check_name when absent), label each group with the NAME FROM THE NEWEST RUN in scope (name changes across versions collapse into one row with the latest display name), and include the rule description where shown consistently with how names resolve. Applies to monitored-table, table-space, rule, and global scopes. Tests: renamed-rule-across-runs fixture -> one row, newest label.
+
+### Task P5.3: Score-cache correctness batch
+
+- LIVE-DIAGNOSE first (deployed app): product-scope cache rows (why table-space score column is null/broken while monitored-tables works) — check scope_key/product-id typing, refresh_product member lookup, and the list JOIN for products.
+- Homepage global score: verify refresh_global truly averages per-table cache rows (user observed "just the latest run" — likely only one table had a non-null cached score). Fix whatever diagnosis shows.
+- STARTUP RECONCILE: on app start (best-effort, after views ensured), refresh scores for ALL monitored tables in one batched warehouse query + derive products/global — heals stale/null cache rows after semantic changes (like the run_mode hotfix) and cold deployments. Keep it bounded + logged.
+- Tables tab in table spaces: per-member DQ score column (ScoreBarCell, cache-fed — extend the product-detail/members response additively with cached score fields).
+- Residual gap from the hotfix review: manually-triggered runs with the tab closed miss refresh — the scheduler tick's completion sweep should ALSO track run-sets created by non-scheduler paths (read run-set creation records server-side) if cheap; otherwise document.
+
+### Task P5.4: Phase 5 verification + deploy
+
 ## Deferred (explicitly out of scope)
 
 - Product-level batch run ids in dq_metrics (would restore full product run-picker parity) — requires run-submission changes; backlog.
