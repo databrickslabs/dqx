@@ -84,6 +84,7 @@ def get_oltp_executor() -> OltpExecutorProtocol | None:
 
 _SP_TTL = 45 * 60  # 45 minutes
 _OBO_TTL = 45 * 60  # 45 minutes
+_CATALOG_TTL = 30  # seconds — see get_user_catalog_names for the revocation trade-off
 
 
 # ---------------------------------------------------------------------------
@@ -791,19 +792,42 @@ def require_runner():
     return Depends(_check)
 
 
+async def _fetch_catalog_names(obo_ws: WorkspaceClient) -> frozenset[str]:
+    """Issue the UC ``catalogs.list`` call via the caller's OBO client."""
+    catalogs = await asyncio.to_thread(lambda: list(obo_ws.catalogs.list()))
+    return frozenset(c.name for c in catalogs if c.name)
+
+
+@app_cache.cached("auth:catalogs:{token_hash}", ttl=_CATALOG_TTL)
+async def _list_user_catalog_names(token_hash: str, obo_ws: WorkspaceClient) -> frozenset[str]:  # noqa: ARG001
+    return await _fetch_catalog_names(obo_ws)
+
+
 async def get_user_catalog_names(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
 ) -> frozenset[str]:
     """Return the set of catalog names the current user can access (via OBO).
 
-    Intentionally **not** cached: this list drives authorization filtering on
+    Cached per token hash for a short TTL (*_CATALOG_TTL*, 30 s), mirroring
+    the *_create_obo_ws* idiom. This list drives authorization filtering on
     list endpoints (rules, dry-run runs/results), so a stale entry could leak
-    rows for a catalog whose grant was just revoked. The underlying OBO
-    ``WorkspaceClient`` is already cached, so each call only re-issues the
-    UC ``catalogs.list`` request, not the full auth handshake.
+    rows for a catalog whose grant was just revoked — that is why the TTL is
+    deliberately short. The explicit trade-off: a revoked catalog grant can
+    remain visible in list filtering for up to 30 seconds; in exchange, list
+    endpoints no longer pay a per-request UC ``catalogs.list`` round trip
+    (live-measured as the dominant list-page latency). The underlying OBO
+    ``WorkspaceClient`` is cached separately (45 min), so a cache miss only
+    re-issues the ``catalogs.list`` request, not the full auth handshake.
+
+    Local-dev fallback: when the OBO header is absent (``get_obo_ws`` fell
+    back to the local default-auth client) there is no per-user token to key
+    on, so the listing stays uncached — exactly the previous behaviour.
     """
-    catalogs = await asyncio.to_thread(lambda: list(obo_ws.catalogs.list()))
-    return frozenset(c.name for c in catalogs if c.name)
+    if not token:
+        return await _fetch_catalog_names(obo_ws)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    return await _list_user_catalog_names(token_hash, obo_ws)
 
 
 # Re-export rt for any remaining usages during transition
