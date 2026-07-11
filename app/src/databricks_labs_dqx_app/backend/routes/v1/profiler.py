@@ -96,11 +96,17 @@ def _classify_table_error(exc: Exception, table_fqn: str) -> tuple[int, str, str
 def list_profile_runs(
     job_svc: Annotated[JobService, Depends(get_job_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
+    table_fqn: str | None = None,
 ) -> list[ProfileRunSummaryOut]:
-    """Return profiling run history, newest first."""
+    """Return profiling run history, newest first.
+
+    When ``table_fqn`` is supplied, only runs for that source table are
+    returned (server-side filter) so single-table views don't pull the full
+    history and filter client-side.
+    """
     try:
         table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
-        rows = job_svc.list_run_rows(table)
+        rows = job_svc.list_run_rows(table, source_table_fqn=table_fqn)
         return [
             ProfileRunSummaryOut(
                 run_id=row.get("run_id") or "",

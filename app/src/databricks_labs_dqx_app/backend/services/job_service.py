@@ -231,12 +231,22 @@ class JobService:
         table: str,
         select_cols: str,
         limit: int = 500,
+        source_table_fqn: str | None = None,
     ) -> list[dict[str, str | None]]:
         """Read the most recent result rows from a Delta table, newest first.
 
         Deduplicates by run_id -- if both a RUNNING placeholder and a terminal
         row exist for the same run_id, only the terminal row is returned.
+
+        When ``source_table_fqn`` is given, only rows for that source table are
+        returned (server-side filter), so callers scoped to a single table
+        don't have to pull the full history and filter client-side.
         """
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        where = ""
+        if source_table_fqn:
+            where = f"  WHERE source_table_fqn = '{escape_sql_string(source_table_fqn)}' "
         sql = (
             f"SELECT {select_cols} "  # noqa: S608
             f"FROM ("
@@ -245,14 +255,20 @@ class JobService:
             f"    ORDER BY CASE WHEN status = 'RUNNING' THEN 1 ELSE 0 END ASC, created_at DESC"
             f"  ) AS rn "
             f"  FROM {table}"
+            f"{where}"
             f") WHERE rn = 1 "
             f"ORDER BY created_at DESC LIMIT {int(limit)}"
         )
         return self._sql.query_dicts(sql)
 
-    def list_run_rows(self, table: str, limit: int = 500) -> list[dict[str, str | None]]:
-        """Read the most recent profiler result rows."""
-        return self._list_deduplicated_rows(table, self._PROFILE_COLS, limit)
+    def list_run_rows(
+        self,
+        table: str,
+        limit: int = 500,
+        source_table_fqn: str | None = None,
+    ) -> list[dict[str, str | None]]:
+        """Read the most recent profiler result rows, optionally scoped to one source table."""
+        return self._list_deduplicated_rows(table, self._PROFILE_COLS, limit, source_table_fqn)
 
     def list_dryrun_rows(self, table: str, limit: int = 500) -> list[dict[str, str | None]]:
         """Read the most recent dry-run result rows, excluding ad-hoc preview runs.

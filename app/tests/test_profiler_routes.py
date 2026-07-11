@@ -191,3 +191,47 @@ def test_classify_returns_documented_status_codes(raw_error: str, expected_statu
     status, code, _ = _classify_table_error(Exception(raw_error), "x.y.z")
     assert status == expected_status
     assert code == expected_code
+
+
+# ---------------------------------------------------------------------------
+# JobService.list_run_rows — server-side ``source_table_fqn`` filter (item 49)
+# ---------------------------------------------------------------------------
+
+
+class TestListRunRowsSourceTableFilter:
+    """The single-table profile view scopes the runs query server-side rather
+    than pulling the full history (limit 500) and filtering in the browser."""
+
+    @staticmethod
+    def _job_service() -> tuple[object, MagicMock]:
+        from databricks.sdk import WorkspaceClient
+        from unittest.mock import create_autospec
+
+        from databricks_labs_dqx_app.backend.services.job_service import JobService
+        from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+
+        sql = create_autospec(SqlExecutor, instance=True)
+        sql.query_dicts.return_value = []
+        ws = create_autospec(WorkspaceClient, instance=True)
+        return JobService(ws=ws, job_id="123", sql=sql), sql
+
+    def test_no_filter_emits_no_where_clause(self) -> None:
+        svc, sql = self._job_service()
+        svc.list_run_rows("main.dqx.dq_profiling_results")
+        emitted = sql.query_dicts.call_args.args[0]
+        assert "WHERE source_table_fqn" not in emitted
+
+    def test_filter_scopes_by_source_table_fqn(self) -> None:
+        svc, sql = self._job_service()
+        svc.list_run_rows("main.dqx.dq_profiling_results", source_table_fqn="cat.sch.orders")
+        emitted = sql.query_dicts.call_args.args[0]
+        assert "WHERE source_table_fqn = 'cat.sch.orders'" in emitted
+
+    def test_filter_escapes_single_quotes(self) -> None:
+        """A source FQN can't legitimately contain a quote, but the literal
+        must still be escaped (doubled) so it can never break out of the
+        string — matching every other literal on the Delta SQL path."""
+        svc, sql = self._job_service()
+        svc.list_run_rows("main.dqx.dq_profiling_results", source_table_fqn="a.b.o'x")
+        emitted = sql.query_dicts.call_args.args[0]
+        assert "'a.b.o''x'" in emitted

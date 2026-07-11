@@ -3850,6 +3850,10 @@ job_run_id?: number | null;
 
 export type CancelDryRun200 = {[key: string]: string};
 
+export type ListProfileRunsParams = {
+table_fqn?: string | null;
+};
+
 export type CancelProfileRun200 = {[key: string]: string};
 
 export type ListCommentsParams = {
@@ -14342,38 +14346,44 @@ export function useGetDryRunResultsSuspense<TData = Awaited<ReturnType<typeof ge
 
 /**
  * Return profiling run history, newest first.
+
+When ``table_fqn`` is supplied, only runs for that source table are
+returned (server-side filter) so single-table views don't pull the full
+history and filter client-side.
  * @summary List Profile Runs
  */
 export const listProfileRuns = (
-     options?: AxiosRequestConfig
+    params?: ListProfileRunsParams, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<ProfileRunSummaryOut[]>> => {
     
     
     return axios.default.get(
-      `/api/v1/profiler/runs`,options
+      `/api/v1/profiler/runs`,{
+    ...options,
+        params: {...params, ...options?.params},}
     );
   }
 
 
 
 
-export const getListProfileRunsQueryKey = () => {
+export const getListProfileRunsQueryKey = (params?: ListProfileRunsParams,) => {
     return [
-    `/api/v1/profiler/runs`
+    `/api/v1/profiler/runs`, ...(params ? [params]: [])
     ] as const;
     }
 
     
-export const getListProfileRunsQueryOptions = <TData = Awaited<ReturnType<typeof listProfileRuns>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getListProfileRunsQueryOptions = <TData = Awaited<ReturnType<typeof listProfileRuns>>, TError = AxiosError<HTTPValidationError>>(params?: ListProfileRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListProfileRunsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListProfileRunsQueryKey(params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listProfileRuns>>> = ({ signal }) => listProfileRuns({ signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listProfileRuns>>> = ({ signal }) => listProfileRuns(params, { signal, ...axiosOptions });
 
       
 
@@ -14387,7 +14397,7 @@ export type ListProfileRunsQueryError = AxiosError<HTTPValidationError>
 
 
 export function useListProfileRuns<TData = Awaited<ReturnType<typeof listProfileRuns>>, TError = AxiosError<HTTPValidationError>>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>> & Pick<
+ params: undefined |  ListProfileRunsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listProfileRuns>>,
           TError,
@@ -14397,7 +14407,7 @@ export function useListProfileRuns<TData = Awaited<ReturnType<typeof listProfile
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useListProfileRuns<TData = Awaited<ReturnType<typeof listProfileRuns>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>> & Pick<
+ params?: ListProfileRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listProfileRuns>>,
           TError,
@@ -14407,7 +14417,7 @@ export function useListProfileRuns<TData = Awaited<ReturnType<typeof listProfile
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useListProfileRuns<TData = Awaited<ReturnType<typeof listProfileRuns>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ params?: ListProfileRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -14415,11 +14425,11 @@ export function useListProfileRuns<TData = Awaited<ReturnType<typeof listProfile
  */
 
 export function useListProfileRuns<TData = Awaited<ReturnType<typeof listProfileRuns>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ params?: ListProfileRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getListProfileRunsQueryOptions(options)
+  const queryOptions = getListProfileRunsQueryOptions(params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -14431,16 +14441,16 @@ export function useListProfileRuns<TData = Awaited<ReturnType<typeof listProfile
 
 
 
-export const getListProfileRunsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listProfileRuns>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getListProfileRunsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listProfileRuns>>, TError = AxiosError<HTTPValidationError>>(params?: ListProfileRunsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListProfileRunsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListProfileRunsQueryKey(params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listProfileRuns>>> = ({ signal }) => listProfileRuns({ signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listProfileRuns>>> = ({ signal }) => listProfileRuns(params, { signal, ...axiosOptions });
 
       
 
@@ -14454,15 +14464,15 @@ export type ListProfileRunsSuspenseQueryError = AxiosError<HTTPValidationError>
 
 
 export function useListProfileRunsSuspense<TData = Awaited<ReturnType<typeof listProfileRuns>>, TError = AxiosError<HTTPValidationError>>(
-  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ params: undefined |  ListProfileRunsParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useListProfileRunsSuspense<TData = Awaited<ReturnType<typeof listProfileRuns>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ params?: ListProfileRunsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useListProfileRunsSuspense<TData = Awaited<ReturnType<typeof listProfileRuns>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ params?: ListProfileRunsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -14470,11 +14480,11 @@ export function useListProfileRunsSuspense<TData = Awaited<ReturnType<typeof lis
  */
 
 export function useListProfileRunsSuspense<TData = Awaited<ReturnType<typeof listProfileRuns>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+ params?: ListProfileRunsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfileRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getListProfileRunsSuspenseQueryOptions(options)
+  const queryOptions = getListProfileRunsSuspenseQueryOptions(params,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
