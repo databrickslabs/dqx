@@ -41,11 +41,17 @@ from .routes import api_router
 from .services.app_settings_service import AppSettingsService
 from .services.binding_run_service import BindingRunService
 from .services.data_product_service import DataProductService
+from .services.entitlement_service import FAILING_ROWS_VIEW_NAME, EntitlementService
 from .services.registry_service import RegistryService
 from .services.rule_embeddings import RuleEmbeddingsService
 from .services.scheduler_service import SchedulerService
 from .services.score_cache_service import ScoreCacheService
-from .services.score_view_service import ScoreViewService
+from .services.score_view_service import (
+    ATTRIBUTION_VIEW_NAME,
+    METRIC_VIEW_NAME,
+    SHAPING_VIEW_NAME,
+    ScoreViewService,
+)
 from .services.vector_store import VectorStoreProvisioner
 from .services.view_service import mark_tmp_schema_ready
 from .sql_executor import OltpExecutorProtocol, SqlExecutor
@@ -297,6 +303,74 @@ def _ensure_score_views(sp_sql: SqlExecutor) -> None:
         )
 
 
+def _ensure_entitlement_objects(sp_sql: SqlExecutor) -> None:
+    """Create/refresh the entitlement cache table + gated failing-rows view (best-effort).
+
+    Runs after the Delta migrations (``dq_quarantine_records`` must exist for
+    the view) alongside ``_ensure_score_views`` — same best-effort contract:
+    a DDL failure degrades to Genie row-level questions returning nothing
+    rather than a crash-looping app. The entitlement table MUST be a UC
+    Delta object (the dynamic view references it with definer's rights), so
+    it is deliberately NOT part of the Lakebase/OLTP data model.
+    """
+    try:
+        service = EntitlementService(sql=sp_sql)
+        service.ensure_objects()
+        logger.info(
+            "Ensured entitlement objects exist: %s and %s",
+            service.entitlements_table_fqn_quoted,
+            service.failing_rows_view_fqn_quoted,
+        )
+    except Exception as e:
+        logger.warning(
+            "Could not create the entitlement table / gated failing-rows view — "
+            "Genie row-level access will stay closed until the next successful startup: %s",
+            e,
+            exc_info=True,
+        )
+
+
+# The user-facing read surface for OBO Genie: the score views + the gated
+# failing-rows view. The entitlement table is deliberately absent — it is
+# SP-only (the dynamic view reads it with definer's rights; user emails
+# inside are not for general reading).
+_USER_READABLE_VIEWS = (
+    METRIC_VIEW_NAME,
+    SHAPING_VIEW_NAME,
+    ATTRIBUTION_VIEW_NAME,
+    FAILING_ROWS_VIEW_NAME,
+)
+
+
+def _grant_user_view_access(sp_sql: SqlExecutor) -> None:
+    """GRANT the read path for OBO Genie to ``account users`` (best-effort).
+
+    Once Genie conversations run as the calling user (Phase 4), every user
+    needs USE SCHEMA on the app schema plus SELECT on the four views the
+    space queries — same precedent as the startup ``GRANT USE CATALOG``
+    below. Row-level protection does NOT depend on these grants: the
+    failing-rows view carries its own current_user() entitlement gate, and
+    the other three views are aggregate-only by design. Each statement is
+    individually best-effort so one failing grant cannot block the rest.
+    """
+    cat = conf.catalog.replace("`", "")
+    sch = conf.schema_name.replace("`", "")
+    statements = [
+        f"GRANT USE SCHEMA ON SCHEMA `{cat}`.`{sch}` TO `account users`",
+        *(
+            f"GRANT SELECT ON TABLE `{cat}`.`{sch}`.{view_name} TO `account users`"
+            for view_name in _USER_READABLE_VIEWS
+        ),
+    ]
+    for stmt in statements:
+        try:
+            sp_sql.execute_no_schema(stmt)
+        except Exception as grant_e:
+            logger.warning(
+                "Startup grant failed (%s): %s (users may need this granted manually)", stmt, grant_e
+            )
+
+
 def _ensure_genie_space(sp_ws: WorkspaceClient, warehouse_id: str, settings_sql: OltpExecutorProtocol) -> None:
     """Provision (or update) the Ask-Genie space over the score views (best-effort).
 
@@ -498,6 +572,12 @@ async def lifespan(app: FastAPI):
     # DQ score views (shaping view + UC metric view over dq_metrics) —
     # must come after the Delta migrations above so dq_metrics exists.
     _ensure_score_views(sp_sql)
+
+    # Entitlement cache + gated failing-rows view (P4.1) — after the Delta
+    # migrations (dq_quarantine_records) — then the user-facing grants, which
+    # need every view to exist first.
+    _ensure_entitlement_objects(sp_sql)
+    _grant_user_view_access(sp_sql)
 
     # Ask-Genie space over the score views — after the views so a freshly
     # created space points at objects that exist. Blocking Genie REST calls

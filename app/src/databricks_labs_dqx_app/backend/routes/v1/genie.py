@@ -11,6 +11,11 @@ v_dq_check_results / v_dq_check_attribution) by design — see
 ``services/genie_space_service`` — so answering with SP credentials never
 exposes row-level data the caller couldn't already see in aggregate.
 
+Phase 4 adds POST /verify-entitlements: the UI fire-and-forgets it with the
+tables on screen so the caller's row-level access (via the entitlement-gated
+``v_dq_failing_rows`` dynamic view) is pre-verified before they ask Genie a
+failing-rows question — see ``services/entitlement_service``.
+
 Availability contract: when no space id is stored (provisioning skipped or
 failed) every endpoint returns ``available=False`` with a 200 rather than
 erroring, so the UI can hide/disable the chat cleanly.
@@ -25,9 +30,11 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
+    get_entitlement_service,
+    get_preview_sql_executor,
     get_sp_ws,
     require_role,
 )
@@ -38,9 +45,12 @@ from databricks_labs_dqx_app.backend.models import (
     GenieFeedbackOut,
     GeniePollIn,
     GenieSpaceOut,
+    GenieVerifyEntitlementsIn,
+    GenieVerifyEntitlementsOut,
 )
 from databricks_labs_dqx_app.backend.services import genie_chat_service
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
 from databricks_labs_dqx_app.backend.services.genie_chat_service import GenieChatState
 from databricks_labs_dqx_app.backend.services.genie_space_service import (
     SAMPLE_QUESTIONS,
@@ -48,6 +58,7 @@ from databricks_labs_dqx_app.backend.services.genie_space_service import (
     SETTING_STATUS,
     STATUS_READY,
 )
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -156,6 +167,36 @@ async def get_genie_space(settings: SettingsDep, sp_ws: SpWsDep) -> GenieSpaceOu
         status=status,
         space_url=space_url,
     )
+
+
+@router.post(
+    "/verify-entitlements",
+    response_model=GenieVerifyEntitlementsOut,
+    operation_id="verifyGenieEntitlements",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+async def verify_genie_entitlements(
+    body: GenieVerifyEntitlementsIn,
+    email: Annotated[str, Depends(get_user_email)],
+    obo_sql: Annotated[SqlExecutor, Depends(get_preview_sql_executor)],
+    entitlements: Annotated[EntitlementService, Depends(get_entitlement_service)],
+) -> GenieVerifyEntitlementsOut:
+    """Self-verify row-level (failing-rows) access for up to 50 tables (P4.1).
+
+    Each FQN is validated before any probe; the live SELECT self-check runs
+    through the CALLER's OBO executor (verifying your own access needs no
+    elevated privilege) with bounded concurrency, and successes are cached
+    SP-side so ``v_dq_failing_rows`` opens for this user for the TTL window.
+
+    Fire-and-forget friendly: the UI ignores the response, and the service
+    never raises — every failure mode degrades to a per-FQN outcome
+    (``verified`` | ``denied`` | ``error``). Verification runs INLINE rather
+    than as a background 202: the 50-FQN cap plus the probe semaphore keeps
+    the worst case bounded, and inline execution keeps the per-FQN outcomes
+    deterministic for callers (and tests) that do read them.
+    """
+    results = await entitlements.verify_and_record(obo_sql, email, body.table_fqns)
+    return GenieVerifyEntitlementsOut(results=results)
 
 
 @router.post(

@@ -1979,3 +1979,21 @@ class GenieFeedbackIn(BaseModel):
 
 class GenieFeedbackOut(BaseModel):
     ok: bool
+
+
+class GenieVerifyEntitlementsIn(BaseModel):
+    """Pre-verify row-level (failing-rows) access for a batch of tables.
+
+    The cap matches ``entitlement_service.VERIFY_ENTITLEMENTS_MAX_FQNS`` —
+    together with the probe semaphore it bounds the worst-case OBO work one
+    request can trigger. FQN syntax is validated per entry by the service
+    (malformed names get an ``error`` outcome, never a probe).
+    """
+
+    table_fqns: list[str] = Field(min_length=1, max_length=50)
+
+
+class GenieVerifyEntitlementsOut(BaseModel):
+    """Per-FQN verification outcome: ``verified`` | ``denied`` | ``error``."""
+
+    results: dict[str, str] = Field(default_factory=dict)

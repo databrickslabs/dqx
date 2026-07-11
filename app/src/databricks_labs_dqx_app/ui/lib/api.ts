@@ -1374,6 +1374,31 @@ export interface GenieSpaceOut {
   space_url?: GenieSpaceOutSpaceUrl;
 }
 
+/**
+ * Pre-verify row-level (failing-rows) access for a batch of tables.
+
+The cap matches ``entitlement_service.VERIFY_ENTITLEMENTS_MAX_FQNS`` —
+together with the probe semaphore it bounds the worst-case OBO work one
+request can trigger. FQN syntax is validated per entry by the service
+(malformed names get an ``error`` outcome, never a probe).
+ */
+export interface GenieVerifyEntitlementsIn {
+  /**
+   * @minItems 1
+   * @maxItems 50
+   */
+  table_fqns: string[];
+}
+
+export type GenieVerifyEntitlementsOutResults = {[key: string]: string};
+
+/**
+ * Per-FQN verification outcome: ``verified`` | ``denied`` | ``error``.
+ */
+export interface GenieVerifyEntitlementsOut {
+  results?: GenieVerifyEntitlementsOutResults;
+}
+
 export interface GrantWarehouseAccessIn {
   warehouse_id: string;
 }
@@ -2778,8 +2803,8 @@ export type RunRowOutRunMode = string | null;
  * One run's rollup for the run picker (newest first).
 
 *run_mode* is the run's provenance ('draft' | 'published') — the
-stamped run-level tag, with the legacy run_type heuristic as fallback
-(resolved in the shaping view). Only meaningful to display when the
+stamped run-level tag, with untagged legacy runs resolved to
+'published' (in the shaping view). Only meaningful to display when the
 caller requested ``include_drafts=true``; the default filter already
 restricts rows to published runs.
  */
@@ -17450,8 +17475,8 @@ export function useGetProductResultsSuspense<TData = Awaited<ReturnType<typeof g
 ``dq_quarantine_records`` carries no run_mode of its own, but it does
 carry ``run_id`` — so the default published-only filter is a subselect
 of the table's published run ids from ``v_dq_check_results`` (the one
-place run_mode is resolved: stamped tag first, legacy run_type
-heuristic as fallback). ``include_drafts=true`` drops the subselect.
+place run_mode is resolved: stamped tag first, untagged legacy runs
+classify as published). ``include_drafts=true`` drops the subselect.
 
 SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
 in the same load-bearing order:
@@ -18289,6 +18314,81 @@ export function useGetGenieSpaceSuspense<TData = Awaited<ReturnType<typeof getGe
 
 
 
+/**
+ * Self-verify row-level (failing-rows) access for up to 50 tables (P4.1).
+
+Each FQN is validated before any probe; the live SELECT self-check runs
+through the CALLER's OBO executor (verifying your own access needs no
+elevated privilege) with bounded concurrency, and successes are cached
+SP-side so ``v_dq_failing_rows`` opens for this user for the TTL window.
+
+Fire-and-forget friendly: the UI ignores the response, and the service
+never raises — every failure mode degrades to a per-FQN outcome
+(``verified`` | ``denied`` | ``error``). Verification runs INLINE rather
+than as a background 202: the 50-FQN cap plus the probe semaphore keeps
+the worst case bounded, and inline execution keeps the per-FQN outcomes
+deterministic for callers (and tests) that do read them.
+ * @summary Verify Genie Entitlements
+ */
+export const verifyGenieEntitlements = (
+    genieVerifyEntitlementsIn: GenieVerifyEntitlementsIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<GenieVerifyEntitlementsOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/genie/verify-entitlements`,
+      genieVerifyEntitlementsIn,options
+    );
+  }
+
+
+
+export const getVerifyGenieEntitlementsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyGenieEntitlements>>, TError,{data: GenieVerifyEntitlementsIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof verifyGenieEntitlements>>, TError,{data: GenieVerifyEntitlementsIn}, TContext> => {
+
+const mutationKey = ['verifyGenieEntitlements'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyGenieEntitlements>>, {data: GenieVerifyEntitlementsIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  verifyGenieEntitlements(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type VerifyGenieEntitlementsMutationResult = NonNullable<Awaited<ReturnType<typeof verifyGenieEntitlements>>>
+    export type VerifyGenieEntitlementsMutationBody = GenieVerifyEntitlementsIn
+    export type VerifyGenieEntitlementsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Verify Genie Entitlements
+ */
+export const useVerifyGenieEntitlements = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyGenieEntitlements>>, TError,{data: GenieVerifyEntitlementsIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof verifyGenieEntitlements>>,
+        TError,
+        {data: GenieVerifyEntitlementsIn},
+        TContext
+      > => {
+
+      const mutationOptions = getVerifyGenieEntitlementsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 /**
  * Record a thumbs up/down on one answer (log-only, like dqlake).
 

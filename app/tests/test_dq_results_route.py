@@ -24,12 +24,13 @@ from databricks.sdk.service.catalog import ColumnInfo, ColumnMask, TableInfo, Ta
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
     get_apply_rules_service,
     get_conf,
     get_data_product_service,
+    get_entitlement_service,
     get_monitored_table_service,
     get_obo_ws,
     get_preview_sql_executor,
@@ -46,6 +47,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductMemberDetail,
     DataProductService,
 )
+from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableDetail,
     MonitoredTableService,
@@ -128,6 +130,17 @@ def score_cache_mock() -> MagicMock:
 
 
 @pytest.fixture
+def entitlement_mock() -> MagicMock:
+    """Entitlement cache (P4.1 piggyback) — the record upsert is best-effort."""
+    mock = create_autospec(EntitlementService, instance=True)
+    mock.record_entitlement.return_value = True
+    return mock
+
+
+USER_EMAIL = "viewer@example.com"
+
+
+@pytest.fixture
 def client(
     sql_mock,
     monitored_tables_mock,
@@ -137,6 +150,7 @@ def client(
     obo_sql_mock,
     obo_ws_mock,
     score_cache_mock,
+    entitlement_mock,
     app_config,
 ) -> TestClient:
     from databricks_labs_dqx_app.backend.routes.v1.dq_results import router
@@ -147,6 +161,7 @@ def client(
     app.dependency_overrides[get_conf] = lambda: app_config
     app.dependency_overrides[get_user_catalog_names] = lambda: ACCESSIBLE_CATALOGS
     app.dependency_overrides[get_user_role] = lambda: UserRole.VIEWER
+    app.dependency_overrides[get_user_email] = lambda: USER_EMAIL
     app.dependency_overrides[get_monitored_table_service] = lambda: monitored_tables_mock
     app.dependency_overrides[get_apply_rules_service] = lambda: apply_rules_mock
     app.dependency_overrides[get_data_product_service] = lambda: data_products_mock
@@ -154,6 +169,7 @@ def client(
     app.dependency_overrides[get_preview_sql_executor] = lambda: obo_sql_mock
     app.dependency_overrides[get_obo_ws] = lambda: obo_ws_mock
     app.dependency_overrides[get_score_cache_service] = lambda: score_cache_mock
+    app.dependency_overrides[get_entitlement_service] = lambda: entitlement_mock
     return TestClient(app)
 
 
@@ -926,6 +942,37 @@ class TestFailedRowsSecurity:
     def test_sp_query_failure_maps_to_500(self, client, sql_mock):
         sql_mock.query_dicts.side_effect = RuntimeError("warehouse down")
         assert client.get(FAILED_ROWS_URL).status_code == 500
+
+
+class TestFailedRowsEntitlementPiggyback:
+    """P4.1: a successful failed-rows call caches the caller's entitlement.
+
+    The caller just proved live SELECT on the source table — the exact
+    verification the Genie ``v_dq_failing_rows`` gate relies on — so the
+    entitlement row is upserted here without a separate verify round-trip.
+    """
+
+    def test_success_path_records_the_entitlement(self, client, entitlement_mock):
+        assert client.get(FAILED_ROWS_URL).status_code == 200
+        entitlement_mock.record_entitlement.assert_called_once_with(USER_EMAIL, FQN)
+
+    def test_obo_denial_records_nothing(self, client, obo_sql_mock, entitlement_mock):
+        obo_sql_mock.query.side_effect = RuntimeError("PERMISSION_DENIED")
+        client.get(FAILED_ROWS_URL)
+        entitlement_mock.record_entitlement.assert_not_called()
+
+    def test_fine_grained_suppression_records_nothing(self, client, obo_ws_mock, entitlement_mock):
+        # A fine-grained-controlled table must not open in v_dq_failing_rows
+        # when this endpoint itself suppresses the sample.
+        obo_ws_mock.tables.get.return_value = TableInfo(
+            row_filter=TableRowFilter(function_name="main.sales.f", input_column_names=["region"])
+        )
+        client.get(FAILED_ROWS_URL)
+        entitlement_mock.record_entitlement.assert_not_called()
+
+    def test_malformed_fqn_records_nothing(self, client, entitlement_mock):
+        client.get("/api/v1/dq-results/failed-rows/not-a-three-part-name")
+        entitlement_mock.record_entitlement.assert_not_called()
 
 
 class TestFailedRowsShapeAndFilters:

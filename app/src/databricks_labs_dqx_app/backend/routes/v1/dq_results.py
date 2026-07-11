@@ -34,13 +34,14 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
     get_apply_rules_service,
     get_conf,
     get_data_product_service,
+    get_entitlement_service,
     get_monitored_table_service,
     get_obo_ws,
     get_preview_sql_executor,
@@ -70,6 +71,7 @@ from databricks_labs_dqx_app.backend.services.dq_results_service import (
     compute_entity_results,
     parse_check_rows,
 )
+from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.quarantine_sample_service import (
@@ -651,6 +653,8 @@ def get_dq_results_failed_rows(
     obo_sql: Annotated[SqlExecutor, Depends(get_preview_sql_executor)],
     sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
+    email: Annotated[str, Depends(get_user_email)],
+    entitlements: Annotated[EntitlementService, Depends(get_entitlement_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -691,6 +695,14 @@ def get_dq_results_failed_rows(
     # sample entirely — copied quarantine rows can't replicate the policy.
     if QuarantineSampleService.has_fine_grained_access_control(obo_ws, table_fqn):
         return FailedRowsOut(rows=[], total=0, suppressed=True)
+
+    # Piggyback (P4.1): the caller just passed the exact gates the Genie
+    # failing-rows view relies on, so cache the entitlement now — the tables
+    # a user actually opens are pre-verified without a separate round-trip.
+    # After BOTH gates deliberately: a fine-grained-controlled table must not
+    # open in v_dq_failing_rows when this endpoint itself suppresses it.
+    # Best-effort (never raises) and never affects this response.
+    entitlements.record_entitlement(email, table_fqn)
 
     facets = _facets(dimension, severity, rule, column)
     # When filters are active, scan a wider window than the page size so a

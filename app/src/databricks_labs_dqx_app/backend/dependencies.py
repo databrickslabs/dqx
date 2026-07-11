@@ -36,6 +36,7 @@ from .services.monitored_table_versions import MonitoredTableVersionService
 from .services.run_sets import RunSetService
 from .services.binding_run_service import BindingRunService
 from .services.data_product_service import DataProductService
+from .services.entitlement_service import EntitlementService
 from .services.rule_embeddings import RuleEmbeddingsService
 from .services.score_cache_service import ScoreCacheService
 from .services.rule_retriever import CosineRuleRetriever, RuleRetriever
@@ -588,6 +589,18 @@ async def get_score_cache_service(
     list endpoints.
     """
     return ScoreCacheService(oltp=oltp, warehouse_sql=warehouse_sql)
+
+
+async def get_entitlement_service(
+    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> EntitlementService:
+    """Create an EntitlementService over the SP warehouse executor (P4.1).
+
+    SP-side by design: the entitlement table and the gated failing-rows
+    view are SP-owned UC objects. The caller's OBO executor (for the
+    self-verification probes) is passed per call, never stored.
+    """
+    return EntitlementService(sql=sp_sql)
 
 
 async def get_data_product_service(

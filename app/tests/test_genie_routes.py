@@ -16,13 +16,16 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
+    get_entitlement_service,
+    get_preview_sql_executor,
     get_sp_ws,
     get_user_role,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
 from databricks_labs_dqx_app.backend.services.genie_space_service import (
     SAMPLE_QUESTIONS,
     SETTING_CONFIG_HASH,
@@ -54,7 +57,21 @@ def sp_ws_mock() -> MagicMock:
 
 
 @pytest.fixture
-def client(settings_mock: MagicMock, sp_ws_mock: MagicMock) -> TestClient:
+def entitlement_mock() -> MagicMock:
+    mock = create_autospec(EntitlementService, instance=True)
+    mock.verify_and_record.return_value = {}
+    return mock
+
+
+@pytest.fixture
+def obo_sql_mock() -> MagicMock:
+    return MagicMock(name="obo_sql")
+
+
+@pytest.fixture
+def client(
+    settings_mock: MagicMock, sp_ws_mock: MagicMock, entitlement_mock: MagicMock, obo_sql_mock: MagicMock
+) -> TestClient:
     from databricks_labs_dqx_app.backend.routes.v1.genie import router
 
     app = FastAPI()
@@ -62,6 +79,9 @@ def client(settings_mock: MagicMock, sp_ws_mock: MagicMock) -> TestClient:
     app.dependency_overrides[get_app_settings_service] = lambda: settings_mock
     app.dependency_overrides[get_sp_ws] = lambda: sp_ws_mock
     app.dependency_overrides[get_user_role] = lambda: UserRole.VIEWER
+    app.dependency_overrides[get_user_email] = lambda: "viewer@example.com"
+    app.dependency_overrides[get_preview_sql_executor] = lambda: obo_sql_mock
+    app.dependency_overrides[get_entitlement_service] = lambda: entitlement_mock
     return TestClient(app)
 
 
@@ -261,6 +281,52 @@ def test_poll_rejects_malformed_ids(client: TestClient) -> None:
 def test_ask_rejects_empty_question(client: TestClient) -> None:
     resp = client.post("/api/v1/genie/ask", json={"question": ""})
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# /verify-entitlements (P4.1)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_entitlements_returns_per_fqn_outcomes(
+    client: TestClient, entitlement_mock: MagicMock, obo_sql_mock: MagicMock
+) -> None:
+    entitlement_mock.verify_and_record.return_value = {
+        "main.sales.orders": "verified",
+        "main.sales.secret": "denied",
+        "bad name": "error",
+    }
+    resp = client.post(
+        "/api/v1/genie/verify-entitlements",
+        json={"table_fqns": ["main.sales.orders", "main.sales.secret", "bad name"]},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "results": {"main.sales.orders": "verified", "main.sales.secret": "denied", "bad name": "error"}
+    }
+    # The service runs as the resolved caller with the caller's OBO executor.
+    entitlement_mock.verify_and_record.assert_awaited_once_with(
+        obo_sql_mock, "viewer@example.com", ["main.sales.orders", "main.sales.secret", "bad name"]
+    )
+
+
+def test_verify_entitlements_caps_the_batch_at_50(client: TestClient, entitlement_mock: MagicMock) -> None:
+    fqns = [f"main.sales.t{i}" for i in range(51)]
+    resp = client.post("/api/v1/genie/verify-entitlements", json={"table_fqns": fqns})
+    assert resp.status_code == 422
+    entitlement_mock.verify_and_record.assert_not_awaited()
+
+
+def test_verify_entitlements_rejects_an_empty_batch(client: TestClient) -> None:
+    resp = client.post("/api/v1/genie/verify-entitlements", json={"table_fqns": []})
+    assert resp.status_code == 422
+
+
+def test_verify_entitlements_accepts_exactly_50(client: TestClient, entitlement_mock: MagicMock) -> None:
+    fqns = [f"main.sales.t{i}" for i in range(50)]
+    entitlement_mock.verify_and_record.return_value = dict.fromkeys(fqns, "verified")
+    resp = client.post("/api/v1/genie/verify-entitlements", json={"table_fqns": fqns})
+    assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------
