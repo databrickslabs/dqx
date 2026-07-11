@@ -1293,7 +1293,7 @@
     "clear": "Cancella"
   },
   "roleManagement": {
-    "title": "Gestione Ruoli",
+    "title": "Autorizzazioni",
     "description": "Mappa i gruppi del workspace Databricks ai ruoli dell'applicazione. Gli utenti ereditano il ruolo a priorità più alta dalle loro appartenenze ai gruppi.",
     "failedLoad": "Impossibile caricare le mappature dei ruoli",
     "noMappings": "Nessuna mappatura di ruolo configurata.",

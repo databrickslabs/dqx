@@ -1293,7 +1293,7 @@
     "clear": "Clear"
   },
   "roleManagement": {
-    "title": "Role Management",
+    "title": "Entitlements",
     "description": "Map Databricks workspace groups to application roles. Users inherit the highest-priority role from their group memberships.",
     "failedLoad": "Failed to load role mappings",
     "noMappings": "No role mappings configured.",

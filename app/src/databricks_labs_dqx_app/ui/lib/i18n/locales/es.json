@@ -1293,7 +1293,7 @@
     "clear": "Limpiar"
   },
   "roleManagement": {
-    "title": "Gestión de Roles",
+    "title": "Autorizaciones",
     "description": "Mapea grupos del workspace de Databricks a roles de la aplicación. Los usuarios heredan el rol de mayor prioridad de sus pertenencias a grupos.",
     "failedLoad": "Error al cargar mapeos de rol",
     "noMappings": "No hay mapeos de rol configurados.",

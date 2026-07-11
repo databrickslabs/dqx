@@ -1293,7 +1293,7 @@
     "clear": "Limpar"
   },
   "roleManagement": {
-    "title": "Gerenciamento de Funções",
+    "title": "Direitos de acesso",
     "description": "Mapeie grupos de workspace do Databricks para funções do aplicativo. Os usuários herdam a função de maior prioridade dos seus grupos.",
     "failedLoad": "Falha ao carregar mapeamentos de função",
     "noMappings": "Nenhum mapeamento de função configurado.",
