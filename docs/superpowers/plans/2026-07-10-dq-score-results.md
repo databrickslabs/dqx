@@ -1872,6 +1872,20 @@ By rule currently groups by check_name — a rule renamed between versions shows
 
 ### Task P6.3: Verify + deploy Phase 6
 
+---
+
+# PHASE 7 (user reports, 2026-07-11 afternoon)
+
+### Task P7.1: List-page latency — TTL-cache the OBO catalog listing
+
+Live-measured: list endpoints cost ~1.9-2.9s vs the ~0.6s proxy floor; the delta is `get_user_catalog_names`' deliberately-uncached OBO `catalogs.list` per request. Add a short-TTL (30s) per-token-hash cache to it (keeping the existing 45-min OBO client cache pattern as the idiom); update the docstring's security rationale honestly (revocation now bites within ≤30s instead of instantly — an explicit, user-flagged trade-off). Verify live latency drops on both lists. All consumers benefit (lists + dq-results aggregates).
+
+### Task P7.2: Table-space drilldown cross-filtering by table (+ column facet check)
+
+dqlake's By-table row click was a sample-selector only, never a facet — the user wants full cross-filtering: clicking a By table row filters the OTHER drilldown boxes to that table (and shows its samples, as today); clicking again clears. Backend: additive `table` facet param (list of member FQNs, validated against scope) on the product/global/rule endpoints; `row_matches_facets` gains the table condition; the By table box itself stays UNfiltered by its own facet (mirroring how the other boxes self-exclude — check how dqlake's base-vs-filtered query split handles the clicked box and follow it). Frontend: MultiTableResults wires table into MultiFilters + FilterChips; selection and facet toggle together. ALSO verify the By-column facet actually cross-filters on the product surface (user suspects not) — fix any wiring gap found. Tests both layers.
+
+### Task P7.3: Verify + deploy Phase 7
+
 ## Deferred (explicitly out of scope)
 
 - Product-level batch run ids in dq_metrics (would restore full product run-picker parity) — requires run-submission changes; backlog.
