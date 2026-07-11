@@ -15,6 +15,22 @@ workspace users group holds
 :data:`~backend.common.permissions.DEFAULT_USERS_GROUP_PRIVILEGES` on every
 object by default (implicit-unless-overridden) so existing flows keep working
 on day one.
+
+Roles are the HARD CEILING (entitlements invariant, item #43). An object
+grant can only ever confer a member of the :class:`~backend.common.permissions.Privilege`
+vocabulary (``SELECT`` / ``MODIFY`` / ``APPLY``) *on a single object* — it is
+purely additive within whatever a route's ``require_role`` guard already
+admits, and there is no code path by which a grant satisfies, widens, or
+substitutes for that role check. Concretely: (1) the object-grant vocabulary
+is disjoint from the role-permission vocabulary (see
+:data:`~backend.common.authorization.PERMISSIONS`), so a grant cannot express
+a role capability such as ``approve_rules`` or ``manage_roles``; (2) a broad
+grant (even ``ALL_PRIVILEGES``) never mutates the caller's resolved
+:class:`~backend.common.authorization.UserRole`, so a low-role user hitting a
+role-gated route is still rejected by ``require_role`` regardless of any
+grant. The ``ADMIN``/``RULE_APPROVER`` bypass is the *upper* boundary of that
+ceiling — a deliberate widening for governance roles, never a way for a lower
+role to climb. This invariant is pinned by ``tests/test_entitlements_hard_boundary.py``.
 """
 
 from __future__ import annotations
