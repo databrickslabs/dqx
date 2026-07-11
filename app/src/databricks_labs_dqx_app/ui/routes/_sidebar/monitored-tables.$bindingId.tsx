@@ -901,81 +901,144 @@ function RunTableAction({
     }
   };
 
+  // Any run mutation, the save-then-run leg, or an already-running run set all
+  // block launching another (item 58).
+  const busy = runMutation.isPending || runDraftBusy || runInProgress;
+  // When there's a draft to run (draft status OR unsaved edits), Run draft is
+  // the PRIMARY action and Run now (approved) is demoted into the menu; with no
+  // draft, Run now (approved) is primary and Run draft is demoted (item 59).
+  // Draft wins as primary whenever both a draft and an approved version exist.
+  const draftIsPrimary = canRunDraft;
+
+  const approvedDisabled = !hasApproved || noRulesRunNow || busy;
+  const approvedTooltip = runInProgress
+    ? t("monitoredTables.runInProgressHint")
+    : noRulesRunNow
+      ? t("monitoredTables.runDisabledNoRulesHint")
+      : !hasApproved
+        ? t("monitoredTables.runNowDisabledHint")
+        : null;
+  const draftDisabled = !canRunDraft || noRulesRunDraft || busy;
+  const draftTooltip = runInProgress
+    ? t("monitoredTables.runInProgressHint")
+    : noRulesRunDraft
+      ? t("monitoredTables.runDisabledNoRulesHint")
+      : !canRunDraft
+        ? t("monitoredTables.runDraftDisabledHint")
+        : null;
+
+  const spinnerOrPlay = busy ? (
+    <Loader2 className="h-4 w-4 animate-spin" />
+  ) : (
+    <Play className="h-4 w-4" />
+  );
+
+  const runNowPrimary = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn(approvedDisabled && "cursor-not-allowed")}>
+          <Button
+            onClick={() => handleRun("approved")}
+            disabled={approvedDisabled}
+            className="gap-2 rounded-r-none"
+          >
+            {spinnerOrPlay}
+            {hasApproved
+              ? t("monitoredTables.runNowButton", { version: table.version })
+              : t("monitoredTables.runNowButtonNoVersion")}
+          </Button>
+        </span>
+      </TooltipTrigger>
+      {approvedTooltip && <TooltipContent side="bottom">{approvedTooltip}</TooltipContent>}
+    </Tooltip>
+  );
+
+  const runDraftPrimary = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn(draftDisabled && "cursor-not-allowed")}>
+          <Button
+            onClick={() => void handleRunDraft()}
+            disabled={draftDisabled}
+            className="gap-2 rounded-r-none"
+          >
+            {spinnerOrPlay}
+            {t("monitoredTables.runDraftAction")}
+          </Button>
+        </span>
+      </TooltipTrigger>
+      {draftTooltip && <TooltipContent side="bottom">{draftTooltip}</TooltipContent>}
+    </Tooltip>
+  );
+
+  const runNowMenuItem = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn(approvedDisabled && "cursor-not-allowed")}>
+          <DropdownMenuItem
+            disabled={approvedDisabled}
+            onSelect={(e) => {
+              e.preventDefault();
+              handleRun("approved");
+            }}
+          >
+            {t("monitoredTables.runNowApprovedOption")}
+          </DropdownMenuItem>
+        </span>
+      </TooltipTrigger>
+      {approvedTooltip && <TooltipContent side="left">{approvedTooltip}</TooltipContent>}
+    </Tooltip>
+  );
+
+  const runDraftMenuItem = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn(draftDisabled && "cursor-not-allowed")}>
+          <DropdownMenuItem
+            disabled={draftDisabled}
+            onSelect={(e) => {
+              e.preventDefault();
+              void handleRunDraft();
+            }}
+          >
+            {t("monitoredTables.runDraftAction")}
+          </DropdownMenuItem>
+        </span>
+      </TooltipTrigger>
+      {draftTooltip && <TooltipContent side="left">{draftTooltip}</TooltipContent>}
+    </Tooltip>
+  );
+
   return (
     <div className="inline-flex" role="group" aria-label={t("monitoredTables.runActionGroupAria")}>
       <TooltipProvider delayDuration={200}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className={cn((!hasApproved || noRulesRunNow || runInProgress) && "cursor-not-allowed")}>
-              <Button
-                onClick={() => handleRun("approved")}
-                disabled={!hasApproved || runMutation.isPending || noRulesRunNow || runInProgress}
-                className="gap-2 rounded-r-none"
-              >
-                {runMutation.isPending || runInProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                {hasApproved
-                  ? t("monitoredTables.runNowButton", { version: table.version })
-                  : t("monitoredTables.runNowButtonNoVersion")}
-              </Button>
-            </span>
-          </TooltipTrigger>
-          {runInProgress ? (
-            <TooltipContent side="bottom">{t("monitoredTables.runInProgressHint")}</TooltipContent>
-          ) : noRulesRunNow ? (
-            <TooltipContent side="bottom">{t("monitoredTables.runDisabledNoRulesHint")}</TooltipContent>
-          ) : (
-            !hasApproved && <TooltipContent side="bottom">{t("monitoredTables.runNowDisabledHint")}</TooltipContent>
-          )}
-        </Tooltip>
-      </TooltipProvider>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            className="rounded-l-none border-l border-primary-foreground/20 px-2"
-            disabled={runMutation.isPending || runInProgress}
-            aria-label={t("monitoredTables.runMenuAria")}
-          >
-            <ChevronDown className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {/* Run draft at the TOP (item 15), disabled+tooltip when unavailable. */}
-          <TooltipProvider delayDuration={200}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className={cn((!canRunDraft || noRulesRunDraft) && "cursor-not-allowed")}>
-                  <DropdownMenuItem
-                    disabled={!canRunDraft || runMutation.isPending || runDraftBusy || noRulesRunDraft || runInProgress}
-                    onSelect={(e) => {
-                      e.preventDefault();
-                      void handleRunDraft();
-                    }}
-                  >
-                    {t("monitoredTables.runDraftAction")}
-                  </DropdownMenuItem>
-                </span>
-              </TooltipTrigger>
-              {noRulesRunDraft ? (
-                <TooltipContent side="left">{t("monitoredTables.runDisabledNoRulesHint")}</TooltipContent>
-              ) : (
-                !canRunDraft && (
-                  <TooltipContent side="left">{t("monitoredTables.runDraftDisabledHint")}</TooltipContent>
-                )
-              )}
-            </Tooltip>
-          </TooltipProvider>
-          {versions.length > 0 && <DropdownMenuSeparator />}
-          {versions.map((v: MonitoredTableVersionOut) => (
-            <DropdownMenuItem
-              key={v.version}
-              disabled={runMutation.isPending || runInProgress}
-              onSelect={() => handleRun("approved", v.version)}
+        {draftIsPrimary ? runDraftPrimary : runNowPrimary}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              className="rounded-l-none border-l border-primary-foreground/20 px-2"
+              disabled={busy}
+              aria-label={t("monitoredTables.runMenuAria")}
             >
-              {t("monitoredTables.runVersionOption", { version: v.version })}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+              <ChevronDown className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {/* The action NOT shown as primary is demoted here at the top. */}
+            {draftIsPrimary ? runNowMenuItem : runDraftMenuItem}
+            {versions.length > 0 && <DropdownMenuSeparator />}
+            {versions.map((v: MonitoredTableVersionOut) => (
+              <DropdownMenuItem
+                key={v.version}
+                disabled={busy}
+                onSelect={() => handleRun("approved", v.version)}
+              >
+                {t("monitoredTables.runVersionOption", { version: v.version })}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </TooltipProvider>
     </div>
   );
 }

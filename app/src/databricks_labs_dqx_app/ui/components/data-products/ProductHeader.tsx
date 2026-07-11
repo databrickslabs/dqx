@@ -390,6 +390,10 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   // edits, they are SAVED first (so the draft run reflects them) and a save
   // failure is surfaced without running.
   const canRunDraft = (product.status === "draft" || editState.isDirty) && editState.members.length > 0;
+  // When there's a draft to run, Run draft is the PRIMARY button and Run now
+  // (approved) is demoted into the ⋮ menu; otherwise Run now is primary and
+  // Run draft is demoted. Draft wins as primary when both exist (item 59).
+  const draftIsPrimary = canRunDraft;
 
   const handleRunDraft = async () => {
     // Spans the whole save-then-run sequence, not just the run mutation, so a
@@ -467,24 +471,36 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
             </Button>
           )}
 
-          {canRun && (
-            <Button
-              onClick={() => void handleRun(RunDataProductInSource.approved)}
-              disabled={runPending || runnableCount === 0}
-              size="sm"
-              className="gap-2"
-              title={
-                runnableCount === 0
-                  ? t("dataProducts.runNowDisabledHint")
-                  : hasActive
-                    ? t("dataProducts.runInProgressHint")
-                    : undefined
-              }
-            >
-              {runPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              {runPending ? t("dataProducts.runningLabel") : t("dataProducts.runNowButton")}
-            </Button>
-          )}
+          {canRun &&
+            (draftIsPrimary ? (
+              <Button
+                onClick={() => void handleRunDraft()}
+                disabled={runPending}
+                size="sm"
+                className="gap-2"
+                title={hasActive ? t("dataProducts.runInProgressHint") : undefined}
+              >
+                {runPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                {runPending ? t("dataProducts.runningLabel") : t("dataProducts.runDraftAction")}
+              </Button>
+            ) : (
+              <Button
+                onClick={() => void handleRun(RunDataProductInSource.approved)}
+                disabled={runPending || runnableCount === 0}
+                size="sm"
+                className="gap-2"
+                title={
+                  runnableCount === 0
+                    ? t("dataProducts.runNowDisabledHint")
+                    : hasActive
+                      ? t("dataProducts.runInProgressHint")
+                      : undefined
+                }
+              >
+                {runPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                {runPending ? t("dataProducts.runningLabel") : t("dataProducts.runNowButton")}
+              </Button>
+            ))}
 
           {/* ⋮ menu — Runs (dqlake-exact, item 29), Run draft, Delete. */}
           <DropdownMenu>
@@ -494,33 +510,57 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {/* Run draft at the TOP (item 15): only when the space is a draft
-                  or has pending edits; those edits are saved first. Disabled +
-                  tooltip otherwise, matching the app's convention. */}
-              {canRun && (
-                <TooltipProvider delayDuration={200}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className={cn(!canRunDraft && "cursor-not-allowed")}>
-                        <DropdownMenuItem
-                          onSelect={(e) => {
-                            e.preventDefault();
-                            void handleRunDraft();
-                          }}
-                          disabled={runPending || !canRunDraft}
-                          className="gap-2"
-                        >
-                          <Play className="h-3.5 w-3.5" />
-                          {t("dataProducts.runDraftAction")}
-                        </DropdownMenuItem>
-                      </span>
-                    </TooltipTrigger>
-                    {!canRunDraft && (
-                      <TooltipContent side="left">{t("dataProducts.runDraftDisabledHint")}</TooltipContent>
-                    )}
-                  </Tooltip>
-                </TooltipProvider>
-              )}
+              {/* The run action NOT shown as the primary button is demoted here
+                  at the top of the ⋮ menu (item 59). Both save-then-run (draft)
+                  and its disabled/tooltip conventions are preserved. */}
+              {canRun &&
+                (draftIsPrimary ? (
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className={cn(runnableCount === 0 && "cursor-not-allowed")}>
+                          <DropdownMenuItem
+                            onSelect={(e) => {
+                              e.preventDefault();
+                              void handleRun(RunDataProductInSource.approved);
+                            }}
+                            disabled={runPending || runnableCount === 0}
+                            className="gap-2"
+                          >
+                            <Play className="h-3.5 w-3.5" />
+                            {t("dataProducts.runNowApprovedOption")}
+                          </DropdownMenuItem>
+                        </span>
+                      </TooltipTrigger>
+                      {runnableCount === 0 && (
+                        <TooltipContent side="left">{t("dataProducts.runNowDisabledHint")}</TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : (
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className={cn(!canRunDraft && "cursor-not-allowed")}>
+                          <DropdownMenuItem
+                            onSelect={(e) => {
+                              e.preventDefault();
+                              void handleRunDraft();
+                            }}
+                            disabled={runPending || !canRunDraft}
+                            className="gap-2"
+                          >
+                            <Play className="h-3.5 w-3.5" />
+                            {t("dataProducts.runDraftAction")}
+                          </DropdownMenuItem>
+                        </span>
+                      </TooltipTrigger>
+                      {!canRunDraft && (
+                        <TooltipContent side="left">{t("dataProducts.runDraftDisabledHint")}</TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
+                ))}
               <DropdownMenuItem onSelect={goToRuns} className="gap-2">
                 <History className="h-3.5 w-3.5" />
                 {t("dataProducts.tabRuns")}
