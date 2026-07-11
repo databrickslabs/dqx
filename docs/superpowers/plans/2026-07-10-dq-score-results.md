@@ -1855,6 +1855,23 @@ By rule currently groups by check_name — a rule renamed between versions shows
 
 ### Task P5.4: Phase 5 verification + deploy
 
+---
+
+# PHASE 6 (user reports, 2026-07-11 midday)
+
+### Task P6.1: As-of carry-forward for dimension/severity trends + product failed-records date fix
+
+- Extend P5.1's as-of carry-forward to `trend_by_dimension` and `trend_by_severity` for product/global scopes (dqlake "moves latest table results forward" in those popovers too): at each member-set instant, each member's latest published run contributes its per-dimension/per-severity counts; series values recomputed from carried-forward contributions. Single-table scope unchanged (degenerates). Same include_drafts flow. Tests: misaligned two-table dimension fixture.
+- Verify the overall average line START gating matches dqlake exactly (allRanSince — average begins at the latest first-run across members); document the semantics in a code comment (the user found the chart confusing — the math is right, the gating just needs to stay faithful).
+- LIVE-DIAGNOSE the table-space failed-records date filtering (user: monitored tables now correct, table spaces not): trace the product surface's Invalid samples fetch (MultiTableResults per-table selection) — what params it sends vs the binding tab; find why records aren't scoped to the shown run/date; fix to match the monitored-table behavior (latest published run of THAT member by default).
+
+### Task P6.2: Genie percentages + headline/breakdown structure (+ UI paragraph rendering)
+
+- Instructions: scores/pass rates/fail rates ALWAYS as percentages (one decimal, with the raw fraction never shown alone); answer structure = a one-sentence HEADLINE (the key finding with its number), then a blank line, then the breakdown paragraphs. Established voice; update the answer-style element rather than bolting on.
+- UI: verify GenieMarkdown renders paragraph breaks (blank lines) as separate paragraphs — if the hand-rolled renderer collapses them, fix it (pure-helper tests on toBlocks). Confirm the sidebar bubble styling gives paragraphs visible spacing.
+
+### Task P6.3: Verify + deploy Phase 6
+
 ## Deferred (explicitly out of scope)
 
 - Product-level batch run ids in dq_metrics (would restore full product run-picker parity) — requires run-submission changes; backlog.
