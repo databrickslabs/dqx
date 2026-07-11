@@ -1454,7 +1454,7 @@
     "toastCreated": "Regra criada como rascunho.",
     "toastUpdated": "Regra atualizada.",
     "saveFailed": "Falha ao salvar a regra.",
-    "dialogDescription": "Esta regra ainda não está vinculada a uma tabela. Ao aplicá-la a uma tabela monitorada, você vai associar as colunas dela às colunas reais dessa tabela.",
+    "dialogSrDescription": "Crie ou edite uma regra de qualidade de dados reutilizável.",
     "createTitle": "Nova regra do registro",
     "editTitle": "Editar rascunho da regra",
     "viewTitle": "Detalhes da regra",

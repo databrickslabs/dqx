@@ -1454,7 +1454,7 @@
     "toastCreated": "Rule created as a draft.",
     "toastUpdated": "Rule updated.",
     "saveFailed": "Failed to save rule.",
-    "dialogDescription": "This rule isn't tied to a table yet. When you apply it to a monitored table, you'll match its columns to real columns there.",
+    "dialogSrDescription": "Create or edit a reusable data quality rule.",
     "createTitle": "New registry rule",
     "editTitle": "Edit draft rule",
     "viewTitle": "Rule details",

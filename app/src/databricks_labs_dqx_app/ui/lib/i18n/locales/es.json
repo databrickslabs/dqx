@@ -1454,7 +1454,7 @@
     "toastCreated": "Regla creada como borrador.",
     "toastUpdated": "Regla actualizada.",
     "saveFailed": "No se pudo guardar la regla.",
-    "dialogDescription": "Esta regla todavía no está vinculada a una tabla. Al aplicarla a una tabla monitoreada, vas a asociar sus columnas con las columnas reales de esa tabla.",
+    "dialogSrDescription": "Crea o edita una regla de calidad de datos reutilizable.",
     "createTitle": "Nueva regla del registro",
     "editTitle": "Editar borrador de regla",
     "viewTitle": "Detalles de la regla",

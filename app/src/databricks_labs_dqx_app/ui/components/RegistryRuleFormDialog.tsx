@@ -2622,7 +2622,6 @@ export function RegistryRuleFormDialog({
     // title here (which would duplicate it) and keep just the helper text.
     return (
       <div className="space-y-6">
-        <p className="text-sm text-muted-foreground">{t("rulesRegistry.dialogDescription")}</p>
         {formBody}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-2 pt-4 border-t">
           {footerButtons}
@@ -2639,7 +2638,7 @@ export function RegistryRuleFormDialog({
             {dialogTitle}
             {authorKindBadges}
           </DialogTitle>
-          <DialogDescription>{t("rulesRegistry.dialogDescription")}</DialogDescription>
+          <DialogDescription className="sr-only">{t("rulesRegistry.dialogSrDescription")}</DialogDescription>
         </DialogHeader>
         {formBody}
         <DialogFooter>{footerButtons}</DialogFooter>

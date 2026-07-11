@@ -1454,7 +1454,7 @@
     "toastCreated": "Regola creata come bozza.",
     "toastUpdated": "Regola aggiornata.",
     "saveFailed": "Impossibile salvare la regola.",
-    "dialogDescription": "Questa regola non è ancora collegata a una tabella. Quando la applichi a una tabella monitorata, potrai far corrispondere le sue colonne alle colonne reali di quella tabella.",
+    "dialogSrDescription": "Crea o modifica una regola di qualità dei dati riutilizzabile.",
     "createTitle": "Nuova regola del registro",
     "editTitle": "Modifica bozza regola",
     "viewTitle": "Dettagli regola",
