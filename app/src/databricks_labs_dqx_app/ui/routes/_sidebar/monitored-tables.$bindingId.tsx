@@ -27,6 +27,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import {
   AlertCircle,
@@ -66,6 +73,7 @@ import {
   useSubmitProfileRun,
   getProfileRunStatus,
   useListProfileRuns,
+  useGetProfileRunResults,
   getListProfileRunsQueryKey,
   useSubmitMonitoredTable,
   useApproveMonitoredTable,
@@ -1337,7 +1345,10 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
   // navigated away. Radix unmounts an inactive tab, so a run kicked off here
   // otherwise vanishes from local state on return; without re-attaching, the
   // in-flight run "disappears" (the exact reported bug).
-  const runsQuery = useListProfileRuns();
+  // Scoped server-side to this table (item 49) so we fetch only its own runs
+  // instead of the full history. The client-side filter stays as a cheap
+  // guard in case a shared cache entry ever carries other tables' rows.
+  const runsQuery = useListProfileRuns({ table_fqn: tableFqn });
   const runsForTable = useMemo(
     () => (runsQuery.data?.data ?? []).filter((r) => r.source_table_fqn === tableFqn),
     [runsQuery.data, tableFqn],
@@ -1346,7 +1357,29 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
     () => runsForTable.find((r) => r.status === "RUNNING") ?? null,
     [runsForTable],
   );
-  const pastRuns = useMemo(() => runsForTable.filter((r) => r.status !== "RUNNING"), [runsForTable]);
+  // Successful past runs power the version switcher (dqlake-style). Every run's
+  // full result set is already persisted per run_id (dq_profiling_results), so
+  // switching just re-points the column list at getProfileRunResults(runId) —
+  // no extra storage. Newest first (runsForTable is already created_at DESC).
+  const successfulRuns = useMemo(
+    () => runsForTable.filter((r) => r.status === "SUCCESS" && r.run_id),
+    [runsForTable],
+  );
+
+  // null = show the latest profile (via getMonitoredTableProfile); a run_id =
+  // that historical run's persisted results (via getProfileRunResults).
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const historyResultsQuery = useGetProfileRunResults(selectedRunId ?? "", {
+    query: { enabled: selectedRunId !== null },
+  });
+
+  // A picked run that no longer exists (history refetched, run rolled off) or
+  // clearing the table selection falls back to the latest profile.
+  useEffect(() => {
+    if (selectedRunId !== null && !successfulRuns.some((r) => r.run_id === selectedRunId)) {
+      setSelectedRunId(null);
+    }
+  }, [selectedRunId, successfulRuns]);
 
   const submitMutation = useSubmitProfileRun();
 
@@ -1417,23 +1450,29 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
   }, [submitMutation, tableFqn, t, queryClient]);
 
   const summary = (profile?.summary ?? {}) as Record<string, unknown>;
+
+  // The column list reflects the run picked in the version switcher: the latest
+  // profile by default, or a selected historical run's persisted results. The
+  // header stats stay pinned to the latest profile.
+  const historyResult = historyResultsQuery.data?.data;
+  const activeSummary =
+    selectedRunId !== null ? ((historyResult?.summary ?? {}) as Record<string, unknown>) : summary;
+  const activeRowCount = selectedRunId !== null ? historyResult?.rows_profiled : profile?.rows_profiled;
+
   const columnStats = useMemo(() => {
-    const entries = Object.entries(summary).filter(
+    const entries = Object.entries(activeSummary).filter(
       (e): e is [string, Record<string, unknown>] =>
         e[0] !== LLM_PK_SUMMARY_KEY && typeof e[1] === "object" && e[1] !== null && !Array.isArray(e[1]),
     );
     return Object.fromEntries(entries);
-  }, [summary]);
+  }, [activeSummary]);
 
-  if (profileQuery.isLoading) {
-    return (
-      <div className="space-y-2 pt-4">
-        <Skeleton className="h-16 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    );
-  }
-
+  // Staggered paint (items 49/96): the run/refresh header renders immediately;
+  // only the column-list region waits on its own query. This stops the whole
+  // tab from blocking behind one skeleton (slow-to-load) and lets the empty
+  // state / Run CTA appear promptly when there's no profile yet.
+  const initialLoading = profileQuery.isLoading;
+  const historyLoading = selectedRunId !== null && historyResultsQuery.isLoading;
   const hasProfile = !profileQuery.error && profile != null;
   const pkInfo = summary[LLM_PK_SUMMARY_KEY] as LlmPrimaryKeyInfo | undefined;
   const pkColumns = pkInfo?.detected_columns ?? [];
@@ -1473,7 +1512,9 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
         </Button>
       </div>
 
-      {!hasProfile ? (
+      {initialLoading ? (
+        <Skeleton className="h-64 w-full" />
+      ) : !hasProfile ? (
         <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed rounded-lg">
           {running ? (
             <Loader2 className="h-10 w-10 text-muted-foreground/40 mb-3 animate-spin" />
@@ -1493,44 +1534,51 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
             </Button>
           )}
         </div>
-      ) : hasColumns ? (
-        <ProfileColumnList columnStats={columnStats} columnTypes={columnTypes} rowCount={profile?.rows_profiled} />
       ) : (
-        <div className="py-8 text-center text-xs text-muted-foreground border border-dashed rounded-md">
-          {t("monitoredTables.profileNoColumnsMatch")}
-        </div>
-      )}
+        <div className="space-y-3">
+          {/* Version switcher (items 50/31) — pick any past run; its full
+              results are already persisted per run_id, so this just re-points
+              the column list. Replaces the old log-style history list. */}
+          {successfulRuns.length > 1 && (
+            <div className="flex items-center justify-end gap-2">
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                {t("monitoredTables.profileVersionLabel")}
+              </span>
+              <Select
+                value={selectedRunId ?? profile?.run_id ?? ""}
+                onValueChange={(v) => setSelectedRunId(v === profile?.run_id ? null : v)}
+              >
+                <SelectTrigger className="h-8 w-[280px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {successfulRuns.map((r, i) => (
+                    <SelectItem key={r.run_id} value={r.run_id ?? ""} className="text-xs">
+                      {i === 0
+                        ? t("monitoredTables.profileVersionOptionLatest", {
+                            date: r.created_at ? formatDateShort(r.created_at) : "—",
+                            count: r.rows_profiled ?? 0,
+                          })
+                        : t("monitoredTables.profileVersionOption", {
+                            date: r.created_at ? formatDateShort(r.created_at) : "—",
+                            count: r.rows_profiled ?? 0,
+                          })}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
-      {pastRuns.length > 0 && (
-        <div className="pt-2">
-          <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
-            {t("monitoredTables.profileHistoryTitle")}
-          </h4>
-          <ul className="divide-y rounded-md border text-xs">
-            {pastRuns.slice(0, 10).map((r) => (
-              <li key={r.run_id} className="flex items-center justify-between gap-3 px-3 py-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Badge
-                    variant={r.status === "SUCCESS" ? "secondary" : "destructive"}
-                    className="font-mono text-[10px] shrink-0"
-                  >
-                    {r.status ?? "—"}
-                  </Badge>
-                  <span className="font-mono text-muted-foreground truncate">
-                    {r.created_at ? formatDateShort(r.created_at) : "—"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3 shrink-0 text-muted-foreground">
-                  {r.rows_profiled != null && (
-                    <span className="font-mono">
-                      {t("monitoredTables.profileHistoryRows", { count: r.rows_profiled })}
-                    </span>
-                  )}
-                  {r.requesting_user && <span className="truncate max-w-[12rem]">{r.requesting_user}</span>}
-                </div>
-              </li>
-            ))}
-          </ul>
+          {historyLoading ? (
+            <Skeleton className="h-64 w-full" />
+          ) : hasColumns ? (
+            <ProfileColumnList columnStats={columnStats} columnTypes={columnTypes} rowCount={activeRowCount} />
+          ) : (
+            <div className="py-8 text-center text-xs text-muted-foreground border border-dashed rounded-md">
+              {t("monitoredTables.profileNoColumnsMatch")}
+            </div>
+          )}
         </div>
       )}
     </div>
