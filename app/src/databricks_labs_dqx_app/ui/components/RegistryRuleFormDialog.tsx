@@ -502,7 +502,17 @@ function SlotsPanel({
       const target = e.target as HTMLElement | null;
       if (!target) return;
       if (rootRef.current?.contains(target)) return;
-      if (target.closest("[data-radix-popper-content-wrapper]")) return;
+      // Ignore clicks inside any portaled Radix overlay: popper-positioned
+      // content exposes `data-radix-popper-content-wrapper`, but an
+      // item-aligned Select's content is portaled without that wrapper — match
+      // its `data-slot="select-content"` / `role="listbox"` too so committing a
+      // selection in such a Select doesn't collapse the slot editor mid-click.
+      if (
+        target.closest(
+          '[data-radix-popper-content-wrapper], [data-slot="select-content"], [role="listbox"]',
+        )
+      )
+        return;
       setExpanded(null);
     };
     document.addEventListener("mousedown", handler);
@@ -640,7 +650,7 @@ function SlotsPanel({
                         <SelectTrigger className="h-8 text-xs w-full">
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent position="popper">
                           {SLOT_FAMILIES.map((f) => (
                             <SelectItem key={f} value={f} className="text-xs">
                               {familyLabel(f)}
