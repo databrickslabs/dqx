@@ -48,6 +48,7 @@ import {
   History as HistoryIcon,
   Info,
   Loader2,
+  Send,
   Shield,
   Sparkles,
   Wrench,
@@ -2617,6 +2618,72 @@ export function RegistryRuleFormDialog({
     );
   };
 
+  // Save-draft + submit buttons, shared by the dialog footer and the page
+  // header. `showSubmitIcon` adds the Send glyph on the submit button to match
+  // the MT/TS header treatment; the dialog footer keeps its icon-less look by
+  // passing `false`. All label/disabled logic (approvals-mode relabel via
+  // `willAutoApprove`, published-revision wording, the `isEditing && !isDirty`
+  // submit-only branch, and the missing-fields tooltips) is preserved verbatim.
+  const renderSaveSubmitButtons = (showSubmitIcon: boolean): ReactNode => {
+    if (readOnly) return null;
+    const submitIcon = showSubmitIcon ? <Send className="h-3.5 w-3.5" /> : null;
+    return (
+      <>
+        {/* Grey out once there's nothing to save — either a blank,
+            untouched create form or an already-persisted draft with no
+            pending edits (re-saving it would just churn the audit log
+            with no real change), matching dqlake's steward editor.
+            Draft saves only need structural validity (`canSaveDraft`);
+            the completeness bar applies to the submit buttons below. */}
+        {withMissingFieldsTooltip(
+          <Button
+            variant="secondary"
+            onClick={() => handleSave(false)}
+            disabled={saving || !isDirty || !canSaveDraft}
+            className="gap-2"
+          >
+            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {isPublishedRevision ? t("rulesRegistry.saveRevision") : t("rulesRegistry.saveDraft")}
+          </Button>,
+          !canSaveDraft,
+          missingDraftFieldLabels,
+          "rulesRegistry.canSaveMissingFieldsTooltip",
+        )}
+        {isEditing && !isDirty ? (
+          // The draft is already persisted and unchanged — submit it
+          // for approval directly rather than issuing a redundant save.
+          withMissingFieldsTooltip(
+            <Button onClick={handleSubmitOnly} disabled={saving || !canSubmit} className="gap-2">
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : submitIcon}
+              {willAutoApprove
+                ? t("rulesRegistry.publishNow")
+                : isPublishedRevision
+                  ? t("rulesRegistry.submitForReview")
+                  : t("rulesRegistry.actionSubmit")}
+            </Button>,
+            !canSubmit,
+            missingSubmitFieldLabels,
+            "rulesRegistry.canSubmitMissingFieldsTooltip",
+          )
+        ) : (
+          withMissingFieldsTooltip(
+            <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit} className="gap-2">
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : submitIcon}
+              {willAutoApprove
+                ? t("rulesRegistry.saveAndPublish")
+                : isPublishedRevision
+                  ? t("rulesRegistry.saveAndSubmitReview")
+                  : t("rulesRegistry.saveAndSubmit")}
+            </Button>,
+            !canSubmit,
+            missingSubmitFieldLabels,
+            "rulesRegistry.canSubmitMissingFieldsTooltip",
+          )
+        )}
+      </>
+    );
+  };
+
   const footerButtons = (
     <>
       {/* Item 18: the routed detail page ("page" variant) already offers a
@@ -2629,74 +2696,23 @@ export function RegistryRuleFormDialog({
           {readOnly ? t("common.close") : t("common.cancel")}
         </Button>
       )}
-      {!readOnly && (
-        <>
-          {/* Grey out once there's nothing to save — either a blank,
-              untouched create form or an already-persisted draft with no
-              pending edits (re-saving it would just churn the audit log
-              with no real change), matching dqlake's steward editor.
-              Draft saves only need structural validity (`canSaveDraft`);
-              the completeness bar applies to the submit buttons below. */}
-          {withMissingFieldsTooltip(
-            <Button
-              variant="secondary"
-              onClick={() => handleSave(false)}
-              disabled={saving || !isDirty || !canSaveDraft}
-              className="gap-2"
-            >
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {isPublishedRevision ? t("rulesRegistry.saveRevision") : t("rulesRegistry.saveDraft")}
-            </Button>,
-            !canSaveDraft,
-            missingDraftFieldLabels,
-            "rulesRegistry.canSaveMissingFieldsTooltip",
-          )}
-          {isEditing && !isDirty ? (
-            // The draft is already persisted and unchanged — submit it
-            // for approval directly rather than issuing a redundant save.
-            withMissingFieldsTooltip(
-              <Button onClick={handleSubmitOnly} disabled={saving || !canSubmit} className="gap-2">
-                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {willAutoApprove
-                  ? t("rulesRegistry.publishNow")
-                  : isPublishedRevision
-                    ? t("rulesRegistry.submitForReview")
-                    : t("rulesRegistry.actionSubmit")}
-              </Button>,
-              !canSubmit,
-              missingSubmitFieldLabels,
-              "rulesRegistry.canSubmitMissingFieldsTooltip",
-            )
-          ) : (
-            withMissingFieldsTooltip(
-              <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit} className="gap-2">
-                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {willAutoApprove
-                  ? t("rulesRegistry.saveAndPublish")
-                  : isPublishedRevision
-                    ? t("rulesRegistry.saveAndSubmitReview")
-                    : t("rulesRegistry.saveAndSubmit")}
-              </Button>,
-              !canSubmit,
-              missingSubmitFieldLabels,
-              "rulesRegistry.canSubmitMissingFieldsTooltip",
-            )
-          )}
-        </>
-      )}
+      {renderSaveSubmitButtons(false)}
     </>
   );
 
   if (variant === "page") {
     // The routed detail page already renders its own name/status/mode/
     // author-kind header above this component, so skip the dialog-style
-    // title here (which would duplicate it) and keep just the helper text.
+    // title here (which would duplicate it). Save/Submit actions live in a
+    // top-right header row (matching the MT/TS binding headers) rather than a
+    // bottom footer; the page's breadcrumb covers the dropped Cancel/Close.
+    const headerActions = renderSaveSubmitButtons(true);
     return (
       <div className="space-y-6">
+        {headerActions && (
+          <div className="flex flex-wrap items-center justify-end gap-2">{headerActions}</div>
+        )}
         {formBody}
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-2 pt-4 border-t">
-          {footerButtons}
-        </div>
       </div>
     );
   }
