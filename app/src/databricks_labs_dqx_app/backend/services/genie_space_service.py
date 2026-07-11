@@ -168,7 +168,10 @@ TEXT_INSTRUCTIONS = [
         "unprompted with its category and magnitude: the data can almost always say what changed, "
         "so never settle for reporting that something happened. Compare the latest run with the "
         "most recent prior run whose value differs, pairing rules by identity — registry_rule_id "
-        "where present, check_name otherwise. The contributor categories: rules added (no prior "
+        "where present, check_name otherwise. Name WHEN the change appeared: state the run date "
+        "and time of both runs being compared — the decomposition returns them as curr_run_ts and "
+        "prev_run_ts — so a change is never just 'since the last run' without its actual "
+        "timestamps. The contributor categories: rules added (no prior "
         "value — a check evaluated for the first time, not one that passed before), rules removed, "
         "rules renamed (the same registry_rule_id under a new check_name — a rename, not an add), "
         "rule definitions changed (same rule, different mapped columns), failure-rate changes (a "
@@ -495,6 +498,10 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         ")\n"
         "SELECT COALESCE(c.rule_name, p.rule_name) AS rule_name,\n"
         "       p.rule_name AS prev_rule_name,\n"
+        # The two run instants being compared ride along on every row so
+        # Genie can NAME the run date/time a change appeared (P7.2 rider).
+        "       (SELECT run_ts FROM cur_ts) AS curr_run_ts,\n"
+        "       (SELECT run_ts FROM prev_ts) AS prev_run_ts,\n"
         "       COALESCE(c.dim, p.dim) AS dimension,\n"
         "       COALESCE(c.sev, p.sev) AS severity,\n"
         "       COALESCE(p.failed_tests, 0) AS prev_failed_tests,\n"
@@ -556,6 +563,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  GROUP BY `dimension`\n"
         ")\n"
         "SELECT COALESCE(c.dim, p.dim) AS dimension,\n"
+        "       (SELECT run_ts FROM cur_ts) AS curr_run_ts,\n"
+        "       (SELECT run_ts FROM prev_ts) AS prev_run_ts,\n"
         "       p.pass_rate AS prev_pass_rate, c.pass_rate AS curr_pass_rate,\n"
         "       COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0) AS delta_failed_tests\n"
         "FROM cur c FULL OUTER JOIN prev p ON c.dim <=> p.dim\n"
@@ -716,8 +725,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
                 "rule removed, rule definition changed, rule renamed, failure rate "
                 "worsened/improved, more data, less data, unchanged — and prev_rule_name exposes "
                 "a rename even when a numeric reason outranks it. Narrate the categories and "
-                "magnitudes it hands you, and use the dimension/severity columns to say which "
-                "dimension or severity moved most. Reuse for any 'why did quality change / "
+                "magnitudes it hands you, name the run date/time the change appeared from "
+                "curr_run_ts and prev_run_ts, and use the dimension/severity columns to say "
+                "which dimension or severity moved most. Reuse for any 'why did quality change / "
                 "biggest factor' question."
             ],
         },

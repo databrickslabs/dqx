@@ -397,6 +397,32 @@ def test_diagnose_pairs_rules_by_registry_identity() -> None:
     assert "c.cols IS NOT NULL AND p.cols IS NOT NULL" in joined
 
 
+def test_diagnose_surfaces_the_run_instants_being_compared() -> None:
+    # P7.2 rider (live user ask): when Genie explains a change it must NAME
+    # the run date/time the change appeared. The decomposition therefore
+    # surfaces the two run instants it compares as output columns — both in
+    # the rule-grain taxonomy SQL and the by-dimension variant — so the
+    # citation is a column read, not an extra query.
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    for question in (
+        "What is driving my changes in score over time?",
+        "Why has my score by dimension changed?",
+    ):
+        joined = "".join(by_q[question]["sql"])
+        assert "AS curr_run_ts" in joined
+        assert "AS prev_run_ts" in joined
+
+
+def test_text_instructions_change_answers_name_the_run_instant() -> None:
+    # The prose half of the P7.2 rider: every change explanation anchors to
+    # WHEN — the run date/time of the two runs compared — citing the
+    # decomposition's curr_run_ts / prev_run_ts columns.
+    joined = "".join(gs.TEXT_INSTRUCTIONS)
+    assert "curr_run_ts" in joined
+    assert "prev_run_ts" in joined
+    assert "run date and time" in joined
+
+
 def test_benchmarks_reuse_curated_sql_verbatim_and_cover_all_questions() -> None:
     space = build()
     benchmarks = space["benchmarks"]["questions"]
