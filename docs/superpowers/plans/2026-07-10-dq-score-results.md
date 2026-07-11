@@ -1847,6 +1847,12 @@ By rule currently groups by check_name — a rule renamed between versions shows
 - Tables tab in table spaces: per-member DQ score column (ScoreBarCell, cache-fed — extend the product-detail/members response additively with cached score fields).
 - Residual gap from the hotfix review: manually-triggered runs with the tab closed miss refresh — the scheduler tick's completion sweep should ALSO track run-sets created by non-scheduler paths (read run-set creation records server-side) if cheap; otherwise document.
 
+### Task P5.5: Failed-records run scoping + Genie behavioral tuning (user reports)
+
+- **Failed records must not stack across runs**: the failed-rows path currently returns rows from ALL published runs (ordered newest-first). Scope to exactly ONE run: default = the latest published run for that table; when the UI run picker selects a run, that run's id (add/verify a run_id param on the failed-rows endpoint; UI passes the picker's selection; "Latest" label = the resolved single latest run). Genie: the row-source curated SQLs and the v_dq_failing_rows guidance must scope to the latest published run (single run_id), and instructions state that failing records are per-run.
+- **Genie drilldown encouragement**: when explaining a change, the space stopped at "a single event led to the lower score" until prompted twice. Strengthen the diagnosis instructions element: before concluding on any score change, check the contributors — newly added rules (no prior value), removed rules, per-rule failure-rate changes, and test-volume changes — and NAME what was found in the answer, unprompted. Keep the established voice.
+- **Paragraphs**: strengthen the answer-style element to prefer short paragraphs for prose (bullets remain only for genuine multi-item breakdowns).
+
 ### Task P5.4: Phase 5 verification + deploy
 
 ## Deferred (explicitly out of scope)
