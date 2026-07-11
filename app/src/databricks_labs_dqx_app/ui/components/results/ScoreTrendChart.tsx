@@ -689,7 +689,7 @@ export function ScoreTrendChart({
       <p className="text-sm text-muted-foreground">{t("resultsUi.noRunsYet")}</p>
     ) : (
       <>
-      <div className="rounded-md border p-2 [&_.recharts-surface]:outline-none [&_.recharts-wrapper]:outline-none [&_svg]:outline-none [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
+      <div className="min-w-0 overflow-hidden rounded-md border p-2 [&_.recharts-surface]:outline-none [&_.recharts-wrapper]:outline-none [&_svg]:outline-none [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
           <ResponsiveContainer width="100%" height={200} minWidth={0}>
             <ComposedChart
               data={points}
