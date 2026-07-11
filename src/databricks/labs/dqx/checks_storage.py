@@ -32,7 +32,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DatabaseError, ProgrammingError, OperationalError, IntegrityError
 
 import yaml
-from pyspark.sql import DataFrame, SparkSession, functions as F
+from pyspark.sql import DataFrame, Row, SparkSession, functions as F
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
 
@@ -88,10 +88,15 @@ _VERSIONING_COLUMN_TYPES_LAKEBASE = {
 }
 _VERSIONING_COLUMNS = tuple(_VERSIONING_COLUMN_TYPES_DELTA)
 
+# Non-versioning columns that must also exist on a pre-existing Delta table before a write.
+# A legacy table created before these columns were added must be ALTERed to include them,
+# otherwise saveAsTable raises a schema-mismatch AnalysisException.
+_ADDITIONAL_DELTA_COLUMN_TYPES = {"message_expr": "STRING"}
+
 CHECKS_TABLE_SCHEMA = (
     "name STRING, criticality STRING, check STRUCT<function STRING, for_each_column ARRAY<STRING>,"
     " arguments MAP<STRING, STRING>>, filter STRING, run_config_name STRING, user_metadata MAP<STRING, STRING>,"
-    " created_at TIMESTAMP, rule_fingerprint STRING, rule_set_fingerprint STRING"
+    " message_expr STRING, created_at TIMESTAMP, rule_fingerprint STRING, rule_set_fingerprint STRING"
 )
 
 
@@ -158,29 +163,42 @@ class DataFrameConverter:
                 stacklevel=2,
             )
 
-        checks = []
-        for row in check_rows:
-            check_dict = {
-                "name": row.name,
-                "criticality": row.criticality,
-                "check": {
-                    "function": row.check["function"],
-                    "arguments": (
-                        {k: safe_json_load(v) for k, v in row.check["arguments"].items()}
-                        if row.check["arguments"] is not None
-                        else {}
-                    ),
-                },
-            }
-            if "for_each_column" in row.check and row.check["for_each_column"]:
-                check_dict["check"]["for_each_column"] = row.check["for_each_column"]
-            if row.filter is not None:
-                check_dict["filter"] = row.filter
-            if row.user_metadata is not None:
-                check_dict["user_metadata"] = row.user_metadata
-            # Denormalize special markers back to objects
-            checks.append(ChecksNormalizer.denormalize_value(check_dict))
-        return checks
+        # Denormalize special markers back to objects
+        return [ChecksNormalizer.denormalize_value(DataFrameConverter._row_to_check_dict(row)) for row in check_rows]
+
+    @staticmethod
+    def _row_to_check_dict(row: Row) -> dict:
+        """Convert a single checks-table row into a check dictionary.
+
+        Decodes JSON-encoded *arguments* and *user_metadata* values with safe_json_load (mirroring the
+        write path), and copies optional top-level fields (*filter*, *user_metadata*, *message_expr*)
+        only when present. Legacy tables lacking a *message_expr* column read back as None.
+
+        Args:
+            row: A Spark Row from the checks table.
+
+        Returns:
+            The check dictionary reconstructed from the row.
+        """
+        arguments = row.check["arguments"]
+        check_dict: dict = {
+            "name": row.name,
+            "criticality": row.criticality,
+            "check": {
+                "function": row.check["function"],
+                "arguments": ({k: safe_json_load(v) for k, v in arguments.items()} if arguments is not None else {}),
+            },
+        }
+        if "for_each_column" in row.check and row.check["for_each_column"]:
+            check_dict["check"]["for_each_column"] = row.check["for_each_column"]
+        if row.filter is not None:
+            check_dict["filter"] = row.filter
+        if row.user_metadata is not None:
+            check_dict["user_metadata"] = {k: safe_json_load(v) for k, v in row.user_metadata.items()}
+        message_expr = getattr(row, "message_expr", None)
+        if message_expr is not None:
+            check_dict["message_expr"] = message_expr
+        return check_dict
 
     @staticmethod
     def to_dataframe(
@@ -244,6 +262,13 @@ class DataFrameConverter:
 
             name, rule_fingerprint = DataFrameConverter._resolve_name_and_fingerprint(original_check, check)
 
+            # Values are already normalized by ChecksNormalizer.normalize; json.dumps for MAP<STRING, STRING>,
+            # mirroring the arguments encoding so non-string user_metadata types survive the round-trip.
+            user_metadata = check.get("user_metadata")
+            json_user_metadata = (
+                {k: json.dumps(v) for k, v in user_metadata.items()} if user_metadata is not None else None
+            )
+
             dq_rule_rows.append(
                 [
                     name,
@@ -251,7 +276,8 @@ class DataFrameConverter:
                     check_struct,
                     check.get("filter"),
                     run_config_name,
-                    check.get("user_metadata"),
+                    json_user_metadata,
+                    check.get("message_expr"),
                     effective_created_at,
                     rule_fingerprint,
                     rule_set_fingerprint,
@@ -359,6 +385,8 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
             run_config_name, the save is skipped and the method returns without writing. This applies regardless
             of config.mode (including "overwrite"). So a call with mode="overwrite" and a checks payload
             that hashes to an existing fingerprint will not overwrite (e.g. if only non-fingerprinted metadata changed).
+            In particular, editing ONLY *message_expr* (or ONLY *user_metadata*) on an existing rule set is a no-op,
+            because compute_rule_fingerprint hashes only name/criticality/function/arguments/filter/for_each_column.
 
             Mode behavior:
             - **overwrite**: If the fingerprint differs, replaces all rows for this run_config_name with the new
@@ -394,7 +422,7 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         # Skip save if rule_set_fingerprint already exists in existing table
         if self._table_exists(config.location):
             existing_df = self.spark.read.table(config.location)
-            columns_added = self._ensure_versioning_columns(config.location, existing_df)
+            columns_added = self._ensure_columns(config.location, existing_df)
             if columns_added:
                 # Schema changed — re-read so the DataFrame includes the new columns.
                 existing_df = self.spark.read.table(config.location)
@@ -431,8 +459,13 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         except NotFound:
             return False
 
-    def _ensure_versioning_columns(self, location: str, existing_df: DataFrame | None = None) -> bool:
-        """Add missing versioning columns to an existing Delta table.
+    def _ensure_columns(self, location: str, existing_df: DataFrame | None = None) -> bool:
+        """Add missing versioning and additional columns to an existing Delta table.
+
+        Ensures both the versioning columns (created_at, rule_fingerprint, rule_set_fingerprint) and
+        the additional non-versioning columns (e.g. message_expr) exist. The versioning columns are
+        required for the pre-write fingerprint filter; the additional columns are required so that
+        saveAsTable does not raise a schema-mismatch AnalysisException against a legacy table.
 
         Args:
             location: Full table name (e.g., "catalog.schema.table").
@@ -440,19 +473,20 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
                 used instead of re-reading the table, avoiding a redundant read.
 
         Returns:
-            True if columns were added, False if all versioning columns already existed.
+            True if columns were added, False if all required columns already existed.
         """
         df = existing_df if existing_df is not None else self.spark.read.table(location)
         existing_columns = {f.name for f in df.schema.fields}
-        missing = [col for col in _VERSIONING_COLUMNS if col not in existing_columns]
+        column_types = {**_VERSIONING_COLUMN_TYPES_DELTA, **_ADDITIONAL_DELTA_COLUMN_TYPES}
+        missing = [col for col in column_types if col not in existing_columns]
         if not missing:
             return False
 
         quoted = ".".join(f"`{part}`" for part in location.replace("`", "").split("."))
         for col in missing:
-            col_type = _VERSIONING_COLUMN_TYPES_DELTA[col]
+            col_type = column_types[col]
             self.spark.sql(f"ALTER TABLE {quoted} ADD COLUMN {col} {col_type}")
-        logger.info(f"Added versioning columns {missing} to table '{location}'.")
+        logger.info(f"Added columns {missing} to table '{location}'.")
         return True
 
 
@@ -542,7 +576,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         return engine
 
     @staticmethod
-    def get_table_definition(schema_name: str, table_name: str, versioning: bool = True) -> Table:
+    def get_table_definition(
+        schema_name: str, table_name: str, versioning: bool = True, include_message_expr: bool = True
+    ) -> Table:
         """
         Create a SQLAlchemy table definition for storing DQ rules (checks) in Lakebase.
 
@@ -551,6 +587,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             table_name: The table where the checks are stored.
             versioning: If True (default), include versioning columns (created_at, rule_fingerprint,
                 rule_set_fingerprint). Pass False for legacy tables that predate versioning support.
+            include_message_expr: If True (default), include the *message_expr* column. Pass False for
+                legacy tables that predate *message_expr* support, so a select does not reference a
+                column that does not exist on the table.
 
         Returns:
             SQLAlchemy table definition for the Lakebase instance.
@@ -563,6 +602,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             Column("run_config_name", String(255), server_default="default"),
             Column("user_metadata", JSONB),
         ]
+        if include_message_expr:
+            columns.append(Column("message_expr", Text))
         if versioning:
             columns += [
                 Column("created_at", DateTime),
@@ -602,6 +643,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 "filter": check.get("filter"),
                 "run_config_name": run_config_name,
                 "user_metadata": null() if user_metadata is None else user_metadata,
+                "message_expr": check.get("message_expr"),
                 "created_at": created_at,
                 "rule_fingerprint": compute_rule_fingerprint(check),
                 "rule_set_fingerprint": rule_set_fingerprint,
@@ -628,7 +670,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             Idempotency: If the table already contains a rule set with the same rule_set_fingerprint for this
             run_config_name, the save is skipped and the method returns without writing or deleting. This applies
             regardless of config.mode (including "overwrite"). The fingerprint check is performed before any
-            overwrite delete, so an existing matching fingerprint always results in a no-op.
+            overwrite delete, so an existing matching fingerprint always results in a no-op. In particular,
+            editing ONLY *message_expr* (or ONLY *user_metadata*) on an existing rule set is a no-op, because
+            compute_rule_fingerprint hashes only name/criticality/function/arguments/filter/for_each_column.
 
             Mode behavior:
             - **overwrite**: If the fingerprint differs, deletes all rows for this run_config_name and inserts
@@ -662,6 +706,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 f"Successfully created or verified table '{config.database_name}.{config.schema_name}.{config.table_name}'."
             )
             LakebaseChecksStorageHandler._ensure_versioning_columns(engine, config)
+            LakebaseChecksStorageHandler._ensure_message_expr_column(engine, config)
 
             normalized_checks = self._normalize_checks(checks, config)
 
@@ -709,6 +754,22 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} {col_type}"))
         logger.info(f"Added versioning columns {list(_VERSIONING_COLUMNS)} to table '{config.location}'.")
 
+    @staticmethod
+    def _ensure_message_expr_column(engine: Engine, config: LakebaseChecksStorageConfig) -> None:
+        """Add the *message_expr* column to an existing Lakebase table when missing.
+
+        Runs independently of the versioning-column check: a table that already has the versioning
+        columns but predates *message_expr* would otherwise never get the column, causing an
+        UndefinedColumn error on write. The ALTER is idempotent (ADD COLUMN IF NOT EXISTS).
+
+        Args:
+            engine: SQLAlchemy engine for the Lakebase instance.
+            config: Configuration for saving and loading checks to Lakebase.
+        """
+        tbl = f'"{config.schema_name}"."{config.table_name}"'
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS message_expr TEXT"))
+
     def _load_checks_from_lakebase(self, config: LakebaseChecksStorageConfig, engine: Engine) -> list[dict]:
         """
         Load dq rules (checks) from a Lakebase table.
@@ -727,7 +788,15 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         has_versioning = LakebaseChecksStorageHandler._rule_set_columns_exists(
             engine, config.schema_name, config.table_name
         )
-        table = self.get_table_definition(config.schema_name, config.table_name, versioning=has_versioning)
+        has_message_expr = LakebaseChecksStorageHandler._column_exists(
+            engine, config.schema_name, config.table_name, "message_expr"
+        )
+        table = self.get_table_definition(
+            config.schema_name,
+            config.table_name,
+            versioning=has_versioning,
+            include_message_expr=has_message_expr,
+        )
 
         if not has_versioning:
             # Legacy table without versioning columns; load all rows for run_config_name.
@@ -780,6 +849,11 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                     f"Make sure the profiler has run successfully and saved checks to this location."
                 )
             checks_dict = [dict(check) for check in checks]
+            # Omit message_expr when absent so both backends behave the same (Delta only sets it when
+            # not None); leave the pre-existing versioning-key leakage alone (out of scope here).
+            for check_dict in checks_dict:
+                if check_dict.get("message_expr") is None:
+                    check_dict.pop("message_expr", None)
 
             # Denormalize special markers back to objects
             return ChecksNormalizer.denormalize(checks_dict)
@@ -804,6 +878,27 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         cols = inspector.get_columns(table, schema=schema)
         existing_column_names = {col['name'] for col in cols}
         return all(x in existing_column_names for x in _VERSIONING_COLUMNS)
+
+    @staticmethod
+    def _column_exists(engine: Engine, schema: str, table: str, column: str) -> bool:
+        """
+        Check whether a single column exists in the Lakebase table.
+
+        Args:
+            engine: SQLAlchemy engine for the Lakebase instance.
+            schema: Schema name of the Lakebase table.
+            table: Table name of the Lakebase table.
+            column: Column name to look for.
+
+        Returns:
+            True if the column exists, False otherwise.
+        """
+        inspector = inspect(engine)
+        if not inspector.has_table(table, schema=schema):
+            return False
+        cols = inspector.get_columns(table, schema=schema)
+        existing_column_names = {col['name'] for col in cols}
+        return column in existing_column_names
 
     def _check_for_undefined_table_error(self, e: ProgrammingError, config: LakebaseChecksStorageConfig) -> NoReturn:
         """

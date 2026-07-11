@@ -186,7 +186,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
             },
             "filter": None,
             "run_config_name": "default",
-            "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
+            "user_metadata": {"check_type": '"completeness"', "check_owner": '"someone@email.com"'},
         },
         {
             "name": "column_not_less_than",
@@ -198,7 +198,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
             },
             "filter": "Col_3 >1",
             "run_config_name": "default",
-            "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
+            "user_metadata": {"check_type": '"standardization"', "check_owner": '"someone_else@email.com"'},
         },
         {
             "name": "column_in_list",
@@ -232,6 +232,56 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
 
     expected_checks_df = spark.createDataFrame(expected_raw_checks, TEST_CHECKS_TABLE_SCHEMA)
     assertDataFrameEqual(checks_df.sort("name"), expected_checks_df.sort("name"))
+
+
+def test_save_and_load_checks_from_table_preserves_user_metadata_value_types(ws, make_schema, make_random, spark):
+    """Non-string user_metadata values (float, bool, str) survive the Delta round-trip with identical types."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(location=table_name, run_config_name="default")
+
+    check = {
+        "name": "col_1_is_null",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "col_1"}},
+        "user_metadata": {"confidence": 0.95, "enabled": True, "owner": "a@b.com"},
+    }
+    engine.save_checks([check], config=config)
+
+    loaded = engine.load_checks(config=config)
+
+    assert len(loaded) == 1
+    loaded_metadata = loaded[0]["user_metadata"]
+    assert loaded_metadata == {"confidence": 0.95, "enabled": True, "owner": "a@b.com"}
+    assert isinstance(loaded_metadata["confidence"], float)
+    assert isinstance(loaded_metadata["enabled"], bool)
+    assert isinstance(loaded_metadata["owner"], str)
+
+
+def test_save_and_load_checks_from_table_preserves_message_expr(ws, make_schema, make_random, spark):
+    """A top-level message_expr string round-trips through the Delta table backend."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(location=table_name, run_config_name="default")
+
+    check = {
+        "name": "col_1_is_null",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "col_1"}},
+        "message_expr": "'custom message'",
+    }
+    engine.save_checks([check], config=config)
+
+    loaded = engine.load_checks(config=config)
+
+    assert len(loaded) == 1
+    assert loaded[0]["message_expr"] == "'custom message'"
 
 
 def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(ws, make_schema, make_random, spark):
@@ -728,6 +778,51 @@ def test_save_to_legacy_delta_table_adds_versioning_columns(ws, make_schema, mak
     # New rows (from save_checks) have fingerprints; legacy row has null fingerprints
     new_rows = saved_df.filter("rule_set_fingerprint IS NOT NULL")
     assert new_rows.count() == 1  # INPUT_CHECKS[:1] stored as 1 compact row (for_each_column preserved)
+
+
+def test_save_to_legacy_delta_table_without_message_expr_adds_column_and_round_trips(
+    ws, make_schema, make_random, spark
+):
+    """Saving to a legacy table lacking the message_expr column ALTERs it in and round-trips message_expr."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    # Create table with legacy schema (no versioning columns and no message_expr column).
+    legacy_df = spark.createDataFrame(
+        [
+            [
+                "a_is_null",
+                "error",
+                {"function": "is_not_null", "for_each_column": [], "arguments": {}},
+                None,
+                "default",
+                None,
+            ]
+        ],
+        TEST_CHECKS_TABLE_SCHEMA,
+    )
+    legacy_df.write.saveAsTable(table_name)
+    assert "message_expr" not in spark.read.table(table_name).columns
+
+    checks_with_message_expr = [
+        {
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+            "message_expr": "'custom message'",
+        }
+    ]
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(location=table_name, mode="append")
+    # Must not raise a schema-mismatch AnalysisException against the legacy table.
+    engine.save_checks(checks_with_message_expr, config=config)
+
+    assert "message_expr" in spark.read.table(table_name).columns
+    loaded = engine.load_checks(
+        config=TableChecksStorageConfig(location=table_name, rule_set_fingerprint=None),
+    )
+    with_message_expr = [check for check in loaded if check.get("message_expr") == "'custom message'"]
+    assert len(with_message_expr) == 1
 
 
 def test_save_idempotency_overwrite_mode(ws, make_schema, make_random, spark):

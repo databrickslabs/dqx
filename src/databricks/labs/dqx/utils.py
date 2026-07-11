@@ -240,14 +240,19 @@ def is_sql_query_safe(query: str) -> bool:
     return not any(re.search(rf"\b{kw}\b", normalized_query) for kw in forbidden_statements)
 
 
-def safe_json_load(value: str):
+def safe_json_load(value: str | None):
     """
     Safely load a JSON string, returning the original value if it fails to parse.
     This allows to specify string value without a need to escape the quotes.
 
+    A *None* value is returned unchanged (a stored MAP<STRING, STRING> may contain SQL NULL values,
+    which surface as None and must not be passed to json.loads).
+
     Args:
-        value: The value to parse as JSON.
+        value: The value to parse as JSON, or None.
     """
+    if value is None:
+        return None
     try:
         return json.loads(value)
     except json.JSONDecodeError:
