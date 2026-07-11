@@ -82,10 +82,16 @@ import { useGeniePanelWidth } from "./useGeniePanelWidth";
 const PENDING_DEFAULT = "Thinking";
 
 /** Keyword heuristic on the user's OWN question: did they deliberately ask to
- *  see a table / rows / list / records? Whole-word matches so "rules" never
- *  trips "rows"; conservative by design — when unsure, no table. */
+ *  see rows / a list / records — or explicitly for a table ("as a table", "in a
+ *  table", "table form", "give me a table")? Whole-word matches so "rules" never
+ *  trips "rows". Deliberately does NOT match the bare entity noun "table(s)":
+ *  canonical aggregate questions like "Which tables have the lowest pass rate?"
+ *  name tables as their subject, not as a request to render one — matching that
+ *  would defeat the suppress-by-default design. "table" only counts in a request
+ *  phrase (preceded by an article, or "table form"). Conservative by design —
+ *  when unsure, no table. */
 const TABLE_INTENT_RE =
-  /\b(tables?|rows?|lists?|records?|samples?|examples?)\b|show me the (records|rows|data|examples)/i;
+  /\b(rows?|lists?|records?|samples?|examples?)\b|\b(a|the) tables?\b|\btable form\b|show me the (records|rows|data|examples)|give me the (rows|records)/i;
 
 function userAskedForTable(question: string | null | undefined): boolean {
   return question != null && TABLE_INTENT_RE.test(question);
