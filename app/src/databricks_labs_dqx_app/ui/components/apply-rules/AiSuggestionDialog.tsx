@@ -298,7 +298,14 @@ export function AiSuggestionDialog({
             {t("common.cancel")}
           </Button>
           {state && state.available && suggestions.length > 0 && (
-            <Button onClick={handleAdd} disabled={selectedCount === 0} className={`gap-2 ${AI_BUTTON_BG}`}>
+            <Button
+              onClick={handleAdd}
+              disabled={selectedCount === 0}
+              className={cn(
+                "gap-2 transition-transform duration-200 ease-out hover:scale-[1.02] active:scale-[0.99] motion-reduce:transform-none",
+                AI_BUTTON_BG,
+              )}
+            >
               <Sparkles className="h-4 w-4" />
               {allSelected
                 ? t("monitoredTables.suggestRulesAddAllButton")
