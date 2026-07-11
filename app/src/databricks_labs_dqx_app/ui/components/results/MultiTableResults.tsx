@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type * as React from "react";
 import { keepPreviousData } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -261,6 +261,13 @@ export interface MultiTableResultsSectionProps {
    *  every query it owns. */
   includeDrafts: boolean;
   onIncludeDraftsChange: (includeDrafts: boolean) => void;
+  /** Called (in an effect) when the BASE (unfiltered) by-table rows land or
+   *  change. The composition stays Genie/entitlement-agnostic — the global
+   *  Results page uses this to pre-verify row entitlements for its
+   *  on-screen tables (P4.3); consumers with an explicit member list (the
+   *  product tab) don't need it. Pass a stable (useCallback / module-scope)
+   *  function — the effect keys on its identity. */
+  onBaseByTable?: (byTable: NonNullable<EntityResultsOut["by_table"]>) => void;
 }
 
 /**
@@ -278,6 +285,7 @@ export function MultiTableResultsSection({
   hideRuleBreakdown,
   includeDrafts,
   onIncludeDraftsChange,
+  onBaseByTable,
 }: MultiTableResultsSectionProps) {
   const { t } = useTranslation();
   // The active single-table selection (E2). Clicking a By Table row sets it;
@@ -333,6 +341,15 @@ export function MultiTableResultsSection({
     ...RESULTS_QUERY_OPTIONS,
   });
   const baseResults = baseQuery.data?.data;
+
+  // Surface the base by-table rows to the caller (see the prop docs). The
+  // rows object is referentially stable per fetch (React Query cache), so
+  // the effect fires once per data landing, not per render.
+  const baseByTable = baseResults?.by_table;
+  useEffect(() => {
+    if (onBaseByTable && baseByTable) onBaseByTable(baseByTable);
+  }, [onBaseByTable, baseByTable]);
+
   // Background refetch (filter/selection change) vs first load: only the former
   // gets the subtle drilldown spinner — the first load has the ChartFrame and
   // per-widget spinners already.

@@ -8,8 +8,12 @@ import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useGetGlobalResults } from "@/lib/api";
+import { useGetGlobalResults, type EntityResultsOut } from "@/lib/api";
 import { AskGenieButton } from "@/components/results/AskGenieButton";
+import {
+  BY_TABLE_PREVERIFY_LIMIT,
+  preverifyRowEntitlements,
+} from "@/lib/entitlement-preverify";
 import {
   MultiTableResultsSection,
   type UseEntityResults,
@@ -64,6 +68,18 @@ function GlobalResultsPage() {
 const useGlobalEntityResults: UseEntityResults = (params, queryOptions) =>
   useGetGlobalResults(params, { query: queryOptions });
 
+// Pre-verify row entitlements for the on-screen tables (P4.3): when the
+// base by-table rows land, fire-and-forget verify-entitlements for the
+// first screenful of FQNs (the row labels ARE the table FQNs) so the
+// Genie failing-rows view is already open before anyone asks. Module-scope
+// for a stable identity — the composition's effect keys on it.
+function preverifyByTable(byTable: NonNullable<EntityResultsOut["by_table"]>): void {
+  preverifyRowEntitlements(
+    byTable.map((g) => g.label),
+    BY_TABLE_PREVERIFY_LIMIT,
+  );
+}
+
 function GlobalResultsContent() {
   const { t } = useTranslation();
   // Run mode ("Published only" vs "Published + Draft"), owned per surface.
@@ -87,6 +103,7 @@ function GlobalResultsContent() {
             scoreLabel={(count) => t("globalResults.orgWideScoreLabel", { count })}
             includeDrafts={includeDrafts}
             onIncludeDraftsChange={setIncludeDrafts}
+            onBaseByTable={preverifyByTable}
             // No runPickerSlot and no requiredFqns: the picker is omitted
             // (see the module comment) and the Average-line universe derives
             // from the accessible by-table rows.

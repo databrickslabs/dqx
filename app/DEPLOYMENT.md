@@ -251,7 +251,7 @@ Lakebase OAuth tokens expire after one hour. The app's `PgExecutor` runs a backg
 
 ## (Optional) Expand OAuth Scopes
 
-> **Most deployments don't need this step.** The OAuth scopes configured automatically by DABs (`sql`, `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read`, `serving.serving-endpoints`) plus the identity scopes Databricks Apps grants implicitly are sufficient for all DQX Studio features on a standard workspace.
+> **Most deployments don't need this step.** The OAuth scopes configured automatically by DABs (`sql`, `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read`, `serving.serving-endpoints`, `dashboards.genie`) plus the identity scopes Databricks Apps grants implicitly are sufficient for all DQX Studio features on a standard workspace. `dashboards.genie` is required because the in-app Ask Genie chat runs as the signed-in user (on-behalf-of), so answers respect that user's own table permissions; without it the chat falls back to the app service principal and row-level answers stay empty.
 >
 > Only follow this section if, after deploying, you see specific features returning `403` / permission errors in the app logs that look like missing OAuth scopes (for example, REST calls the baseline scopes do not cover). Expanding scopes requires **account admin** access.
 

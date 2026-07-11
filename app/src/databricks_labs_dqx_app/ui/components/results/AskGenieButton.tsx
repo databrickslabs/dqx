@@ -2,12 +2,14 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { AI_BUTTON_BG } from "@/lib/ai-style";
+import { preverifyRowEntitlements } from "@/lib/entitlement-preverify";
 import { GenieChatSidebar } from "./GenieChatSidebar";
 import { GenieIcon } from "./GenieIcon";
 import type {
@@ -59,6 +61,26 @@ export function GenieChatProvider({
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [autoAsk, setAutoAsk] = useState<string | null>(null);
+
+  // Pre-verify the caller's row-level (failing-rows) access for the tables
+  // in scope (P4.3), so the entitlement-gated view is already open by the
+  // time they ask Genie a failing-rows question: the context table on a
+  // table surface, the member FQNs on a product surface. Provider mount is
+  // the cheaper correct trigger (no open-state tracking) — the results tab
+  // rendering IS the "user is looking at these tables" signal, and the
+  // per-session dedupe inside the helper absorbs remounts. The effect keys
+  // on a newline-joined serialization (FQNs can't contain newlines) because
+  // contextTables is a fresh array per render.
+  const preverifyKey =
+    contextKind === "table"
+      ? (contextSubject ?? "")
+      : contextKind === "product"
+        ? (contextTables ?? []).join("\n")
+        : "";
+  useEffect(() => {
+    if (!preverifyKey) return;
+    preverifyRowEntitlements(preverifyKey.split("\n"));
+  }, [preverifyKey]);
 
   const controller = useMemo<GenieChatController>(
     () => ({

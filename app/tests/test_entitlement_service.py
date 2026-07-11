@@ -31,6 +31,7 @@ from databricks_labs_dqx_app.backend.services.entitlement_service import (
     VERIFY_ENTITLEMENTS_MAX_FQNS,
     EntitlementService,
 )
+from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 
 FQN = "main.sales.orders"
 FQN2 = "main.sales.customers"
@@ -213,6 +214,38 @@ class TestRecordEntitlement:
     def test_upsert_failure_never_raises(self, svc, sql_executor_mock):
         sql_executor_mock.upsert.side_effect = RuntimeError("merge failed")
         assert svc.record_entitlement(EMAIL, FQN) is False
+
+
+class TestCanonicalFqnAgreement:
+    """The entitlement side must store the EXACT string the runner writes.
+
+    The gated view's predicate is a case-sensitive string equality
+    (``e.table_fqn = q.source_table_fqn``), and the runner writes
+    ``source_table_fqn`` verbatim from the submitted config
+    (``app/tasks/src/dqx_task_runner/runner.py``:
+    ``config.get("source_table_fqn", "")``), which the app populates with
+    the binding's plain unquoted ``catalog.schema.table`` unchanged
+    (``routes/v1/dryrun.py``: ``"source_table_fqn": table_fqn``). So the
+    canonical format on BOTH sides is that plain unquoted FQN, case
+    preserved exactly as stored on the binding — any transformation here
+    (lowercasing, backtick-quoting, trimming) would fail closed: no leak,
+    but Genie's failing-rows view silently empty for a verified table.
+    """
+
+    def test_validate_and_upsert_preserve_the_runner_written_fqn_verbatim(self, svc, sql_executor_mock):
+        # Case + hyphens preserved: exactly what a binding can carry and
+        # what the runner therefore writes to dq_quarantine_records.
+        runner_written = "Main.Sales-Data.Orders_2024"
+
+        # validate_fqn accepts the plain unquoted form and returns it
+        # UNCHANGED (no normalisation the quarantine side wouldn't mirror).
+        assert validate_fqn(runner_written) == runner_written
+
+        # record_entitlement stores it byte-for-byte as the merge key —
+        # the same string the view will compare against source_table_fqn.
+        assert svc.record_entitlement(EMAIL, runner_written) is True
+        stored = sql_executor_mock.upsert.call_args.args[1]["table_fqn"]
+        assert stored == runner_written  # byte-equal: no lowercase, no quoting, no trim
 
 
 # ---------------------------------------------------------------------------
