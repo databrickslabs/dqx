@@ -673,8 +673,9 @@ class AppSettingsService:
 
         AI features are enabled by default so a fresh deploy is usable without
         an explicit opt-in. An admin can still turn everything off by saving
-        ``ai_enabled = false`` (the kill-switch). Only an explicit ``"false"``
-        disables AI; any other stored value — or no row at all — reads as on.
+        ``ai_enabled = false`` (the kill-switch). Only an unset value (no row)
+        or an explicit ``"true"`` reads as on; any other stored value — including
+        ``"false"`` — is off.
         """
         raw = self.get_setting(self._AI_ENABLED_KEY)
         if raw is None:

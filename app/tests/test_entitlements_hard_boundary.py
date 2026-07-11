@@ -30,6 +30,8 @@ The proofs are structural + behavioural, no workspace required:
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
+from unittest.mock import create_autospec
 
 import pytest
 from fastapi import HTTPException
@@ -37,11 +39,20 @@ from fastapi import HTTPException
 from databricks_labs_dqx_app.backend.common.authorization import PERMISSIONS, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import require_role
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 
 
-class _FakeOltp:
-    """Minimal OLTP executor answering ``list_grants`` / members SELECT shapes."""
+class _FakeOltp(OltpExecutorProtocol):
+    """Minimal OLTP executor answering ``list_grants`` / members SELECT shapes.
+
+    Subclasses :class:`OltpExecutorProtocol` so it is a proper structural
+    implementation of the surface :class:`PermissionsService` accepts —
+    the constructor takes it with no cast or ``type: ignore``. Only the
+    handful of methods the enforcement paths exercise are overridden with
+    real behaviour; the rest inherit the Protocol's no-op stubs.
+    """
 
     def __init__(self) -> None:
         self.grants: dict[tuple[str, str], list[list[object]]] = {}
@@ -55,7 +66,7 @@ class _FakeOltp:
     def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
         return None
 
-    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[object]]:
+    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
         if "dq_data_product_members" in sql:
             return []
         ot = re.search(r"object_type = '([^']*)'", sql)
@@ -69,13 +80,24 @@ class _FakeOltp:
         )
 
 
-@pytest.fixture
-def svc() -> PermissionsService:
-    class _AppSettings:
-        def get_permissions_default_inherit(self) -> bool:
-            return False
+class _Svc(NamedTuple):
+    """The service under test plus the fake OLTP double it is wired to.
 
-    return PermissionsService(sql=_FakeOltp(), app_settings=_AppSettings())  # type: ignore[arg-type]
+    Yielding both from the fixture lets tests seed grants via
+    :meth:`_FakeOltp.add_grant` without reaching into the service's
+    private ``_sql`` attribute.
+    """
+
+    service: PermissionsService
+    fake: _FakeOltp
+
+
+@pytest.fixture
+def svc() -> _Svc:
+    fake = _FakeOltp()
+    app_settings = create_autospec(AppSettingsService, instance=True)
+    app_settings.get_permissions_default_inherit.return_value = False
+    return _Svc(service=PermissionsService(sql=fake, app_settings=app_settings), fake=fake)
 
 
 # ---------------------------------------------------------------------------
@@ -125,9 +147,8 @@ async def test_require_role_admits_listed_roles():
 
 
 def test_all_privileges_grant_tops_out_at_object_privileges(svc):
-    fake: _FakeOltp = svc._sql  # type: ignore[assignment]
-    fake.add_grant("registry_rule", "r1", "u1", "ALL_PRIVILEGES")
-    eff = svc.effective_privileges("registry_rule", "r1", principal_ids={"u1"})
+    svc.fake.add_grant("registry_rule", "r1", "u1", "ALL_PRIVILEGES")
+    eff = svc.service.effective_privileges("registry_rule", "r1", principal_ids={"u1"})
     # The widest possible grant confers exactly the three concrete object
     # privileges — nothing role-shaped, and never MANAGE.
     assert eff == {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY}
@@ -135,9 +156,8 @@ def test_all_privileges_grant_tops_out_at_object_privileges(svc):
 
 async def test_broad_grant_does_not_let_low_role_pass_role_gate(svc):
     # Author holds ALL_PRIVILEGES on the object (object layer grants MODIFY)...
-    fake: _FakeOltp = svc._sql  # type: ignore[assignment]
-    fake.add_grant("registry_rule", "r1", "u1", "ALL_PRIVILEGES")
-    assert svc.has_privilege(
+    svc.fake.add_grant("registry_rule", "r1", "u1", "ALL_PRIVILEGES")
+    assert svc.service.has_privilege(
         "registry_rule",
         "r1",
         Privilege.MODIFY,
@@ -158,9 +178,8 @@ async def test_broad_grant_does_not_let_low_role_pass_role_gate(svc):
 def test_grant_cannot_confer_manage_on_object(svc):
     # Even ALL_PRIVILEGES does not grant MANAGE (re-granting) — that stays with
     # owners / bypass roles, mirroring UC. A grant is not a role.
-    fake: _FakeOltp = svc._sql  # type: ignore[assignment]
-    fake.add_grant("registry_rule", "r1", "u1", "ALL_PRIVILEGES")
-    assert not svc.can_manage_grants(
+    svc.fake.add_grant("registry_rule", "r1", "u1", "ALL_PRIVILEGES")
+    assert not svc.service.can_manage_grants(
         "registry_rule",
         "r1",
         role=UserRole.RULE_AUTHOR,
@@ -179,7 +198,7 @@ def test_grant_cannot_confer_manage_on_object(svc):
 def test_governance_roles_bypass_object_grants(svc, role):
     # The intentional upper boundary of the ceiling: admin/approver may modify
     # even with no grant. This is preserved, not removed (item #43).
-    assert svc.has_privilege(
+    assert svc.service.has_privilege(
         "registry_rule",
         "r1",
         Privilege.MODIFY,
@@ -195,7 +214,7 @@ def test_non_governance_roles_do_not_bypass_object_grants(svc, role):
     # Without a grant and without ownership, a non-governance role is denied a
     # gated object privilege — the object layer bites for everyone below the
     # bypass line.
-    assert not svc.has_privilege(
+    assert not svc.service.has_privilege(
         "registry_rule",
         "r1",
         Privilege.MODIFY,
