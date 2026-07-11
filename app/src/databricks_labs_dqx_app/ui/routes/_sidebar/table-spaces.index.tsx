@@ -33,12 +33,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, Boxes, CheckCircle2, Loader2, Plus, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
+import { AlertCircle, Boxes, CheckCircle2, Loader2, Play, Plus, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
 import {
   useListDataProducts,
   useApproveDataProduct,
   useRejectDataProduct,
   useDeleteDataProduct,
+  useRunDataProduct,
   getListDataProductsQueryKey,
   getGetDataProductQueryKey,
   type DataProductOut,
@@ -196,6 +197,7 @@ function DataProductsPage() {
   const approveMutation = useApproveDataProduct();
   const rejectMutation = useRejectDataProduct();
   const deleteMutation = useDeleteDataProduct();
+  const runMutation = useRunDataProduct();
 
   const invalidateAfterChange = useCallback(
     (productId: string) => {
@@ -231,6 +233,33 @@ function DataProductsPage() {
       t("dataProducts.toastApproved"),
       t("dataProducts.toastApproveFailed"),
     );
+
+  // Run the approved snapshot (item 76). Gated to spaces with at least one
+  // runnable member (`runnable_count > 0`) below. Not routed through
+  // `runRowAction` because the run endpoint returns 200 even when every
+  // member failed to launch (empty `submitted`, run set rolled back) — that
+  // must surface as a failure, mirroring the detail header's `handleRun`.
+  // `pendingId` swaps the row's action cell to a spinner while in flight; a
+  // cross-session "already running" gate would need the per-row run-activity
+  // feed the far-left running cog needs, deferred with it (see report).
+  const handleRun = (product: DataProductOut) => {
+    if (pendingId) return;
+    setPendingId(product.product_id);
+    runMutation
+      .mutateAsync({ productId: product.product_id, data: { source: "approved" } })
+      .then((resp) => {
+        if ((resp.data.submitted?.length ?? 0) === 0) {
+          toast.error(t("dataProducts.toastRunNoneStarted"), { duration: 6000 });
+          return;
+        }
+        toast.success(t("dataProducts.toastRunStarted"));
+        invalidateAfterChange(product.product_id);
+      })
+      .catch((err: unknown) => {
+        toast.error(extractApiError(err, t("dataProducts.toastRunFailed")), { duration: 6000 });
+      })
+      .finally(() => setPendingId(null));
+  };
 
   // Reject is destructive (sends the space back to draft) so it is gated
   // behind a confirm dialog, mirroring the detail header's reject button —
@@ -286,10 +315,27 @@ function DataProductsPage() {
           pendingProductId={pendingId}
           renderActions={
             // Actions column stays visible for anyone who can approve OR
-            // create/delete — mirrors Monitored Tables overview's gating.
-            perms.canApproveRules || perms.canCreateRules
+            // create/delete OR run — mirrors Monitored Tables overview's
+            // gating, now including the runner-only case (item 76).
+            perms.canApproveRules || perms.canCreateRules || perms.canRunRules
               ? (product) => (
                   <div className="flex items-center justify-end gap-1">
+                    {perms.canRunRules && (product.runnable_count ?? 0) > 0 && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            aria-label={t("dataProducts.runAction")}
+                            onClick={() => handleRun(product)}
+                          >
+                            <Play className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("dataProducts.runAction")}</TooltipContent>
+                      </Tooltip>
+                    )}
                     {product.status === "pending_approval" && perms.canApproveRules && (
                       <>
                         <Tooltip>

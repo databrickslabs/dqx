@@ -34,12 +34,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, CheckCircle2, Loader2, Plus, RotateCcw, Search, Table2, Trash2, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Play, Plus, RotateCcw, Search, Table2, Trash2, XCircle } from "lucide-react";
 import {
   useListMonitoredTables,
   useDeleteMonitoredTable,
   useApproveMonitoredTable,
   useRejectMonitoredTable,
+  useRunMonitoredTable,
   type MonitoredTableSummaryOut,
 } from "@/lib/api";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
@@ -235,6 +236,7 @@ function MonitoredTablesPage() {
   const deleteMutation = useDeleteMonitoredTable();
   const approveMutation = useApproveMonitoredTable();
   const rejectMutation = useRejectMonitoredTable();
+  const runMutation = useRunMonitoredTable();
   const [rejectTarget, setRejectTarget] = useState<MonitoredTableSummaryOut | null>(null);
 
   // Shared runner for the row-level approve/reject actions — mirrors the
@@ -262,6 +264,20 @@ function MonitoredTablesPage() {
       () => approveMutation.mutateAsync({ bindingId: summary.table.binding_id }),
       t("monitoredTables.toastApproved"),
       t("monitoredTables.toastApproveFailed"),
+    );
+
+  // Run the approved snapshot (item 76). Gated to tables that have an
+  // approved version (version > 0) below; `runRowAction` sets `pendingId`,
+  // which swaps this row's action cell to a spinner until the submit
+  // settles. A cross-session "already running" gate would need the same
+  // per-row run-activity feed the far-left running cog needs — deferred
+  // with it (see report), so the guard here is the in-flight pending state.
+  const handleRun = (summary: MonitoredTableSummaryOut) =>
+    runRowAction(
+      summary.table.binding_id,
+      () => runMutation.mutateAsync({ bindingId: summary.table.binding_id, data: { source: "approved" } }),
+      t("monitoredTables.toastRunStarted"),
+      t("monitoredTables.toastRunFailed"),
     );
 
   // Reject is destructive (moves the table out of the approval queue) so it
@@ -389,13 +405,30 @@ function MonitoredTablesPage() {
           }
           renderActions={
             // Actions column stays visible for anyone who can approve OR
-            // create/delete — an approver-only user still needs to see the
-            // approve/reject buttons even without create/delete rights, and
-            // vice versa. Mirrors RulesTable's per-status action gating
+            // create/delete OR run — an approver-only user still needs to
+            // see the approve/reject buttons even without create/delete
+            // rights, and a runner needs the Run button (item 76). Mirrors
+            // RulesTable's per-status action gating
             // (registry-rules.index.tsx#renderActionsCell).
-            perms.canApproveRules || perms.canCreateRules
+            perms.canApproveRules || perms.canCreateRules || perms.canRunRules
               ? (summary) => (
                   <div className="flex items-center justify-end gap-1">
+                    {perms.canRunRules && (summary.table.version ?? 0) > 0 && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            aria-label={t("monitoredTables.runAction")}
+                            onClick={() => handleRun(summary)}
+                          >
+                            <Play className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("monitoredTables.runAction")}</TooltipContent>
+                      </Tooltip>
+                    )}
                     {summary.table.status === "pending_approval" && perms.canApproveRules && (
                       <>
                         <Tooltip>
