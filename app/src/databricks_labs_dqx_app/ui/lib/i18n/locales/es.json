@@ -1081,7 +1081,6 @@
     "openInDatabricks": "Abrir ejecución en Databricks",
     "tableFilterChip": "Filtrado por {{table}}",
     "productFilterChip": "Filtrado por espacio de tablas",
-    "ruleFilterChip": "Filtrado por regla {{rule}}",
     "surfaceFilterClearAria": "Borrar filtro",
     "menuViewRuns": "Ver en el Historial de ejecuciones",
     "hasInvalid": "Tiene inválidas",

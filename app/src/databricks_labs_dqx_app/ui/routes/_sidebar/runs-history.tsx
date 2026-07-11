@@ -59,14 +59,12 @@ export const Route = createFileRoute("/_sidebar/runs-history")({
   //   ?runSetId=  — narrow to one run set's member runs (Data Products Runs tab)
   //   ?tableFqn=  — narrow to a single monitored table's runs (MT detail 3-dot)
   //   ?productId= — narrow to a table space's member tables (TS detail 3-dot)
-  //   ?ruleName=  — narrow to runs whose checks include a rule by name (RR detail 3-dot)
   validateSearch: (
     search: Record<string, unknown>,
-  ): { runSetId?: string; tableFqn?: string; productId?: string; ruleName?: string } => ({
+  ): { runSetId?: string; tableFqn?: string; productId?: string } => ({
     runSetId: typeof search.runSetId === "string" ? search.runSetId : undefined,
     tableFqn: typeof search.tableFqn === "string" ? search.tableFqn : undefined,
     productId: typeof search.productId === "string" ? search.productId : undefined,
-    ruleName: typeof search.ruleName === "string" ? search.ruleName : undefined,
   }),
   component: RunsHistoryPage,
 });
@@ -269,7 +267,7 @@ function RunsHistoryPage() {
 function RunHistoryContent() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { runSetId, tableFqn, productId, ruleName } = useSearch({ from: "/_sidebar/runs-history" });
+  const { runSetId, tableFqn, productId } = useSearch({ from: "/_sidebar/runs-history" });
   const { data: currentUser } = useCurrentUserSuspense(selector<UserType>());
   const currentUserEmail = currentUser?.user_name ?? "";
 
@@ -314,7 +312,6 @@ function RunHistoryContent() {
         runSetId: undefined,
         tableFqn: undefined,
         productId: undefined,
-        ruleName: undefined,
       }),
     });
 
@@ -323,7 +320,6 @@ function RunHistoryContent() {
   const [catalogFilter, setCatalogFilter] = useState("all");
   const [schemaFilter, setSchemaFilter] = useState("all");
   const [tableFilter, setTableFilter] = useState("all");
-  const [tableSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [kindFilter, setKindFilter] = useState("all");
   const [runByFilter, setRunByFilter] = useState("all");
@@ -469,15 +465,6 @@ function RunHistoryContent() {
         const { schema, table } = parseFqn(run.source_table_fqn);
         if (schemaFilter !== "all" && schema !== schemaFilter) return false;
         if (tableFilter !== "all" && table !== tableFilter) return false;
-        if (
-          tableSearch &&
-          !table.toLowerCase().includes(tableSearch.toLowerCase()) &&
-          !run.source_table_fqn.toLowerCase().includes(tableSearch.toLowerCase())
-        )
-          return false;
-      } else if (tableSearch) {
-        const name = run.source_table_fqn.slice(_SQL_CHECK_PREFIX.length);
-        if (!name.toLowerCase().includes(tableSearch.toLowerCase())) return false;
       }
       if (statusFilter !== "all" && run.status !== statusFilter) return false;
       if (kindFilter !== "all" && run.kind !== kindFilter) return false;
@@ -515,7 +502,6 @@ function RunHistoryContent() {
     catalogFilter,
     schemaFilter,
     tableFilter,
-    tableSearch,
     statusFilter,
     kindFilter,
     runByFilter,
@@ -523,18 +509,13 @@ function RunHistoryContent() {
     rSortDir,
   ]);
 
-  // Ruled-out RR rule-name filtering is best-effort: run rows don't persist a
-  // registry rule_id, so we match the rule's *name* against nothing on the row
-  // and simply surface the chip. (See stream report — no run↔registry-rule
-  // linkage in the data model; the chip documents the intended scope.)
-
   const availableSchemas = catalogFilter !== "all" ? schemasByCatalog[catalogFilter] || [] : [];
   const availableTables =
     catalogFilter !== "all" && schemaFilter !== "all"
       ? tablesByCatalogSchema[`${catalogFilter}.${schemaFilter}`] || []
       : [];
 
-  const surfaceFilterActive = !!runSetId || !!tableFqn || !!productId || !!ruleName;
+  const surfaceFilterActive = !!runSetId || !!tableFqn || !!productId;
   const hasActiveFilters =
     surfaceFilterActive ||
     catalogFilter !== "all" ||
@@ -563,7 +544,7 @@ function RunHistoryContent() {
   );
   useEffect(() => {
     setCurrentPage(1);
-  }, [catalogFilter, schemaFilter, tableFilter, statusFilter, kindFilter, runByFilter, rSortKey, rSortDir, runSetId, tableFqn, productId, ruleName]);
+  }, [catalogFilter, schemaFilter, tableFilter, statusFilter, kindFilter, runByFilter, rSortKey, rSortDir, runSetId, tableFqn, productId]);
 
   const surfaceChip = runSetId
     ? t("runsHistory.runSetFilterChip", { runSetId: runSetId.slice(0, 8) })
@@ -571,9 +552,7 @@ function RunHistoryContent() {
       ? t("runsHistory.tableFilterChip", { table: cleanFqn(tableFqn) })
       : productId
         ? t("runsHistory.productFilterChip")
-        : ruleName
-          ? t("runsHistory.ruleFilterChip", { rule: ruleName })
-          : null;
+        : null;
 
   return (
     <div className="space-y-6 h-full overflow-y-auto">

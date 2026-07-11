@@ -28,7 +28,6 @@ import {
   AlertCircle,
   Braces,
   CheckCircle2,
-  History,
   Loader2,
   MoreVertical,
   RotateCcw,
@@ -338,13 +337,6 @@ function RegistryRuleDetailPage() {
                   <DropdownMenuItem onClick={handleOpenJsonDialog} className="gap-2">
                     <Braces className="h-3.5 w-3.5" />
                     {t("rulesRegistry.actionViewJson")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => void navigate({ to: "/runs-history", search: { ruleName: name } })}
-                    className="gap-2"
-                  >
-                    <History className="h-3.5 w-3.5" />
-                    {t("runsHistory.menuViewRuns")}
                   </DropdownMenuItem>
                   {canDelete && (
                     <DropdownMenuItem
