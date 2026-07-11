@@ -314,6 +314,11 @@ class MonitoredTableService:
             tables = [(t, s) for t, s in tables if needle in t.table_fqn.lower()]
         applied_counts = self._applied_rule_counts([t.binding_id for t, _ in tables])
         check_counts = self._materialized_check_counts([t.table_fqn for t, _ in tables])
+        # Derive last_profiled_at from dq_profiling_results (the stored column is
+        # never written) so the overview "last profiled" column is real.
+        profiled_at = self._latest_profiled_at_map([t.table_fqn for t, _ in tables])
+        for t, _ in tables:
+            t.last_profiled_at = profiled_at.get(t.table_fqn)
         return [
             MonitoredTableSummary(
                 table=t,
@@ -370,11 +375,42 @@ class MonitoredTableService:
         rows = self._sql.query(sql)
         return {row[0]: int(row[1]) for row in rows if row and row[0] is not None and row[1] is not None}
 
+    def _latest_profiled_at_map(self, table_fqns: list[str]) -> dict[str, datetime]:
+        """Newest SUCCESS profiling timestamp per table, from ``dq_profiling_results``.
+
+        Derive-on-read for ``last_profiled_at``: the ``dq_monitored_tables``
+        column is never written (always NULL), so the real "last profiled"
+        value is the most recent successful profiler run for the table — the
+        same row :meth:`get_latest_profile` trusts. One grouped query covers
+        every listed table (no per-table round-trip); tables never profiled are
+        simply absent from the result. Self-healing — no backfill needed.
+        """
+        if not table_fqns:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(f)}'" for f in table_fqns)
+        last_profiled_at = self._profiling_sql.ts_text("MAX(created_at)")
+        sql = (
+            f"SELECT source_table_fqn, {last_profiled_at} AS last_profiled_at "  # noqa: S608
+            f"FROM {self._profiling_table} "
+            f"WHERE source_table_fqn IN ({in_list}) AND status = 'SUCCESS' "
+            f"GROUP BY source_table_fqn"
+        )
+        rows = self._profiling_sql.query(sql)
+        result: dict[str, datetime] = {}
+        for row in rows:
+            ts = self._parse_timestamp(row[1])
+            if row[0] and ts is not None:
+                result[row[0]] = ts
+        return result
+
     def get(self, binding_id: str) -> MonitoredTableDetail | None:
         """Get a monitored table binding plus its applied rules (with joined rule tags)."""
         table = self._get(binding_id)
         if table is None:
             return None
+        # Derive last_profiled_at from dq_profiling_results (the stored column is
+        # never written) so the About tab shows a real "last profiled".
+        table.last_profiled_at = self._latest_profiled_at_map([table.table_fqn]).get(table.table_fqn)
         applied_rules = self._list_applied_rules(binding_id)
         return MonitoredTableDetail(table=table, applied_rules=applied_rules)
 

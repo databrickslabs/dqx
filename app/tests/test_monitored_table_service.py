@@ -373,6 +373,68 @@ class TestGet:
         assert summary.rule_severity is None
 
 
+class TestLastProfiledDerivedOnRead:
+    """`last_profiled_at` is derived on read from ``dq_profiling_results`` (item
+    53): the ``dq_monitored_tables`` column is never written, so the value must
+    come from the latest successful profiler run, not the stored (null) column.
+    """
+
+    def test_get_derives_last_profiled_at_from_profiling_results(self, svc, sql, profiling_sql):
+        sql.query.side_effect = [
+            [_table_row(binding_id="b1", table_fqn="cat.schema.tbl", last_profiled_at=None)],
+            [],  # no applied rules
+        ]
+        profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+        profiling_sql.query.return_value = [["cat.schema.tbl", "2026-07-10 12:00:00"]]
+
+        detail = svc.get("b1")
+
+        assert detail is not None
+        assert detail.table.last_profiled_at is not None
+        assert detail.table.last_profiled_at.year == 2026
+        # The derive query hits dq_profiling_results, filtered to SUCCESS runs.
+        profiling_sql.query.assert_called_once()
+        derive_sql = profiling_sql.query.call_args[0][0]
+        assert "dq_profiling_results" in derive_sql
+        assert "status = 'SUCCESS'" in derive_sql
+        assert "GROUP BY source_table_fqn" in derive_sql
+
+    def test_get_last_profiled_at_none_when_never_profiled(self, svc, sql, profiling_sql):
+        # Even a (stale) non-null stored column is overridden by the derived
+        # value, so an unprofiled table reads None rather than a bogus date.
+        sql.query.side_effect = [
+            [_table_row(binding_id="b1", last_profiled_at="2020-01-01 00:00:00")],
+            [],
+        ]
+        profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+        profiling_sql.query.return_value = []  # no successful profile
+
+        detail = svc.get("b1")
+
+        assert detail is not None
+        assert detail.table.last_profiled_at is None
+
+    def test_list_derives_last_profiled_at_per_table(self, svc, sql, profiling_sql):
+        sql.query.side_effect = [
+            [
+                _table_row(binding_id="b1", table_fqn="cat.s.t1"),
+                _table_row(binding_id="b2", table_fqn="cat.s.t2"),
+            ],
+            [],  # applied-rule counts
+            [],  # materialized-check counts
+        ]
+        profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+        profiling_sql.query.return_value = [["cat.s.t1", "2026-07-09 08:00:00"]]
+
+        summaries = svc.list_monitored_tables()
+
+        by_id = {s.table.binding_id: s for s in summaries}
+        assert by_id["b1"].table.last_profiled_at is not None
+        assert by_id["b1"].table.last_profiled_at.year == 2026
+        # t2 has no successful profile -> None.
+        assert by_id["b2"].table.last_profiled_at is None
+
+
 class TestGetBindingIdsByTableFqn:
     """Batched ``table_fqn -> binding_id`` lookup for the by_table axis."""
 
