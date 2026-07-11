@@ -910,6 +910,15 @@ function RunTableAction({
   // Draft wins as primary whenever both a draft and an approved version exist.
   const draftIsPrimary = canRunDraft;
 
+  // The split-button arrow only offers the demoted run action plus any past
+  // approved versions; disable it when NONE of those is actionable (item 34),
+  // not merely while a run is pending. The demoted action is Run now (approved)
+  // when Run draft is primary, else Run draft.
+  const demotedActionable = draftIsPrimary
+    ? hasApproved && !noRulesRunNow
+    : canRunDraft && !noRulesRunDraft;
+  const menuHasActionable = versions.length > 0 || demotedActionable;
+
   const approvedDisabled = !hasApproved || noRulesRunNow || busy;
   const approvedTooltip = runInProgress
     ? t("monitoredTables.runInProgressHint")
@@ -1017,7 +1026,7 @@ function RunTableAction({
           <DropdownMenuTrigger asChild>
             <Button
               className="rounded-l-none border-l border-primary-foreground/20 px-2"
-              disabled={busy}
+              disabled={busy || !menuHasActionable}
               aria-label={t("monitoredTables.runMenuAria")}
             >
               <ChevronDown className="h-4 w-4" />
