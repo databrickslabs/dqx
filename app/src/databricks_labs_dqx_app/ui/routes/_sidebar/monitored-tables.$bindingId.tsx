@@ -529,22 +529,31 @@ function MonitoredTableDetailPage() {
                 {...computeRunGating(baseline.length, stagedRows.length)}
               />
             )}
-            {/* ⋮ menu — Delete (confirm) only. Schedule moved back to its
-                own tab (P25 item 1 reverted P23 item 13), so the menu is
-                editor-only and hidden for viewers. */}
-            {perms.canCreateRules && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0"
-                    aria-label={t("monitoredTables.actionsMenuLabel")}
-                  >
-                    <MoreVertical className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+            {/* ⋮ menu — "View in Runs History" (all roles) + Delete (editors
+                only). Schedule moved back to its own tab (P25 item 1 reverted
+                P23 item 13). */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  aria-label={t("monitoredTables.actionsMenuLabel")}
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() =>
+                    void navigate({ to: "/runs-history", search: { tableFqn: table.table_fqn } })
+                  }
+                  className="gap-2"
+                >
+                  <History className="h-3.5 w-3.5" />
+                  {t("runsHistory.menuViewRuns")}
+                </DropdownMenuItem>
+                {perms.canCreateRules && (
                   <DropdownMenuItem
                     onClick={() => setDeleteConfirmOpen(true)}
                     variant="destructive"
@@ -553,9 +562,9 @@ function MonitoredTableDetailPage() {
                     <Trash2 className="h-3.5 w-3.5" />
                     {t("monitoredTables.actionDelete")}
                   </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 

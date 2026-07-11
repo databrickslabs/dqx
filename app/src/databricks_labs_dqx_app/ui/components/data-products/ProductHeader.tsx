@@ -361,6 +361,12 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
       search: (prev) => ({ ...prev, tab: "runs" }),
     });
 
+  // Deep-link into the global Runs History, pre-filtered to this table
+  // space's member tables (Stream I #17). Distinct from `goToRuns`, which
+  // opens the in-page Runs tab.
+  const goToRunsHistory = () =>
+    void navigate({ to: "/runs-history", search: { productId: product.product_id } });
+
   const handleRun = async (source: (typeof RunDataProductInSource)[keyof typeof RunDataProductInSource]) => {
     setBusyRun(true);
     try {
@@ -564,6 +570,10 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
               <DropdownMenuItem onSelect={goToRuns} className="gap-2">
                 <History className="h-3.5 w-3.5" />
                 {t("dataProducts.tabRuns")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={goToRunsHistory} className="gap-2">
+                <History className="h-3.5 w-3.5" />
+                {t("runsHistory.menuViewRuns")}
               </DropdownMenuItem>
               {canEdit && <DropdownMenuSeparator />}
               {canEdit && (
