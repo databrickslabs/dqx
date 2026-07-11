@@ -1007,6 +1007,6 @@ def get_table_results(
             binding_id = monitored_tables.get_binding_ids_by_table_fqn([table_fqn]).get(table_fqn)
             if binding_id:
                 annotate_trend_versions(result.trend, monitored_tables.get_version_freezes(binding_id))
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning(f"Skipping trend version markers for {table_fqn}: lookup failed", exc_info=True)
     return result
