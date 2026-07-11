@@ -14,6 +14,7 @@ import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { GenieChatProvider } from "@/components/results/AskGenieButton";
 import { RunPicker, type Run } from "@/components/results/RunPicker";
 import { RunInProgressBanner } from "@/components/results/RunInProgressBanner";
+import { RunReviewStatusBadge } from "@/components/results/RunReviewStatusBadge";
 import { includeDraftsParam } from "@/components/results/RunModeSelect";
 import { useProductRunSets } from "@/hooks/use-product-run-sets";
 import {
@@ -177,7 +178,12 @@ function ResultsBody({ productId }: { productId: string }) {
           // resolves to the latest path anyway, so onChange is a no-op (see the
           // run-picker adaptation note in the module comment).
           runPickerSlot={
-            <RunPicker runs={productRunPickerRuns(runs)} value={null} onChange={() => {}} />
+            <>
+              <RunPicker runs={productRunPickerRuns(runs)} value={null} onChange={() => {}} />
+              {/* Read-only review status of the latest (pinned) run (#18) —
+                  display only; editing lives on the Runs History page. */}
+              <RunReviewStatusBadge runId={runs[0]?.run_id} />
+            </>
           }
         />
       </div>

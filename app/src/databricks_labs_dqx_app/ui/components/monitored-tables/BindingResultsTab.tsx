@@ -26,6 +26,7 @@ import { GenieChatProvider } from "@/components/results/AskGenieButton";
 import { ScoreBox } from "@/components/results/ScoreBox";
 import { RunPicker } from "@/components/results/RunPicker";
 import { RunModeSelect, includeDraftsParam } from "@/components/results/RunModeSelect";
+import { RunReviewStatusBadge } from "@/components/results/RunReviewStatusBadge";
 import { RunInProgressBanner } from "@/components/results/RunInProgressBanner";
 import { CollapsibleSection } from "@/components/results/CollapsibleSection";
 import { CollapseRegion } from "@/components/results/CollapseRegion";
@@ -676,6 +677,9 @@ function ResultsBody({
             value={filters.runId ?? null}
             onChange={(id) => setFilters((f) => ({ ...f, runId: id }))}
           />
+          {/* Read-only review status of the selected run (#18) — display only;
+              editing lives on the Runs History page. */}
+          <RunReviewStatusBadge runId={effectiveRunId} />
         </div>
         <div className="sm:pr-2">
           <ScoreBox
