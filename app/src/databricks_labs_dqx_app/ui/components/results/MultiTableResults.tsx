@@ -185,14 +185,46 @@ export function computeOverallPoints(
  * consistent. DELIBERATE dqlake deviation — the original hardcodes
  * totalTests={0}, which suppresses the subtitle on the product ScoreBox
  * entirely (its ScoreBox only renders the subtitle when totalTests > 0).
+ *
+ * *tableFacet* (P7.2): the server self-excludes the table facet from the
+ * by_table rows (so the box keeps its full row set), which would leave this
+ * subtitle spanning every table while the headline trend is filtered to the
+ * selected one — so the facet is re-applied here, client-side, on the rows'
+ * FQN labels. Empty facet = all rows, as before.
  */
-export function sumTestCounts(byTable: EntityResultsOut["by_table"]): {
+export function sumTestCounts(
+  byTable: EntityResultsOut["by_table"],
+  tableFacet: string[] = [],
+): {
   failedTests: number;
   totalTests: number;
 } {
+  const rows = (byTable ?? []).filter(
+    (g) => tableFacet.length === 0 || (g.label != null && tableFacet.includes(g.label)),
+  );
   return {
-    failedTests: (byTable ?? []).reduce((a, g) => a + (g.failed_tests ?? 0), 0),
-    totalTests: (byTable ?? []).reduce((a, g) => a + (g.total_tests ?? 0), 0),
+    failedTests: rows.reduce((a, g) => a + (g.failed_tests ?? 0), 0),
+    totalTests: rows.reduce((a, g) => a + (g.total_tests ?? 0), 0),
+  };
+}
+
+/**
+ * Next (sample selection, table facet) pair for a By table row click (P7.2):
+ * clicking a row pins BOTH the invalid-samples selection and the table facet
+ * to that table; clicking the selected row again clears both. Single-select
+ * semantics — the facet mirrors the selection (switching rows REPLACES the
+ * facet value, it never accumulates), and a label that no longer resolves to
+ * an FQN clears the facet rather than filtering on a stale value.
+ */
+export function nextTableSelection(
+  current: string | null,
+  label: string,
+  fqn: string | undefined,
+): { selected: string | null; table: string[] } {
+  const clearing = current === label;
+  return {
+    selected: clearing ? null : label,
+    table: clearing || !fqn ? [] : [fqn],
   };
 }
 
@@ -202,6 +234,7 @@ const CHIP_LABEL_KEYS: Record<Facet, string> = {
   severity: "resultsUi.chipSeverity",
   rule: "resultsUi.chipRule",
   column: "resultsUi.chipColumn",
+  table: "resultsUi.chipTable",
 };
 
 export interface MultiTableResultsSectionProps {
@@ -253,12 +286,16 @@ export function MultiTableResultsSection({
 }: MultiTableResultsSectionProps) {
   const { t } = useTranslation();
   // The active single-table selection (E2). Clicking a By Table row sets it;
-  // clicking again clears it. This stays SEPARATE from the facet filters — By
-  // table is not a facet, it drives the invalid-samples view.
+  // clicking again clears it. It drives the invalid-samples view AND (P7.2)
+  // mirrors into the `table` facet, so the click cross-filters the other
+  // drilldown boxes too — see nextTableSelection. The selection stays
+  // friendly-name-keyed; the facet carries the FQN.
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
-  // Multi-select facet filters (dimension/severity/rule/column). Clicking a
-  // breakdown row toggles the matching facet, which re-scopes every breakdown
-  // and trend (mirrors the monitored-table tab).
+  // Multi-select facet filters (dimension/severity/rule/column) plus the
+  // single-select table facet. Clicking a breakdown row toggles the matching
+  // facet, which re-scopes every breakdown and trend (mirrors the
+  // monitored-table tab). The By table box itself is exempt from the table
+  // facet — the server self-excludes it so the rows never vanish.
   const [filters, setFilters] = useState<MultiFilters>(EMPTY_FILTERS);
   // No selected-run state: per-table run_ids cannot scope a multi-table view
   // (see breakdownParams), so no run_id ever reaches the queries below.
@@ -323,7 +360,8 @@ export function MultiTableResultsSection({
     filters.dimension.length > 0 ||
     filters.severity.length > 0 ||
     filters.rule.length > 0 ||
-    filters.column.length > 0;
+    filters.column.length > 0 ||
+    filters.table.length > 0;
 
   const accessibleTableCount = (baseResults?.by_table ?? []).length;
   // By table shows the FRIENDLY table name (last FQN segment), so the selection
@@ -466,18 +504,26 @@ export function MultiTableResultsSection({
   // Rule chips may carry a registry rule_id as their value — show the
   // matching by_rule row's (newest-run) label instead of the opaque id.
   const ruleChipRows = [...(baseResults?.by_rule ?? []), ...(results?.by_rule ?? [])];
-  const chips = (["dimension", "severity", "rule", "column"] as const).flatMap(
+  // Chip display values: rule ids resolve to their newest-run label; the
+  // table facet carries FQNs but chips show the friendly table name.
+  const chipDisplay = (facet: Facet, value: string) => {
+    if (facet === "rule") return ruleChipDisplay(value, ruleChipRows);
+    if (facet === "table") return friendlyTableName(value);
+    return value;
+  };
+  const chips = (["dimension", "severity", "rule", "column", "table"] as const).flatMap(
     (facet) =>
       filters[facet].map((value) => ({
         key: `${facet}:${value}`,
-        label: t(CHIP_LABEL_KEYS[facet], {
-          value: facet === "rule" ? ruleChipDisplay(value, ruleChipRows) : value,
-        }),
+        label: t(CHIP_LABEL_KEYS[facet], { value: chipDisplay(facet, value) }),
       })),
   );
 
   const onRemoveChip = (key: string) => {
     const [facet, value] = key.split(/:(.+)/) as [Facet, string];
+    // The table facet mirrors the invalid-samples selection — removing its
+    // chip clears both, exactly like re-clicking the selected By table row.
+    if (facet === "table") setSelectedTable(null);
     setFilters((f) => toggleFacet(f, facet, value));
   };
 
@@ -498,7 +544,10 @@ export function MultiTableResultsSection({
   // deviation (the original's totalTests={0} hid the subtitle).
   const lastTrend = (trends?.trend ?? []).at(-1);
   const passRate = toNum(lastTrend?.pass_rate);
-  const { failedTests, totalTests } = sumTestCounts(results?.by_table);
+  // The table facet is re-applied client-side here: the server self-excludes
+  // it from by_table (the box keeps its rows), but the subtitle must match
+  // the (table-filtered) headline trend — see sumTestCounts.
+  const { failedTests, totalTests } = sumTestCounts(results?.by_table, filters.table);
 
   // Over-time chart: a prominent foreground "Average" trendline drawn on top
   // of dull, thin per-table lines. The Average is the SERVER's as-of
@@ -525,8 +574,14 @@ export function MultiTableResultsSection({
     { key: "failed_records", label: "Rows" },
   ]);
 
-  const onTableSelect = (label: string) =>
-    setSelectedTable((cur) => (cur === label ? null : label));
+  // A By table row click toggles BOTH the invalid-samples selection and the
+  // table facet (P7.2) — one gesture, one mental model. Single-select: see
+  // nextTableSelection.
+  const onTableSelect = (label: string) => {
+    const next = nextTableSelection(selectedTable, label, fqnByFriendly.get(label));
+    setSelectedTable(next.selected);
+    setFilters((f) => ({ ...f, table: next.table }));
+  };
 
   const ChartFrame = ({ children }: { children: React.ReactNode }) =>
     loading ? (
@@ -632,8 +687,10 @@ export function MultiTableResultsSection({
           {/* Row 1: By dimension + By severity. Row 2: By rule full width.
               Row 3: By table + By column share a row (E1). Clicking a
               dimension/severity/rule/column row toggles that facet, re-scoping
-              every breakdown. By table is NOT a facet — it drives the
-              invalid-samples view. */}
+              every breakdown. Clicking a By table row (P7.2) toggles the
+              invalid-samples selection AND the table facet together — the
+              other boxes cross-filter to that table while the By table box
+              itself keeps its rows (the server self-excludes the facet). */}
           <div className="grid gap-6 md:grid-cols-2">
             <DimensionBreakdown
               title={t("resultsUi.byDimensionTitle")}

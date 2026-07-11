@@ -51,7 +51,11 @@ import { toCountSeries } from "@/components/results/countSeries";
 // the detail page polls ONLY a run set it just triggered (see the
 // `runInProgress` prop) — never an idle poll.
 
-export type Facet = "dimension" | "severity" | "rule" | "column";
+/** The drilldown facets. `table` (P7.2) exists only on the multi-table
+ *  surfaces (product/global/rule — see MultiTableResults); this single-table
+ *  tab never toggles it (a table facet is meaningless on a one-table scope),
+ *  so its `filters.table` stays empty and the param is never sent. */
+export type Facet = "dimension" | "severity" | "rule" | "column" | "table";
 
 /** Help text shown behind the "?" icon on the two count charts. The rule /
  *  check / test terms are bold so the distinction reads at a glance. */
@@ -73,6 +77,8 @@ export type MultiFilters = {
   severity: string[];
   rule: string[];
   column: string[];
+  /** Table FQNs (P7.2) — the multi-table surfaces' By-table cross-filter. */
+  table: string[];
   runId?: string | null;
 };
 
@@ -81,6 +87,7 @@ export const EMPTY_FILTERS: MultiFilters = {
   severity: [],
   rule: [],
   column: [],
+  table: [],
 };
 
 /** Toggle a value in a facet's multi-select set: add if absent, remove if
@@ -113,12 +120,16 @@ export function facetQueryParams(filters: MultiFilters): {
   severity?: string[];
   rule?: string[];
   column?: string[];
+  table?: string[];
 } {
   return {
     dimension: orUndef(filters.dimension),
     severity: orUndef(filters.severity),
     rule: orUndef(filters.rule),
     column: orUndef(filters.column),
+    // Only ever populated on the multi-table surfaces; the single-table
+    // endpoints don't accept it and this tab never sets it.
+    table: orUndef(filters.table),
   };
 }
 
@@ -312,12 +323,15 @@ function FacetSearch({
   );
 }
 
-/** Facet → chip-label i18n key (static keys so the extractor sees them). */
+/** Facet → chip-label i18n key (static keys so the extractor sees them).
+ *  `table` never chips on this tab (the facet is multi-table-surface-only)
+ *  but the Record must cover the union. */
 const CHIP_LABEL_KEYS: Record<Facet, string> = {
   dimension: "resultsUi.chipDimension",
   severity: "resultsUi.chipSeverity",
   rule: "resultsUi.chipRule",
   column: "resultsUi.chipColumn",
+  table: "resultsUi.chipTable",
 };
 
 function ResultsBody({

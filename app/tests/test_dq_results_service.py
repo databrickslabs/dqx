@@ -450,6 +450,80 @@ class TestFacets:
         assert out.by_rule == []
 
 
+class TestTableFacet:
+    """P7.2: the table facet (clicking a By table row cross-filters the
+    OTHER drilldown boxes to that table) — same OR-within / AND-across
+    semantics as the other four facets, except the by_table box itself
+    SELF-EXCLUDES it (its rows must not vanish when one is clicked)."""
+
+    OTHER = "main.sales.customers"
+
+    def _rows(self):
+        return [
+            make_row(
+                "c1", failed=10, total=100, severity="High", dimension="Completeness", columns=("id",), rule_id="rule-1"
+            ),
+            make_row(
+                "c2",
+                failed=20,
+                total=100,
+                fqn=self.OTHER,
+                severity="Low",
+                dimension="Validity",
+                columns=("amount",),
+                rule_id="rule-2",
+            ),
+        ]
+
+    def test_table_facet_restricts_breakdowns_and_trend(self):
+        out = compute_entity_results(self._rows(), ResultFacets(tables=(FQN,)), table_axis="by_table")
+        assert [g.label for g in out.by_rule] == ["c1"]
+        assert [g.label for g in out.by_dimension] == ["Completeness"]
+        assert out.trend[0].pass_rate == pytest.approx(0.9)  # only c1's table counted
+
+    def test_or_within_the_table_facet(self):
+        out = compute_entity_results(self._rows(), ResultFacets(tables=(FQN, self.OTHER)), table_axis="by_table")
+        assert {g.label for g in out.by_rule} == {"c1", "c2"}
+
+    def test_and_across_with_the_other_facets(self):
+        out = compute_entity_results(
+            self._rows(), ResultFacets(tables=(FQN,), dimensions=("Validity",)), table_axis="by_table"
+        )
+        assert out.by_rule == []
+
+    def test_by_table_box_self_excludes_the_table_facet(self):
+        # Clicking a By table row must not make the OTHER table rows vanish
+        # from the By table box itself — the box stays unfiltered by its own
+        # facet (the selection highlight needs the full row set).
+        out = compute_entity_results(self._rows(), ResultFacets(tables=(FQN,)), table_axis="by_table")
+        assert {g.label for g in out.by_table} == {FQN, self.OTHER}
+
+    def test_by_table_self_exclusion_still_honours_the_other_facets(self):
+        # The self-exclusion drops ONLY the table facet: an active dimension
+        # chip still cross-filters the By table box as before.
+        out = compute_entity_results(
+            self._rows(), ResultFacets(tables=(FQN,), dimensions=("Validity",)), table_axis="by_table"
+        )
+        assert [g.label for g in out.by_table] == [self.OTHER]
+
+    def test_trend_by_table_is_scoped_by_the_table_facet(self):
+        # The per-table trend lines are a chart, not the By table box — they
+        # cross-filter like every other trend series.
+        out = compute_entity_results(self._rows(), ResultFacets(tables=(FQN,)), table_axis="by_table")
+        assert {p.series for p in out.trend_by_table} == {FQN}
+
+    def test_table_facet_scopes_the_carried_forward_series(self):
+        rows = self._rows()
+        out = compute_entity_results(
+            rows, ResultFacets(tables=(self.OTHER,)), table_axis="by_table", asof_rows=expand_asof(rows)
+        )
+        assert out.trend[0].pass_rate == pytest.approx(0.8)  # only c2's table carried
+
+    def test_table_facet_counts_as_active(self):
+        assert ResultFacets(tables=(FQN,)).any_active()
+        assert not ResultFacets().any_active()
+
+
 class TestTrends:
     def _multi_run(self):
         return [

@@ -852,6 +852,113 @@ class TestRuleResults:
 
 
 # ---------------------------------------------------------------------------
+# Table facet (P7.2) — By-table cross-filtering on the multi-table scopes
+# ---------------------------------------------------------------------------
+
+
+class TestTableFacetParam:
+    """The repeatable ``table`` query param: validated per value (400),
+    scope-constrained on product/rule (silent drop, never 403), applied
+    like the other four facets — except the by_table box self-excludes it
+    (its rows must not vanish; pinned in the service tests too)."""
+
+    TWO_TABLE_ROWS = [
+        check_row("c1", errors=10, total=100, fqn="main.sales.orders", dimension="Completeness"),
+        check_row("c2", errors=30, total=100, fqn="dev.sales.items", dimension="Validity"),
+    ]
+
+    def test_global_table_facet_restricts_breakdowns_but_not_by_table(self, client, sql_mock):
+        sql_dispatch(sql_mock, check_rows=list(self.TWO_TABLE_ROWS))
+        body = client.get("/api/v1/dq-results/global", params={"table": ["main.sales.orders"]}).json()
+        assert [g["label"] for g in body["by_rule"]] == ["c1"]
+        assert [g["label"] for g in body["by_dimension"]] == ["Completeness"]
+        assert body["trend"][0]["pass_rate"] == pytest.approx(0.9)
+        # The By table box self-excludes its own facet: both tables stay.
+        assert {g["label"] for g in body["by_table"]} == {"main.sales.orders", "dev.sales.items"}
+
+    def test_global_invalid_table_facet_fqn_returns_400(self, client, sql_mock):
+        resp = client.get("/api/v1/dq-results/global", params={"table": ["main.sales.evil\\"]})
+        assert resp.status_code == 400
+        sql_mock.query_dicts.assert_not_called()
+
+    def test_global_or_within_the_table_facet(self, client, sql_mock):
+        sql_dispatch(sql_mock, check_rows=list(self.TWO_TABLE_ROWS))
+        body = client.get(
+            "/api/v1/dq-results/global", params={"table": ["main.sales.orders", "dev.sales.items"]}
+        ).json()
+        assert {g["label"] for g in body["by_rule"]} == {"c1", "c2"}
+
+    def test_product_member_table_facet_applies(self, client, sql_mock, data_products_mock):
+        data_products_mock.get.return_value = product_detail(
+            "p1", [("b1", "main.sales.orders"), ("b2", "dev.sales.items")]
+        )
+        sql_dispatch(sql_mock, check_rows=list(self.TWO_TABLE_ROWS))
+        body = client.get("/api/v1/dq-results/product/p1", params={"table": ["dev.sales.items"]}).json()
+        assert [g["label"] for g in body["by_rule"]] == ["c2"]
+        assert {g["label"] for g in body["by_table"]} == {"main.sales.orders", "dev.sales.items"}
+
+    def test_product_non_member_values_are_silently_dropped_not_403(self, client, sql_mock, data_products_mock):
+        # A facet value outside the product's member set is DROPPED (the
+        # results stay member-scoped and unfiltered) — never a 403, and
+        # never a facet that silently blanks every box.
+        data_products_mock.get.return_value = product_detail("p1", [("b1", "main.sales.orders")])
+        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=10, total=100, fqn="main.sales.orders")])
+        resp = client.get("/api/v1/dq-results/product/p1", params={"table": ["main.other.table"]})
+        assert resp.status_code == 200
+        assert [g["label"] for g in resp.json()["by_rule"]] == ["c1"]
+
+    def test_product_invalid_table_facet_fqn_returns_400(self, client, sql_mock, data_products_mock):
+        data_products_mock.get.return_value = product_detail("p1", [("b1", "main.sales.orders")])
+        resp = client.get("/api/v1/dq-results/product/p1", params={"table": ["not-an-fqn"]})
+        assert resp.status_code == 400
+        sql_mock.query_dicts.assert_not_called()
+
+    def test_rule_table_facet_constrained_to_the_scoped_tables(
+        self, client, sql_mock, apply_rules_mock, monitored_tables_mock
+    ):
+        apply_rules_mock.list_bindings_for_rule.return_value = [
+            AppliedRule(id="ar1", binding_id="b1", rule_id="rule-1"),
+            AppliedRule(id="ar2", binding_id="b2", rule_id="rule-1"),
+        ]
+        details = {
+            "b1": binding_detail("b1", "main.sales.orders"),
+            "b2": binding_detail("b2", "dev.sales.items"),
+        }
+        monitored_tables_mock.get.side_effect = details.get
+        sql_dispatch(
+            sql_mock,
+            check_rows=[
+                check_row("c1", errors=10, total=100, fqn="main.sales.orders", rule_id="rule-1"),
+                check_row("c1", errors=30, total=100, fqn="dev.sales.items", rule_id="rule-1"),
+            ],
+        )
+        body = client.get(
+            "/api/v1/dq-results/rule/rule-1", params={"table": ["dev.sales.items"]}
+        ).json()
+        assert body["trend"][0]["pass_rate"] == pytest.approx(0.7)
+        # by_table self-excludes the facet: both scoped tables stay visible.
+        assert {g["label"] for g in body["by_table"]} == {"main.sales.orders", "dev.sales.items"}
+        # An out-of-scope value is silently dropped — unfiltered, not empty.
+        body = client.get(
+            "/api/v1/dq-results/rule/rule-1", params={"table": ["main.other.table"]}
+        ).json()
+        assert body["trend"][0]["pass_rate"] == pytest.approx(1 - 40 / 200)
+
+    def test_rule_invalid_table_facet_fqn_returns_400(self, client, sql_mock, apply_rules_mock):
+        resp = client.get("/api/v1/dq-results/rule/rule-1", params={"table": ["bad fqn"]})
+        assert resp.status_code == 400
+        sql_mock.query_dicts.assert_not_called()
+
+    def test_single_table_endpoint_has_no_table_facet(self, client, sql_mock):
+        # The monitored-table surface never cross-filters by table (a
+        # single-table scope makes it meaningless) — the param is ignored
+        # by FastAPI (unknown query params are dropped, results unchanged).
+        sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=10, total=100)])
+        body = client.get(f"/api/v1/dq-results/table/{FQN}", params={"table": ["dev.sales.items"]}).json()
+        assert [g["label"] for g in body["by_rule"]] == ["c1"]
+
+
+# ---------------------------------------------------------------------------
 # Hyphenated app catalog — quoted read FQNs through every query builder
 # ---------------------------------------------------------------------------
 

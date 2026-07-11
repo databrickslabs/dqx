@@ -2344,6 +2344,7 @@
     "chipSeverity": "Severity: {{value}}",
     "chipRule": "Rule: {{value}}",
     "chipColumn": "Column: {{value}}",
+    "chipTable": "Table: {{value}}",
     "averageScoreLabel": "Average score",
     "averageDqScoreTitle": "Average DQ Score",
     "byTableTitle": "By table",

@@ -2344,6 +2344,7 @@
     "chipSeverity": "Severidad: {{value}}",
     "chipRule": "Regla: {{value}}",
     "chipColumn": "Columna: {{value}}",
+    "chipTable": "Tabla: {{value}}",
     "averageScoreLabel": "Puntuación media",
     "averageDqScoreTitle": "Puntuación media de CD",
     "byTableTitle": "Por tabla",

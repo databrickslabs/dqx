@@ -3922,6 +3922,7 @@ dimension?: string[] | null;
 severity?: string[] | null;
 rule?: string[] | null;
 column?: string[] | null;
+table?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
@@ -3932,6 +3933,7 @@ dimension?: string[] | null;
 severity?: string[] | null;
 rule?: string[] | null;
 column?: string[] | null;
+table?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
@@ -3946,6 +3948,7 @@ dimension?: string[] | null;
 severity?: string[] | null;
 rule?: string[] | null;
 column?: string[] | null;
+table?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
@@ -16861,7 +16864,10 @@ export const useRefreshDqScores = <TError = AxiosError<HTTPValidationError>,
 
 Tables in catalogs the caller cannot access are silently filtered
 (never 403) — the same gate as the dq-score global endpoint.
-Draft runs are excluded unless *include_drafts*.
+Draft runs are excluded unless *include_drafts*. *table* (P7.2) is
+the By-table cross-filter: a repeatable list of member FQNs, applied
+app-side like the other four facets (the rows it filters are already
+catalog-gated, so an inaccessible value simply matches nothing).
  * @summary Get Global Results
  */
 export const getGlobalResults = (
@@ -17019,6 +17025,8 @@ renamed since the run still attributes to the rule, and a run
 predating checks_json simply carries no provenance).
 
 Tables in inaccessible catalogs are silently filtered (never 403).
+*table* (P7.2) is the By-table cross-filter, constrained to the
+rule's scoped tables (out-of-scope values are silently dropped).
 ``failed_records`` is intentionally absent from *trend_failures*: the
 per-run failing-row count is table-wide and cannot be scoped to one
 rule's failures.
@@ -17346,7 +17354,9 @@ export function useGetProductResultsRunsSuspense<TData = Awaited<ReturnType<type
  * Results aggregated over the product's member tables (by_table filled).
 
 Members in inaccessible catalogs are silently filtered (never 403).
-Draft runs are excluded unless *include_drafts*.
+Draft runs are excluded unless *include_drafts*. *table* (P7.2) is
+the By-table cross-filter, constrained to the product's accessible
+member set (out-of-scope values are silently dropped).
  * @summary Get Product Results
  */
 export const getProductResults = (
@@ -17858,7 +17868,9 @@ export function useGetDqResultsRunsSuspense<TData = Awaited<ReturnType<typeof ge
 
 ``trend_failures`` honours the run filter but not the drilldown chips
 (dqlake parity: its table reader filters that series on binding/run
-only). Draft runs are excluded unless *include_drafts*.
+only). Draft runs are excluded unless *include_drafts*. No as-of
+expansion fetch here: a single table's per-run rows ARE its as-of
+degeneration (``compute_entity_results`` falls back to them).
  * @summary Get Table Results
  */
 export const getTableResults = (

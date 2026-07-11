@@ -28,13 +28,21 @@ describe("toggleFacet", () => {
       severity: [],
       rule: ["r1"],
       column: [],
+      table: ["main.sales.orders"],
       runId: "run-9",
     };
     const next = toggleFacet(filters, "column", "amount");
     expect(next.dimension).toEqual(["Validity"]);
     expect(next.rule).toEqual(["r1"]);
+    expect(next.table).toEqual(["main.sales.orders"]);
     expect(next.runId).toBe("run-9");
     expect(next.column).toEqual(["amount"]);
+  });
+
+  it("toggles the table facet like any other (P7.2)", () => {
+    const on = toggleFacet(EMPTY_FILTERS, "table", "main.sales.orders");
+    expect(on.table).toEqual(["main.sales.orders"]);
+    expect(toggleFacet(on, "table", "main.sales.orders").table).toEqual([]);
   });
 
   it("does not mutate its input (EMPTY_FILTERS stays empty)", () => {
@@ -121,6 +129,7 @@ describe("facetQueryParams (facet chips → query params, per box)", () => {
     severity: ["Critical", "High"],
     rule: [],
     column: ["amount"],
+    table: [],
     runId: "run-1",
   };
 
@@ -130,6 +139,7 @@ describe("facetQueryParams (facet chips → query params, per box)", () => {
       severity: ["Critical", "High"],
       rule: undefined,
       column: ["amount"],
+      table: undefined,
     });
   });
 
@@ -139,7 +149,14 @@ describe("facetQueryParams (facet chips → query params, per box)", () => {
       severity: undefined,
       rule: undefined,
       column: undefined,
+      table: undefined,
     });
+  });
+
+  it("carries the table facet (P7.2 — multi-table surfaces only)", () => {
+    expect(
+      facetQueryParams({ ...EMPTY_FILTERS, table: ["main.sales.orders"] }).table,
+    ).toEqual(["main.sales.orders"]);
   });
 
   it("never leaks runId into the facet params (run scoping is a separate param)", () => {
@@ -148,6 +165,7 @@ describe("facetQueryParams (facet chips → query params, per box)", () => {
       "severity",
       "rule",
       "column",
+      "table",
     ]);
   });
 

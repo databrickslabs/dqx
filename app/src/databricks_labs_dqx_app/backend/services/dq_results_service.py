@@ -71,15 +71,22 @@ class CheckResultRow:
 
 @dataclass(frozen=True)
 class ResultFacets:
-    """Active drilldown filters: OR within a facet, AND across facets."""
+    """Active drilldown filters: OR within a facet, AND across facets.
+
+    *tables* (P7.2) is the multi-table scopes' By-table cross-filter — a
+    set of member table FQNs. It participates in the AND like the other
+    four facets everywhere EXCEPT the ``by_table`` breakdown itself,
+    which self-excludes it (see ``compute_entity_results``).
+    """
 
     dimensions: tuple[str, ...] = ()
     severities: tuple[str, ...] = ()
     rules: tuple[str, ...] = ()
     columns: tuple[str, ...] = ()
+    tables: tuple[str, ...] = ()
 
     def any_active(self) -> bool:
-        return bool(self.dimensions or self.severities or self.rules or self.columns)
+        return bool(self.dimensions or self.severities or self.rules or self.columns or self.tables)
 
 
 def _parse_columns_json(raw: str | None) -> tuple[str, ...]:
@@ -144,8 +151,11 @@ def row_matches_facets(row: CheckResultRow, facets: ResultFacets) -> bool:
     a value matches the row's frozen registry rule id (preferred — one
     id selects every run of the rule, old names included) or its check
     name (backward compat for label-only callers and the only handle
-    legacy NULL-rule_id rows have).
+    legacy NULL-rule_id rows have). The table facet is an equality on the
+    row's table FQN — the SQL analogue of dqlake's binding filter.
     """
+    if facets.tables and row.table_fqn not in facets.tables:
+        return False
     if facets.dimensions and row.dimension not in facets.dimensions:
         return False
     if facets.severities and row.severity not in facets.severities:
@@ -435,14 +445,27 @@ def compute_entity_results(
         # endpoint keeps the caller's scoping: the monitored-table tab pins
         # a run_id itself, and without one it pools history as before.
         breakdown_rows = matched
+        table_box_rows = breakdown_rows
         if table_axis == "by_table":
             latest = _latest_instant_by_table(rows)
             breakdown_rows = [row for row in matched if row.run_date == latest.get(row.table_fqn)]
+            # The By table box SELF-EXCLUDES the table facet (P7.2): clicking
+            # a table row cross-filters every OTHER box, but the box's own
+            # rows must not vanish — the selection highlight needs the full
+            # (otherwise-faceted) row set, exactly as the frontend's
+            # base-vs-filtered split keeps a clicked row visible in its own
+            # box. The other facets still apply to it.
+            matched_sans_table = (
+                [row for row in rows if row_matches_facets(row, replace(facets, tables=()))]
+                if facets.tables
+                else matched
+            )
+            table_box_rows = [row for row in matched_sans_table if row.run_date == latest.get(row.table_fqn)]
         result.by_dimension = _group_rows(breakdown_rows, lambda row: row.dimension)
         result.by_severity = _group_rows(breakdown_rows, lambda row: row.severity)
         result.by_rule = _by_rule_rows(breakdown_rows)
         result.by_column = _by_column_rows(breakdown_rows)
-        table_groups = _group_rows(breakdown_rows, lambda row: row.table_fqn)
+        table_groups = _group_rows(table_box_rows, lambda row: row.table_fqn)
         if table_axis == "by_table":
             if binding_ids_by_table:
                 for group in table_groups:

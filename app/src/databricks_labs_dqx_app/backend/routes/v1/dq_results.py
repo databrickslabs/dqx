@@ -288,13 +288,42 @@ def _facets(
     severity: list[str] | None,
     rule: list[str] | None,
     column: list[str] | None,
+    table: list[str] | None = None,
 ) -> ResultFacets:
     return ResultFacets(
         dimensions=tuple(dimension or ()),
         severities=tuple(severity or ()),
         rules=tuple(rule or ()),
         columns=tuple(column or ()),
+        tables=tuple(table or ()),
     )
+
+
+def _validate_table_facet(table: list[str] | None) -> None:
+    """Reject a table-facet value that is not a valid three-part FQN (400).
+
+    Run before any warehouse call — the values are user-supplied and, like
+    every other facet, only ever compared app-side against already-fetched
+    rows (never interpolated into SQL); the validation keeps the surface
+    consistent with every other FQN-accepting parameter.
+    """
+    for fqn in table or ():
+        try:
+            validate_fqn(fqn)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _scope_table_facet(table: list[str] | None, member_fqns: list[str]) -> list[str]:
+    """Constrain the table facet to the scope's (accessible) member set.
+
+    Values outside the scope are SILENTLY DROPPED — never a 403 (matching
+    the multi-table endpoints' inaccessible-member convention), and never
+    an impossible facet that would blank every box: dropping every value
+    deactivates the facet, leaving the scope unfiltered.
+    """
+    members = set(member_fqns)
+    return [fqn for fqn in table or () if fqn in members]
 
 
 def _runs_from_metric_view(
@@ -471,6 +500,7 @@ def get_global_results(
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
+    table: Annotated[list[str] | None, Query()] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
@@ -479,9 +509,13 @@ def get_global_results(
 
     Tables in catalogs the caller cannot access are silently filtered
     (never 403) — the same gate as the dq-score global endpoint.
-    Draft runs are excluded unless *include_drafts*.
+    Draft runs are excluded unless *include_drafts*. *table* (P7.2) is
+    the By-table cross-filter: a repeatable list of member FQNs, applied
+    app-side like the other four facets (the rows it filters are already
+    catalog-gated, so an inaccessible value simply matches nothing).
     """
     _validate_run_id(run_id)
+    _validate_table_facet(table)
     try:
         rows = [
             row
@@ -513,7 +547,7 @@ def get_global_results(
         binding_ids = {}
     return compute_entity_results(
         rows,
-        _facets(dimension, severity, rule, column),
+        _facets(dimension, severity, rule, column, table),
         axes=axes,
         table_axis="by_table",
         failed_records_by_run=failed_records,
@@ -543,6 +577,7 @@ def get_rule_results(
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
+    table: Annotated[list[str] | None, Query()] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
@@ -556,11 +591,14 @@ def get_rule_results(
     predating checks_json simply carries no provenance).
 
     Tables in inaccessible catalogs are silently filtered (never 403).
+    *table* (P7.2) is the By-table cross-filter, constrained to the
+    rule's scoped tables (out-of-scope values are silently dropped).
     ``failed_records`` is intentionally absent from *trend_failures*: the
     per-run failing-row count is table-wide and cannot be scoped to one
     rule's failures.
     """
     _validate_run_id(run_id)
+    _validate_table_facet(table)
     try:
         applications = apply_rules.list_bindings_for_rule(rule_id)
         binding_ids = list(dict.fromkeys(a.binding_id for a in applications))
@@ -600,7 +638,7 @@ def get_rule_results(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return compute_entity_results(
         rows,
-        _facets(dimension, severity, rule, column),
+        _facets(dimension, severity, rule, column, _scope_table_facet(table, table_fqns)),
         axes=axes,
         table_axis="by_table",
         binding_ids_by_table=binding_id_by_fqn,
@@ -678,6 +716,7 @@ def get_product_results(
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
+    table: Annotated[list[str] | None, Query()] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
@@ -685,9 +724,12 @@ def get_product_results(
     """Results aggregated over the product's member tables (by_table filled).
 
     Members in inaccessible catalogs are silently filtered (never 403).
-    Draft runs are excluded unless *include_drafts*.
+    Draft runs are excluded unless *include_drafts*. *table* (P7.2) is
+    the By-table cross-filter, constrained to the product's accessible
+    member set (out-of-scope values are silently dropped).
     """
     _validate_run_id(run_id)
+    _validate_table_facet(table)
     try:
         fqns, binding_ids = _accessible_member_fqns(data_products, product_id, user_catalogs)
         rows = _fetch_check_rows(sql, app_conf, fqns, run_id, include_drafts)
@@ -700,7 +742,7 @@ def get_product_results(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return compute_entity_results(
         rows,
-        _facets(dimension, severity, rule, column),
+        _facets(dimension, severity, rule, column, _scope_table_facet(table, fqns)),
         axes=axes,
         table_axis="by_table",
         failed_records_by_run=failed_records,
