@@ -44,6 +44,7 @@ import {
   type DataProductOut,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
+import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
 import { cn } from "@/lib/utils";
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -345,7 +346,7 @@ function DataProductsPage() {
                 />
               </div>
               <Select value={stewardFilter} onValueChange={applyFilter(setStewardFilter)}>
-                <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("dataProducts.colSteward")}>
+                <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("dataProducts.colSteward")}>
                   <SelectValue placeholder={t("dataProducts.stewardPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>

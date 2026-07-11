@@ -44,6 +44,7 @@ import {
 } from "@/lib/api";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { usePermissions } from "@/hooks/use-permissions";
+import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
@@ -319,7 +320,7 @@ function MonitoredTablesPage() {
                 />
               </div>
               <Select value={catalogFilter} onValueChange={applyFilter(setCatalogFilter)}>
-                <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("monitoredTables.colCatalog")}>
+                <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colCatalog")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -330,7 +331,7 @@ function MonitoredTablesPage() {
                 </SelectContent>
               </Select>
               <Select value={schemaFilter} onValueChange={applyFilter(setSchemaFilter)}>
-                <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("monitoredTables.colSchema")}>
+                <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colSchema")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -341,7 +342,7 @@ function MonitoredTablesPage() {
                 </SelectContent>
               </Select>
               <Select value={statusFilter} onValueChange={applyFilter(setStatusFilter)}>
-                <SelectTrigger className="h-8 w-40 text-xs">
+                <SelectTrigger className={FILTER_TRIGGER_CLASS}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -353,7 +354,7 @@ function MonitoredTablesPage() {
                 </SelectContent>
               </Select>
               <Select value={stewardFilter} onValueChange={applyFilter(setStewardFilter)}>
-                <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("monitoredTables.colSteward")}>
+                <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colSteward")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

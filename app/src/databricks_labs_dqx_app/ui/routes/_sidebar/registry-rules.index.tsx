@@ -57,6 +57,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { invalidateAfterRegistryRuleApprovalChange } from "@/lib/registry-rule-invalidation";
 import { cn } from "@/lib/utils";
 import { Pagination } from "@/components/Pagination";
+import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
 import { RulesTable, getRulesTableSortValue, type RulesTableSortKey } from "@/components/rules/RulesTable";
 import {
   RESERVED_NAME_KEY,
@@ -113,7 +114,7 @@ function RegistryRulesSkeleton() {
 
 const ALL = "all";
 const PAGE_SIZE = 25;
-const FILTER_CLASS = "h-8 w-36 text-xs";
+const FILTER_CLASS = FILTER_TRIGGER_CLASS;
 
 function RegistryRulesPage() {
   const { t } = useTranslation();
