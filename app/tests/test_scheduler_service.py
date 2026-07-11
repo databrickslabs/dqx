@@ -33,12 +33,14 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductService,
     NoRunnableMembersError,
 )
+from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
 from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _CRON_WEEKDAY_NAMES,
     _FAILURE_BACKOFF,
     _GC_AGE_HOURS,
     _GC_HOUR_UTC,
     _GC_WEEKDAY_SAT,
+    _METADATA_DIM_REFRESH_INTERVAL_HOURS,
     _RUN_SET_SWEEP_MAX_RUNS,
     _RUN_SET_SWEEP_WINDOW_DAYS,
     _SCORE_RECONCILE_MAX_ATTEMPTS,
@@ -394,6 +396,60 @@ class TestMaybeGcOrphanViews:
 
 
 # ---------------------------------------------------------------------------
+# _maybe_refresh_metadata_dims — hourly metadata-dim refresh tick (P8.1)
+# ---------------------------------------------------------------------------
+
+
+class TestMaybeRefreshMetadataDims:
+    @pytest.mark.asyncio
+    async def test_noop_and_timer_untouched_when_collaborator_absent(self, make_scheduler):
+        svc, _ = make_scheduler()  # no metadata_dim_service
+        assert svc._metadata_dim_service is None
+        before = svc._next_metadata_dim_refresh_at
+        # Even long past the timer, a None collaborator does nothing.
+        await svc._maybe_refresh_metadata_dims(before + timedelta(hours=5))
+        assert svc._next_metadata_dim_refresh_at == before
+
+    @pytest.mark.asyncio
+    async def test_skips_when_not_yet_due(self, make_scheduler):
+        dim = create_autospec(MetadataDimService, instance=True)
+        svc, _ = make_scheduler(metadata_dim_service=dim)
+        future = datetime(2099, 1, 1, tzinfo=timezone.utc)
+        svc._next_metadata_dim_refresh_at = future
+
+        await svc._maybe_refresh_metadata_dims(future - timedelta(seconds=1))
+
+        assert svc._next_metadata_dim_refresh_at == future
+        dim.refresh.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_advances_timer_before_running_and_refreshes(self, make_scheduler):
+        dim = create_autospec(MetadataDimService, instance=True)
+        svc, _ = make_scheduler(metadata_dim_service=dim)
+        due = datetime(2026, 5, 2, 1, 0, tzinfo=timezone.utc)
+        svc._next_metadata_dim_refresh_at = due
+
+        fire = due + timedelta(seconds=1)
+        await svc._maybe_refresh_metadata_dims(fire)
+
+        dim.refresh.assert_called_once_with()
+        # Timer advanced by exactly the interval from ``now``.
+        assert svc._next_metadata_dim_refresh_at == fire + timedelta(hours=_METADATA_DIM_REFRESH_INTERVAL_HOURS)
+
+    @pytest.mark.asyncio
+    async def test_refresh_failure_does_not_propagate(self, make_scheduler):
+        dim = create_autospec(MetadataDimService, instance=True)
+        dim.refresh.side_effect = RuntimeError("warehouse down")
+        svc, _ = make_scheduler(metadata_dim_service=dim)
+        due = datetime(2026, 5, 2, 1, 0, tzinfo=timezone.utc)
+        svc._next_metadata_dim_refresh_at = due
+
+        # Must not raise; just log and reschedule.
+        await svc._maybe_refresh_metadata_dims(due + timedelta(minutes=1))
+        assert svc._next_metadata_dim_refresh_at > due
+
+
+# ---------------------------------------------------------------------------
 # tmp_view_<id> generator <-> regex round-trip
 #
 # This test exists because the GC's ``_TMP_VIEW_NAME_RE`` is the only thing
@@ -604,7 +660,12 @@ class TestTickOneProduct:
             run_set_id="rs1",
             submitted=[
                 DataProductRunSubmission(
-                    binding_id="b1", table_fqn="c.s.t", run_id="r1", job_run_id=1, view_fqn="c.tmp.v1", binding_version=1
+                    binding_id="b1",
+                    table_fqn="c.s.t",
+                    run_id="r1",
+                    job_run_id=1,
+                    view_fqn="c.tmp.v1",
+                    binding_version=1,
                 )
             ],
             skipped=[],
@@ -613,9 +674,7 @@ class TestTickOneProduct:
 
         svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
 
-        dp_service.run.assert_called_once_with(
-            "prod1", source="approved", user_email="scheduler", trigger="scheduled"
-        )
+        dp_service.run.assert_called_once_with("prod1", source="approved", user_email="scheduler", trigger="scheduled")
         mocks.oltp.upsert.assert_called_once()
         kwargs = mocks.oltp.upsert.call_args.kwargs
         assert kwargs["key_cols"] == {"schedule_name": "product:prod1"}
@@ -1311,9 +1370,7 @@ class TestScoreCacheRefreshOnCompletion:
         # Zero monitored tables still refreshes the derived global row.
         score_cache.refresh_all_for_tables.assert_called_once_with([])
 
-    def test_reconcile_failure_retries_next_pass_then_gives_up_after_the_cap(
-        self, make_scheduler, scheduler_caplog
-    ):
+    def test_reconcile_failure_retries_next_pass_then_gives_up_after_the_cap(self, make_scheduler, scheduler_caplog):
         svc, mocks, score_cache = _make_score_scheduler(make_scheduler, reconcile_scores_on_start=True)
         score_cache.list_monitored_table_fqns.return_value = ["main.sales.orders"]
         score_cache.refresh_all_for_tables.side_effect = RuntimeError("warehouse down")
@@ -1359,10 +1416,20 @@ class TestScoreCacheRefreshOnCompletion:
             run_set_id="rs1",
             submitted=[
                 DataProductRunSubmission(
-                    binding_id="b1", table_fqn="c.s.t1", run_id="r1", job_run_id=1, view_fqn="c.tmp.v1", binding_version=1
+                    binding_id="b1",
+                    table_fqn="c.s.t1",
+                    run_id="r1",
+                    job_run_id=1,
+                    view_fqn="c.tmp.v1",
+                    binding_version=1,
                 ),
                 DataProductRunSubmission(
-                    binding_id="b2", table_fqn="c.s.t2", run_id="r2", job_run_id=2, view_fqn="c.tmp.v2", binding_version=1
+                    binding_id="b2",
+                    table_fqn="c.s.t2",
+                    run_id="r2",
+                    job_run_id=2,
+                    view_fqn="c.tmp.v2",
+                    binding_version=1,
                 ),
             ],
             skipped=[],

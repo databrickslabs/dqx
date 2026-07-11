@@ -28,6 +28,8 @@ RESULTS_FQN = f"{CATALOG}.{SCHEMA}.v_dq_check_results"
 ASOF_FQN = f"{CATALOG}.{SCHEMA}.v_dq_check_results_asof"
 ATTRIBUTION_FQN = f"{CATALOG}.{SCHEMA}.v_dq_check_attribution"
 FAILING_FQN = f"{CATALOG}.{SCHEMA}.v_dq_failing_rows"
+DIM_RULES_FQN = f"{CATALOG}.{SCHEMA}.dim_dq_rules"
+DIM_TABLES_FQN = f"{CATALOG}.{SCHEMA}.dim_dq_monitored_tables"
 
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 
@@ -97,10 +99,13 @@ def test_serialized_space_top_level_shape() -> None:
     assert space["instructions"]["sql_functions"] == []
 
 
-def test_data_sources_are_exactly_the_five_score_objects() -> None:
+def test_data_sources_are_exactly_the_score_objects_plus_metadata_dims() -> None:
     space = build()
     tables = space["data_sources"]["tables"]
-    assert [t["identifier"] for t in tables] == sorted([ATTRIBUTION_FQN, RESULTS_FQN, ASOF_FQN, FAILING_FQN])
+    # Five score objects (four views) + the two metadata dims (P8.1).
+    assert [t["identifier"] for t in tables] == sorted(
+        [ATTRIBUTION_FQN, RESULTS_FQN, ASOF_FQN, FAILING_FQN, DIM_RULES_FQN, DIM_TABLES_FQN]
+    )
     mvs = space["data_sources"]["metric_views"]
     assert [m["identifier"] for m in mvs] == [MV_FQN]
     for src in [*tables, *mvs]:
@@ -142,6 +147,62 @@ def test_failing_rows_source_description_grounded_in_real_columns() -> None:
     assert "DQX Studio" in desc
 
 
+def test_metadata_dim_sources_present_and_grounded() -> None:
+    # P8.1: the two SP-owned metadata dims are attached as data sources so
+    # Genie can answer authoring/ownership questions from UC (Lakebase is
+    # unreachable). Each description is grounded in its real columns.
+    space = build()
+    by_id = {t["identifier"]: t for t in space["data_sources"]["tables"]}
+    assert DIM_RULES_FQN in by_id
+    assert DIM_TABLES_FQN in by_id
+    rules_desc = "".join(by_id[DIM_RULES_FQN]["description"])
+    for col in ("rule_id", "name", "description", "dimension", "default_severity", "mode", "status", "steward"):
+        assert col in rules_desc, col
+    tables_desc = "".join(by_id[DIM_TABLES_FQN]["description"])
+    for col in ("binding_id", "table_fqn", "steward", "status", "schedule_cron", "version"):
+        assert col in tables_desc, col
+
+
+def test_dim_rules_default_severity_column_config_disambiguates_from_applied() -> None:
+    # The default_severity column comment must steer stewards to the APPLIED
+    # severity on the score objects for run-time severity questions, and be
+    # explicit that this column is only the rule's own authored default.
+    space = build()
+    by_id = {t["identifier"]: t for t in space["data_sources"]["tables"]}
+    configs = {c["column_name"]: c for c in by_id[DIM_RULES_FQN]["column_configs"]}
+    assert set(configs) == {"default_severity", "dimension", "mode", "name", "status", "steward"}
+    desc = "".join(configs["default_severity"]["description"])
+    assert "DEFAULT" in desc
+    assert "NOT what actually ran" in desc
+    assert "v_dq_check_attribution" in desc
+    assert "v_dq_check_results" in desc
+    assert "APPLIED" in desc
+
+
+def test_text_instructions_clarify_applied_vs_default_severity() -> None:
+    # P8.1: an unqualified "severity" means the APPLIED/effective severity on
+    # the score objects, NOT dim_dq_rules.default_severity (only surfaced for
+    # defaults/authoring/drift questions).
+    joined = "".join(gs.TEXT_INSTRUCTIONS)
+    assert "APPLIED severity" in joined
+    assert "dim_dq_rules.default_severity" in joined
+    assert "severity_override" in joined
+    assert "rule defaults" in joined
+    assert "drift" in joined
+
+
+def test_metadata_dim_curated_questions_read_the_dim() -> None:
+    # The authoring/ownership sample questions have curated SQL over
+    # dim_dq_rules (no run_mode, no score-object join).
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    for question in ("Which rules does a steward own?", "What is the description of a rule?"):
+        sql = "".join(by_q[question]["sql"])
+        assert f"`{CATALOG}`.`{SCHEMA}`.dim_dq_rules" in sql
+        assert "run_mode" not in sql
+    assert ":steward" in "".join(by_q["Which rules does a steward own?"]["sql"])
+    assert ":rule_name" in "".join(by_q["What is the description of a rule?"]["sql"])
+
+
 def test_sample_questions_restore_the_row_level_ones() -> None:
     space = build()
     entries = space["config"]["sample_questions"]
@@ -161,7 +222,7 @@ def test_text_instructions_single_entry_with_newline_terminated_paragraphs() -> 
     assert len(text_instructions) == 1
     content = text_instructions[0]["content"]
     assert content == list(gs.TEXT_INSTRUCTIONS)
-    assert len(content) == 11
+    assert len(content) == 12
     assert all(p.endswith("\n") for p in content)
     joined = "".join(content)
     assert "MEASURE()" in joined
@@ -261,10 +322,27 @@ def test_every_sample_question_has_a_curated_sql() -> None:
     assert curated == set(gs.SAMPLE_QUESTIONS)
 
 
+# Authoring/ownership questions read the metadata dims (dim_dq_rules /
+# dim_dq_monitored_tables), which carry no run_mode and never join the
+# run-facing score objects — the run_mode/score-object discipline below
+# applies only to the results-facing questions.
+_METADATA_DIM_QUESTIONS = {
+    "Which rules does a steward own?",
+    "What is the description of a rule?",
+}
+
+
 def test_curated_sqls_are_grounded_on_our_objects_and_run_mode() -> None:
     for entry in gs._curated_sqls(CATALOG, SCHEMA):
         sql = "".join(entry["sql"])
         question = entry["question"][0]
+        if question in _METADATA_DIM_QUESTIONS:
+            # Metadata dim — no run_mode, no score-object join; grounded on
+            # dim_dq_rules with the catalog/schema backtick-quoted per part.
+            assert f"`{CATALOG}`.`{SCHEMA}`.dim_dq_rules" in sql
+            assert "run_mode" not in sql
+            assert entry["usage_guidance"]
+            continue
         # Only our objects, catalog/schema backtick-quoted (object name is a
         # trusted bare constant — quote_object_fqn convention).
         assert (

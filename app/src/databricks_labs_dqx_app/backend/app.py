@@ -42,6 +42,8 @@ from .services.app_settings_service import AppSettingsService
 from .services.binding_run_service import BindingRunService
 from .services.data_product_service import DataProductService
 from .services.entitlement_service import FAILING_ROWS_VIEW_NAME, EntitlementService
+from .services.metadata_dim_service import MetadataDimService
+from .services.monitored_table_service import MonitoredTableService
 from .services.registry_service import RegistryService
 from .services.rule_embeddings import RuleEmbeddingsService
 from .services.scheduler_service import SchedulerService
@@ -304,6 +306,31 @@ def _ensure_score_views(sp_sql: SqlExecutor) -> None:
         )
 
 
+def _ensure_metadata_dims(sp_sql: SqlExecutor, oltp: OltpExecutorProtocol) -> None:
+    """Full-refresh the rule + monitored-table metadata dims (best-effort).
+
+    Runs after ``_ensure_score_views`` so the Genie space's authoring/
+    ownership data sources (``dim_dq_rules`` / ``dim_dq_monitored_tables``)
+    exist and are populated from the Rules Registry — same best-effort
+    contract as the score views: a warehouse hiccup or transient DDL failure
+    degrades to stale/empty dims (and Genie answering those questions less
+    well) rather than a crash-looping app. The scheduler re-refreshes them
+    hourly thereafter.
+    """
+    try:
+        registry = RegistryService(sql=oltp)
+        monitored_tables = MonitoredTableService(sql=oltp, profiling_sql=sp_sql)
+        MetadataDimService(sp_sql=sp_sql, registry=registry, monitored_tables=monitored_tables).refresh()
+        logger.info("Ensured DQ metadata dims exist and are refreshed")
+    except Exception as e:
+        logger.warning(
+            "Could not refresh the DQ metadata dims — Genie authoring/ownership "
+            "questions may be stale until the next successful refresh: %s",
+            e,
+            exc_info=True,
+        )
+
+
 def _ensure_entitlement_objects(sp_sql: SqlExecutor) -> None:
     """Create/refresh the entitlement cache table + gated failing-rows view (best-effort).
 
@@ -369,9 +396,7 @@ def _grant_user_view_access(sp_sql: SqlExecutor) -> None:
         try:
             sp_sql.execute_no_schema(stmt)
         except Exception as grant_e:
-            logger.warning(
-                "Startup grant failed (%s): %s (users may need this granted manually)", stmt, grant_e
-            )
+            logger.warning("Startup grant failed (%s): %s (users may need this granted manually)", stmt, grant_e)
 
 
 def _ensure_genie_space(sp_ws: WorkspaceClient, warehouse_id: str, settings_sql: OltpExecutorProtocol) -> None:
@@ -576,6 +601,13 @@ async def lifespan(app: FastAPI):
     # must come after the Delta migrations above so dq_metrics exists.
     _ensure_score_views(sp_sql)
 
+    # Rule + monitored-table metadata dims (P8.1) — SP-owned UC tables the
+    # Genie space queries for authoring/ownership questions, full-refreshed
+    # from the Rules Registry (Genie cannot reach Lakebase directly). After
+    # the migrations so the registry tables exist; the scheduler re-refreshes
+    # hourly from here on.
+    _ensure_metadata_dims(sp_sql, pg_executor if pg_executor is not None else sp_sql)
+
     # Entitlement cache + gated failing-rows view (P4.1) — after the Delta
     # migrations (dq_quarantine_records) — then the user-facing grants, which
     # need every view to exist first.
@@ -585,9 +617,7 @@ async def lifespan(app: FastAPI):
     # Ask-Genie space over the score views — after the views so a freshly
     # created space points at objects that exist. Blocking Genie REST calls
     # run in a thread; the ensure itself is idempotent + best-effort.
-    await asyncio.to_thread(
-        _ensure_genie_space, sp_ws, wh_id, pg_executor if pg_executor is not None else sp_sql
-    )
+    await asyncio.to_thread(_ensure_genie_space, sp_ws, wh_id, pg_executor if pg_executor is not None else sp_sql)
 
     # Seed the run-review-status catalogue once, here at startup, rather
     # than lazily on first read. This keeps ``get_run_review_statuses``
@@ -697,6 +727,17 @@ async def lifespan(app: FastAPI):
                 data_product_service = None
                 binding_run_service = None
 
+            # Metadata-dim refresher (P8.1): the scheduler re-materializes the
+            # rule + monitored-table dims hourly so Genie's authoring/ownership
+            # data sources stay fresh long after the startup refresh above.
+            # Same OLTP executor as the other scheduler collaborators; the
+            # dims themselves are SP-owned UC tables written via sp_sql.
+            metadata_dim_service = MetadataDimService(
+                sp_sql=sp_sql,
+                registry=RegistryService(sql=oltp_for_scheduler),
+                monitored_tables=MonitoredTableService(sql=oltp_for_scheduler, profiling_sql=sp_sql),
+            )
+
             _scheduler = SchedulerService(
                 ws=sp_ws,
                 warehouse_id=os.environ.get("DATABRICKS_WAREHOUSE_ID")
@@ -709,6 +750,7 @@ async def lifespan(app: FastAPI):
                 oltp_sql=pg_executor,
                 data_product_service=data_product_service,
                 binding_run_service=binding_run_service,
+                metadata_dim_service=metadata_dim_service,
                 # Same construction as dependencies.get_score_cache_service:
                 # the cache lives on the OLTP executor, the published-score
                 # recompute reads the metric view via the SP warehouse

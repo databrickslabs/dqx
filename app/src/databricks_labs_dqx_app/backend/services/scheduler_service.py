@@ -40,6 +40,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductService,
     NoRunnableMembersError,
 )
+from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
 
@@ -163,6 +164,14 @@ _RETENTION_INTERVAL_HOURS = 24
 _QUARANTINE_RETENTION_DAYS_DEFAULT = 30
 _QUARANTINE_TABLE_NAME = "dq_quarantine_records"
 
+# The rule + monitored-table metadata dims (``dim_dq_rules`` /
+# ``dim_dq_monitored_tables``) are full-refreshed from the Rules Registry
+# once per ``_METADATA_DIM_REFRESH_INTERVAL_HOURS`` so the Genie space's
+# authoring/ownership data sources stay current between deploys. Hourly
+# (vs. retention's daily) because registry edits are user-facing and cheap
+# to re-materialize at page scale.
+_METADATA_DIM_REFRESH_INTERVAL_HOURS = 1
+
 # Retention is split per-backend: analytical (Delta) tables are
 # trimmed via the SQL warehouse executor, OLTP tables via the OLTP
 # executor (Lakebase if enabled, Delta otherwise).  Both lists are
@@ -196,6 +205,7 @@ class SchedulerService:
         data_product_service: DataProductService | None = None,
         binding_run_service: BindingRunService | None = None,
         score_cache_service: ScoreCacheService | None = None,
+        metadata_dim_service: MetadataDimService | None = None,
         reconcile_scores_on_start: bool = False,
     ) -> None:
         """Construct the scheduler.
@@ -235,6 +245,15 @@ class SchedulerService:
             gap where the browser-side refresh-scores POST never fires
             because no browser observed the scheduled run complete.
             When ``None`` the refresh step is a no-op.
+        metadata_dim_service:
+            Optional collaborator that full-refreshes the rule +
+            monitored-table metadata dims (``dim_dq_rules`` /
+            ``dim_dq_monitored_tables``) the Genie space queries. When set,
+            :meth:`_maybe_refresh_metadata_dims` re-materializes them once
+            per ``_METADATA_DIM_REFRESH_INTERVAL_HOURS`` so registry edits
+            reach Genie without a redeploy. When ``None`` (legacy
+            deployments, unit tests) the tick is a no-op — a fourth,
+            independent timer that touches no state the other ticks read.
         reconcile_scores_on_start:
             When True (production wiring — set by the app lifespan),
             the first score-refresh pass after boot recomputes EVERY
@@ -277,6 +296,7 @@ class SchedulerService:
         self._data_product_service = data_product_service
         self._binding_run_service = binding_run_service
         self._score_cache_service = score_cache_service
+        self._metadata_dim_service = metadata_dim_service
         # Scheduler-launched runs awaiting their dq_validation_runs
         # terminal row, run_id -> launch time (UTC). In-memory only:
         # the scheduler is file-locked to one worker, and a run lost to
@@ -312,6 +332,14 @@ class SchedulerService:
         # (default 24h). Held in process memory like the view GC; a
         # missed sweep is harmless since the next one catches up.
         self._next_retention_at: datetime = datetime.now(timezone.utc) + timedelta(hours=_RETENTION_INTERVAL_HOURS)
+
+        # Metadata-dim refresh: fires every
+        # ``_METADATA_DIM_REFRESH_INTERVAL_HOURS`` (default 1h). Held in
+        # process memory like the retention sweep; the app also refreshes once
+        # at startup, so a missed tick is harmless.
+        self._next_metadata_dim_refresh_at: datetime = datetime.now(timezone.utc) + timedelta(
+            hours=_METADATA_DIM_REFRESH_INTERVAL_HOURS
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -354,6 +382,7 @@ class SchedulerService:
                 await self._tick(recalc=recalc)
                 await self._maybe_gc_orphan_views(datetime.now(timezone.utc))
                 await self._maybe_run_retention(datetime.now(timezone.utc))
+                await self._maybe_refresh_metadata_dims(datetime.now(timezone.utc))
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -573,9 +602,7 @@ class SchedulerService:
             try:
                 self._tick_one_product(product, now)
             except Exception:
-                logger.exception(
-                    "Scheduler failed processing product schedule 'product:%s'", product["product_id"]
-                )
+                logger.exception("Scheduler failed processing product schedule 'product:%s'", product["product_id"])
 
     def _load_scheduled_products(self) -> list[dict[str, Any]]:
         """Return cron-scheduled Table Spaces that have an approved (frozen) snapshot.
@@ -657,8 +684,7 @@ class SchedulerService:
                     )
                 else:
                     logger.warning(
-                        "Product schedule '%s': could not compute next_run_at for cron '%s'; "
-                        "seeding backoff tracker",
+                        "Product schedule '%s': could not compute next_run_at for cron '%s'; seeding backoff tracker",
                         schedule_name,
                         cron_expr,
                     )
@@ -676,9 +702,7 @@ class SchedulerService:
             return
 
         run_id = uuid4().hex[:16]
-        logger.info(
-            "Product schedule '%s' is due (next_run_at=%s), triggering run %s", schedule_name, next_run, run_id
-        )
+        logger.info("Product schedule '%s' is due (next_run_at=%s), triggering run %s", schedule_name, next_run, run_id)
 
         assert self._data_product_service is not None  # guarded by _tick_products
         try:
@@ -777,9 +801,7 @@ class SchedulerService:
             try:
                 self._tick_one_table(table, now)
             except Exception:
-                logger.exception(
-                    "Scheduler failed processing table schedule 'table:%s'", table["binding_id"]
-                )
+                logger.exception("Scheduler failed processing table schedule 'table:%s'", table["binding_id"])
 
     def _load_scheduled_tables(self) -> list[dict[str, Any]]:
         """Return cron-scheduled monitored tables that have an approved (frozen) snapshot.
@@ -855,8 +877,7 @@ class SchedulerService:
                     )
                 else:
                     logger.warning(
-                        "Table schedule '%s': could not compute next_run_at for cron '%s'; "
-                        "seeding backoff tracker",
+                        "Table schedule '%s': could not compute next_run_at for cron '%s'; seeding backoff tracker",
                         schedule_name,
                         cron_expr,
                     )
@@ -874,9 +895,7 @@ class SchedulerService:
             return
 
         run_id = uuid4().hex[:16]
-        logger.info(
-            "Table schedule '%s' is due (next_run_at=%s), triggering run %s", schedule_name, next_run, run_id
-        )
+        logger.info("Table schedule '%s' is due (next_run_at=%s), triggering run %s", schedule_name, next_run, run_id)
 
         assert self._binding_run_service is not None  # guarded by _tick_monitored_tables
         try:
@@ -1853,6 +1872,32 @@ class SchedulerService:
         except Exception:
             logger.exception("Retention sweep failed (non-fatal)")
 
+    async def _maybe_refresh_metadata_dims(self, now: datetime) -> None:
+        """Full-refresh the metadata dims if the hourly timer has elapsed.
+
+        No-op when no ``metadata_dim_service`` was wired (legacy deployments,
+        unit tests). Cheap to skip (one comparison) and runs in a background
+        thread so it doesn't block the loop. Failures are logged but never
+        fatal — the next tick re-tries.
+        """
+        if self._metadata_dim_service is None:
+            return
+        if now < self._next_metadata_dim_refresh_at:
+            return
+
+        scheduled_for = self._next_metadata_dim_refresh_at
+        # Advance the timer first so a slow refresh can't double-fire.
+        self._next_metadata_dim_refresh_at = now + timedelta(hours=_METADATA_DIM_REFRESH_INTERVAL_HOURS)
+        logger.info(
+            "Metadata-dim refresh: triggering hourly rebuild (was due at %s); next run scheduled for %s",
+            scheduled_for.isoformat(),
+            self._next_metadata_dim_refresh_at.isoformat(),
+        )
+        try:
+            await asyncio.to_thread(self._metadata_dim_service.refresh)
+        except Exception:
+            logger.exception("Metadata-dim refresh failed (non-fatal)")
+
     def _run_retention(self) -> None:
         """DELETE rows older than ``retention_days`` from each high-volume table.
 
@@ -1883,7 +1928,7 @@ class SchedulerService:
         for table_name, time_col in _DELTA_RETENTION_TABLES:
             table = f"`{self._catalog}`.`{self._schema}`.{table_name}"
             cutoff = quarantine_days if table_name == _QUARANTINE_TABLE_NAME else days
-            stmt = f"DELETE FROM {table} " f"WHERE {time_col} < current_timestamp() - INTERVAL {cutoff} DAY"
+            stmt = f"DELETE FROM {table} WHERE {time_col} < current_timestamp() - INTERVAL {cutoff} DAY"
             try:
                 self._sql.execute(stmt)
                 logger.info("Retention sweep (Delta): cleaned %s (cutoff=%dd)", table_name, cutoff)
@@ -1896,7 +1941,7 @@ class SchedulerService:
         interval = self._oltp_sql.interval_days_expr(days)
         for table_name, time_col in _OLTP_RETENTION_TABLES:
             table = self._oltp_sql.fqn(table_name)
-            stmt = f"DELETE FROM {table} " f"WHERE {time_col} < CURRENT_TIMESTAMP - {interval}"
+            stmt = f"DELETE FROM {table} WHERE {time_col} < CURRENT_TIMESTAMP - {interval}"
             try:
                 self._oltp_sql.execute(stmt)
                 logger.info("Retention sweep (OLTP): cleaned %s (cutoff=%dd)", table_name, days)

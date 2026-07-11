@@ -10,7 +10,8 @@ app setting.
 
 Identity + permission model: the space is SP-owned, but chat questions run
 OBO where the token allows (see ``genie_chat_service``), and the one
-row-level object attached is itself the permission gate. Five data sources:
+row-level object attached is itself the permission gate. Seven data sources
+(five score objects + two metadata dims):
 
 - ``mv_dq_scores`` (UC metric view)   — pass rates / failed + total tests
   per table, run, rule, dimension, severity (read measures with MEASURE()).
@@ -29,6 +30,14 @@ row-level object attached is itself the permission gate. Five data sources:
   window (see ``entitlement_service``). Fail-closed empty otherwise —
   including under the SP identity, so the chat's SP fallback can never
   leak row-level data.
+
+- ``dim_dq_rules`` / ``dim_dq_monitored_tables`` (P8.1) — SP-owned UC
+  tables full-refreshed from the Rules Registry (Genie cannot reach
+  Lakebase directly) so the space can answer authoring/ownership questions
+  ("who owns this rule/table", "what is this rule's description", "which
+  tables are in draft"). Aggregates-only metadata, no row-level exposure.
+  ``dim_dq_rules.default_severity`` is the rule's OWN authored default —
+  distinct from the APPLIED severity on the score objects above.
 
 ``dq_quarantine_records`` itself (and any other ungated raw-row object)
 stays EXCLUDED: only the gated view may carry row-level data into the
@@ -59,6 +68,10 @@ from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.entitlement_service import FAILING_ROWS_VIEW_NAME
+from databricks_labs_dqx_app.backend.services.metadata_dim_service import (
+    DIM_MONITORED_TABLES_TABLE_NAME,
+    DIM_RULES_TABLE_NAME,
+)
 from databricks_labs_dqx_app.backend.services.score_view_service import (
     ASOF_VIEW_NAME,
     ATTRIBUTION_VIEW_NAME,
@@ -105,6 +118,11 @@ SAMPLE_QUESTIONS = [
     "Why has my score by dimension changed?",
     "What is the biggest factor affecting my DQ score?",
     "How many draft runs happened recently?",
+    # Authoring / ownership questions answered from the metadata dims
+    # (dim_dq_rules / dim_dq_monitored_tables) — NOT the score views. These
+    # carry the rule's own DEFAULT tags and the monitored-table register.
+    "Which rules does a steward own?",
+    "What is the description of a rule?",
 ]
 
 # The steward brief. The API concatenates content[] WITHOUT separators, so
@@ -125,8 +143,8 @@ TEXT_INSTRUCTIONS = [
         "1 - SUM(failed_tests) / SUM(total_tests), computed at the test grain. Read every "
         "metric-view measure with MEASURE(). The views return scores and rates as fractions of 1 — "
         "always convert them and state every score, pass rate, or failure rate as a percentage "
-        "with one decimal place, \"91.5%\", never a bare fraction like 0.915. Report failures as a "
-        "share of tests run, with the denominator — \"1,250 of 50,000 tests failed (2.5%)\" — and "
+        'with one decimal place, "91.5%", never a bare fraction like 0.915. Report failures as a '
+        'share of tests run, with the denominator — "1,250 of 50,000 tests failed (2.5%)" — and '
         "avoid bare counts, since they mean little on their own. Do not average pass rates across "
         "runs or tables; recompute from the underlying sums.\n"
     ),
@@ -140,6 +158,15 @@ TEXT_INSTRUCTIONS = [
         "Severity is one of Critical, High, Medium, or Low — present in that order, leading with "
         "Critical. Quality dimensions (Completeness, Validity, and so on) are the steward's "
         "business framing; prefer them when summarising what kind of quality problem exists.\n"
+    ),
+    (
+        "When the steward asks about severity without qualification, they mean the APPLIED severity "
+        "the check actually ran with — the value on v_dq_check_results, v_dq_check_attribution, and "
+        "mv_dq_scores (already reflecting any per-application severity_override). dim_dq_rules."
+        "default_severity is a DIFFERENT thing: the rule's own DEFAULT severity tag as authored, not "
+        "what ran on any table. Surface or compare default_severity only when the question is about "
+        "rule defaults, rule authoring, or the drift between a rule's default and what actually ran; "
+        "for everything else use the applied severity.\n"
     ),
     (
         "A rule's check_name is its display name AS OF each run and can change when the rule is "
@@ -246,6 +273,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     v = quote_object_fqn(catalog, schema, SHAPING_VIEW_NAME)
     va = quote_object_fqn(catalog, schema, ASOF_VIEW_NAME)
     fr = quote_object_fqn(catalog, schema, FAILING_ROWS_VIEW_NAME)
+    dim_rules = quote_object_fqn(catalog, schema, DIM_RULES_TABLE_NAME)
 
     latest_published = (
         "  AND `run_time` = (SELECT MAX(`run_time`) FROM " + mv + "\n"
@@ -580,10 +608,43 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  AND `run_time` >= current_timestamp() - INTERVAL 7 DAYS"
     )
 
+    # --- authoring / ownership questions over the metadata dim (P8.1) ---
+    # dim_dq_rules carries the rule's OWN default tags (default_severity is
+    # the authored default, NOT the applied severity on the score views), so
+    # these have no run_mode and never join the run-facing objects.
+    rules_by_steward = (
+        "SELECT `name`, `dimension`, `default_severity`, `mode`, `status`, `version`\n"
+        f"FROM {dim_rules}\n"
+        "WHERE `steward` = :steward\n"
+        "ORDER BY `name`"
+    )
+
+    rule_description = (
+        "SELECT `name`, `description`, `dimension`, `default_severity`, `mode`, `status`, `steward`\n"
+        f"FROM {dim_rules}\n"
+        "WHERE `name` = :rule_name"
+    )
+
     table_param = [
         {
             "name": "table_name",
             "description": ["Fully-qualified name of the table to scope to (catalog.schema.table)."],
+            "type_hint": "STRING",
+        }
+    ]
+
+    steward_param = [
+        {
+            "name": "steward",
+            "description": ["Steward (owner) whose rules to list."],
+            "type_hint": "STRING",
+        }
+    ]
+
+    rule_name_param = [
+        {
+            "name": "rule_name",
+            "description": ["Name of the registry rule to describe."],
             "type_hint": "STRING",
         }
     ]
@@ -685,9 +746,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "question": ["How has the score changed over recent runs?"],
             "sql": _lines(score_trend),
             "parameters": table_param,
-            "usage_guidance": [
-                "Pass-rate trend over published runs for one table. Render as a time-series line."
-            ],
+            "usage_guidance": ["Pass-rate trend over published runs for one table. Render as a time-series line."],
         },
         {
             "question": ["How has the average score across tables changed over time?"],
@@ -708,8 +767,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "sql": _lines(severity_trend),
             "parameters": table_param,
             "usage_guidance": [
-                "Pass rate per run_time split by severity for one table (published runs). "
-                "One line per severity."
+                "Pass rate per run_time split by severity for one table (published runs). One line per severity."
             ],
         },
         {
@@ -768,6 +826,28 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
                 "Distinct draft runs in the last 7 days from v_dq_check_results — the one "
                 "question that deliberately filters run_mode = 'draft' (the question names "
                 "drafts explicitly)."
+            ],
+        },
+        {
+            "question": ["Which rules does a steward own?"],
+            "sql": _lines(rules_by_steward),
+            "parameters": steward_param,
+            "usage_guidance": [
+                "Registry rules owned by a steward, from the dim_dq_rules metadata table "
+                "(the registry, NOT run results). One row per rule with its name, dimension, "
+                "default_severity (the rule's OWN authored default — not the applied severity "
+                "on the score views), authoring mode, review status, and published version."
+            ],
+        },
+        {
+            "question": ["What is the description of a rule?"],
+            "sql": _lines(rule_description),
+            "parameters": rule_name_param,
+            "usage_guidance": [
+                "A single registry rule's authored metadata from dim_dq_rules: description, "
+                "dimension, default_severity (the rule's own authored default, not what ran on "
+                "any table), mode, status, and steward. Use for rule-authoring questions — this "
+                "table carries no run results, so never read pass rates or failures from it."
             ],
         },
     ]
@@ -848,6 +928,8 @@ def _column_configs(catalog: str, schema: str) -> dict[str, list[dict]]:
     asof = _plain_fqn(catalog, schema, ASOF_VIEW_NAME)
     attribution = _plain_fqn(catalog, schema, ATTRIBUTION_VIEW_NAME)
     failing = _plain_fqn(catalog, schema, FAILING_ROWS_VIEW_NAME)
+    dim_rules = _plain_fqn(catalog, schema, DIM_RULES_TABLE_NAME)
+    dim_tables = _plain_fqn(catalog, schema, DIM_MONITORED_TABLES_TABLE_NAME)
     return {
         results: sorted(
             [
@@ -884,6 +966,34 @@ def _column_configs(catalog: str, schema: str) -> dict[str, list[dict]]:
         failing: [
             cc("source_table_fqn", "Fully-qualified name (catalog.schema.table) of the monitored SOURCE table."),
         ],
+        dim_rules: sorted(
+            [
+                cc(
+                    "default_severity",
+                    "The rule's own DEFAULT severity tag (Critical/High/Medium/Low) as authored — NOT "
+                    "what actually ran; for the severity results were tagged with at run time, use "
+                    "v_dq_check_attribution / v_dq_check_results.severity (the APPLIED/effective "
+                    "severity) instead.",
+                ),
+                cc(
+                    "dimension",
+                    "The rule's own quality dimension tag (Completeness, Validity, ...). NULL when untagged.",
+                ),
+                cc("mode", "Authoring mode of the rule: 'dqx_native', 'lowcode', or 'sql'."),
+                cc("name", "Human display name of the registry rule."),
+                cc("status", "Registry review status: draft, pending_approval, approved, rejected, or deprecated."),
+                cc("steward", "Owner (steward) responsible for the rule."),
+            ],
+            key=lambda c: c["column_name"],
+        ),
+        dim_tables: sorted(
+            [
+                cc("status", "Monitored-table review status: draft, pending_approval, approved, or rejected."),
+                cc("steward", "Owner (steward) responsible for the monitored table."),
+                cc("table_fqn", "Fully-qualified name (catalog.schema.table) of the monitored table."),
+            ],
+            key=lambda c: c["column_name"],
+        ),
     }
 
 
@@ -926,8 +1036,7 @@ def _sql_snippets(catalog: str, schema: str) -> dict:
             "sql": [f"{mv}.`run_mode` = 'published'"],
             "synonyms": ["published only", "official runs", "excluding drafts"],
             "instruction": [
-                "Apply by DEFAULT to every question — draft runs only when the question "
-                "explicitly asks about drafts."
+                "Apply by DEFAULT to every question — draft runs only when the question explicitly asks about drafts."
             ],
         },
         {
@@ -989,6 +1098,8 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
     asof = _plain_fqn(catalog, schema, ASOF_VIEW_NAME)
     attribution = _plain_fqn(catalog, schema, ATTRIBUTION_VIEW_NAME)
     failing = _plain_fqn(catalog, schema, FAILING_ROWS_VIEW_NAME)
+    dim_rules = _plain_fqn(catalog, schema, DIM_RULES_TABLE_NAME)
+    dim_tables = _plain_fqn(catalog, schema, DIM_MONITORED_TABLES_TABLE_NAME)
     column_configs = _column_configs(catalog, schema)
     # Each attached object carries a description grounded in its REAL columns
     # so Genie routes questions correctly. The only row-level object is the
@@ -1064,6 +1175,36 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                     "where access is verified."
                 ],
                 "column_configs": column_configs[failing],
+            },
+            {
+                "identifier": dim_rules,
+                "description": [
+                    "Registry rule catalogue (metadata, NOT run results) — one row per registry "
+                    "rule, full-refreshed from the Rules Registry. Columns: rule_id, name, "
+                    "description, dimension (the rule's own quality-dimension tag), "
+                    "default_severity (the rule's OWN authored DEFAULT severity — NOT what ran; "
+                    "for the severity a check actually ran with use v_dq_check_attribution / "
+                    "v_dq_check_results.severity), mode (dqx_native/lowcode/sql), status (draft/"
+                    "pending_approval/approved/rejected/deprecated), is_builtin, steward (owner), "
+                    "version (published version, 0 until first publish), created_at, updated_at. "
+                    "Use for rule-authoring and ownership questions (who owns a rule, what a rule "
+                    "is, which rules are in draft); it carries no pass/fail counts."
+                ],
+                "column_configs": column_configs[dim_rules],
+            },
+            {
+                "identifier": dim_tables,
+                "description": [
+                    "Monitored-table register (metadata, NOT run results) — one row per "
+                    "monitored-table binding, full-refreshed from the Rules Registry. Columns: "
+                    "binding_id, table_fqn (the monitored table's fully-qualified name), steward "
+                    "(owner), status (draft/pending_approval/approved/rejected), schedule_cron "
+                    "(POSIX cron, NULL when unscheduled), version (approved version, 0 until first "
+                    "approval), created_at, updated_at. Use for governance/ownership questions "
+                    "(who owns a table, which tables are in draft, which are scheduled); it "
+                    "carries no scores — read those from mv_dq_scores / v_dq_check_results."
+                ],
+                "column_configs": column_configs[dim_tables],
             },
         ],
         key=lambda x: x["identifier"],
@@ -1257,8 +1398,7 @@ def ensure_dq_genie_space(
                 # delete a space we can't cleanly recreate.
                 settings.save_setting(SETTING_STATUS, STATUS_READY)
                 logger.warning(
-                    f"Genie space update failed; left existing space {existing} "
-                    "in place — will retry on next provision"
+                    f"Genie space update failed; left existing space {existing} in place — will retry on next provision"
                 )
             return existing
 
