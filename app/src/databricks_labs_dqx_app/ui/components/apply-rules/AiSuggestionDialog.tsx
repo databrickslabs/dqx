@@ -214,7 +214,10 @@ export function AiSuggestionDialog({
           <DialogDescription>{t("monitoredTables.suggestRulesDialogDescription")}</DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto min-h-0 -mr-2 pr-2">
+        {/* scrollbar-gutter:stable reserves the scrollbar's space up front so
+            it can't paint/reflow mid-way through the dialog's zoom/slide-in
+            (the 200ms open animation), which otherwise caused a visible jump. */}
+        <div className="flex-1 overflow-y-auto min-h-0 -mr-2 pr-2 [scrollbar-gutter:stable]">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-10 gap-2 text-center">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-label={t("monitoredTables.suggestRulesLoading")} />
