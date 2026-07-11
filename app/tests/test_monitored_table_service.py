@@ -230,11 +230,12 @@ class TestBulkRegister:
 class TestListMonitoredTables:
     def test_lists_with_applied_rule_counts(self, svc, sql):
         sql.query.side_effect = [
-            [_table_row(binding_id="b1"), _table_row(binding_id="b2")],
-            [["2"]],  # applied-rule count for b1
-            [["3"]],  # materialized-check count for b1
-            [["0"]],  # applied-rule count for b2
-            [["0"]],  # materialized-check count for b2
+            [
+                _table_row(binding_id="b1", table_fqn="cat.schema.t1"),
+                _table_row(binding_id="b2", table_fqn="cat.schema.t2"),
+            ],
+            [["b1", "2"]],  # grouped applied-rule counts (b2 absent -> 0)
+            [["cat.schema.t1", "3"]],  # grouped materialized-check counts (t2 absent -> 0)
         ]
         summaries = svc.list_monitored_tables()
         assert len(summaries) == 2
@@ -242,6 +243,16 @@ class TestListMonitoredTables:
         assert summaries[0].check_count == 3
         assert summaries[1].applied_rule_count == 0
         assert summaries[1].check_count == 0
+        # Counts are batched: bindings query + ONE grouped query per count
+        # kind, regardless of how many bindings are listed (no per-binding N+1).
+        assert sql.query.call_count == 3
+        applied_sql = sql.query.call_args_list[1][0][0]
+        assert "GROUP BY binding_id" in applied_sql
+        assert "IN ('b1', 'b2')" in applied_sql
+        checks_sql = sql.query.call_args_list[2][0][0]
+        assert "GROUP BY table_fqn" in checks_sql
+        assert "IN ('cat.schema.t1', 'cat.schema.t2')" in checks_sql
+        assert "status != 'rejected'" in checks_sql
 
     def test_filters_by_status_pushed_to_sql(self, svc, sql):
         sql.query.return_value = []
@@ -261,8 +272,8 @@ class TestListMonitoredTables:
                 _table_row(binding_id="b1", table_fqn="cat1.schema.tbl"),
                 _table_row(binding_id="b2", table_fqn="cat2.schema.tbl"),
             ],
-            [["0"]],  # applied-rule count for the one row surviving the filter
-            [["0"]],  # materialized-check count for the one row surviving the filter
+            [],  # grouped applied-rule counts — none for the surviving row
+            [],  # grouped materialized-check counts — none for the surviving row
         ]
         summaries = svc.list_monitored_tables(catalog="cat1")
         assert len(summaries) == 1
@@ -274,8 +285,8 @@ class TestListMonitoredTables:
                 _table_row(binding_id="b1", table_fqn="cat.schema.orders"),
                 _table_row(binding_id="b2", table_fqn="cat.schema.customers"),
             ],
-            [["0"]],  # applied-rule count for the one row surviving the filter
-            [["0"]],  # materialized-check count for the one row surviving the filter
+            [],  # grouped applied-rule counts — none for the surviving row
+            [],  # grouped materialized-check counts — none for the surviving row
         ]
         summaries = svc.list_monitored_tables(name="order")
         assert len(summaries) == 1
@@ -294,8 +305,8 @@ class TestListMonitoredTables:
                     score_computed_at="2026-07-10T00:00:00",
                 )
             ],
-            [["2"]],  # applied-rule count
-            [["3"]],  # materialized-check count
+            [["b1", "2"]],  # grouped applied-rule counts
+            [["cat.schema.tbl", "3"]],  # grouped materialized-check counts
         ]
         summaries = svc.list_monitored_tables()
         list_sql = sql.query.call_args_list[0][0][0]
@@ -311,8 +322,8 @@ class TestListMonitoredTables:
     def test_list_score_fields_none_when_never_scored(self, svc, sql):
         sql.query.side_effect = [
             [_table_row(binding_id="b1")],
-            [["0"]],
-            [["0"]],
+            [],  # grouped applied-rule counts
+            [],  # grouped materialized-check counts
         ]
         summary = svc.list_monitored_tables()[0]
         assert summary.score is None

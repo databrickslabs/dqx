@@ -312,11 +312,13 @@ class MonitoredTableService:
         if name:
             needle = name.lower()
             tables = [(t, s) for t, s in tables if needle in t.table_fqn.lower()]
+        applied_counts = self._applied_rule_counts([t.binding_id for t, _ in tables])
+        check_counts = self._materialized_check_counts([t.table_fqn for t, _ in tables])
         return [
             MonitoredTableSummary(
                 table=t,
-                applied_rule_count=self._count_applied_rules(t.binding_id),
-                check_count=self._count_materialized_checks(t.table_fqn),
+                applied_rule_count=applied_counts.get(t.binding_id, 0),
+                check_count=check_counts.get(t.table_fqn, 0),
                 score=cached.score,
                 failed_tests=cached.failed_tests,
                 total_tests=cached.total_tests,
@@ -330,14 +332,23 @@ class MonitoredTableService:
         parts = table_fqn.split(".")
         return parts[index] if len(parts) > index else None
 
-    def _count_applied_rules(self, binding_id: str) -> int:
-        e = escape_sql_string(binding_id)
-        sql = f"SELECT COUNT(*) FROM {self._applied_table} WHERE binding_id = '{e}'"  # noqa: S608
+    def _applied_rule_counts(self, binding_ids: list[str]) -> dict[str, int]:
+        """Applied-rule counts for all *binding_ids* in ONE grouped query (no per-binding round-trip)."""
+        if not binding_ids:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(b)}'" for b in binding_ids)
+        sql = (
+            f"SELECT binding_id, COUNT(*) FROM {self._applied_table} "  # noqa: S608
+            f"WHERE binding_id IN ({in_list}) GROUP BY binding_id"
+        )
         rows = self._sql.query(sql)
-        return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+        return {row[0]: int(row[1]) for row in rows if row and row[0] is not None and row[1] is not None}
 
-    def _count_materialized_checks(self, table_fqn: str) -> int:
-        """Count active ``dq_quality_rules`` rows for *table_fqn*, regardless of authoring source.
+    def _materialized_check_counts(self, table_fqns: list[str]) -> dict[str, int]:
+        """Count active ``dq_quality_rules`` rows per *table_fqns* entry, regardless of authoring source.
+
+        One grouped query for all listed tables (no per-table round-trip); a
+        table with zero active rows is simply absent from the result.
 
         ``dq_quality_rules`` holds every check for a table — authored
         directly (``source`` in ``ui``/``sql``/``profiler``/``import``/``ai``)
@@ -349,13 +360,15 @@ class MonitoredTableService:
         active, mirroring :data:`RulesCatalogService.VALID_STATUSES`'s
         terminal "dead" state.
         """
-        e = escape_sql_string(table_fqn)
+        if not table_fqns:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(f)}'" for f in table_fqns)
         sql = (
-            f"SELECT COUNT(*) FROM {self._quality_rules_table} "  # noqa: S608
-            f"WHERE table_fqn = '{e}' AND status != 'rejected'"
+            f"SELECT table_fqn, COUNT(*) FROM {self._quality_rules_table} "  # noqa: S608
+            f"WHERE table_fqn IN ({in_list}) AND status != 'rejected' GROUP BY table_fqn"
         )
         rows = self._sql.query(sql)
-        return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+        return {row[0]: int(row[1]) for row in rows if row and row[0] is not None and row[1] is not None}
 
     def get(self, binding_id: str) -> MonitoredTableDetail | None:
         """Get a monitored table binding plus its applied rules (with joined rule tags)."""

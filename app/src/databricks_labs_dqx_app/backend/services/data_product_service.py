@@ -223,13 +223,32 @@ class DataProductService:
         """List every data product, newest-updated first, with resolved members.
 
         The cached DQ score columns are LEFT-JOINed from ``dq_score_cache``
-        in the same round-trip (P3.4) — never recomputed here.
+        in the same round-trip (P3.4) — never recomputed here. Everything
+        else the per-product detail needs is fetched in a BOUNDED number of
+        batched queries, independent of product count: one for all products'
+        members, one grouped MAX for last-run-at, and (only when pins exist)
+        one for the pinned frozen-snapshot counts. Never one-query-per-product.
         """
         scored = self._fetch_products_with_scores()
         if not scored:
             return []
         table_map = self._table_summary_map()
-        return [self._build_detail(p, table_map, cached) for p, cached in scored]
+        product_ids = [product.product_id for product, _ in scored]
+        members_by_product = self._fetch_members_by_product(product_ids)
+        last_run_map = self._run_set_service.latest_created_at_by_product(product_ids)
+        all_members = [m for members in members_by_product.values() for m in members]
+        pinned_counts = self._pinned_snapshot_counts(all_members)
+        return [
+            self._build_detail(
+                product,
+                table_map,
+                cached,
+                member_rows=members_by_product.get(product.product_id, []),
+                last_run_at=last_run_map.get(product.product_id),
+                pinned_counts=pinned_counts,
+            )
+            for product, cached in scored
+        ]
 
     def get(self, product_id: str) -> DataProductDetail | None:
         """Get a single data product with resolved members, or None if it doesn't exist."""
@@ -237,7 +256,16 @@ class DataProductService:
         if scored is None:
             return None
         product, cached = scored
-        return self._build_detail(product, self._table_summary_map(), cached)
+        member_rows = self._fetch_members(product_id)
+        last_run_map = self._run_set_service.latest_created_at_by_product([product_id])
+        return self._build_detail(
+            product,
+            self._table_summary_map(),
+            cached,
+            member_rows=member_rows,
+            last_run_at=last_run_map.get(product_id),
+            pinned_counts=self._pinned_snapshot_counts(member_rows),
+        )
 
     # ------------------------------------------------------------------
     # CRUD
@@ -641,9 +669,18 @@ class DataProductService:
         self,
         product: DataProduct,
         table_map: dict[str, MonitoredTableSummary],
-        cached_score: CachedScore | None = None,
+        cached_score: CachedScore | None,
+        *,
+        member_rows: list[_MemberRow],
+        last_run_at: datetime | None,
+        pinned_counts: dict[tuple[str, int], tuple[int, int]],
     ) -> DataProductDetail:
-        member_rows = self._fetch_members(product.product_id)
+        """Assemble one product's detail from PRE-FETCHED batch data.
+
+        Takes the member rows, last-run-at, and pinned-snapshot-count map the
+        caller already fetched (batched across all products on the list path)
+        so building N details issues zero additional queries.
+        """
         members: list[DataProductMemberDetail] = []
         for row in member_rows:
             summary = table_map.get(row.binding_id)
@@ -656,7 +693,7 @@ class DataProductService:
                 )
                 continue
             table = summary.table
-            rules_count, checks_count = self._member_counts(summary, row.pinned_version)
+            rules_count, checks_count = self._member_counts(summary, row.pinned_version, pinned_counts)
             members.append(
                 DataProductMemberDetail(
                     id=row.id,
@@ -674,7 +711,6 @@ class DataProductService:
                     score_computed_at=summary.score_computed_at,
                 )
             )
-        last_run_at = self._last_run_at(product.product_id)
         cached = cached_score or CachedScore()
         return DataProductDetail(
             product=product,
@@ -688,28 +724,37 @@ class DataProductService:
             score_computed_at=cached.computed_at,
         )
 
-    def _member_counts(self, summary: MonitoredTableSummary, pinned_version: int | None) -> tuple[int, int]:
+    @staticmethod
+    def _member_counts(
+        summary: MonitoredTableSummary,
+        pinned_version: int | None,
+        pinned_counts: dict[tuple[str, int], tuple[int, int]],
+    ) -> tuple[int, int]:
         """Return ``(rules_count, checks_count)`` for a member.
 
         An UNPINNED member tracks the binding's latest approved state, so it
         reports the live summary counts. A member PINNED to a specific version
         enforces that version's FROZEN snapshot, so it must report the
         snapshot's counts (``dq_monitored_table_versions.state_json`` /
-        ``checks_json`` lengths) — not the binding's current (possibly newer or
-        emptied) live count, which would otherwise mislead the owner about what
-        the pin actually enforces. Falls back to the live counts if the pinned
-        snapshot can't be resolved (defensive: a pin should always have a
-        matching frozen row).
+        ``checks_json`` lengths) — resolved from the pre-fetched
+        *pinned_counts* map (see :meth:`_pinned_snapshot_counts`), not the
+        binding's current (possibly newer or emptied) live count, which would
+        otherwise mislead the owner about what the pin actually enforces.
+        Falls back to the live counts if the pinned snapshot can't be resolved
+        (defensive: a pin should always have a matching frozen row).
         """
         if pinned_version is not None:
-            snapshot = self._version_service.snapshot_counts(summary.table.binding_id, pinned_version)
+            snapshot = pinned_counts.get((summary.table.binding_id, pinned_version))
             if snapshot is not None:
                 return snapshot
         return summary.applied_rule_count, summary.check_count
 
-    def _last_run_at(self, product_id: str) -> datetime | None:
-        run_sets = self._run_set_service.list_for_product(product_id, limit=1)
-        return run_sets[0].created_at if run_sets else None
+    def _pinned_snapshot_counts(self, member_rows: list[_MemberRow]) -> dict[tuple[str, int], tuple[int, int]]:
+        """Resolve every pinned member's frozen-snapshot counts in one batched query."""
+        pins = [(row.binding_id, row.pinned_version) for row in member_rows if row.pinned_version is not None]
+        if not pins:
+            return {}
+        return self._version_service.snapshot_counts_many(pins)
 
     def _table_summary_map(self) -> dict[str, MonitoredTableSummary]:
         summaries = self._monitored_tables.list_monitored_tables()
@@ -735,6 +780,26 @@ class DataProductService:
             f"SELECT id, binding_id, pinned_version FROM {self._members_table} WHERE product_id = '{e}'"  # noqa: S608
         )
         return [_MemberRow(id=row[0], binding_id=row[1], pinned_version=self._parse_int(row[2])) for row in rows]
+
+    def _fetch_members_by_product(self, product_ids: list[str]) -> dict[str, list[_MemberRow]]:
+        """Fetch ALL listed products' members in ONE query, grouped app-side.
+
+        Batched counterpart of :meth:`_fetch_members` for the list path — one
+        ``IN (...)`` round-trip instead of one query per product.
+        """
+        if not product_ids:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(p)}'" for p in product_ids)
+        rows = self._sql.query(
+            f"SELECT id, product_id, binding_id, pinned_version FROM {self._members_table} "  # noqa: S608
+            f"WHERE product_id IN ({in_list})"
+        )
+        result: dict[str, list[_MemberRow]] = {}
+        for row in rows:
+            result.setdefault(row[1], []).append(
+                _MemberRow(id=row[0], binding_id=row[2], pinned_version=self._parse_int(row[3]))
+            )
+        return result
 
     def _select_cols(self, prefix: str = "") -> str:
         created_at = self._sql.ts_text(f"{prefix}created_at")

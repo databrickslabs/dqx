@@ -12,6 +12,7 @@ zero-runnable, per-member submission failures collected into ``skipped``).
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import create_autospec
 
 import pytest
@@ -98,6 +99,14 @@ def _member_row(member_id: str, binding_id: str, pinned_version: str | None = No
     return [member_id, binding_id, pinned_version]
 
 
+def _list_member_row(
+    member_id: str, product_id: str, binding_id: str, pinned_version: str | None = None
+) -> list[str | None]:
+    # The batched list-path members query selects product_id too, so rows can
+    # be grouped app-side (one IN (...) query for ALL products' members).
+    return [member_id, product_id, binding_id, pinned_version]
+
+
 def _table_summary(
     binding_id: str = "b1",
     table_fqn: str = "cat.schema.tbl",
@@ -142,7 +151,7 @@ def monitored_tables():
 @pytest.fixture
 def run_set_service():
     mock = create_autospec(RunSetService, instance=True)
-    mock.list_for_product.return_value = []
+    mock.latest_created_at_by_product.return_value = {}
     mock.create.return_value = "rs-new"
     return mock
 
@@ -156,7 +165,7 @@ def binding_run_service():
 def version_service():
     mock = create_autospec(MonitoredTableVersionService, instance=True)
     # Default: no frozen snapshot resolves, so members fall back to live counts.
-    mock.snapshot_counts.return_value = None
+    mock.snapshot_counts_many.return_value = {}
     return mock
 
 
@@ -210,12 +219,11 @@ class TestListAndGet:
     def test_list_products_resolves_members_and_counters(self, service, sql, monitored_tables, run_set_service):
         sql.query.side_effect = [
             [_product_row(product_id="p1", status="draft", version="0")],
-            [_member_row("m1", "b1")],
+            [_list_member_row("m1", "p1", "b1")],
         ]
         monitored_tables.list_monitored_tables.return_value = [
             _table_summary(binding_id="b1", status="approved", version=2)
         ]
-        run_set_service.list_for_product.return_value = []
 
         result = service.list_products()
         assert len(result) == 1
@@ -225,6 +233,55 @@ class TestListAndGet:
         assert detail.runnable_count == 1
         assert detail.members[0].binding_status == "approved"
         assert detail.members[0].runnable is True
+
+    def test_list_products_issues_bounded_queries_independent_of_product_count(
+        self, service, sql, monitored_tables, run_set_service, version_service
+    ):
+        """The list path must issue a BOUNDED number of OLTP queries no matter
+        how many products exist (regression: it used to fan out per product —
+        members + run sets + run-set members + a Delta scan each, plus one
+        snapshot query per pinned member)."""
+        sql.query.side_effect = [
+            [
+                _product_row(product_id="p1"),
+                _product_row(product_id="p2", name="Payments"),
+                _product_row(product_id="p3", name="Refunds"),
+            ],
+            [
+                _list_member_row("m1", "p1", "b1"),
+                _list_member_row("m2", "p2", "b2", pinned_version="1"),
+                _list_member_row("m3", "p3", "b3"),
+            ],
+        ]
+        monitored_tables.list_monitored_tables.return_value = [
+            _table_summary(binding_id="b1", table_fqn="cat.s.t1", applied_rule_count=3, check_count=5),
+            _table_summary(binding_id="b2", table_fqn="cat.s.t2", applied_rule_count=0, check_count=0),
+            _table_summary(binding_id="b3", table_fqn="cat.s.t3", applied_rule_count=7, check_count=9),
+        ]
+        run_set_service.latest_created_at_by_product.return_value = {"p2": datetime(2026, 7, 9, 12, 0, 0)}
+        version_service.snapshot_counts_many.return_value = {("b2", 1): (1, 2)}
+
+        result = service.list_products()
+
+        # Exactly 2 direct OLTP queries: products+scores, all-members-in-one.
+        assert sql.query.call_count == 2
+        members_query = sql.query.call_args_list[1][0][0]
+        assert f"FROM {_MEMBERS}" in members_query
+        assert "IN ('p1', 'p2', 'p3')" in members_query
+        # Collaborator round-trips are batched across ALL products/pins.
+        run_set_service.latest_created_at_by_product.assert_called_once_with(["p1", "p2", "p3"])
+        version_service.snapshot_counts_many.assert_called_once_with([("b2", 1)])
+        # The response shape is unchanged: same per-product details as before.
+        by_id = {d.product.product_id: d for d in result}
+        assert by_id["p1"].members[0].rules_count == 3
+        assert by_id["p1"].members[0].checks_count == 5
+        assert by_id["p1"].last_run_at is None
+        assert by_id["p2"].members[0].pinned_version == 1
+        assert by_id["p2"].members[0].rules_count == 1  # frozen snapshot, not live 0
+        assert by_id["p2"].members[0].checks_count == 2
+        assert by_id["p2"].last_run_at == datetime(2026, 7, 9, 12, 0, 0)
+        assert by_id["p3"].members[0].rules_count == 7
+        assert all(d.member_count == 1 for d in result)
 
     def test_list_products_empty(self, service, sql):
         sql.query.return_value = []
@@ -321,7 +378,7 @@ class TestListAndGet:
     def test_member_referencing_missing_binding_is_skipped(self, service, sql, monitored_tables, run_set_service):
         sql.query.side_effect = [
             [_product_row(product_id="p1")],
-            [_member_row("m1", "b-deleted")],
+            [_list_member_row("m1", "p1", "b-deleted")],
         ]
         monitored_tables.list_monitored_tables.return_value = []
         result = service.list_products()
@@ -356,7 +413,7 @@ class TestListAndGet:
         assert detail.members[0].rules_count == 3
         assert detail.members[0].checks_count == 5
         # No pin -> never consults the frozen snapshot.
-        version_service.snapshot_counts.assert_not_called()
+        version_service.snapshot_counts_many.assert_not_called()
 
     def test_pinned_member_reports_pinned_snapshot_counts(self, service, sql, monitored_tables, version_service):
         # Live binding has moved on to v2 and its live counts differ from the
@@ -369,10 +426,10 @@ class TestListAndGet:
         monitored_tables.list_monitored_tables.return_value = [
             _table_summary(binding_id="b1", status="approved", version=2, applied_rule_count=0, check_count=0)
         ]
-        version_service.snapshot_counts.return_value = (1, 2)
+        version_service.snapshot_counts_many.return_value = {("b1", 1): (1, 2)}
         detail = service.get("p1")
         assert detail is not None
-        version_service.snapshot_counts.assert_called_once_with("b1", 1)
+        version_service.snapshot_counts_many.assert_called_once_with([("b1", 1)])
         assert detail.members[0].rules_count == 1
         assert detail.members[0].checks_count == 2
         # The pin itself is still surfaced unchanged.
@@ -388,7 +445,7 @@ class TestListAndGet:
         monitored_tables.list_monitored_tables.return_value = [
             _table_summary(binding_id="b1", status="approved", version=2, applied_rule_count=3, check_count=5)
         ]
-        version_service.snapshot_counts.return_value = None  # snapshot not found
+        version_service.snapshot_counts_many.return_value = {}  # snapshot not found
         detail = service.get("p1")
         assert detail is not None
         assert detail.members[0].rules_count == 3
