@@ -163,6 +163,7 @@ function GrantDialog({
   open,
   onOpenChange,
   editing,
+  objectType,
   defaultInherit,
   showInherit,
   saving,
@@ -171,6 +172,7 @@ function GrantDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editing: ObjectGrantOut | null;
+  objectType: Props["objectType"];
   defaultInherit: boolean;
   showInherit: boolean;
   saving: boolean;
@@ -181,6 +183,16 @@ function GrantDialog({
   // must keep at least one privilege.
   const allowEmpty = !!editing && isUsersGroupGrant(editing);
   const { t } = useTranslation();
+  // Inheritance flows down the object hierarchy, so what "inherit" grants
+  // access to differs by object type: a monitored table pushes access to its
+  // underlying rules; a table space pushes it to its member tables and their
+  // rules. Registry rules never show this toggle (nothing beneath them).
+  const inheritHintKey =
+    objectType === "monitored_table"
+      ? "permissions.inheritToggleHintMonitoredTable"
+      : objectType === "data_product"
+        ? "permissions.inheritToggleHintTableSpace"
+        : "permissions.inheritToggleHint";
   const [draft, setDraft] = useState<GrantDraft>({
     principal: null,
     view: true,
@@ -245,30 +257,34 @@ function GrantDialog({
 
           <div className="space-y-2">
             <Label>{t("permissions.privileges")}</Label>
+            {/* Grid columns (checkbox · privilege keyword · hint) keep every
+                hint on a shared left edge regardless of keyword width, and the
+                hints are non-selectable so drag-selecting text in the dialog
+                doesn't highlight the explanatory copy. */}
             <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm">
+              <label className="grid grid-cols-[auto_5rem_1fr] items-center gap-2 text-sm">
                 <Checkbox
                   checked={draft.view}
                   onCheckedChange={(c) => setDraft((d) => ({ ...d, view: c === true }))}
                 />
                 <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_SELECT)}</span>
-                <span className="text-xs text-muted-foreground">{t("permissions.viewHint")}</span>
+                <span className="select-none text-xs text-muted-foreground">{t("permissions.viewHint")}</span>
               </label>
-              <label className="flex items-center gap-2 text-sm">
+              <label className="grid grid-cols-[auto_5rem_1fr] items-center gap-2 text-sm">
                 <Checkbox
                   checked={draft.modify}
                   onCheckedChange={(c) => setDraft((d) => ({ ...d, modify: c === true }))}
                 />
                 <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_MODIFY)}</span>
-                <span className="text-xs text-muted-foreground">{t("permissions.modifyHint")}</span>
+                <span className="select-none text-xs text-muted-foreground">{t("permissions.modifyHint")}</span>
               </label>
-              <label className="flex items-center gap-2 text-sm">
+              <label className="grid grid-cols-[auto_5rem_1fr] items-center gap-2 text-sm">
                 <Checkbox
                   checked={draft.apply}
                   onCheckedChange={(c) => setDraft((d) => ({ ...d, apply: c === true }))}
                 />
                 <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_APPLY)}</span>
-                <span className="text-xs text-muted-foreground">{t("permissions.applyHint")}</span>
+                <span className="select-none text-xs text-muted-foreground">{t("permissions.applyHint")}</span>
               </label>
             </div>
           </div>
@@ -279,7 +295,7 @@ function GrantDialog({
                 <Label htmlFor="grant-inherit" className="text-sm">
                   {t("permissions.inheritToggleLabel")}
                 </Label>
-                <p className="text-[11px] text-muted-foreground">{t("permissions.inheritToggleHint")}</p>
+                <p className="text-[11px] text-muted-foreground">{t(inheritHintKey)}</p>
               </div>
               <Switch
                 id="grant-inherit"
@@ -573,6 +589,7 @@ export function PermissionsTab({
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         editing={editing}
+        objectType={objectType}
         defaultInherit={defaultInherit}
         showInherit={!isRule}
         saving={setMut.isPending}

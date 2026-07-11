@@ -29,12 +29,14 @@ import {
   Braces,
   CheckCircle2,
   Loader2,
+  MessageSquare,
   MoreVertical,
   RotateCcw,
   Table2,
   Trash2,
   XCircle,
 } from "lucide-react";
+import { CommentsDialog } from "@/components/CommentThread";
 import {
   useGetRegistryRuleSuspense,
   getGetRegistryRuleQueryKey,
@@ -121,6 +123,7 @@ function RegistryRuleDetailPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [applyModalOpen, setApplyModalOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
   // Read-only view / "save as new draft" clone dialog (rule isn't editable
   // in place — see `RegistryRuleJsonDialog`).
   const [jsonDialogOpen, setJsonDialogOpen] = useState(false);
@@ -338,6 +341,10 @@ function RegistryRuleDetailPage() {
                     <Braces className="h-3.5 w-3.5" />
                     {t("rulesRegistry.actionViewJson")}
                   </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setCommentsOpen(true)} className="gap-2">
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    {t("rulesRegistry.actionComments")}
+                  </DropdownMenuItem>
                   {canDelete && (
                     <DropdownMenuItem
                       onClick={() => setDeleteConfirmOpen(true)}
@@ -383,6 +390,13 @@ function RegistryRuleDetailPage() {
           onApplied={invalidateDetail}
         />
       )}
+
+      <CommentsDialog
+        entityType="rule"
+        entityId={rule.rule_id}
+        open={commentsOpen}
+        onOpenChange={setCommentsOpen}
+      />
 
       <RegistryRuleJsonDialog
         open={jsonDialogOpen}

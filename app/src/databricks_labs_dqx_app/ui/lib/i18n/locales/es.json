@@ -1244,7 +1244,9 @@
     "failedDelete": "Error al eliminar comentario",
     "deleteAria": "Eliminar comentario",
     "deleteConfirmTitle": "¿Eliminar este comentario?",
-    "deleteConfirmBody": "Esto eliminará el comentario de forma permanente. Esta acción no se puede deshacer."
+    "deleteConfirmBody": "Esto eliminará el comentario de forma permanente. Esta acción no se puede deshacer.",
+    "dialogTitle": "Comentarios",
+    "dialogDescription": "Comenta y deja notas para tu equipo."
   },
   "dryRun": {
     "totalRows": "Filas Totales",
@@ -1446,6 +1448,7 @@
     "actionsMenuLabel": "Acciones",
     "actionApplyToTables": "Aplicar a tablas",
     "actionViewJson": "Ver/editar JSON",
+    "actionComments": "Comentarios",
     "jsonDialogTitle": "JSON de verificación DQX",
     "jsonDialogDescriptionEditable": "Guardar aplica estos cambios a un borrador nuevo — esta regla queda intacta.",
     "jsonDialogDescriptionReadOnly": "El dict de verificación DQX nativo que genera esta regla, con los slots reutilizables mostrados como marcadores de posición en lugar de columnas reales.",
@@ -1718,6 +1721,7 @@
     "emptyStateNoTables": "Todavía no hay tablas monitoreadas.",
     "neverProfiled": "Nunca perfilada",
     "actionOpen": "Abrir",
+    "actionComments": "Comentarios",
     "actionDelete": "Eliminar",
     "actionsMenuLabel": "Acciones",
     "deleteConfirmTitle": "¿Dejar de monitorizar esta tabla?",
@@ -2160,6 +2164,7 @@
     "runInProgressHint": "Ya hay una ejecución en curso. Espera a que termine antes de iniciar otra.",
     "runDraftAction": "Ejecutar borrador",
     "runDraftDisabledHint": "Ejecutar borrador está disponible en modo borrador o cuando tienes cambios sin guardar para guardar y ejecutar.",
+    "actionComments": "Comentarios",
     "deleteAction": "Eliminar",
     "actionsMenuLabel": "Acciones del espacio de tablas",
     "deleteConfirmTitle": "¿Eliminar este espacio de tablas?",
@@ -2287,6 +2292,8 @@
     "removePermission": "Quitar permiso",
     "inheritToggleLabel": "Heredar a objetos secundarios",
     "inheritToggleHint": "Cuando está activado, esta concesión se propaga a las tablas miembro.",
+    "inheritToggleHintMonitoredTable": "Cuando está activado, esta concesión también se propaga a las reglas subyacentes de la tabla.",
+    "inheritToggleHintTableSpace": "Cuando está activado, esta concesión también se propaga a las tablas miembro y a sus reglas.",
     "searchPlaceholder": "Buscar usuarios o grupos…",
     "selectPrincipal": "Selecciona una entidad…",
     "noGrants": "Aún no se han concedido permisos.",

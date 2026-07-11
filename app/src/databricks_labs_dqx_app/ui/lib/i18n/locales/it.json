@@ -1244,7 +1244,9 @@
     "failedDelete": "Impossibile eliminare il commento",
     "deleteAria": "Elimina commento",
     "deleteConfirmTitle": "Eliminare questo commento?",
-    "deleteConfirmBody": "Il commento verrà rimosso definitivamente. Questa azione non può essere annullata."
+    "deleteConfirmBody": "Il commento verrà rimosso definitivamente. Questa azione non può essere annullata.",
+    "dialogTitle": "Commenti",
+    "dialogDescription": "Discuti e lascia note per il tuo team."
   },
   "dryRun": {
     "totalRows": "Righe Totali",
@@ -1446,6 +1448,7 @@
     "actionsMenuLabel": "Azioni",
     "actionApplyToTables": "Applica alle tabelle",
     "actionViewJson": "Visualizza/modifica JSON",
+    "actionComments": "Commenti",
     "jsonDialogTitle": "JSON del controllo DQX",
     "jsonDialogDescriptionEditable": "Salvando, queste modifiche vengono applicate a una nuova bozza — questa regola resta invariata.",
     "jsonDialogDescriptionReadOnly": "Il dict di controllo DQX nativo generato da questa regola, con gli slot riutilizzabili mostrati come segnaposto invece di colonne reali.",
@@ -1718,6 +1721,7 @@
     "emptyStateNoTables": "Nessuna tabella monitorata ancora.",
     "neverProfiled": "Mai profilata",
     "actionOpen": "Apri",
+    "actionComments": "Commenti",
     "actionDelete": "Elimina",
     "actionsMenuLabel": "Azioni",
     "deleteConfirmTitle": "Interrompere il monitoraggio di questa tabella?",
@@ -2160,6 +2164,7 @@
     "runInProgressHint": "È già in corso un'esecuzione. Attendi che finisca prima di avviarne un'altra.",
     "runDraftAction": "Esegui bozza",
     "runDraftDisabledHint": "Esegui bozza è disponibile in stato bozza o quando hai modifiche non salvate da salvare ed eseguire.",
+    "actionComments": "Commenti",
     "deleteAction": "Elimina",
     "actionsMenuLabel": "Azioni spazio tabelle",
     "deleteConfirmTitle": "Eliminare questo spazio tabelle?",
@@ -2287,6 +2292,8 @@
     "removePermission": "Rimuovi autorizzazione",
     "inheritToggleLabel": "Eredita agli oggetti figli",
     "inheritToggleHint": "Se attivo, questa concessione si propaga alle tabelle membro.",
+    "inheritToggleHintMonitoredTable": "Se attivo, questa concessione si propaga anche alle regole sottostanti della tabella.",
+    "inheritToggleHintTableSpace": "Se attivo, questa concessione si propaga anche alle tabelle membro e alle relative regole.",
     "searchPlaceholder": "Cerca utenti o gruppi…",
     "selectPrincipal": "Seleziona un'entità…",
     "noGrants": "Nessuna autorizzazione concessa.",

@@ -1244,7 +1244,9 @@
     "failedDelete": "Falha ao excluir comentário",
     "deleteAria": "Excluir comentário",
     "deleteConfirmTitle": "Excluir este comentário?",
-    "deleteConfirmBody": "Isso removerá o comentário permanentemente. Esta ação não pode ser desfeita."
+    "deleteConfirmBody": "Isso removerá o comentário permanentemente. Esta ação não pode ser desfeita.",
+    "dialogTitle": "Comentários",
+    "dialogDescription": "Converse e deixe anotações para sua equipe."
   },
   "dryRun": {
     "totalRows": "Total de Linhas",
@@ -1446,6 +1448,7 @@
     "actionsMenuLabel": "Ações",
     "actionApplyToTables": "Aplicar às tabelas",
     "actionViewJson": "Ver/editar JSON",
+    "actionComments": "Comentários",
     "jsonDialogTitle": "JSON de verificação DQX",
     "jsonDialogDescriptionEditable": "Salvar aplica essas alterações a um novo rascunho — esta regra permanece intocada.",
     "jsonDialogDescriptionReadOnly": "O dict de verificação DQX nativo que esta regra gera, com slots reutilizáveis mostrados como espaços reservados em vez de colunas reais.",
@@ -1718,6 +1721,7 @@
     "emptyStateNoTables": "Nenhuma tabela monitorada ainda.",
     "neverProfiled": "Nunca perfilada",
     "actionOpen": "Abrir",
+    "actionComments": "Comentários",
     "actionDelete": "Excluir",
     "actionsMenuLabel": "Ações",
     "deleteConfirmTitle": "Parar de monitorar esta tabela?",
@@ -2160,6 +2164,7 @@
     "runInProgressHint": "Já há uma execução em andamento. Aguarde a conclusão antes de iniciar outra.",
     "runDraftAction": "Executar rascunho",
     "runDraftDisabledHint": "Executar rascunho está disponível em rascunho ou quando você tem edições não salvas para salvar e executar.",
+    "actionComments": "Comentários",
     "deleteAction": "Excluir",
     "actionsMenuLabel": "Ações do espaço de tabelas",
     "deleteConfirmTitle": "Excluir este espaço de tabelas?",
@@ -2287,6 +2292,8 @@
     "removePermission": "Remover permissão",
     "inheritToggleLabel": "Herdar para objetos filhos",
     "inheritToggleHint": "Quando ativado, esta concessão se propaga para as tabelas membros.",
+    "inheritToggleHintMonitoredTable": "Quando ativado, esta concessão também se propaga para as regras subjacentes da tabela.",
+    "inheritToggleHintTableSpace": "Quando ativado, esta concessão também se propaga para as tabelas membros e suas regras.",
     "searchPlaceholder": "Pesquisar usuários ou grupos…",
     "selectPrincipal": "Selecione uma entidade…",
     "noGrants": "Nenhuma permissão concedida ainda.",

@@ -53,6 +53,7 @@ import {
   Info,
   KeyRound,
   Loader2,
+  MessageSquare,
   MoreVertical,
   Play,
   Plus,
@@ -104,6 +105,7 @@ import {
 import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
+import { CommentsDialog } from "@/components/CommentThread";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import { useLabelDefinitions, useWorkspaceHost } from "@/lib/api-custom";
@@ -327,6 +329,7 @@ function MonitoredTableDetailPage() {
   const deleteMutation = useDeleteMonitoredTable();
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
 
   const persistStagedRows = useCallback(
     () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
@@ -561,6 +564,10 @@ function MonitoredTableDetailPage() {
                   <History className="h-3.5 w-3.5" />
                   {t("runsHistory.menuViewRuns")}
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setCommentsOpen(true)} className="gap-2">
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  {t("monitoredTables.actionComments")}
+                </DropdownMenuItem>
                 {perms.canCreateRules && (
                   <DropdownMenuItem
                     onClick={() => setDeleteConfirmOpen(true)}
@@ -775,6 +782,13 @@ function MonitoredTableDetailPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <CommentsDialog
+        entityType="monitored_table"
+        entityId={bindingId}
+        open={commentsOpen}
+        onOpenChange={setCommentsOpen}
+      />
 
       <AlertDialog open={blocker.status === "blocked"}>
         <AlertDialogContent>

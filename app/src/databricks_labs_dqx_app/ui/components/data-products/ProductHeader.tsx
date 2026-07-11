@@ -47,7 +47,8 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { CheckCircle2, Clock, History, Loader2, MoreVertical, Play, Save, Send, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, History, Loader2, MessageSquare, MoreVertical, Play, Save, Send, Trash2, XCircle } from "lucide-react";
+import { CommentsDialog } from "@/components/CommentThread";
 import { cn } from "@/lib/utils";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
 
@@ -295,6 +296,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
   const [busyRun, setBusyRun] = useState(false);
   // Bridges the gap between a successful submit and the next 4s poll
   // catching the new RUNNING run set, so the button doesn't flash back to
@@ -575,6 +577,10 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                 <History className="h-3.5 w-3.5" />
                 {t("runsHistory.menuViewRuns")}
               </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setCommentsOpen(true)} className="gap-2">
+                <MessageSquare className="h-3.5 w-3.5" />
+                {t("dataProducts.actionComments")}
+              </DropdownMenuItem>
               {canEdit && <DropdownMenuSeparator />}
               {canEdit && (
                 <DropdownMenuItem onSelect={() => setDeleteOpen(true)} variant="destructive" className="gap-2">
@@ -683,6 +689,13 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <CommentsDialog
+        entityType="data_product"
+        entityId={product.product_id}
+        open={commentsOpen}
+        onOpenChange={setCommentsOpen}
+      />
     </div>
   );
 }

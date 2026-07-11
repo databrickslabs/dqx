@@ -1244,7 +1244,9 @@
     "failedDelete": "Failed to delete comment",
     "deleteAria": "Delete comment",
     "deleteConfirmTitle": "Delete this comment?",
-    "deleteConfirmBody": "This will permanently remove the comment. This action cannot be undone."
+    "deleteConfirmBody": "This will permanently remove the comment. This action cannot be undone.",
+    "dialogTitle": "Comments",
+    "dialogDescription": "Discuss and leave notes for your team."
   },
   "dryRun": {
     "totalRows": "Total Rows",
@@ -1446,6 +1448,7 @@
     "actionsMenuLabel": "Actions",
     "actionApplyToTables": "Apply to tables",
     "actionViewJson": "View / edit JSON",
+    "actionComments": "Comments",
     "jsonDialogTitle": "DQX check JSON",
     "jsonDialogDescriptionEditable": "Saving applies these changes to a brand-new draft — this rule is left untouched.",
     "jsonDialogDescriptionReadOnly": "The native DQX check dict this rule compiles to, with reusable slots shown as placeholders instead of real columns.",
@@ -1718,6 +1721,7 @@
     "emptyStateNoTables": "No monitored tables yet.",
     "neverProfiled": "Never profiled",
     "actionOpen": "Open",
+    "actionComments": "Comments",
     "actionDelete": "Delete",
     "actionsMenuLabel": "Actions",
     "deleteConfirmTitle": "Stop monitoring this table?",
@@ -2160,6 +2164,7 @@
     "runInProgressHint": "A run is already in progress. Wait for it to finish before starting another.",
     "runDraftAction": "Run draft",
     "runDraftDisabledHint": "Run draft is available in draft, or when you have unsaved edits to save and run.",
+    "actionComments": "Comments",
     "deleteAction": "Delete",
     "actionsMenuLabel": "Table space actions",
     "deleteConfirmTitle": "Delete this table space?",
@@ -2287,6 +2292,8 @@
     "removePermission": "Remove permission",
     "inheritToggleLabel": "Inherit to child objects",
     "inheritToggleHint": "When on, this grant flows down to member tables.",
+    "inheritToggleHintMonitoredTable": "When on, this grant also flows down to the table's underlying rules.",
+    "inheritToggleHintTableSpace": "When on, this grant also flows down to member tables and their rules.",
     "searchPlaceholder": "Search users or groups…",
     "selectPrincipal": "Select a principal…",
     "noGrants": "No permissions granted yet.",
