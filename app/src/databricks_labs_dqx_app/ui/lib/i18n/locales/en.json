@@ -61,7 +61,6 @@
     "switchFailed": "Failed to switch language. Please try again."
   },
   "sidebar": {
-    "home": "Home",
     "createRules": "Create Rules",
     "singleTableRules": "Single table rules",
     "crossTableRules": "Cross-table rules",
@@ -100,8 +99,6 @@
     "groupsDescription": "User group memberships ({{count}})",
     "entitlementsTitle": "Entitlements",
     "entitlementsDescription": "User entitlements ({{count}})",
-    "preferencesTitle": "Preferences",
-    "preferencesDescription": "Personalize how the app looks and reads",
     "loadFailedTitle": "Failed to Load Profile",
     "loadFailedDescription": "There was an error loading your profile information. Make sure the backend is running and you're authenticated."
   },
@@ -124,7 +121,6 @@
       "rulesRegistryDesc": "Create a repository of reusable data quality rules",
       "monitoredTablesDesc": "Apply rules to specific tables and monitor their data quality",
       "tableSpacesDesc": "Group related tables into spaces with a shared schedule",
-      "resultsDesc": "Explore DQ scores, breakdowns, and failing records across your tables",
       "config": "Admin Settings",
       "configDesc": "Configure settings and preferences"
     },
@@ -148,9 +144,6 @@
   "navbar": {
     "aiAssistant": "Generate rules",
     "toggleTheme": "Toggle theme"
-  },
-  "sidebarUser": {
-    "configuration": "Configuration"
   },
   "breadcrumb": {
     "home": "Home"

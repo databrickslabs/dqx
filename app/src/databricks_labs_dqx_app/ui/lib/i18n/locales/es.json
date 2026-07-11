@@ -61,7 +61,6 @@
     "switchFailed": "No se pudo cambiar el idioma. Inténtalo de nuevo."
   },
   "sidebar": {
-    "home": "Inicio",
     "createRules": "Crear Reglas",
     "singleTableRules": "Reglas de tabla única",
     "crossTableRules": "Reglas entre tablas",
@@ -100,8 +99,6 @@
     "groupsDescription": "Pertenencia a grupos ({{count}})",
     "entitlementsTitle": "Privilegios",
     "entitlementsDescription": "Privilegios del usuario ({{count}})",
-    "preferencesTitle": "Preferencias",
-    "preferencesDescription": "Personaliza la apariencia y el idioma de la aplicación",
     "loadFailedTitle": "Error al Cargar el Perfil",
     "loadFailedDescription": "Hubo un error al cargar la información de tu perfil. Asegúrate de que el backend esté en ejecución y que hayas iniciado sesión."
   },
@@ -124,7 +121,6 @@
       "rulesRegistryDesc": "Crea un repositorio de reglas de calidad de datos reutilizables",
       "monitoredTablesDesc": "Aplica reglas a tablas específicas y monitoriza su calidad de datos",
       "tableSpacesDesc": "Agrupa tablas relacionadas en espacios con una programación compartida",
-      "resultsDesc": "Explora puntuaciones de DQ, desgloses y registros con errores en tus tablas",
       "config": "Configuración de Administrador",
       "configDesc": "Configura ajustes y preferencias"
     },
@@ -148,9 +144,6 @@
   "navbar": {
     "aiAssistant": "Generar reglas",
     "toggleTheme": "Cambiar tema"
-  },
-  "sidebarUser": {
-    "configuration": "Configuración"
   },
   "breadcrumb": {
     "home": "Inicio"

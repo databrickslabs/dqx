@@ -61,7 +61,6 @@
     "switchFailed": "Impossibile cambiare lingua. Riprova."
   },
   "sidebar": {
-    "home": "Home",
     "createRules": "Crea Regole",
     "singleTableRules": "Regole su tabella singola",
     "crossTableRules": "Regole tra tabelle",
@@ -100,8 +99,6 @@
     "groupsDescription": "Appartenenza ai gruppi ({{count}})",
     "entitlementsTitle": "Autorizzazioni",
     "entitlementsDescription": "Autorizzazioni dell'utente ({{count}})",
-    "preferencesTitle": "Preferenze",
-    "preferencesDescription": "Personalizza l'aspetto e la lingua dell'app",
     "loadFailedTitle": "Caricamento del Profilo non riuscito",
     "loadFailedDescription": "Si è verificato un errore durante il caricamento delle informazioni del profilo. Assicurati che il backend sia in esecuzione e che tu sia autenticato."
   },
@@ -124,7 +121,6 @@
       "rulesRegistryDesc": "Crea un repository di regole di qualità dei dati riutilizzabili",
       "monitoredTablesDesc": "Applica regole a tabelle specifiche e monitora la loro qualità dei dati",
       "tableSpacesDesc": "Raggruppa tabelle correlate in spazi con una pianificazione condivisa",
-      "resultsDesc": "Esplora punteggi DQ, suddivisioni e record non conformi nelle tue tabelle",
       "config": "Impostazioni Amministratore",
       "configDesc": "Configura impostazioni e preferenze"
     },
@@ -148,9 +144,6 @@
   "navbar": {
     "aiAssistant": "Genera regole",
     "toggleTheme": "Cambia tema"
-  },
-  "sidebarUser": {
-    "configuration": "Configurazione"
   },
   "breadcrumb": {
     "home": "Home"

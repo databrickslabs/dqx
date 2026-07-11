@@ -61,7 +61,6 @@
     "switchFailed": "Falha ao trocar de idioma. Tente novamente."
   },
   "sidebar": {
-    "home": "Início",
     "createRules": "Criar Regras",
     "singleTableRules": "Regras de tabela única",
     "crossTableRules": "Regras entre tabelas",
@@ -100,8 +99,6 @@
     "groupsDescription": "Grupos do usuário ({{count}})",
     "entitlementsTitle": "Direitos",
     "entitlementsDescription": "Direitos do usuário ({{count}})",
-    "preferencesTitle": "Preferências",
-    "preferencesDescription": "Personalize a aparência e o idioma do aplicativo",
     "loadFailedTitle": "Falha ao Carregar o Perfil",
     "loadFailedDescription": "Ocorreu um erro ao carregar as informações do seu perfil. Verifique se o backend está em execução e se você está autenticado."
   },
@@ -124,7 +121,6 @@
       "rulesRegistryDesc": "Crie um repositório de regras de qualidade de dados reutilizáveis",
       "monitoredTablesDesc": "Aplique regras a tabelas específicas e monitore sua qualidade de dados",
       "tableSpacesDesc": "Agrupe tabelas relacionadas em espaços com um agendamento compartilhado",
-      "resultsDesc": "Explore pontuações de DQ, detalhamentos e registros com falha em suas tabelas",
       "config": "Configurações de Administrador",
       "configDesc": "Configure ajustes e preferências"
     },
@@ -148,9 +144,6 @@
   "navbar": {
     "aiAssistant": "Gerar regras",
     "toggleTheme": "Alternar tema"
-  },
-  "sidebarUser": {
-    "configuration": "Configuração"
   },
   "breadcrumb": {
     "home": "Início"
