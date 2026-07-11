@@ -17,6 +17,8 @@ filtering, axes slicing) independent of the routes.
 from __future__ import annotations
 
 import json
+from collections import defaultdict
+from dataclasses import replace
 
 import pytest
 
@@ -54,6 +56,35 @@ def make_row(
         columns=columns,
         rule_id=rule_id,
     )
+
+
+
+def expand_asof(rows: list[CheckResultRow]) -> list[CheckResultRow]:
+    """Reference AS-OF expansion mirroring ``v_dq_check_results_asof``.
+
+    The carry-forward consolidation now lives in the UC view (one scope
+    partition per include_drafts value — these fixtures model the one
+    partition a route ever reads); this helper reproduces its semantics
+    over in-memory rows so the misaligned fixtures keep pinning the
+    NUMERIC truth of the full SQL-then-service path: for every distinct
+    run instant, each table with a run at-or-before that instant
+    contributes the rows of its LATEST such run, stamped with the
+    instant (``run_date`` = the view's ``as_of_time``). Rows with no
+    run_date never enter (the view excludes NULL run_time).
+    """
+    dated = [row for row in rows if row.run_date is not None]
+    runs_by_table: dict[str, dict[str, list[CheckResultRow]]] = defaultdict(dict)
+    for row in dated:
+        assert row.run_date is not None
+        runs_by_table[row.table_fqn].setdefault(row.run_date, []).append(row)
+    out: list[CheckResultRow] = []
+    for instant in sorted({row.run_date for row in dated if row.run_date is not None}):
+        for runs in runs_by_table.values():
+            eligible = [run_date for run_date in runs if run_date <= instant]
+            if not eligible:
+                continue
+            out.extend(replace(row, run_date=instant) for row in runs[max(eligible)])
+    return out
 
 
 class TestParseCheckRows:
@@ -510,16 +541,16 @@ class TestTrends:
 
 
 class TestAsOfAverageTrend:
-    """The overall ``trend`` is the AS-OF carry-forward average (dqlake's
-    mv_product_results / _product_trend semantics): one point per distinct
-    run instant across the scope; at each instant every member table
-    contributes the pass rate of its most recent run at-or-before that
-    instant, and the point is the EQUAL-WEIGHT mean of those carried
-    values. dqlake's exclusion choices, pinned here:
+    """The overall ``trend`` is the AS-OF carry-forward average. The
+    expansion itself is the UC view ``v_dq_check_results_asof`` (modelled
+    here by ``expand_asof`` — the misaligned fixtures pin the numeric truth
+    of the SQL-then-service path); the service pools each table's carried
+    rows per instant and takes the EQUAL-WEIGHT mean across tables
+    (dqlake's ``_product_trend``):
 
     - a table with no run yet at an instant is excluded until its first
-      run (inner-join semantics in dqlake's asof CTE);
-    - a table whose as-of run has a NULL pass rate (zero tests) is
+      run (inner-join semantics in the view's asof CTE);
+    - a table whose as-of rows pool to a NULL pass rate (zero tests) is
       excluded at that instant — never substituted with an older run.
     """
 
@@ -537,8 +568,13 @@ class TestAsOfAverageTrend:
             make_row("c1", failed=0, total=100, run_id="a2", run_date=self.T3, fqn=self.A),
         ]
 
+    def _compute(self, rows: list[CheckResultRow], facets: ResultFacets | None = None):
+        return compute_entity_results(
+            rows, facets or ResultFacets(), table_axis="by_table", asof_rows=expand_asof(rows)
+        )
+
     def test_average_carries_each_table_forward_at_every_instant(self):
-        out = compute_entity_results(self._misaligned(), ResultFacets(), table_axis="by_table")
+        out = self._compute(self._misaligned())
         assert [p.run_date for p in out.trend] == [self.T1, self.T2, self.T3]
         # t1: only A has run (B excluded until its first run).
         assert out.trend[0].pass_rate == pytest.approx(0.9)
@@ -552,7 +588,7 @@ class TestAsOfAverageTrend:
             make_row("c1", failed=0, total=1000, run_id="a1", run_date=self.T1, fqn=self.A),
             make_row("c1", failed=5, total=10, run_id="b1", run_date=self.T1, fqn=self.B),
         ]
-        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
+        out = self._compute(rows)
         # Mean of the table rates (1.0 and 0.5) — not the pooled 1 - 5/1010.
         assert out.trend[0].pass_rate == pytest.approx(0.75)
 
@@ -563,14 +599,14 @@ class TestAsOfAverageTrend:
             make_row("c1", failed=0, total=None, run_id="a2", run_date=self.T2, fqn=self.A),
             make_row("c1", failed=50, total=100, run_id="b1", run_date=self.T2, fqn=self.B),
         ]
-        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
-        # t2: A's as-of run is the NULL-rate one — A drops out (dqlake filters
-        # NULL AFTER picking the as-of run); only B contributes.
+        out = self._compute(rows)
+        # t2: A's as-of run is the NULL-rate one — A drops out (NULL is
+        # filtered AFTER the as-of pick); only B contributes.
         assert out.trend[1].pass_rate == pytest.approx(0.5)
 
     def test_point_is_null_when_no_table_has_a_rate_at_the_instant(self):
         rows = [make_row("c1", failed=0, total=None, run_id="a1", run_date=self.T1, fqn=self.A)]
-        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
+        out = self._compute(rows)
         assert [p.run_date for p in out.trend] == [self.T1]
         assert out.trend[0].pass_rate is None
 
@@ -584,12 +620,26 @@ class TestAsOfAverageTrend:
                 "c1", failed=50, total=100, run_id="b1", run_date=self.T2, fqn=self.B, dimension="Completeness"
             ),
         ]
-        out = compute_entity_results(rows, ResultFacets(dimensions=("Completeness",)), table_axis="by_table")
+        out = self._compute(rows, ResultFacets(dimensions=("Completeness",)))
         # A's carried-forward rate at t2 is its Completeness-only rate (0.9),
-        # not the all-checks rate — carry-forward runs over the matched rows.
+        # not the all-checks rate — facets filter the expansion's rows.
         assert out.trend[1].pass_rate == pytest.approx((0.9 + 0.5) / 2)
 
+    def test_foreign_instants_in_the_expansion_are_dropped(self):
+        # The UC view is table-agnostic: its instants span EVERY table, so
+        # the expansion can carry this scope's tables at instants where the
+        # scope never ran. Those rows must not create points — the series'
+        # instants are the scope's own run instants (from the raw rows).
+        rows = [make_row("c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A)]
+        foreign = replace(rows[0], run_date=self.T2)  # carried at another table's instant
+        out = compute_entity_results(
+            rows, ResultFacets(), table_axis="by_table", asof_rows=[*expand_asof(rows), foreign]
+        )
+        assert [p.run_date for p in out.trend] == [self.T1]
+
     def test_single_table_scope_degenerates_to_per_run_rates(self):
+        # The table endpoint fetches no expansion (asof_rows=None): its own
+        # per-run rows ARE the degenerate expansion.
         rows = [
             make_row("c1", failed=10, total=100, run_id="r1", run_date=self.T1),
             make_row("c1", failed=50, total=100, run_id="r2", run_date=self.T2),
@@ -600,22 +650,22 @@ class TestAsOfAverageTrend:
             (self.T2, pytest.approx(0.5)),
         ]
 
-    def test_dateless_rows_form_one_isolated_leading_point(self):
+    def test_dateless_rows_never_enter_the_expansion(self):
+        # The view excludes NULL run_time (it cannot be ordered), so a
+        # legacy dateless run contributes no as-of point.
         rows = [
             make_row("c1", failed=50, total=100, run_id="r0", run_date=None, fqn=self.A),
             make_row("c1", failed=0, total=100, run_id="b1", run_date=self.T1, fqn=self.B),
         ]
-        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
-        assert [p.run_date for p in out.trend] == [None, self.T1]
-        assert out.trend[0].pass_rate == pytest.approx(0.5)
-        # The dateless run cannot be ordered, so it never carries forward.
-        assert out.trend[1].pass_rate == pytest.approx(1.0)
+        out = self._compute(rows)
+        assert [p.run_date for p in out.trend] == [self.T1]
+        assert out.trend[0].pass_rate == pytest.approx(1.0)
 
     def test_trend_by_table_stays_per_run_instant(self):
         # The dull per-table lines keep their raw per-run points — no
         # carry-forward there (dqlake's trend_by_table is each table's own
         # runs).
-        out = compute_entity_results(self._misaligned(), ResultFacets(), table_axis="by_table")
+        out = self._compute(self._misaligned())
         assert [(p.run_date, p.series) for p in out.trend_by_table] == [
             (self.T1, self.A),
             (self.T2, self.B),
@@ -624,14 +674,13 @@ class TestAsOfAverageTrend:
 
 
 class TestAsOfGroupedTrends:
-    """``trend_by_dimension`` / ``trend_by_severity`` are AS-OF carry-forward
-    (dqlake's ``_product_trend_grouped`` over ``v_product_check_consolidated``):
-    one point set per distinct run instant across the scope; at each instant
-    every member table contributes the check rows of its most recent run
-    at-or-before that instant, and the series value per group is the POOLED
-    rate over those carried rows — 1 - SUM(failed)/SUM(total) — NOT the
-    equal-weight mean the overall Average uses (dqlake's grouped SQL pools;
-    only its Average AVGs per-table rates).
+    """``trend_by_dimension`` / ``trend_by_severity`` pool the SAME as-of
+    expansion per (instant, series) — dqlake's ``_product_trend_grouped``
+    over its consolidated view: at each instant every member table
+    contributes its latest run's rows, and the series value per group is
+    the POOLED rate over those carried rows (1 - SUM(failed)/SUM(total)) —
+    NOT the equal-weight mean the overall Average uses (dqlake's grouped
+    SQL pools; only its Average AVGs per-table rates).
     """
 
     A = "main.sales.orders"
@@ -657,8 +706,13 @@ class TestAsOfGroupedTrends:
             ),
         ]
 
+    def _compute(self, rows: list[CheckResultRow], facets: ResultFacets | None = None):
+        return compute_entity_results(
+            rows, facets or ResultFacets(), table_axis="by_table", asof_rows=expand_asof(rows)
+        )
+
     def test_dimension_series_carries_each_table_forward_at_every_instant(self):
-        out = compute_entity_results(self._misaligned_dimensions(), ResultFacets(), table_axis="by_table")
+        out = self._compute(self._misaligned_dimensions())
         completeness = [p for p in out.trend_by_dimension if p.series == "Completeness"]
         assert [p.run_date for p in completeness] == [self.T1, self.T2, self.T3]
         # t1: only A has run.
@@ -679,13 +733,13 @@ class TestAsOfGroupedTrends:
                 "c1", failed=5, total=10, run_id="b1", run_date=self.T1, fqn=self.B, dimension="Completeness"
             ),
         ]
-        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
+        out = self._compute(rows)
         point = next(p for p in out.trend_by_dimension if p.series == "Completeness")
         assert point.pass_rate == pytest.approx(1 - 5 / 1010)  # pooled, not (1.0 + 0.5) / 2
         assert point.total_tests == 1010
 
     def test_carried_rows_pool_rule_counts_across_tables(self):
-        out = compute_entity_results(self._misaligned_dimensions(), ResultFacets(), table_axis="by_table")
+        out = self._compute(self._misaligned_dimensions())
         completeness = [p for p in out.trend_by_dimension if p.series == "Completeness"]
         # t2 pools A's carried c1 and B's c1 — same check name, so one
         # distinct rule key; total_tests pools both runs.
@@ -693,10 +747,10 @@ class TestAsOfGroupedTrends:
         assert completeness[1].total_tests == 200
 
     def test_series_absent_from_the_carried_run_does_not_persist(self):
-        # Carry-forward carries each table's WHOLE latest run: A's t3 run has
+        # The expansion carries each table's WHOLE latest run: A's t3 run has
         # no Validity check, so Validity gets no t3 point from A's older run
-        # (the consolidated view replaces the table's contribution wholesale).
-        out = compute_entity_results(self._misaligned_dimensions(), ResultFacets(), table_axis="by_table")
+        # (the view replaces the table's contribution wholesale).
+        out = self._compute(self._misaligned_dimensions())
         validity = [p for p in out.trend_by_dimension if p.series == "Validity"]
         assert [p.run_date for p in validity] == [self.T1, self.T2]
 
@@ -705,14 +759,14 @@ class TestAsOfGroupedTrends:
             make_row("c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A, severity="High"),
             make_row("c1", failed=50, total=100, run_id="b1", run_date=self.T2, fqn=self.B, severity="High"),
         ]
-        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
+        out = self._compute(rows)
         high = [p for p in out.trend_by_severity if p.series == "High"]
         assert [p.run_date for p in high] == [self.T1, self.T2]
         assert high[1].pass_rate == pytest.approx(1 - 60 / 200)
 
     def test_single_table_scope_degenerates_to_per_run_grouping(self):
-        # PINNED: for one table the as-of run at each of its instants is that
-        # run, so the series is identical to the pre-P6.1 per-run grouping.
+        # PINNED: the table endpoint fetches no expansion; its per-run rows
+        # group exactly as before.
         rows = [
             make_row("c1", failed=10, total=100, run_id="r1", run_date=self.T1, dimension="Completeness"),
             make_row("c2", failed=0, total=50, run_id="r1", run_date=self.T1, dimension="Validity"),
@@ -726,34 +780,10 @@ class TestAsOfGroupedTrends:
         ]
 
     def test_facets_scope_the_carried_forward_groups(self):
-        out = compute_entity_results(
-            self._misaligned_dimensions(), ResultFacets(dimensions=("Completeness",)), table_axis="by_table"
-        )
+        out = self._compute(self._misaligned_dimensions(), ResultFacets(dimensions=("Completeness",)))
         assert {p.series for p in out.trend_by_dimension} == {"Completeness"}
         completeness = [p for p in out.trend_by_dimension if p.series == "Completeness"]
         assert completeness[1].pass_rate == pytest.approx(1 - 60 / 200)
-
-    def test_dateless_rows_form_isolated_leading_points(self):
-        rows = [
-            make_row("c1", failed=50, total=100, run_id="r0", run_date=None, fqn=self.A, dimension="Validity"),
-            make_row("c1", failed=0, total=100, run_id="b1", run_date=self.T1, fqn=self.B, dimension="Validity"),
-        ]
-        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table")
-        validity = [p for p in out.trend_by_dimension if p.series == "Validity"]
-        assert [(p.run_date, p.pass_rate) for p in validity] == [
-            (None, pytest.approx(0.5)),
-            # The dateless run cannot be ordered, so it never carries forward.
-            (self.T1, pytest.approx(1.0)),
-        ]
-
-    def test_trend_by_table_stays_per_run_instant(self):
-        # The dull per-table lines keep raw per-run points — no carry-forward.
-        out = compute_entity_results(self._misaligned_dimensions(), ResultFacets(), table_axis="by_table")
-        assert [(p.run_date, p.series) for p in out.trend_by_table] == [
-            (self.T1, self.A),
-            (self.T2, self.B),
-            (self.T3, self.A),
-        ]
 
 
 class TestLatestRunBreakdowns:

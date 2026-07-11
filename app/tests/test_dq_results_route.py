@@ -54,6 +54,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
 )
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.score_view_service import (
+    ASOF_VIEW_NAME,
     METRIC_VIEW_NAME,
     SHAPING_VIEW_NAME,
 )
@@ -246,14 +247,24 @@ def sql_dispatch(
     metrics_rows: list[dict[str, str | None]] | None = None,
     runs_rows: list[dict[str, str | None]] | None = None,
     quarantine_rows: list[dict[str, str | None]] | None = None,
+    asof_rows: list[dict[str, str | None]] | None = None,
 ) -> None:
-    """Route each SP query to its canned result by the statement's target."""
+    """Route each SP query to its canned result by the statement's target.
+
+    *asof_rows* feeds the ``v_dq_check_results_asof`` fetch (rows in the
+    same Statement-Execution shape, with ``run_date`` standing in for the
+    aliased ``as_of_time``); it defaults to *check_rows* — a valid
+    degenerate expansion whenever every fixture table has a single run.
+    """
 
     def dispatch(stmt: str, **_kwargs: object) -> list[dict[str, str | None]]:
         # Quarantine first: its published-run subselect references the
-        # shaping view inside the same statement.
+        # shaping view inside the same statement. The as-of view before the
+        # shaping view: its name CONTAINS the shaping view's name.
         if "dq_quarantine_records" in stmt:
             return quarantine_rows or []
+        if ASOF_VIEW_NAME in stmt:
+            return asof_rows if asof_rows is not None else (check_rows or [])
         if SHAPING_VIEW_NAME in stmt:
             return check_rows or []
         if METRIC_VIEW_NAME in stmt:
@@ -1165,8 +1176,51 @@ class TestIncludeDrafts:
         return [
             call[0][0]
             for call in sql_mock.query_dicts.call_args_list
-            if SHAPING_VIEW_NAME in call[0][0] and "dq_quarantine_records" not in call[0][0]
+            if SHAPING_VIEW_NAME in call[0][0]
+            and ASOF_VIEW_NAME not in call[0][0]
+            and "dq_quarantine_records" not in call[0][0]
         ]
+
+    def _asof_stmts(self, sql_mock) -> list[str]:
+        return [call[0][0] for call in sql_mock.query_dicts.call_args_list if ASOF_VIEW_NAME in call[0][0]]
+
+    @pytest.mark.parametrize("url", CHECK_ROW_ENDPOINTS)
+    def test_asof_reads_default_to_the_published_partition(self, client, sql_mock, url):
+        # The as-of view pre-computes one expansion per run universe; the
+        # default read selects the published-runs-only partition (run_mode
+        # filtering happens INSIDE the view's partition build, so the read
+        # never filters run_mode itself).
+        sql_dispatch(sql_mock)
+        assert client.get(url).status_code == 200
+        stmts = self._asof_stmts(sql_mock)
+        if "/table/" not in url:
+            # Multi-table scopes fetch the expansion; the table endpoint
+            # never does (its per-run rows are the degenerate expansion).
+            assert stmts, "expected an as-of expansion read"
+        else:
+            assert stmts == []
+        assert all("include_drafts = false" in stmt for stmt in stmts)
+
+    @pytest.mark.parametrize("url", CHECK_ROW_ENDPOINTS)
+    def test_include_drafts_selects_the_drafts_inclusive_partition(self, client, sql_mock, url):
+        sql_dispatch(sql_mock)
+        assert client.get(url, params={"include_drafts": "true"}).status_code == 200
+        for stmt in self._asof_stmts(sql_mock):
+            assert "include_drafts = true" in stmt
+
+    def test_breakdown_axes_skip_the_asof_fetch(self, client, sql_mock):
+        # The expansion feeds only the trend series — a breakdown-only
+        # request must not pay for the extra warehouse read.
+        sql_dispatch(sql_mock)
+        assert client.get("/api/v1/dq-results/product/p1", params={"axes": "breakdown"}).status_code == 200
+        assert self._asof_stmts(sql_mock) == []
+
+    def test_asof_fetch_scopes_to_the_member_table_list(self, client, sql_mock):
+        sql_dispatch(sql_mock)
+        assert client.get("/api/v1/dq-results/product/p1").status_code == 200
+        (stmt,) = self._asof_stmts(sql_mock)
+        assert f"input_location IN ('{FQN}')" in stmt
+        assert "CAST(as_of_time AS STRING) AS run_date" in stmt
 
     @pytest.mark.parametrize("url", CHECK_ROW_ENDPOINTS)
     def test_check_row_reads_default_to_published_runs(self, client, sql_mock, url):

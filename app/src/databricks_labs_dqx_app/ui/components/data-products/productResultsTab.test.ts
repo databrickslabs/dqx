@@ -96,55 +96,37 @@ describe("buildTableColorMap", () => {
 });
 
 describe("computeOverallPoints", () => {
+  // The server's trend IS the as-of carry-forward average (UC view
+  // v_dq_check_results_asof); this helper only scales it 0..100. The
+  // former allRanSince gate is deliberately gone: the line starts at the
+  // FIRST member's first run and each member joins at its own first run.
   const trend: TrendPointOut[] = [
     { run_date: "2026-01-01T00:00:00", pass_rate: 0.5 },
     { run_date: "2026-01-02T00:00:00", pass_rate: 0.75 },
     { run_date: "2026-01-03T00:00:00", pass_rate: 1 },
   ];
 
-  it("is empty until EVERY required member table has run", () => {
-    const byTable = [pt(A, "2026-01-01T00:00:00")]; // B never ran
-    expect(computeOverallPoints(byTable, trend, [A, B])).toEqual([]);
-  });
-
-  it("is empty when there are no required members (no universe, no Average)", () => {
-    expect(computeOverallPoints([pt(A, "2026-01-01T00:00:00")], trend, [])).toEqual([]);
-  });
-
-  it("starts the Average at the LATEST first-run across members and scales 0..100", () => {
-    const byTable = [
-      pt(A, "2026-01-01T00:00:00"),
-      pt(A, "2026-01-03T00:00:00"),
-      pt(B, "2026-01-02T00:00:00"), // B's first run sets the cutoff
-    ];
-    expect(computeOverallPoints(byTable, trend, [A, B])).toEqual([
+  it("plots the server series as-is, scaled 0..100 (no membership gate)", () => {
+    expect(computeOverallPoints(trend)).toEqual([
+      { run_date: "2026-01-01T00:00:00", value: 50 },
       { run_date: "2026-01-02T00:00:00", value: 75 },
       { run_date: "2026-01-03T00:00:00", value: 100 },
     ]);
   });
 
   it("maps non-numeric pass rates to null values and coerces string rates", () => {
-    const oneTable = [pt(A, "2026-01-01T00:00:00")];
     const mixedTrend = [
       { run_date: "2026-01-01T00:00:00", pass_rate: null },
       { run_date: "2026-01-02T00:00:00", pass_rate: "0.4" as unknown as number },
     ];
-    expect(computeOverallPoints(oneTable, mixedTrend, [A])).toEqual([
+    expect(computeOverallPoints(mixedTrend)).toEqual([
       { run_date: "2026-01-01T00:00:00", value: null },
       { run_date: "2026-01-02T00:00:00", value: 40 },
     ]);
   });
 
-  it("uses each member's EARLIEST run for the cutoff even when points arrive out of order", () => {
-    const byTable = [
-      pt(B, "2026-01-03T00:00:00"),
-      pt(B, "2026-01-01T00:00:00"), // earlier B point arrives later in the list
-      pt(A, "2026-01-02T00:00:00"),
-    ];
-    const points = computeOverallPoints(byTable, trend, [A, B]);
-    expect(points.map((p) => p.run_date)).toEqual([
-      "2026-01-02T00:00:00",
-      "2026-01-03T00:00:00",
-    ]);
+  it("is empty for an undefined or empty server series", () => {
+    expect(computeOverallPoints(undefined)).toEqual([]);
+    expect(computeOverallPoints([])).toEqual([]);
   });
 });

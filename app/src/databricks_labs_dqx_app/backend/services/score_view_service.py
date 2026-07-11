@@ -1,6 +1,6 @@
 """DDL management for the UC objects backing the dq-score endpoints.
 
-Three SP-owned objects in the app's main schema (dqlake-parity
+Four SP-owned objects in the app's main schema (dqlake-parity
 architecture):
 
 - *v_dq_check_attribution* — AS-OF-THE-RUN rule attribution parsed out
@@ -29,6 +29,13 @@ architecture):
   *check_metrics* is absent, malformed, or empty still yields a single
   placeholder row (all three numeric columns NULL) so the endpoints
   can report its run id with a null score.
+- *v_dq_check_results_asof* — table-agnostic AS-OF expansion of the
+  shaping view for carry-forward trends: one partition of rows per
+  (include_drafts scope, run instant), where each table with a run
+  at-or-before the instant repeats the check rows of its latest such
+  run. The UC-side replacement for computing carry-forward averages
+  server-side; see *asof_view_ddl* for the draft-handling and cost
+  notes.
 - *mv_dq_scores* — a UC metric view (CREATE VIEW ... WITH METRICS
   LANGUAGE YAML) over the shaping view with dimensions
   (input_location, run_id, run_time, is_latest_run, check_name,
@@ -65,6 +72,7 @@ logger = logging.getLogger(__name__)
 
 ATTRIBUTION_VIEW_NAME = "v_dq_check_attribution"
 SHAPING_VIEW_NAME = "v_dq_check_results"
+ASOF_VIEW_NAME = "v_dq_check_results_asof"
 METRIC_VIEW_NAME = "mv_dq_scores"
 
 # Run-provenance tags stamped uniformly onto EVERY check's user_metadata at
@@ -131,6 +139,10 @@ class ScoreViewService:
     @property
     def shaping_view_fqn_quoted(self) -> str:
         return f"{self._catalog_q}.{self._schema_q}.{SHAPING_VIEW_NAME}"
+
+    @property
+    def asof_view_fqn_quoted(self) -> str:
+        return f"{self._catalog_q}.{self._schema_q}.{ASOF_VIEW_NAME}"
 
     @property
     def metric_view_fqn_quoted(self) -> str:
@@ -307,6 +319,94 @@ class ScoreViewService:
             "  AND a.check_name = e.check_name"
         )
 
+    def asof_view_ddl(self) -> str:
+        """CREATE OR REPLACE VIEW statement for *v_dq_check_results_asof*.
+
+        Table-agnostic AS-OF expansion of the shaping view — the UC-side
+        source for every carry-forward trend (the product/global Average
+        and the dimension/severity popovers; dqlake's
+        ``v_product_check_consolidated`` analogue, generalised to all
+        tables). For every distinct run instant across ALL tables
+        (*as_of_time*), each table with a run at-or-before that instant
+        contributes the check rows of its LATEST such run, stamped with
+        the instant. Readers scope with a plain
+        ``input_location IN (...)`` filter at query time — no window
+        functions or as-of joins needed on the read side.
+
+        DRAFT HANDLING — the *include_drafts* discriminator column. The
+        expansion is built TWICE, once per read scope, because both the
+        instant set and the carry choice must be computed WITHIN the run
+        universe the reader wants: filtering an all-runs expansion by
+        run_mode after the fact would leave draft-run instants in the
+        published series and would DROP a table at instants where its
+        latest run was a draft instead of carrying its latest published
+        run. The ``include_drafts = false`` partition is built over
+        published runs only; the ``true`` partition over all runs
+        (published runs therefore appear in both). Every reader filters
+        to exactly ONE partition (``NOT include_drafts`` by default) and
+        must never mix the two.
+
+        COST — a plain view, computed on read; nothing is stored. The
+        instants x runs join is quadratic in runs-per-scope in the worst
+        case, but the source is the app-managed ``dq_metrics`` (90-day
+        retention, page-scale run counts), the two partitions prune via
+        the reader's ``include_drafts`` predicate, and the check-row
+        fan-out happens only after the rn = 1 filter picks one run per
+        (instant, table). Rows whose *run_time* is NULL cannot be
+        ordered and never enter the expansion (the join drops them).
+        """
+        v = self.shaping_view_fqn_quoted
+        return (
+            f"CREATE OR REPLACE VIEW {self.asof_view_fqn_quoted} AS\n"
+            "WITH runs AS (\n"
+            "  SELECT DISTINCT input_location, run_id, run_time, run_mode\n"
+            f"  FROM {v}\n"
+            "  WHERE run_time IS NOT NULL\n"
+            "),\n"
+            # The two read scopes. A published run belongs to both; a
+            # draft run only to the drafts-inclusive one.
+            "scopes AS (SELECT explode(array(false, true)) AS include_drafts),\n"
+            "scoped AS (\n"
+            "  SELECT r.input_location, r.run_id, r.run_time, s.include_drafts\n"
+            "  FROM runs r\n"
+            f"  JOIN scopes s ON s.include_drafts OR r.run_mode = '{RUN_MODE_PUBLISHED}'\n"
+            "),\n"
+            "instants AS (\n"
+            "  SELECT DISTINCT include_drafts, run_time AS as_of_time FROM scoped\n"
+            "),\n"
+            "asof AS (\n"
+            "  SELECT i.include_drafts, i.as_of_time, s.input_location, s.run_id,\n"
+            "         ROW_NUMBER() OVER (\n"
+            "           PARTITION BY i.include_drafts, i.as_of_time, s.input_location\n"
+            "           ORDER BY s.run_time DESC) AS rn\n"
+            "  FROM instants i\n"
+            "  JOIN scoped s\n"
+            "    ON s.include_drafts = i.include_drafts AND s.run_time <= i.as_of_time\n"
+            ")\n"
+            "SELECT\n"
+            "  a.include_drafts,\n"
+            "  a.as_of_time,\n"
+            "  c.run_id,\n"
+            "  c.input_location,\n"
+            "  c.run_time,\n"
+            "  c.is_latest_run,\n"
+            "  c.check_name,\n"
+            "  c.error_count,\n"
+            "  c.warning_count,\n"
+            "  c.input_row_count,\n"
+            "  c.run_mode,\n"
+            "  c.binding_version,\n"
+            "  c.criticality,\n"
+            "  c.severity,\n"
+            "  c.dimension,\n"
+            "  c.registry_rule_id,\n"
+            "  c.columns\n"
+            "FROM asof a\n"
+            f"JOIN {v} c\n"
+            "  ON c.run_id = a.run_id AND c.input_location = a.input_location\n"
+            "WHERE a.rn = 1"
+        )
+
     def metric_view_ddl(self) -> str:
         """CREATE OR REPLACE VIEW ... WITH METRICS LANGUAGE YAML for *mv_dq_scores*."""
         yaml_body = (
@@ -360,13 +460,13 @@ class ScoreViewService:
         )
 
     def ensure_views(self) -> None:
-        """Create or replace all three views, dependencies first.
+        """Create or replace all four views, dependencies first.
 
         Order: attribution view (no dependencies), then the shaping view
-        (joins the attribution view), then the metric view (sources the
-        shaping view). Raises on failure — the caller decides whether
-        that is fatal (it is best-effort at app startup; see
-        *app._ensure_score_views*).
+        (joins the attribution view), then the as-of expansion and the
+        metric view (both source the shaping view). Raises on failure —
+        the caller decides whether that is fatal (it is best-effort at
+        app startup; see *app._ensure_score_views*).
         """
         attribution_ddl = self.attribution_view_ddl()
         logger.info(f"Creating/refreshing attribution view {ATTRIBUTION_VIEW_NAME}")
@@ -374,6 +474,9 @@ class ScoreViewService:
         shaping_ddl = self.shaping_view_ddl()
         logger.info(f"Creating/refreshing shaping view {SHAPING_VIEW_NAME}")
         self._sql.execute(shaping_ddl)
+        asof_ddl = self.asof_view_ddl()
+        logger.info(f"Creating/refreshing as-of expansion view {ASOF_VIEW_NAME}")
+        self._sql.execute(asof_ddl)
         metric_ddl = self.metric_view_ddl()
         logger.info(f"Creating/refreshing metric view {METRIC_VIEW_NAME}")
         self._sql.execute(metric_ddl)

@@ -31,6 +31,7 @@ import pytest
 from databricks_labs_dqx_app.backend.models import CheckMetricBreakdown
 from databricks_labs_dqx_app.backend.services.score_service import ScoreService
 from databricks_labs_dqx_app.backend.services.score_view_service import (
+    ASOF_VIEW_NAME,
     ATTRIBUTION_VIEW_NAME,
     METRIC_VIEW_NAME,
     SHAPING_VIEW_NAME,
@@ -56,6 +57,7 @@ class TestObjectNames:
     def test_view_name_constants(self):
         assert ATTRIBUTION_VIEW_NAME == "v_dq_check_attribution"
         assert SHAPING_VIEW_NAME == "v_dq_check_results"
+        assert ASOF_VIEW_NAME == "v_dq_check_results_asof"
         assert METRIC_VIEW_NAME == "mv_dq_scores"
 
     def test_metric_view_fqn_helper_quotes_catalog_and_schema(self):
@@ -213,6 +215,83 @@ class TestShapingViewDdl:
         assert "TRY_CAST(e.binding_version_tag AS INT) AS binding_version" in ddl
 
 
+class TestAsofViewDdl:
+    """``v_dq_check_results_asof`` — the table-agnostic AS-OF expansion that
+    moved the carry-forward consolidation out of Python and into the UC
+    view layer. For every distinct run instant per read scope, each table
+    with a run at-or-before it repeats its latest such run's check rows.
+    """
+
+    def test_is_idempotent_create_or_replace(self, svc):
+        assert svc.asof_view_ddl().startswith("CREATE OR REPLACE VIEW ")
+
+    def test_targets_asof_view_and_reads_the_shaping_view(self, svc):
+        ddl = svc.asof_view_ddl()
+        assert f"`dqx_test`.`dqx_app_test`.{ASOF_VIEW_NAME}" in ddl
+        assert f"`dqx_test`.`dqx_app_test`.{SHAPING_VIEW_NAME}" in ddl
+
+    def test_is_a_single_statement(self, svc):
+        assert ";" not in svc.asof_view_ddl()
+
+    def test_builds_two_partitions_published_runs_land_in_both(self, svc):
+        # The include_drafts discriminator: the false partition is built
+        # over published runs only; the true partition over ALL runs. A
+        # published run therefore joins both scopes; a draft only the
+        # drafts-inclusive one. Post-hoc run_mode filtering CANNOT
+        # replace this (it would leave draft instants in the published
+        # series and drop tables whose latest run is a draft).
+        ddl = svc.asof_view_ddl()
+        assert "SELECT explode(array(false, true)) AS include_drafts" in ddl
+        assert "ON s.include_drafts OR r.run_mode = 'published'" in ddl
+
+    def test_instants_are_per_scope_run_times(self, svc):
+        ddl = svc.asof_view_ddl()
+        assert "SELECT DISTINCT include_drafts, run_time AS as_of_time FROM scoped" in ddl
+
+    def test_picks_each_tables_latest_run_at_or_before_every_instant(self, svc):
+        # The as-of window: latest run per (scope, instant, table), rows
+        # kept only for the picked run.
+        ddl = svc.asof_view_ddl()
+        assert "PARTITION BY i.include_drafts, i.as_of_time, s.input_location" in ddl
+        assert "ORDER BY s.run_time DESC" in ddl
+        assert "s.run_time <= i.as_of_time" in ddl
+        assert ddl.rstrip().endswith("WHERE a.rn = 1")
+
+    def test_joins_carried_run_rows_back_at_check_grain(self, svc):
+        ddl = svc.asof_view_ddl()
+        assert "ON c.run_id = a.run_id AND c.input_location = a.input_location" in ddl
+
+    def test_emits_as_of_time_plus_the_shaping_row_shape(self, svc):
+        ddl = svc.asof_view_ddl()
+        for column in (
+            "a.include_drafts",
+            "a.as_of_time",
+            "c.run_id",
+            "c.input_location",
+            "c.run_time",
+            "c.check_name",
+            "c.error_count",
+            "c.warning_count",
+            "c.input_row_count",
+            "c.run_mode",
+            "c.severity",
+            "c.dimension",
+            "c.registry_rule_id",
+            "c.columns",
+        ):
+            assert column in ddl, column
+
+    def test_null_run_times_never_enter_the_expansion(self, svc):
+        assert "WHERE run_time IS NOT NULL" in svc.asof_view_ddl()
+
+    def test_quotes_hyphenated_catalog(self, sql_executor_mock):
+        sql_executor_mock.catalog = "prod-east"
+        sql_executor_mock.schema = "dqx-studio"
+        sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
+        ddl = ScoreViewService(sql=sql_executor_mock).asof_view_ddl()
+        assert f"`prod-east`.`dqx-studio`.{ASOF_VIEW_NAME}" in ddl
+
+
 class TestMetricViewDdl:
     def test_is_idempotent_create_or_replace_with_metrics_yaml(self, svc):
         ddl = svc.metric_view_ddl()
@@ -260,25 +339,31 @@ class TestMetricViewDdl:
 
 
 class TestEnsureViews:
-    def test_creates_attribution_then_shaping_then_metric_view(self, svc, sql_executor_mock):
+    def test_creates_attribution_shaping_asof_then_metric_view(self, svc, sql_executor_mock):
         svc.ensure_views()
         executed = [call.args[0] for call in sql_executor_mock.execute.call_args_list]
-        assert executed == [svc.attribution_view_ddl(), svc.shaping_view_ddl(), svc.metric_view_ddl()]
+        assert executed == [
+            svc.attribution_view_ddl(),
+            svc.shaping_view_ddl(),
+            svc.asof_view_ddl(),
+            svc.metric_view_ddl(),
+        ]
 
 
 class TestStartupWiring:
     """``backend.app._ensure_score_views`` — the lifespan step that owns the DDL."""
 
-    def test_creates_all_three_views(self, sql_executor_mock):
+    def test_creates_all_four_views(self, sql_executor_mock):
         from databricks_labs_dqx_app.backend.app import _ensure_score_views
 
         sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
         _ensure_score_views(sql_executor_mock)
         executed = [call.args[0] for call in sql_executor_mock.execute.call_args_list]
-        assert len(executed) == 3
+        assert len(executed) == 4
         assert ATTRIBUTION_VIEW_NAME in executed[0]
         assert SHAPING_VIEW_NAME in executed[1]
-        assert METRIC_VIEW_NAME in executed[2]
+        assert ASOF_VIEW_NAME in executed[2]
+        assert METRIC_VIEW_NAME in executed[3]
 
     def test_is_best_effort_and_never_raises(self, sql_executor_mock):
         from databricks_labs_dqx_app.backend.app import _ensure_score_views

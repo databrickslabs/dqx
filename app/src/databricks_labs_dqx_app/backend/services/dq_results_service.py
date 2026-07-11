@@ -12,7 +12,11 @@ by construction — editing or renaming a rule's tags today never rewrites
 historical results — and this module needs no live join to the binding's
 current applied-rule metadata:
 
-1. The route fetches the raw check rows via SQL (``parse_check_rows``).
+1. The route fetches the raw check rows via SQL (``parse_check_rows``),
+   plus — for the multi-table scopes' trend axes — the scope's slice of
+   the UC as-of expansion view ``v_dq_check_results_asof`` (the
+   carry-forward consolidation is computed IN the view layer, not here;
+   see ``score_view_service.asof_view_ddl``).
 2. ``compute_entity_results`` filters by the active facets and groups
    every axis, mirroring dqlake's SQL semantics (documented per helper).
 
@@ -167,16 +171,6 @@ class _GroupAcc:
         self.rule_keys.add(_rule_key(row))
         self.check_rows += 1
 
-    def merge(self, other: "_GroupAcc") -> None:
-        """Pool another accumulator's counts into this one (the SUM-over-
-        carried-rows step of the as-of grouped trends). *other* is never
-        mutated — it stays valid for later instants of the walk."""
-        self.failed += other.failed
-        if other.total is not None:
-            self.total = (self.total or 0) + other.total
-        self.rule_keys |= other.rule_keys
-        self.check_rows += other.check_rows
-
     @property
     def pass_rate(self) -> float | None:
         # SQL analogue: 1 - SUM(failed) / NULLIF(SUM(total), 0).
@@ -251,70 +245,39 @@ def _by_column_rows(rows: list[CheckResultRow]) -> list[GroupRowOut]:
     return _group_rows(exploded, lambda row: row.columns[0], with_check_count=False)
 
 
-def _trend(rows: list[CheckResultRow]) -> list[TrendPointOut]:
-    """AS-OF carry-forward average — the overall "Average" series.
+def _trend_asof(rows: list[CheckResultRow]) -> list[TrendPointOut]:
+    """The overall "Average" series over AS-OF-EXPANDED rows.
 
-    dqlake's product-trend semantics (its ``_product_trend`` reader /
-    ``v_product_check_consolidated`` view): one point per distinct run
-    instant across the scope; at each instant every member table
-    contributes the pass rate of its most recent run at-or-before that
-    instant, and the point is the EQUAL-WEIGHT mean of those carried
-    values. Exclusion choices follow dqlake exactly:
+    The carry-forward itself now lives in the UC view
+    ``v_dq_check_results_asof`` (see ``score_view_service.asof_view_ddl``):
+    *rows* already contain, at every run instant (``run_date`` = the
+    expansion's ``as_of_time``), each member table's latest-run check
+    rows. This function only finishes the aggregation the way dqlake's
+    ``_product_trend`` does: pool each table's rows at the instant into
+    its pass rate, then take the EQUAL-WEIGHT mean across tables. A
+    table whose as-of rows pool to a NULL rate (zero tests) is excluded
+    from that instant's mean — never substituted (dqlake filters NULL
+    AFTER the as-of pick); an instant where no table has a rate yields a
+    NULL point.
 
-    - a table with no run yet at an instant is excluded until its first
-      run (the inner join in dqlake's asof CTE yields it no row);
-    - a table whose as-of run has a NULL pass rate (zero tests) is
-      excluded at that instant — never substituted with an older run
-      (dqlake filters NULL AFTER picking the as-of run, rn = 1).
+    The series starts at the FIRST member's first run and every member
+    joins the line at its own first run — there is no all-members-ran
+    display gate (tables get added to and removed from scopes over
+    time). LIMITATION: membership history is not stored, so the series
+    reflects the CURRENT member set's run history — a table removed from
+    the scope today also drops out of the past points.
 
-    For a single-table scope this degenerates to the table's own per-run
-    rates (its as-of run at each of its instants is that run). Computed
-    in Python over the already-fetched rows rather than as warehouse SQL:
-    every axis shares one fetch, the row counts are page-sized, and the
-    pure function keeps the carry-forward math unit-testable (the SQL
-    analogue is documented in the Genie space's curated as-of example).
-
-    Rows with no run_date (defensive — legacy/corrupt) cannot be ordered,
-    so they form one isolated leading point and never carry forward.
-
-    START GATING lives client-side, not here: this emits the FULL series
-    from the first member's first run, but dqlake only DISPLAYS the
-    Average from the instant every member has run at least once
-    (allRanSince — the latest first-run across members). That display
-    gate is applied by ``computeOverallPoints`` in the UI's
-    ``MultiTableResults.tsx`` (which documents its half of the pairing);
-    trimming here instead would starve the gate of the per-table run
-    extents it derives the cutoff from.
+    For a single-table scope the expansion degenerates to the table's
+    own per-run rows, so this is its per-run rate series.
     """
-    # (table -> run instant -> pooled accumulator) at the run grain.
-    per_table: dict[str, dict[str | None, _GroupAcc]] = defaultdict(lambda: defaultdict(_GroupAcc))
+    # instant -> table -> pooled accumulator.
+    per_instant: dict[str | None, dict[str, _GroupAcc]] = defaultdict(lambda: defaultdict(_GroupAcc))
     for row in rows:
-        per_table[row.table_fqn][row.run_date].add(row)
-
+        per_instant[row.run_date][row.table_fqn].add(row)
     out: list[TrendPointOut] = []
-    dateless = [runs[None].pass_rate for runs in per_table.values() if None in runs]
-    if dateless:
-        rated = [rate for rate in dateless if rate is not None]
-        out.append(TrendPointOut(run_date=None, pass_rate=sum(rated) / len(rated) if rated else None))
-
-    # Each table's dated runs, ascending — the carry-forward walk below
-    # advances a per-table cursor instead of re-scanning per instant.
-    series: dict[str, list[tuple[str, float | None]]] = {
-        fqn: sorted((run_date, acc.pass_rate) for run_date, acc in runs.items() if run_date is not None)
-        for fqn, runs in per_table.items()
-    }
-    instants = sorted({run_date for table_runs in series.values() for run_date, _ in table_runs})
-    positions: dict[str, int] = dict.fromkeys(series, 0)
-    carried: dict[str, float | None] = {}
-    for instant in instants:
-        for fqn, table_runs in series.items():
-            i = positions[fqn]
-            while i < len(table_runs) and table_runs[i][0] <= instant:
-                carried[fqn] = table_runs[i][1]
-                i += 1
-            positions[fqn] = i
-        values = [rate for rate in carried.values() if rate is not None]
-        out.append(TrendPointOut(run_date=instant, pass_rate=sum(values) / len(values) if values else None))
+    for run_date in sorted(per_instant, key=lambda d: d or ""):
+        rates = [acc.pass_rate for acc in per_instant[run_date].values() if acc.pass_rate is not None]
+        out.append(TrendPointOut(run_date=run_date, pass_rate=sum(rates) / len(rates) if rates else None))
     return out
 
 
@@ -322,11 +285,19 @@ def _trend_grouped(
     rows: list[CheckResultRow],
     series_of: Callable[[CheckResultRow], str | None],
 ) -> list[TrendPointOut]:
-    """Per-run-instant grouped series — the ``trend_by_table`` dull lines.
+    """Per-instant grouped series: one point per (run_date, series), each
+    pooling the rows AT that instant (1 - SUM(failed)/SUM(total)).
 
-    Each point pools only the rows AT that instant (no carry-forward):
-    dqlake's trend_by_table plots each member table's own runs. The
-    dimension/severity popovers use ``_trend_grouped_asof`` instead.
+    Two callers, two row sets:
+
+    - ``trend_by_table`` feeds the RAW per-run rows — each table's dull
+      line is its own runs, no carry-forward (dqlake parity);
+    - ``trend_by_dimension`` / ``trend_by_severity`` feed the AS-OF
+      EXPANSION rows, so the same pooling yields dqlake's
+      ``_product_trend_grouped`` semantics (at each instant every member
+      contributes its latest run's rows; the group value is the POOLED
+      rate over the carried rows — NOT the mean the overall Average
+      uses; dqlake's grouped SQL pools, only its Average AVGs).
     """
     groups: dict[tuple[str | None, str | None], _GroupAcc] = defaultdict(_GroupAcc)
     for row in rows:
@@ -341,90 +312,6 @@ def _trend_grouped(
         )
         for (run_date, series), acc in sorted(groups.items(), key=lambda kv: (kv[0][0] or "", kv[0][1] or ""))
     ]
-
-
-def _grouped_points(run_date: str | None, groups: dict[str | None, _GroupAcc]) -> list[TrendPointOut]:
-    """One instant's grouped points, series-sorted (None label first —
-    matches ``_trend_grouped``'s ordering for exact single-table
-    degeneration)."""
-    return [
-        TrendPointOut(
-            run_date=run_date,
-            series=series,
-            pass_rate=acc.pass_rate,
-            rule_count=len(acc.rule_keys),
-            total_tests=acc.total,
-        )
-        for series, acc in sorted(groups.items(), key=lambda kv: kv[0] or "")
-    ]
-
-
-def _trend_grouped_asof(
-    rows: list[CheckResultRow],
-    series_of: Callable[[CheckResultRow], str | None],
-) -> list[TrendPointOut]:
-    """AS-OF carry-forward grouped series — trend_by_dimension/severity.
-
-    dqlake's product popover semantics (``_product_trend_grouped`` over
-    ``v_product_check_consolidated``): one point set per distinct run
-    instant across the scope; at each instant every member table
-    contributes the check rows of its most recent run at-or-before that
-    instant, and the series value per group is the POOLED rate over the
-    carried rows — 1 - SUM(failed)/NULLIF(SUM(total), 0) — NOT the
-    equal-weight mean the overall Average uses (dqlake's grouped SQL
-    pools; only its Average AVGs per-table rates). rule_count and
-    total_tests are computed over the same carried rows.
-
-    Carry-forward carries each table's WHOLE latest run (the asof CTE
-    picks a run, then groups its rows): a series absent from that run
-    contributes nothing at the instant, even if an older run had it. A
-    table with no run yet at an instant is excluded until its first run
-    (inner-join semantics). For a single-table scope this degenerates to
-    the pre-existing per-run grouping — the as-of run at each of the
-    table's instants is that run — so the monitored-table popovers are
-    unchanged.
-
-    Like ``_trend``, runs sharing one run_date string pool into a single
-    instant, and dateless rows (defensive — legacy/corrupt) form isolated
-    leading points that never carry forward.
-    """
-    # table -> run instant -> series -> pooled accumulator (run grain).
-    per_table: dict[str, dict[str | None, dict[str | None, _GroupAcc]]] = defaultdict(
-        lambda: defaultdict(lambda: defaultdict(_GroupAcc))
-    )
-    for row in rows:
-        per_table[row.table_fqn][row.run_date][series_of(row)].add(row)
-
-    out: list[TrendPointOut] = []
-    dateless: dict[str | None, _GroupAcc] = defaultdict(_GroupAcc)
-    for runs in per_table.values():
-        for series, acc in runs.get(None, {}).items():
-            dateless[series].merge(acc)
-    if dateless:
-        out.extend(_grouped_points(None, dateless))
-
-    # Each table's dated runs, ascending — the carry-forward walk advances
-    # a per-table cursor instead of re-scanning per instant (see _trend).
-    series_runs: dict[str, list[tuple[str, dict[str | None, _GroupAcc]]]] = {
-        fqn: sorted((run_date, groups) for run_date, groups in runs.items() if run_date is not None)
-        for fqn, runs in per_table.items()
-    }
-    instants = sorted({run_date for table_runs in series_runs.values() for run_date, _ in table_runs})
-    positions: dict[str, int] = dict.fromkeys(series_runs, 0)
-    carried: dict[str, dict[str | None, _GroupAcc]] = {}
-    for instant in instants:
-        for fqn, table_runs in series_runs.items():
-            i = positions[fqn]
-            while i < len(table_runs) and table_runs[i][0] <= instant:
-                carried[fqn] = table_runs[i][1]
-                i += 1
-            positions[fqn] = i
-        pooled: dict[str | None, _GroupAcc] = defaultdict(_GroupAcc)
-        for groups in carried.values():
-            for series, acc in groups.items():
-                pooled[series].merge(acc)
-        out.extend(_grouped_points(instant, pooled))
-    return out
 
 
 def _trend_counts(rows: list[CheckResultRow]) -> list[TrendCountPointOut]:
@@ -500,6 +387,7 @@ def compute_entity_results(
     failed_records_by_run: dict[tuple[str, str], int | None] | None = None,
     failures_ignore_facets: bool = False,
     binding_ids_by_table: dict[str, str] | None = None,
+    asof_rows: list[CheckResultRow] | None = None,
 ) -> EntityResultsOut:
     """Assemble the full EntityResultsOut from raw check rows.
 
@@ -510,6 +398,13 @@ def compute_entity_results(
     dqlake's slice selection: ``"trend"`` computes only the over-time
     series, ``"breakdown"`` only the groupings; unrequested keys stay
     empty so the shape is stable.
+
+    *asof_rows* is the scope's slice of the UC as-of expansion view
+    ``v_dq_check_results_asof`` (``run_date`` = the expansion's
+    ``as_of_time``); it feeds the carry-forward series (overall
+    ``trend`` + ``trend_by_dimension`` / ``trend_by_severity``). None —
+    the single-table endpoint — falls back to the raw rows, whose
+    per-run grouping is that scope's exact as-of degeneration.
 
     *failures_ignore_facets* mirrors dqlake's table reader, whose
     trend_failures query filters on binding/run only — never on the
@@ -557,9 +452,30 @@ def compute_entity_results(
         else:
             result.tables = table_groups
     if axes in ("all", "trend"):
-        result.trend = _trend(matched)
-        result.trend_by_dimension = _trend_grouped_asof(matched, lambda row: row.dimension)
-        result.trend_by_severity = _trend_grouped_asof(matched, lambda row: row.severity)
+        # The as-of series (overall Average + dimension/severity popovers)
+        # aggregate the UC as-of expansion when the caller fetched one.
+        # Scope restrictions on the expansion:
+        # - instants: the expansion is table-agnostic (every table's run
+        #   instants workspace-wide), so its rows are restricted to the
+        #   instants where THIS scope actually ran — derived from the raw
+        #   rows, pre-facet (dqlake's batch instants are facet-independent);
+        #   without it a foreign table's run would inject flat repeat
+        #   points into the scope's series.
+        # - facets: applied to the carried rows exactly like *matched*
+        #   (dqlake filters its facet chips on the consolidated view).
+        # Callers without an expansion (the single-table endpoint) fall
+        # back to *matched*: a single table's per-run rows ARE its as-of
+        # expansion (its latest run at each of its instants is that run).
+        if asof_rows is None:
+            expansion = matched
+        else:
+            scope_instants = {row.run_date for row in rows}
+            expansion = [
+                row for row in asof_rows if row.run_date in scope_instants and row_matches_facets(row, facets)
+            ]
+        result.trend = _trend_asof(expansion)
+        result.trend_by_dimension = _trend_grouped(expansion, lambda row: row.dimension)
+        result.trend_by_severity = _trend_grouped(expansion, lambda row: row.severity)
         if table_axis == "by_table":
             result.trend_by_table = _trend_grouped(matched, lambda row: row.table_fqn)
         result.trend_counts = _trend_counts(matched)

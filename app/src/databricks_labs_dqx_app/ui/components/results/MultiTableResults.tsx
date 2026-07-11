@@ -60,9 +60,10 @@ import {
 //    org-wide label carrying the accessible-table count).
 //  - `runPickerSlot`: the optional run-picker node overlapping the ScoreBox.
 //    Callers without a coherent run universe omit it entirely.
-//  - `requiredFqns`: the member-table universe that must all have run before
-//    the Average line exists. Callers without an explicit membership list
-//    (global) omit it and the universe derives from the base by-table rows.
+//
+// (A former `requiredFqns` prop gated the Average line on every member
+// having run — removed with the allRanSince display gate: the server's
+// as-of series is plotted as-is; see computeOverallPoints.)
 //
 // The sanctioned dqlake deviations live here unchanged: hooks re-pointed to
 // `/api/v1/dq-results/*`, all strings via t(), Genie stripped, and NO idle
@@ -155,76 +156,27 @@ export function buildTableColorMap(
 
 /**
  * Average points for the overall-mode trend chart. The server's `trend` IS
- * the as-of carry-forward average (at each run instant every member table
- * contributes its most recent published run at-or-before that instant;
- * equal-weight mean — see backend `dq_results_service._trend`), so this does
- * NO averaging of its own: it only applies dqlake's display gate — plot the
- * Average ONLY from the instant every monitored member has run (so a
- * freshly-added table yields one Average point now, growing into a smooth
- * line as runs accrue) — and scales values 0..100.
+ * the as-of carry-forward average (the UC view `v_dq_check_results_asof`:
+ * at each run instant every member table contributes its most recent
+ * published run at-or-before that instant; equal-weight mean — see backend
+ * `dq_results_service._trend_asof`), so this does NO math of its own: it
+ * only scales values 0..100 for the chart's OverallStep contract.
  *
- * START GATING — the two halves of the pairing (`_trend` documents the
- * other side): the BACKEND emits the full series from the first member's
- * first run; THIS function derives `allRanSince` (the latest first-run
- * across the required members — the earliest instant at which every member
- * has at least one run) and drops the points before it. So the Average
- * line deliberately STARTS later than the per-table dull lines: leading
- * instants where only some members had run would average a partial member
- * set, which dqlake never displays. The math on the surviving points is
- * untouched server truth.
- *
- * *trendByTable* supplies each member's earliest run; *trend* supplies the
- * server's as-of average points; *requiredFqns* is the member-table universe
- * that must all have run for the Average to exist. Values are scaled 0..100
- * for the chart's OverallStep contract.
+ * The Average line starts at the FIRST member's first run and each member
+ * joins it at its own first run — the former all-members-ran display gate
+ * (allRanSince) was deliberately removed: tables get added to and removed
+ * from scopes over time, so the average at each instant is the mean over
+ * the members WITH data as of then. LIMITATION: membership history is not
+ * stored, so the series reflects the CURRENT member set's run history — a
+ * table removed from the scope today also drops out of the past points.
  */
 export function computeOverallPoints(
-  trendByTable: TrendPointOut[] | undefined,
   trend: TrendPointOut[] | undefined,
-  requiredFqns: string[],
 ): OverallStep[] {
-  // Per-table run extent from the table series: earliest run (for the
-  // all-members-ran cutoff). run_date values are same-format ISO UTC strings,
-  // so string compare orders them.
-  const byTable = new Map<string, { first: string }>();
-  for (const t of trendByTable ?? []) {
-    const s = t.series;
-    if (!s) continue;
-    const rd = String(t.run_date ?? "");
-    const cur = byTable.get(s);
-    if (!cur) byTable.set(s, { first: rd });
-    else if (rd < cur.first) cur.first = rd;
-  }
-  const everyRequiredRan =
-    requiredFqns.length > 0 && requiredFqns.every((f) => byTable.has(f));
-  if (!everyRequiredRan) return [];
-  // The instant from which every member has a run: the latest of their first runs.
-  const allRanSince = requiredFqns.reduce((mx, f) => {
-    const fr = byTable.get(f)?.first ?? "";
-    return fr > mx ? fr : mx;
-  }, "");
-  return (trend ?? [])
-    .filter((t) => String(t.run_date ?? "") >= allRanSince)
-    .map((t) => {
-      const v = toNum(t.pass_rate);
-      return { run_date: String(t.run_date ?? ""), value: v == null ? null : v * 100 };
-    });
-}
-
-/**
- * Distinct table FQNs of the base (unfiltered) by-table rows — the derived
- * member universe for callers without an explicit membership list (the
- * global page: every accessible table tracked in dq_metrics). Null labels
- * (defensive: the backend always labels table rows) are skipped.
- */
-export function tableUniverse(byTable: EntityResultsOut["by_table"]): string[] {
-  return Array.from(
-    new Set(
-      (byTable ?? [])
-        .map((g) => g.label)
-        .filter((l): l is string => l != null),
-    ),
-  );
+  return (trend ?? []).map((t) => {
+    const v = toNum(t.pass_rate);
+    return { run_date: String(t.run_date ?? ""), value: v == null ? null : v * 100 };
+  });
 }
 
 /**
@@ -260,9 +212,6 @@ export interface MultiTableResultsSectionProps {
   /** Optional run-picker node overlapping the ScoreBox's top-right corner.
    *  Omit when the entity has no coherent run universe to pick from. */
   runPickerSlot?: React.ReactNode;
-  /** Member-table universe for the Average line; derived from the base
-   *  by-table rows when omitted. */
-  requiredFqns?: string[];
   /** Hides the "By rule" breakdown box. For consumers whose rule facet is
    *  locked server-side (the rule Results view — every row would be the one
    *  rule), where a one-row facet box adds nothing. dqlake has no precedent
@@ -297,7 +246,6 @@ export function MultiTableResultsSection({
   useEntityResults,
   scoreLabel,
   runPickerSlot,
-  requiredFqns,
   hideRuleBreakdown,
   includeDrafts,
   onIncludeDraftsChange,
@@ -377,12 +325,6 @@ export function MultiTableResultsSection({
     filters.rule.length > 0 ||
     filters.column.length > 0;
 
-  // The member-table universe: the caller's explicit list (product members),
-  // or every table in the base (unfiltered) by-table rows (global). dqlake
-  // built a table-FQN -> binding_id map here because its per-table endpoints
-  // keyed on binding_id; ours key directly on the table FQN, so the friendly
-  // name -> FQN map below is the whole selection resolution.
-  const universeFqns = requiredFqns ?? tableUniverse(baseResults?.by_table);
   const accessibleTableCount = (baseResults?.by_table ?? []).length;
   // By table shows the FRIENDLY table name (last FQN segment), so the selection
   // is keyed on that. Map it back to the full FQN to resolve the table.
@@ -558,20 +500,16 @@ export function MultiTableResultsSection({
   const passRate = toNum(lastTrend?.pass_rate);
   const { failedTests, totalTests } = sumTestCounts(results?.by_table);
 
-  // Over-time chart: a prominent foreground "Average" trendline drawn on top of
-  // dull, thin per-table lines. The Average is the SERVER's as-of carry-forward
-  // mean of the member tables (each member contributes its most recent run
-  // at-or-before every instant), plotted ONLY at run instants where every
-  // monitored member has run as-of then (so a freshly-added table yields one
-  // Average point now, growing into a smooth line as runs accrue). Each table's
-  // latest run links to the latest Average point with a dotted line.
+  // Over-time chart: a prominent foreground "Average" trendline drawn on top
+  // of dull, thin per-table lines. The Average is the SERVER's as-of
+  // carry-forward mean of the member tables (the UC as-of view: each member
+  // contributes its most recent run at-or-before every instant), plotted
+  // from the FIRST member's first run — each member joins the line at its
+  // own first run. Each table's latest run links to the latest Average
+  // point with a dotted line.
   const perTable = toTrendSeries(trends?.trend_by_table);
   const tableColorMap = buildTableColorMap(trends?.trend_by_table);
-  const overallPoints = computeOverallPoints(
-    trends?.trend_by_table,
-    trends?.trend,
-    universeFqns,
-  );
+  const overallPoints = computeOverallPoints(trends?.trend);
 
   // Series keys are the ENGLISH canonical names — the chart's ordering/legend
   // logic pins on ["Rules","Checks","Tests","Rows"]; do not translate them here.

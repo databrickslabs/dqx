@@ -81,6 +81,7 @@ from databricks_labs_dqx_app.backend.services.quarantine_sample_service import (
     to_failing_record,
 )
 from databricks_labs_dqx_app.backend.services.score_view_service import (
+    ASOF_VIEW_NAME,
     RUN_MODE_PUBLISHED,
     SHAPING_VIEW_NAME,
     metric_view_fqn,
@@ -191,6 +192,54 @@ def _fetch_check_rows(
         f"ORDER BY run_time"
     )
     return parse_check_rows(sql.query_dicts(stmt))
+
+
+def _fetch_asof_check_rows(
+    sql: SqlExecutor,
+    app_conf: AppConfig,
+    table_fqns: list[str] | None,
+    run_id: str | None = None,
+    include_drafts: bool = False,
+) -> list[CheckResultRow]:
+    """Read the scope's slice of the AS-OF expansion ``v_dq_check_results_asof``.
+
+    The view pre-computes the carry-forward consolidation (at every run
+    instant, each table's latest run at-or-before it — see
+    ``score_view_service.asof_view_ddl``), so this is a plain filter:
+    the *include_drafts* partition selector (the FALSE partition is
+    built over published runs only; TRUE over all runs — exactly one is
+    ever read), the per-table-list filter, and optionally a pinned
+    *run_id* (restricting the expansion to instants where that run is
+    the carried one). ``run_date`` is aliased to the expansion's
+    ``as_of_time`` so ``parse_check_rows`` yields rows keyed by the
+    consolidated instant. The instant set is further restricted to the
+    scope's own run instants app-side (``compute_entity_results``) —
+    the view is table-agnostic, so its instants span every table.
+    """
+    if table_fqns is not None and not table_fqns:
+        return []
+    view = _app_object_fqn(app_conf, ASOF_VIEW_NAME)
+    conds = [f"include_drafts = {'true' if include_drafts else 'false'}"]
+    if table_fqns is not None:
+        conds.append(f"input_location IN ({_in_list(table_fqns)})")
+    if run_id:
+        conds.append(f"run_id = '{escape_sql_string(run_id)}'")
+    stmt = (
+        f"SELECT input_location, run_id, CAST(as_of_time AS STRING) AS run_date, "
+        f"check_name, error_count, warning_count, input_row_count, "
+        f"severity, dimension, registry_rule_id, to_json(columns) AS columns_json "
+        f"FROM {view} "  # noqa: S608
+        f"WHERE {' AND '.join(conds)} "
+        f"ORDER BY as_of_time"
+    )
+    return parse_check_rows(sql.query_dicts(stmt))
+
+
+def _wants_trends(axes: str) -> bool:
+    """Whether the *axes* selection computes the over-time series (anything
+    but the explicit ``"breakdown"`` slice — unknown values select all,
+    mirroring ``compute_entity_results``)."""
+    return axes != "breakdown"
 
 
 def _fetch_failed_records_by_run(
@@ -441,6 +490,16 @@ def get_global_results(
         ]
         accessible_fqns = sorted({row.table_fqn for row in rows})
         failed_records = _fetch_failed_records_by_run(sql, app_conf, accessible_fqns)
+        # The as-of expansion feeds the carry-forward trend series; the
+        # global scope's table filter is app-side (catalog gate), same as
+        # the raw-row fetch above.
+        asof_rows = None
+        if _wants_trends(axes):
+            asof_rows = [
+                row
+                for row in _fetch_asof_check_rows(sql, app_conf, None, run_id, include_drafts)
+                if catalog_of(row.table_fqn) in user_catalogs
+            ]
     except Exception as exc:
         logger.exception("Failed to compute global results")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -459,6 +518,7 @@ def get_global_results(
         table_axis="by_table",
         failed_records_by_run=failed_records,
         binding_ids_by_table=binding_ids,
+        asof_rows=asof_rows,
     )
 
 
@@ -525,6 +585,16 @@ def get_rule_results(
             binding_id_by_fqn[fqn] = binding_id
         all_rows = _fetch_check_rows(sql, app_conf, table_fqns, run_id, include_drafts)
         rows: list[CheckResultRow] = [row for row in all_rows if row.rule_id == rule_id]
+        # Rule scoping applies to the as-of expansion the same way: the
+        # carried run stays each table's latest run (the expansion's
+        # choice), and only its rows attributed to this rule count.
+        asof_rows = None
+        if _wants_trends(axes):
+            asof_rows = [
+                row
+                for row in _fetch_asof_check_rows(sql, app_conf, table_fqns, run_id, include_drafts)
+                if row.rule_id == rule_id
+            ]
     except Exception as exc:
         logger.exception(f"Failed to compute results for rule {rule_id}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -534,6 +604,7 @@ def get_rule_results(
         axes=axes,
         table_axis="by_table",
         binding_ids_by_table=binding_id_by_fqn,
+        asof_rows=asof_rows,
     )
 
 
@@ -621,6 +692,7 @@ def get_product_results(
         fqns, binding_ids = _accessible_member_fqns(data_products, product_id, user_catalogs)
         rows = _fetch_check_rows(sql, app_conf, fqns, run_id, include_drafts)
         failed_records = _fetch_failed_records_by_run(sql, app_conf, fqns)
+        asof_rows = _fetch_asof_check_rows(sql, app_conf, fqns, run_id, include_drafts) if _wants_trends(axes) else None
     except HTTPException:
         raise
     except Exception as exc:
@@ -634,6 +706,7 @@ def get_product_results(
         failed_records_by_run=failed_records,
         # Member binding ids are already loaded — no extra lookup needed.
         binding_ids_by_table=dict(zip(fqns, binding_ids)),
+        asof_rows=asof_rows,
     )
 
 
@@ -856,7 +929,9 @@ def get_table_results(
 
     ``trend_failures`` honours the run filter but not the drilldown chips
     (dqlake parity: its table reader filters that series on binding/run
-    only). Draft runs are excluded unless *include_drafts*.
+    only). Draft runs are excluded unless *include_drafts*. No as-of
+    expansion fetch here: a single table's per-run rows ARE its as-of
+    degeneration (``compute_entity_results`` falls back to them).
     """
     _validate_run_id(run_id)
     try:

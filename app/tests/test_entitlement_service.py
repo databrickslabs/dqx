@@ -436,7 +436,7 @@ class TestStartupWiring:
         sql_executor_mock.execute.side_effect = RuntimeError("no CREATE TABLE privilege")
         _ensure_entitlement_objects(sql_executor_mock)  # must not propagate
 
-    def test_grants_use_schema_plus_select_on_the_four_views(self, sql_executor_mock):
+    def test_grants_use_schema_plus_select_on_the_five_views(self, sql_executor_mock):
         from databricks_labs_dqx_app.backend.app import _grant_user_view_access
 
         _grant_user_view_access(sql_executor_mock)
@@ -445,7 +445,13 @@ class TestStartupWiring:
         select_grants = executed[1:]
         assert [
             f"GRANT SELECT ON TABLE `dqx_test`.`dqx_app_test`.{name} TO `account users`"
-            for name in ("mv_dq_scores", "v_dq_check_results", "v_dq_check_attribution", "v_dq_failing_rows")
+            for name in (
+                "mv_dq_scores",
+                "v_dq_check_results",
+                "v_dq_check_results_asof",
+                "v_dq_check_attribution",
+                "v_dq_failing_rows",
+            )
         ] == select_grants
 
     def test_the_entitlement_table_gets_no_grant(self, sql_executor_mock):
@@ -459,6 +465,6 @@ class TestStartupWiring:
         from databricks_labs_dqx_app.backend.app import _grant_user_view_access
 
         # First statement fails — the remaining grants must still be issued.
-        sql_executor_mock.execute_no_schema.side_effect = [RuntimeError("denied")] + [None] * 4
+        sql_executor_mock.execute_no_schema.side_effect = [RuntimeError("denied")] + [None] * 5
         _grant_user_view_access(sql_executor_mock)  # must not propagate
-        assert sql_executor_mock.execute_no_schema.call_count == 5
+        assert sql_executor_mock.execute_no_schema.call_count == 6

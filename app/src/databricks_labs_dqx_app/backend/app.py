@@ -47,6 +47,7 @@ from .services.rule_embeddings import RuleEmbeddingsService
 from .services.scheduler_service import SchedulerService
 from .services.score_cache_service import ScoreCacheService
 from .services.score_view_service import (
+    ASOF_VIEW_NAME,
     ATTRIBUTION_VIEW_NAME,
     METRIC_VIEW_NAME,
     SHAPING_VIEW_NAME,
@@ -330,13 +331,15 @@ def _ensure_entitlement_objects(sp_sql: SqlExecutor) -> None:
         )
 
 
-# The user-facing read surface for OBO Genie: the score views + the gated
+# The user-facing read surface for OBO Genie: the score views (including
+# the as-of expansion behind average-over-time questions) + the gated
 # failing-rows view. The entitlement table is deliberately absent — it is
 # SP-only (the dynamic view reads it with definer's rights; user emails
 # inside are not for general reading).
 _USER_READABLE_VIEWS = (
     METRIC_VIEW_NAME,
     SHAPING_VIEW_NAME,
+    ASOF_VIEW_NAME,
     ATTRIBUTION_VIEW_NAME,
     FAILING_ROWS_VIEW_NAME,
 )
@@ -346,11 +349,11 @@ def _grant_user_view_access(sp_sql: SqlExecutor) -> None:
     """GRANT the read path for OBO Genie to ``account users`` (best-effort).
 
     Once Genie conversations run as the calling user (Phase 4), every user
-    needs USE SCHEMA on the app schema plus SELECT on the four views the
+    needs USE SCHEMA on the app schema plus SELECT on the five views the
     space queries — same precedent as the startup ``GRANT USE CATALOG``
     below. Row-level protection does NOT depend on these grants: the
     failing-rows view carries its own current_user() entitlement gate, and
-    the other three views are aggregate-only by design. Each statement is
+    the other four views are aggregate-only by design. Each statement is
     individually best-effort so one failing grant cannot block the rest.
     """
     cat = conf.catalog.replace("`", "")

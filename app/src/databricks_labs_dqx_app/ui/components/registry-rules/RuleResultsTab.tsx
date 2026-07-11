@@ -31,8 +31,8 @@ import {
  *   "Latest" and the global page omitted it (see the run-picker adaptation
  *   note in ProductResultsTab); "latest" is the only coherent semantic, so
  *   no `runPickerSlot` is passed.
- * - No `requiredFqns`: the Average-line universe derives from the base
- *   by-table rows (the rule's accessible applied tables with metrics).
+ * - The Average line is the server's as-of series over the rule's
+ *   accessible applied tables, plotted as-is (no membership gate).
  *
  * Data-state gating (unchanged from Task 11) lives in `ruleResultsState`
  * (lib/results-display.ts, unit-tested there): `applied_to_count` counts ALL

@@ -25,7 +25,7 @@ import {
 // `components/results/MultiTableResults.tsx` (extracted verbatim from this
 // file so the global Results page and the rule Results view reuse it instead
 // of near-copying it); this file keeps only the product-specific pieces: the
-// run history + latest-only picker, the member-table universe, and the
+// run history + latest-only picker, the Genie member scope, and the
 // "Average score" label. The sanctioned dqlake deviations (hooks re-pointed
 // to `/api/v1/dq-results/*`, t() strings, Genie stripped, NO idle polling —
 // RESULTS_QUERY_OPTIONS + run-completion invalidation only, dqlake's
@@ -129,9 +129,9 @@ function ResultsBody({ productId }: { productId: string }) {
     (r): r is typeof r & { run_id: string } => typeof r.run_id === "string",
   );
 
-  // The product (with members) supplies the member-table universe for the
-  // composition's Average line (every member must have run before the Average
-  // exists).
+  // The product (with members) supplies the member FQNs for the Genie
+  // chat scope below (the Average line itself is server-computed from the
+  // as-of view; no client-side member universe is needed).
   const { data: product } = useGetDataProductSuspense(productId, selector<DataProductOut>());
   const memberFqns = Array.from(
     new Set((product.members ?? []).map((m) => m.table_fqn)),
@@ -158,7 +158,6 @@ function ResultsBody({ productId }: { productId: string }) {
       <MultiTableResultsSection
         useEntityResults={useEntityResults}
         scoreLabel={() => t("resultsUi.averageScoreLabel")}
-        requiredFqns={memberFqns}
         includeDrafts={includeDrafts}
         onIncludeDraftsChange={setIncludeDrafts}
         // Fixed to "Latest": only the newest entry is offered, and selecting it

@@ -25,6 +25,7 @@ SCHEMA = "dq"
 
 MV_FQN = f"{CATALOG}.{SCHEMA}.mv_dq_scores"
 RESULTS_FQN = f"{CATALOG}.{SCHEMA}.v_dq_check_results"
+ASOF_FQN = f"{CATALOG}.{SCHEMA}.v_dq_check_results_asof"
 ATTRIBUTION_FQN = f"{CATALOG}.{SCHEMA}.v_dq_check_attribution"
 FAILING_FQN = f"{CATALOG}.{SCHEMA}.v_dq_failing_rows"
 
@@ -96,14 +97,25 @@ def test_serialized_space_top_level_shape() -> None:
     assert space["instructions"]["sql_functions"] == []
 
 
-def test_data_sources_are_exactly_the_four_score_objects() -> None:
+def test_data_sources_are_exactly_the_five_score_objects() -> None:
     space = build()
     tables = space["data_sources"]["tables"]
-    assert [t["identifier"] for t in tables] == sorted([ATTRIBUTION_FQN, RESULTS_FQN, FAILING_FQN])
+    assert [t["identifier"] for t in tables] == sorted([ATTRIBUTION_FQN, RESULTS_FQN, ASOF_FQN, FAILING_FQN])
     mvs = space["data_sources"]["metric_views"]
     assert [m["identifier"] for m in mvs] == [MV_FQN]
     for src in [*tables, *mvs]:
         assert src["description"] and all(isinstance(d, str) for d in src["description"])
+
+
+def test_asof_source_description_teaches_the_partition_discipline() -> None:
+    # The load-bearing rules: filter to exactly one include_drafts
+    # partition (NOT include_drafts default), group by as_of_time, and
+    # never treat the repeated rows as single-run facts.
+    space = build()
+    by_id = {t["identifier"]: t for t in space["data_sources"]["tables"]}
+    desc = "".join(by_id[ASOF_FQN]["description"])
+    for phrase in ("include_drafts", "as_of_time", "NOT include_drafts", "latest such run"):
+        assert phrase in desc, phrase
 
 
 def test_space_never_references_ungated_row_level_objects() -> None:
@@ -232,10 +244,17 @@ def test_curated_sqls_are_grounded_on_our_objects_and_run_mode() -> None:
         question = entry["question"][0]
         # Only our objects, catalog/schema backtick-quoted (object name is a
         # trusted bare constant — quote_object_fqn convention).
-        assert f"`{CATALOG}`.`{SCHEMA}`.mv_dq_scores" in sql or f"`{CATALOG}`.`{SCHEMA}`.v_dq_check_results" in sql
-        # run_mode discipline: published everywhere except the draft question.
+        assert (
+            f"`{CATALOG}`.`{SCHEMA}`.mv_dq_scores" in sql or f"`{CATALOG}`.`{SCHEMA}`.v_dq_check_results" in sql
+        )  # v_dq_check_results_asof matches the v_dq_check_results prefix
+        # run_mode discipline: published everywhere except the draft
+        # question. The as-of average reads v_dq_check_results_asof, whose
+        # published-only scoping is the include_drafts partition selector
+        # (run_mode filtering happened inside the view's partition build).
         if question == "How many draft runs happened recently?":
             assert "`run_mode` = 'draft'" in sql
+        elif f"`{CATALOG}`.`{SCHEMA}`.v_dq_check_results_asof" in sql:
+            assert "NOT `include_drafts`" in sql
         else:
             assert "`run_mode` = 'published'" in sql
         # Table-scoped queries are parameterized trusted assets.
@@ -429,6 +448,14 @@ def test_column_configs_enable_prompt_matching_sorted_by_name() -> None:
         "dimension",
         "input_location",
         "run_mode",
+        "severity",
+    }
+    asof_cols = by_id[ASOF_FQN]["column_configs"]
+    assert [c["column_name"] for c in asof_cols] == sorted(c["column_name"] for c in asof_cols)
+    assert {c["column_name"] for c in asof_cols} == {
+        "check_name",
+        "dimension",
+        "input_location",
         "severity",
     }
     attribution_cols = by_id[ATTRIBUTION_FQN]["column_configs"]

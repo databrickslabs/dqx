@@ -104,9 +104,9 @@ function GlobalResultsContent() {
             includeDrafts={includeDrafts}
             onIncludeDraftsChange={setIncludeDrafts}
             onBaseByTable={preverifyByTable}
-            // No runPickerSlot and no requiredFqns: the picker is omitted
-            // (see the module comment) and the Average-line universe derives
-            // from the accessible by-table rows.
+            // No runPickerSlot: the picker is omitted (see the module
+            // comment); the Average line is the server's as-of series over
+            // the accessible tables.
           />
         </div>
 

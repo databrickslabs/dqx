@@ -56,6 +56,7 @@ from databricks.sdk import WorkspaceClient
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.entitlement_service import FAILING_ROWS_VIEW_NAME
 from databricks_labs_dqx_app.backend.services.score_view_service import (
+    ASOF_VIEW_NAME,
     ATTRIBUTION_VIEW_NAME,
     METRIC_VIEW_NAME,
     SHAPING_VIEW_NAME,
@@ -148,11 +149,12 @@ TEXT_INSTRUCTIONS = [
     (
         "The message may name its subject: `(Table: <fqn>)` scopes to that table; "
         "`(Data product: <name> — tables: ...)` scopes to those member tables, and the product's "
-        "headline score is the mean of its member tables' pass rates, not the pooled rate. For the "
-        "average over time, use the as-of pattern from the curated example: at each run instant "
-        "every table contributes its most recent published run at-or-before that instant "
-        "(carry-forward), scoped with input_location IN (the member tables). Without a subject, "
-        "answer across all tables.\n"
+        "headline score is the mean of its member tables' pass rates, not the pooled rate. For "
+        "the average over time, read v_dq_check_results_asof (filtered NOT include_drafts): it "
+        "already carries, at each run instant (as_of_time), every table's most recent published "
+        "run at-or-before that instant, so group by as_of_time and input_location for per-table "
+        "rates and average those, scoped with input_location IN (the member tables). Without a "
+        "subject, answer across all tables.\n"
     ),
     (
         "To explain a change in score — in either direction, and whenever asked how or why it "
@@ -233,6 +235,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     """
     mv = quote_object_fqn(catalog, schema, METRIC_VIEW_NAME)
     v = quote_object_fqn(catalog, schema, SHAPING_VIEW_NAME)
+    va = quote_object_fqn(catalog, schema, ASOF_VIEW_NAME)
     fr = quote_object_fqn(catalog, schema, FAILING_ROWS_VIEW_NAME)
 
     latest_published = (
@@ -382,35 +385,30 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "ORDER BY `run_time`"
     )
 
-    # AS-OF carry-forward average across tables — the pattern behind the app's
-    # product/global "Average" trendline (dqlake's mv_product_results
-    # consolidation). At each run instant every table contributes its most
-    # recent published run at-or-before that instant; the point is the
-    # equal-weight mean of those carried-forward rates. Deliberately
-    # UNPARAMETERIZED: the member set is a table LIST, which Genie's scalar
-    # trusted-asset parameters cannot express — the example spans all tables
-    # and the usage guidance + text instructions teach scoping it with
-    # `input_location IN (...)` for a data product's members.
+    # AS-OF carry-forward average across tables — the app's product/global
+    # "Average" trendline. The carry-forward consolidation is PRE-COMPUTED
+    # by v_dq_check_results_asof (at each run instant every table repeats
+    # its most recent run at-or-before that instant; NOT include_drafts =
+    # the published-runs-only partition), so this is two plain GROUP BYs:
+    # pool each table's carried rows into its rate per instant, then take
+    # the equal-weight mean across tables (AVG skips NULL-rate tables).
+    # Deliberately UNPARAMETERIZED: the member set is a table LIST, which
+    # Genie's scalar trusted-asset parameters cannot express — the example
+    # spans all tables and the usage guidance + text instructions teach
+    # scoping it with `input_location IN (...)` for a data product's
+    # members.
     asof_average_trend = (
-        "WITH runs AS (\n"
-        "  SELECT `input_location`, `run_time`,\n"
+        "WITH per_table AS (\n"
+        "  SELECT `as_of_time`, `input_location`,\n"
         "         1 - TRY_DIVIDE(SUM(`error_count` + `warning_count`), SUM(`input_row_count`)) AS pass_rate\n"
-        f"  FROM {v}\n"
-        "  WHERE `run_mode` = 'published'\n"
-        "  GROUP BY `input_location`, `run_time`\n"
-        "),\n"
-        "instants AS (SELECT DISTINCT `run_time` FROM runs),\n"
-        "asof AS (\n"
-        "  SELECT i.`run_time`, r.`input_location`, r.pass_rate,\n"
-        "         ROW_NUMBER() OVER (PARTITION BY i.`run_time`, r.`input_location`\n"
-        "                            ORDER BY r.`run_time` DESC) AS rn\n"
-        "  FROM instants i JOIN runs r ON r.`run_time` <= i.`run_time`\n"
+        f"  FROM {va}\n"
+        "  WHERE NOT `include_drafts`\n"
+        "  GROUP BY `as_of_time`, `input_location`\n"
         ")\n"
-        "SELECT `run_time`, AVG(pass_rate) AS average_pass_rate\n"
-        "FROM asof\n"
-        "WHERE rn = 1 AND pass_rate IS NOT NULL\n"
-        "GROUP BY `run_time`\n"
-        "ORDER BY `run_time`"
+        "SELECT `as_of_time`, AVG(pass_rate) AS average_pass_rate\n"
+        "FROM per_table\n"
+        "GROUP BY `as_of_time`\n"
+        "ORDER BY `as_of_time`"
     )
 
     severity_trend = (
@@ -681,11 +679,13 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "sql": _lines(asof_average_trend),
             "usage_guidance": [
                 "The as-of average across a set of tables — the app's product/global Average "
-                "line: at each run instant every table contributes its most recent published "
-                "run at-or-before that instant (carry-forward); the point is the equal-weight "
-                "mean of those rates. Tables with no run yet are excluded until their first "
-                "run. Scope to a data product by adding `input_location` IN (its member "
-                "tables) inside the runs CTE. Render as a time-series line."
+                "line. v_dq_check_results_asof already carries, at each run instant "
+                "(as_of_time), every table's most recent run at-or-before that instant "
+                "(NOT include_drafts = built over published runs only), so this is just "
+                "per-table rates per instant averaged equal-weight. Tables with no run yet "
+                "are excluded until their first run. Scope to a data product by adding "
+                "`input_location` IN (its member tables) inside the per_table CTE. Render "
+                "as a time-series line."
             ],
         },
         {
@@ -829,6 +829,7 @@ def _column_configs(catalog: str, schema: str) -> dict[str, list[dict]]:
         }
 
     results = _plain_fqn(catalog, schema, SHAPING_VIEW_NAME)
+    asof = _plain_fqn(catalog, schema, ASOF_VIEW_NAME)
     attribution = _plain_fqn(catalog, schema, ATTRIBUTION_VIEW_NAME)
     failing = _plain_fqn(catalog, schema, FAILING_ROWS_VIEW_NAME)
     return {
@@ -842,6 +843,15 @@ def _column_configs(catalog: str, schema: str) -> dict[str, list[dict]]:
                 cc("dimension", "Quality dimension of the check (Completeness, Validity, ...). NULL when untagged."),
                 cc("input_location", "Fully-qualified name (catalog.schema.table) of the monitored SOURCE table."),
                 cc("run_mode", "Run provenance: 'published' or 'draft'. Default to published."),
+                cc("severity", "Severity of the check: Critical, High, Medium, or Low. NULL when untagged."),
+            ],
+            key=lambda c: c["column_name"],
+        ),
+        asof: sorted(
+            [
+                cc("check_name", "Name of the data-quality rule (check) that was evaluated."),
+                cc("dimension", "Quality dimension of the check (Completeness, Validity, ...). NULL when untagged."),
+                cc("input_location", "Fully-qualified name (catalog.schema.table) of the monitored SOURCE table."),
                 cc("severity", "Severity of the check: Critical, High, Medium, or Low. NULL when untagged."),
             ],
             key=lambda c: c["column_name"],
@@ -960,6 +970,7 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
     """Build the full serialized_space v2 tree over the app's score objects."""
     mv = _plain_fqn(catalog, schema, METRIC_VIEW_NAME)
     results = _plain_fqn(catalog, schema, SHAPING_VIEW_NAME)
+    asof = _plain_fqn(catalog, schema, ASOF_VIEW_NAME)
     attribution = _plain_fqn(catalog, schema, ATTRIBUTION_VIEW_NAME)
     failing = _plain_fqn(catalog, schema, FAILING_ROWS_VIEW_NAME)
     column_configs = _column_configs(catalog, schema)
@@ -985,6 +996,28 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                     "untagged or legacy runs. Prefer mv_dq_scores for rates and trends."
                 ],
                 "column_configs": column_configs[results],
+            },
+            {
+                "identifier": asof,
+                "description": [
+                    "AS-OF expansion of v_dq_check_results for carry-forward trends across "
+                    "tables. For every distinct run instant (as_of_time) across all tables, "
+                    "each table with a run at-or-before that instant repeats the check rows of "
+                    "its latest such run. Columns: include_drafts (boolean partition selector — "
+                    "false is built over published runs only, true over all runs; ALWAYS filter "
+                    "to exactly one partition, NOT include_drafts by default, and never mix "
+                    "them), as_of_time (the consolidated instant — group by it for trends), "
+                    "then the same shape as v_dq_check_results: run_id, input_location, "
+                    "run_time (the carried run's own time), is_latest_run, check_name, "
+                    "error_count, warning_count, input_row_count, run_mode, binding_version, "
+                    "criticality, severity, dimension, registry_rule_id, columns. Use ONLY for "
+                    "average-over-time / trend questions spanning several tables (group by "
+                    "as_of_time and input_location for per-table rates, then average); for "
+                    "single-run or latest-state questions use mv_dq_scores or "
+                    "v_dq_check_results — this view repeats rows across instants by design, so "
+                    "never sum it without grouping by as_of_time."
+                ],
+                "column_configs": column_configs[asof],
             },
             {
                 "identifier": attribution,
