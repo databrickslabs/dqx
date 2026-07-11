@@ -12,6 +12,12 @@ logger = logging.getLogger(__name__)
 
 _CONFIG_KEY = "workspace_config"
 
+# Compiled-in fallback for the ``draft_run_sample_limit`` setting — the
+# row cap applied to DRAFT monitored-table runs when the admin has not
+# configured one. 0 means unlimited. Shared by ``BindingRunService`` and
+# the ``/config/draft-run-sample-limit`` admin endpoints.
+DRAFT_RUN_SAMPLE_LIMIT_DEFAULT = 1000
+
 # Module-level adapter so we pay the type-tree walk once at import time
 # rather than on every ``get_config`` call. ``TypeAdapter`` is Pydantic's
 # public v2 surface for validating non-BaseModel types against a target
@@ -191,6 +197,38 @@ class AppSettingsService:
         """Persist the quarantine retention window. Returns the saved value."""
         self.save_setting(self._QUARANTINE_RETENTION_KEY, str(int(days)), user_email=user_email)
         return int(days)
+
+    # ------------------------------------------------------------------
+    # Draft-run sampling — bounds the rows a DRAFT monitored-table run
+    # reads (``BindingRunService.run_binding`` with ``source='draft'``).
+    # Approved/published runs NEVER sample — they always scan the whole
+    # table; this knob exists only so exploratory draft runs on large
+    # tables stay cheap. Stored as a plain integer string:
+    #   * unset / invalid → consumer falls back to
+    #     ``DRAFT_RUN_SAMPLE_LIMIT_DEFAULT`` (1000)
+    #   * 0               → unlimited (draft runs scan the whole table)
+    #   * positive N      → draft runs read at most N rows
+    # ------------------------------------------------------------------
+
+    _DRAFT_RUN_SAMPLE_LIMIT_KEY = "draft_run_sample_limit"
+
+    def get_draft_run_sample_limit(self) -> int | None:
+        """Return the configured draft-run sample limit, or ``None`` if unset.
+
+        0 means unlimited (whole table). Negative stored values are
+        treated as unset so a corrupt row can never disable sampling by
+        accident.
+        """
+        value = self._get_int_setting(self._DRAFT_RUN_SAMPLE_LIMIT_KEY)
+        if value is not None and value < 0:
+            logger.warning("Setting %s is negative (%d); treating as unset", self._DRAFT_RUN_SAMPLE_LIMIT_KEY, value)
+            return None
+        return value
+
+    def save_draft_run_sample_limit(self, limit: int, *, user_email: str | None = None) -> int:
+        """Persist the draft-run sample limit (0 = unlimited). Returns the saved value."""
+        self.save_setting(self._DRAFT_RUN_SAMPLE_LIMIT_KEY, str(int(limit)), user_email=user_email)
+        return int(limit)
 
     def _get_int_setting(self, key: str) -> int | None:
         raw = self.get_setting(key)

@@ -997,6 +997,25 @@ export interface DimensionOut {
   rank: number;
 }
 
+export interface DraftRunSampleLimitIn {
+  /**
+   * Draft runs sample at most this many rows; 0 checks the whole table.
+   * @minimum 0
+   * @maximum 10000000
+   */
+  draft_run_sample_limit: number;
+}
+
+/**
+ * Effective draft-run sample limit + the default/bounds for the UI.
+ */
+export interface DraftRunSampleLimitOut {
+  draft_run_sample_limit: number;
+  draft_run_sample_limit_default?: number;
+  draft_run_sample_limit_max?: number;
+  draft_run_sample_limit_set: boolean;
+}
+
 export type DryRunInChecksItem = { [key: string]: unknown };
 
 export interface DryRunIn {
@@ -2788,12 +2807,6 @@ export interface RunMonitoredTableIn {
   source: RunMonitoredTableInSource;
   /** Pin to a specific approved snapshot version. Ignored when source='draft'. */
   version?: RunMonitoredTableInVersion;
-  /**
-   * 0 (default) checks the whole table; a positive value samples that many rows. Monitoring runs should scan the full table — sampling is for previews.
-   * @minimum 0
-   * @maximum 10000
-   */
-  sample_size?: number;
 }
 
 /**
@@ -5363,6 +5376,216 @@ export const useSaveRetentionSettings = <TError = AxiosError<HTTPValidationError
       > => {
 
       const mutationOptions = getSaveRetentionSettingsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Return the current draft-run sample limit + default (admin only).
+ * @summary Get Draft Run Sample Limit
+ */
+export const getDraftRunSampleLimit = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DraftRunSampleLimitOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/config/draft-run-sample-limit`,options
+    );
+  }
+
+
+
+
+export const getGetDraftRunSampleLimitQueryKey = () => {
+    return [
+    `/api/v1/config/draft-run-sample-limit`
+    ] as const;
+    }
+
+    
+export const getGetDraftRunSampleLimitQueryOptions = <TData = Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDraftRunSampleLimitQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDraftRunSampleLimit>>> = ({ signal }) => getDraftRunSampleLimit({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDraftRunSampleLimitQueryResult = NonNullable<Awaited<ReturnType<typeof getDraftRunSampleLimit>>>
+export type GetDraftRunSampleLimitQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetDraftRunSampleLimit<TData = Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDraftRunSampleLimit>>,
+          TError,
+          Awaited<ReturnType<typeof getDraftRunSampleLimit>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDraftRunSampleLimit<TData = Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDraftRunSampleLimit>>,
+          TError,
+          Awaited<ReturnType<typeof getDraftRunSampleLimit>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDraftRunSampleLimit<TData = Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Draft Run Sample Limit
+ */
+
+export function useGetDraftRunSampleLimit<TData = Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDraftRunSampleLimitQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetDraftRunSampleLimitSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDraftRunSampleLimitQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDraftRunSampleLimit>>> = ({ signal }) => getDraftRunSampleLimit({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDraftRunSampleLimitSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getDraftRunSampleLimit>>>
+export type GetDraftRunSampleLimitSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetDraftRunSampleLimitSuspense<TData = Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDraftRunSampleLimitSuspense<TData = Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDraftRunSampleLimitSuspense<TData = Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Draft Run Sample Limit
+ */
+
+export function useGetDraftRunSampleLimitSuspense<TData = Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDraftRunSampleLimit>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDraftRunSampleLimitSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Update the draft-run sample limit (admin only). 0 = unlimited.
+ * @summary Save Draft Run Sample Limit
+ */
+export const saveDraftRunSampleLimit = (
+    draftRunSampleLimitIn: DraftRunSampleLimitIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DraftRunSampleLimitOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/draft-run-sample-limit`,
+      draftRunSampleLimitIn,options
+    );
+  }
+
+
+
+export const getSaveDraftRunSampleLimitMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveDraftRunSampleLimit>>, TError,{data: DraftRunSampleLimitIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveDraftRunSampleLimit>>, TError,{data: DraftRunSampleLimitIn}, TContext> => {
+
+const mutationKey = ['saveDraftRunSampleLimit'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveDraftRunSampleLimit>>, {data: DraftRunSampleLimitIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveDraftRunSampleLimit(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveDraftRunSampleLimitMutationResult = NonNullable<Awaited<ReturnType<typeof saveDraftRunSampleLimit>>>
+    export type SaveDraftRunSampleLimitMutationBody = DraftRunSampleLimitIn
+    export type SaveDraftRunSampleLimitMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Draft Run Sample Limit
+ */
+export const useSaveDraftRunSampleLimit = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveDraftRunSampleLimit>>, TError,{data: DraftRunSampleLimitIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveDraftRunSampleLimit>>,
+        TError,
+        {data: DraftRunSampleLimitIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveDraftRunSampleLimitMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

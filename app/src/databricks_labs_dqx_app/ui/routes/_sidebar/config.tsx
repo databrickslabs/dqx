@@ -77,6 +77,9 @@ import {
   useGetWarehouseAccess,
   getGetWarehouseAccessQueryKey,
   useGrantWarehouseAccess,
+  useGetDraftRunSampleLimit,
+  useSaveDraftRunSampleLimit,
+  getGetDraftRunSampleLimitQueryKey,
   type AiSettingsIn,
   type RulesRegistrySettingsIn,
   type ComputeSettingsIn,
@@ -1125,6 +1128,117 @@ function RetentionSettings() {
               Only admins can change retention.
             </span>
           )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Draft-run sample limit — admin knob capping the rows a DRAFT monitored-table
+// run reads (0 = whole table). Approved/published runs never sample; they
+// always scan the full table, so there is deliberately no knob for them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DraftRunSampleLimitSettings() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { data: resp, isLoading } = useGetDraftRunSampleLimit();
+  const settings = resp?.data;
+  const saveMutation = useSaveDraftRunSampleLimit();
+  const { data: role } = useCurrentUserRoleSuspense();
+  const isAdmin = role?.data?.role === "admin";
+
+  const [limit, setLimit] = useState<string>("");
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (settings && !hydrated) {
+      setLimit(String(settings.draft_run_sample_limit));
+      setHydrated(true);
+    }
+  }, [settings, hydrated]);
+
+  const max = settings?.draft_run_sample_limit_max ?? 10_000_000;
+  const parsed = Number.parseInt(limit, 10);
+  const isInvalid = Number.isNaN(parsed) || parsed < 0 || parsed > max;
+  const isDirty = settings != null && !Number.isNaN(parsed) && parsed !== settings.draft_run_sample_limit;
+
+  const handleSave = () => {
+    if (!settings || isInvalid || !isDirty) return;
+    saveMutation.mutate(
+      { data: { draft_run_sample_limit: parsed } },
+      {
+        onSuccess: (saved) => {
+          queryClient.invalidateQueries({ queryKey: getGetDraftRunSampleLimitQueryKey() });
+          setLimit(String(saved.data.draft_run_sample_limit));
+          toast.success(t("config.draftSampleSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveDraftSample"));
+        },
+      },
+    );
+  };
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Database className="h-5 w-5" />
+          {t("config.draftSampleTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.draftSampleDescription")}
+        </p>
+        <div className="space-y-1.5 max-w-sm">
+          <Label htmlFor="draft-sample-limit" className="text-xs">
+            {t("config.draftSampleLabel")}
+          </Label>
+          <Input
+            id="draft-sample-limit"
+            type="number"
+            min={0}
+            max={max}
+            step={1}
+            value={limit}
+            disabled={!isAdmin || saveMutation.isPending}
+            onChange={(e) => setLimit(e.target.value)}
+            className="h-8"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            {t("config.draftSampleDefaultHint", { value: settings.draft_run_sample_limit_default })}
+            {!settings.draft_run_sample_limit_set && ` ${t("config.draftSampleNotCustomised")}`}
+          </p>
+        </div>
+        {isInvalid && (
+          <p className="text-xs text-destructive flex items-start gap-1.5">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <span>{t("config.draftSampleInvalid", { max })}</span>
+          </p>
+        )}
+        <div className="flex items-center gap-2 pt-2 border-t">
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!isAdmin || !isDirty || isInvalid || saveMutation.isPending}
+          >
+            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+            {t("config.draftSampleSave")}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setLimit(String(settings.draft_run_sample_limit))}
+            disabled={!isAdmin || !isDirty || saveMutation.isPending}
+          >
+            {t("config.draftSampleReset")}
+          </Button>
         </div>
       </CardContent>
     </Card>
@@ -2432,6 +2546,13 @@ function ConfigPage() {
               <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <RetentionSettings />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.28}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <DraftRunSampleLimitSettings />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>

@@ -815,9 +815,11 @@ class TestRun:
         assert result.run_set_id == "rs-new"
         assert len(result.submitted) == 1
         assert result.skipped == []
-        # assert_called_once_with is an exact-match: no ``sample_size`` kwarg
-        # means the product fan-out relies on run_binding's default of 0
-        # (full-table scan) — monitoring runs must not silently sample.
+        # assert_called_once_with is an exact-match: the fan-out passes NO
+        # sampling knob (run_binding has none). Sampling resolves per
+        # resolved source inside run_binding — approved members always
+        # scan the whole table; draft members are capped by the admin
+        # ``draft_run_sample_limit`` setting.
         binding_run_service.run_binding.assert_called_once_with(
             "b1", source="draft", version=None, user_email="bob@x", trigger="manual", run_set_id="rs-new"
         )

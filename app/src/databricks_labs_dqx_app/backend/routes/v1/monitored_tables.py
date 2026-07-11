@@ -366,7 +366,6 @@ def run_monitored_table(
             version=body.version,
             user_email=user_email,
             trigger="manual",
-            sample_size=body.sample_size,
         )
         return RunMonitoredTableOut(
             run_set_id=result.run_set_id,

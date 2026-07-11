@@ -26,7 +26,10 @@ from databricks_labs_dqx_app.backend.models import (
     RunConfigIn,
     RunConfigOut,
 )
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    DRAFT_RUN_SAMPLE_LIMIT_DEFAULT,
+    AppSettingsService,
+)
 from databricks_labs_dqx_app.backend.services.vector_store import VectorStoreProvisioner
 
 # Everyone except VIEWER. Used to gate the embedded-dashboard GET: the
@@ -407,6 +410,70 @@ def save_retention_settings(
         logger.info("Saved quarantine_retention_days=%d", validated_q)
 
     return get_retention_settings(svc)
+
+
+# ---------------------------------------------------------------------------
+# Draft-run sample limit — admin knob capping the rows a DRAFT monitored-
+# table run reads. Approved/published runs never sample (they always scan
+# the whole table — see ``BindingRunService.run_binding``); this setting
+# exists only so exploratory draft runs on large tables stay cheap.
+# 0 = unlimited (draft runs also scan the whole table).
+# ---------------------------------------------------------------------------
+
+# Generous ceiling — a draft "sample" past ten million rows is almost
+# certainly a typo; admins wanting full scans should use 0 (unlimited).
+_DRAFT_SAMPLE_LIMIT_MAX = 10_000_000
+
+
+class DraftRunSampleLimitOut(BaseModel):
+    """Effective draft-run sample limit + the default/bounds for the UI."""
+
+    draft_run_sample_limit: int
+    draft_run_sample_limit_default: int = DRAFT_RUN_SAMPLE_LIMIT_DEFAULT
+    draft_run_sample_limit_max: int = _DRAFT_SAMPLE_LIMIT_MAX
+    draft_run_sample_limit_set: bool
+
+
+class DraftRunSampleLimitIn(BaseModel):
+    draft_run_sample_limit: int = Field(
+        ge=0,
+        le=_DRAFT_SAMPLE_LIMIT_MAX,
+        description="Draft runs sample at most this many rows; 0 checks the whole table.",
+    )
+
+
+@router.get(
+    "/draft-run-sample-limit",
+    response_model=DraftRunSampleLimitOut,
+    operation_id="getDraftRunSampleLimit",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def get_draft_run_sample_limit(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> DraftRunSampleLimitOut:
+    """Return the current draft-run sample limit + default (admin only)."""
+    limit = svc.get_draft_run_sample_limit()
+    return DraftRunSampleLimitOut(
+        draft_run_sample_limit=limit if limit is not None else DRAFT_RUN_SAMPLE_LIMIT_DEFAULT,
+        draft_run_sample_limit_set=limit is not None,
+    )
+
+
+@router.put(
+    "/draft-run-sample-limit",
+    response_model=DraftRunSampleLimitOut,
+    operation_id="saveDraftRunSampleLimit",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_draft_run_sample_limit(
+    body: DraftRunSampleLimitIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> DraftRunSampleLimitOut:
+    """Update the draft-run sample limit (admin only). 0 = unlimited."""
+    svc.save_draft_run_sample_limit(body.draft_run_sample_limit, user_email=email)
+    logger.info("Saved draft_run_sample_limit=%d", body.draft_run_sample_limit)
+    return get_draft_run_sample_limit(svc)
 
 
 # ---------------------------------------------------------------------------

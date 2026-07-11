@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
-from pydantic import ValidationError
 
 from databricks_labs_dqx_app.backend.models import (
     ApplyRuleIn,
@@ -755,25 +754,12 @@ class TestRunMonitoredTable:
         assert result.run_id == "run-1"
         assert result.job_run_id == 42
         assert result.view_fqn == "dqx_studio_tmp.tmp_1"
-        # Default body omits sample_size → 0 = full-table scan (monitoring
-        # runs check every row; sampling is opt-in for previews).
+        # Exact-match assert: NO sample_size kwarg. Sampling is not a
+        # per-request choice — approved runs always scan the whole table
+        # and draft runs are capped by the admin setting, both resolved
+        # inside run_binding itself.
         svc.run_binding.assert_called_once_with(
-            "b1", source="approved", version=None, user_email="alice@x", trigger="manual", sample_size=0
-        )
-
-    def test_custom_sample_size_is_passed_through(self):
-        svc = MagicMock()
-        svc.run_binding.return_value = BindingRunResult(
-            run_set_id="rs-1", run_id="run-1", job_run_id=42, view_fqn="dqx_studio_tmp.tmp_1"
-        )
-        run_monitored_table(
-            "b1",
-            body=RunMonitoredTableIn(source="approved", version=None, sample_size=250),
-            obo_ws=_mock_obo_ws(),
-            run_svc=svc,
-        )
-        svc.run_binding.assert_called_once_with(
-            "b1", source="approved", version=None, user_email="alice@x", trigger="manual", sample_size=250
+            "b1", source="approved", version=None, user_email="alice@x", trigger="manual"
         )
 
     def test_binding_not_found_maps_to_404(self):
@@ -822,22 +808,19 @@ class TestRunMonitoredTable:
         assert excinfo.value.status_code == 500
 
 
-class TestRunMonitoredTableInSampleSize:
-    """Pin ``RunMonitoredTableIn.sample_size`` default and bounds.
+class TestRunMonitoredTableInHasNoSamplingKnob:
+    """Pin that ``RunMonitoredTableIn`` exposes NO sample_size field.
 
-    0 (the default) means "check the whole table" — monitoring runs must
-    not silently sample. A positive value is explicit sampling, capped at
-    10,000 to match the dryrun batch route.
+    Approved/published runs must never sample (they always scan the
+    whole table) and draft runs are capped by the admin setting
+    ``draft_run_sample_limit`` — sampling is deliberately not a
+    per-request choice. Reintroducing the field would let API callers
+    silently turn monitoring runs into sample scans.
     """
 
-    def test_default_is_zero_full_table(self):
-        assert RunMonitoredTableIn(source="approved").sample_size == 0
+    def test_sample_size_field_removed(self):
+        assert "sample_size" not in RunMonitoredTableIn.model_fields
 
-    def test_negative_rejected(self):
-        with pytest.raises(ValidationError):
-            RunMonitoredTableIn(source="approved", sample_size=-1)
-
-    def test_upper_bound_enforced(self):
-        assert RunMonitoredTableIn(source="approved", sample_size=10_000).sample_size == 10_000
-        with pytest.raises(ValidationError):
-            RunMonitoredTableIn(source="approved", sample_size=10_001)
+    def test_stray_sample_size_is_ignored_not_accepted(self):
+        body = RunMonitoredTableIn.model_validate({"source": "approved", "sample_size": 50})
+        assert not hasattr(body, "sample_size")

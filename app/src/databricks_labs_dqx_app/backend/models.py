@@ -1020,15 +1020,10 @@ class RunMonitoredTableIn(BaseModel):
         default=None,
         description="Pin to a specific approved snapshot version. Ignored when source='draft'.",
     )
-    sample_size: int = Field(
-        default=0,
-        ge=0,
-        le=10_000,
-        description=(
-            "0 (default) checks the whole table; a positive value samples that many rows. "
-            "Monitoring runs should scan the full table — sampling is for previews."
-        ),
-    )
+    # Deliberately NO sample_size field: approved/published runs always
+    # check the whole table (never sample), and draft runs are capped by
+    # the admin setting ``draft_run_sample_limit`` — sampling is not a
+    # per-request choice. See BindingRunService.run_binding.
 
 
 class RunMonitoredTableOut(BaseModel):
