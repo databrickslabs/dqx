@@ -386,7 +386,6 @@ class TestReviewChanges:
         out = dp_routes.get_data_product_review_changes("p1", svc, version_svc)
         assert out.product_id == "p1"
         assert out.version == 3
-        assert out.has_prior_snapshot is True
         assert len(out.members) == 1
         assert out.members[0].checks == [{"check": {"function": "is_not_null"}}]
         # pinned_version None -> effective = binding_version (2)
@@ -402,6 +401,5 @@ class TestReviewChanges:
         svc.get.return_value = detail
         version_svc = MagicMock()
         out = dp_routes.get_data_product_review_changes("p1", svc, version_svc)
-        assert out.has_prior_snapshot is False
         assert out.members[0].checks == []
         version_svc.get_checks.assert_not_called()

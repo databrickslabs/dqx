@@ -129,15 +129,12 @@ def get_data_product_review_changes(
         if detail is None:
             raise HTTPException(status_code=404, detail=f"Data product not found: {product_id}")
         members: list[DataProductReviewMemberOut] = []
-        has_prior = False
         for member in detail.members:
             effective_version = member.pinned_version or member.binding_version
             checks: list[dict[str, object]] = []
             if effective_version and effective_version > 0:
                 try:
                     checks = version_svc.get_checks(member.binding_id, effective_version)
-                    if checks:
-                        has_prior = True
                 except LookupError:
                     checks = []
             members.append(
@@ -153,7 +150,6 @@ def get_data_product_review_changes(
             product_id=detail.product.product_id,
             name=detail.product.name,
             version=detail.product.version,
-            has_prior_snapshot=has_prior,
             members=members,
         )
     except HTTPException:

@@ -1304,10 +1304,6 @@ class DataProductReviewChangesOut(BaseModel):
     product_id: str
     name: str
     version: int
-    has_prior_snapshot: bool = Field(
-        default=False,
-        description="True when at least one member has a frozen approved snapshot to show",
-    )
     members: list[DataProductReviewMemberOut] = Field(default_factory=list)
 
 

@@ -951,8 +951,6 @@ export interface DataProductReviewChangesOut {
   product_id: string;
   name: string;
   version: number;
-  /** True when at least one member has a frozen approved snapshot to show */
-  has_prior_snapshot?: boolean;
   members?: DataProductReviewMemberOut[];
 }
 
@@ -10284,6 +10282,12 @@ Backs the Drafts & Review change-diff popout: reads the
 ``dq_quality_rules_history`` audit trail so the UI can diff the two most
 recent recorded ``check`` payloads (previous vs proposed). Declared BEFORE
 the ``/{table_fqn:path}`` catch-all so the more-specific pattern wins.
+
+Scoped to the caller's Unity Catalog entitlements exactly as ``getRules``
+is: all history rows for one rule share the same ``table_fqn``, so if that
+catalog is not in the user's accessible set we raise 403 rather than leak
+the table name and ``check`` payloads. Cross-table SQL checks
+(``__sql_check__/``) carry no home catalog and are always allowed.
  * @summary Get Rule History
  */
 export const getRuleHistory = (
