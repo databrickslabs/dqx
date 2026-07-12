@@ -100,15 +100,16 @@ class TestRun:
         assert exc.value.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_warehouse_failure_maps_to_502(self, svc):
+    async def test_warehouse_failure_surfaces_error_in_502(self, svc):
         async def _boom(**kwargs):
-            raise RuntimeError("warehouse down: schema secret")
+            raise RuntimeError("permission denied on table cat.s.t")
 
         svc.run_adhoc.side_effect = _boom
         with pytest.raises(HTTPException) as exc:
             await run_rule_test(_adhoc_body(), svc)
         assert exc.value.status_code == 502
-        assert "warehouse down" not in exc.value.detail  # sanitized
+        # The user's own OBO query failure is surfaced so a failed test is actionable.
+        assert "permission denied on table cat.s.t" in exc.value.detail
 
     @pytest.mark.asyncio
     async def test_table_missing_mapping_maps_to_400(self, svc):
