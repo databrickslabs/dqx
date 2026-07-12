@@ -530,9 +530,16 @@ class Materializer:
             )
             return
 
-        existing_status, existing_check_json = existing
+        existing_status, existing_registry_version, existing_check_json = existing
         content_changed = existing_check_json != check_json
-        new_status = self._decide_status(existing_status, content_changed, pinned, auto_upgrade)
+        # A DIRECT edit (severity override, unpin, or any change that leaves the
+        # resolved registry version untouched) must always return an approved
+        # row to review — only a genuine VERSION move of an unpinned follower is
+        # eligible for the auto-upgrade "keep approved" shortcut. Legacy rows
+        # with no recorded registry_version can't be proven to be a version
+        # move, so they take the safe (re-review) branch.
+        version_changed = existing_registry_version is not None and existing_registry_version != version_number
+        new_status = self._decide_status(existing_status, content_changed, pinned, auto_upgrade, version_changed)
         self._sql.execute(
             f"UPDATE {self._quality_rules_table} SET "
             f"  table_fqn = '{escape_sql_string(table_fqn)}', "
@@ -548,30 +555,49 @@ class Materializer:
         )
 
     @staticmethod
-    def _decide_status(existing_status: str, content_changed: bool, pinned: bool, auto_upgrade: bool) -> str:
+    def _decide_status(
+        existing_status: str,
+        content_changed: bool,
+        pinned: bool,
+        auto_upgrade: bool,
+        version_changed: bool,
+    ) -> str:
         if not content_changed:
             return existing_status
         if existing_status == "approved":
-            if pinned:
+            # A pinned application's content only ever changes through a DIRECT
+            # edit (severity override, or a pin bump to a different version),
+            # and a direct edit to an unpinned application (severity override,
+            # or unpinning) leaves the resolved version untouched — both must
+            # always return to review, regardless of the auto-upgrade setting
+            # (pins/edits are exempt from *version* upgrades, not from
+            # re-approval after a deliberate edit). Only a genuine VERSION move
+            # of an unpinned follower is eligible to stay approved, and only
+            # when the admin enabled auto-upgrade.
+            if pinned or not version_changed:
                 return "pending_approval"
             return "approved" if auto_upgrade else "pending_approval"
         if existing_status == "rejected":
             return "draft"
         return existing_status
 
-    def _get_materialized_row(self, row_id: str) -> tuple[str, str] | None:
+    def _get_materialized_row(self, row_id: str) -> tuple[str, int | None, str] | None:
         check_text = self._sql.select_json_text(self._check_col)
         e = escape_sql_string(row_id)
-        sql = f"SELECT status, {check_text} FROM {self._quality_rules_table} WHERE rule_id = '{e}'"  # noqa: S608
+        sql = (
+            f"SELECT status, registry_version, {check_text} "  # noqa: S608
+            f"FROM {self._quality_rules_table} WHERE rule_id = '{e}'"
+        )
         rows = self._sql.query(sql)
         if not rows:
             return None
-        status, check_json_raw = rows[0][0], rows[0][1]
+        status, registry_version_raw, check_json_raw = rows[0][0], rows[0][1], rows[0][2]
         try:
             normalized = json.dumps(json.loads(check_json_raw), sort_keys=True) if check_json_raw else ""
         except json.JSONDecodeError:
             normalized = check_json_raw or ""
-        return status, normalized
+        registry_version = int(registry_version_raw) if registry_version_raw not in (None, "") else None
+        return status, registry_version, normalized
 
     def _existing_group_ids(self, applied_rule_id: str | None) -> set[str]:
         """Return the ``dq_quality_rules.rule_id``s currently materialized for *applied_rule_id*.

@@ -897,7 +897,7 @@ class TestMaterializeBindingIdempotency:
 
         def fake_query(sql_text: str):
             if "SELECT status" in sql_text:
-                return [["approved", existing_check_json]]
+                return [["approved", 1, existing_check_json]]
             return []
 
         sql.query.side_effect = fake_query
@@ -919,7 +919,7 @@ class TestMaterializeBindingIdempotency:
 
         def fake_query(sql_text: str):
             if "SELECT status" in sql_text:
-                return [["draft", "{}"]]
+                return [["draft", 1, "{}"]]
             return []
 
         sql.query.side_effect = fake_query
@@ -942,7 +942,8 @@ class TestAutoUpgradeBehaviour:
 
         def fake_query(sql_text: str):
             if "SELECT status" in sql_text:
-                return [["approved", json.dumps({"different": "content"})]]
+                # Was materialized against v1; resolved version now moves to v2.
+                return [["approved", 1, json.dumps({"different": "content"})]]
             return []
 
         sql.query.side_effect = fake_query
@@ -950,7 +951,7 @@ class TestAutoUpgradeBehaviour:
         update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
         assert "status = 'pending_approval'" in update_sql
 
-    def test_behaviour_a_keeps_approved_when_content_changes(
+    def test_behaviour_a_keeps_approved_when_version_moves(
         self, materializer, sql, registry, monitored_tables, app_settings
     ):
         app_settings.get_auto_upgrade_without_approval.return_value = True
@@ -963,13 +964,48 @@ class TestAutoUpgradeBehaviour:
 
         def fake_query(sql_text: str):
             if "SELECT status" in sql_text:
-                return [["approved", json.dumps({"different": "content"})]]
+                # Was materialized against v1; an unpinned follower now resolves
+                # to the freshly published v2 — a genuine VERSION move, so the
+                # auto-upgrade shortcut may keep it approved.
+                return [["approved", 1, json.dumps({"different": "content"})]]
             return []
 
         sql.query.side_effect = fake_query
         materializer.materialize_binding("b1")
         update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
         assert "status = 'approved'" in update_sql
+
+    def test_unpinned_severity_edit_requires_review_even_with_auto_upgrade(
+        self, materializer, sql, registry, monitored_tables, app_settings
+    ):
+        # B2-67: a DIRECT severity-override edit on an approved, UNPINNED rule
+        # leaves the resolved version unchanged, so it must return to review
+        # even when auto-upgrade is on — the auto-upgrade shortcut is only for
+        # genuine version moves, not deliberate edits. Before the fix this was
+        # silently kept approved (no submit-for-review, no banner).
+        app_settings.get_auto_upgrade_without_approval.return_value = True
+        applied = AppliedRule(
+            id="ar1",
+            binding_id="b1",
+            rule_id="r1",
+            severity_override="Critical",  # direct edit changes content, version stays v1
+            column_mapping=[{"column": "customer_id"}],
+            mapping_hash="h",
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule(version=1)
+        registry.get_version.return_value = _version_snapshot(version=1, severity="High")
+
+        def fake_query(sql_text: str):
+            if "SELECT status" in sql_text:
+                # Already materialized against the SAME resolved version (v1).
+                return [["approved", 1, json.dumps({"different": "content"})]]
+            return []
+
+        sql.query.side_effect = fake_query
+        materializer.materialize_binding("b1")
+        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert "status = 'pending_approval'" in update_sql
 
     def test_pinned_row_content_change_always_goes_to_pending_approval(
         self, materializer, sql, registry, monitored_tables, app_settings
@@ -990,7 +1026,7 @@ class TestAutoUpgradeBehaviour:
 
         def fake_query(sql_text: str):
             if "SELECT status" in sql_text:
-                return [["approved", json.dumps({"different": "content"})]]
+                return [["approved", 1, json.dumps({"different": "content"})]]
             return []
 
         sql.query.side_effect = fake_query
@@ -1195,7 +1231,7 @@ class TestRematerializeForRule:
             if "dq_applied_rules" in sql_text:
                 return [["b1"]]
             if "SELECT status" in sql_text:
-                return [["approved", json.dumps({"different": "content"})]]
+                return [["approved", 1, json.dumps({"different": "content"})]]
             return []
 
         sql.query.side_effect = fake_query
