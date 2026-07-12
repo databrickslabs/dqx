@@ -64,6 +64,7 @@ def _table_row(
     schedule_cron: str | None = None,
     schedule_tz: str | None = None,
     last_profiled_at: str | None = None,
+    last_run_at: str | None = None,
     score: str | None = None,
     failed_tests: str | None = None,
     total_tests: str | None = None,
@@ -71,7 +72,7 @@ def _table_row(
 ) -> list[str]:
     # The trailing 4 cells are the dq_score_cache LEFT-JOIN columns the list
     # query selects (P3.4) — all None when the table has never been scored.
-    # The single-row read paths select only the first 12 columns; the extra
+    # The single-row read paths select only the first 13 columns; the extra
     # cells are simply ignored by _row_to_table.
     return [
         binding_id,
@@ -82,6 +83,7 @@ def _table_row(
         schedule_cron,
         schedule_tz,
         last_profiled_at,
+        last_run_at,
         "alice@x",
         "2026-07-02T00:00:00+00:00",
         "alice@x",
@@ -390,66 +392,118 @@ class TestGet:
         assert summary.rule_severity is None
 
 
-class TestLastProfiledDerivedOnRead:
-    """`last_profiled_at` is derived on read from ``dq_profiling_results`` (item
-    53): the ``dq_monitored_tables`` column is never written, so the value must
-    come from the latest successful profiler run, not the stored (null) column.
+class TestRunTimestampsReadFromOltp:
+    """`last_profiled_at` / `last_run_at` are read straight off the OLTP row
+    (T-perf): they are denormalized on run/profiler completion by
+    ``refresh_run_timestamps``, so the list/detail read paths must NOT touch
+    the always-Delta ``dq_profiling_results`` / ``dq_validation_runs`` tables.
     """
 
-    def test_get_derives_last_profiled_at_from_profiling_results(self, svc, sql, profiling_sql):
+    def test_get_reads_timestamps_from_oltp_without_warehouse(self, svc, sql, profiling_sql):
         sql.query.side_effect = [
-            [_table_row(binding_id="b1", table_fqn="cat.schema.tbl", last_profiled_at=None)],
+            [
+                _table_row(
+                    binding_id="b1",
+                    table_fqn="cat.schema.tbl",
+                    last_profiled_at="2026-07-10 12:00:00",
+                    last_run_at="2026-07-11 09:00:00",
+                )
+            ],
             [],  # no applied rules
         ]
-        profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
-        profiling_sql.query.return_value = [["cat.schema.tbl", "2026-07-10 12:00:00"]]
-
         detail = svc.get("b1")
 
         assert detail is not None
         assert detail.table.last_profiled_at is not None
         assert detail.table.last_profiled_at.year == 2026
-        # The derive query hits dq_profiling_results, filtered to SUCCESS runs.
-        profiling_sql.query.assert_called_once()
-        derive_sql = profiling_sql.query.call_args[0][0]
-        assert "dq_profiling_results" in derive_sql
-        assert "status = 'SUCCESS'" in derive_sql
-        assert "GROUP BY source_table_fqn" in derive_sql
+        assert detail.table.last_run_at is not None
+        assert detail.table.last_run_at.day == 11
+        # The detail load never touches the warehouse executor.
+        profiling_sql.query.assert_not_called()
 
-    def test_get_last_profiled_at_none_when_never_profiled(self, svc, sql, profiling_sql):
-        # Even a (stale) non-null stored column is overridden by the derived
-        # value, so an unprofiled table reads None rather than a bogus date.
-        sql.query.side_effect = [
-            [_table_row(binding_id="b1", last_profiled_at="2020-01-01 00:00:00")],
-            [],
-        ]
-        profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
-        profiling_sql.query.return_value = []  # no successful profile
-
-        detail = svc.get("b1")
-
-        assert detail is not None
-        assert detail.table.last_profiled_at is None
-
-    def test_list_derives_last_profiled_at_per_table(self, svc, sql, profiling_sql):
+    def test_list_reads_timestamps_from_oltp_without_warehouse(self, svc, sql, profiling_sql):
         sql.query.side_effect = [
             [
-                _table_row(binding_id="b1", table_fqn="cat.s.t1"),
+                _table_row(binding_id="b1", table_fqn="cat.s.t1", last_run_at="2026-07-09 08:00:00"),
                 _table_row(binding_id="b2", table_fqn="cat.s.t2"),
             ],
             [],  # applied-rule counts
             [],  # materialized-check counts
         ]
-        profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
-        profiling_sql.query.return_value = [["cat.s.t1", "2026-07-09 08:00:00"]]
-
         summaries = svc.list_monitored_tables()
 
         by_id = {s.table.binding_id: s for s in summaries}
-        assert by_id["b1"].table.last_profiled_at is not None
-        assert by_id["b1"].table.last_profiled_at.year == 2026
-        # t2 has no successful profile -> None.
-        assert by_id["b2"].table.last_profiled_at is None
+        assert by_id["b1"].table.last_run_at is not None
+        assert by_id["b1"].table.last_run_at.year == 2026
+        assert by_id["b2"].table.last_run_at is None
+        # P3.4/T-perf contract: a page load NEVER hits the warehouse executor.
+        profiling_sql.query.assert_not_called()
+
+
+class TestRefreshRunTimestamps:
+    """Write-on-complete: derive last_run_at / last_profiled_at from their Delta
+    sources and denormalize them into the OLTP ``dq_monitored_tables`` row.
+    """
+
+    def test_writes_both_columns_from_delta_sources(self, svc, sql, profiling_sql):
+        profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+        # 1st profiling_sql.query = validation-runs MAX; 2nd = profiling MAX.
+        profiling_sql.query.side_effect = [
+            [["cat.s.t1", "2026-07-11 09:00:00"]],
+            [["cat.s.t1", "2026-07-10 12:00:00"]],
+        ]
+        written = svc.refresh_run_timestamps(["cat.s.t1"])
+
+        assert written == 1
+        # last_run_at is read from dq_validation_runs, terminal + non-preview.
+        run_sql = profiling_sql.query.call_args_list[0][0][0]
+        assert "dq_validation_runs" in run_sql
+        assert "UPPER(status) <> 'RUNNING'" in run_sql
+        assert "run_type" in run_sql and "preview" in run_sql
+        assert "GROUP BY source_table_fqn" in run_sql
+        # One OLTP UPDATE that sets BOTH columns and never touches updated_at.
+        sql.execute.assert_called_once()
+        update_sql = sql.execute.call_args[0][0]
+        assert "UPDATE dqx_test.dqx_app_test.dq_monitored_tables" in update_sql
+        assert "last_run_at = CAST(" in update_sql
+        assert "last_profiled_at = CAST(" in update_sql
+        assert "updated_at" not in update_sql
+        assert "WHERE table_fqn = 'cat.s.t1'" in update_sql
+
+    def test_skips_tables_with_no_runs_and_no_profiles(self, svc, sql, profiling_sql):
+        profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+        profiling_sql.query.side_effect = [[], []]  # neither a run nor a profile
+        written = svc.refresh_run_timestamps(["cat.s.t1"])
+        assert written == 0
+        sql.execute.assert_not_called()
+
+    def test_writes_null_for_missing_side(self, svc, sql, profiling_sql):
+        # A table with a run but no successful profile writes last_run_at and
+        # NULLs last_profiled_at (idempotent, self-healing).
+        profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+        profiling_sql.query.side_effect = [
+            [["cat.s.t1", "2026-07-11 09:00:00"]],  # validation run
+            [],  # no profile
+        ]
+        written = svc.refresh_run_timestamps(["cat.s.t1"])
+        assert written == 1
+        update_sql = sql.execute.call_args[0][0]
+        assert "last_run_at = CAST(" in update_sql
+        assert "last_profiled_at = NULL" in update_sql
+
+    def test_drops_invalid_fqns_before_interpolation(self, svc, sql, profiling_sql):
+        profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+        profiling_sql.query.side_effect = [[], []]
+        written = svc.refresh_run_timestamps(["cat.s.evil\\", "not-three-parts"])
+        assert written == 0
+        # All inputs invalid -> no Delta lookups, no OLTP write.
+        profiling_sql.query.assert_not_called()
+        sql.execute.assert_not_called()
+
+    def test_empty_input_short_circuits(self, svc, sql, profiling_sql):
+        assert svc.refresh_run_timestamps([]) == 0
+        profiling_sql.query.assert_not_called()
+        sql.execute.assert_not_called()
 
 
 class TestGetBindingIdsByTableFqn:

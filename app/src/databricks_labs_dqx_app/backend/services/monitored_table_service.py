@@ -130,6 +130,10 @@ class MonitoredTableService:
         self._quality_rules_table = sql.fqn("dq_quality_rules")
         self._score_cache_table = sql.fqn("dq_score_cache")
         self._profiling_table = profiling_sql.fqn("dq_profiling_results")
+        # ``dq_validation_runs`` is always Delta (written by the runner job),
+        # same schema as ``dq_profiling_results`` — the ``last_run_at``
+        # write-on-complete derivation reads it off the same executor.
+        self._validation_runs_table = profiling_sql.fqn("dq_validation_runs")
         self._select_cols = self._build_select_cols()
         self._applied_select_cols = self._build_applied_select_cols()
 
@@ -137,10 +141,12 @@ class MonitoredTableService:
         created_at = self._sql.ts_text(f"{prefix}created_at")
         updated_at = self._sql.ts_text(f"{prefix}updated_at")
         last_profiled_at = self._sql.ts_text(f"{prefix}last_profiled_at")
+        last_run_at = self._sql.ts_text(f"{prefix}last_run_at")
         return (
             f"{prefix}binding_id, {prefix}table_fqn, {prefix}steward, {prefix}status, "
             f"{prefix}version, {prefix}schedule_cron, {prefix}schedule_tz, "
             f"{last_profiled_at} AS last_profiled_at, "
+            f"{last_run_at} AS last_run_at, "
             f"{prefix}created_by, {created_at} AS created_at, "
             f"{prefix}updated_by, {updated_at} AS updated_at"
         )
@@ -295,6 +301,12 @@ class MonitoredTableService:
         in the same round-trip (P3.4) — never recomputed here; a page load
         must not touch the warehouse. NULLs (no cache row yet) surface as
         ``None`` score fields on the summary.
+
+        ``last_profiled_at`` / ``last_run_at`` are read straight off the OLTP
+        binding row — denormalized on run/profiler completion by
+        :meth:`refresh_run_timestamps` — so this path, too, never touches the
+        warehouse (T-perf: the earlier derive-on-read over ``dq_profiling_results``
+        put a SQL-warehouse hop on every list load).
         """
         clauses: list[str] = []
         if status:
@@ -313,7 +325,7 @@ class MonitoredTableService:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY mt.updated_at DESC LIMIT 2000"
         rows = self._sql.query(sql)
-        tables = [(self._row_to_table(row), parse_cached_score(row[12], row[13], row[14], row[15])) for row in rows]
+        tables = [(self._row_to_table(row), parse_cached_score(row[13], row[14], row[15], row[16])) for row in rows]
         if catalog:
             tables = [(t, s) for t, s in tables if self._fqn_part(t.table_fqn, 0) == catalog]
         if schema:
@@ -323,11 +335,6 @@ class MonitoredTableService:
             tables = [(t, s) for t, s in tables if needle in t.table_fqn.lower()]
         applied_counts = self._applied_rule_counts([t.binding_id for t, _ in tables])
         check_counts = self._materialized_check_counts([t.table_fqn for t, _ in tables])
-        # Derive last_profiled_at from dq_profiling_results (the stored column is
-        # never written) so the overview "last profiled" column is real.
-        profiled_at = self._latest_profiled_at_map([t.table_fqn for t, _ in tables])
-        for t, _ in tables:
-            t.last_profiled_at = profiled_at.get(t.table_fqn)
         return [
             MonitoredTableSummary(
                 table=t,
@@ -384,15 +391,106 @@ class MonitoredTableService:
         rows = self._sql.query(sql)
         return {row[0]: int(row[1]) for row in rows if row and row[0] is not None and row[1] is not None}
 
+    # ------------------------------------------------------------------
+    # Write-on-complete: denormalize last_run_at / last_profiled_at (T-perf)
+    # ------------------------------------------------------------------
+
+    def refresh_run_timestamps(self, table_fqns: list[str]) -> int:
+        """Recompute + write ``last_run_at`` / ``last_profiled_at`` into the OLTP rows.
+
+        Write-on-complete (T-perf / B2-15): called OFF the page-load path at
+        run and profiler completion (and the scheduler's startup reconcile) so
+        the list/detail read paths read plain indexed OLTP columns and never
+        touch the warehouse.
+
+        Both values are derived from their Delta source, so this is idempotent
+        and self-healing — calling it at either completion event heals both
+        columns:
+
+        - ``last_run_at`` = newest terminal ``dq_validation_runs`` ``created_at``
+          for the table (either trigger surface — MT-direct or via a table
+          space — since both write ``source_table_fqn`` = the member table).
+        - ``last_profiled_at`` = newest SUCCESS ``dq_profiling_results``
+          ``created_at`` (the same row :meth:`get_latest_profile` trusts).
+
+        Two batched Delta lookups cover every listed table (no per-table
+        round-trip), then one OLTP ``UPDATE`` per table that has a value
+        (tables with neither are skipped, so a reconcile over a fresh install
+        writes nothing). The binding's ``updated_*`` audit columns are
+        deliberately left untouched — this is a pure denormalization, not a
+        lifecycle edit, so completing a run never reorders the list or rewrites
+        provenance. Returns the number of rows written.
+        """
+        valid: list[str] = []
+        for fqn in dict.fromkeys(table_fqns):
+            try:
+                validate_fqn(fqn)
+            except ValueError:
+                logger.warning("Dropping invalid table FQN from run-timestamp refresh")
+                continue
+            valid.append(fqn)
+        if not valid:
+            return 0
+        last_run = self._latest_validation_run_at_map(valid)
+        last_profiled = self._latest_profiled_at_map(valid)
+        written = 0
+        for fqn in valid:
+            run_at = last_run.get(fqn)
+            profiled_at = last_profiled.get(fqn)
+            if run_at is None and profiled_at is None:
+                continue
+            self._write_run_timestamps(fqn, run_at, profiled_at)
+            written += 1
+        return written
+
+    def _write_run_timestamps(
+        self, table_fqn: str, last_run_at: datetime | None, last_profiled_at: datetime | None
+    ) -> None:
+        """Write the denormalized timestamps for ONE table (both backends).
+
+        ``CAST('<iso>' AS TIMESTAMP)`` parses on Delta and Postgres alike
+        (mirrors :class:`ScoreCacheService`'s timestamp writes); a ``None``
+        value is written as SQL ``NULL``.
+        """
+        e = escape_sql_string(table_fqn)
+        self._sql.execute(
+            f"UPDATE {self._table} SET "  # noqa: S608
+            f"last_run_at = {self._opt_timestamp(last_run_at)}, "
+            f"last_profiled_at = {self._opt_timestamp(last_profiled_at)} "
+            f"WHERE table_fqn = '{e}'"
+        )
+
+    def _latest_validation_run_at_map(self, table_fqns: list[str]) -> dict[str, datetime]:
+        """Newest terminal ``dq_validation_runs`` timestamp per table.
+
+        The unified "last run" source (B2-15): covers BOTH trigger surfaces
+        (MT-direct runs and product/table-space fan-outs) because every
+        submitted run writes ``source_table_fqn`` = the member table. RUNNING
+        placeholders and ad-hoc ``preview`` runs are excluded so the value
+        tracks only history-visible runs. One grouped query over every listed
+        table; tables that have never run are absent from the result.
+        """
+        if not table_fqns:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(f)}'" for f in table_fqns)
+        last_run_at = self._profiling_sql.ts_text("MAX(created_at)")
+        sql = (
+            f"SELECT source_table_fqn, {last_run_at} AS last_run_at "  # noqa: S608
+            f"FROM {self._validation_runs_table} "
+            f"WHERE source_table_fqn IN ({in_list}) "
+            f"AND UPPER(status) <> 'RUNNING' AND COALESCE(run_type, 'dryrun') <> 'preview' "
+            f"GROUP BY source_table_fqn"
+        )
+        return self._grouped_timestamp_map(self._profiling_sql.query(sql))
+
     def _latest_profiled_at_map(self, table_fqns: list[str]) -> dict[str, datetime]:
         """Newest SUCCESS profiling timestamp per table, from ``dq_profiling_results``.
 
-        Derive-on-read for ``last_profiled_at``: the ``dq_monitored_tables``
-        column is never written (always NULL), so the real "last profiled"
-        value is the most recent successful profiler run for the table — the
-        same row :meth:`get_latest_profile` trusts. One grouped query covers
-        every listed table (no per-table round-trip); tables never profiled are
-        simply absent from the result. Self-healing — no backfill needed.
+        The ``last_profiled_at`` source for :meth:`refresh_run_timestamps`'
+        write-on-complete: the most recent successful profiler run for the
+        table — the same row :meth:`get_latest_profile` trusts. One grouped
+        query covers every listed table (no per-table round-trip); tables never
+        profiled are simply absent from the result.
         """
         if not table_fqns:
             return {}
@@ -404,7 +502,10 @@ class MonitoredTableService:
             f"WHERE source_table_fqn IN ({in_list}) AND status = 'SUCCESS' "
             f"GROUP BY source_table_fqn"
         )
-        rows = self._profiling_sql.query(sql)
+        return self._grouped_timestamp_map(self._profiling_sql.query(sql))
+
+    def _grouped_timestamp_map(self, rows: list[list[str]]) -> dict[str, datetime]:
+        """Parse ``(fqn, ts_text)`` rows into ``{fqn: datetime}``, dropping unparsable ones."""
         result: dict[str, datetime] = {}
         for row in rows:
             ts = self._parse_timestamp(row[1])
@@ -417,9 +518,9 @@ class MonitoredTableService:
         table = self._get(binding_id)
         if table is None:
             return None
-        # Derive last_profiled_at from dq_profiling_results (the stored column is
-        # never written) so the About tab shows a real "last profiled".
-        table.last_profiled_at = self._latest_profiled_at_map([table.table_fqn]).get(table.table_fqn)
+        # ``last_profiled_at`` / ``last_run_at`` are read straight off the OLTP
+        # row (denormalized on completion by :meth:`refresh_run_timestamps`) —
+        # no warehouse hop on the detail load (About tab reads last_profiled_at).
         applied_rules = self._list_applied_rules(binding_id)
         return MonitoredTableDetail(table=table, applied_rules=applied_rules)
 
@@ -775,6 +876,18 @@ class MonitoredTableService:
     def _opt_str(value: str | None) -> str:
         return f"'{escape_sql_string(value)}'" if value else "NULL"
 
+    @staticmethod
+    def _opt_timestamp(value: datetime | None) -> str:
+        """SQL literal for a nullable timestamp column write.
+
+        ``CAST('<iso>' AS TIMESTAMP)`` parses identically on Delta and
+        Postgres; ``None`` becomes ``NULL``. The ISO string never contains a
+        quote, but it is escaped anyway for uniformity with the other writers.
+        """
+        if value is None:
+            return "NULL"
+        return f"CAST('{escape_sql_string(value.isoformat())}' AS TIMESTAMP)"
+
     @classmethod
     def _parse_status(cls, value: str | None, *, binding_id: str) -> MonitoredTableStatus:
         """Validate *value* against :data:`MonitoredTableStatus`'s allowed members and narrow it."""
@@ -832,10 +945,11 @@ class MonitoredTableService:
             schedule_cron=row[5] or None,
             schedule_tz=row[6] or None,
             last_profiled_at=self._parse_timestamp(row[7]),
-            created_by=row[8],
-            created_at=self._parse_timestamp(row[9]),
-            updated_by=row[10],
-            updated_at=self._parse_timestamp(row[11]),
+            last_run_at=self._parse_timestamp(row[8]),
+            created_by=row[9],
+            created_at=self._parse_timestamp(row[10]),
+            updated_by=row[11],
+            updated_at=self._parse_timestamp(row[12]),
         )
 
     def _row_to_applied_rule(self, row: list[str]) -> AppliedRule:
