@@ -127,14 +127,11 @@ class DatabaseResetService:
         # from the platform-verified identity but we sanitise defensively.
         safe_actor = performed_by.replace("\n", " ").replace("\r", " ")
         logger.warning(
-            "DATABASE RESET performed by=%s cleared_count=%d failed_count=%d "
-            "(admin role mappings preserved; dq_migrations untouched)",
-            safe_actor,
-            len(cleared),
-            len(failed),
+            f"DATABASE RESET performed by={safe_actor} cleared_count={len(cleared)} "
+            f"failed_count={len(failed)} (admin role mappings preserved; dq_migrations untouched)"
         )
         if failed:
-            logger.warning("DATABASE RESET tables that failed to clear: %s", sorted(failed))
+            logger.warning(f"DATABASE RESET tables that failed to clear: {sorted(failed)}")
 
         return DatabaseResetResult(
             performed_by=performed_by,

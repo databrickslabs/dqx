@@ -71,7 +71,9 @@ def reset_database(
         result = svc.reset_all_data(performed_by=performed_by)
     except Exception as e:
         logger.error(f"Database reset failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Database reset failed. See server logs for details.")
+        raise HTTPException(
+            status_code=500, detail="Database reset failed. See server logs for details."
+        ) from e
 
     return ResetDatabaseOut(
         status="reset",
