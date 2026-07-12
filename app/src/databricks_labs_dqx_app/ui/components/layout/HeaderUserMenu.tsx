@@ -166,7 +166,7 @@ function HeaderUserMenuContent() {
             github.com/databrickslabs/dqx
             <ExternalLink className="h-3 w-3" aria-hidden />
           </a>
-          {appVersion && <p>v{appVersion}</p>}
+          {appVersion && <p className="font-mono">v{appVersion}</p>}
         </div>
       </DropdownMenuContent>
     </DropdownMenu>
