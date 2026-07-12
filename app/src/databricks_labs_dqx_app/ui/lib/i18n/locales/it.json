@@ -1611,6 +1611,7 @@
     "aiProposalUseButton": "Usa questa",
     "aiProposalDiscardButton": "Scarta",
     "aiProposalApplied": "Proposta dell'IA applicata — rivedi i campi qui sotto prima di salvare.",
+    "aiFunctionUnavailable": "L'IA ha scelto una funzione di controllo non disponibile qui. Applicato ciò che era possibile — scegli una funzione per completare la regola.",
     "aiGenerateFailed": "Impossibile generare una proposta di regola.",
     "aiRateLimited": "Limite di utilizzo IA raggiunto per quest'ora. Riprova più tardi.",
     "aiUnavailable": "L'IA non è al momento disponibile.",

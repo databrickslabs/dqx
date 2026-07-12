@@ -988,6 +988,11 @@ export function RegistryRuleFormDialog({
   const [nameError, setNameError] = useState<string | null>(null);
   const [authorKind, setAuthorKind] = useState<CreateRegistryRuleInAuthorKind | undefined>(undefined);
   const [pendingNativeArgs, setPendingNativeArgs] = useState<Record<string, unknown> | null>(null);
+  // Typed column slots carried by an AI proposal (item B2-32), stashed
+  // alongside `pendingNativeArgs` and flushed once the function catalog
+  // resolves. Preserves the model's chosen slot names/families instead of
+  // re-seeding canonical `column_N` slots. `null` = no AI slots to apply.
+  const [pendingNativeSlots, setPendingNativeSlots] = useState<RuleSlot[] | null>(null);
   // "As JSON" surface (item 11, P24-C) — edits round-trip back into the form
   // state below via `applyParsedToForm`, for both the create form and
   // in-place editing of an existing rule. The open state can be driven
@@ -1045,6 +1050,7 @@ export function RegistryRuleFormDialog({
     setErrorMessage(sourceRule?.definition?.error_message ?? "");
     setAiDescription("");
     setPendingNativeArgs(null);
+    setPendingNativeSlots(null);
     const freeTags: Record<string, string> = {};
     for (const [k, v] of Object.entries(md)) {
       if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY) continue;
@@ -1139,7 +1145,24 @@ export function RegistryRuleFormDialog({
     if (pendingNativeArgs === null) return;
     if (checkFunctions.length === 0) return;
     if (!selectedFn) {
+      // The AI named a function that isn't in the frontend catalog (e.g. an
+      // optional module not installed on this deployment). Don't silently drop
+      // everything: still surface the AI's raw scalar arguments (best-effort)
+      // and any typed slots it carried, then warn the steward that the function
+      // couldn't be matched so they can pick a real one. Column-slot arguments
+      // are placeholders, so only the non-`{{…}}` scalar args are shown.
+      const raw: Record<string, string> = {};
+      for (const [key, v] of Object.entries(pendingNativeArgs)) {
+        if (v === undefined || v === null) continue;
+        const rendered = Array.isArray(v) ? v.join(", ") : String(v);
+        if (/^\{\{.*\}\}$/.test(rendered.trim())) continue;
+        raw[key] = rendered;
+      }
+      setParamRawValues(raw);
+      if (pendingNativeSlots && pendingNativeSlots.length > 0) setNativeSlots(pendingNativeSlots);
       setPendingNativeArgs(null);
+      setPendingNativeSlots(null);
+      toast.warning(t("rulesRegistry.aiFunctionUnavailable"));
       return;
     }
     const raw: Record<string, string> = {};
@@ -1150,12 +1173,14 @@ export function RegistryRuleFormDialog({
       }
     }
     setParamRawValues(raw);
-    // The AI proposal picked the function; re-seed the slot set to match
-    // its arity (fresh canonical names — an AI proposal never carries
-    // author-chosen slot names).
-    setNativeSlots(fnDerivedSlots);
+    // Prefer the AI proposal's typed column slots (author-meaningful names +
+    // families locked to the check's semantics — item B2-32). Fall back to the
+    // canonical `column_N` slots derived from the function signature only when
+    // the proposal carried none.
+    setNativeSlots(pendingNativeSlots && pendingNativeSlots.length > 0 ? pendingNativeSlots : fnDerivedSlots);
     setPendingNativeArgs(null);
-  }, [pendingNativeArgs, checkFunctions, selectedFn, derivedParams, fnDerivedSlots]);
+    setPendingNativeSlots(null);
+  }, [pendingNativeArgs, pendingNativeSlots, checkFunctions, selectedFn, derivedParams, fnDerivedSlots, t]);
 
   const createMutation = useCreateRegistryRule();
   const updateMutation = useUpdateRegistryRule();
@@ -1477,6 +1502,7 @@ export function RegistryRuleFormDialog({
       setFunctionName("");
       setParamRawValues({});
       setPendingNativeArgs(null);
+      setPendingNativeSlots(null);
     } else {
       setFunctionName(nativeFn);
       setSqlPredicate("");
@@ -1485,8 +1511,13 @@ export function RegistryRuleFormDialog({
           ? (body.arguments as Record<string, unknown>)
           : {};
       setPendingNativeArgs(args);
+      // Stash the proposal's typed column slots (if any) to flush alongside the
+      // args once the function catalog resolves (item B2-32).
+      setPendingNativeSlots(proposal.slots ?? null);
     }
-    setAiDescription("");
+    // NOTE: intentionally do NOT clear `aiDescription` here (item B2-32 Part B) —
+    // the steward's typed prompt survives after a generation so they can tweak
+    // and regenerate without retyping.
     // Jump to Implementation so the steward immediately sees what the
     // proposal filled in, regardless of which page tab they were on when
     // they used the (now always-visible) Build-with-AI banner.

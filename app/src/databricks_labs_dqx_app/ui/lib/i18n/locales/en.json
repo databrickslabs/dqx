@@ -1611,6 +1611,7 @@
     "aiProposalUseButton": "Use this",
     "aiProposalDiscardButton": "Discard",
     "aiProposalApplied": "AI proposal applied — review the fields below before saving.",
+    "aiFunctionUnavailable": "The AI picked a check function that isn't available here. Applied what we could — pick a function to finish the rule.",
     "aiGenerateFailed": "Failed to generate a rule proposal.",
     "aiRateLimited": "AI usage limit reached for this hour. Try again later.",
     "aiUnavailable": "AI is currently unavailable.",
