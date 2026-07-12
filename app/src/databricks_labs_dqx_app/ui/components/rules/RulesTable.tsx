@@ -15,7 +15,11 @@ import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
-import { STICKY_ACTIONS_HEAD_CLASS, STICKY_ACTIONS_CELL_CLASS } from "@/components/data-table/sticky-actions";
+import {
+  STICKY_ACTIONS_HEAD_CLASS,
+  STICKY_ACTIONS_CELL_CLASS,
+  ACTIONS_COL_WIDTH,
+} from "@/components/data-table/sticky-actions";
 import { AI_GRADIENT_URL } from "@/lib/ai-style";
 import { AuthorKindIcon } from "./AuthorKindIcon";
 import {
@@ -278,7 +282,9 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     // lifecycle actions (submit/approve/reject/deprecate/delete).
     toggleable: false,
     defaultVisible: true,
-    defaultWidth: 140,
+    // Shared with the other overview tables so the Actions column width is
+    // consistent app-wide (item B2-43).
+    defaultWidth: ACTIONS_COL_WIDTH,
     sortable: false,
     resizable: false,
     headClassName: "text-right",

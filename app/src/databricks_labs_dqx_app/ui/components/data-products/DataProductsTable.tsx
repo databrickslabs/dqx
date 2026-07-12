@@ -16,7 +16,11 @@ import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/c
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
 import { ScoreBarCell, scoreSortValue } from "@/components/data-table/ScoreBarCell";
-import { STICKY_ACTIONS_HEAD_CLASS, STICKY_ACTIONS_CELL_CLASS } from "@/components/data-table/sticky-actions";
+import {
+  STICKY_ACTIONS_HEAD_CLASS,
+  STICKY_ACTIONS_CELL_CLASS,
+  ACTIONS_COL_WIDTH,
+} from "@/components/data-table/sticky-actions";
 import type { DataProductOut } from "@/lib/api";
 
 /** Column keys that carry a comparable value and can drive client sort.
@@ -388,7 +392,8 @@ export function DataProductsTable({
   }
 
   const totalWidth =
-    visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0) + (hasActions ? 96 : 0);
+    visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0) +
+    (hasActions ? ACTIONS_COL_WIDTH : 0);
 
   return (
     <div className="space-y-4">
@@ -411,7 +416,7 @@ export function DataProductsTable({
             {visibleKeys.map((k) => (
               <col key={k} style={{ width: colWidths[k] ?? COLUMNS[k].defaultWidth }} />
             ))}
-            {hasActions && <col style={{ width: 96 }} />}
+            {hasActions && <col style={{ width: ACTIONS_COL_WIDTH }} />}
           </colgroup>
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
@@ -457,7 +462,7 @@ export function DataProductsTable({
               {hasActions && (
                 <TableHead
                   className={cn("text-right text-xs font-medium px-2", STICKY_ACTIONS_HEAD_CLASS)}
-                  style={{ width: 96 }}
+                  style={{ width: ACTIONS_COL_WIDTH }}
                 >
                   {t("dataProducts.colActions")}
                 </TableHead>
@@ -483,7 +488,7 @@ export function DataProductsTable({
                   })}
                   {hasActions && (
                     <TableCell
-                      style={{ width: 96 }}
+                      style={{ width: ACTIONS_COL_WIDTH }}
                       className={cn("text-right p-2", STICKY_ACTIONS_CELL_CLASS)}
                       onClick={(e) => e.stopPropagation()}
                     >
