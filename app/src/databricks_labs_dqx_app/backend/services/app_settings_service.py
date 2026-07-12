@@ -199,3 +199,239 @@ class AppSettingsService:
         except (TypeError, ValueError):
             logger.warning("Setting %s is not parseable as int (%r); ignoring", key, raw)
             return None
+
+    # ------------------------------------------------------------------
+    # Embedded dashboard — Insights page renders a Databricks AI/BI
+    # dashboard inside an iframe. Admins set the dashboard ID + an
+    # optional display title via the Configuration page; the GET
+    # endpoint falls back to ``conf.default_dashboard_id`` (env) when
+    # this setting is unset, so a bundle can ship a starter dashboard
+    # ID without preventing customer overrides.
+    # ------------------------------------------------------------------
+
+    _EMBEDDED_DASHBOARD_KEY = "embedded_dashboard_v1"
+
+    def get_embedded_dashboard(self) -> dict | None:
+        """Return ``{"dashboard_id": str, "title": str | None}`` or ``None`` if unset."""
+        raw = self.get_setting(self._EMBEDDED_DASHBOARD_KEY)
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("embedded_dashboard_v1 setting is not valid JSON; ignoring")
+            return None
+        if not isinstance(parsed, dict):
+            logger.warning("embedded_dashboard_v1 setting is not a dict; ignoring")
+            return None
+        dashboard_id = parsed.get("dashboard_id")
+        if not isinstance(dashboard_id, str) or not dashboard_id.strip():
+            return None
+        title = parsed.get("title")
+        return {
+            "dashboard_id": dashboard_id.strip(),
+            "title": title.strip() if isinstance(title, str) and title.strip() else None,
+        }
+
+    def save_embedded_dashboard(
+        self,
+        dashboard_id: str,
+        title: str | None = None,
+        *,
+        user_email: str | None = None,
+    ) -> dict:
+        """Persist the embedded dashboard ID + optional title. Returns the saved payload."""
+        cleaned_id = (dashboard_id or "").strip()
+        cleaned_title = (title or "").strip() or None
+        payload = {"dashboard_id": cleaned_id, "title": cleaned_title}
+        self.save_setting(self._EMBEDDED_DASHBOARD_KEY, json.dumps(payload), user_email=user_email)
+        return payload
+
+    def delete_embedded_dashboard(self, *, user_email: str | None = None) -> None:
+        """Clear the embedded dashboard setting so the env default takes over again."""
+        self.save_setting(self._EMBEDDED_DASHBOARD_KEY, "", user_email=user_email)
+
+    # ------------------------------------------------------------------
+    # Run review statuses — admin-managed list of labels surfaced on the
+    # Runs detail page (next to comments) and as a Runs History filter.
+    # Stored as a JSON array under ``run_review_statuses_v1``. One entry
+    # MUST be flagged ``is_default``; that value is what
+    # ``ReviewStatusService`` returns virtually for runs that have never
+    # been explicitly reviewed.
+    #
+    # The seed catalogue below is persisted once at startup via
+    # :meth:`seed_run_review_statuses_if_absent` (called from the app
+    # lifespan after migrations). The read path is side-effect free: if
+    # the setting is somehow still unset it returns the seed *virtually*
+    # without writing, so a GET (e.g. the Runs listing) never turns into
+    # a write and read-only health probes don't mutate state.
+    # ------------------------------------------------------------------
+
+    _RUN_REVIEW_STATUSES_KEY = "run_review_statuses_v1"
+
+    # Default catalogue shipped on first read. The colors are token
+    # names the UI maps to its design-system palette so we can rebrand
+    # without touching backend data.
+    _RUN_REVIEW_STATUSES_SEED: list[dict] = [
+        {
+            "value": "Pending review",
+            "description": "Awaiting business review",
+            "color": "gray",
+            "is_default": True,
+        },
+        {
+            "value": "Acknowledged",
+            "description": "Known issue, accepted by owners",
+            "color": "amber",
+            "is_default": False,
+        },
+        {
+            "value": "Resolved",
+            "description": "Fixed upstream",
+            "color": "green",
+            "is_default": False,
+        },
+        {
+            "value": "False positive",
+            "description": "Rule is wrong, not a real issue",
+            "color": "blue",
+            "is_default": False,
+        },
+    ]
+
+    def get_run_review_statuses(self) -> list[dict]:
+        """Return the admin-managed catalogue of run review status values.
+
+        Pure read — never writes. When the setting is unset (or
+        malformed) this returns the normalised seed list *virtually*
+        rather than persisting it; the seed is written once at startup by
+        :meth:`seed_run_review_statuses_if_absent`. Keeping this read-only
+        means the Runs listing GET (which calls this) and read-only health
+        probes don't trigger a ``dq_app_settings`` write.
+
+        Returned entries are always normalised — ``value`` trimmed,
+        ``description`` defaulted to empty string, ``color`` defaulted
+        to ``"gray"``, ``is_default`` coerced to bool — so call sites
+        can index by field without defensive lookups.
+        """
+        raw = self.get_setting(self._RUN_REVIEW_STATUSES_KEY)
+        if not raw:
+            return [self._normalise_status_entry(e) for e in self._RUN_REVIEW_STATUSES_SEED]
+
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("run_review_statuses_v1 is not valid JSON; falling back to seed")
+            return [self._normalise_status_entry(e) for e in self._RUN_REVIEW_STATUSES_SEED]
+        if not isinstance(parsed, list):
+            logger.warning("run_review_statuses_v1 is not a list; falling back to seed")
+            return [self._normalise_status_entry(e) for e in self._RUN_REVIEW_STATUSES_SEED]
+
+        out: list[dict] = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            normalised = self._normalise_status_entry(item)
+            if normalised["value"]:
+                out.append(normalised)
+        # Defensive: if the persisted list is malformed and we end up
+        # with nothing, surface the seed rather than an empty dropdown.
+        return out or [self._normalise_status_entry(e) for e in self._RUN_REVIEW_STATUSES_SEED]
+
+    def seed_run_review_statuses_if_absent(self, *, user_email: str | None = None) -> bool:
+        """Persist the seed catalogue iff no value exists yet.
+
+        Called once at startup (after migrations) so the read path stays
+        side-effect free. Idempotent: returns ``False`` (no write) when a
+        value is already present, ``True`` when it seeded. ``save_setting``
+        is an upsert keyed by ``setting_key``, so the rare case of two
+        first-start workers racing converges instead of conflicting.
+        """
+        if self.get_setting(self._RUN_REVIEW_STATUSES_KEY):
+            return False
+        logger.info("Seeding default run_review_statuses at startup")
+        self._persist_run_review_statuses(self._RUN_REVIEW_STATUSES_SEED, user_email=user_email)
+        return True
+
+    def save_run_review_statuses(
+        self,
+        statuses: list[dict],
+        *,
+        user_email: str | None = None,
+    ) -> list[dict]:
+        """Replace the admin-managed catalogue, enforcing exactly one default.
+
+        Validation rules (raise ``ValueError`` on violation so the route
+        can turn them into a 400):
+        - At least one entry is required (callers always need a default
+          to surface for unreviewed runs).
+        - ``value`` must be non-empty, trimmed, and unique within the list.
+        - Exactly one entry must have ``is_default=True``.
+        """
+        cleaned: list[dict] = []
+        seen: set[str] = set()
+        for item in statuses or []:
+            if not isinstance(item, dict):
+                continue
+            normalised = self._normalise_status_entry(item)
+            value = normalised["value"]
+            if not value:
+                raise ValueError("Run review status 'value' must be non-empty.")
+            if value in seen:
+                raise ValueError(f"Duplicate run review status value: {value!r}.")
+            seen.add(value)
+            cleaned.append(normalised)
+
+        if not cleaned:
+            raise ValueError("At least one run review status is required.")
+
+        defaults = [e for e in cleaned if e["is_default"]]
+        if len(defaults) != 1:
+            raise ValueError(f"Exactly one run review status must be marked as default; got {len(defaults)}.")
+
+        self._persist_run_review_statuses(cleaned, user_email=user_email)
+        return cleaned
+
+    def get_default_run_review_status(self) -> str:
+        """Return the ``value`` of the catalogue entry flagged ``is_default``.
+
+        Called by ``ReviewStatusService`` to surface an effective status
+        for runs that have no explicit row. Guaranteed non-empty because
+        :meth:`save_run_review_statuses` enforces the invariant.
+        """
+        for entry in self.get_run_review_statuses():
+            if entry["is_default"]:
+                return entry["value"]
+        # Should be unreachable thanks to the save-side invariant, but
+        # we fall back to the seed default rather than raise so a buggy
+        # write can't take down the whole listings endpoint.
+        return self._RUN_REVIEW_STATUSES_SEED[0]["value"]
+
+    def _persist_run_review_statuses(
+        self,
+        entries: list[dict],
+        *,
+        user_email: str | None,
+    ) -> None:
+        self.save_setting(
+            self._RUN_REVIEW_STATUSES_KEY,
+            json.dumps([self._normalise_status_entry(e) for e in entries]),
+            user_email=user_email,
+        )
+        logger.info("Saved %d run review status(es) (by=%s)", len(entries), user_email or "system")
+
+    @staticmethod
+    def _normalise_status_entry(item: dict) -> dict:
+        value = (item.get("value") or "").strip() if isinstance(item.get("value"), str) else ""
+        description = item.get("description") or ""
+        if not isinstance(description, str):
+            description = ""
+        color = item.get("color") or "gray"
+        if not isinstance(color, str) or not color.strip():
+            color = "gray"
+        return {
+            "value": value,
+            "description": description.strip(),
+            "color": color.strip(),
+            "is_default": bool(item.get("is_default")),
+        }

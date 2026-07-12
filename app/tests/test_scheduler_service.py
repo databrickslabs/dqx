@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from databricks_labs_dqx_app.backend.services.scheduler_service import (
+    _FAILURE_BACKOFF,
     _GC_AGE_HOURS,
     _GC_HOUR_UTC,
     _GC_WEEKDAY_SAT,
@@ -130,6 +131,100 @@ class TestNextSaturday01Utc:
         nxt = SchedulerService._next_saturday_01_utc(now)
         assert nxt.microsecond == 0
         assert nxt.second == 0
+
+
+# ---------------------------------------------------------------------------
+# _compute_next_run — monthly day-of-month clamping
+# ---------------------------------------------------------------------------
+
+
+class TestComputeNextRunMonthly:
+    @staticmethod
+    def _cfg(dom: int, hour: int = 0, minute: int = 0) -> dict:
+        return {"frequency": "monthly", "day_of_month": dom, "hour": hour, "minute": minute}
+
+    def test_day_31_in_30_day_month_fires_on_last_day_not_28(self):
+        # April has 30 days. Day 31 must clamp to the 30th, not silently 28.
+        after = datetime(2026, 4, 10, tzinfo=timezone.utc)
+        nxt = SchedulerService._compute_next_run(self._cfg(31), after)
+        assert nxt == datetime(2026, 4, 30, 0, 0, tzinfo=timezone.utc)
+
+    def test_day_31_in_february_non_leap_clamps_to_28(self):
+        after = datetime(2026, 2, 5, tzinfo=timezone.utc)
+        nxt = SchedulerService._compute_next_run(self._cfg(31), after)
+        assert nxt == datetime(2026, 2, 28, 0, 0, tzinfo=timezone.utc)
+
+    def test_day_29_in_february_leap_year_keeps_29(self):
+        # 2028 is a leap year — the 29th is a real date and must be honoured.
+        after = datetime(2028, 2, 5, tzinfo=timezone.utc)
+        nxt = SchedulerService._compute_next_run(self._cfg(29), after)
+        assert nxt == datetime(2028, 2, 29, 0, 0, tzinfo=timezone.utc)
+
+    def test_normal_day_is_preserved(self):
+        after = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        nxt = SchedulerService._compute_next_run(self._cfg(15, hour=9), after)
+        assert nxt == datetime(2026, 6, 15, 9, 0, tzinfo=timezone.utc)
+
+    def test_rollover_into_short_month_reclamps_without_error(self):
+        # after is past this month's occurrence, forcing a roll into April
+        # (30 days). Day 31 must re-clamp to the 30th rather than raising
+        # ValueError from replace(day=31) on a 30-day month.
+        after = datetime(2026, 3, 31, 23, 0, tzinfo=timezone.utc)
+        nxt = SchedulerService._compute_next_run(self._cfg(31), after)
+        assert nxt == datetime(2026, 4, 30, 0, 0, tzinfo=timezone.utc)
+
+    def test_december_rollover_into_january(self):
+        after = datetime(2026, 12, 31, 23, 0, tzinfo=timezone.utc)
+        nxt = SchedulerService._compute_next_run(self._cfg(31), after)
+        assert nxt == datetime(2027, 1, 31, 0, 0, tzinfo=timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# _advance_after_failure — retry-loop prevention
+# ---------------------------------------------------------------------------
+
+
+class TestAdvanceAfterFailure:
+    def test_advances_to_next_occurrence_with_failed_status(self, make_scheduler):
+        svc, mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp")
+        now = datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc)
+
+        svc._advance_after_failure("daily_check", {"frequency": "daily", "hour": 9, "minute": 0}, now, "run123")
+
+        mocks.oltp.upsert.assert_called_once()
+        kwargs = mocks.oltp.upsert.call_args.kwargs
+        value_cols = kwargs["value_cols"]
+        assert value_cols["status"] == "failed"
+        assert value_cols["last_run_id"] == "run123"
+        # next_run_at is pushed to the next daily occurrence (tomorrow 09:00),
+        # strictly in the future relative to ``now`` so the schedule stops
+        # re-firing every tick.
+        assert "2026-05-02T09:00:00+00:00" in value_cols["next_run_at"].expr
+
+    def test_falls_back_to_backoff_when_compute_fails(self, make_scheduler, monkeypatch):
+        svc, mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp")
+        now = datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc)
+
+        def _boom(*_a, **_k):
+            raise ValueError("bad cron")
+
+        monkeypatch.setattr(SchedulerService, "_compute_next_run", staticmethod(_boom))
+
+        svc._advance_after_failure("broken", {"frequency": "weekly"}, now, "run456")
+
+        mocks.oltp.upsert.assert_called_once()
+        value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
+        assert value_cols["status"] == "failed"
+        expected = (now + _FAILURE_BACKOFF).isoformat()
+        assert expected in value_cols["next_run_at"].expr
+
+    def test_swallows_persistence_failure(self, make_scheduler):
+        svc, mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp")
+        mocks.oltp.upsert.side_effect = RuntimeError("db down")
+        now = datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc)
+
+        # Must not raise — the caller (_tick) relies on this being best-effort.
+        svc._advance_after_failure("daily_check", {"frequency": "daily", "hour": 9, "minute": 0}, now, "run789")
 
 
 # ---------------------------------------------------------------------------

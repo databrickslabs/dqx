@@ -1,6 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, Suspense, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { QueryErrorResetBoundary } from "@tanstack/react-query";
+import { ErrorBoundary } from "react-error-boundary";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import {
   Card,
@@ -20,11 +22,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  AlertCircle,
   ShieldCheck,
   Plus,
   ChevronDown,
   ChevronRight,
   Database,
+  RotateCcw,
   Trash2,
   Download,
 } from "lucide-react";
@@ -55,11 +59,32 @@ const CROSS_TABLE_CATALOG = "Cross-table rules";
 
 export const Route = createFileRoute("/_sidebar/rules/active")({
   component: () => (
-    <Suspense fallback={<ActiveRulesSkeleton />}>
-      <ActiveRulesPage />
-    </Suspense>
+    <QueryErrorResetBoundary>
+      {({ reset }) => (
+        <ErrorBoundary onReset={reset} fallbackRender={ActiveRulesError}>
+          <Suspense fallback={<ActiveRulesSkeleton />}>
+            <ActiveRulesPage />
+          </Suspense>
+        </ErrorBoundary>
+      )}
+    </QueryErrorResetBoundary>
   ),
 });
+
+function ActiveRulesError({ resetErrorBoundary }: { resetErrorBoundary: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col items-center justify-center py-16 text-center">
+      <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
+      <p className="text-muted-foreground text-sm mb-1">{t("common.loadFailed")}</p>
+      <p className="text-muted-foreground/70 text-xs mb-3">{t("common.retryHint")}</p>
+      <Button variant="outline" size="sm" onClick={resetErrorBoundary} className="gap-2">
+        <RotateCcw className="h-3 w-3" />
+        {t("common.retry")}
+      </Button>
+    </div>
+  );
+}
 
 function ActiveRulesSkeleton() {
   return (
@@ -447,11 +472,19 @@ function ActiveRulesPage() {
                   groups={groupedByTable}
                   expandedTables={expandedTables}
                   onToggle={toggleTable}
-                  onNavigate={(fqn) =>
-                    fqn.startsWith(SQL_CHECK_PREFIX)
-                      ? navigate({ to: "/rules/create-sql", search: { edit: fqn, from: "active" } })
-                      : navigate({ to: "/rules/single-table", search: { table: fqn, from: "active" } })
-                  }
+                  onNavigate={(fqn) => {
+                    // Only cross-table SQL checks live under the synthetic
+                    // ``__sql_check__/`` namespace. Everything else — including
+                    // ``has_valid_schema`` / ``foreign_key`` reference checks —
+                    // carries a real target-table FQN and is authored/edited in
+                    // the single-table editor, which loads every check on the
+                    // table.
+                    if (fqn.startsWith(SQL_CHECK_PREFIX)) {
+                      navigate({ to: "/rules/create-sql", search: { edit: fqn, from: "active" } });
+                    } else {
+                      navigate({ to: "/rules/single-table", search: { table: fqn, from: "active" } });
+                    }
+                  }}
                   canDelete={canApproveRules}
                   onDelete={requestDelete}
                   pendingDelete={pendingDelete}
@@ -513,6 +546,13 @@ interface ByTableViewProps {
   groups: TableGroup[];
   expandedTables: Set<string>;
   onToggle: (fqn: string) => void;
+  /**
+   * Called when the user clicks "View / edit rules" on a table group. The
+   * editor is chosen from the ``table_fqn`` alone: synthetic ``__sql_check__/``
+   * groups are cross-table SQL checks (SQL editor); every real-table group —
+   * including ``has_valid_schema`` / ``foreign_key`` reference checks — opens
+   * the single-table editor.
+   */
   onNavigate: (fqn: string) => void;
   canDelete: boolean;
   onDelete: (rule: RuleCatalogEntryOut) => void;

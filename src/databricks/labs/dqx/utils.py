@@ -6,13 +6,13 @@ import re
 from decimal import Decimal
 from enum import Enum
 from importlib.util import find_spec
-from typing import Any, TypeVar, overload
+from typing import Any, TypeVar, overload, Annotated
 from fnmatch import fnmatch
 from pathlib import Path
 
-
 from pyspark.sql import Column
 from pyspark.sql.types import StructType
+import pyspark.sql.functions as F
 
 # Import spark connect column if spark session is created using spark connect
 try:
@@ -20,12 +20,35 @@ try:
 except ImportError:
     ConnectColumn = None  # type: ignore
 
-import pyspark.sql.functions as F
+from pydantic.functional_validators import PlainValidator
+from pydantic.json_schema import WithJsonSchema
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
+
+
+def _validate_spark_column(value: Any) -> Any:
+    """Accept both classic pyspark.sql.Column and the Spark Connect variant.
+
+    In environments using Spark Connect (e.g. Databricks serverless / Python 3.10–3.11 CI),
+    ``F.col()`` / ``F.lit()`` return ``pyspark.sql.connect.column.Column``, which is not an
+    ``isinstance`` of the classic ``pyspark.sql.Column``.  Reading ConnectColumn at call time
+    (not at import time) means monkeypatching in tests works correctly.
+    """
+    _valid_types: tuple = (Column,) if ConnectColumn is None else (Column, ConnectColumn)
+    if isinstance(value, _valid_types):
+        return value
+    raise ValueError(f"Expected a PySpark Column, got {type(value).__name__}")
+
+
+SparkColumn = Annotated[
+    Column,
+    PlainValidator(_validate_spark_column),
+    WithJsonSchema({"type": "string"}),
+]
+"""Pydantic-compatible Column type that accepts both classic and Spark Connect columns."""
 
 logger = logging.getLogger(__name__)
 

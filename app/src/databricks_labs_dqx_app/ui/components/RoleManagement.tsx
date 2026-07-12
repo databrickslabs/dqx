@@ -25,6 +25,16 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Users,
   Plus,
   Trash2,
@@ -275,6 +285,7 @@ function RoleMappingRow({
         size="sm"
         onClick={onDelete}
         disabled={isDeleting}
+        aria-label={t("roleManagement.deleteMappingAria", { role: getRoleLabel(mapping.role, t), group: mapping.group_name })}
         className="text-destructive hover:text-destructive hover:bg-destructive/10"
       >
         <Trash2 className="h-4 w-4" />
@@ -374,6 +385,9 @@ export function RoleManagement() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  // Delete is destructive — show a confirm dialog instead of mutating
+  // immediately when the trash icon is clicked.
+  const [pendingDelete, setPendingDelete] = useState<{ role: string; group: string } | null>(null);
   // Form values live up here so we can keep them across a slow/failed
   // mutation. They're cleared in the mutation's ``onSuccess`` handler.
   const [selectedRole, setSelectedRole] = useState<string>("");
@@ -439,10 +453,17 @@ export function RoleManagement() {
     createMutation.mutate({ role, groupName });
   };
 
-  const handleDelete = (role: string, groupName: string) => {
-    const key = `${role}:${groupName}`;
+  const handleDeleteRequest = (role: string, groupName: string) => {
+    setPendingDelete({ role, group: groupName });
+  };
+
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+    const { role, group } = pendingDelete;
+    const key = `${role}:${group}`;
     setDeletingKey(key);
-    deleteMutation.mutate({ role, groupName });
+    setPendingDelete(null);
+    deleteMutation.mutate({ role, groupName: group });
   };
 
   if (isLoading) {
@@ -489,7 +510,7 @@ export function RoleManagement() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Shield className="h-5 w-5" />
-          Role Management
+          {t("roleManagement.title")}
         </CardTitle>
         <CardDescription>
           {t("roleManagement.description")}
@@ -536,7 +557,7 @@ export function RoleManagement() {
                 <RoleMappingRow
                   key={key}
                   mapping={mapping}
-                  onDelete={() => handleDelete(mapping.role, mapping.group_name)}
+                  onDelete={() => handleDeleteRequest(mapping.role, mapping.group_name)}
                   isDeleting={deletingKey === key}
                 />
               );
@@ -553,6 +574,36 @@ export function RoleManagement() {
           isAdding={createMutation.isPending}
         />
       </CardContent>
+
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("roleManagement.deleteMappingTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDelete
+                ? t("roleManagement.deleteMappingBody", {
+                    role: getRoleLabel(pendingDelete.role, t),
+                    group: pendingDelete.group,
+                  })
+                : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {t("common.delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

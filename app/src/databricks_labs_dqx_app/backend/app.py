@@ -24,6 +24,7 @@ from .migrations import MigrationRunner
 # Delta-only test environments that don't install it.
 from .migrations.postgres import PgMigrationRunner
 from .routes import api_router
+from .services.app_settings_service import AppSettingsService
 from .services.scheduler_service import SchedulerService
 from .services.view_service import mark_tmp_schema_ready
 from .sql_executor import SqlExecutor
@@ -47,6 +48,21 @@ def _try_acquire_scheduler_lease() -> bool:
 
     The lock file is held for the lifetime of the process; when the worker
     exits the OS releases it automatically.
+
+    .. WARNING::
+       This lease is **process-local**: ``fcntl.flock`` only excludes other
+       processes on the same host. If DQX Studio is ever scaled to more
+       than one Databricks App replica/container, every replica will
+       acquire its own lock and run ``_tick()`` independently — the same
+       due schedule will be submitted N times. The current deployment
+       relies on Databricks Apps running a single container; if that ever
+       changes, replace this with a cross-replica lease (e.g. a Postgres
+       advisory lock on ``DQX_LAKEBASE_SCHEMA_NAME`` keyed by
+       ``hashtext('dqx-scheduler')`` with ``pg_try_advisory_lock``, or a
+       lease row in ``dq_app_settings`` with TTL + ``FOR UPDATE
+       SKIP LOCKED``). See backend audit finding B1. The file lock is
+       still needed as a fallback for multi-worker uvicorn within one
+       container.
     """
     import fcntl
 
@@ -213,7 +229,7 @@ async def lifespan(app: FastAPI):
     # raise, let the Databricks Apps platform restart the container,
     # and surface the underlying problem via restart-loop alerting.
     # The opt-out is intentional and explicit (unset
-    # ``DQX_LAKEBASE_INSTANCE_NAME``); a flap is not an opt-out.
+    # ``DQX_LAKEBASE_ENDPOINT``); a flap is not an opt-out.
     # The legitimate Delta-only path runs in the ``else`` branch below.
     # ------------------------------------------------------------------
     pg_executor = None
@@ -232,7 +248,7 @@ async def lifespan(app: FastAPI):
             pg_executor = await asyncio.to_thread(
                 build_pg_executor,
                 sp_ws,
-                instance_name=conf.lakebase_instance_name,
+                endpoint=conf.lakebase_endpoint,
                 database=conf.lakebase_database_name,
                 schema=conf.lakebase_schema_name,
                 token_refresh_minutes=conf.lakebase_token_refresh_minutes,
@@ -250,8 +266,8 @@ async def lifespan(app: FastAPI):
                 logger.info("Lakebase schema is up to date")
             set_oltp_executor(pg_executor)
             logger.info(
-                "Lakebase OLTP routing enabled (instance=%s, database=%s, schema=%s)",
-                conf.lakebase_instance_name,
+                "Lakebase OLTP routing enabled (endpoint=%s, database=%s, schema=%s)",
+                conf.lakebase_endpoint,
                 conf.lakebase_database_name,
                 conf.lakebase_schema_name,
             )
@@ -274,21 +290,21 @@ async def lifespan(app: FastAPI):
                     logger.warning("Error closing Lakebase pool during init failure", exc_info=True)
             set_oltp_executor(None)
             logger.exception(
-                "Lakebase initialisation failed (instance=%s, database=%s, schema=%s). "
+                "Lakebase initialisation failed (endpoint=%s, database=%s, schema=%s). "
                 "Refusing to start — silent fallback to Delta would split OLTP writes across "
                 "two physical stores and orphan prior Lakebase data on every flap. "
-                "Common causes: the database_instance is not provisioned, the app SP lacks "
-                "CAN_CONNECT_AND_CREATE on the bound database, OAuth token issuance is failing, "
+                "Common causes: the project branch/endpoint is not provisioned, the app SP "
+                "lacks a Postgres role on the branch, OAuth token issuance is failing, "
                 "or the Lakebase endpoint is transiently unreachable. Fix the underlying issue "
                 "and the platform will restart this container automatically. To intentionally "
-                "run on Delta only, unset DQX_LAKEBASE_INSTANCE_NAME.",
-                conf.lakebase_instance_name,
+                "run on Delta only, unset DQX_LAKEBASE_ENDPOINT.",
+                conf.lakebase_endpoint,
                 conf.lakebase_database_name,
                 conf.lakebase_schema_name,
             )
             raise
     else:
-        logger.info("Lakebase not configured (DQX_LAKEBASE_INSTANCE_NAME is empty). OLTP tables will live on Delta.")
+        logger.info("Lakebase not configured (DQX_LAKEBASE_ENDPOINT is empty). OLTP tables will live on Delta.")
         set_oltp_executor(None)
 
     # Delta migrations always run, but the OLTP fallback DDL is
@@ -302,6 +318,17 @@ async def lifespan(app: FastAPI):
         logger.info("Delta schema is up to date")
 
     # Best-effort below — the app can recover from these failing.
+
+    # Seed the run-review-status catalogue once, here at startup, rather
+    # than lazily on first read. This keeps ``get_run_review_statuses``
+    # (called on the Runs listing GET path) side-effect free. Best-effort:
+    # if the write fails the read path still returns the seed virtually,
+    # so the feature degrades gracefully until an admin saves the list.
+    try:
+        oltp_for_seed = pg_executor if pg_executor is not None else sp_sql
+        AppSettingsService(sql=oltp_for_seed).seed_run_review_statuses_if_absent()
+    except Exception as seed_e:
+        logger.warning("Could not seed default run_review_statuses: %s", seed_e, exc_info=True)
 
     try:
         tmp_cat = conf.catalog.replace("`", "")
@@ -322,7 +349,20 @@ async def lifespan(app: FastAPI):
         )
 
     if not (conf.wheels_volume and conf.job_id):
-        logger.warning("DQX_WHEELS_VOLUME or DQX_JOB_ID not set — task-runner job wheels will not be synced")
+        msg = (
+            "DQX_WHEELS_VOLUME or DQX_JOB_ID is not set — profiler, dry-run, and scheduler features will be unavailable"
+        )
+        if conf.require_task_runner:
+            # Production-style deploy (bundle sets DQX_REQUIRE_TASK_RUNNER=1):
+            # treat a missing binding as a fatal misconfiguration so we
+            # crash loop with an actionable error instead of silently
+            # serving a half-broken app.
+            raise RuntimeError(
+                f"{msg}. Both env vars are required when DQX_REQUIRE_TASK_RUNNER=1. "
+                "Check the bundle resource bindings (dqx-task-runner-job, dqx-wheels) "
+                "and re-run `databricks bundle deploy`."
+            )
+        logger.warning("%s (set DQX_REQUIRE_TASK_RUNNER=1 in production to fail fast)", msg)
     else:
         wheel_volume_paths: list[str] = []
         try:

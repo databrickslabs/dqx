@@ -137,7 +137,7 @@ Use `ConfigSerializer` from the DQX library to load/save workspace configs. Neve
 - **Databricks Connect** ~15.4 (Spark sessions)
 - **DQX library** (imported as `databricks-labs-dqx[llm]`)
 - **Uvicorn** (ASGI server)
-- **Python 3.11+**
+- **Python 3.12+**
 
 ## Commands
 
@@ -169,6 +169,8 @@ uv run uvicorn databricks_labs_dqx_app.backend.app:app --reload  # Dev server
 - **Scheduler:** runs in-process as an asyncio task, gated by an exclusive file lock (`/tmp/.dqx_scheduler.lock`) so only one uvicorn worker drives it. Disable with `DQX_SCHEDULER_DISABLED=1`.
 - **Caches:** `app_cache` (`cache.py`) is per-process in-memory with TTL. SP `WorkspaceClient`, OBO `WorkspaceClient`, and per-user catalog list are all cached. Use the `MISS` sentinel — never `is None` — to detect cache absence.
 - **SPA static files:** `spa_static.py` falls through to `index.html` only for non-asset paths (positive allowlist of asset extensions), so SPA routes containing dots still work.
+- **Synthetic-FQN dispatch (`__sql_check__/<name>`):** rules whose `table_fqn` starts with `__sql_check__/` are **cross-table SQL checks** — the only table-less rule kind. `arguments.sql_query` is set; build the input view with `view_svc.create_view_from_sql(...)` and set `is_sql_check=True`. A synthetic rule with no `sql_query` is malformed (surface a per-table error). Keep this dispatch in sync across `routes/v1/dryrun.py` (manual / batch) and `services/scheduler_service.py` (scheduled). Per-table errors raised during dispatch are surfaced to the UI via the run-submission response payload (consumed in `ui/routes/_sidebar/runs.tsx`). Reference checks like `has_valid_schema` / `foreign_key` carry a **real** `table_fqn` and flow through the normal `view_svc.create_view(table_fqn)` path (`is_sql_check=False`) — they need no special handling here.
+- **Lakebase `ON CONFLICT DO UPDATE SET` column references:** PostgreSQL refuses bare column references on the RHS of `DO UPDATE SET` (`column reference "version" is ambiguous`), and a *schema-qualified* reference (`"dq"."tbl"."version"`) is **not** a valid existing-row reference there either — Postgres treats it as a FROM-clause entry and errors with `invalid reference to FROM-clause entry for table "dq"` on the *first* save, not just on conflict. `PgExecutor.upsert_with_audit` therefore aliases the conflict target (`INSERT INTO <fqn> AS "dqx_upsert_target"`) and qualifies `increment_on_update` references against the alias (`"{qcol} = "dqx_upsert_target".{qcol} + 1"`). The regression test in `tests/test_pg_executor.py` asserts the alias form *and* the absence of both the bare and schema-qualified forms — do not relax it.
 
 ## Hybrid Storage Backend (Delta + Lakebase)
 
@@ -178,9 +180,9 @@ choice is driven entirely by `databricks.yml`:
 | Backend | Tables | Why |
 |---------|--------|-----|
 | **Delta Lake** (always) | `dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics` | Spark task runner writes these; high-volume append-mostly; columnar reads. |
-| **Lakebase Postgres** *(default — opt-out via `lakebase_instance_name=""`)* | `dq_app_settings`, `dq_role_mappings`, `dq_quality_rules`, `dq_quality_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs` | Low-latency point reads/writes from FastAPI request handlers; row-level upserts; primary-key/foreign-key semantics. |
+| **Lakebase Postgres** *(default — opt-out via `lakebase_endpoint="-"`)* | `dq_app_settings`, `dq_role_mappings`, `dq_quality_rules`, `dq_quality_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs` | Low-latency point reads/writes from FastAPI request handlers; row-level upserts; primary-key/foreign-key semantics. |
 
-When Lakebase is **disabled** (no `lakebase_instance_name` set), the OLTP
+When Lakebase is **disabled** (no `lakebase_endpoint` set), the OLTP
 tables fall back to Delta — `MigrationRunner` runs both
 `v1: Delta analytical baseline` *and* `v2: Delta OLTP fallback`. When
 Lakebase is **enabled**, only `v1` runs on Delta and `PgMigrationRunner`
@@ -248,17 +250,20 @@ Stateful resources declared in `databricks.yml` with
 * `resources.schemas.main_schema` — `dqx_studio` schema
 * `resources.schemas.tmp_schema` — `dqx_studio_tmp` schema
 * `resources.volumes.wheels` — wheels volume
-* `resources.database_instances.lakebase` — Lakebase Postgres instance
-  (autoscaling by default per [Lakebase Autoscaling](https://docs.databricks.com/aws/en/oltp/upgrade-to-autoscaling))
+* `resources.postgres_projects.dqx_studio` — Lakebase Postgres project
+  (autoscaling + scale-to-zero per [Lakebase Autoscaling](https://docs.databricks.com/aws/en/oltp/upgrade-to-autoscaling)),
+  paired with `resources.postgres_roles.app_sp` (the app SP's Postgres role)
 
 The app connects to the always-present `databricks_postgres` admin
-database on the Lakebase instance — that's the default value of
-`lakebase_database_name` and the value the app→database binding
-wires up. On first start, the app creates its own `dqx_studio`
-Postgres schema inside `databricks_postgres` and runs migrations
-against it. Multiple apps can therefore share the same
-`databricks_postgres` on one Lakebase instance safely; each gets its
-own schema namespace.
+database on the Lakebase project via the `DQX_LAKEBASE_ENDPOINT`
+endpoint path (`projects/<project>/branches/<branch>/endpoints/primary`) —
+`databricks_postgres` is the default value of `lakebase_database_name`.
+The endpoint drives both host resolution (`postgres.get_endpoint`) and
+OAuth credential issuance (`postgres.generate_database_credential`). On
+first start, the app creates its own `dqx_studio` Postgres schema inside
+`databricks_postgres` and runs migrations against it. Multiple apps can
+therefore share the same `databricks_postgres` on one Lakebase project
+safely; each gets its own schema namespace.
 
 The bundle deliberately does NOT use `database_catalogs`. That DAB
 resource is the only way to *create* a custom logical Postgres
@@ -275,14 +280,14 @@ is silent data loss. To intentionally tear one down: remove the flag,
 run `databricks bundle deployment unbind <key>`, then destroy. The
 app's `dqx_studio` Postgres schema lives below the resource layer
 DABs models, so `prevent_destroy` doesn't apply to it directly; the
-instance-level guard is what protects it.
+project-level guard is what protects it.
 
-For workspaces where the schemas, volume, or Lakebase instance were
-provisioned out-of-band (e.g. by the legacy bootstrap script),
-one-time binding is required: `make app-bind PROFILE=... TARGET=...`.
-After bind, `bundle deploy` adopts the existing resources instead of
-trying to CREATE them.
-
-Privileges on UC objects for the auto-created app SP are still applied
-by `scripts/post_deploy_grants.sh` after each deploy — the app SP's
-UUID isn't known at bundle-write time.
+UC privileges for the app SP and task-runner SP are declared
+**natively** as `grants:` on the schema/volume resources (via
+`${resources.apps.dqx-studio.service_principal_client_id}` and
+`${var.dqx_service_principal_application_id}`), so `bundle deploy`
+applies them — there is no post-deploy grant script. The one manual
+step is `USE CATALOG` on the pre-existing (user-selected) catalog,
+which the bundle can't grant because it doesn't manage the catalog;
+grant it once per catalog as a documented prerequisite (see
+`DEPLOYMENT.md`).

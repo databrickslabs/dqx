@@ -40,6 +40,7 @@ dependencies = [
     "databricks-sdk~=0.73",
     "sqlalchemy>=2.0,<3.0",
     "PyYAML~=6.0.3",
+    "pydantic>=2.8.2,<3",
 ]
 
 [project.optional-dependencies]
@@ -884,6 +885,7 @@ redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", 
 "tests/integration/test_app_backend.py" = "import-outside-toplevel"
 "src/databricks/labs/dqx/anomaly/anomaly_workflow.py" = "import-outside-toplevel"
 "src/databricks/labs/dqx/check_funcs.py" = "protected-access"
+"tests/unit/test_engine.py" = "protected-access"
 "tests/unit/test_anomaly_llm_explainer.py" = "protected-access"
 "tests/unit/test_anomaly_check_funcs_validation.py" = "protected-access"
 "tests/unit/test_anomaly_scoring_run.py" = "protected-access"

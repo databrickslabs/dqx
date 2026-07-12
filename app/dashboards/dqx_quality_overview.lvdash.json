@@ -1,0 +1,625 @@
+{
+  "datasets": [
+    {
+      "name": "ds_runs",
+      "displayName": "validation_runs (30 days)",
+      "queryLines": [
+        "SELECT\n",
+        "  run_id,\n",
+        "  source_table_fqn,\n",
+        "  status,\n",
+        "  run_type,\n",
+        "  total_rows,\n",
+        "  valid_rows,\n",
+        "  invalid_rows,\n",
+        "  error_rows,\n",
+        "  warning_rows,\n",
+        "  requesting_user,\n",
+        "  created_at\n",
+        "FROM dq_validation_runs\n",
+        "WHERE created_at >= current_date() - INTERVAL 30 DAYS"
+      ]
+    },
+    {
+      "name": "ds_quarantine",
+      "displayName": "quarantine_records (30 days)",
+      "queryLines": [
+        "SELECT\n",
+        "  quarantine_id,\n",
+        "  run_id,\n",
+        "  source_table_fqn,\n",
+        "  requesting_user,\n",
+        "  created_at\n",
+        "FROM dq_quarantine_records\n",
+        "WHERE created_at >= current_date() - INTERVAL 30 DAYS"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "overview",
+      "displayName": "Overview",
+      "layout": [
+        {
+          "widget": {
+            "name": "kpi_total_runs",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_runs",
+                  "fields": [
+                    {
+                      "name": "total_runs",
+                      "expression": "COUNT(`run_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_runs",
+                  "displayName": "Total runs"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Total runs (30d)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_monitored_tables",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_runs",
+                  "fields": [
+                    {
+                      "name": "monitored_tables",
+                      "expression": "COUNT(DISTINCT `source_table_fqn`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "monitored_tables",
+                  "displayName": "Tables"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Tables under monitoring"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_total_errors",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_runs",
+                  "fields": [
+                    {
+                      "name": "total_errors",
+                      "expression": "COALESCE(SUM(`error_rows`), 0)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_errors",
+                  "displayName": "Error rows"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Total error rows (30d)"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_pass_rate",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_runs",
+                  "fields": [
+                    {
+                      "name": "pass_rate_pct",
+                      "expression": "100.0 * SUM(`valid_rows`) / NULLIF(SUM(`total_rows`), 0)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "pass_rate_pct",
+                  "displayName": "Pass rate",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 1
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Average pass rate (%, 30d)"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "runs_over_time",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_runs",
+                  "fields": [
+                    {
+                      "name": "run_date",
+                      "expression": "DATE_TRUNC('DAY', `created_at`)"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "run_count",
+                      "expression": "COUNT(`run_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "run_date",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Day",
+                  "axis": {
+                    "title": "Day"
+                  }
+                },
+                "y": {
+                  "fieldName": "run_count",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Runs",
+                  "axis": {
+                    "title": "Runs"
+                  }
+                },
+                "color": {
+                  "fieldName": "status",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Status",
+                  "legend": {
+                    "title": "Status"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Runs over time by status"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "errors_warnings_over_time",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_runs",
+                  "fields": [
+                    {
+                      "name": "run_date",
+                      "expression": "DATE_TRUNC('DAY', `created_at`)"
+                    },
+                    {
+                      "name": "error_rows_sum",
+                      "expression": "COALESCE(SUM(`error_rows`), 0)"
+                    },
+                    {
+                      "name": "warning_rows_sum",
+                      "expression": "COALESCE(SUM(`warning_rows`), 0)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "run_date",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Day",
+                  "axis": {
+                    "title": "Day"
+                  }
+                },
+                "y": {
+                  "fields": [
+                    {
+                      "fieldName": "error_rows_sum",
+                      "displayName": "Errors"
+                    },
+                    {
+                      "fieldName": "warning_rows_sum",
+                      "displayName": "Warnings"
+                    }
+                  ],
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Rows"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Error & warning rows over time"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 3,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "top_failing_tables",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_runs",
+                  "fields": [
+                    {
+                      "name": "source_table_fqn",
+                      "expression": "`source_table_fqn`"
+                    },
+                    {
+                      "name": "total_errors",
+                      "expression": "COALESCE(SUM(`error_rows`), 0)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "total_errors",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Error rows"
+                  }
+                },
+                "y": {
+                  "fieldName": "source_table_fqn",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  },
+                  "axis": {
+                    "title": "Table"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Top failing tables (30d)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 8,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "quarantine_volume",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_quarantine",
+                  "fields": [
+                    {
+                      "name": "quarantine_date",
+                      "expression": "DATE_TRUNC('DAY', `created_at`)"
+                    },
+                    {
+                      "name": "quarantine_count",
+                      "expression": "COUNT(`quarantine_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "area",
+              "encodings": {
+                "x": {
+                  "fieldName": "quarantine_date",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Day"
+                  }
+                },
+                "y": {
+                  "fieldName": "quarantine_count",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Quarantined rows"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Quarantined rows over time"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 8,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "recent_runs_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_runs",
+                  "fields": [
+                    {
+                      "name": "created_at",
+                      "expression": "`created_at`"
+                    },
+                    {
+                      "name": "source_table_fqn",
+                      "expression": "`source_table_fqn`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "run_type",
+                      "expression": "`run_type`"
+                    },
+                    {
+                      "name": "total_rows",
+                      "expression": "`total_rows`"
+                    },
+                    {
+                      "name": "error_rows",
+                      "expression": "`error_rows`"
+                    },
+                    {
+                      "name": "warning_rows",
+                      "expression": "`warning_rows`"
+                    },
+                    {
+                      "name": "requesting_user",
+                      "expression": "`requesting_user`"
+                    },
+                    {
+                      "name": "run_id",
+                      "expression": "`run_id`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "created_at",
+                    "displayName": "Time",
+                    "type": "datetime",
+                    "dateTimeFormat": "ll LTS (z)",
+                    "order": 100
+                  },
+                  {
+                    "fieldName": "source_table_fqn",
+                    "displayName": "Table",
+                    "order": 200
+                  },
+                  {
+                    "fieldName": "status",
+                    "displayName": "Status",
+                    "order": 300
+                  },
+                  {
+                    "fieldName": "run_type",
+                    "displayName": "Type",
+                    "order": 400
+                  },
+                  {
+                    "fieldName": "total_rows",
+                    "displayName": "Total",
+                    "type": "integer",
+                    "order": 500
+                  },
+                  {
+                    "fieldName": "error_rows",
+                    "displayName": "Errors",
+                    "type": "integer",
+                    "order": 600
+                  },
+                  {
+                    "fieldName": "warning_rows",
+                    "displayName": "Warnings",
+                    "type": "integer",
+                    "order": 700
+                  },
+                  {
+                    "fieldName": "requesting_user",
+                    "displayName": "Requested by",
+                    "order": 800
+                  },
+                  {
+                    "fieldName": "run_id",
+                    "displayName": "Run ID",
+                    "order": 900,
+                    "visible": false
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false,
+              "frame": {
+                "showTitle": true,
+                "title": "Recent runs"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 13,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "footer_notes",
+            "spec": {
+              "version": 1,
+              "widgetType": "markdown",
+              "encodings": {},
+              "frame": {
+                "showTitle": false
+              },
+              "text": "### Customise this dashboard\n\nThis starter ships with DQX Studio and is fully editable. Open the dashboard in **Databricks → AI/BI Dashboards** to add widgets, change filters, or drill into specific tables — your changes appear here immediately on the **Insights** page.\n\n**Underlying tables**\n\n- `dq_validation_runs` — one row per validation run (status, counts, requester, timing)\n- `dq_quarantine_records` — per-row failures (full row payload, errors, warnings)\n- `dq_metrics` — long-format DQX observer metrics (pivot on `metric_name`)\n- `dq_profiling_results` — schema profiles for tables under monitoring\n\nAll four live in the schema configured at deploy time (`DQX_CATALOG` / `DQX_SCHEMA`)."
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 19,
+            "width": 12,
+            "height": 3
+          }
+        }
+      ]
+    }
+  ]
+}

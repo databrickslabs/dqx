@@ -137,8 +137,10 @@ _SAMPLE_ROW = [
 class TestGetOboWs:
     """Unit tests for the get_obo_ws dependency function."""
 
-    def test_raises_when_no_token(self):
+    def test_raises_when_no_token(self, monkeypatch):
         """Should raise HTTPException when no token is provided."""
+        monkeypatch.delenv("DATABRICKS_CONFIG_PROFILE", raising=False)
+        monkeypatch.delenv("DATABRICKS_TOKEN", raising=False)
 
         async def _() -> None:
             with pytest.raises(HTTPException) as exc_info:
@@ -148,8 +150,10 @@ class TestGetOboWs:
 
         asyncio.run(_())
 
-    def test_raises_when_empty_token(self):
+    def test_raises_when_empty_token(self, monkeypatch):
         """Should raise HTTPException when empty token is provided."""
+        monkeypatch.delenv("DATABRICKS_CONFIG_PROFILE", raising=False)
+        monkeypatch.delenv("DATABRICKS_TOKEN", raising=False)
 
         async def _() -> None:
             with pytest.raises(HTTPException) as exc_info:
@@ -1870,7 +1874,7 @@ class TestDryRunRoutes:
         mock_settings_svc: AppSettingsService,
     ) -> None:
         """submit_dry_run should raise HTTP 400 when check validation reports errors."""
-        validation = ChecksValidationStatus(_errors=["Unknown function: bad_func"])
+        validation = ChecksValidationStatus(errors=["Unknown function: bad_func"])
         body = DryRunIn(table_fqn="cat.sch.tbl", checks=_SAMPLE_CHECKS)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
@@ -1935,6 +1939,7 @@ class TestDryRunRoutes:
             view_svc=mock_view_svc,
             app_conf=app_conf,
             sql=sql,
+            user_role=UserRole.VIEWER,
         )
 
         assert isinstance(result, RunStatusOut)
@@ -1959,6 +1964,7 @@ class TestDryRunRoutes:
                 view_svc=mock_view_svc,
                 app_conf=app_conf,
                 sql=sql,
+                user_role=UserRole.VIEWER,
             )
 
         assert exc.value.status_code == 500

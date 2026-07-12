@@ -107,13 +107,8 @@ docs-clean: ## Remove docs build, .docusaurus, and generated API reference
 app-install: ## Install app frontend dependencies (yarn --frozen-lockfile)
 	yarn --cwd app install --frozen-lockfile
 
-app-build: ## Build app: openapi → orval → vite → wheels (CI parity)
-	cd app && \
-	  UV_BUILD_CONSTRAINT=.build-constraints.txt \
-	  UV_REQUIRE_HASHES=1 \
-	  $(UV_RUN) python scripts/build_app.py && \
-	  uv build ../ --wheel --out-dir .build/ && \
-	  uv build tasks/ --wheel --out-dir .build/tasks/
+app-build: ## Build app: openapi → orval → vite (CI parity)
+	cd app && $(UV_RUN) python scripts/build_app.py
 
 # Start the local dev loop (foreground). ``scripts/dev.py`` spawns
 # uvicorn (FastAPI, port 9002) and vite (port 9001) and wires vite's
@@ -179,77 +174,60 @@ app-test: ## Run app backend pytest suite (K=<expr> filter, COV=1 for coverage)
 
 ##@ App deploy (require PROFILE=<databricks-profile>; most also need TARGET=<bundle-target>)
 
-# Grant Unity Catalog permissions after bundle deploy.
-#
-# Usage: make app-grant-permissions PROFILE=my-profile
-#        make app-grant-permissions PROFILE=my-profile TARGET=dev \
-#                                   BUNDLE_VARS='--var=catalog_name=foo'
-#
-# BUNDLE_VARS must match the overrides used at deploy time. The script
-# reads bundle variables to discover which catalog / schema / volume to
-# grant on, so an unforwarded override would point the GRANTs at the
-# wrong objects.
-app-grant-permissions: ## Run post-deploy GRANTs (called by app-deploy; standalone for re-running)
-	@test -n "$(PROFILE)" || (echo "Usage: make app-grant-permissions PROFILE=<databricks-profile> [TARGET=<bundle-target>]"; exit 1)
-	app/scripts/post_deploy_grants.sh -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) $(if $(BUNDLE_VARS),-- $(BUNDLE_VARS))
+# Minimum Databricks CLI version required to deploy. The ``postgres_roles``
+# resource in ``app/databricks.yml`` (one-button Lakebase provisioning) was
+# added in CLI v1.4.0 (https://github.com/databricks/cli/pull/5467); older
+# CLIs reject the unknown field at ``bundle validate`` with a confusing
+# error deep inside the deploy. Fail fast here with an actionable message.
+DATABRICKS_MIN_VERSION := 1.4.0
 
-# Adopt pre-existing storage resources into bundle management.
-#
-# Use ONCE per target on workspaces where the schemas / volume /
-# Lakebase instance already exist (e.g. from a previous bootstrap-
-# script deploy, or from manual creation). The app's Postgres schema
-# inside ``databricks_postgres`` is not bundle-managed and does not
-# need binding — the app re-creates it on first connection if missing.
-# Without binding, ``databricks bundle deploy`` would try to CREATE
-# them and fail with "already exists" / "Instance name is not unique".
-#
-# Bind is idempotent at the CLI level — re-binding the same resource
-# is a no-op. Skip this target on fresh workspaces; ``bundle deploy``
-# creates the resources directly.
-#
-# Usage: make app-bind PROFILE=my-profile TARGET=dev
-#        make app-bind PROFILE=my-profile TARGET=dev \
-#                      BUNDLE_VARS='--var=lakebase_instance_name=<fresh-name>'
-#
-# BUNDLE_VARS forwards arbitrary ``--var key=value`` arguments through
-# to the bundle CLI. Use the same override here as you intend to pass
-# to ``make app-deploy`` — the bind step reads the resolved bundle
-# variables to know which instance/schema name to bind to, so an
-# override applied only at deploy time would bind the wrong resource.
-app-bind: ## Adopt pre-existing UC schemas / volume / Lakebase into bundle (run ONCE per workspace)
-	@test -n "$(PROFILE)" || (echo "Usage: make app-bind PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
-	@test -n "$(TARGET)" || (echo "Usage: make app-bind PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
-	app/scripts/bind_resources.sh -p $(PROFILE) -t $(TARGET) $(if $(BUNDLE_VARS),-- $(BUNDLE_VARS))
+# Preflight: assert the CLI exists and is new enough. Used as a prerequisite
+# of app-deploy / app-bind so the version gate runs before any build or
+# network call. The sort -V trick: the smallest of {MIN, installed} equals
+# MIN exactly when installed >= MIN (handles 1.10 > 1.4 unlike a string sort).
+app-check-cli: ## Verify the Databricks CLI meets the minimum version for deploy
+	@command -v databricks >/dev/null 2>&1 || \
+	  { echo "ERROR: 'databricks' CLI not found on PATH. Install: https://docs.databricks.com/dev-tools/cli/install.html"; exit 1; }
+	@ver=$$(databricks --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
+	  if [ -z "$$ver" ]; then \
+	    echo "ERROR: could not parse a version from 'databricks --version'."; exit 1; \
+	  fi; \
+	  if [ "$$(printf '%s\n%s\n' "$(DATABRICKS_MIN_VERSION)" "$$ver" | sort -V | head -1)" != "$(DATABRICKS_MIN_VERSION)" ]; then \
+	    echo "ERROR: Databricks CLI v$$ver is too old; v$(DATABRICKS_MIN_VERSION)+ is required to deploy DQX Studio."; \
+	    echo "       app/databricks.yml uses the 'postgres_roles' resource (one-button Lakebase),"; \
+	    echo "       which older CLIs reject at 'bundle validate' with an unknown-field error."; \
+	    echo "       Upgrade:  brew upgrade databricks   (or https://docs.databricks.com/dev-tools/cli/install.html)"; \
+	    exit 1; \
+	  fi; \
+	  echo "✓ Databricks CLI v$$ver (>= $(DATABRICKS_MIN_VERSION))"
 
-# Full deploy: build, bundle deploy (creates storage on fresh
-# workspaces, updates managed resources otherwise), grant permissions
-# to the app SP, and start the app. Run ``make app-bind`` once before
-# the FIRST deploy on a workspace where the storage was previously
-# provisioned out-of-band — otherwise the bundle will try to CREATE
-# the existing resources and fail.
+# Full deploy: build, bundle deploy, and start the app. ``bundle deploy``
+# creates the SQL warehouse, schemas, volume, Lakebase project + endpoint +
+# app-SP Postgres role, and applies all Unity Catalog grants natively — there
+# is no post-deploy grant script and no one-time bind step.
+#
+# ONE-TIME prerequisite per catalog (the bundle does not manage the pre-existing
+# catalog, so it cannot grant catalog-level access): grant USE CATALOG on the
+# chosen catalog to the app SP, the task-runner SP, and ``account users``.
+# See app/DEPLOYMENT.md.
 #
 # Usage: make app-deploy PROFILE=my-profile TARGET=dev
 #        make app-deploy PROFILE=my-profile TARGET=dev \
-#                        BUNDLE_VARS='--var=lakebase_instance_name=<fresh-name>'
+#                        BUNDLE_VARS='--var=catalog_name=foo'
 #
-# BUNDLE_VARS forwards arbitrary ``--var key=value`` arguments to
-# every step of the deploy: ``bundle deploy``, ``post_deploy_grants.sh``,
-# and ``bundle run``. Threading the same overrides through all three is
-# load-bearing — the grants script re-runs ``bundle validate`` to
-# discover the deployed catalog / schema / volume, and without the
-# overrides it would issue GRANTs on the bundle defaults instead of
-# the resources actually deployed.
+# BUNDLE_VARS forwards arbitrary ``--var key=value`` arguments to ``bundle
+# deploy`` and ``bundle run``.
 #
-# The common use case is overriding ``lakebase_instance_name`` when the
-# original name is locked by Lakebase's ~7-day soft-delete retention
-# after a manual delete (the deploy errors out with "Instance name is
-# not unique" otherwise). Per-deploy CLI overrides keep ``databricks.yml``
-# clean.
-app-deploy: app-build ## Build, deploy bundle, grant permissions, and start app
+# FORCE=1 appends ``--force`` to ``bundle deploy``. Use it when the deploy
+# aborts because a resource was modified in the workspace UI since the last
+# deploy (e.g. "dashboard ... has been modified remotely") — ``--force``
+# overwrites the remote copy with the bundle's local definition. This DROPS
+# any in-UI edits, so only set it once you've confirmed the local version is
+# the one you want to ship.
+app-deploy: app-check-cli app-build ## Build, deploy bundle, and start app (FORCE=1 to overwrite remote edits)
 	@test -n "$(PROFILE)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
-	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET) $(BUNDLE_VARS)
-	app/scripts/post_deploy_grants.sh -p $(PROFILE) -t $(TARGET) $(if $(BUNDLE_VARS),-- $(BUNDLE_VARS))
+	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET) $(if $(FORCE),--force) $(BUNDLE_VARS)
 	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET) $(BUNDLE_VARS)
 
 APP_NAME ?= dqx-studio
@@ -279,7 +257,11 @@ lock-dependencies: ## Regenerate top-level uv.lock and .build-constraints.txt
 	$(UV_RUN) --group yq tomlq -r '.["build-system"].requires[]' pyproject.toml | \
 	  uv pip compile --generate-hashes --universal --no-header - > build-constraints-new.txt
 	mv build-constraints-new.txt .build-constraints.txt
-	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g' uv.lock
+	# Normalize the lock so contributors inside Databricks (private proxy) and outside (public PyPI)
+	# produce an identical file. A proxy mirrors PyPI with identical paths, so rewrite the registry
+	# index and every per-package "/packages/..." download URL to the public hosts. Also drop the
+	# "size" field: the private proxy never reports it, so it is the only form both can reproduce.
+	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g; s|url = "https://[^/"]+/packages/|url = "https://files.pythonhosted.org/packages/|g; s|, size = \d+||g' uv.lock
 
 ##@ Misc
 
@@ -290,4 +272,4 @@ fork-sync: ## Mirror a fork PR to a branch in the main repo for full CI (PR=<num
 	./.github/scripts/fork-sync-pr.sh $(PR)
 
 .DEFAULT: all
-.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-regen-api app-check app-test app-grant-permissions app-bind app-deploy fork-sync build lock-dependencies lock-app-dependencies
+.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-regen-api app-check app-test app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies

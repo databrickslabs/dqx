@@ -557,12 +557,10 @@ export function LabelsBadges({
 
   const visible = entries.slice(0, max);
   const overflow = entries.length - visible.length;
-  const overflowLabel = entries
-    .slice(max)
-    .map(([k, v]) => formatLabel(k, v))
-    .join(", ");
 
   const sizeClass = size === "xs" ? "text-[10px] px-1.5 py-0" : "text-xs";
+
+  const badgeClass = `${sizeClass} border-blue-500/40 text-blue-700 bg-blue-50/50 font-normal`;
 
   return (
     <div className={["flex flex-wrap gap-1 items-center", className].filter(Boolean).join(" ")}>
@@ -570,7 +568,7 @@ export function LabelsBadges({
         <Badge
           key={`${k}=${v}`}
           variant="outline"
-          className={`${sizeClass} border-blue-500/40 text-blue-700 bg-blue-50/50 font-normal`}
+          className={badgeClass}
           title={`${k}=${v}`}
         >
           <Tag className="h-2.5 w-2.5 mr-0.5 opacity-60" />
@@ -578,13 +576,42 @@ export function LabelsBadges({
         </Badge>
       ))}
       {overflow > 0 && (
-        <Badge
-          variant="outline"
-          className={`${sizeClass} border-muted-foreground/30 text-muted-foreground font-normal`}
-          title={overflowLabel}
-        >
-          +{overflow}
-        </Badge>
+        <Popover>
+          <PopoverTrigger asChild>
+            {/* Stop propagation so clicking the pill inside a table row
+                expands the labels instead of triggering row navigation. */}
+            <button
+              type="button"
+              onClick={(e) => e.stopPropagation()}
+              className={cn(
+                "inline-flex items-center rounded-md border font-normal cursor-pointer transition-colors hover:bg-muted",
+                sizeClass,
+                "border-muted-foreground/30 text-muted-foreground",
+              )}
+            >
+              +{overflow}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="start"
+            className="w-auto max-w-xs p-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-wrap gap-1 max-h-60 overflow-y-auto">
+              {entries.map(([k, v]) => (
+                <Badge
+                  key={`${k}=${v}`}
+                  variant="outline"
+                  className={badgeClass}
+                  title={`${k}=${v}`}
+                >
+                  <Tag className="h-2.5 w-2.5 mr-0.5 opacity-60" />
+                  {formatLabel(k, v)}
+                </Badge>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
       )}
     </div>
   );
