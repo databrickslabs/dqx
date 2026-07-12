@@ -353,7 +353,7 @@ This works whether the checked table is populated by a batch or a streaming pipe
 </Admonition>
 
 <Admonition type="info" title="Summary Metrics: Snapshot vs. history">
-The approach above stores summary metrics as a **materialized view** over the checked table. A materialized view is recomputed on each pipeline update, so it holds a **current snapshot** of the metrics over all rows in the table. And because it aggregates the whole table, `input_row_count` is the cumulative total, not a per-run count.
+The approach above stores summary metrics as a **materialized view** over the checked table. On each pipeline update the view is refreshed — **incrementally** when the query is deterministic (set static *run_time_overwrite* / *run_id_overwrite* as in the note above) and the pipeline engine can incrementalize the aggregation, otherwise fully recomputed. Either way it holds a **current snapshot**: it aggregates the whole table, so `input_row_count` is the cumulative total, not a per-run count.
 
 To instead keep a **history** of metrics over time (appended as the pipeline runs, so you can track quality trends), you need an append target rather than a materialized view. Choose based on the pipeline type:
 

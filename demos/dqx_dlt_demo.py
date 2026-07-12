@@ -130,8 +130,13 @@ def silver():
 
 # COMMAND ----------
 
-# Summary Metrics: materialized view computed by aggregation over the silver table. 
+# Summary Metrics: materialized view computed by aggregation over the silver table.
 # One row per metric (input / error / warning / valid row counts and per-check breakdown).
+# Note: this MV is a cumulative snapshot over the whole table (input_row_count is the running
+# total, not a per-run count). It refreshes incrementally only when the query is deterministic —
+# set static run_time_overwrite / run_id_overwrite in ExtraParams for that. For per-run / per-window
+# metrics on large or incrementally-checked tables, append from a windowed streaming table instead
+# (see the "Snapshot vs. history" section of the Summary Metrics guide).
 @dlt.table
 def dq_summary_metrics():
   df = dlt.read("silver")

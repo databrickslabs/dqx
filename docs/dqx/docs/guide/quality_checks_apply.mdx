@@ -1059,7 +1059,7 @@ Inside a Lakeflow Pipeline (Spark Declarative Pipeline / DLT), do the following:
 This works for both batch and streaming pipelines. See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
 
 <Admonition type="info" title="Summary Metrics: Snapshot vs. history">
-The example is using a materialized view to compute the summary metrics. The view is recomputed on each pipeline update, so it holds a **current snapshot** of the metrics over all rows in the checked table. Because it aggregates the whole table, `input_row_count` is the cumulative total, not a per-run count.
+The example is using a materialized view to compute the summary metrics. On each pipeline update the view is refreshed — **incrementally** when the query is deterministic (set static *run_time_overwrite* / *run_id_overwrite*, see the note above) and the engine can incrementalize the aggregation, otherwise fully recomputed. Either way it holds a **current snapshot** over all rows in the checked table, so `input_row_count` is the cumulative total, not a per-run count.
 
 To keep a **history** of metrics over time you need an append target: for **streaming** pipelines append per-window metrics from a windowed streaming table (recommended), and for **batch** pipelines append `compute_summary_metrics` output from a companion job. See the [Summary Metrics guide](/docs/guide/summary_metrics) for examples.
 </Admonition>
