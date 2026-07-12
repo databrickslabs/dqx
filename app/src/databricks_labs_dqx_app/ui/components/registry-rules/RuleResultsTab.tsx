@@ -10,6 +10,7 @@ import { useGetRuleResults, useGetRuleScoreSuspense } from "@/lib/api";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ruleResultsState } from "@/lib/results-display";
 import { includeDraftsParam } from "@/components/results/RunModeSelect";
+import { GenieChatProvider } from "@/components/results/AskGenieButton";
 import {
   MultiTableResultsSection,
   type UseEntityResults,
@@ -88,24 +89,34 @@ function RuleResultsContent({ ruleId }: { ruleId: string }) {
   }
 
   return (
-    // B2-9: results-page entrance animation (see BindingResultsTab) — matches
-    // the RR/MT/TS overview feel when the Results tab is opened.
-    <FadeIn className="max-w-5xl">
-      <MultiTableResultsSection
-        useEntityResults={useEntityResults}
-        // Counts the viewer-ACCESSIBLE tables (the composition passes the
-        // base by-table row count): the score and breakdowns only cover the
-        // applied tables the viewer can see, so the label must count the
-        // same set (applied_to_count may be higher — see ruleResultsState).
-        scoreLabel={(count) => t("rulesRegistry.resultsOverallScoreLabel", { count })}
-        hideRuleBreakdown
-        includeDrafts={includeDrafts}
-        onIncludeDraftsChange={setIncludeDrafts}
-        // Rule results are published-only: drafts are per-authoring-surface,
-        // not a coherent cross-table universe for a single rule.
-        hideRunMode
-      />
-    </FadeIn>
+    // Genie chat scope (B2-21, the dropped #80): the RR rule-results surface
+    // gets its OWN floating "Ask Genie" launcher + sidebar, its conversation
+    // hard-scoped to a rule-unique context so a rule's thread never bleeds into
+    // a table / table-space / global thread. `contextKind="rule"` words the
+    // suggested questions around this rule's cross-table spread. No subject
+    // preamble: the surface has no single home table (like the global page),
+    // and the rule scoping is enforced server-side by the rule-results
+    // endpoint rather than by a Genie-space subject hint.
+    <GenieChatProvider context={`rule ${ruleId}`} contextKind="rule">
+      {/* B2-9: results-page entrance animation (see BindingResultsTab) — matches
+          the RR/MT/TS overview feel when the Results tab is opened. */}
+      <FadeIn className="max-w-5xl">
+        <MultiTableResultsSection
+          useEntityResults={useEntityResults}
+          // Counts the viewer-ACCESSIBLE tables (the composition passes the
+          // base by-table row count): the score and breakdowns only cover the
+          // applied tables the viewer can see, so the label must count the
+          // same set (applied_to_count may be higher — see ruleResultsState).
+          scoreLabel={(count) => t("rulesRegistry.resultsOverallScoreLabel", { count })}
+          hideRuleBreakdown
+          includeDrafts={includeDrafts}
+          onIncludeDraftsChange={setIncludeDrafts}
+          // Rule results are published-only: drafts are per-authoring-surface,
+          // not a coherent cross-table universe for a single rule.
+          hideRunMode
+        />
+      </FadeIn>
+    </GenieChatProvider>
   );
 }
 
