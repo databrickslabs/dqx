@@ -1,4 +1,4 @@
-import { Suspense, useState } from "react";
+import { useState } from "react";
 import type * as React from "react";
 import { QueryErrorResetBoundary, keepPreviousData } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
@@ -11,10 +11,10 @@ import { FadeIn } from "@/components/anim/FadeIn";
 import { cn } from "@/lib/utils";
 import {
   useGetTableResults,
-  useGetDqResultsRunsSuspense,
+  useGetDqResultsRuns,
   useGetDqResultsFailedRows,
-  useListResultDimensionsSuspense,
-  useListResultSeveritiesSuspense,
+  useListResultDimensions,
+  useListResultSeverities,
   getDqResultsFailedRows,
   type EntityResultsOut,
   type RunsOut,
@@ -235,20 +235,20 @@ export function BindingResultsTab({
                 </div>
               )}
             >
-              {/* B2-4 (=dropped #61): the Results tab owns its own Suspense so
-                  its suspending hooks (runs / dimensions / severities) no longer
-                  bubble to the page-level Suspense and re-suspend the whole
-                  detail page on tab switch. Mirrors the TS TabBoundary shape,
-                  with the skeleton localized to this tab body. */}
-              <Suspense fallback={<Skeleton className="h-48 w-full" />}>
-                <ResultsBody
-                  bindingId={bindingId}
-                  tableName={tableName}
-                  tableFqn={tableFqn}
-                  neverApproved={neverApproved}
-                  runInProgress={runInProgress}
-                />
-              </Suspense>
+              {/* B2-23: the Results tab is fully NON-suspense (mirrors the
+                  Table Spaces ProductResultsTab) — its data hooks are the
+                  non-suspense variants with local isPending spinners/skeletons,
+                  so nothing here can surface a fallback at the page-level
+                  Suspense boundary and blank the detail page on a tab switch.
+                  The page shell renders immediately; each widget loads on its
+                  own. */}
+              <ResultsBody
+                bindingId={bindingId}
+                tableName={tableName}
+                tableFqn={tableFqn}
+                neverApproved={neverApproved}
+                runInProgress={runInProgress}
+              />
             </ErrorBoundary>
           )}
         </QueryErrorResetBoundary>
@@ -387,18 +387,28 @@ function ResultsBody({
   // (Runs History's RUNNING-run poll / the product run-set poll), which
   // covers the whole `/api/v1/dq-results/` prefix.
 
-  // Runs list (per-run pass rate / failed / total). Suspense — the page needs a
-  // run to scope the score, and switching runs is a deliberate action. Keyed
-  // on the binding id (the endpoint accepts a binding id or a table FQN),
-  // matching dqlake's binding_id param.
-  const { data: runsData } = useGetDqResultsRunsSuspense<RunsOut>(
+  // Runs list (per-run pass rate / failed / total). NON-suspense (B2-23) — the
+  // score section shows a local skeleton while it first loads and the run-mode
+  // / run-pick changes keep the previous list visible (keepPreviousData) rather
+  // than flashing, so this never re-suspends the page. Keyed on the binding id
+  // (the endpoint accepts a binding id or a table FQN), matching dqlake's
+  // binding_id param.
+  const runsQuery = useGetDqResultsRuns<RunsOut>(
     bindingId,
     { include_drafts: draftsParam },
     {
-      query: { ...selector<RunsOut>().query, ...RESULTS_QUERY_OPTIONS },
+      query: {
+        ...selector<RunsOut>().query,
+        placeholderData: keepPreviousData,
+        ...RESULTS_QUERY_OPTIONS,
+      },
     },
   );
-  const runs = (runsData.rows ?? []).filter(
+  const runsData = runsQuery.data;
+  // First load only (no rows yet) drives the score skeleton; a keepPreviousData
+  // refetch keeps the old score on screen instead of a spinner.
+  const runsLoading = runsQuery.isPending;
+  const runs = (runsData?.rows ?? []).filter(
     (r): r is typeof r & { run_id: string } => typeof r.run_id === "string",
   );
   const latestRunId = runs[0]?.run_id;
@@ -468,10 +478,13 @@ function ResultsBody({
     filters.rule.length > 0 ||
     filters.column.length > 0;
 
-  const { data: dimensions } =
-    useListResultDimensionsSuspense<DimensionOut[]>(selector<DimensionOut[]>());
-  const { data: severities } =
-    useListResultSeveritiesSuspense<SeverityOut[]>(selector<SeverityOut[]>());
+  // Dimension / severity registries (colors + ranks). NON-suspense (B2-23) —
+  // they load independently; until they arrive the color maps are empty and the
+  // charts/breakdowns render without custom colors, then re-render once ready.
+  const dimensions =
+    useListResultDimensions<DimensionOut[]>(selector<DimensionOut[]>()).data ?? [];
+  const severities =
+    useListResultSeverities<SeverityOut[]>(selector<SeverityOut[]>()).data ?? [];
 
   const dimColors = Object.fromEntries(dimensions.map((d) => [d.name, d.color]));
   const sevColors = Object.fromEntries(severities.map((s) => [s.name, s.color]));
@@ -710,13 +723,17 @@ function ResultsBody({
           />
         </div>
         <div className="sm:pr-2">
-          <ScoreBox
-            passRate={passRate}
-            failedTests={failedTests}
-            totalTests={totalTests}
-            trend={scoreTrend}
-            info={COUNT_INFO}
-          />
+          {runsLoading ? (
+            <Skeleton className="h-32 w-full" />
+          ) : (
+            <ScoreBox
+              passRate={passRate}
+              failedTests={failedTests}
+              totalTests={totalTests}
+              trend={scoreTrend}
+              info={COUNT_INFO}
+            />
+          )}
         </div>
       </div>
 

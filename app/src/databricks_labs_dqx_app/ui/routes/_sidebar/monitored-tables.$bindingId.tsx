@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
@@ -238,10 +238,16 @@ function MonitoredTableDetailPage() {
     tab && (DETAIL_TAB_KEYS as readonly string[]).includes(tab) ? (tab as DetailTab) : "about";
   const handleTabChange = useCallback(
     (next: string) => {
-      navigate({
-        to: "/monitored-tables/$bindingId",
-        params: { bindingId },
-        search: (prev) => ({ ...prev, tab: next }),
+      // B2-23: mark the tab-switch navigate as a transition so that if any
+      // query elsewhere on the page re-suspends as a result of the URL change,
+      // React keeps the CURRENT tab content on screen instead of surfacing the
+      // page-level DetailSkeleton fallback and blanking the whole page.
+      startTransition(() => {
+        navigate({
+          to: "/monitored-tables/$bindingId",
+          params: { bindingId },
+          search: (prev) => ({ ...prev, tab: next }),
+        });
       });
     },
     [navigate, bindingId],
