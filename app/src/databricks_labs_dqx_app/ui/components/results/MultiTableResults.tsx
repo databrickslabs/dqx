@@ -32,6 +32,7 @@ import {
 } from "@/components/results/failedRecordsExport";
 import { toCountSeries } from "@/components/results/countSeries";
 import { RunModeSelect, includeDraftsParam } from "@/components/results/RunModeSelect";
+import { RunReviewStatusPanel } from "@/components/RunReviewStatusPanel";
 import {
   toNum,
   ApplicableToggle,
@@ -274,6 +275,12 @@ export interface MultiTableResultsSectionProps {
    *  product tab) don't need it. Pass a stable (useCallback / module-scope)
    *  function — the effect keys on its identity. */
   onBaseByTable?: (byTable: NonNullable<EntityResultsOut["by_table"]>) => void;
+  /** B2-8: when set, the selected run's review status renders in its own
+   *  full-width INTERACTABLE card (the RunReviewStatusPanel) between the score
+   *  and the over-time trend. The table-space tab passes its pinned (latest)
+   *  run id; the global and rule surfaces have no coherent single run and omit
+   *  it, so no card renders there. */
+  reviewStatusRunId?: string | null;
 }
 
 /**
@@ -292,6 +299,7 @@ export function MultiTableResultsSection({
   onIncludeDraftsChange,
   hideRunMode,
   onBaseByTable,
+  reviewStatusRunId,
 }: MultiTableResultsSectionProps) {
   const { t } = useTranslation();
   // Published-only surfaces (hideRunMode) never send `include_drafts`,
@@ -637,6 +645,17 @@ export function MultiTableResultsSection({
         </div>
         <div className="sm:pr-2">{scoreBox}</div>
       </div>
+
+      {/* B2-8: the pinned run's review status in its own full-width
+          INTERACTABLE card between the score and the over-time trend (the
+          RunReviewStatusPanel — dropdown + revert-to-default + audit history,
+          gated for users without permission). Only surfaces that pass a run id
+          (the table-space tab) render it; global/rule omit it. */}
+      {reviewStatusRunId && (
+        <div className="rounded-lg border bg-card p-4">
+          <RunReviewStatusPanel runId={reviewStatusRunId} />
+        </div>
+      )}
 
       <CollapsibleSection title={t("resultsUi.overTimeSection")} defaultOpen>
         <div className="space-y-6">
