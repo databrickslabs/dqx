@@ -11,6 +11,11 @@ import { useGetGlobalResultsSettings } from "@/lib/api";
  * never a flash of a screen that shouldn't be there.
  */
 export function useGlobalResultsEnabled(): boolean {
-  const { data } = useGetGlobalResultsSettings({ query: { select: (d) => d.data } });
+  // B2-22: this gate is session-stable app config consumed on nearly every
+  // page (the sidebar Layout calls it) — pin to staleTime: Infinity so it's
+  // fetched once and served from cache instead of refetching per route/tab.
+  const { data } = useGetGlobalResultsSettings({
+    query: { select: (d) => d.data, staleTime: Infinity },
+  });
   return data?.global_results_enabled ?? false;
 }

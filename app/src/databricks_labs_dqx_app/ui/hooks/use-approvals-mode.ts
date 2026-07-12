@@ -22,7 +22,10 @@ export interface UseApprovalsModeResult {
  * surfaces to relabel their buttons and hide the now-redundant Approve action.
  */
 export function useApprovalsMode(): UseApprovalsModeResult {
-  const { data } = useGetApprovalsMode();
+  // B2-22: app-wide approvals mode is session-stable config — pin to
+  // staleTime: Infinity so it's fetched once and served from cache across
+  // every mount rather than refetched per route/tab.
+  const { data } = useGetApprovalsMode({ query: { staleTime: Infinity } });
   const { canApproveRules } = usePermissions();
 
   const raw = data?.data?.mode;

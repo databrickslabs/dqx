@@ -32,6 +32,12 @@ const queryClient = new QueryClient({
     queries: {
       // Don't retry by default - AuthGuard handles initial auth flow
       retry: false,
+      // B2-22: keep query results fresh for 5 minutes so app-wide data
+      // (role, version, approvals mode, global-results flag, and everything
+      // else) is served from cache instead of refetching on every route
+      // mount / tab switch. Run-completion invalidation and explicit
+      // invalidateQueries still refresh what needs to change.
+      staleTime: 5 * 60 * 1000,
     },
   },
 });

@@ -53,7 +53,10 @@ function HeaderUserMenuSkeleton() {
 function HeaderUserMenuContent() {
   const { data: user } = useCurrentUserSuspense(selector<User>());
   const { data: roleResp } = useCurrentUserRoleSuspense(selector<UserRoleOut>());
-  const { data: verResp } = useGetVersion();
+  // B2-22: the app version is fixed for the life of the deployment — pin to
+  // staleTime: Infinity so it's fetched once and served from cache instead of
+  // refetching every time the header menu remounts.
+  const { data: verResp } = useGetVersion({ query: { staleTime: Infinity } });
   const { t, i18n } = useTranslation();
 
   const appVersion = verResp?.data?.version;
