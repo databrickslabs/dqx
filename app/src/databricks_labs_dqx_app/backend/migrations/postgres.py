@@ -344,6 +344,11 @@ PG_MIGRATIONS: list[PgMigration] = [
             # ``dq_data_products`` schedule columns.
             "  schedule_cron    TEXT,"
             "  schedule_tz      TEXT,"
+            # schedule_kind (B2-52): what a scheduled run does — profiling only,
+            # DQ only, or both. NOT NULL with a default so fresh installs carry a
+            # concrete value; v14 below converges already-deployed DBs (the same
+            # edit-in-place trap ``schedule_cron``'s v9 had to correct).
+            "  schedule_kind    TEXT NOT NULL DEFAULT 'profiling_and_dq',"
             "  last_profiled_at TIMESTAMPTZ,"
             # Denormalized run/profile pointers written on completion
             # (write-on-complete, T-perf) so the list/detail read paths never
@@ -357,6 +362,8 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  updated_by       TEXT,"
             "  updated_at       TIMESTAMPTZ,"
             "  CONSTRAINT uq_dq_monitored_tables_table_fqn UNIQUE (table_fqn),"
+            "  CONSTRAINT chk_dq_monitored_tables_schedule_kind "
+            "    CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq')),"
             "  CONSTRAINT chk_dq_monitored_tables_status "
             "    CHECK (status IN ('draft','pending_approval','approved','rejected'))"
             ");"
@@ -596,6 +603,10 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  steward        TEXT,"
             "  schedule_cron  TEXT,"
             "  schedule_tz    TEXT,"
+            # schedule_kind (B2-52): profiling-only / DQ-only / both for a
+            # scheduled Table Space run. NOT NULL + default; v14 converges DBs
+            # already carrying this v6 table without the column.
+            "  schedule_kind  TEXT NOT NULL DEFAULT 'profiling_and_dq',"
             "  status         TEXT NOT NULL,"
             "  version        INTEGER NOT NULL DEFAULT 0,"
             "  created_by     TEXT,"
@@ -603,6 +614,8 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  updated_by     TEXT,"
             "  updated_at     TIMESTAMPTZ,"
             "  CONSTRAINT uq_dq_data_products_name UNIQUE (name),"
+            "  CONSTRAINT chk_dq_data_products_schedule_kind "
+            "    CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq')),"
             "  CONSTRAINT chk_dq_data_products_status "
             "    CHECK (status IN ('draft','pending_approval','approved','rejected'))"
             ");"
@@ -904,6 +917,40 @@ PG_MIGRATIONS: list[PgMigration] = [
             # so a re-run against an already-converged DB is a true no-op.
             # ----------------------------------------------------------
             f"ALTER TABLE {_S}.dq_monitored_tables ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;"
+        ),
+    ),
+    PgMigration(
+        version=14,
+        description="Schedulable scope: add schedule_kind to monitored tables + data products (B2-52)",
+        sql=(
+            # ----------------------------------------------------------
+            # Schedule-scope column ``schedule_kind`` (B2-52). The v1
+            # baseline (``dq_monitored_tables``) and the v6 CREATE
+            # (``dq_data_products``) above now declare the column, so this
+            # is a NO-OP on fresh installs. It exists purely to converge
+            # databases already deployed WITHOUT it (v1/v6 are already
+            # recorded in ``dq_migrations`` there, so editing them in place
+            # could never reach them — the same edit-in-place trap v5/v8/v9/
+            # v13 corrected after the fact). ``IF NOT EXISTS`` is native
+            # Postgres syntax, so a re-run against an already-converged DB is
+            # a true no-op. The CHECK constraint is (re-)added guarded by a
+            # DROP IF EXISTS so this converges cleanly whether or not the
+            # column (and its constraint) already exist.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  ADD COLUMN IF NOT EXISTS schedule_kind TEXT NOT NULL DEFAULT 'profiling_and_dq';"
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_schedule_kind;"
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  ADD CONSTRAINT chk_dq_monitored_tables_schedule_kind "
+            "    CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'));"
+            f"ALTER TABLE {_S}.dq_data_products "
+            "  ADD COLUMN IF NOT EXISTS schedule_kind TEXT NOT NULL DEFAULT 'profiling_and_dq';"
+            f"ALTER TABLE {_S}.dq_data_products "
+            "  DROP CONSTRAINT IF EXISTS chk_dq_data_products_schedule_kind;"
+            f"ALTER TABLE {_S}.dq_data_products "
+            "  ADD CONSTRAINT chk_dq_data_products_schedule_kind "
+            "    CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'));"
         ),
     ),
 ]

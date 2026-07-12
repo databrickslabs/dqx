@@ -51,6 +51,24 @@ _SQL_CHECK_PREFIX = "__sql_check__/"
 
 _VALID_TRACKER_STATUSES = {"pending", "success", "partial_failure", "failed"}
 
+# Schedule scope (B2-52): what a due schedule actually runs. Mirrors the
+# ``schedule_kind`` column on ``dq_monitored_tables`` / ``dq_data_products``.
+# A missing/unknown value falls back to the default (both), matching the
+# column defaults and the model parsers, so a legacy NULL row still runs.
+_SCHEDULE_KIND_DEFAULT = "profiling_and_dq"
+_KINDS_WITH_DQ = frozenset({"dq_only", "profiling_and_dq"})
+_KINDS_WITH_PROFILING = frozenset({"profiling_only", "profiling_and_dq"})
+# Row cap sampled by a scheduler-launched profiling run — matches the profiler
+# route's ``ProfileRunIn.sample_limit`` default.
+_PROFILE_SAMPLE_LIMIT = 50_000
+
+
+def _normalize_schedule_kind(value: object) -> str:
+    """Return a valid schedule-kind string, defaulting unknown/None to both."""
+    if value in _KINDS_WITH_PROFILING or value in _KINDS_WITH_DQ:
+        return str(value)
+    return _SCHEDULE_KIND_DEFAULT
+
 # Fallback gap used to push ``next_run_at`` into the future when a schedule's
 # trigger fails *and* its next occurrence cannot be computed. Prevents a
 # deterministic failure from re-firing the schedule on every tick.
@@ -638,7 +656,7 @@ class SchedulerService:
         """
         try:
             sql = (
-                f"SELECT product_id, schedule_cron, schedule_tz FROM {self._products_table} "
+                f"SELECT product_id, schedule_cron, schedule_tz, schedule_kind FROM {self._products_table} "
                 f"WHERE schedule_cron IS NOT NULL AND version > 0"
             )
             rows = self._oltp_sql.query(sql)
@@ -646,7 +664,12 @@ class SchedulerService:
             logger.debug("dq_data_products table not available; skipping product schedules", exc_info=True)
             return []
         return [
-            {"product_id": row[0], "schedule_cron": row[1], "schedule_tz": row[2]}
+            {
+                "product_id": row[0],
+                "schedule_cron": row[1],
+                "schedule_tz": row[2],
+                "schedule_kind": _normalize_schedule_kind(row[3] if len(row) > 3 else None),
+            }
             for row in rows
             if row and row[0] and row[1]
         ]
@@ -713,65 +736,73 @@ class SchedulerService:
             return
 
         run_id = uuid4().hex[:16]
-        logger.info("Product schedule '%s' is due (next_run_at=%s), triggering run %s", schedule_name, next_run, run_id)
+        kind = _normalize_schedule_kind(product.get("schedule_kind"))
+        logger.info(
+            "Product schedule '%s' is due (next_run_at=%s, kind=%s), triggering run %s",
+            schedule_name,
+            next_run,
+            kind,
+            run_id,
+        )
 
         assert self._data_product_service is not None  # guarded by _tick_products
-        try:
-            result = self._data_product_service.run(
-                product_id,
-                source="approved",
-                user_email="scheduler",
-                trigger="scheduled",
-            )
-            logger.info(
-                "Product schedule '%s': submitted run set %s (%d member(s), %d skipped)",
-                schedule_name,
-                result.run_set_id,
-                len(result.submitted),
-                len(result.skipped),
-            )
-            for submission in result.submitted:
-                self._track_run_for_score_refresh(submission.run_id)
-            new_next = self._compute_next_cron_run(cron_expr, now, tz_name)
-            status = "success" if not result.skipped else "partial_failure"
-            self._upsert_tracker(schedule_name, now, new_next, run_id, status)
-        except NoRunnableMembersError as e:
-            # Zero runnable members (all drafts / never approved) maps to a
-            # 409 at the manual-trigger route, but a scheduled tick must
-            # not treat it as a hard failure that retries every tick.
-            logger.warning("Product schedule '%s': no runnable members: %s", schedule_name, e)
-            self._advance_product_after_failure(schedule_name, cron_expr, tz_name, now, run_id)
-        except Exception:
-            logger.exception("Product schedule '%s' run %s failed to trigger", schedule_name, run_id)
-            self._advance_product_after_failure(schedule_name, cron_expr, tz_name, now, run_id)
 
-    def _advance_product_after_failure(
-        self,
-        schedule_name: str,
-        cron_expr: str,
-        tz_name: str | None,
-        now: datetime,
-        run_id: str,
-    ) -> None:
-        """Persist a failed run and push ``next_run_at`` forward after a trigger failure.
+        # Branch by schedule scope (B2-52): the DQ fan-out (DataProductService.run)
+        # and/or a profiling run per member table, folded into one combined
+        # tracker status so the dedupe/advance bookkeeping stays a single row
+        # per firing.
+        any_succeeded = False
+        any_failed = False
 
-        Mirrors :meth:`_advance_after_failure` for the product path: falls
-        back to :data:`_FAILURE_BACKOFF` if even the next-occurrence
-        computation fails (e.g. a malformed cron expression), so the
-        schedule still moves off "due" instead of re-firing every tick.
-        """
-        try:
-            new_next = self._compute_next_cron_run(cron_expr, now, tz_name)
-        except Exception:
-            logger.exception(
-                "Product schedule '%s': could not compute next_run_at after a failure; using backoff",
-                schedule_name,
-            )
-            new_next = now + _FAILURE_BACKOFF
-        try:
-            self._upsert_tracker(schedule_name, now, new_next, run_id, "failed")
-        except Exception:
-            logger.exception("Product schedule '%s': failed to persist tracker after a failure", schedule_name)
+        if kind in _KINDS_WITH_DQ:
+            try:
+                result = self._data_product_service.run(
+                    product_id,
+                    source="approved",
+                    user_email="scheduler",
+                    trigger="scheduled",
+                )
+                logger.info(
+                    "Product schedule '%s': submitted run set %s (%d member(s), %d skipped)",
+                    schedule_name,
+                    result.run_set_id,
+                    len(result.submitted),
+                    len(result.skipped),
+                )
+                for submission in result.submitted:
+                    self._track_run_for_score_refresh(submission.run_id)
+                any_succeeded = True
+                if result.skipped:
+                    any_failed = True  # some members skipped → partial
+            except NoRunnableMembersError as e:
+                # Zero runnable members (all drafts / never approved) maps to a
+                # 409 at the manual-trigger route, but a scheduled tick must
+                # not treat it as a hard failure that retries every tick.
+                logger.warning("Product schedule '%s': no runnable members: %s", schedule_name, e)
+                any_failed = True
+            except Exception:
+                logger.exception("Product schedule '%s' DQ run failed to trigger", schedule_name)
+                any_failed = True
+
+        if kind in _KINDS_WITH_PROFILING:
+            try:
+                member_fqns = self._data_product_service.member_table_fqns(product_id)
+            except Exception:
+                logger.exception("Product schedule '%s': failed to enumerate members for profiling", schedule_name)
+                member_fqns = []
+                any_failed = True
+            for fqn in member_fqns:
+                try:
+                    prof_run_id = self._submit_profile_run(fqn, f"scheduler:{schedule_name}")
+                    logger.info(
+                        "Product schedule '%s': submitted profiling run %s for %s", schedule_name, prof_run_id, fqn
+                    )
+                    any_succeeded = True
+                except Exception:
+                    logger.exception("Product schedule '%s': profiling run failed for %s", schedule_name, fqn)
+                    any_failed = True
+
+        self._finish_schedule_firing(schedule_name, cron_expr, tz_name, now, run_id, any_succeeded, any_failed)
 
     # ------------------------------------------------------------------
     # Monitored-table ticks (P21 item 14)
@@ -840,7 +871,8 @@ class SchedulerService:
         """
         try:
             sql = (
-                f"SELECT binding_id, schedule_cron, schedule_tz FROM {self._monitored_tables_table} "
+                f"SELECT binding_id, schedule_cron, schedule_tz, table_fqn, schedule_kind "
+                f"FROM {self._monitored_tables_table} "
                 f"WHERE schedule_cron IS NOT NULL AND version > 0"
             )
             rows = self._oltp_sql.query(sql)
@@ -848,7 +880,13 @@ class SchedulerService:
             logger.debug("dq_monitored_tables schedule columns not available; skipping", exc_info=True)
             return []
         return [
-            {"binding_id": row[0], "schedule_cron": row[1], "schedule_tz": row[2]}
+            {
+                "binding_id": row[0],
+                "schedule_cron": row[1],
+                "schedule_tz": row[2],
+                "table_fqn": row[3] if len(row) > 3 else None,
+                "schedule_kind": _normalize_schedule_kind(row[4] if len(row) > 4 else None),
+            }
             for row in rows
             if row and row[0] and row[1]
         ]
@@ -906,63 +944,169 @@ class SchedulerService:
             return
 
         run_id = uuid4().hex[:16]
-        logger.info("Table schedule '%s' is due (next_run_at=%s), triggering run %s", schedule_name, next_run, run_id)
+        kind = _normalize_schedule_kind(table.get("schedule_kind"))
+        table_fqn = table.get("table_fqn")
+        logger.info(
+            "Table schedule '%s' is due (next_run_at=%s, kind=%s), triggering run %s",
+            schedule_name,
+            next_run,
+            kind,
+            run_id,
+        )
 
         assert self._binding_run_service is not None  # guarded by _tick_monitored_tables
-        try:
-            result = self._binding_run_service.run_binding(
-                binding_id,
-                source="approved",
-                version=None,
-                user_email="scheduler",
-                trigger="scheduled",
-            )
-            logger.info(
-                "Table schedule '%s': submitted run %s (run_set %s)",
-                schedule_name,
-                result.run_id,
-                result.run_set_id,
-            )
-            self._track_run_for_score_refresh(result.run_id)
-            new_next = self._compute_next_cron_run(cron_expr, now, tz_name)
-            self._upsert_tracker(schedule_name, now, new_next, run_id, "success")
-        except BindingRunError as e:
-            # An expected, deterministic domain failure (never approved,
-            # missing snapshot, empty checks) — record and advance rather than
-            # hard-retrying every tick, mirroring the product NoRunnableMembers
-            # path.
-            logger.warning("Table schedule '%s': not runnable: %s", schedule_name, e)
-            self._advance_table_after_failure(schedule_name, cron_expr, tz_name, now, run_id)
-        except Exception:
-            logger.exception("Table schedule '%s' run %s failed to trigger", schedule_name, run_id)
-            self._advance_table_after_failure(schedule_name, cron_expr, tz_name, now, run_id)
 
-    def _advance_table_after_failure(
+        # Branch by schedule scope (B2-52): DQ (BindingRunService), profiling
+        # (a "profile" task on the shared job), or both. Each attempted action
+        # contributes to a single combined tracker status so the existing
+        # dedupe/advance bookkeeping stays intact — one tracker row per due
+        # firing regardless of how many sub-runs it launches.
+        any_succeeded = False
+        any_failed = False
+
+        if kind in _KINDS_WITH_DQ:
+            try:
+                result = self._binding_run_service.run_binding(
+                    binding_id,
+                    source="approved",
+                    version=None,
+                    user_email="scheduler",
+                    trigger="scheduled",
+                )
+                logger.info(
+                    "Table schedule '%s': submitted DQ run %s (run_set %s)",
+                    schedule_name,
+                    result.run_id,
+                    result.run_set_id,
+                )
+                self._track_run_for_score_refresh(result.run_id)
+                any_succeeded = True
+            except BindingRunError as e:
+                # An expected, deterministic domain failure (never approved,
+                # missing snapshot, empty checks) — record and advance rather
+                # than hard-retrying every tick, mirroring the product
+                # NoRunnableMembers path.
+                logger.warning("Table schedule '%s': DQ not runnable: %s", schedule_name, e)
+                any_failed = True
+            except Exception:
+                logger.exception("Table schedule '%s' DQ run failed to trigger", schedule_name)
+                any_failed = True
+
+        if kind in _KINDS_WITH_PROFILING:
+            if not table_fqn:
+                logger.warning("Table schedule '%s': cannot profile — no table_fqn on the schedule row", schedule_name)
+                any_failed = True
+            else:
+                try:
+                    profile_run_id = self._submit_profile_run(table_fqn, f"scheduler:{schedule_name}")
+                    logger.info(
+                        "Table schedule '%s': submitted profiling run %s for %s",
+                        schedule_name,
+                        profile_run_id,
+                        table_fqn,
+                    )
+                    any_succeeded = True
+                except Exception:
+                    logger.exception(
+                        "Table schedule '%s' profiling run failed to trigger for %s", schedule_name, table_fqn
+                    )
+                    any_failed = True
+
+        self._finish_schedule_firing(schedule_name, cron_expr, tz_name, now, run_id, any_succeeded, any_failed)
+
+    def _finish_schedule_firing(
         self,
         schedule_name: str,
         cron_expr: str,
         tz_name: str | None,
         now: datetime,
         run_id: str,
+        any_succeeded: bool,
+        any_failed: bool,
     ) -> None:
-        """Persist a failed run and push ``next_run_at`` forward after a table trigger failure.
+        """Advance ``next_run_at`` and persist one combined tracker status (B2-52).
 
-        Mirrors :meth:`_advance_product_after_failure`: falls back to
-        :data:`_FAILURE_BACKOFF` if the next-occurrence computation fails so the
-        schedule still moves off "due" instead of re-firing every tick.
+        Shared by the table and product ticks: a due firing may launch a DQ
+        run, a profiling run, or both. Exactly ONE tracker row is written per
+        firing so the existing dedupe bookkeeping is untouched — ``success``
+        when nothing failed, ``partial_failure`` when at least one sub-run
+        succeeded and at least one failed, ``failed`` when nothing succeeded.
+        ``next_run_at`` always moves forward (falling back to
+        :data:`_FAILURE_BACKOFF` if the next occurrence can't be computed) so a
+        deterministic failure never becomes an every-tick retry loop.
         """
         try:
             new_next = self._compute_next_cron_run(cron_expr, now, tz_name)
         except Exception:
             logger.exception(
-                "Table schedule '%s': could not compute next_run_at after a failure; using backoff",
-                schedule_name,
+                "Schedule '%s': could not compute next_run_at after firing; using backoff", schedule_name
             )
             new_next = now + _FAILURE_BACKOFF
+        if not any_succeeded and any_failed:
+            status = "failed"
+        elif any_failed:
+            status = "partial_failure"
+        else:
+            status = "success"
         try:
-            self._upsert_tracker(schedule_name, now, new_next, run_id, "failed")
+            self._upsert_tracker(schedule_name, now, new_next, run_id, status)
         except Exception:
-            logger.exception("Table schedule '%s': failed to persist tracker after a failure", schedule_name)
+            logger.exception("Schedule '%s': failed to persist tracker after firing", schedule_name)
+
+    def _submit_profile_run(self, source_table_fqn: str, requesting_user: str) -> str:
+        """Launch a profiling run for one table via the shared task-runner job (B2-52).
+
+        Mirrors the profiler route's submit path but runs entirely as the app
+        service principal (the scheduler has no OBO token): create a temp view
+        with :meth:`_create_view` (SP credentials), then fire a ``profile``
+        task on the same job the scope-config/DQ paths use. The frozen profiler
+        runner writes the ``dq_profiling_results`` row itself and drops the temp
+        view on completion (``task_type == 'profile'``), so no placeholder row
+        is recorded here — matching the fire-and-forget scope-config path. On a
+        submission failure the just-created view is dropped so a half-submitted
+        run never leaks a temp view.
+
+        Returns the app-level ``run_id``. Raises if the job id is unset or the
+        submission fails.
+        """
+        if not self._job_id:
+            raise RuntimeError("DQX_JOB_ID is not configured — cannot submit profiling runs")
+
+        run_id = uuid4().hex[:16]
+        view_fqn = self._create_view(source_table_fqn)
+        try:
+            config = {
+                "sample_limit": _PROFILE_SAMPLE_LIMIT,
+                "source_table_fqn": source_table_fqn,
+                "columns": None,
+                "profile_options": None,
+            }
+            self._ws.jobs.run_now(
+                job_id=int(self._job_id),
+                job_parameters={
+                    "task_type": "profile",
+                    "view_fqn": view_fqn,
+                    "result_catalog": self._catalog,
+                    "result_schema": self._schema,
+                    "config_json": json.dumps(config),
+                    "run_id": run_id,
+                    "requesting_user": requesting_user,
+                },
+            )
+        except Exception:
+            try:
+                from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
+
+                self._tmp_sql.execute(f"DROP VIEW IF EXISTS {quote_fqn(view_fqn)}")
+            except Exception as cleanup_err:
+                logger.warning(
+                    "Failed to drop temp view %s after profiling submit failure for %s: %s",
+                    view_fqn,
+                    source_table_fqn,
+                    cleanup_err,
+                )
+            raise
+        return run_id
 
     # ------------------------------------------------------------------
     # Score-cache refresh on observed run completion

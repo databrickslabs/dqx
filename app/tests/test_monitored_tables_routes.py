@@ -303,7 +303,9 @@ class TestUpdateSchedule:
         )
         assert result.schedule_cron == "0 6 * * *"
         assert result.schedule_tz == "UTC"
-        svc.update_schedule.assert_called_once_with("b1", "0 6 * * *", "UTC", "alice@x")
+        svc.update_schedule.assert_called_once_with(
+            "b1", "0 6 * * *", "UTC", "alice@x", schedule_kind="profiling_and_dq"
+        )
 
     def test_clears_schedule(self):
         svc = MagicMock()
@@ -319,7 +321,7 @@ class TestUpdateSchedule:
             perms=MagicMock(),
         )
         assert result.schedule_cron is None
-        svc.update_schedule.assert_called_once_with("b1", None, None, "alice@x")
+        svc.update_schedule.assert_called_once_with("b1", None, None, "alice@x", schedule_kind="profiling_and_dq")
 
     def test_missing_raises_404(self):
         svc = MagicMock()

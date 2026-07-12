@@ -894,6 +894,16 @@ export type DataProductOutScheduleCron = string | null;
 
 export type DataProductOutScheduleTz = string | null;
 
+export type DataProductOutScheduleKind = typeof DataProductOutScheduleKind[keyof typeof DataProductOutScheduleKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const DataProductOutScheduleKind = {
+  profiling_only: 'profiling_only',
+  dq_only: 'dq_only',
+  profiling_and_dq: 'profiling_and_dq',
+} as const;
+
 export type DataProductOutStatus = typeof DataProductOutStatus[keyof typeof DataProductOutStatus];
 
 
@@ -939,6 +949,7 @@ export interface DataProductOut {
   steward?: DataProductOutSteward;
   schedule_cron?: DataProductOutScheduleCron;
   schedule_tz?: DataProductOutScheduleTz;
+  schedule_kind?: DataProductOutScheduleKind;
   status: DataProductOutStatus;
   version: number;
   /** 'approved' | 'pending_approval' | 'rejected' | 'modified' | 'draft' — review lifecycle display */
@@ -1819,6 +1830,19 @@ export type MonitoredTableOutScheduleCron = string | null;
  */
 export type MonitoredTableOutScheduleTz = string | null;
 
+/**
+ * What the scheduled run does: profiling only, DQ only, or both (default both)
+ */
+export type MonitoredTableOutScheduleKind = typeof MonitoredTableOutScheduleKind[keyof typeof MonitoredTableOutScheduleKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const MonitoredTableOutScheduleKind = {
+  profiling_only: 'profiling_only',
+  dq_only: 'dq_only',
+  profiling_and_dq: 'profiling_and_dq',
+} as const;
+
 export type MonitoredTableOutLastProfiledAt = string | null;
 
 /**
@@ -1848,6 +1872,8 @@ export interface MonitoredTableOut {
   schedule_cron?: MonitoredTableOutScheduleCron;
   /** IANA zone the cron runs in; None = UTC */
   schedule_tz?: MonitoredTableOutScheduleTz;
+  /** What the scheduled run does: profiling only, DQ only, or both (default both) */
+  schedule_kind?: MonitoredTableOutScheduleKind;
   last_profiled_at?: MonitoredTableOutLastProfiledAt;
   /** Newest terminal validation-run instant for this table (either trigger surface); drives the overview 'Last run' column. */
   last_run_at?: MonitoredTableOutLastRunAt;
@@ -3599,6 +3625,8 @@ export type UpdateDataProductInScheduleCron = string | null;
 
 export type UpdateDataProductInScheduleTz = string | null;
 
+export type UpdateDataProductInScheduleKind = 'profiling_only' | 'dq_only' | 'profiling_and_dq' | null;
+
 /**
  * Body of ``PATCH /data-products/{id}`` (``updateDataProduct``).
 
@@ -3613,6 +3641,7 @@ export interface UpdateDataProductIn {
   steward?: UpdateDataProductInSteward;
   schedule_cron?: UpdateDataProductInScheduleCron;
   schedule_tz?: UpdateDataProductInScheduleTz;
+  schedule_kind?: UpdateDataProductInScheduleKind;
 }
 
 /**
@@ -3626,6 +3655,19 @@ export type UpdateMonitoredTableScheduleInScheduleCron = string | null;
 export type UpdateMonitoredTableScheduleInScheduleTz = string | null;
 
 /**
+ * What the scheduled run does: profiling only, DQ only, or both (default both)
+ */
+export type UpdateMonitoredTableScheduleInScheduleKind = typeof UpdateMonitoredTableScheduleInScheduleKind[keyof typeof UpdateMonitoredTableScheduleInScheduleKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const UpdateMonitoredTableScheduleInScheduleKind = {
+  profiling_only: 'profiling_only',
+  dq_only: 'dq_only',
+  profiling_and_dq: 'profiling_and_dq',
+} as const;
+
+/**
  * Request body for setting/clearing a monitored table's run schedule (P21 item 14).
 
 ``schedule_cron=None`` clears the schedule. When a cron is present the caller
@@ -3636,6 +3678,8 @@ export interface UpdateMonitoredTableScheduleIn {
   schedule_cron?: UpdateMonitoredTableScheduleInScheduleCron;
   /** IANA zone the cron is evaluated in; None = UTC */
   schedule_tz?: UpdateMonitoredTableScheduleInScheduleTz;
+  /** What the scheduled run does: profiling only, DQ only, or both (default both) */
+  schedule_kind?: UpdateMonitoredTableScheduleInScheduleKind;
 }
 
 export type UpdateRegistryRuleInMode = 'dqx_native' | 'lowcode' | 'sql' | null;

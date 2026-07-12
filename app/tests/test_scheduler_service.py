@@ -16,6 +16,7 @@ integration tests; here we keep the surface narrow and deterministic.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from unittest.mock import create_autospec
@@ -41,6 +42,7 @@ from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _GC_HOUR_UTC,
     _GC_WEEKDAY_SAT,
     _METADATA_DIM_REFRESH_INTERVAL_HOURS,
+    _PROFILE_SAMPLE_LIMIT,
     _RUN_SET_SWEEP_MAX_RUNS,
     _RUN_SET_SWEEP_WINDOW_DAYS,
     _SCORE_RECONCILE_MAX_ATTEMPTS,
@@ -673,7 +675,7 @@ class TestTickOneProduct:
         )
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 
-        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         dp_service.run.assert_called_once_with("prod1", source="approved", user_email="scheduler", trigger="scheduled")
         mocks.oltp.upsert.assert_called_once()
@@ -688,7 +690,7 @@ class TestTickOneProduct:
         mocks.oltp.query.return_value = [_tracker_row("product:prod1", "2026-05-02T09:00:00+00:00")]
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 
-        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         dp_service.run.assert_not_called()
         mocks.oltp.upsert.assert_not_called()
@@ -698,7 +700,7 @@ class TestTickOneProduct:
         mocks.oltp.query.return_value = []  # no existing tracker row
         now = datetime(2026, 5, 1, 8, 0, 0, tzinfo=timezone.utc)  # before today's 09:00
 
-        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         dp_service.run.assert_not_called()
         # Seeds a "pending" tracker row so the next tick knows the target time.
@@ -715,7 +717,7 @@ class TestTickOneProduct:
 
         # Must not raise — a run failure is best-effort, mirroring
         # _advance_after_failure on the scope-config path.
-        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         mocks.oltp.upsert.assert_called_once()
         value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
@@ -728,7 +730,7 @@ class TestTickOneProduct:
         dp_service.run.side_effect = NoRunnableMembersError("zero runnable members")
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 
-        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         mocks.oltp.upsert.assert_called_once()
         value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
@@ -745,7 +747,7 @@ class TestTickOneProduct:
         dp_service.run.return_value = DataProductRunResult(run_set_id="rs1", submitted=[], skipped=[])
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 
-        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         dp_service.run.assert_called_once()
         mocks.oltp.upsert.assert_called_once()
@@ -774,7 +776,7 @@ class TestTickOneProductMalformedCronBackoff:
         mocks.oltp.query.return_value = []  # no tracker row exists yet
         now = datetime(2026, 5, 1, 9, 0, 0, tzinfo=timezone.utc)
 
-        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "not a cron", "schedule_tz": "UTC"}, now)
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "not a cron", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         dp_service.run.assert_not_called()
         mocks.oltp.upsert.assert_called_once()
@@ -793,7 +795,7 @@ class TestTickOneProductMalformedCronBackoff:
         mocks.oltp.query.return_value = [("product:prod1", None, None, None, "pending")]
         now = datetime(2026, 5, 1, 9, 0, 0, tzinfo=timezone.utc)
 
-        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "not a cron", "schedule_tz": "UTC"}, now)
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "not a cron", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         dp_service.run.assert_not_called()
         mocks.oltp.upsert.assert_called_once()
@@ -812,7 +814,7 @@ class TestTickOneProductMalformedCronBackoff:
 
         # Must not raise — this is the core regression: an unguarded raise
         # here previously propagated up through _tick_products every tick.
-        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "garbage", "schedule_tz": "UTC"}, now)
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "garbage", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         mocks.oltp.upsert.assert_called_once()
 
@@ -933,7 +935,7 @@ class TestTickOneTable:
         br_service.run_binding.return_value = _binding_run_result()
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 
-        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         br_service.run_binding.assert_called_once_with(
             "b1", source="approved", version=None, user_email="scheduler", trigger="scheduled"
@@ -950,7 +952,7 @@ class TestTickOneTable:
         mocks.oltp.query.return_value = [_tracker_row("table:b1", "2026-05-02T09:00:00+00:00")]
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 
-        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         br_service.run_binding.assert_not_called()
         mocks.oltp.upsert.assert_not_called()
@@ -960,7 +962,7 @@ class TestTickOneTable:
         mocks.oltp.query.return_value = []
         now = datetime(2026, 5, 1, 8, 0, 0, tzinfo=timezone.utc)
 
-        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         br_service.run_binding.assert_not_called()
         mocks.oltp.upsert.assert_called_once()
@@ -974,7 +976,7 @@ class TestTickOneTable:
         br_service.run_binding.side_effect = BindingRunError("never approved")
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 
-        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         mocks.oltp.upsert.assert_called_once()
         value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
@@ -987,7 +989,7 @@ class TestTickOneTable:
         br_service.run_binding.side_effect = RuntimeError("job submission failed")
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 
-        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, now)
+        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         mocks.oltp.upsert.assert_called_once()
         value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
@@ -998,7 +1000,7 @@ class TestTickOneTable:
         mocks.oltp.query.return_value = []
         now = datetime(2026, 5, 1, 9, 0, 0, tzinfo=timezone.utc)
 
-        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "not a cron", "schedule_tz": "UTC"}, now)
+        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "not a cron", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now)
 
         br_service.run_binding.assert_not_called()
         mocks.oltp.upsert.assert_called_once()
@@ -1084,6 +1086,215 @@ class TestTickMonitoredTables:
 
         assert (fired == ["b1"]) == expect_fires
         svc._tick_one_table = monkeypatch_target
+
+
+# ---------------------------------------------------------------------------
+# Schedule scope (B2-52) — profiling_only / dq_only / profiling_and_dq
+# branching in _tick_one_table / _tick_one_product plus the _submit_profile_run
+# job-parameter contract.
+# ---------------------------------------------------------------------------
+
+_DUE_TRACKER_AT = "2026-05-01T09:00:00+00:00"
+_DUE_NOW = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+
+def _prep_profiling_scheduler(svc):
+    """Stub the SP view creation + job id so a profiling submit reaches jobs.run_now."""
+    svc._job_id = "123"  # ``int(self._job_id)`` runs before jobs.run_now
+    svc._create_view = lambda fqn: f"main.dqx_tmp.tmp_view_{fqn.replace('.', '_')}"  # type: ignore[method-assign]
+
+
+class TestSubmitProfileRun:
+    def test_builds_profile_task_parameters(self, make_scheduler):
+        svc, _mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp")
+        _prep_profiling_scheduler(svc)
+
+        run_id = svc._submit_profile_run("c.s.orders", "scheduler:table:b1")
+
+        assert svc._ws.jobs.run_now.call_count == 1
+        params = svc._ws.jobs.run_now.call_args.kwargs["job_parameters"]
+        assert params["task_type"] == "profile"
+        assert params["view_fqn"] == "main.dqx_tmp.tmp_view_c_s_orders"
+        assert params["requesting_user"] == "scheduler:table:b1"
+        config = json.loads(params["config_json"])
+        assert config["source_table_fqn"] == "c.s.orders"
+        assert config["sample_limit"] == _PROFILE_SAMPLE_LIMIT
+        assert isinstance(run_id, str) and run_id
+
+    def test_raises_without_job_id(self, make_scheduler):
+        svc, _mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp")
+        svc._job_id = ""
+        with pytest.raises(RuntimeError):
+            svc._submit_profile_run("c.s.orders", "scheduler:table:b1")
+        svc._ws.jobs.run_now.assert_not_called()
+
+
+class TestTableScheduleKind:
+    def test_dq_only_runs_dq_and_never_profiles(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        _prep_profiling_scheduler(svc)
+        mocks.oltp.query.return_value = [_tracker_row("table:b1", _DUE_TRACKER_AT)]
+        br_service.run_binding.return_value = _binding_run_result()
+
+        svc._tick_one_table(
+            {
+                "binding_id": "b1",
+                "schedule_cron": "0 9 * * *",
+                "schedule_tz": "UTC",
+                "table_fqn": "c.s.t",
+                "schedule_kind": "dq_only",
+            },
+            _DUE_NOW,
+        )
+
+        br_service.run_binding.assert_called_once()
+        svc._ws.jobs.run_now.assert_not_called()
+        assert mocks.oltp.upsert.call_args.kwargs["value_cols"]["status"] == "success"
+
+    def test_profiling_only_profiles_and_never_runs_dq(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        _prep_profiling_scheduler(svc)
+        mocks.oltp.query.return_value = [_tracker_row("table:b1", _DUE_TRACKER_AT)]
+
+        svc._tick_one_table(
+            {
+                "binding_id": "b1",
+                "schedule_cron": "0 9 * * *",
+                "schedule_tz": "UTC",
+                "table_fqn": "c.s.t",
+                "schedule_kind": "profiling_only",
+            },
+            _DUE_NOW,
+        )
+
+        br_service.run_binding.assert_not_called()
+        assert svc._ws.jobs.run_now.call_count == 1
+        assert svc._ws.jobs.run_now.call_args.kwargs["job_parameters"]["task_type"] == "profile"
+        assert mocks.oltp.upsert.call_args.kwargs["value_cols"]["status"] == "success"
+
+    def test_profiling_and_dq_runs_both(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        _prep_profiling_scheduler(svc)
+        mocks.oltp.query.return_value = [_tracker_row("table:b1", _DUE_TRACKER_AT)]
+        br_service.run_binding.return_value = _binding_run_result()
+
+        svc._tick_one_table(
+            {
+                "binding_id": "b1",
+                "schedule_cron": "0 9 * * *",
+                "schedule_tz": "UTC",
+                "table_fqn": "c.s.t",
+                "schedule_kind": "profiling_and_dq",
+            },
+            _DUE_NOW,
+        )
+
+        br_service.run_binding.assert_called_once()
+        assert svc._ws.jobs.run_now.call_count == 1  # profiling submit
+        assert mocks.oltp.upsert.call_args.kwargs["value_cols"]["status"] == "success"
+
+    def test_missing_kind_defaults_to_both(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        _prep_profiling_scheduler(svc)
+        mocks.oltp.query.return_value = [_tracker_row("table:b1", _DUE_TRACKER_AT)]
+        br_service.run_binding.return_value = _binding_run_result()
+
+        # No schedule_kind key at all → normalized to profiling_and_dq.
+        svc._tick_one_table(
+            {"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "table_fqn": "c.s.t"},
+            _DUE_NOW,
+        )
+
+        br_service.run_binding.assert_called_once()
+        assert svc._ws.jobs.run_now.call_count == 1
+
+    def test_profiling_and_dq_partial_when_profiling_fails(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        _prep_profiling_scheduler(svc)
+        mocks.oltp.query.return_value = [_tracker_row("table:b1", _DUE_TRACKER_AT)]
+        br_service.run_binding.return_value = _binding_run_result()
+        svc._ws.jobs.run_now.side_effect = RuntimeError("job submit boom")
+
+        svc._tick_one_table(
+            {
+                "binding_id": "b1",
+                "schedule_cron": "0 9 * * *",
+                "schedule_tz": "UTC",
+                "table_fqn": "c.s.t",
+                "schedule_kind": "profiling_and_dq",
+            },
+            _DUE_NOW,
+        )
+
+        br_service.run_binding.assert_called_once()
+        assert mocks.oltp.upsert.call_args.kwargs["value_cols"]["status"] == "partial_failure"
+
+
+class TestProductScheduleKind:
+    def test_dq_only_runs_dq_and_never_profiles(self, make_scheduler):
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        _prep_profiling_scheduler(svc)
+        mocks.oltp.query.return_value = [_tracker_row("product:prod1", _DUE_TRACKER_AT)]
+        dp_service.run.return_value = DataProductRunResult(run_set_id="rs1", submitted=[], skipped=[])
+
+        svc._tick_one_product(
+            {"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"},
+            _DUE_NOW,
+        )
+
+        dp_service.run.assert_called_once()
+        dp_service.member_table_fqns.assert_not_called()
+        svc._ws.jobs.run_now.assert_not_called()
+
+    def test_profiling_only_fans_out_profiling_per_member(self, make_scheduler):
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        _prep_profiling_scheduler(svc)
+        mocks.oltp.query.return_value = [_tracker_row("product:prod1", _DUE_TRACKER_AT)]
+        dp_service.member_table_fqns.return_value = ["c.s.t1", "c.s.t2"]
+
+        svc._tick_one_product(
+            {
+                "product_id": "prod1",
+                "schedule_cron": "0 9 * * *",
+                "schedule_tz": "UTC",
+                "schedule_kind": "profiling_only",
+            },
+            _DUE_NOW,
+        )
+
+        dp_service.run.assert_not_called()
+        assert svc._ws.jobs.run_now.call_count == 2
+        assert {c.kwargs["job_parameters"]["task_type"] for c in svc._ws.jobs.run_now.call_args_list} == {"profile"}
+        assert mocks.oltp.upsert.call_args.kwargs["value_cols"]["status"] == "success"
+
+    def test_profiling_and_dq_runs_dq_and_profiles_every_member(self, make_scheduler):
+        svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
+        _prep_profiling_scheduler(svc)
+        mocks.oltp.query.return_value = [_tracker_row("product:prod1", _DUE_TRACKER_AT)]
+        dp_service.run.return_value = DataProductRunResult(
+            run_set_id="rs1",
+            submitted=[
+                DataProductRunSubmission(
+                    binding_id="b1", table_fqn="c.s.t1", run_id="r1", job_run_id=1, view_fqn="v1", binding_version=1
+                )
+            ],
+            skipped=[],
+        )
+        dp_service.member_table_fqns.return_value = ["c.s.t1"]
+
+        svc._tick_one_product(
+            {
+                "product_id": "prod1",
+                "schedule_cron": "0 9 * * *",
+                "schedule_tz": "UTC",
+                "schedule_kind": "profiling_and_dq",
+            },
+            _DUE_NOW,
+        )
+
+        dp_service.run.assert_called_once()
+        assert svc._ws.jobs.run_now.call_count == 1  # one member profiled
+        assert mocks.oltp.upsert.call_args.kwargs["value_cols"]["status"] == "success"
 
 
 # ---------------------------------------------------------------------------
@@ -1439,7 +1650,7 @@ class TestScoreCacheRefreshOnCompletion:
         mocks.oltp.query.return_value = [_tracker_row("table:b1", "2026-05-01T09:00:00+00:00")]
         br_service.run_binding.return_value = _binding_run_result()
 
-        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, self.NOW)
+        svc._tick_one_table({"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, self.NOW)
 
         assert set(svc._pending_score_runs) == {"r1"}
 
@@ -1470,7 +1681,7 @@ class TestScoreCacheRefreshOnCompletion:
             skipped=[],
         )
 
-        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC"}, self.NOW)
+        svc._tick_one_product({"product_id": "prod1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, self.NOW)
 
         assert set(svc._pending_score_runs) == {"r1", "r2"}
 

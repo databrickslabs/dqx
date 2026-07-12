@@ -196,6 +196,12 @@ class RuleVersion(BaseModel):
 
 MonitoredTableStatus = Literal["draft", "pending_approval", "approved", "rejected"]
 
+# What a scheduled run does (B2-52). Applies to both monitored tables and
+# Table Spaces: profile only, run DQ only, or both. Default ``profiling_and_dq``
+# mirrors the ``schedule_kind`` column default in both migration backends.
+ScheduleKind = Literal["profiling_only", "dq_only", "profiling_and_dq"]
+SCHEDULE_KIND_DEFAULT: ScheduleKind = "profiling_and_dq"
+
 # One mapping GROUP is ``{slot_name: column_name}`` — the slot→column binding
 # for exactly one materialized check. ``column_mapping`` on an applied rule is
 # a list of such groups so a single rule can be applied to a table more than
@@ -224,6 +230,10 @@ class MonitoredTable(BaseModel):
         description="5-field POSIX cron; None = not scheduled. Approved tables with a cron fire on the scheduler.",
     )
     schedule_tz: str | None = Field(default=None, description="IANA zone the cron is evaluated in; None = UTC")
+    schedule_kind: ScheduleKind = Field(
+        default=SCHEDULE_KIND_DEFAULT,
+        description="What a scheduled run does: profiling only, DQ only, or both (default both)",
+    )
     last_profiled_at: datetime | None = None
     last_run_at: datetime | None = Field(
         default=None,
@@ -342,6 +352,7 @@ class DataProduct(BaseModel):
     steward: str | None = None
     schedule_cron: str | None = None
     schedule_tz: str | None = None
+    schedule_kind: ScheduleKind = SCHEDULE_KIND_DEFAULT
     status: DataProductStatus = "draft"
     version: int = Field(default=0, description="0 until first approval; bumped ONLY on approve")
     created_by: str | None = None

@@ -591,6 +591,11 @@ _V2_OLTP_FALLBACK = (
     # scheduler, mirroring ``dq_data_products``'s schedule columns below.
     "  schedule_cron STRING,"
     "  schedule_tz STRING,"
+    # schedule_kind (B2-52): profiling-only / DQ-only / both for a scheduled
+    # run. Plain STRING (like schedule_cron) — the service writes a concrete
+    # value on insert; the CHECK below allows NULL (Delta CHECK passes on NULL)
+    # so legacy rows converged by v18 aren't rejected.
+    "  schedule_kind STRING,"
     "  last_profiled_at TIMESTAMP,"
     # Denormalized last-run/last-profiled pointers written on run completion
     # (write-on-complete, T-perf): the list/detail read paths read these plain
@@ -608,6 +613,9 @@ _V2_OLTP_FALLBACK = (
     f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
     f"  ADD CONSTRAINT chk_dq_monitored_tables_status "
     f"  CHECK (status IN ('draft','pending_approval','approved','rejected'));"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
+    f"  ADD CONSTRAINT chk_dq_monitored_tables_schedule_kind "
+    f"  CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'));"
     #
     # dq_applied_rules — the LIVE LINK between a published registry rule
     # and a monitored table's column mapping. ``pinned_version`` NULL
@@ -838,6 +846,9 @@ _V10_DATA_PRODUCTS = (
     "  steward        STRING,"
     "  schedule_cron  STRING,"
     "  schedule_tz    STRING,"
+    # schedule_kind (B2-52): profiling-only / DQ-only / both for a scheduled
+    # Table Space run. Plain STRING; CHECK allows NULL for legacy rows (v18).
+    "  schedule_kind  STRING,"
     "  status         STRING NOT NULL,"
     "  version        INT NOT NULL,"
     "  created_by     STRING,"
@@ -849,6 +860,9 @@ _V10_DATA_PRODUCTS = (
     f"ALTER TABLE {_PLACEHOLDER}.dq_data_products "
     f"  ADD CONSTRAINT chk_dq_data_products_status "
     f"  CHECK (status IN ('draft','pending_approval','approved','rejected'));"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products "
+    f"  ADD CONSTRAINT chk_dq_data_products_schedule_kind "
+    f"  CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'));"
     #
     # dq_data_product_members — table membership within a product (design
     # spec §3.4).
@@ -1067,6 +1081,33 @@ _V17_MONITORED_TABLES_LAST_RUN_AT = (
 )
 
 
+# Schedulable scope: add ``schedule_kind`` to monitored tables + data products
+# (B2-52). The v2 OLTP-fallback baseline above now declares the column (and its
+# CHECK) on both tables, so this is a NO-OP on fresh installs; it exists purely
+# to converge Delta-OLTP databases already deployed WITHOUT it (v2 is already
+# recorded in ``dq_migrations`` there, so editing v2 in place could never reach
+# them — the same edit-in-place trap corrected by v9/v12/v13/v17). Plain
+# ``ADD COLUMN`` / ``ADD CONSTRAINT`` (not ``IF NOT EXISTS`` — unsupported on
+# some warehouse versions); on an already-converged DB each raises
+# ``COLUMN_ALREADY_EXISTS`` / ``DELTA_CONSTRAINT_ALREADY_EXISTS`` which
+# ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows. The CHECK passes on the NULL
+# ``schedule_kind`` legacy rows carry until the service next writes them.
+#
+# Marked ``oltp_fallback=True``: both tables live in Lakebase when enabled (the
+# Postgres mirror is v14 in ``backend.migrations.postgres``), so this only runs
+# against Delta when Lakebase is disabled.
+_V18_SCHEDULE_KIND = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN schedule_kind STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
+    f"  ADD CONSTRAINT chk_dq_monitored_tables_schedule_kind "
+    f"  CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'));"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN schedule_kind STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products "
+    f"  ADD CONSTRAINT chk_dq_data_products_schedule_kind "
+    f"  CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'))"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -1198,6 +1239,13 @@ MIGRATIONS: list[Migration] = [
         description="Monitored tables: add last_run_at (write-on-complete list-page pointer, T-perf/B2-15) "
         "— used only when Lakebase is disabled",
         sql_template=_V17_MONITORED_TABLES_LAST_RUN_AT,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=18,
+        description="Schedulable scope: add schedule_kind to monitored tables + data products (B2-52) "
+        "— used only when Lakebase is disabled",
+        sql_template=_V18_SCHEDULE_KIND,
         oltp_fallback=True,
     ),
 ]

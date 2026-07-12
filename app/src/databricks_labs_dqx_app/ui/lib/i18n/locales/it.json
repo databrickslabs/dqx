@@ -1,4 +1,13 @@
 {
+  "schedule": {
+    "kindLabel": "Cosa esegue questa pianificazione",
+    "kindHelp": "Scegli se ogni esecuzione pianificata esegue il profiling dei dati, i controlli di qualità dei dati o entrambi.",
+    "kindOption": {
+      "profiling_and_dq": "Profiling + qualità dei dati",
+      "profiling_only": "Solo profiling",
+      "dq_only": "Solo qualità dei dati"
+    }
+  },
   "common": {
     "loading": "Caricamento...",
     "tryAgain": "Riprova",

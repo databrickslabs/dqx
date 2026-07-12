@@ -142,6 +142,29 @@ class TestPgMigrationsCatalogue:
         for m in PG_MIGRATIONS:
             assert m.description.strip(), f"v{m.version} migration has an empty description"
 
+    def test_schedule_kind_baseline_declares_column_on_both_tables(self):
+        # Fresh installs must carry schedule_kind on both tables (B2-52).
+        # Whitespace between column name and type varies (alignment), so
+        # assert the identifier, default, and CHECK name independently.
+        by_version = {m.version: m for m in PG_MIGRATIONS}
+        baseline_sql = by_version[1].sql  # dq_monitored_tables baseline
+        products_sql = by_version[6].sql  # dq_data_products CREATE
+        assert "schedule_kind" in baseline_sql
+        assert "schedule_kind" in products_sql
+        assert baseline_sql.count("'profiling_and_dq'") >= 1
+        assert products_sql.count("'profiling_and_dq'") >= 1
+        assert "chk_dq_monitored_tables_schedule_kind" in baseline_sql
+        assert "chk_dq_data_products_schedule_kind" in products_sql
+
+    def test_v14_converges_schedule_kind_on_deployed_dbs(self):
+        # Already-deployed DBs get schedule_kind via the v14 converge migration.
+        v14 = next(m for m in PG_MIGRATIONS if m.version == 14)
+        assert "ADD COLUMN IF NOT EXISTS schedule_kind TEXT NOT NULL DEFAULT 'profiling_and_dq'" in v14.sql
+        assert "dq_monitored_tables" in v14.sql
+        assert "dq_data_products" in v14.sql
+        assert "chk_dq_monitored_tables_schedule_kind" in v14.sql
+        assert "chk_dq_data_products_schedule_kind" in v14.sql
+
 
 # ---------------------------------------------------------------------------
 # PgMigration dataclass behaviour

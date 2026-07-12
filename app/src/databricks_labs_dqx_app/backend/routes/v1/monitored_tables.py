@@ -336,7 +336,9 @@ def update_monitored_table_schedule(
         principal_email=user_email,
     )
     try:
-        table = svc.update_schedule(binding_id, body.schedule_cron, body.schedule_tz, user_email)
+        table = svc.update_schedule(
+            binding_id, body.schedule_cron, body.schedule_tz, user_email, schedule_kind=body.schedule_kind
+        )
         return MonitoredTableOut.from_domain(table)
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))

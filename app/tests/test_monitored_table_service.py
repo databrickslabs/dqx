@@ -65,15 +65,17 @@ def _table_row(
     schedule_tz: str | None = None,
     last_profiled_at: str | None = None,
     last_run_at: str | None = None,
+    schedule_kind: str | None = "profiling_and_dq",
     score: str | None = None,
     failed_tests: str | None = None,
     total_tests: str | None = None,
     score_computed_at: str | None = None,
 ) -> list[str]:
-    # The trailing 4 cells are the dq_score_cache LEFT-JOIN columns the list
-    # query selects (P3.4) — all None when the table has never been scored.
-    # The single-row read paths select only the first 13 columns; the extra
-    # cells are simply ignored by _row_to_table.
+    # ``schedule_kind`` (B2-52) is selected last among the base columns
+    # (index 13); the trailing 4 cells are the dq_score_cache LEFT-JOIN
+    # columns the list query selects (P3.4) — all None when the table has
+    # never been scored. The single-row read paths select only the first 14
+    # columns; the extra cells are simply ignored by _row_to_table.
     return [
         binding_id,
         table_fqn,
@@ -88,6 +90,7 @@ def _table_row(
         "2026-07-02T00:00:00+00:00",
         "alice@x",
         "2026-07-02T00:00:00+00:00",
+        schedule_kind,
         score,
         failed_tests,
         total_tests,
@@ -594,6 +597,19 @@ class TestUpdateSchedule:
         update_sql = sql.execute.call_args[0][0]
         assert "schedule_cron = NULL" in update_sql
         assert "schedule_tz = NULL" in update_sql
+
+    def test_persists_schedule_kind(self, svc, sql):
+        sql.query.return_value = [_table_row(binding_id="b1", status="approved")]
+        table = svc.update_schedule("b1", "0 6 * * *", "UTC", "alice@x", schedule_kind="profiling_only")
+        assert table.schedule_kind == "profiling_only"
+        update_sql = sql.execute.call_args[0][0]
+        assert "schedule_kind = 'profiling_only'" in update_sql
+
+    def test_defaults_schedule_kind_to_both(self, svc, sql):
+        sql.query.return_value = [_table_row(binding_id="b1", status="approved")]
+        table = svc.update_schedule("b1", "0 6 * * *", "UTC", "alice@x")
+        assert table.schedule_kind == "profiling_and_dq"
+        assert "schedule_kind = 'profiling_and_dq'" in sql.execute.call_args[0][0]
 
     def test_raises_when_missing(self, svc, sql):
         sql.query.return_value = []

@@ -42,6 +42,16 @@ class TestMonitoredTable:
         assert table.steward is None
         assert table.created_by is None
         assert table.updated_at is None
+        # schedule_kind defaults to "both" (B2-52).
+        assert table.schedule_kind == "profiling_and_dq"
+
+    @pytest.mark.parametrize("kind", ["profiling_only", "dq_only", "profiling_and_dq"])
+    def test_accepts_valid_schedule_kinds(self, MonitoredTable, kind):
+        assert MonitoredTable(binding_id="b1", table_fqn="t", schedule_kind=kind).schedule_kind == kind
+
+    def test_rejects_invalid_schedule_kind(self, MonitoredTable):
+        with pytest.raises(ValidationError):
+            MonitoredTable(binding_id="b1", table_fqn="t", schedule_kind="everything")
 
     @pytest.mark.parametrize("status", ["draft", "pending_approval", "approved", "rejected"])
     def test_accepts_valid_statuses(self, MonitoredTable, status):

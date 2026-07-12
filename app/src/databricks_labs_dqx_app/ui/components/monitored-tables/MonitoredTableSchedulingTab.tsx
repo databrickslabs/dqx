@@ -14,7 +14,7 @@ import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { CalendarClock, Loader2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScheduleEditor } from "@/components/common/ScheduleEditor";
+import { ScheduleEditor, DEFAULT_SCHEDULE_KIND, type ScheduleKind } from "@/components/common/ScheduleEditor";
 import { useListDataProducts, useUpdateMonitoredTableSchedule, type MonitoredTableOut } from "@/lib/api";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { cronHint } from "@/lib/cron";
@@ -40,11 +40,14 @@ export function MonitoredTableSchedulingTab({
   // Local buffer, seeded from the persisted schedule. `null` cron = no schedule.
   const [cron, setCron] = useState<string | null>(table.schedule_cron ?? null);
   const [tz, setTz] = useState<string>(table.schedule_tz ?? DEFAULT_TZ);
+  const [scheduleKind, setScheduleKind] = useState<ScheduleKind>(table.schedule_kind ?? DEFAULT_SCHEDULE_KIND);
   const [cronInvalid, setCronInvalid] = useState(false);
 
   const serverCron = table.schedule_cron ?? null;
   const serverTz = table.schedule_tz ?? DEFAULT_TZ;
-  const dirty = cron !== serverCron || (cron !== null && tz !== serverTz);
+  const serverKind: ScheduleKind = table.schedule_kind ?? DEFAULT_SCHEDULE_KIND;
+  const dirty =
+    cron !== serverCron || (cron !== null && (tz !== serverTz || scheduleKind !== serverKind));
   const canSave = dirty && !cronInvalid;
 
   const updateMut = useUpdateMonitoredTableSchedule({ mutation: { onError: () => {} } });
@@ -70,7 +73,7 @@ export function MonitoredTableSchedulingTab({
 
   const handleSave = () => {
     updateMut.mutate(
-      { bindingId, data: { schedule_cron: cron, schedule_tz: cron !== null ? tz : null } },
+      { bindingId, data: { schedule_cron: cron, schedule_tz: cron !== null ? tz : null, schedule_kind: scheduleKind } },
       {
         onSuccess: () => {
           toast.success(t("monitoredTables.scheduleToastSaved"));
@@ -89,10 +92,12 @@ export function MonitoredTableSchedulingTab({
         cron={cron}
         timezone={tz}
         canEdit={canEdit}
+        scheduleKind={scheduleKind}
         onChange={(nextCron, nextTz) => {
           setCron(nextCron);
           setTz(nextTz);
         }}
+        onKindChange={setScheduleKind}
         onRemove={() => setCron(null)}
         onValidityChange={(valid) => setCronInvalid(!valid)}
         footerNote={t("monitoredTables.scheduleFooterNote")}

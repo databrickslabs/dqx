@@ -10,19 +10,39 @@
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { SchedulePicker } from "@/components/common/SchedulePicker";
 import { simpleToCron } from "@/lib/cron";
 
 const DEFAULT_CADENCE_CRON = simpleToCron("daily", "06:00");
 const DEFAULT_TZ = "UTC";
 
+/** What a scheduled run does (B2-52). Kept in step with the backend
+ *  ``schedule_kind`` enum; default is "both". */
+export type ScheduleKind = "profiling_only" | "dq_only" | "profiling_and_dq";
+
+export const DEFAULT_SCHEDULE_KIND: ScheduleKind = "profiling_and_dq";
+
+const SCHEDULE_KIND_ORDER: ScheduleKind[] = ["profiling_and_dq", "profiling_only", "dq_only"];
+
 interface Props {
   /** Current cron (5-field) or null when there is no schedule. */
   cron: string | null;
   timezone: string;
   canEdit: boolean;
+  /** What a due run does: profiling only, DQ only, or both (B2-52). */
+  scheduleKind: ScheduleKind;
   /** Called on every picker edit with the concrete cron + timezone. */
   onChange: (cron: string, timezone: string) => void;
+  /** Called when the schedule-scope dropdown changes. */
+  onKindChange: (kind: ScheduleKind) => void;
   /** Called when the schedule is removed (cron cleared to null). */
   onRemove: () => void;
   /** Reports whether the displayed cron is one the backend scheduler accepts. */
@@ -40,7 +60,9 @@ export function ScheduleEditor({
   cron,
   timezone,
   canEdit,
+  scheduleKind,
   onChange,
+  onKindChange,
   onRemove,
   onValidityChange,
   actions,
@@ -81,6 +103,27 @@ export function ScheduleEditor({
         onValidityChange={onValidityChange}
         canEdit={canEdit}
       />
+
+      <div className="space-y-2">
+        <Label htmlFor="schedule-kind">{t("schedule.kindLabel")}</Label>
+        <Select
+          value={scheduleKind}
+          onValueChange={(value) => onKindChange(value as ScheduleKind)}
+          disabled={!canEdit}
+        >
+          <SelectTrigger id="schedule-kind" className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SCHEDULE_KIND_ORDER.map((kind) => (
+              <SelectItem key={kind} value={kind}>
+                {t(`schedule.kindOption.${kind}`)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">{t("schedule.kindHelp")}</p>
+      </div>
 
       <div className="flex flex-wrap items-center gap-2">
         {canEdit && (

@@ -17,6 +17,8 @@ from .registry_models import AppliedRule as AppliedRuleDomain
 from .registry_models import ColumnMappingGroup
 from .registry_models import MonitoredTable as MonitoredTableDomain
 from .registry_models import MonitoredTableStatus as MonitoredTableStatusDomain
+from .registry_models import ScheduleKind as RegistryScheduleKind
+from .registry_models import SCHEDULE_KIND_DEFAULT as REGISTRY_SCHEDULE_KIND_DEFAULT
 from .registry_models import MonitoredTableVersion as MonitoredTableVersionDomain
 from .registry_models import RuleSlot as RegistryRuleSlot
 from .registry_models import RunSetSource as RegistryRunSetSource
@@ -514,6 +516,10 @@ class UpdateMonitoredTableScheduleIn(BaseModel):
 
     schedule_cron: str | None = Field(default=None, description="5-field POSIX cron; None clears the schedule")
     schedule_tz: str | None = Field(default=None, description="IANA zone the cron is evaluated in; None = UTC")
+    schedule_kind: RegistryScheduleKind = Field(
+        default=REGISTRY_SCHEDULE_KIND_DEFAULT,
+        description="What the scheduled run does: profiling only, DQ only, or both (default both)",
+    )
 
 
 class BulkRegisterMonitoredTablesIn(BaseModel):
@@ -662,6 +668,10 @@ class MonitoredTableOut(BaseModel):
     version: int = Field(default=0, description="0 = never approved; bumped on each table approval")
     schedule_cron: str | None = Field(default=None, description="5-field POSIX cron; None = not scheduled")
     schedule_tz: str | None = Field(default=None, description="IANA zone the cron runs in; None = UTC")
+    schedule_kind: RegistryScheduleKind = Field(
+        default=REGISTRY_SCHEDULE_KIND_DEFAULT,
+        description="What the scheduled run does: profiling only, DQ only, or both (default both)",
+    )
     last_profiled_at: str | None = None
     last_run_at: str | None = Field(
         default=None,
@@ -683,6 +693,7 @@ class MonitoredTableOut(BaseModel):
             version=table.version,
             schedule_cron=table.schedule_cron,
             schedule_tz=table.schedule_tz,
+            schedule_kind=table.schedule_kind,
             last_profiled_at=table.last_profiled_at.isoformat() if table.last_profiled_at else None,
             last_run_at=table.last_run_at.isoformat() if table.last_run_at else None,
             created_by=table.created_by,
@@ -1177,6 +1188,7 @@ class UpdateDataProductIn(BaseModel):
     steward: str | None = None
     schedule_cron: str | None = None
     schedule_tz: str | None = None
+    schedule_kind: RegistryScheduleKind | None = None
 
 
 class AddDataProductMemberIn(BaseModel):
@@ -1249,6 +1261,7 @@ class DataProductOut(BaseModel):
     steward: str | None = None
     schedule_cron: str | None = None
     schedule_tz: str | None = None
+    schedule_kind: RegistryScheduleKind = REGISTRY_SCHEDULE_KIND_DEFAULT
     status: RegistryDataProductStatus
     version: int
     display_status: str = Field(
@@ -1280,6 +1293,7 @@ class DataProductOut(BaseModel):
             steward=product.steward,
             schedule_cron=product.schedule_cron,
             schedule_tz=product.schedule_tz,
+            schedule_kind=product.schedule_kind,
             status=product.status,
             version=product.version,
             display_status=data_product_display_status(product),

@@ -1,4 +1,13 @@
 {
+  "schedule": {
+    "kindLabel": "What this schedule runs",
+    "kindHelp": "Choose whether each scheduled run profiles the data, runs data quality checks, or both.",
+    "kindOption": {
+      "profiling_and_dq": "Profiling + data quality",
+      "profiling_only": "Profiling only",
+      "dq_only": "Data quality only"
+    }
+  },
   "common": {
     "loading": "Loading...",
     "tryAgain": "Try Again",

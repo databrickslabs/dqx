@@ -28,10 +28,12 @@ from typing import Any, cast, get_args
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_models import (
+    SCHEDULE_KIND_DEFAULT,
     AppliedRule,
     ColumnMappingGroup,
     MonitoredTable,
     MonitoredTableStatus,
+    ScheduleKind,
     get_rule_dimension,
     get_rule_name,
     get_rule_severity,
@@ -148,7 +150,10 @@ class MonitoredTableService:
             f"{last_profiled_at} AS last_profiled_at, "
             f"{last_run_at} AS last_run_at, "
             f"{prefix}created_by, {created_at} AS created_at, "
-            f"{prefix}updated_by, {updated_at} AS updated_at"
+            f"{prefix}updated_by, {updated_at} AS updated_at, "
+            # schedule_kind (B2-52) appended last so existing positional
+            # indices in ``_row_to_table`` stay stable (row[13]).
+            f"{prefix}schedule_kind"
         )
 
     def _build_applied_select_cols(self) -> str:
@@ -325,7 +330,9 @@ class MonitoredTableService:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY mt.updated_at DESC LIMIT 2000"
         rows = self._sql.query(sql)
-        tables = [(self._row_to_table(row), parse_cached_score(row[13], row[14], row[15], row[16])) for row in rows]
+        # schedule_kind (B2-52) is selected at index 13, so the score-cache
+        # LEFT-JOIN columns follow at 14..17.
+        tables = [(self._row_to_table(row), parse_cached_score(row[14], row[15], row[16], row[17])) for row in rows]
         if catalog:
             tables = [(t, s) for t, s in tables if self._fqn_part(t.table_fqn, 0) == catalog]
         if schema:
@@ -687,6 +694,7 @@ class MonitoredTableService:
         schedule_cron: str | None,
         schedule_tz: str | None,
         user_email: str,
+        schedule_kind: ScheduleKind = SCHEDULE_KIND_DEFAULT,
     ) -> MonitoredTable:
         """Set (or clear) the binding's run schedule (P21 item 14).
 
@@ -708,22 +716,26 @@ class MonitoredTableService:
             raise RuntimeError(f"Monitored table not found: {binding_id}")
         cron = schedule_cron or None
         tz = schedule_tz if cron is not None else None
+        kind = schedule_kind if schedule_kind in get_args(ScheduleKind) else SCHEDULE_KIND_DEFAULT
         e = escape_sql_string(binding_id)
         self._sql.execute(
             f"UPDATE {self._table} SET schedule_cron = {self._opt_str(cron)}, "
             f"schedule_tz = {self._opt_str(tz)}, "
+            f"schedule_kind = {self._opt_str(kind)}, "
             f"updated_by = {self._opt_str(user_email)}, updated_at = now() "
             f"WHERE binding_id = '{e}'"
         )
         table.schedule_cron = cron
         table.schedule_tz = tz
+        table.schedule_kind = kind
         table.updated_by = user_email
         logger.info(
-            "Updated monitored table %s (binding_id=%s) schedule (cron=%s, tz=%s, by %s)",
+            "Updated monitored table %s (binding_id=%s) schedule (cron=%s, tz=%s, kind=%s, by %s)",
             table.table_fqn,
             binding_id,
             cron,
             tz,
+            kind,
             user_email,
         )
         return table
@@ -899,6 +911,19 @@ class MonitoredTableService:
         return cast(MonitoredTableStatus, value)
 
     @staticmethod
+    def _parse_schedule_kind(value: str | None) -> ScheduleKind:
+        """Narrow a stored ``schedule_kind`` to :data:`ScheduleKind`.
+
+        Legacy rows (converged by migration v14/v18) carry NULL until the
+        service next writes them, and the Delta CHECK permits NULL — so an
+        empty/None/unknown value falls back to the default rather than raising,
+        keeping list reads resilient.
+        """
+        if value in get_args(ScheduleKind):
+            return cast(ScheduleKind, value)
+        return SCHEDULE_KIND_DEFAULT
+
+    @staticmethod
     def _parse_timestamp(value: str | None) -> datetime | None:
         if not value:
             return None
@@ -950,6 +975,7 @@ class MonitoredTableService:
             created_at=self._parse_timestamp(row[10]),
             updated_by=row[11],
             updated_at=self._parse_timestamp(row[12]),
+            schedule_kind=self._parse_schedule_kind(row[13] if len(row) > 13 else None),
         )
 
     def _row_to_applied_rule(self, row: list[str]) -> AppliedRule:

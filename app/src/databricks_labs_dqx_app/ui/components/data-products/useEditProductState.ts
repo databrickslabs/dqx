@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import { DEFAULT_SCHEDULE_KIND, type ScheduleKind } from "@/components/common/ScheduleEditor";
 import {
   useUpdateDataProduct,
   useAddDataProductMember,
@@ -58,6 +59,7 @@ export function useEditProductState(product: DataProductOut) {
   const [steward, setStewardLocal] = useState(product.steward ?? "");
   const [scheduleCron, setScheduleCronLocal] = useState<string | null>(product.schedule_cron ?? null);
   const [scheduleTz, setScheduleTzLocal] = useState<string>(product.schedule_tz ?? "UTC");
+  const [scheduleKind, setScheduleKindLocal] = useState<ScheduleKind>(product.schedule_kind ?? DEFAULT_SCHEDULE_KIND);
   // Set by Task 9's ProductSchedulingTab/SchedulePicker while the raw-cron
   // (custom) editor holds an expression the backend scheduler would reject.
   // Gates the header's Save buttons below so a malformed cron never reaches
@@ -70,6 +72,7 @@ export function useEditProductState(product: DataProductOut) {
     setScheduleCronLocal(cron);
     if (tz) setScheduleTzLocal(tz);
   }, []);
+  const setScheduleKind = useCallback((kind: ScheduleKind) => setScheduleKindLocal(kind), []);
 
   /** Add a member to the buffer. Newly added members carry no id yet and no
    *  counts — those land after save + refetch. */
@@ -139,10 +142,12 @@ export function useEditProductState(product: DataProductOut) {
   const scheduleDirty = useMemo(() => {
     const serverCron = product.schedule_cron ?? null;
     const serverTz = product.schedule_tz ?? "UTC";
+    const serverKind: ScheduleKind = product.schedule_kind ?? DEFAULT_SCHEDULE_KIND;
     if (scheduleCron !== serverCron) return true;
-    if (scheduleCron !== null && scheduleTz !== serverTz) return true;
+    // Timezone + scope-kind only matter while a schedule exists.
+    if (scheduleCron !== null && (scheduleTz !== serverTz || scheduleKind !== serverKind)) return true;
     return false;
-  }, [scheduleCron, scheduleTz, product.schedule_cron, product.schedule_tz]);
+  }, [scheduleCron, scheduleTz, scheduleKind, product.schedule_cron, product.schedule_tz, product.schedule_kind]);
 
   const membersDirty = useMemo(() => {
     const cur = new Set(members.map(memberKey));
@@ -225,6 +230,9 @@ export function useEditProductState(product: DataProductOut) {
     if (scheduleDirty) {
       patch.schedule_cron = scheduleCron;
       patch.schedule_tz = scheduleCron !== null ? scheduleTz : (product.schedule_tz ?? "UTC");
+      // Only send the scope kind while a schedule exists; clearing the cron
+      // leaves the stored kind untouched (the backend never nulls it).
+      if (scheduleCron !== null) patch.schedule_kind = scheduleKind;
       patchNeeded = true;
     }
 
@@ -261,6 +269,7 @@ export function useEditProductState(product: DataProductOut) {
     stewardDirty,
     scheduleCron,
     scheduleTz,
+    scheduleKind,
     scheduleDirty,
     members,
     serverMemberKeys,
@@ -334,6 +343,8 @@ export function useEditProductState(product: DataProductOut) {
     scheduleCron,
     scheduleTz,
     setSchedule,
+    scheduleKind,
+    setScheduleKind,
     scheduleCronInvalid,
     setScheduleCronInvalid,
 

@@ -1,4 +1,13 @@
 {
+  "schedule": {
+    "kindLabel": "Qué ejecuta esta programación",
+    "kindHelp": "Elige si cada ejecución programada perfila los datos, ejecuta las comprobaciones de calidad de datos o ambas.",
+    "kindOption": {
+      "profiling_and_dq": "Perfilado + calidad de datos",
+      "profiling_only": "Solo perfilado",
+      "dq_only": "Solo calidad de datos"
+    }
+  },
   "common": {
     "loading": "Cargando...",
     "tryAgain": "Reintentar",

@@ -43,15 +43,17 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast, get_args
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_models import (
+    SCHEDULE_KIND_DEFAULT,
     DataProduct,
     DataProductMember,
     MonitoredTable,
     RunSetSource,
     RunSetTrigger,
+    ScheduleKind,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
@@ -296,10 +298,11 @@ class DataProductService:
         )
         self._sql.execute(
             f"INSERT INTO {self._products_table} "
-            "(product_id, name, description, steward, schedule_cron, schedule_tz, status, version, "
+            "(product_id, name, description, steward, schedule_cron, schedule_tz, schedule_kind, status, version, "
             "created_by, created_at, updated_by, updated_at) VALUES ("
             f"'{escape_sql_string(product.product_id)}', '{escape_sql_string(product.name)}', "
             f"{self._opt_str(product.description)}, {self._opt_str(product.steward)}, NULL, NULL, "
+            f"{self._opt_str(product.schedule_kind)}, "
             f"'{product.status}', 0, {self._opt_str(created_by)}, now(), {self._opt_str(created_by)}, now())"
         )
         logger.info("Created data product %s (product_id=%s)", name, product.product_id)
@@ -335,10 +338,19 @@ class DataProductService:
         for col in _UPDATABLE_FIELDS:
             if col in updates:
                 set_clauses.append(f"{col} = {self._opt_str(updates[col])}")
+        # schedule_kind (B2-52) is handled separately from _UPDATABLE_FIELDS
+        # because its column is NOT NULL on Postgres: only a concrete, valid
+        # kind is ever written, so an omitted/None value leaves the stored
+        # value untouched rather than violating the constraint.
+        apply_kind = updates.get("schedule_kind") in get_args(ScheduleKind)
+        if apply_kind:
+            set_clauses.append(f"schedule_kind = {self._opt_str(updates['schedule_kind'])}")
         e = escape_sql_string(product_id)
         self._sql.execute(f"UPDATE {self._products_table} SET {', '.join(set_clauses)} WHERE product_id = '{e}'")
 
         applied = {k: v for k, v in updates.items() if k in _UPDATABLE_FIELDS}
+        if apply_kind:
+            applied["schedule_kind"] = updates["schedule_kind"]
         return product.model_copy(
             update={**applied, "status": "draft", "updated_by": updated_by, "updated_at": datetime.now(timezone.utc)}
         )
@@ -659,6 +671,29 @@ class DataProductService:
 
         return DataProductRunResult(run_set_id=run_set_id, submitted=submitted, skipped=skipped)
 
+    def member_table_fqns(self, product_id: str) -> list[str]:
+        """Return the distinct real source table FQNs of a product's members.
+
+        Used by the scheduler's profiling fan-out (B2-52): a Table Space
+        profiling run profiles each member table. Cross-table synthetic keys
+        (``__sql_check__/<name>``) and members whose binding no longer exists
+        are skipped — there is no physical table to profile. Order follows
+        the members list; duplicates are collapsed.
+        """
+        member_rows = self._fetch_members(product_id)
+        table_map = self._table_summary_map()
+        seen: set[str] = set()
+        fqns: list[str] = []
+        for row in member_rows:
+            summary = table_map.get(row.binding_id)
+            if summary is None:
+                continue
+            fqn = summary.table.table_fqn
+            if fqn and fqn not in seen and not fqn.startswith("__sql_check__/"):
+                seen.add(fqn)
+                fqns.append(fqn)
+        return fqns
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -816,7 +851,10 @@ class DataProductService:
             f"{prefix}product_id, {prefix}name, {prefix}description, {prefix}steward, "
             f"{prefix}schedule_cron, {prefix}schedule_tz, {prefix}status, {prefix}version, "
             f"{prefix}created_by, {created_at} AS created_at, "
-            f"{prefix}updated_by, {updated_at} AS updated_at"
+            f"{prefix}updated_by, {updated_at} AS updated_at, "
+            # schedule_kind (B2-52) appended last so the score-join columns keep
+            # their relative offset (score cols follow at +1..+4).
+            f"{prefix}schedule_kind"
         )
 
     def _require_approved_binding(self, binding_id: str) -> MonitoredTable:
@@ -876,12 +914,12 @@ class DataProductService:
         if not rows:
             return None
         row = rows[0]
-        return self._row_to_product(row), parse_cached_score(row[12], row[13], row[14], row[15])
+        return self._row_to_product(row), parse_cached_score(row[13], row[14], row[15], row[16])
 
     def _fetch_products_with_scores(self) -> list[tuple[DataProduct, CachedScore]]:
         sql = f"{self._score_joined_select()} ORDER BY p.updated_at DESC"  # noqa: S608
         rows = self._sql.query(sql)
-        return [(self._row_to_product(row), parse_cached_score(row[12], row[13], row[14], row[15])) for row in rows]
+        return [(self._row_to_product(row), parse_cached_score(row[13], row[14], row[15], row[16])) for row in rows]
 
     def _row_to_product(self, row: list[str]) -> DataProduct:
         return DataProduct(
@@ -897,6 +935,11 @@ class DataProductService:
             created_at=self._parse_timestamp(row[9]),
             updated_by=row[10],
             updated_at=self._parse_timestamp(row[11]),
+            schedule_kind=(
+                cast(ScheduleKind, row[12])
+                if len(row) > 12 and row[12] in get_args(ScheduleKind)
+                else SCHEDULE_KIND_DEFAULT
+            ),
         )
 
     @staticmethod

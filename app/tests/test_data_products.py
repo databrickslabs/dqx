@@ -66,15 +66,17 @@ def _product_row(
     schedule_tz: str | None = None,
     status: str = "draft",
     version: str = "0",
+    schedule_kind: str | None = "profiling_and_dq",
     score: str | None = None,
     failed_tests: str | None = None,
     total_tests: str | None = None,
     score_computed_at: str | None = None,
 ) -> list[str | None]:
-    # The trailing 4 cells are the dq_score_cache LEFT-JOIN columns the
-    # list/get read paths select (P3.4) — all None when the product has
-    # never been scored. The other read paths select only the first 12
-    # columns; the extra cells are ignored by _row_to_product.
+    # ``schedule_kind`` (B2-52) is selected last among the base columns
+    # (index 12); the trailing 4 cells are the dq_score_cache LEFT-JOIN
+    # columns the list/get read paths select (P3.4) — all None when the
+    # product has never been scored. The non-score read paths select only
+    # the first 13 columns; the extra cells are ignored by _row_to_product.
     return [
         product_id,
         name,
@@ -88,6 +90,7 @@ def _product_row(
         "2026-07-07T00:00:00",
         "alice@x",
         "2026-07-07T00:00:00",
+        schedule_kind,
         score,
         failed_tests,
         total_tests,
@@ -498,6 +501,10 @@ class TestCreate:
         insert_sql = sql.execute.call_args[0][0]
         assert f"INSERT INTO {_PRODUCTS}" in insert_sql
         assert "'Orders'" in insert_sql
+        # schedule_kind (B2-52) defaults to both and is persisted on create.
+        assert product.schedule_kind == "profiling_and_dq"
+        assert "schedule_kind" in insert_sql
+        assert "'profiling_and_dq'" in insert_sql
 
     def test_create_duplicate_name_raises(self, service, sql):
         sql.query.return_value = [["p-existing"]]
@@ -552,6 +559,43 @@ class TestUpdate:
         service.update("p1", {"schedule_cron": None}, "bob@x")
         update_sql = sql.execute.call_args[0][0]
         assert "schedule_cron = NULL" in update_sql
+
+    def test_update_persists_schedule_kind(self, service, sql):
+        sql.query.side_effect = [[_product_row(product_id="p1")]]
+        updated = service.update("p1", {"schedule_kind": "profiling_only"}, "bob@x")
+        assert updated.schedule_kind == "profiling_only"
+        assert "schedule_kind = 'profiling_only'" in sql.execute.call_args[0][0]
+
+    def test_update_never_writes_null_schedule_kind(self, service, sql):
+        # schedule_kind is NOT NULL on Postgres — an explicit None must be
+        # ignored rather than written as NULL.
+        sql.query.side_effect = [[_product_row(product_id="p1")]]
+        service.update("p1", {"schedule_kind": None}, "bob@x")
+        assert "schedule_kind =" not in sql.execute.call_args[0][0]
+
+
+class TestMemberTableFqns:
+    """B2-52: scheduler profiling fan-out enumerates a product's member tables."""
+
+    def test_lists_distinct_real_fqns(self, service, sql, monitored_tables):
+        sql.query.side_effect = [[_member_row("m1", "b1"), _member_row("m2", "b2")]]
+        monitored_tables.list_monitored_tables.return_value = [
+            _table_summary(binding_id="b1", table_fqn="c.s.t1"),
+            _table_summary(binding_id="b2", table_fqn="c.s.t2"),
+        ]
+        assert service.member_table_fqns("p1") == ["c.s.t1", "c.s.t2"]
+
+    def test_dedupes_and_skips_synthetic_and_missing(self, service, sql, monitored_tables):
+        sql.query.side_effect = [
+            [_member_row("m1", "b1"), _member_row("m2", "b2"), _member_row("m3", "b3"), _member_row("m4", "b-gone")]
+        ]
+        monitored_tables.list_monitored_tables.return_value = [
+            _table_summary(binding_id="b1", table_fqn="c.s.t1"),
+            _table_summary(binding_id="b2", table_fqn="c.s.t1"),  # duplicate FQN collapses
+            _table_summary(binding_id="b3", table_fqn="__sql_check__/x"),  # synthetic — no physical table
+        ]
+        # b-gone has no summary → skipped.
+        assert service.member_table_fqns("p1") == ["c.s.t1"]
 
 
 class TestDelete:
