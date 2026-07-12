@@ -66,9 +66,11 @@ import type { EditProductState } from "@/components/data-products/useEditProduct
 function ReviewPendingChangesButton({
   productId,
   members,
+  editState,
 }: {
   productId: string;
   members: DataProductMemberOut[];
+  editState: EditProductState;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -96,11 +98,16 @@ function ReviewPendingChangesButton({
 
   const handleApprove = (member: DataProductMemberOut) => {
     if (busyBindingId) return;
+    // Captured before the mutation: only suppress the nav guard for the
+    // approve-triggered refetch window when there were no unsaved edits to
+    // begin with, so a genuine unsaved edit still warns (B2-66).
+    const wasClean = !editState.isDirty;
     setBusyBindingId(member.binding_id);
     approveMutation.mutate(
       { bindingId: member.binding_id },
       {
         onSuccess: () => {
+          if (wasClean) editState.markApprovedWhenClean();
           toast.success(t("dataProducts.reviewChangesToastApproved", { table: member.table_fqn }));
           invalidateAfterAction(member.binding_id);
         },
@@ -347,8 +354,12 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   };
 
   const handleApprove = async () => {
+    // See ReviewPendingChangesButton.handleApprove: only bypass the guard for
+    // the post-approve refetch window when nothing was unsaved (B2-66).
+    const wasClean = !editState.isDirty;
     try {
       await approveMut.mutateAsync({ productId: product.product_id });
+      if (wasClean) editState.markApprovedWhenClean();
       toast.success(t("dataProducts.toastApproved"));
       invalidateLifecycle();
     } catch (e) {
@@ -460,7 +471,11 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
         </div>
         <div className="flex gap-2 items-center">
           {canApprove && (
-            <ReviewPendingChangesButton productId={product.product_id} members={editState.members} />
+            <ReviewPendingChangesButton
+              productId={product.product_id}
+              members={editState.members}
+              editState={editState}
+            />
           )}
 
           {canEdit && (

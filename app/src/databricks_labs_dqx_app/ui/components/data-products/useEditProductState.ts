@@ -92,6 +92,19 @@ export function useEditProductState(product: DataProductOut) {
     setMembers((prev) => prev.map((x) => (memberKey(x) === memberKey(m) ? { ...x, pinned_version: version } : x)));
   }, []);
 
+  // Set right after a successful save/submit so the NEXT server refetch is
+  // adopted wholesale into the buffer, overriding the pin-preserving bail
+  // below. Right after a save the buffer *is* the just-persisted state, so
+  // there is no unsaved edit to protect — and the server may have resolved a
+  // value the buffer sent optimistically (most importantly a "follow latest"
+  // `pinned_version: null` that the backend pins to a concrete version when
+  // `default_auto_upgrade` is off). Without adopting the server's resolved
+  // value the buffer clings to its optimistic one and `isDirty` never settles
+  // back to false, leaving the space permanently "dirty" (and the nav guard's
+  // bypass permanently stuck). See B2-66. Consumed (cleared) by the re-seed
+  // effect on the first refetch it sees.
+  const resyncRef = useRef(false);
+
   // Re-seed the buffer from the server after a save/publish refetch, so a
   // just-added member's real rule/check counts populate without a manual
   // refresh. Only adopt when the buffered member SET (keys + pins) already
@@ -99,6 +112,13 @@ export function useEditProductState(product: DataProductOut) {
   useEffect(() => {
     const serverMembers = product.members ?? [];
     setMembers((prev) => {
+      // Post-save resync: adopt the server's resolved member state verbatim
+      // (real ids, server-resolved pins, refreshed counts). Safe because it
+      // only fires on the refetch that immediately follows an explicit save.
+      if (resyncRef.current) {
+        resyncRef.current = false;
+        return serverMembers;
+      }
       if (prev.length !== serverMembers.length) return prev;
       const serverByKey = new Map(serverMembers.map((m) => [memberKey(m), m]));
       for (const m of prev) {
@@ -255,6 +275,7 @@ export function useEditProductState(product: DataProductOut) {
     try {
       await persist();
       bypassGuardRef.current = true;
+      resyncRef.current = true;
       invalidate();
       toast.success(t("dataProducts.toastSavedDraft"));
       return true;
@@ -272,6 +293,7 @@ export function useEditProductState(product: DataProductOut) {
       await persist();
       await submitMut.mutateAsync({ productId: product.product_id });
       bypassGuardRef.current = true;
+      resyncRef.current = true;
       invalidate();
       toast.success(t("dataProducts.toastSubmitted"));
       return true;
@@ -280,6 +302,22 @@ export function useEditProductState(product: DataProductOut) {
       return false;
     }
   }, [persist, submitMut, product.product_id, invalidate, t]);
+
+  // Called by the approve handlers (the space-level approve banner AND the
+  // member-level review popover) after a successful approval — but ONLY when
+  // the buffer was clean beforehand (the caller checks `isDirty`). Approval
+  // refetches the product; between the mutation resolving and that refetch
+  // settling, the buffer can momentarily disagree with the still-stale query
+  // data and trip a spurious "unsaved changes" guard (the same window B10 fixed
+  // for the save path). Engaging the bypass suppresses that, and the resync
+  // adopts the refreshed server truth so `isDirty` settles cleanly afterwards.
+  // Both are safe precisely because the caller only invokes this when there was
+  // nothing unsaved to lose — a genuine unsaved edit takes the `isDirty` branch
+  // and never calls this, so the guard still fires for it. (B2-66)
+  const markApprovedWhenClean = useCallback(() => {
+    bypassGuardRef.current = true;
+    resyncRef.current = true;
+  }, []);
 
   // A save touches several endpoints; treat any in flight as "save pending".
   const savePending = updateMut.isPending || addMut.isPending || removeMut.isPending;
@@ -307,6 +345,7 @@ export function useEditProductState(product: DataProductOut) {
     isDirty,
     canSave,
     bypassGuardRef,
+    markApprovedWhenClean,
     handleSaveDraft,
     handleSubmit,
     savePending,
