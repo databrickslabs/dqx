@@ -5,6 +5,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { AlertCircle, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { FadeIn } from "@/components/anim/FadeIn";
 import { useGetRuleResults, useGetRuleScoreSuspense } from "@/lib/api";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ruleResultsState } from "@/lib/results-display";
@@ -87,7 +88,9 @@ function RuleResultsContent({ ruleId }: { ruleId: string }) {
   }
 
   return (
-    <div className="max-w-5xl">
+    // B2-9: results-page entrance animation (see BindingResultsTab) — matches
+    // the RR/MT/TS overview feel when the Results tab is opened.
+    <FadeIn className="max-w-5xl">
       <MultiTableResultsSection
         useEntityResults={useEntityResults}
         // Counts the viewer-ACCESSIBLE tables (the composition passes the
@@ -102,7 +105,7 @@ function RuleResultsContent({ ruleId }: { ruleId: string }) {
         // not a coherent cross-table universe for a single rule.
         hideRunMode
       />
-    </div>
+    </FadeIn>
   );
 }
 

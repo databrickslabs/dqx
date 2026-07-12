@@ -7,6 +7,7 @@ import { ChevronDown, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { FadeIn } from "@/components/anim/FadeIn";
 import { cn } from "@/lib/utils";
 import {
   useGetTableResults,
@@ -217,7 +218,10 @@ export function BindingResultsTab({
       contextKind="table"
       contextSubject={tableFqn}
     >
-      <div className="space-y-6 pt-4 max-w-5xl">
+      {/* B2-9: results-page entrance animation. The tab body remounts on tab
+          switch (inactive tabs unmount), so this fades the Results tab in each
+          time it is opened, matching the RR/MT/TS overview feel. */}
+      <FadeIn className="space-y-6 pt-4 max-w-5xl">
         <QueryErrorResetBoundary>
           {({ reset }) => (
             <ErrorBoundary
@@ -248,7 +252,7 @@ export function BindingResultsTab({
             </ErrorBoundary>
           )}
         </QueryErrorResetBoundary>
-      </div>
+      </FadeIn>
     </GenieChatProvider>
   );
 }

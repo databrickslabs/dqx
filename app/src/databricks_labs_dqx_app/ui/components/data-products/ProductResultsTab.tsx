@@ -3,6 +3,7 @@ import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { FadeIn } from "@/components/anim/FadeIn";
 import {
   useGetProductResults,
   useGetProductResultsRuns,
@@ -88,7 +89,9 @@ export function productRunPickerRuns(runs: Run[]): Run[] {
 export function ProductResultsTab({ productId }: { productId: string }) {
   const { t } = useTranslation();
   return (
-    <div className="space-y-6 pt-4 max-w-5xl">
+    // B2-9: results-page entrance animation (see BindingResultsTab) — the tab
+    // body remounts on tab switch, so the Results tab fades in each time.
+    <FadeIn className="space-y-6 pt-4 max-w-5xl">
       <QueryErrorResetBoundary>
         {({ reset }) => (
           <ErrorBoundary
@@ -106,7 +109,7 @@ export function ProductResultsTab({ productId }: { productId: string }) {
           </ErrorBoundary>
         )}
       </QueryErrorResetBoundary>
-    </div>
+    </FadeIn>
   );
 }
 
