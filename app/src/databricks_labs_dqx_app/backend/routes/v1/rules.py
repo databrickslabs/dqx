@@ -412,6 +412,8 @@ def submit_for_approval(
         return _entry_to_out(entry)
     except HTTPException:
         raise
+    except DraftRunRequiredError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
