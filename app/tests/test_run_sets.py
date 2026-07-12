@@ -214,3 +214,21 @@ class TestLatestCreatedAtByProduct:
     def test_empty_input_short_circuits_without_sql(self, service, oltp_sql):
         assert service.latest_created_at_by_product([]) == {}
         oltp_sql.query.assert_not_called()
+
+
+class TestRunSetIdsByRunId:
+    def test_maps_run_ids_to_their_run_set_ids(self, service, oltp_sql):
+        oltp_sql.query.return_value = [("r1", "set1"), ("r2", "set1"), ("r3", "set2")]
+        result = service.run_set_ids_by_run_id(["r1", "r2", "r3"])
+        assert result == {"r1": "set1", "r2": "set1", "r3": "set2"}
+        sql = oltp_sql.query.call_args[0][0]
+        assert f"FROM {_MEMBERS}" in sql
+        assert "'r1'" in sql and "'r2'" in sql and "'r3'" in sql
+
+    def test_empty_input_short_circuits_without_query(self, service, oltp_sql):
+        assert service.run_set_ids_by_run_id([]) == {}
+        oltp_sql.query.assert_not_called()
+
+    def test_drops_rows_missing_either_key(self, service, oltp_sql):
+        oltp_sql.query.return_value = [("r1", "set1"), (None, "set2"), ("r3", None)]
+        assert service.run_set_ids_by_run_id(["r1"]) == {"r1": "set1"}

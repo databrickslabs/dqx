@@ -1040,3 +1040,134 @@ class TestAnnotateTrendVersions:
         pts = [TrendPointOut(run_date="not-a-date", pass_rate=1.0)]
         annotate_trend_versions(pts, freezes)
         assert pts[0].version is None
+
+
+# ---------------------------------------------------------------------------
+# Run-batch consolidation (B2-18 + B2-5): concurrent member runs of one
+# Table-Space "Run now" collapse onto a single batch instant. The batch key
+# is COALESCE(run_set_id, run_id); the batch instant is the batch's last
+# run_date (MAX run_time). Only the by_table axis consolidates (dqlake).
+# ---------------------------------------------------------------------------
+
+
+class TestBatchConsolidation:
+    A = "main.sales.orders"
+    B = "main.sales.customers"
+
+    def test_trend_by_table_collapses_two_concurrent_members_to_one_instant(self):
+        # Two member tables ran in one batch (shared run set) but landed at
+        # DISTINCT run_times: their markers must share the batch instant
+        # (the batch's MAX run_time) so the trend tooltip lists both (B2-5).
+        rows = [
+            make_row(fqn=self.A, run_id="ra", run_date="2026-07-01 10:00:00", failed=0, total=100),
+            make_row(fqn=self.B, run_id="rb", run_date="2026-07-01 10:05:00", failed=10, total=100),
+        ]
+        out = compute_entity_results(
+            rows,
+            ResultFacets(),
+            table_axis="by_table",
+            run_set_by_run_id={"ra": "set1", "rb": "set1"},
+            asof_rows=rows,
+        )
+        instants = {p.run_date for p in out.trend_by_table}
+        assert instants == {"2026-07-01 10:05:00"}  # single batch instant = MAX(run_time)
+        assert {p.series for p in out.trend_by_table} == {self.A, self.B}
+
+    def test_coalesce_fallback_keeps_unsetted_runs_on_their_own_instant(self):
+        # No run-set membership -> COALESCE(run_set_id, run_id) degenerates to
+        # the bare run_id, so each run stays its own batch (unconsolidated).
+        rows = [
+            make_row(fqn=self.A, run_id="ra", run_date="2026-07-01 10:00:00"),
+            make_row(fqn=self.B, run_id="rb", run_date="2026-07-01 10:05:00"),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table", asof_rows=rows)
+        assert {p.run_date for p in out.trend_by_table} == {
+            "2026-07-01 10:00:00",
+            "2026-07-01 10:05:00",
+        }
+
+    def test_by_table_snapshot_uses_batch_instant_for_latest(self):
+        # Table A's latest run and table B's only run share one batch; an
+        # earlier A run must be excluded from the by_table snapshot (each
+        # table's latest run WITHIN the latest batch).
+        rows = [
+            make_row(fqn=self.A, run_id="ra0", run_date="2026-07-01 09:00:00", failed=99, total=100),
+            make_row(fqn=self.A, run_id="ra1", run_date="2026-07-02 10:00:00", failed=0, total=100),
+            make_row(fqn=self.B, run_id="rb1", run_date="2026-07-02 10:05:00", failed=10, total=100),
+        ]
+        out = compute_entity_results(
+            rows,
+            ResultFacets(),
+            table_axis="by_table",
+            run_set_by_run_id={"ra1": "set2", "rb1": "set2"},
+            asof_rows=rows,
+        )
+        by_table = {g.label: g.pass_rate for g in out.by_table}
+        assert by_table[self.A] == pytest.approx(1.0)  # the batch run, not the 99-fail earlier one
+        assert by_table[self.B] == pytest.approx(1 - 10 / 100)
+
+    def test_single_table_axis_is_unaffected_by_run_sets(self):
+        # The single-table endpoint (table_axis="tables") never consolidates:
+        # a run-set map must not change its `tables` grouping or resurrect an
+        # older run. MT single-table behaviour stays exactly as before.
+        rows = [
+            make_row(run_id="r1", run_date="2026-07-01 00:00:00", failed=5, total=100),
+            make_row(run_id="r2", run_date="2026-07-02 00:00:00", failed=10, total=100),
+        ]
+        baseline = compute_entity_results(rows, ResultFacets(), table_axis="tables", asof_rows=rows)
+        with_sets = compute_entity_results(
+            rows,
+            ResultFacets(),
+            table_axis="tables",
+            run_set_by_run_id={"r1": "s1", "r2": "s1"},
+            asof_rows=rows,
+        )
+        assert [t.model_dump() for t in with_sets.tables] == [t.model_dump() for t in baseline.tables]
+        assert with_sets.trend_by_table == baseline.trend_by_table == []
+        assert [p.model_dump() for p in with_sets.trend] == [p.model_dump() for p in baseline.trend]
+
+    def test_as_of_batch_caps_trend_to_chosen_batch_instant(self):
+        # as_of_batch (a run_id) caps the series to batches at/-before that
+        # batch's instant — the newest run is truncated.
+        rows = [
+            make_row(run_id="r1", run_date="2026-07-01 00:00:00", failed=0, total=100),
+            make_row(run_id="r2", run_date="2026-07-02 00:00:00", failed=0, total=100),
+            make_row(run_id="r3", run_date="2026-07-03 00:00:00", failed=0, total=100),
+        ]
+        out = compute_entity_results(
+            rows,
+            ResultFacets(),
+            table_axis="by_table",
+            as_of_batch="r2",
+            asof_rows=rows,
+        )
+        assert {p.run_date for p in out.trend_by_table} == {
+            "2026-07-01 00:00:00",
+            "2026-07-02 00:00:00",
+        }
+        # Overall Average also truncates to the chosen batch.
+        assert {p.run_date for p in out.trend} == {
+            "2026-07-01 00:00:00",
+            "2026-07-02 00:00:00",
+        }
+
+    def test_as_of_batch_resolves_a_member_run_id_to_its_batch(self):
+        # The chosen run_id can be ANY member of the batch; capping uses the
+        # batch instant (its last run_time), not the member's own run_time.
+        rows = [
+            make_row(fqn=self.A, run_id="ra", run_date="2026-07-02 10:00:00", failed=0, total=100),
+            make_row(fqn=self.B, run_id="rb", run_date="2026-07-02 10:05:00", failed=0, total=100),
+            make_row(fqn=self.A, run_id="ra2", run_date="2026-07-03 00:00:00", failed=0, total=100),
+        ]
+        # as_of_batch = "ra" (the EARLIER member); its batch instant is 10:05
+        # (rb), so rb stays in scope even though its own run_time is later.
+        out = compute_entity_results(
+            rows,
+            ResultFacets(),
+            table_axis="by_table",
+            run_set_by_run_id={"ra": "set3", "rb": "set3"},
+            as_of_batch="ra",
+            asof_rows=rows,
+        )
+        assert {p.run_date for p in out.trend_by_table} == {"2026-07-02 10:05:00"}
+        assert {p.series for p in out.trend_by_table} == {self.A, self.B}

@@ -351,24 +351,39 @@ def annotate_trend_versions(
 def _trend_grouped(
     rows: list[CheckResultRow],
     series_of: Callable[[CheckResultRow], str | None],
+    *,
+    instant_of: Callable[[CheckResultRow], str | None] | None = None,
 ) -> list[TrendPointOut]:
-    """Per-instant grouped series: one point per (run_date, series), each
+    """Per-instant grouped series: one point per (instant, series), each
     pooling the rows AT that instant (1 - SUM(failed)/SUM(total)).
+
+    *instant_of* selects each row's x position; it defaults to the row's
+    own ``run_date``. The ``trend_by_table`` caller overrides it with the
+    row's RUN-BATCH instant (see ``compute_entity_results``) so every
+    concurrent member run of one Table-Space "Run now" collapses onto the
+    single batch instant — mirroring dqlake's
+    ``_product_trend_by_table_scores`` (all members share the Average
+    point's x instead of spreading across the time axis). The COALESCE
+    fallback (batch key -> bare run_id for un-setted runs) makes this a
+    no-op for single-table scopes.
 
     Two callers, two row sets:
 
-    - ``trend_by_table`` feeds the RAW per-run rows — each table's dull
-      line is its own runs, no carry-forward (dqlake parity);
+    - ``trend_by_table`` feeds the RAW per-run rows at the BATCH instant —
+      each table's dull line is its own runs, no carry-forward (dqlake
+      parity), consolidated per batch;
     - ``trend_by_dimension`` / ``trend_by_severity`` feed the AS-OF
-      EXPANSION rows, so the same pooling yields dqlake's
-      ``_product_trend_grouped`` semantics (at each instant every member
-      contributes its latest run's rows; the group value is the POOLED
-      rate over the carried rows — NOT the mean the overall Average
-      uses; dqlake's grouped SQL pools, only its Average AVGs).
+      EXPANSION rows at their own ``run_date`` (default *instant_of*), so
+      the same pooling yields dqlake's ``_product_trend_grouped``
+      semantics (at each instant every member contributes its latest
+      run's rows; the group value is the POOLED rate over the carried
+      rows — NOT the mean the overall Average uses; dqlake's grouped SQL
+      pools, only its Average AVGs).
     """
+    instant = instant_of or (lambda row: row.run_date)
     groups: dict[tuple[str | None, str | None], _GroupAcc] = defaultdict(_GroupAcc)
     for row in rows:
-        groups[(row.run_date, series_of(row))].add(row)
+        groups[(instant(row), series_of(row))].add(row)
     return [
         TrendPointOut(
             run_date=run_date,
@@ -430,18 +445,28 @@ def _trend_failures(
     return out
 
 
-def _latest_instant_by_table(rows: list[CheckResultRow]) -> dict[str, str | None]:
-    """Each table's latest run instant (max run_date; None orders first).
+def _latest_instant_by_table(
+    rows: list[CheckResultRow],
+    instant_of: Callable[[CheckResultRow], str | None] | None = None,
+) -> dict[str, str | None]:
+    """Each table's latest run instant (max instant; None orders first).
 
     The Python analogue of dqlake's ``v_table_scores.is_latest_for_table``
     window flag: computed over EVERY run in scope, independent of the
     active facet chips — a facet can hide a latest run's rows but never
     resurrect an older run in its place.
+
+    *instant_of* selects the instant (defaults to the row's ``run_date``);
+    the ``by_table`` breakdown overrides it with the row's RUN-BATCH
+    instant so a batch counts as ONE instant (all concurrent member runs
+    of one Table-Space "Run now" resolve to the same latest instant).
     """
+    instant = instant_of or (lambda row: row.run_date)
     latest: dict[str, str | None] = {}
     for row in rows:
-        if row.table_fqn not in latest or (row.run_date or "") > (latest[row.table_fqn] or ""):
-            latest[row.table_fqn] = row.run_date
+        row_instant = instant(row)
+        if row.table_fqn not in latest or (row_instant or "") > (latest[row.table_fqn] or ""):
+            latest[row.table_fqn] = row_instant
     return latest
 
 
@@ -455,6 +480,8 @@ def compute_entity_results(
     failures_ignore_facets: bool = False,
     binding_ids_by_table: dict[str, str] | None = None,
     asof_rows: list[CheckResultRow] | None = None,
+    run_set_by_run_id: dict[str, str] | None = None,
+    as_of_batch: str | None = None,
 ) -> EntityResultsOut:
     """Assemble the full EntityResultsOut from raw check rows.
 
@@ -483,11 +510,72 @@ def compute_entity_results(
     UI can link each row to its monitored-table page. Tables absent from
     the map keep None. Only the ``by_table`` axis is enriched — the
     single-table endpoint's ``tables`` axis has no linking use case.
+
+    *run_set_by_run_id* (run_id -> run_set_id) is the query-time join of
+    ``dq_run_set_members`` (see ``RunSetService.run_set_ids_by_run_id``).
+    It lets the multi-table axes consolidate CONCURRENT member runs of one
+    Table-Space "Run now" onto a single RUN-BATCH instant: the batch key
+    is ``COALESCE(run_set_id, run_id)`` (dqlake parity), and the batch
+    instant is the batch's LAST ``run_date`` (``MAX(run_time)``). The
+    ``trend_by_table`` markers and the ``by_table`` latest-run selection
+    are keyed on that instant, so every member of a batch shares the
+    Average point's x (fixing the spread-out markers AND the
+    single-member trend tooltip). The COALESCE fallback makes it a no-op
+    for single-table scopes and un-setted runs, so their behaviour is
+    UNCHANGED — the map is None on the single-table endpoint. Only the
+    ``by_table`` axis consolidates (mirrors dqlake, whose table reader
+    plots raw run instants).
+
+    *as_of_batch* is a run_id identifying a chosen run batch (any member
+    run of it, as returned in the batch-keyed runs picker). When set, the
+    over-time series and the ``by_table`` snapshot are capped to batches
+    whose instant is at/-before that batch's instant — dqlake's
+    ``as_of_batch`` truncation. None = newest (no cap). An unknown value
+    leaves the scope uncapped (newest) rather than blanking it.
     """
     if axes not in VALID_AXES:
         axes = "all"  # dqlake parity: anything else selects every slice
-    matched = [row for row in rows if row_matches_facets(row, facets)]
-    failure_rows = rows if failures_ignore_facets else matched
+
+    # RUN-BATCH consolidation (dqlake parity). The batch key is
+    # COALESCE(run_set_id, run_id); the batch instant is the batch's last
+    # run_date. Computed over EVERY scope row (facet- and cap-independent,
+    # like dqlake's `batches` CTE), so a hidden facet or an as-of cap never
+    # shifts a batch's instant.
+    run_sets = run_set_by_run_id or {}
+
+    def batch_key_of(row: CheckResultRow) -> str | None:
+        if row.run_id is None:
+            return None
+        return run_sets.get(row.run_id) or row.run_id
+
+    batch_instant: dict[str, str | None] = {}
+    for row in rows:
+        key = batch_key_of(row)
+        if key is None:
+            continue
+        if key not in batch_instant or (row.run_date or "") > (batch_instant[key] or ""):
+            batch_instant[key] = row.run_date
+
+    def instant_of(row: CheckResultRow) -> str | None:
+        key = batch_key_of(row)
+        return (batch_instant.get(key) if key is not None else None) or row.run_date
+
+    # As-of cap: resolve the chosen run_id to its batch instant. Unknown
+    # -> no cap (newest), never an empty scope.
+    cap_instant: str | None = None
+    if as_of_batch is not None:
+        cap_key = run_sets.get(as_of_batch) or as_of_batch
+        cap_instant = batch_instant.get(cap_key)
+
+    def within_cap(row: CheckResultRow) -> bool:
+        if cap_instant is None:
+            return True
+        row_instant = instant_of(row)
+        return row_instant is not None and row_instant <= cap_instant
+
+    capped_rows = [row for row in rows if within_cap(row)]
+    matched = [row for row in capped_rows if row_matches_facets(row, facets)]
+    failure_rows = capped_rows if failures_ignore_facets else matched
 
     result = EntityResultsOut()
     records_by_run = failed_records_by_run or {}
@@ -504,8 +592,11 @@ def compute_entity_results(
         breakdown_rows = matched
         table_box_rows = breakdown_rows
         if table_axis == "by_table":
-            latest = _latest_instant_by_table(rows)
-            breakdown_rows = [row for row in matched if row.run_date == latest.get(row.table_fqn)]
+            # Latest run PER TABLE keyed on the BATCH instant (a batch counts
+            # as ONE instant), computed over the cap-scoped rows so an as-of
+            # selection snapshots each table's latest run at/-before it.
+            latest = _latest_instant_by_table(capped_rows, instant_of)
+            breakdown_rows = [row for row in matched if instant_of(row) == latest.get(row.table_fqn)]
             # The By table box SELF-EXCLUDES the table facet (P7.2): clicking
             # a table row cross-filters every OTHER box, but the box's own
             # rows must not vanish — the selection highlight needs the full
@@ -513,11 +604,11 @@ def compute_entity_results(
             # base-vs-filtered split keeps a clicked row visible in its own
             # box. The other facets still apply to it.
             matched_sans_table = (
-                [row for row in rows if row_matches_facets(row, replace(facets, tables=()))]
+                [row for row in capped_rows if row_matches_facets(row, replace(facets, tables=()))]
                 if facets.tables
                 else matched
             )
-            table_box_rows = [row for row in matched_sans_table if row.run_date == latest.get(row.table_fqn)]
+            table_box_rows = [row for row in matched_sans_table if instant_of(row) == latest.get(row.table_fqn)]
         result.by_dimension = _group_rows(breakdown_rows, lambda row: row.dimension)
         result.by_severity = _group_rows(breakdown_rows, lambda row: row.severity)
         result.by_rule = _by_rule_rows(breakdown_rows)
@@ -549,7 +640,10 @@ def compute_entity_results(
         if asof_rows is None:
             expansion = matched
         else:
-            scope_instants = {row.run_date for row in rows}
+            # The scope's own run instants (facet-independent). Capped to
+            # the as-of batch so the carry-forward Average truncates to the
+            # chosen batch (dqlake's `<=` HAVING on the batches CTE).
+            scope_instants = {row.run_date for row in capped_rows}
             expansion = [
                 row for row in asof_rows if row.run_date in scope_instants and row_matches_facets(row, facets)
             ]
@@ -557,7 +651,11 @@ def compute_entity_results(
         result.trend_by_dimension = _trend_grouped(expansion, lambda row: row.dimension)
         result.trend_by_severity = _trend_grouped(expansion, lambda row: row.severity)
         if table_axis == "by_table":
-            result.trend_by_table = _trend_grouped(matched, lambda row: row.table_fqn)
+            # Per-table markers plotted at their RUN-BATCH instant so every
+            # member of one Table-Space run shares the Average point's x —
+            # this is what makes the trend tooltip list ALL members (B2-5)
+            # and stops the markers spreading across the axis (B2-18).
+            result.trend_by_table = _trend_grouped(matched, lambda row: row.table_fqn, instant_of=instant_of)
         result.trend_counts = _trend_counts(matched)
         result.trend_failures = _trend_failures(failure_rows, records_by_run)
     return result

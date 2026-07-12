@@ -220,6 +220,35 @@ class RunSetService:
                 result[row[0]] = ts
         return result
 
+    def run_set_ids_by_run_id(self, run_ids: list[str]) -> dict[str, str]:
+        """Map each of *run_ids* to its ``run_set_id`` via ``dq_run_set_members``.
+
+        The query-time batch join the DQ-results read path uses to
+        consolidate concurrent member runs of one Table-Space "Run now"
+        onto a single batch (see
+        ``services.dq_results_service.compute_entity_results``). A run not
+        recorded in any run set is simply ABSENT from the result, so the
+        caller's ``COALESCE(run_set_id, run_id)`` falls back to the bare
+        run_id and single-table / un-setted runs stay unconsolidated. When
+        a run_id somehow appears in more than one set the last row wins
+        (run submissions mint exactly one membership per run, so this is
+        defensive only).
+
+        Lives here — not baked into the ``v_dq_check_results`` UC view —
+        because ``dq_run_set_members`` is an OLTP table (Lakebase Postgres,
+        or the Delta OLTP fallback) while the results views are Delta/UC,
+        so a cross-backend SQL JOIN into the view is not possible.
+        """
+        if not run_ids:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(r)}'" for r in run_ids)
+        sql = (
+            f"SELECT run_id, run_set_id FROM {self._members_table} "  # noqa: S608
+            f"WHERE run_id IN ({in_list})"
+        )
+        rows = self._sql.query(sql)
+        return {row[0]: row[1] for row in rows if row[0] and row[1]}
+
     def get(self, run_set_id: str) -> RunSetDetail:
         """Return a run set plus its resolved members.
 

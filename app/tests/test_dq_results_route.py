@@ -34,6 +34,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_monitored_table_service,
     get_obo_ws,
     get_preview_sql_executor,
+    get_run_set_service,
     get_score_cache_service,
     get_sp_sql_executor,
     get_user_catalog_names,
@@ -48,6 +49,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductService,
 )
 from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
+from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableDetail,
     MonitoredTableService,
@@ -138,6 +140,15 @@ def entitlement_mock() -> MagicMock:
     return mock
 
 
+@pytest.fixture
+def run_sets_mock() -> MagicMock:
+    """Run-set service — no run-set membership by default (runs stay
+    unconsolidated: each its own batch via COALESCE)."""
+    mock = create_autospec(RunSetService, instance=True)
+    mock.run_set_ids_by_run_id.return_value = {}
+    return mock
+
+
 USER_EMAIL = "viewer@example.com"
 
 
@@ -152,6 +163,7 @@ def client(
     obo_ws_mock,
     score_cache_mock,
     entitlement_mock,
+    run_sets_mock,
     app_config,
 ) -> TestClient:
     from databricks_labs_dqx_app.backend.routes.v1.dq_results import router
@@ -171,6 +183,7 @@ def client(
     app.dependency_overrides[get_obo_ws] = lambda: obo_ws_mock
     app.dependency_overrides[get_score_cache_service] = lambda: score_cache_mock
     app.dependency_overrides[get_entitlement_service] = lambda: entitlement_mock
+    app.dependency_overrides[get_run_set_service] = lambda: run_sets_mock
     return TestClient(app)
 
 
@@ -645,6 +658,50 @@ class TestProductResults:
         assert body["rows"][0]["run_id"] == "r1"
         stmt = sql_mock.query_dicts.call_args[0][0]
         assert "'main.sales.orders'" in stmt
+
+    def test_product_runs_consolidate_batch_members_to_one_picker_entry(
+        self, client, sql_mock, data_products_mock, run_sets_mock
+    ):
+        # Two member-table runs sharing a run set collapse to ONE picker row
+        # (one product-level batch): representative run_id = the latest member
+        # run, run_ts = the batch instant, pass_rate = equal-weight mean,
+        # counts summed (dqlake product_runs parity).
+        data_products_mock.get.return_value = product_detail(
+            "p1", [("b1", "main.sales.orders"), ("b2", "dev.sales.items")]
+        )
+        sql_dispatch(
+            sql_mock,
+            runs_rows=[
+                runs_row(run_id="r2", run_ts="2026-07-01 10:05:00", pass_rate=0.8, failed=20, total=100),
+                runs_row(run_id="r1", run_ts="2026-07-01 10:00:00", pass_rate=1.0, failed=0, total=100),
+            ],
+        )
+        run_sets_mock.run_set_ids_by_run_id.return_value = {"r1": "s1", "r2": "s1"}
+        body = client.get("/api/v1/dq-results/product/p1/runs").json()
+        assert len(body["rows"]) == 1
+        row = body["rows"][0]
+        assert row["run_id"] == "r2"  # representative = latest member run
+        assert row["run_ts"] == "2026-07-01 10:05:00"  # batch instant (MAX)
+        assert row["pass_rate"] == pytest.approx(0.9)  # equal-weight mean
+        assert row["failed_tests"] == 20
+        assert row["total_tests"] == 200
+
+    def test_product_runs_without_run_sets_stay_one_per_run(
+        self, client, sql_mock, data_products_mock, run_sets_mock
+    ):
+        # No run-set membership -> each run is its own batch (COALESCE), so
+        # the rollup is one picker row per run, unchanged.
+        data_products_mock.get.return_value = product_detail("p1", [("b1", "main.sales.orders")])
+        sql_dispatch(
+            sql_mock,
+            runs_rows=[
+                runs_row(run_id="r2", run_ts="2026-07-02 00:00:00"),
+                runs_row(run_id="r1", run_ts="2026-07-01 00:00:00"),
+            ],
+        )
+        run_sets_mock.run_set_ids_by_run_id.return_value = {}
+        body = client.get("/api/v1/dq-results/product/p1/runs").json()
+        assert [r["run_id"] for r in body["rows"]] == ["r2", "r1"]
 
     def test_product_with_no_accessible_members_yields_empty_runs(
         self, client, sql_mock, data_products_mock

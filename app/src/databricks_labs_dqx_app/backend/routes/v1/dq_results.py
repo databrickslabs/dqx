@@ -45,6 +45,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_monitored_table_service,
     get_obo_ws,
     get_preview_sql_executor,
+    get_run_set_service,
     get_score_cache_service,
     get_sp_sql_executor,
     get_user_catalog_names,
@@ -74,6 +75,7 @@ from databricks_labs_dqx_app.backend.services.dq_results_service import (
 )
 from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
+from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.quarantine_sample_service import (
     QuarantineSampleService,
@@ -327,17 +329,84 @@ def _scope_table_facet(table: list[str] | None, member_fqns: list[str]) -> list[
     return [fqn for fqn in table or () if fqn in members]
 
 
+def _run_set_map(run_sets: RunSetService, run_ids: list[str]) -> dict[str, str]:
+    """Best-effort run_id -> run_set_id join (the batch key for consolidation).
+
+    Degrades to an empty map on any OLTP hiccup — a missing join simply
+    leaves runs unconsolidated (each its own batch via COALESCE), never a
+    500. The run-set tables are OLTP (Lakebase/Delta-fallback) while the
+    results views are Delta/UC, so this is a query-time Python join rather
+    than a view-side one.
+    """
+    if not run_ids:
+        return {}
+    try:
+        return run_sets.run_set_ids_by_run_id(sorted(set(run_ids)))
+    except Exception:
+        logger.warning("Failed to resolve run-set membership; leaving runs unconsolidated", exc_info=True)
+        return {}
+
+
+def _consolidate_runs(rows: list[RunRowOut], run_set_by_run_id: dict[str, str]) -> list[RunRowOut]:
+    """Roll up per-run rows into one row per RUN BATCH, newest first.
+
+    A batch = ``COALESCE(run_set_id, run_id)``: all concurrent member runs
+    of one Table-Space "Run now" collapse to a single picker entry at the
+    batch instant (the batch's last ``run_ts``), with the equal-weight
+    mean member score and summed test counts (dqlake ``product_runs``
+    parity). The batch's REPRESENTATIVE run (the latest member run) is
+    surfaced as ``run_id`` so (a) the picker's selection resolves to that
+    run's batch via ``as_of_batch`` and (b) the review-status card still
+    gets a real run id. Un-setted runs stay one-per-batch (COALESCE), so a
+    single-table runs list is unaffected.
+    """
+    batches: dict[str, list[RunRowOut]] = {}
+    for row in rows:
+        key = (run_set_by_run_id.get(row.run_id or "") or row.run_id) if row.run_id else None
+        batches.setdefault(key or "", []).append(row)
+    out: list[RunRowOut] = []
+    for members in batches.values():
+        # Representative = latest member run (max run_ts; the mv query
+        # already returned rows newest-first, so the first is the latest).
+        latest = max(members, key=lambda m: m.run_ts or "")
+        rates = [m.pass_rate for m in members if m.pass_rate is not None]
+        failed = [m.failed_tests for m in members if m.failed_tests is not None]
+        totals = [m.total_tests for m in members if m.total_tests is not None]
+        out.append(
+            RunRowOut(
+                run_id=latest.run_id,
+                run_ts=latest.run_ts,
+                pass_rate=sum(rates) / len(rates) if rates else None,
+                failed_tests=sum(failed) if failed else None,
+                total_tests=sum(totals) if totals else None,
+                # A batch is 'draft' only if every member is a draft run;
+                # any published member makes it a published batch.
+                run_mode=RUN_MODE_PUBLISHED
+                if any(m.run_mode == RUN_MODE_PUBLISHED for m in members)
+                else next((m.run_mode for m in members if m.run_mode), None),
+            )
+        )
+    out.sort(key=lambda r: r.run_ts or "", reverse=True)
+    return out
+
+
 def _runs_from_metric_view(
     sql: SqlExecutor,
     app_conf: AppConfig,
     table_fqns: list[str],
     include_drafts: bool = False,
+    run_sets: RunSetService | None = None,
 ) -> RunsOut:
     """Per-run rollup from ``mv_dq_scores``, newest first (dqlake RunsOut).
 
     Draft runs are excluded unless *include_drafts*; every row carries its
     ``run_mode`` so the picker can badge drafts when they are included
     (grouping by run_mode is lossless — a run has exactly one mode).
+
+    *run_sets*, when supplied, rolls the per-run rows up into one row per
+    RUN BATCH (the Table-Space runs picker) via a best-effort
+    ``dq_run_set_members`` join over the rows just fetched. None keeps the
+    raw per-run rollup (the single-table / binding runs picker).
     """
     if not table_fqns:
         return RunsOut()
@@ -355,19 +424,21 @@ def _runs_from_metric_view(
         f"ORDER BY run_time DESC LIMIT {_RUNS_LIMIT}"
     )
     rows = sql.query_dicts(stmt)
-    return RunsOut(
-        rows=[
-            RunRowOut(
-                run_id=row.get("run_id"),
-                run_ts=row.get("run_ts"),
-                pass_rate=safe_float(row.get("pass_rate")),
-                failed_tests=safe_int(row.get("failed_tests")),
-                total_tests=safe_int(row.get("total_tests")),
-                run_mode=row.get("run_mode"),
-            )
-            for row in rows
-        ]
-    )
+    run_rows = [
+        RunRowOut(
+            run_id=row.get("run_id"),
+            run_ts=row.get("run_ts"),
+            pass_rate=safe_float(row.get("pass_rate")),
+            failed_tests=safe_int(row.get("failed_tests")),
+            total_tests=safe_int(row.get("total_tests")),
+            run_mode=row.get("run_mode"),
+        )
+        for row in rows
+    ]
+    if run_sets is not None:
+        run_set_by_run_id = _run_set_map(run_sets, [r.run_id for r in run_rows if r.run_id])
+        run_rows = _consolidate_runs(run_rows, run_set_by_run_id)
+    return RunsOut(rows=run_rows)
 
 
 def _label_registry(app_settings: AppSettingsService, key: str) -> list[tuple[str, str, int]]:
@@ -509,6 +580,7 @@ def get_global_results(
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    run_sets: Annotated[RunSetService, Depends(get_run_set_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -517,6 +589,7 @@ def get_global_results(
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
+    as_of_batch: str | None = Query(None),
 ) -> EntityResultsOut:
     """Results over every table tracked in dq_metrics that the caller can access.
 
@@ -526,8 +599,13 @@ def get_global_results(
     the By-table cross-filter: a repeatable list of member FQNs, applied
     app-side like the other four facets (the rows it filters are already
     catalog-gated, so an inaccessible value simply matches nothing).
+
+    Concurrent member runs of one run set are consolidated onto their
+    RUN-BATCH instant (``dq_run_set_members`` join) so the per-table trend
+    markers align; *as_of_batch* caps to a chosen batch's instant.
     """
     _validate_run_id(run_id)
+    _validate_run_id(as_of_batch)
     _validate_table_facet(table)
     try:
         rows = [
@@ -537,6 +615,7 @@ def get_global_results(
         ]
         accessible_fqns = sorted({row.table_fqn for row in rows})
         failed_records = _fetch_failed_records_by_run(sql, app_conf, accessible_fqns)
+        run_set_by_run_id = _run_set_map(run_sets, [row.run_id for row in rows if row.run_id])
         # The as-of expansion feeds the carry-forward trend series; the
         # global scope's table filter is app-side (catalog gate), same as
         # the raw-row fetch above.
@@ -566,6 +645,8 @@ def get_global_results(
         failed_records_by_run=failed_records,
         binding_ids_by_table=binding_ids,
         asof_rows=asof_rows,
+        run_set_by_run_id=run_set_by_run_id,
+        as_of_batch=as_of_batch,
     )
 
 
@@ -586,6 +667,7 @@ def get_rule_results(
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    run_sets: Annotated[RunSetService, Depends(get_run_set_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -594,6 +676,7 @@ def get_rule_results(
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
+    as_of_batch: str | None = Query(None),
 ) -> EntityResultsOut:
     """Results across the rule's applied tables, restricted to that rule's checks.
 
@@ -611,6 +694,7 @@ def get_rule_results(
     rule's failures.
     """
     _validate_run_id(run_id)
+    _validate_run_id(as_of_batch)
     _validate_table_facet(table)
     try:
         applications = apply_rules.list_bindings_for_rule(rule_id)
@@ -636,6 +720,7 @@ def get_rule_results(
             binding_id_by_fqn[fqn] = binding_id
         all_rows = _fetch_check_rows(sql, app_conf, table_fqns, run_id, include_drafts)
         rows: list[CheckResultRow] = [row for row in all_rows if row.rule_id == rule_id]
+        run_set_by_run_id = _run_set_map(run_sets, [row.run_id for row in rows if row.run_id])
         # Rule scoping applies to the as-of expansion the same way: the
         # carried run stays each table's latest run (the expansion's
         # choice), and only its rows attributed to this rule count.
@@ -656,6 +741,8 @@ def get_rule_results(
         table_axis="by_table",
         binding_ids_by_table=binding_id_by_fqn,
         asof_rows=asof_rows,
+        run_set_by_run_id=run_set_by_run_id,
+        as_of_batch=as_of_batch,
     )
 
 
@@ -701,12 +788,19 @@ def get_product_results_runs(
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     data_products: Annotated[DataProductService, Depends(get_data_product_service)],
+    run_sets: Annotated[RunSetService, Depends(get_run_set_service)],
     include_drafts: bool = Query(False),
 ) -> RunsOut:
-    """Run rollups across the product's accessible member tables, newest first."""
+    """Run rollups across the product's accessible member tables, newest first.
+
+    Rolled up per RUN BATCH (``dq_run_set_members`` join): concurrent
+    member runs of one Table-Space "Run now" collapse to a single picker
+    entry, so the picker offers coherent product-level batches rather than
+    per-member-table runs.
+    """
     try:
         fqns, _ = _accessible_member_fqns(data_products, product_id, user_catalogs)
-        return _runs_from_metric_view(sql, app_conf, fqns, include_drafts)
+        return _runs_from_metric_view(sql, app_conf, fqns, include_drafts, run_sets=run_sets)
     except HTTPException:
         raise
     except Exception as exc:
@@ -725,6 +819,7 @@ def get_product_results(
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     data_products: Annotated[DataProductService, Depends(get_data_product_service)],
+    run_sets: Annotated[RunSetService, Depends(get_run_set_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -733,6 +828,7 @@ def get_product_results(
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
+    as_of_batch: str | None = Query(None),
 ) -> EntityResultsOut:
     """Results aggregated over the product's member tables (by_table filled).
 
@@ -740,14 +836,22 @@ def get_product_results(
     Draft runs are excluded unless *include_drafts*. *table* (P7.2) is
     the By-table cross-filter, constrained to the product's accessible
     member set (out-of-scope values are silently dropped).
+
+    Concurrent member runs of one Table-Space "Run now" are consolidated
+    onto a single RUN-BATCH instant (``dq_run_set_members`` join), so the
+    per-table trend markers share the Average point's x and the trend
+    tooltip lists every member. *as_of_batch* (a run_id from the batch-
+    keyed runs picker) caps the series/snapshot to that batch's instant.
     """
     _validate_run_id(run_id)
+    _validate_run_id(as_of_batch)
     _validate_table_facet(table)
     try:
         fqns, binding_ids = _accessible_member_fqns(data_products, product_id, user_catalogs)
         rows = _fetch_check_rows(sql, app_conf, fqns, run_id, include_drafts)
         failed_records = _fetch_failed_records_by_run(sql, app_conf, fqns)
         asof_rows = _fetch_asof_check_rows(sql, app_conf, fqns, run_id, include_drafts) if _wants_trends(axes) else None
+        run_set_by_run_id = _run_set_map(run_sets, [row.run_id for row in rows if row.run_id])
     except HTTPException:
         raise
     except Exception as exc:
@@ -762,6 +866,8 @@ def get_product_results(
         # Member binding ids are already loaded — no extra lookup needed.
         binding_ids_by_table=dict(zip(fqns, binding_ids)),
         asof_rows=asof_rows,
+        run_set_by_run_id=run_set_by_run_id,
+        as_of_batch=as_of_batch,
     )
 
 
