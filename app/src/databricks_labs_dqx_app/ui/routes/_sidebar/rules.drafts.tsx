@@ -579,10 +579,6 @@ function MonitoredTablesApprovalsSection({
       t("rulesDrafts.mtToastFailedReject"),
     );
 
-  // Keep the queue focused: hide the whole section when nothing is pending,
-  // but keep it visible while loading/erroring for context (mirrors TS).
-  if (!isLoading && !error && tables.length === 0) return null;
-
   return (
     <>
       <ApprovalQueueCard
@@ -785,10 +781,6 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
       t("dataProducts.toastRejected"),
       t("dataProducts.toastRejectFailed"),
     );
-
-  // Hide the whole section when there is nothing pending (mirrors the intent of
-  // keeping the queue focused) — but keep it while loading/erroring for context.
-  if (!isLoading && !error && pending.length === 0) return null;
 
   return (
     <>

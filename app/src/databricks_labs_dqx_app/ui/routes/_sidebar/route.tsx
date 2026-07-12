@@ -119,7 +119,7 @@ function Layout() {
                 from the approval queue below (#11). */}
             <hr className="my-2 border-sidebar-border" />
 
-            {/* Review and Approve — approvals for registry rules AND
+            {/* Review & Approve — approvals for registry rules AND
                 per-table applications. Renamed from "Drafts & Review" (#11).
                 Import Rules used to sit just above this item; it now lives in
                 the username dropdown since it's a bulk-registry operation,

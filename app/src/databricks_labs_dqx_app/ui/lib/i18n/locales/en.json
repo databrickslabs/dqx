@@ -67,7 +67,7 @@
     "profileAndGenerate": "Profile & generate",
     "fromContract": "From data contract",
     "schemaValidation": "Schema validation",
-    "reviewAndApprove": "Review and Approve",
+    "reviewAndApprove": "Review & Approve",
     "activeRules": "Active Rules",
     "dataProducts": "Table Spaces",
     "runsHistory": "Runs History",
@@ -747,8 +747,8 @@
     "criticalityError": "error"
   },
   "rulesDrafts": {
-    "breadcrumb": "Drafts & Review",
-    "title": "Drafts & review",
+    "breadcrumb": "Review & Approve",
+    "title": "Review & Approve",
     "subtitle": "Rule sets awaiting review, recently created drafts, and rejected sets.",
     "ruleSets": "Rule sets",
     "rulesCount_one": "{{count}} rule",

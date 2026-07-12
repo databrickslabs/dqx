@@ -747,8 +747,8 @@
     "criticalityError": "errore"
   },
   "rulesDrafts": {
-    "breadcrumb": "Bozze e Revisione",
-    "title": "Bozze e Revisione",
+    "breadcrumb": "Rivedi e Approva",
+    "title": "Rivedi e Approva",
     "subtitle": "Rivedi i set di regole in attesa, approvali o rinvialli per modifiche.",
     "allCatalogs": "Tutti i Cataloghi",
     "allSchemas": "Tutti gli Schemi",

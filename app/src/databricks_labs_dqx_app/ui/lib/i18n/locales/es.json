@@ -747,8 +747,8 @@
     "criticalityError": "error"
   },
   "rulesDrafts": {
-    "breadcrumb": "Borradores y Revisión",
-    "title": "Borradores y Revisión",
+    "breadcrumb": "Revisar y Aprobar",
+    "title": "Revisar y Aprobar",
     "subtitle": "Revisa conjuntos de reglas pendientes, apruébalos o devuélvelos para cambios.",
     "allCatalogs": "Todos los Catálogos",
     "allSchemas": "Todos los Esquemas",

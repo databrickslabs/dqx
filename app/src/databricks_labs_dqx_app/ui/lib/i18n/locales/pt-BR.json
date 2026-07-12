@@ -747,8 +747,8 @@
     "criticalityError": "erro"
   },
   "rulesDrafts": {
-    "breadcrumb": "Rascunhos e Revisão",
-    "title": "Rascunhos e Revisão",
+    "breadcrumb": "Revisar e Aprovar",
+    "title": "Revisar e Aprovar",
     "subtitle": "Revise conjuntos de regras pendentes, aprove-os ou envie de volta para alterações.",
     "allCatalogs": "Todos os Catálogos",
     "allSchemas": "Todos os Esquemas",
