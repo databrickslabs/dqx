@@ -1814,6 +1814,11 @@ export type MonitoredTableOutScheduleTz = string | null;
 
 export type MonitoredTableOutLastProfiledAt = string | null;
 
+/**
+ * Newest terminal validation-run instant for this table (either trigger surface); drives the overview 'Last run' column.
+ */
+export type MonitoredTableOutLastRunAt = string | null;
+
 export type MonitoredTableOutCreatedBy = string | null;
 
 export type MonitoredTableOutCreatedAt = string | null;
@@ -1837,6 +1842,8 @@ export interface MonitoredTableOut {
   /** IANA zone the cron runs in; None = UTC */
   schedule_tz?: MonitoredTableOutScheduleTz;
   last_profiled_at?: MonitoredTableOutLastProfiledAt;
+  /** Newest terminal validation-run instant for this table (either trigger surface); drives the overview 'Last run' column. */
+  last_run_at?: MonitoredTableOutLastRunAt;
   created_by?: MonitoredTableOutCreatedBy;
   created_at?: MonitoredTableOutCreatedAt;
   updated_by?: MonitoredTableOutUpdatedBy;
@@ -17632,6 +17639,13 @@ batched warehouse query over the metric view, published runs only),
 every table space containing any of them, and the global rollup —
 all upserted into ``dq_score_cache`` so the list pages never touch
 the warehouse on load.
+
+The same run-completion moment also refreshes each table's denormalized
+``last_run_at`` / ``last_profiled_at`` (T-perf / B2-15) so the overview
+"Last run" column and table-space last-run stay current without the
+list path ever touching the warehouse. Best-effort: a timestamp-refresh
+failure only leaves those columns stale until the next completion or the
+scheduler's reconcile, so it never fails the score refresh.
 
 SP-side by design: the cache is shared/global and viewer-independent;
 the existing catalog filtering on the list endpoints scopes what each

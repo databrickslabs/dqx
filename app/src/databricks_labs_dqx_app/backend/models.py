@@ -654,6 +654,11 @@ class MonitoredTableOut(BaseModel):
     schedule_cron: str | None = Field(default=None, description="5-field POSIX cron; None = not scheduled")
     schedule_tz: str | None = Field(default=None, description="IANA zone the cron runs in; None = UTC")
     last_profiled_at: str | None = None
+    last_run_at: str | None = Field(
+        default=None,
+        description="Newest terminal validation-run instant for this table (either trigger surface); "
+        "drives the overview 'Last run' column.",
+    )
     created_by: str | None = None
     created_at: str | None = None
     updated_by: str | None = None
@@ -670,6 +675,7 @@ class MonitoredTableOut(BaseModel):
             schedule_cron=table.schedule_cron,
             schedule_tz=table.schedule_tz,
             last_profiled_at=table.last_profiled_at.isoformat() if table.last_profiled_at else None,
+            last_run_at=table.last_run_at.isoformat() if table.last_run_at else None,
             created_by=table.created_by,
             created_at=table.created_at.isoformat() if table.created_at else None,
             updated_by=table.updated_by,

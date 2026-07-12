@@ -345,6 +345,13 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  schedule_cron    TEXT,"
             "  schedule_tz      TEXT,"
             "  last_profiled_at TIMESTAMPTZ,"
+            # Denormalized run/profile pointers written on completion
+            # (write-on-complete, T-perf) so the list/detail read paths never
+            # hit the warehouse. ``last_run_at`` = newest terminal
+            # ``dq_validation_runs`` created_at for this table (either trigger
+            # surface); ``last_profiled_at`` = newest SUCCESS
+            # ``dq_profiling_results`` created_at. Both self-heal on refresh.
+            "  last_run_at      TIMESTAMPTZ,"
             "  created_by       TEXT,"
             "  created_at       TIMESTAMPTZ,"
             "  updated_by       TEXT,"
@@ -880,6 +887,23 @@ PG_MIGRATIONS: list[PgMigration] = [
             # The only read is "last N points for one scope, newest first".
             f"CREATE INDEX IF NOT EXISTS idx_dq_score_history_scope_computed_at "
             f"  ON {_S}.dq_score_history (scope_type, scope_key, computed_at DESC);"
+        ),
+    ),
+    PgMigration(
+        version=13,
+        description="Monitored tables: add last_run_at (write-on-complete list-page pointer, T-perf/B2-15)",
+        sql=(
+            # ----------------------------------------------------------
+            # Monitored-table ``last_run_at`` (T-perf / B2-15). The v1
+            # baseline above now declares the column, so this is a NO-OP
+            # on fresh installs. It exists purely to converge databases
+            # already deployed WITHOUT it (v1 is already recorded in
+            # ``dq_migrations`` there, so editing v1 in place could never
+            # reach them — the same edit-in-place trap v5/v8/v9 corrected
+            # after the fact). ``IF NOT EXISTS`` is native Postgres syntax,
+            # so a re-run against an already-converged DB is a true no-op.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_monitored_tables ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;"
         ),
     ),
 ]

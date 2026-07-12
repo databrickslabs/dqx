@@ -591,6 +591,13 @@ _V2_OLTP_FALLBACK = (
     "  schedule_cron STRING,"
     "  schedule_tz STRING,"
     "  last_profiled_at TIMESTAMP,"
+    # Denormalized last-run/last-profiled pointers written on run completion
+    # (write-on-complete, T-perf): the list/detail read paths read these plain
+    # OLTP columns so a page load never touches the warehouse. ``last_run_at``
+    # is the newest terminal ``dq_validation_runs`` created_at for this table
+    # (either trigger surface); ``last_profiled_at`` the newest SUCCESS
+    # ``dq_profiling_results`` created_at. Both derive-on-complete/self-heal.
+    "  last_run_at TIMESTAMP,"
     "  created_by STRING,"
     "  created_at TIMESTAMP,"
     "  updated_by STRING,"
@@ -1041,6 +1048,24 @@ _V16_SCORE_HISTORY = (
 )
 
 
+# Monitored tables gain a denormalized ``last_run_at`` (T-perf / B2-15). The v2
+# OLTP-fallback baseline above now declares the column, so this is a NO-OP on
+# fresh installs; it exists purely to converge Delta-OLTP databases already
+# deployed WITHOUT it (v2 is already recorded in ``dq_migrations`` there, so
+# editing v2 in place could never reach them — the same edit-in-place trap
+# corrected by v9/v12/v13). One plain ``ADD COLUMN`` (not ``ADD COLUMN IF NOT
+# EXISTS`` — unsupported on some warehouse versions); on an already-converged
+# DB it raises ``COLUMN_ALREADY_EXISTS`` which ``_IDEMPOTENT_ERROR_FRAGMENTS``
+# swallows.
+#
+# Marked ``oltp_fallback=True``: ``dq_monitored_tables`` lives in Lakebase when
+# enabled (the Postgres mirror is v13 in ``backend.migrations.postgres``), so
+# this only runs against Delta when Lakebase is disabled.
+_V17_MONITORED_TABLES_LAST_RUN_AT = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN last_run_at TIMESTAMP"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -1165,6 +1190,13 @@ MIGRATIONS: list[Migration] = [
         description="DQ score history (dq_score_history) — append-only trend points for the "
         "homepage chart (P3.5), used only when Lakebase is disabled",
         sql_template=_V16_SCORE_HISTORY,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=17,
+        description="Monitored tables: add last_run_at (write-on-complete list-page pointer, T-perf/B2-15) "
+        "— used only when Lakebase is disabled",
+        sql_template=_V17_MONITORED_TABLES_LAST_RUN_AT,
         oltp_fallback=True,
     ),
 ]

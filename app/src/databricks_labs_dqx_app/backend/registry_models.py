@@ -225,6 +225,11 @@ class MonitoredTable(BaseModel):
     )
     schedule_tz: str | None = Field(default=None, description="IANA zone the cron is evaluated in; None = UTC")
     last_profiled_at: datetime | None = None
+    last_run_at: datetime | None = Field(
+        default=None,
+        description="Newest terminal validation-run instant for this table (either trigger surface); "
+        "written on run completion so the list/detail read paths never touch the warehouse.",
+    )
     created_by: str | None = None
     created_at: datetime | None = None
     updated_by: str | None = None
