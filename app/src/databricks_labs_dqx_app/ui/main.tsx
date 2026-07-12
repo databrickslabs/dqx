@@ -13,6 +13,7 @@ import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthGuard } from "@/components/AuthGuard";
 import { toast } from "sonner";
+import { errorToast } from "@/lib/toast";
 
 const mutationCache = new MutationCache({
   onSuccess: (_data, _vars, _ctx, mutation) => {
@@ -21,7 +22,9 @@ const mutationCache = new MutationCache({
   },
   onError: (_error, _vars, _ctx, mutation) => {
     const meta = mutation.meta as { errorMessage?: string } | undefined;
-    if (meta?.errorMessage) toast.error(meta.errorMessage);
+    // B2-30: error toasts carry a "Copy" action (copies the message text) in
+    // addition to the global dismiss X on the Toaster.
+    if (meta?.errorMessage) errorToast(meta.errorMessage);
   },
 });
 

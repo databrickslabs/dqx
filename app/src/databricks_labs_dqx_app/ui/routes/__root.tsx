@@ -60,6 +60,7 @@ export const Route = createRootRouteWithContext<{
           footer — the offset, not the corner, is the real fix. */}
       <Toaster
         richColors
+        closeButton
         position="bottom-right"
         offset={{ bottom: "5rem", right: "1rem" }}
         mobileOffset={{ bottom: "5rem", right: "1rem" }}

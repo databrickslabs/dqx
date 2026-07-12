@@ -38,6 +38,8 @@
     "unsavedChanges": "Cambios sin guardar",
     "rowsPerPage": "Filas por página:",
     "close": "Cerrar",
+    "copy": "Copiar",
+    "copied": "Copiado",
     "reset": "Restablecer",
     "editColumns": "Editar columnas",
     "relativeJustNow": "justo ahora",
