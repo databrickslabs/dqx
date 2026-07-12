@@ -44,7 +44,6 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  ClipboardList,
   Clock,
   Columns3,
   Database,
@@ -52,6 +51,7 @@ import {
   History,
   Info,
   KeyRound,
+  LineChart,
   Loader2,
   MessageSquare,
   MoreVertical,
@@ -697,7 +697,7 @@ function MonitoredTableDetailPage() {
               </TabsTrigger>
               <TabGroupDivider />
               <TabsTrigger value="results" className="gap-1.5">
-                <ClipboardList className="h-3.5 w-3.5" />
+                <LineChart className="h-3.5 w-3.5" />
                 {t("monitoredTables.tabResults")}
               </TabsTrigger>
             </TabsList>
