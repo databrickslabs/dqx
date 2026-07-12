@@ -167,7 +167,7 @@ class DataFrameConverter:
         return [ChecksNormalizer.denormalize_value(DataFrameConverter._row_to_check_dict(row)) for row in check_rows]
 
     @staticmethod
-    def _row_to_check_dict(row: Row) -> dict:
+    def _row_to_check_dict(row: Row) -> dict[str, object]:
         """Convert a single checks-table row into a check dictionary.
 
         Decodes JSON-encoded *arguments* and *user_metadata* values with safe_json_load (mirroring the
