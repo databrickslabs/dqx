@@ -481,3 +481,121 @@ class TestColumnResolution:
 
         assert len(result.suggestions) == 1
         assert result.suggestions[0].column_mapping == {"column": "legacy_col"}
+
+
+def _profile_with_rules(summary: dict, generated_rules: list[dict]) -> LatestProfile:
+    return LatestProfile(
+        run_id="run1",
+        source_table_fqn="cat.sch.tbl",
+        summary=summary,
+        generated_rules=generated_rules,
+    )
+
+
+def _generated(function: str, arguments: dict) -> dict:
+    return {"name": "gen", "criticality": "warn", "check": {"function": function, "arguments": arguments}}
+
+
+def _approved_rule(rule_id: str, severity: str = "Medium") -> RegistryRule:
+    definition = RuleDefinition.model_validate(
+        {
+            "body": {"function": "is_not_null", "arguments": {"column": "{{column}}"}},
+            "slots": [{"name": "column", "family": "any", "position": 0, "cardinality": "one"}],
+            "parameters": [],
+        }
+    )
+    return RegistryRule(
+        rule_id=rule_id,
+        mode="dqx_native",
+        status="approved",
+        version=1,
+        definition=definition,
+        user_metadata={"name": f"Rule {rule_id}", "dimension": "Completeness", "severity": severity},
+    )
+
+
+class TestProfilingSuggestions:
+    async def test_profiling_suggestion_merged_in(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile_with_rules(
+            {"amount": {}}, [_generated("is_not_null", {"column": "amount"})]
+        )
+        registry.match_or_create_approved_rule.return_value = (_approved_rule("prof1"), True)
+        # AI path available but retrieves nothing.
+        suggester = _suggester(monitored_tables, registry, apply_rules, FakeRetriever(candidates=[]), _gateway())
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is True
+        assert len(result.suggestions) == 1
+        suggestion = result.suggestions[0]
+        assert suggestion.rule_id == "prof1"
+        assert suggestion.column_mapping == {"column": "amount"}
+        assert suggestion.reason == "Suggested based on DQX profiling"
+
+    async def test_profiling_works_when_ai_unavailable(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile_with_rules(
+            {"amount": {}}, [_generated("is_not_null", {"column": "amount"})]
+        )
+        registry.match_or_create_approved_rule.return_value = (_approved_rule("prof1"), True)
+        gateway = _gateway()
+        gateway.is_enabled.return_value = False  # AI is OFF
+
+        suggester = _suggester(monitored_tables, registry, apply_rules, FakeRetriever(), gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        # Profiler suggestions reach the UI even with no AI infra.
+        assert result.available is True
+        assert len(result.suggestions) == 1
+        assert result.suggestions[0].reason == "Suggested based on DQX profiling"
+
+    async def test_profiling_deduped_against_ai(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile_with_rules(
+            {"amount": {}}, [_generated("is_not_null", {"column": "amount"})]
+        )
+        # AI + profiling resolve to the SAME rule + mapping.
+        registry.get_rule.return_value = _approved_rule("R")
+        registry.match_or_create_approved_rule.return_value = (_approved_rule("R"), False)
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="R", score=0.9)])
+        gateway = _gateway(
+            {"suggestions": [{"rule_id": "R", "mapping": {"column": "amount"}, "explanation": "amount nullable"}]}
+        )
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        # One suggestion; the AI entry (with its explanation) wins the dedup.
+        assert len(result.suggestions) == 1
+        assert result.suggestions[0].explanation == "amount nullable"
+        assert result.suggestions[0].reason == ""
+
+    async def test_profiling_excludes_already_applied(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile_with_rules(
+            {"amount": {}}, [_generated("is_not_null", {"column": "amount"})]
+        )
+        registry.match_or_create_approved_rule.return_value = (_approved_rule("prof1"), True)
+        apply_rules.list_applied.return_value = [
+            AppliedRule(id="ar1", binding_id="b1", rule_id="prof1", column_mapping=[{"column": "amount"}])
+        ]
+        suggester = _suggester(monitored_tables, registry, apply_rules, FakeRetriever(candidates=[]), _gateway())
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.suggestions == []
+
+    async def test_profiling_skips_when_match_or_create_returns_none(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile_with_rules(
+            {"amount": {}}, [_generated("is_not_null", {"column": "amount"})]
+        )
+        # A non-approved duplicate blocks creation -> (None, False) -> dropped.
+        registry.match_or_create_approved_rule.return_value = (None, False)
+        suggester = _suggester(monitored_tables, registry, apply_rules, FakeRetriever(candidates=[]), _gateway())
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.suggestions == []

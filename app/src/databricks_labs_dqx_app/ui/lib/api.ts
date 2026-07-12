@@ -3382,6 +3382,8 @@ export interface SuggestedRuleMappingOut {
   severity?: SuggestedRuleMappingOutSeverity;
   column_mapping: SuggestedRuleMappingOutColumnMapping;
   explanation?: string;
+  /** Source attribution. Empty for AI-judged suggestions (which carry an 'explanation'); 'Suggested based on DQX profiling' for profiler-derived suggestions. */
+  reason?: string;
 }
 
 export type TableDataOutRowsItem = {[key: string]: string | null};

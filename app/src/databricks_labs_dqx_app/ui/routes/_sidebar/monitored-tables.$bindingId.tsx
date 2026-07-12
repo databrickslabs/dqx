@@ -1823,6 +1823,18 @@ function ApplyRulesTab({
     return m;
   }, [publishedRules]);
 
+  // Profiling-derived suggestions (those carrying a `reason`) may have
+  // auto-created + approved brand-new registry rules server-side. Those
+  // rule_ids won't be in the approved-rules snapshot this tab (and the Suggest
+  // dialog) fetched earlier, so refetch it once such a result arrives — without
+  // it those suggestions would render with a raw rule_id and be dropped on Add
+  // (see `newStagedRow`, which needs the full rule to denormalize).
+  useEffect(() => {
+    if (suggestState?.suggestions.some((s) => s.reason)) {
+      void refetchRegistry();
+    }
+  }, [suggestState, refetchRegistry]);
+
   // Completeness status per rule group — drives the "needs attention"
   // filter and the by-rule/by-column incomplete-mapping indicators.
   const statuses = useMemo(

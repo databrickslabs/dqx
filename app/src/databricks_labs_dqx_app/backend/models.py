@@ -839,6 +839,13 @@ class SuggestedRuleMappingOut(BaseModel):
     severity: str | None = None
     column_mapping: ColumnMappingGroup
     explanation: str = ""
+    reason: str = Field(
+        default="",
+        description=(
+            "Source attribution. Empty for AI-judged suggestions (which carry an 'explanation'); "
+            "'Suggested based on DQX profiling' for profiler-derived suggestions."
+        ),
+    )
 
     @classmethod
     def from_domain(cls, suggestion: RuleSuggestion) -> "SuggestedRuleMappingOut":
@@ -849,6 +856,7 @@ class SuggestedRuleMappingOut(BaseModel):
             severity=suggestion.severity,
             column_mapping=suggestion.column_mapping,
             explanation=suggestion.explanation,
+            reason=suggestion.reason,
         )
 
 
