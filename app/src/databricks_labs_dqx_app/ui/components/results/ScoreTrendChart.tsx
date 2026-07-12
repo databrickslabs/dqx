@@ -239,6 +239,22 @@ export function formatTs(value: string | number): string {
   });
 }
 
+/** Invert a cursor pixel-y within the plot area to a 0–100 percent value,
+ *  clamped to [0, 100]. `plotTop` maps to 100% (top of the plot) and
+ *  `plotBottom` to 0%. Used by the percent-mode 2D box-zoom (B2-17) to turn a
+ *  vertical drag into a y-domain window. A degenerate (non-positive) span
+ *  returns 0. */
+export function percentFromChartY(
+  chartY: number,
+  plotTop: number,
+  plotBottom: number,
+): number {
+  const span = plotBottom - plotTop;
+  if (span <= 0) return 0;
+  const frac = (plotBottom - chartY) / span;
+  return Math.max(0, Math.min(100, frac * 100));
+}
+
 type TooltipPayloadEntry = {
   name?: string | number;
   value?: string | number | null;
@@ -557,43 +573,86 @@ export function ScoreTrendChart({
   }, [points]);
   const hasTimeTicks = timeTicks.length > 1;
 
-  // ── Drag-select-to-zoom (all modes share the numeric time X-axis, so the
-  // same mechanism is sensible for percent single/multi, count and overall
-  // charts). Mouse-down anchors one edge, dragging tracks the other, and
-  // mouse-up commits a [minTs, maxTs] zoom window. A plain click (no drag →
-  // both edges equal) commits nothing, so per-series onClick still works.
+  // Plot geometry, shared by the y-zoom inversion below and the Overall-DQ-score
+  // gradient further down. The chart is a fixed 200px tall with an 8px top
+  // margin and a ~30px x-axis, so the plot area runs from y=PLOT_TOP (the 100%
+  // line) to y=PLOT_BOTTOM (the 0% line) in SVG pixels.
+  const CHART_HEIGHT = 200;
+  const TOP_MARGIN = 8;
+  const XAXIS_HEIGHT = 30;
+  const PLOT_TOP = TOP_MARGIN;
+  const PLOT_BOTTOM = CHART_HEIGHT - XAXIS_HEIGHT;
+
+  // ── Drag-select-to-zoom. All modes share the numeric time X-axis, so a drag
+  // always zooms X. In PERCENT mode the drag box ALSO zooms Y (2D box zoom,
+  // B2-17): the cursor's pixel y is inverted to a 0–100 value against the plot
+  // geometry above. Count mode's y-axis is [0,"auto"] — not invertible at drag
+  // time — so it stays X-only. Mouse-down anchors one corner, dragging tracks
+  // the other, mouse-up commits [minTs,maxTs] (plus [minY,maxY] in percent
+  // mode). A plain click (no drag → edges equal) commits nothing, so per-series
+  // onClick still works. PAN is deferred: recharts has no first-class pan and
+  // faking it (offsetting both domains on drag) is disproportionate here —
+  // reset and re-drag instead.
+  const canYZoom = mode === "percent";
   const [dragStart, setDragStart] = useState<number | null>(null);
   const [dragEnd, setDragEnd] = useState<number | null>(null);
+  const [dragStartY, setDragStartY] = useState<number | null>(null);
+  const [dragEndY, setDragEndY] = useState<number | null>(null);
   const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
+  const [yZoomDomain, setYZoomDomain] = useState<[number, number] | null>(null);
   const dragging = dragStart != null && dragEnd != null && dragStart !== dragEnd;
   const zoomed = zoomDomain != null;
+  const yZoomed = yZoomDomain != null;
 
-  // Recharts passes the chart state as the first mouse-handler arg; only
-  // `activeLabel` (the ts under the cursor) is needed here.
-  type ChartMouseState = { activeLabel?: string | number } | null;
+  // Recharts passes the chart state as the first mouse-handler arg: `activeLabel`
+  // is the ts under the cursor (numeric time axis) and `chartY` is the cursor's
+  // pixel y within the chart, inverted here to a 0–100 percent value.
+  type ChartMouseState = { activeLabel?: string | number; chartY?: number } | null;
   const tsFromState = (s: ChartMouseState): number | null => {
     const v = s?.activeLabel;
     return typeof v === "number" ? v : typeof v === "string" ? Number(v) : null;
+  };
+  const yFromState = (s: ChartMouseState): number | null => {
+    const py = s?.chartY;
+    if (typeof py !== "number") return null;
+    return percentFromChartY(py, PLOT_TOP, PLOT_BOTTOM);
   };
   const handleMouseDown = (s: ChartMouseState) => {
     const ts = tsFromState(s);
     if (ts == null) return;
     setDragStart(ts);
     setDragEnd(null);
+    if (canYZoom) {
+      setDragStartY(yFromState(s));
+      setDragEndY(null);
+    }
   };
   const handleMouseMove = (s: ChartMouseState) => {
     if (dragStart == null) return;
     const ts = tsFromState(s);
     if (ts != null) setDragEnd(ts);
+    if (canYZoom) {
+      const y = yFromState(s);
+      if (y != null) setDragEndY(y);
+    }
   };
   const handleMouseUp = () => {
     if (dragStart != null && dragEnd != null && dragStart !== dragEnd) {
       setZoomDomain([Math.min(dragStart, dragEnd), Math.max(dragStart, dragEnd)]);
+      // Commit the y-window alongside the x-window (2D box) in percent mode.
+      if (canYZoom && dragStartY != null && dragEndY != null && dragStartY !== dragEndY) {
+        setYZoomDomain([Math.min(dragStartY, dragEndY), Math.max(dragStartY, dragEndY)]);
+      }
     }
     setDragStart(null);
     setDragEnd(null);
+    setDragStartY(null);
+    setDragEndY(null);
   };
-  const resetZoom = () => setZoomDomain(null);
+  const resetZoom = () => {
+    setZoomDomain(null);
+    setYZoomDomain(null);
+  };
 
   // Effective X domain + ticks: when zoomed, recompute nice time ticks within
   // the zoom window (clipped to it); otherwise use the full-range niceTimeTicks
@@ -685,12 +744,7 @@ export function ScoreTrendChart({
   // with y coordinates spanning the plot area in SVG pixels — the chart is a
   // fixed 200px tall with an 8px top margin and a ~30px x-axis, so the plot
   // area runs from y=PLOT_TOP (the 100% line, green) to y=PLOT_BOTTOM (the 0%
-  // line, red).
-  const CHART_HEIGHT = 200;
-  const TOP_MARGIN = 8;
-  const XAXIS_HEIGHT = 30;
-  const PLOT_TOP = TOP_MARGIN;
-  const PLOT_BOTTOM = CHART_HEIGHT - XAXIS_HEIGHT;
+  // line, red) — see the plot-geometry constants defined above.
   const scoreGradientId = "score-trend-gradient";
   // Vertical gradient over the plot's y-range: top (100%) green, bottom (0%)
   // red, with a yellow midpoint — the ramp's 1/0.5/0 hues.
@@ -757,7 +811,7 @@ export function ScoreTrendChart({
     ) : (
       <>
       <div className="relative min-w-0 overflow-hidden rounded-md border p-2 [&_.recharts-surface]:outline-none [&_.recharts-wrapper]:outline-none [&_svg]:outline-none [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
-          {zoomed && (
+          {(zoomed || yZoomed) && (
             <button
               type="button"
               onClick={resetZoom}
@@ -774,12 +828,21 @@ export function ScoreTrendChart({
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseUp}
-              style={dragging ? { cursor: "ew-resize", userSelect: "none" } : undefined}
+              style={
+                dragging
+                  ? { cursor: canYZoom ? "crosshair" : "ew-resize", userSelect: "none" }
+                  : undefined
+              }
             >
-              {isOverallScore && (
+              {isOverallScore && !yZoomed && (
                 <defs>
                   {/* userSpaceOnUse + plot-area y coords → the ramp is keyed to
-                      the absolute 0–100 axis, not the line's own extent. */}
+                      the absolute 0–100 axis, not the line's own extent. Under a
+                      y-zoom (B2-17) the axis no longer spans 0–100, so these
+                      pixel-keyed stops would mis-map; the gradient is dropped
+                      then and the line/fill fall back to a flat colour (the dots
+                      stay value-coloured — they key on each point's own score,
+                      not pixels, so they remain correct). */}
                   <linearGradient
                     id={scoreGradientId}
                     gradientUnits="userSpaceOnUse"
@@ -843,7 +906,11 @@ export function ScoreTrendChart({
                 padding={{ left: 16, right: 16 }}
               />
               <YAxis
-                domain={mode === "count" ? [0, "auto"] : [0, 100]}
+                // Controlled y-domain: the committed y-zoom window when set
+                // (percent mode only), else the mode default. allowDataOverflow
+                // clips points outside the zoom window (B2-17).
+                domain={yZoomDomain ?? (mode === "count" ? [0, "auto"] : [0, 100])}
+                allowDataOverflow={yZoomed}
                 tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
                 tickFormatter={
                   mode === "count" ? (v) => `${v}` : (v) => `${v}%`
@@ -994,9 +1061,12 @@ export function ScoreTrendChart({
                       key={name}
                       type={lineType}
                       dataKey={name}
-                      stroke={`url(#${scoreGradientId})`}
+                      // Flat fallback while y-zoomed (the pixel-keyed gradient
+                      // would mis-map — see the guarded <defs> above).
+                      stroke={yZoomed ? "var(--foreground)" : `url(#${scoreGradientId})`}
                       strokeWidth={2}
-                      fill={`url(#${scoreFillGradientId})`}
+                      fill={yZoomed ? "var(--foreground)" : `url(#${scoreFillGradientId})`}
+                      fillOpacity={yZoomed ? 0.06 : undefined}
                       connectNulls
                       dot={scoreDot}
                       activeDot={scoreActiveDot}
@@ -1110,6 +1180,18 @@ export function ScoreTrendChart({
                 <ReferenceArea
                   x1={Math.min(dragStart, dragEnd)}
                   x2={Math.max(dragStart, dragEnd)}
+                  // A 2D rectangle in percent mode (both y edges set); a
+                  // full-height band otherwise (count mode / no y drag).
+                  y1={
+                    canYZoom && dragStartY != null && dragEndY != null
+                      ? Math.min(dragStartY, dragEndY)
+                      : undefined
+                  }
+                  y2={
+                    canYZoom && dragStartY != null && dragEndY != null
+                      ? Math.max(dragStartY, dragEndY)
+                      : undefined
+                  }
                   strokeOpacity={0.3}
                   fill="var(--foreground)"
                   fillOpacity={0.08}

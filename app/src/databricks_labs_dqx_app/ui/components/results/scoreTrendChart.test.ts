@@ -3,6 +3,7 @@ import {
   countSeriesColors,
   COUNT_COLORS,
   niceTimeTicks,
+  percentFromChartY,
   pivot,
   pivotCounts,
   toggleHidden,
@@ -131,5 +132,33 @@ describe("countSeriesColors", () => {
     expect(colors.a).toBe(COUNT_COLORS[0]);
     expect(colors.e).toBe(COUNT_COLORS[4]);
     expect(colors.f).toBe(COUNT_COLORS[0]); // cycles
+  });
+});
+
+describe("percentFromChartY", () => {
+  // The percent-mode 2D box-zoom inverts the cursor pixel-y to a 0–100 value
+  // against the fixed plot geometry (PLOT_TOP=8 maps to 100%, PLOT_BOTTOM=170
+  // to 0%).
+  const TOP = 8;
+  const BOTTOM = 170;
+
+  it("maps the plot-top pixel to 100% and the plot-bottom pixel to 0%", () => {
+    expect(percentFromChartY(TOP, TOP, BOTTOM)).toBe(100);
+    expect(percentFromChartY(BOTTOM, TOP, BOTTOM)).toBe(0);
+  });
+
+  it("maps the mid pixel to ~50%", () => {
+    const mid = (TOP + BOTTOM) / 2;
+    expect(percentFromChartY(mid, TOP, BOTTOM)).toBeCloseTo(50, 5);
+  });
+
+  it("clamps pixels above the plot top / below the plot bottom to 100 / 0", () => {
+    expect(percentFromChartY(TOP - 40, TOP, BOTTOM)).toBe(100);
+    expect(percentFromChartY(BOTTOM + 40, TOP, BOTTOM)).toBe(0);
+  });
+
+  it("returns 0 for a degenerate (non-positive) plot span", () => {
+    expect(percentFromChartY(50, 100, 100)).toBe(0);
+    expect(percentFromChartY(50, 100, 20)).toBe(0);
   });
 });
