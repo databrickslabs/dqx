@@ -16,8 +16,9 @@
 //   member tables and the P3.9 instructions route on that list.
 
 /** What the chat was opened against — drives how suggested questions are
- *  worded and scoped. */
-export type GenieContextKind = "table" | "product";
+ *  worded and scoped. "rule" is the registry-rule results surface (B2-21):
+ *  aggregates for one rule across the applied tables the viewer can see. */
+export type GenieContextKind = "table" | "product" | "rule";
 
 /** Direction of the most recent score move, when the opening context knows it.
  *  Lets the "change since last run" prompt be worded as increase/decrease
@@ -53,6 +54,47 @@ export function buildSuggestedQuestions(
   const changeVerb =
     direction === "up" ? "increase" : direction === "down" ? "decrease" : "change";
   const sinceLastRun = `Why did my DQ score ${changeVerb} since the last run?`;
+
+  if (kind === "rule") {
+    // Rule-scoped: the surface aggregates ONE rule across every applied table
+    // the viewer can see, so questions are worded around "this rule" and its
+    // per-table / per-column spread rather than a single table's health.
+    return [
+      {
+        labelKey: "genie.categoryBasicStats",
+        questions: [
+          `What is this rule's overall pass rate?`,
+          `How many tables is this rule applied to?`,
+          `How many tests has this rule run in the latest run?`,
+          `How many failures does this rule have right now?`,
+        ],
+      },
+      {
+        labelKey: "genie.categoryDrilldown",
+        questions: [
+          `Which tables is this rule failing on most?`,
+          `Which columns does this rule fail on most?`,
+          `Where are this rule's most severe failures right now?`,
+        ],
+      },
+      {
+        labelKey: "genie.categoryTrends",
+        questions: [
+          `How has this rule's pass rate changed over recent runs?`,
+          `How have this rule's failures been changing over time?`,
+          `What is driving the changes in this rule's score over time?`,
+        ],
+      },
+      {
+        labelKey: "genie.categoryDiagnose",
+        questions: [
+          `Why did this rule's pass rate ${changeVerb} since the last run?`,
+          `Which table is hurting this rule's score the most?`,
+          `What is the biggest factor affecting this rule's pass rate?`,
+        ],
+      },
+    ];
+  }
 
   if (kind === "product") {
     return [
@@ -158,6 +200,9 @@ export function buildContextPreamble(
     return tables.length
       ? `(Data product: ${trimmed} — tables: ${tables.join(", ")})`
       : `(Data product: ${trimmed})`;
+  }
+  if (kind === "rule") {
+    return `(Rule: ${trimmed})`;
   }
   return `(Table: ${trimmed})`;
 }

@@ -6,13 +6,13 @@ import {
 } from "./genieSuggestedQuestions";
 
 /** Flatten every question across categories for easy membership checks. */
-function allQuestions(kind: "table" | "product" | undefined) {
+function allQuestions(kind: "table" | "product" | "rule" | undefined) {
   return buildSuggestedQuestions(kind).flatMap((c) => c.questions);
 }
 
 describe("buildSuggestedQuestions", () => {
   it("keeps the four-category structure (label keys, in order)", () => {
-    for (const kind of ["table", "product"] as const) {
+    for (const kind of ["table", "product", "rule"] as const) {
       expect(buildSuggestedQuestions(kind).map((c) => c.labelKey)).toEqual([
         "genie.categoryBasicStats",
         "genie.categoryDrilldown",
@@ -34,6 +34,26 @@ describe("buildSuggestedQuestions", () => {
     for (const q of allQuestions("table")) {
       expect(q).not.toMatch(/this (table|data product)/);
     }
+  });
+
+  it("words rule-scoped questions around 'this rule'", () => {
+    const qs = allQuestions("rule");
+    expect(qs).toContain("What is this rule's overall pass rate?");
+    // Rule questions are about the rule's spread, never a single table's health.
+    for (const q of qs) {
+      expect(q.toLowerCase()).not.toContain("rows that failed");
+    }
+    expect(qs.some((q) => /this rule/.test(q))).toBe(true);
+  });
+
+  it("words the rule change-since-last-run prompt by direction", () => {
+    const prompt = (dir?: "up" | "down") =>
+      buildSuggestedQuestions("rule", dir)
+        .find((c) => c.labelKey === "genie.categoryDiagnose")!
+        .questions[0];
+    expect(prompt()).toBe("Why did this rule's pass rate change since the last run?");
+    expect(prompt("up")).toBe("Why did this rule's pass rate increase since the last run?");
+    expect(prompt("down")).toBe("Why did this rule's pass rate decrease since the last run?");
   });
 
   it("words the change-since-last-run prompt by direction", () => {
@@ -71,6 +91,10 @@ describe("buildContextPreamble", () => {
     expect(buildContextPreamble(undefined, "cat.sch.tbl")).toBe(
       "(Table: cat.sch.tbl)",
     );
+  });
+
+  it("wraps a rule subject", () => {
+    expect(buildContextPreamble("rule", "id_not_null")).toBe("(Rule: id_not_null)");
   });
 
   it("carries the product's member tables (P3.9 instructions route on it)", () => {
