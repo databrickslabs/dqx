@@ -53,6 +53,8 @@ import {
   type RegistryRuleOut,
 } from "@/lib/api";
 import { useLabelDefinitions } from "@/lib/api-custom";
+import { LabelFilter, labelsMatchFilter, type LabelSelection } from "@/components/Labels";
+import { labelToken } from "@/lib/format-utils";
 import { usePermissions } from "@/hooks/use-permissions";
 import { invalidateAfterRegistryRuleApprovalChange } from "@/lib/registry-rule-invalidation";
 import { cn } from "@/lib/utils";
@@ -66,6 +68,7 @@ import {
   RESERVED_SEVERITY_KEY,
   orderSeverityValuesForDisplay,
   getTag,
+  freeTags,
   colorFor,
   ColorDot,
   type LabelColorDefinition,
@@ -126,7 +129,7 @@ function RegistryRulesPage() {
   const [dimensionFilter, setDimensionFilter] = useState<string>(ALL);
   const [severityFilter, setSeverityFilter] = useState<string>(ALL);
   const [stewardFilter, setStewardFilter] = useState<string>(ALL);
-  const [tagFilter, setTagFilter] = useState("");
+  const [labelFilter, setLabelFilter] = useState<LabelSelection>(new Map());
   const [nameSearch, setNameSearch] = useState("");
   const [page, setPage] = useState(1);
 
@@ -141,28 +144,27 @@ function RegistryRulesPage() {
     [labelDefinitions],
   );
 
-  // Steward isn't a label — it's a plain rule field — so the steward facet
-  // is derived from the server-filtered result set below, and filtered
-  // client-side alongside the free-text name search (same as the old
-  // dqx Active Rules list, which filtered client-side over one fetched set).
+  // Only dimension/severity are pushed to the server. Steward, free-text tags
+  // (via the key-first LabelFilter) and the name search are all derived from
+  // and filtered over the server-filtered result set client-side — the same
+  // one-fetch-then-filter approach the old dqx Active Rules list used. Moving
+  // tag filtering client-side (it was previously a single free-text `tag`
+  // server param matching key presence) is what lets the LabelFilter offer
+  // key + value multi-select without a new backend query shape.
   const serverParams = useMemo(
     () => ({
       dimension: dimensionFilter === ALL ? undefined : dimensionFilter,
       severity: severityFilter === ALL ? undefined : severityFilter,
-      tag: tagFilter.trim() || undefined,
     }),
-    [dimensionFilter, severityFilter, tagFilter],
+    [dimensionFilter, severityFilter],
   );
 
-  // Non-suspense on purpose: the `tag` server param is a free-text input, so
-  // a suspense query would re-suspend (flashing the whole page skeleton and
-  // dropping input focus) on every keystroke. The trade-off is that a failed
-  // or still-loading list fetch resolves to `data === undefined` rather than
-  // suspending/throwing — which historically rendered as a misleading empty
-  // "No rules yet" table (P19 bug #3: with a cold cache the empty state
-  // showed for the entire fetch, reading as "my rules are gone").
-  // `isPending` (true only while there is no cached data) renders a skeleton
-  // and `isError` renders the retry UI instead.
+  // Non-suspense on purpose: a failed or still-loading list fetch resolves to
+  // `data === undefined` rather than suspending/throwing — which historically
+  // rendered as a misleading empty "No rules yet" table (P19 bug #3: with a
+  // cold cache the empty state showed for the entire fetch, reading as "my
+  // rules are gone"). `isPending` (true only while there is no cached data)
+  // renders a skeleton and `isError` renders the retry UI instead.
   const { data, isPending, isError, refetch } = useListRegistryRules(serverParams);
   const serverFilteredRules = useMemo(() => data?.data ?? [], [data]);
 
@@ -174,15 +176,34 @@ function RegistryRulesPage() {
     return Array.from(set).sort();
   }, [serverFilteredRules]);
 
+  // Distinct free-text (non-reserved) tags across the server-filtered set,
+  // feeding the key-first LabelFilter. Reserved keys (dimension/severity) are
+  // excluded — they have their own dedicated Select facets above.
+  const availableLabels = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { key: string; value: string }[] = [];
+    for (const r of serverFilteredRules) {
+      for (const [key, value] of Object.entries(freeTags(r))) {
+        const tok = labelToken(key, value);
+        if (!seen.has(tok)) {
+          seen.add(tok);
+          out.push({ key, value });
+        }
+      }
+    }
+    return out;
+  }, [serverFilteredRules]);
+
   const rules = useMemo(() => {
     const q = nameSearch.trim().toLowerCase();
     return serverFilteredRules.filter((r) => {
       if (stewardFilter !== ALL && (r.steward ?? "") !== stewardFilter) return false;
+      if (!labelsMatchFilter(freeTags(r), labelFilter)) return false;
       if (!q) return true;
       const name = getTag(r, RESERVED_NAME_KEY).toLowerCase();
       return name.includes(q) || r.rule_id.toLowerCase().includes(q);
     });
-  }, [serverFilteredRules, stewardFilter, nameSearch]);
+  }, [serverFilteredRules, stewardFilter, labelFilter, nameSearch]);
 
   const [sortKey, setSortKey] = useState<RulesTableSortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -225,7 +246,7 @@ function RegistryRulesPage() {
     dimensionFilter !== ALL ||
     severityFilter !== ALL ||
     stewardFilter !== ALL ||
-    tagFilter.trim() !== "" ||
+    labelFilter.size > 0 ||
     nameSearch.trim() !== "";
 
   const invalidate = useCallback(
@@ -517,10 +538,13 @@ function RegistryRulesPage() {
         emptyText={t("common.noMatches")}
         ariaLabel={t("rulesRegistry.stewardPlaceholder")}
       />
-      <Input
-        placeholder={t("rulesRegistry.tagPlaceholder")}
-        value={tagFilter}
-        onChange={(e) => applyFilter(setTagFilter)(e.target.value)}
+      <LabelFilter
+        available={availableLabels}
+        selected={labelFilter}
+        onChange={(next) => {
+          setLabelFilter(next);
+          setPage(1);
+        }}
         className={FILTER_CLASS}
       />
       {hasActiveFilters && (
@@ -532,7 +556,7 @@ function RegistryRulesPage() {
             setDimensionFilter(ALL);
             setSeverityFilter(ALL);
             setStewardFilter(ALL);
-            setTagFilter("");
+            setLabelFilter(new Map());
             setNameSearch("");
             setPage(1);
           }}
