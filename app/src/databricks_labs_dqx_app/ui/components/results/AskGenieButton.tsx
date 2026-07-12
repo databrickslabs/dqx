@@ -49,7 +49,9 @@ export function GenieChatProvider({
   direction,
   children,
 }: {
-  context?: string;
+  /** Opaque, page-unique conversation scope. REQUIRED so a surface can never
+   *  fall back to a shared thread (hard per-surface scoping — B2-21). */
+  context: string;
   contextKind?: GenieContextKind;
   /** Fully-qualified table or product name injected into sent messages. */
   contextSubject?: string;
@@ -142,7 +144,8 @@ export function AskGenieButton({
   contextTables,
   direction,
 }: {
-  context?: string;
+  /** Opaque, page-unique conversation scope. REQUIRED (see GenieChatProvider). */
+  context: string;
   contextKind?: GenieContextKind;
   contextSubject?: string;
   contextTables?: string[];

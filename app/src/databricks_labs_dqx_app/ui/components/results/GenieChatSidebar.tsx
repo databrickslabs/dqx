@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
@@ -10,6 +10,9 @@ import {
   GripVertical,
   X,
   ExternalLink,
+  History,
+  Trash2,
+  Check,
 } from "lucide-react";
 
 import {
@@ -24,6 +27,11 @@ import {
   CollapsibleTrigger,
   CollapsibleContent,
 } from "@/components/ui/collapsible";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -54,10 +62,14 @@ import {
 } from "./genieSuggestedQuestions";
 import {
   appendMessage,
-  resetConversation,
+  deleteConversation,
+  selectConversation,
   setConversationId,
-  useConversation,
+  startNewConversation,
+  useActiveConversation,
+  useContextConversations,
   type ChatMessage,
+  type Conversation,
 } from "./genieConversationStore";
 import { useGeniePanelWidth } from "./useGeniePanelWidth";
 
@@ -108,6 +120,14 @@ function isSampleDataResult(
 ): boolean {
   if (columns.includes("failing_record")) return true;
   return sql != null && /\bselect\s+\*/i.test(sql);
+}
+
+/** A short human label for a stored thread in the history list: its first
+ *  user question (trimmed), falling back to a generic label for an
+ *  answer-only / empty thread. */
+function conversationLabel(conv: Conversation, fallback: string): string {
+  const firstQuestion = conv.messages.find((m) => m.role === "user")?.text?.trim();
+  return firstQuestion && firstQuestion.length > 0 ? firstQuestion : fallback;
 }
 
 /** The user question a given assistant message is answering — the nearest
@@ -211,8 +231,9 @@ export function GenieChatBody({
   autoAsk,
   scrollEnabled = true,
 }: {
-  /** Opaque scope key — also the per-conversation store key. */
-  context?: string;
+  /** Opaque scope key — also the per-conversation store key. Required so a
+   *  body can never bind to a shared fallback thread (B2-21 Part A). */
+  context: string;
   /** Whether the chat was opened from a table's or a product's results. */
   contextKind?: GenieContextKind;
   /** Concrete subject injected into the message sent to Genie (not shown on
@@ -247,7 +268,7 @@ export function GenieChatBody({
 
   // Messages + conversation_id live in a module-level store keyed by context,
   // so they survive the Sheet (and this body) unmounting on close.
-  const { messages, conversationId } = useConversation(context);
+  const { messages, conversationId } = useActiveConversation(context);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const start = useStartGenieMessage();
@@ -606,7 +627,8 @@ export function GenieChatSidebar({
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  context?: string;
+  /** Opaque, page-unique conversation scope. Required (B2-21 Part A). */
+  context: string;
   contextKind?: GenieContextKind;
   /** Fully-qualified table or product name injected into sent messages. */
   contextSubject?: string;
@@ -615,10 +637,22 @@ export function GenieChatSidebar({
   direction?: ScoreDirection;
   autoAsk?: string | null;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { width, dragging, onPointerDown } = useGeniePanelWidth();
-  const { messages } = useConversation(context);
-  const hasConversation = messages.length > 0;
+  const { conversations, activeId } = useContextConversations(context);
+  const active = conversations.find((c) => c.id === activeId);
+  const hasConversation = (active?.messages.length ?? 0) > 0;
+  // Prior threads for THIS surface only (the store is scoped per context, so a
+  // table's history never surfaces another surface's threads — B2-21 Part B).
+  // Newest activity first; blank threads (no turns yet) are omitted.
+  const history = useMemo(
+    () =>
+      conversations
+        .filter((c) => c.messages.length > 0)
+        .sort((a, b) => b.updatedAt - a.updatedAt),
+    [conversations],
+  );
+  const [historyOpen, setHistoryOpen] = useState(false);
   // Non-suspense: the deep link is best-effort chrome and must not suspend the
   // whole sheet while the space metadata loads.
   const { data: spaceInfo } = useGetGenieSpace<GenieSpaceOut>({
@@ -678,12 +712,80 @@ export function GenieChatSidebar({
                 {t("genie.title")}
               </SheetTitle>
               <div className="flex items-center gap-1">
+                {history.length > 0 && (
+                  <Popover open={historyOpen} onOpenChange={setHistoryOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 gap-1 px-2 text-xs text-muted-foreground"
+                        aria-label={t("genie.history")}
+                        title={t("genie.history")}
+                      >
+                        <History className="h-3.5 w-3.5" />
+                        {t("genie.history")}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-80 p-0">
+                      <p className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
+                        {t("genie.historyHeading")}
+                      </p>
+                      <ul className="max-h-72 overflow-y-auto py-1">
+                        {history.map((conv) => {
+                          const isActive = conv.id === activeId;
+                          return (
+                            <li key={conv.id} className="flex items-stretch">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  selectConversation(context, conv.id);
+                                  setHistoryOpen(false);
+                                }}
+                                className={cn(
+                                  "flex min-w-0 flex-1 flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-muted",
+                                  isActive && "bg-muted/60",
+                                )}
+                              >
+                                <span className="flex w-full items-center gap-1.5">
+                                  {isActive && (
+                                    <Check className="h-3 w-3 shrink-0 text-fuchsia-500" />
+                                  )}
+                                  <span className="min-w-0 flex-1 truncate text-sm">
+                                    {conversationLabel(
+                                      conv,
+                                      t("genie.untitledConversation"),
+                                    )}
+                                  </span>
+                                </span>
+                                <span className="text-[11px] text-muted-foreground">
+                                  {new Date(conv.updatedAt).toLocaleString(
+                                    i18n.language,
+                                    { dateStyle: "medium", timeStyle: "short" },
+                                  )}
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={t("genie.deleteConversation")}
+                                title={t("genie.deleteConversation")}
+                                onClick={() => deleteConversation(context, conv.id)}
+                                className="flex items-center px-2 text-muted-foreground hover:text-destructive"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </PopoverContent>
+                  </Popover>
+                )}
                 {hasConversation && (
                   <Button
                     variant="ghost"
                     size="sm"
                     className="h-7 gap-1 px-2 text-xs text-muted-foreground"
-                    onClick={() => resetConversation(context)}
+                    onClick={() => startNewConversation(context)}
                   >
                     <Plus className="h-3.5 w-3.5" />
                     {t("genie.newConversation")}
