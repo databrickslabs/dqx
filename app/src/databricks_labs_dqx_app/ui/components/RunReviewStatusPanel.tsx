@@ -185,28 +185,30 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
                   key={opt.value}
                   type="button"
                   className={cn(
-                    "flex w-full items-start gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted",
+                    "flex w-full flex-col items-start gap-1 rounded px-2 py-1.5 text-left text-xs hover:bg-muted",
                     opt.value === current.status && "bg-muted",
                   )}
                   disabled={busy}
                   onClick={() => handleSelect(opt.value)}
                 >
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "text-[10px] font-normal mt-0.5 shrink-0",
-                      reviewStatusBadgeClasses(opt.color),
+                  <span className="flex w-full items-center gap-2">
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "text-[10px] font-normal shrink-0",
+                        reviewStatusBadgeClasses(opt.color),
+                      )}
+                    >
+                      {opt.value}
+                    </Badge>
+                    {opt.value === current.status && !current.is_default && (
+                      <Check className="h-3 w-3 ml-auto shrink-0 opacity-70" />
                     )}
-                  >
-                    {opt.value}
-                  </Badge>
+                  </span>
                   {opt.description && (
-                    <span className="text-muted-foreground text-[11px] leading-tight flex-1">
+                    <span className="text-muted-foreground text-[11px] leading-tight">
                       {opt.description}
                     </span>
-                  )}
-                  {opt.value === current.status && !current.is_default && (
-                    <Check className="h-3 w-3 ml-auto self-center opacity-70" />
                   )}
                 </button>
               ))}
@@ -239,11 +241,6 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
           </span>
         )}
 
-        {current.is_default && (
-          <span className="text-[11px] text-muted-foreground italic">
-            {t("runReviewPanel.defaultForUnreviewed")}
-          </span>
-        )}
       </div>
 
       {/* Only surface the audit trail when there's actually something to
