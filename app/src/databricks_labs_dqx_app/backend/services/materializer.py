@@ -565,15 +565,19 @@ class Materializer:
         if not content_changed:
             return existing_status
         if existing_status == "approved":
-            # A pinned application's content only ever changes through a DIRECT
-            # edit (severity override, or a pin bump to a different version),
-            # and a direct edit to an unpinned application (severity override,
-            # or unpinning) leaves the resolved version untouched — both must
-            # always return to review, regardless of the auto-upgrade setting
-            # (pins/edits are exempt from *version* upgrades, not from
-            # re-approval after a deliberate edit). Only a genuine VERSION move
-            # of an unpinned follower is eligible to stay approved, and only
-            # when the admin enabled auto-upgrade.
+            # An approved row whose content changed falls into three cases:
+            #   * Same resolved version (version_changed=False) — e.g. a
+            #     severity override — always returns to review.
+            #   * A pinned row always returns to review: a pin's content only
+            #     changes through a deliberate edit (severity override, or a pin
+            #     bump to a different version), which is exactly what re-approval
+            #     exists to gate.
+            #   * A genuine VERSION move of an unpinned follower is eligible to
+            #     stay approved, but only when the admin enabled auto-upgrade;
+            #     otherwise it returns to review. Unpinning FROM a stale pinned
+            #     version also moves the resolved version, so it lands in this
+            #     branch and is (correctly) treated as a version move rather
+            #     than a same-version edit.
             if pinned or not version_changed:
                 return "pending_approval"
             return "approved" if auto_upgrade else "pending_approval"

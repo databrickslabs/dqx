@@ -1101,7 +1101,9 @@ _DUE_NOW = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 def _prep_profiling_scheduler(svc):
     """Stub the SP view creation + job id so a profiling submit reaches jobs.run_now."""
     svc._job_id = "123"  # ``int(self._job_id)`` runs before jobs.run_now
-    svc._create_view = lambda fqn: f"main.dqx_tmp.tmp_view_{fqn.replace('.', '_')}"  # type: ignore[method-assign]
+    svc._create_view = create_autospec(
+        svc._create_view, side_effect=lambda fqn: f"main.dqx_tmp.tmp_view_{fqn.replace('.', '_')}"
+    )
 
 
 class TestSubmitProfileRun:

@@ -17,6 +17,7 @@ declared slots before it is returned (see :meth:`RuleSuggester._post_process`).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -219,8 +220,12 @@ class RuleSuggester:
 
         # Profiler-derived suggestions are computed first and independently of
         # AI/Vector Search — the profiler already proposed concrete checks, so
-        # they reach the UI even on a deployment with no AI infra.
-        profiling = self._profiling_suggestions(profile, already_applied, user_email)
+        # they reach the UI even on a deployment with no AI infra. This runs
+        # synchronous OLTP SQL (match/create/approve per profiler check), so it
+        # is offloaded to a worker thread to avoid stalling the event loop.
+        profiling = await asyncio.to_thread(
+            self._profiling_suggestions, profile, already_applied, user_email
+        )
 
         ai_available, ai_suggestions, ai_reason = await self._ai_suggestions(
             detail, table_fqn, profile, already_applied, user_email
