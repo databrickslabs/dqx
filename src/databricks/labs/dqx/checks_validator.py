@@ -7,7 +7,6 @@ from typing import Any, get_origin, get_args
 from pydantic import (
     BaseModel,
     ConfigDict,
-    PydanticSchemaGenerationError,
     TypeAdapter,
     ValidationError,
     ValidationInfo,
@@ -22,7 +21,14 @@ from databricks.labs.dqx.rule import Criticality
 logger = logging.getLogger(__name__)
 
 
-@ft.lru_cache(maxsize=None)
+# Bounded caches: *_cached_signature* is called with user-supplied *custom_check_functions* (a
+# fresh closure per notebook/session, potentially capturing large state), so an unbounded cache
+# (*maxsize=None*) would pin every distinct callable for the whole process lifetime and grow the
+# driver's memory monotonically. A bounded LRU keeps the cross-check reuse while capping retention.
+_CACHE_MAXSIZE = 1024
+
+
+@ft.lru_cache(maxsize=_CACHE_MAXSIZE)
 def _cached_signature(func: Callable) -> inspect.Signature:
     """Return the (cached) signature of a check function.
 
@@ -32,7 +38,7 @@ def _cached_signature(func: Callable) -> inspect.Signature:
     return inspect.signature(func)
 
 
-@ft.lru_cache(maxsize=None)
+@ft.lru_cache(maxsize=_CACHE_MAXSIZE)
 def _type_adapter(annotation: Any) -> TypeAdapter[Any]:
     """Build (and cache) a strict *TypeAdapter* for a check-function parameter annotation.
 
@@ -295,8 +301,15 @@ class CheckSpec(BaseModel):
         Delegates runtime type checking to *pydantic.TypeAdapter* in strict mode (no lax coercion,
         so a stringy *"5"* does not pass an *int* parameter) rather than a hand-rolled type walker,
         keeping argument validation consistent with how *CheckSpec* validates its own fields.
-        Annotations pydantic cannot build a schema for are treated as satisfied, mirroring the
-        previous leniency toward unrecognised annotations.
+        Annotations pydantic cannot build a schema for — or that are unhashable and so cannot be
+        cached — are treated as satisfied, mirroring the previous leniency toward unrecognised
+        annotations.
+
+        A *bool* is re-checked against its *int* supertype: strict pydantic rejects a *bool* for an
+        *int* parameter, but the pre-migration *isinstance*-based validator accepted it
+        (*isinstance(True, int)* is True). Re-validating *int(value)* restores that acceptance
+        wherever *int* is valid (e.g. *int* or *int | str*), so a stored check carrying a
+        *true* / *false* literal on an integer parameter still passes the load -> apply round-trip.
 
         Args:
             value: The argument value supplied in the check metadata.
@@ -309,8 +322,21 @@ class CheckSpec(BaseModel):
             return True  # no type hint, assume valid
         try:
             adapter = _type_adapter(expected_type)
-        except (PydanticSchemaGenerationError, SchemaError):
-            return True  # annotation pydantic cannot schematise; stay lenient as before
+        except (SchemaError, TypeError):
+            # Stay lenient as before rather than crashing: TypeError covers both an annotation
+            # pydantic cannot schematise (*PydanticSchemaGenerationError* subclasses *TypeError*)
+            # and an unhashable annotation (the *lru_cache* key raises *TypeError* before the
+            # adapter is even built).
+            return True
+        if CheckSpec._strict_matches(adapter, value):
+            return True
+        if isinstance(value, bool):
+            return CheckSpec._strict_matches(adapter, int(value))
+        return False
+
+    @staticmethod
+    def _strict_matches(adapter: TypeAdapter[Any], value: object) -> bool:
+        """Return whether *value* passes *adapter* under strict validation (no lax coercion)."""
         try:
             adapter.validate_python(value, strict=True)
         except ValidationError:
@@ -322,6 +348,10 @@ class CheckSpec(BaseModel):
         arguments: dict, func: Callable, check: dict, expected_type_args: tuple[type, ...], value: list[Any]
     ) -> list[str]:
         """Validate list-typed arguments against expected item types.
+
+        Each item is checked with the same *_matches_type* used for scalar arguments, so the two
+        paths agree on a given logical type (e.g. a *bool* is accepted for both *int* and
+        *list[int]*, not one and rejected by the other).
 
         Args:
             arguments: A dictionary of argument names and their values to be validated.
@@ -339,9 +369,10 @@ class CheckSpec(BaseModel):
                 f"in the 'arguments' block: {check}"
             ]
 
+        item_type = expected_type_args[0] if expected_type_args else inspect.Parameter.empty
         errors: list[str] = []
         for i, item in enumerate(value):
-            if not isinstance(item, expected_type_args):
+            if not CheckSpec._matches_type(item, item_type):
                 expected_type_name = "|".join(getattr(arg, "__name__", str(arg)) for arg in expected_type_args)
                 errors.append(
                     f"Item {i} in argument '{arguments}' should be of type '{expected_type_name}' "
