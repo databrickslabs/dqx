@@ -1447,7 +1447,7 @@
   },
   "rulesRegistry": {
     "title": "Rules Registry",
-    "description": "Browse, author, and govern reusable data quality rule definitions.",
+    "description": "Create a repository of reusable data quality rules.",
     "newRule": "New rule",
     "filtersTitle": "Filters",
     "filtersDescription": "Narrow the registry by status, taxonomy, or ownership.",
@@ -1748,7 +1748,7 @@
   "monitoredTables": {
     "breadcrumb": "Monitored Tables",
     "title": "Monitored Tables",
-    "subtitle": "Apply registry rules to tables and materialize them into active checks.",
+    "subtitle": "Apply rules to specific tables and monitor their data quality.",
     "monitorTable": "Monitor a table",
     "searchPlaceholder": "Search by table name…",
     "statusPublished": "Published",
@@ -2124,7 +2124,7 @@
   },
   "dataProducts": {
     "title": "Table Spaces",
-    "subtitle": "Group monitored tables into governed, versioned, schedulable bundles.",
+    "subtitle": "Group related tables into spaces with a shared schedule.",
     "newProduct": "New Table Space",
     "createTitle": "Create table space",
     "searchPlaceholder": "Search table spaces…",

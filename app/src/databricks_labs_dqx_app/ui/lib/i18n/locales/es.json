@@ -1447,7 +1447,7 @@
   },
   "rulesRegistry": {
     "title": "Registro de Reglas",
-    "description": "Explora, crea y gobierna definiciones reutilizables de reglas de calidad de datos.",
+    "description": "Crea un repositorio de reglas de calidad de datos reutilizables.",
     "newRule": "Nueva regla",
     "filtersTitle": "Filtros",
     "filtersDescription": "Filtra el registro por estado, taxonomía o responsable.",
@@ -1748,7 +1748,7 @@
   "monitoredTables": {
     "breadcrumb": "Tablas monitorizadas",
     "title": "Tablas monitorizadas",
-    "subtitle": "Aplica reglas del registro a tablas y materialízalas en comprobaciones activas.",
+    "subtitle": "Aplica reglas a tablas específicas y monitoriza su calidad de datos.",
     "monitorTable": "Monitorizar una tabla",
     "searchPlaceholder": "Buscar por nombre de tabla…",
     "statusPublished": "Publicado",
@@ -2124,7 +2124,7 @@
   },
   "dataProducts": {
     "title": "Espacios de Tablas",
-    "subtitle": "Agrupa tablas monitoreadas en paquetes gobernados, versionados y programables.",
+    "subtitle": "Agrupa tablas relacionadas en espacios con una programación compartida.",
     "newProduct": "Nuevo Espacio de Tablas",
     "createTitle": "Crear espacio de tablas",
     "searchPlaceholder": "Buscar espacios de tablas…",
