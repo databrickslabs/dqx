@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef, type UIEvent } from "react";
 import { useTranslation } from "react-i18next";
 import yaml from "js-yaml";
 import { cn } from "@/lib/utils";
@@ -41,18 +41,128 @@ function toYaml(value: unknown): string {
   }
 }
 
-function DiffPane({
+// ---------------------------------------------------------------------------
+// Line-level diff (in-house LCS). No diff library is bundled with the app, so
+// we compute the longest-common-subsequence of the two YAML line arrays and
+// back-track it into removed/added/equal operations. Removed and added lines
+// within the same change hunk are then paired row-for-row so a modified line
+// sits opposite its replacement — the alignment that makes a split diff
+// readable (blank filler cells pad the shorter side).
+// ---------------------------------------------------------------------------
+
+type LineTag = "equal" | "removed" | "added";
+interface DiffCell {
+  text: string;
+  tag: LineTag;
+}
+interface DiffRow {
+  left: DiffCell | null;
+  right: DiffCell | null;
+}
+
+function diffLines(previous: string, proposed: string): DiffRow[] {
+  const a = previous.length ? previous.split("\n") : [];
+  const b = proposed.length ? proposed.split("\n") : [];
+  const n = a.length;
+  const m = b.length;
+
+  // lcs[i][j] = length of LCS of a[i:] and b[j:]
+  const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+
+  const ops: DiffCell[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      ops.push({ text: a[i], tag: "equal" });
+      i++;
+      j++;
+    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      ops.push({ text: a[i], tag: "removed" });
+      i++;
+    } else {
+      ops.push({ text: b[j], tag: "added" });
+      j++;
+    }
+  }
+  while (i < n) ops.push({ text: a[i++], tag: "removed" });
+  while (j < m) ops.push({ text: b[j++], tag: "added" });
+
+  const rows: DiffRow[] = [];
+  let k = 0;
+  while (k < ops.length) {
+    if (ops[k].tag === "equal") {
+      const cell = ops[k];
+      rows.push({ left: cell, right: cell });
+      k++;
+      continue;
+    }
+    // Gather the contiguous run of non-equal ops and pair removed with added.
+    const removed: DiffCell[] = [];
+    const added: DiffCell[] = [];
+    while (k < ops.length && ops[k].tag !== "equal") {
+      if (ops[k].tag === "removed") removed.push(ops[k]);
+      else added.push(ops[k]);
+      k++;
+    }
+    const max = Math.max(removed.length, added.length);
+    for (let r = 0; r < max; r++) {
+      rows.push({ left: removed[r] ?? null, right: added[r] ?? null });
+    }
+  }
+  return rows;
+}
+
+function DiffLine({ cell }: { cell: DiffCell | null }) {
+  if (!cell) {
+    // Filler row opposite an addition/removal — keeps the panes aligned.
+    return <div className="w-full h-[1.125rem] bg-muted/40 dark:bg-muted/20 border-l-2 border-transparent" />;
+  }
+  const gutter = cell.tag === "removed" ? "-" : cell.tag === "added" ? "+" : " ";
+  return (
+    <div
+      className={cn(
+        "w-full h-[1.125rem] leading-[1.125rem] whitespace-pre border-l-2",
+        cell.tag === "removed" && "bg-destructive/10 border-destructive/50",
+        cell.tag === "added" && "bg-emerald-500/10 border-emerald-500/50",
+        cell.tag === "equal" && "border-transparent",
+      )}
+    >
+      <span
+        className={cn(
+          "inline-block w-4 pl-1 select-none",
+          cell.tag === "removed" && "text-destructive",
+          cell.tag === "added" && "text-emerald-600 dark:text-emerald-400",
+          cell.tag === "equal" && "text-muted-foreground/40",
+        )}
+      >
+        {gutter}
+      </span>
+      <span className="pr-3">{cell.text || " "}</span>
+    </div>
+  );
+}
+
+function SplitDiffPane({
   label,
   tone,
-  value,
-  emptyText,
+  rows,
+  side,
+  scrollRef,
+  onScroll,
 }: {
   label: string;
   tone: "previous" | "proposed";
-  value: unknown;
-  emptyText: string;
+  rows: DiffRow[];
+  side: "left" | "right";
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  onScroll: (e: UIEvent<HTMLDivElement>) => void;
 }) {
-  const body = toYaml(value).trim();
   return (
     <div className="border rounded-lg overflow-hidden flex flex-col min-w-0">
       <div
@@ -63,6 +173,88 @@ function DiffPane({
             : "bg-muted text-muted-foreground",
         )}
       >
+        {label}
+      </div>
+      <div ref={scrollRef} onScroll={onScroll} className="overflow-auto max-h-[52vh] text-xs font-mono">
+        <div className="min-w-max">
+          {rows.map((row, idx) => (
+            <DiffLine key={idx} cell={side === "left" ? row.left : row.right} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Git-style split diff: the previous YAML on the left with removed lines in
+ * red, the proposed YAML on the right with added lines in green, aligned
+ * line-for-line. The two panes scroll vertically (and horizontally) in
+ * lockstep via shared refs with a re-entrancy guard.
+ */
+function SplitDiff({
+  previous,
+  proposed,
+  previousLabel,
+  proposedLabel,
+}: {
+  previous: unknown;
+  proposed: unknown;
+  previousLabel: string;
+  proposedLabel: string;
+}) {
+  const leftRef = useRef<HTMLDivElement>(null);
+  const rightRef = useRef<HTMLDivElement>(null);
+  const syncing = useRef(false);
+
+  const rows = useMemo(
+    () => diffLines(toYaml(previous).trim(), toYaml(proposed).trim()),
+    [previous, proposed],
+  );
+
+  const makeScrollHandler = (from: "left" | "right") => (e: UIEvent<HTMLDivElement>) => {
+    // Guard against the feedback loop: assigning scrollTop below fires the
+    // other pane's onScroll, which would otherwise scroll us back.
+    if (syncing.current) {
+      syncing.current = false;
+      return;
+    }
+    const source = e.currentTarget;
+    const target = (from === "left" ? rightRef : leftRef).current;
+    if (!target) return;
+    syncing.current = true;
+    target.scrollTop = source.scrollTop;
+    target.scrollLeft = source.scrollLeft;
+  };
+
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      <SplitDiffPane
+        label={previousLabel}
+        tone="previous"
+        rows={rows}
+        side="left"
+        scrollRef={leftRef}
+        onScroll={makeScrollHandler("left")}
+      />
+      <SplitDiffPane
+        label={proposedLabel}
+        tone="proposed"
+        rows={rows}
+        side="right"
+        scrollRef={rightRef}
+        onScroll={makeScrollHandler("right")}
+      />
+    </div>
+  );
+}
+
+/** Single plain pane — used when there is no previous snapshot to diff against. */
+function PlainPane({ label, value, emptyText }: { label: string; value: unknown; emptyText: string }) {
+  const body = toYaml(value).trim();
+  return (
+    <div className="border rounded-lg overflow-hidden flex flex-col min-w-0">
+      <div className="px-3 py-1.5 text-xs font-medium border-b bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
         {label}
       </div>
       {body ? (
@@ -129,22 +321,20 @@ export function ChangeDiffDialog({
                 <span>{note}</span>
               </div>
             )}
-            <div className={hasPrevious ? "grid gap-3 md:grid-cols-2" : ""}>
-              {hasPrevious && (
-                <DiffPane
-                  label={previousLabel ?? t("rulesDrafts.diff.previous")}
-                  tone="previous"
-                  value={previous}
-                  emptyText={t("rulesDrafts.diff.empty")}
-                />
-              )}
-              <DiffPane
+            {hasPrevious ? (
+              <SplitDiff
+                previous={previous}
+                proposed={proposed}
+                previousLabel={previousLabel ?? t("rulesDrafts.diff.previous")}
+                proposedLabel={proposedLabel ?? t("rulesDrafts.diff.proposed")}
+              />
+            ) : (
+              <PlainPane
                 label={proposedLabel ?? t("rulesDrafts.diff.proposed")}
-                tone="proposed"
                 value={proposed}
                 emptyText={t("rulesDrafts.diff.empty")}
               />
-            </div>
+            )}
           </div>
         )}
       </DialogContent>
