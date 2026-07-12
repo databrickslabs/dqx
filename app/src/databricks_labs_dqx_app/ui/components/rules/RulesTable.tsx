@@ -181,12 +181,20 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultWidth: 140,
     sortable: true,
     renderHeader: (label) => label,
-    renderCell: (r) => (
-      <span className="flex flex-wrap items-center gap-1">
-        <StatusBadge status={r.status} />
-        {r.display_status === "modified" && <ModifiedBadge version={r.version} />}
-      </span>
-    ),
+    // B2-28: when an approved rule has unpublished edits (display_status
+    // "modified") show ONLY the "modified since vN" badge — the "approved"
+    // StatusBadge alongside it is redundant. Otherwise show the normal
+    // StatusBadge for the current lifecycle status.
+    renderCell: (r) =>
+      r.display_status === "modified" ? (
+        <span className="flex flex-wrap items-center gap-1">
+          <ModifiedBadge version={r.version} />
+        </span>
+      ) : (
+        <span className="flex flex-wrap items-center gap-1">
+          <StatusBadge status={r.status} />
+        </span>
+      ),
   },
   version: {
     labelKey: "rulesRegistry.colVersion",
