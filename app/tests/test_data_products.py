@@ -118,9 +118,12 @@ def _table_summary(
     failed_tests: int | None = None,
     total_tests: int | None = None,
     score_computed_at: str | None = None,
+    last_run_at: datetime | None = None,
 ) -> MonitoredTableSummary:
     return MonitoredTableSummary(
-        table=MonitoredTable(binding_id=binding_id, table_fqn=table_fqn, status=status, version=version),
+        table=MonitoredTable(
+            binding_id=binding_id, table_fqn=table_fqn, status=status, version=version, last_run_at=last_run_at
+        ),
         applied_rule_count=applied_rule_count,
         check_count=check_count,
         score=score,
@@ -255,10 +258,15 @@ class TestListAndGet:
         ]
         monitored_tables.list_monitored_tables.return_value = [
             _table_summary(binding_id="b1", table_fqn="cat.s.t1", applied_rule_count=3, check_count=5),
-            _table_summary(binding_id="b2", table_fqn="cat.s.t2", applied_rule_count=0, check_count=0),
+            _table_summary(
+                binding_id="b2",
+                table_fqn="cat.s.t2",
+                applied_rule_count=0,
+                check_count=0,
+                last_run_at=datetime(2026, 7, 9, 12, 0, 0),
+            ),
             _table_summary(binding_id="b3", table_fqn="cat.s.t3", applied_rule_count=7, check_count=9),
         ]
-        run_set_service.latest_created_at_by_product.return_value = {"p2": datetime(2026, 7, 9, 12, 0, 0)}
         version_service.snapshot_counts_many.return_value = {("b2", 1): (1, 2)}
 
         result = service.list_products()
@@ -268,8 +276,9 @@ class TestListAndGet:
         members_query = sql.query.call_args_list[1][0][0]
         assert f"FROM {_MEMBERS}" in members_query
         assert "IN ('p1', 'p2', 'p3')" in members_query
-        # Collaborator round-trips are batched across ALL products/pins.
-        run_set_service.latest_created_at_by_product.assert_called_once_with(["p1", "p2", "p3"])
+        # Per-product last-run is now derived from the members' denormalized
+        # last_run_at (B2-15) — no per-product run-set MAX query.
+        run_set_service.latest_created_at_by_product.assert_not_called()
         version_service.snapshot_counts_many.assert_called_once_with([("b2", 1)])
         # The response shape is unchanged: same per-product details as before.
         by_id = {d.product.product_id: d for d in result}
@@ -279,9 +288,38 @@ class TestListAndGet:
         assert by_id["p2"].members[0].pinned_version == 1
         assert by_id["p2"].members[0].rules_count == 1  # frozen snapshot, not live 0
         assert by_id["p2"].members[0].checks_count == 2
+        # p2's member (b2) carries the newest run instant -> product last_run.
         assert by_id["p2"].last_run_at == datetime(2026, 7, 9, 12, 0, 0)
         assert by_id["p3"].members[0].rules_count == 7
         assert all(d.member_count == 1 for d in result)
+
+    def test_product_last_run_is_max_over_members_either_surface(
+        self, service, sql, monitored_tables, run_set_service
+    ):
+        """B2-15: a table space's last-run is MAX over its members' last_run_at.
+
+        Each member's ``last_run_at`` is denormalized on completion regardless
+        of trigger surface (MT-direct OR this space's fan-out), so a member run
+        via EITHER surface bumps the product — the older per-product run-set MAX
+        (grouped by product_id) missed MT-surface runs (product_id=None).
+        """
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [
+                _list_member_row("m1", "p1", "b1"),
+                _list_member_row("m2", "p1", "b2"),
+            ],
+        ]
+        monitored_tables.list_monitored_tables.return_value = [
+            # b1 last ran via a table-space fan-out; b2 via the MT surface later.
+            _table_summary(binding_id="b1", table_fqn="cat.s.t1", last_run_at=datetime(2026, 7, 8, 6, 0, 0)),
+            _table_summary(binding_id="b2", table_fqn="cat.s.t2", last_run_at=datetime(2026, 7, 11, 18, 0, 0)),
+        ]
+
+        result = service.list_products()
+
+        assert result[0].last_run_at == datetime(2026, 7, 11, 18, 0, 0)
+        run_set_service.latest_created_at_by_product.assert_not_called()
 
     def test_list_products_empty(self, service, sql):
         sql.query.return_value = []

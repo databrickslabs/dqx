@@ -226,8 +226,10 @@ class DataProductService:
         in the same round-trip (P3.4) — never recomputed here. Everything
         else the per-product detail needs is fetched in a BOUNDED number of
         batched queries, independent of product count: one for all products'
-        members, one grouped MAX for last-run-at, and (only when pins exist)
-        one for the pinned frozen-snapshot counts. Never one-query-per-product.
+        members and (only when pins exist) one for the pinned frozen-snapshot
+        counts. Never one-query-per-product. The per-product "last run" is
+        derived from the already-fetched member ``last_run_at`` columns — no
+        extra query.
         """
         scored = self._fetch_products_with_scores()
         if not scored:
@@ -235,7 +237,6 @@ class DataProductService:
         table_map = self._table_summary_map()
         product_ids = [product.product_id for product, _ in scored]
         members_by_product = self._fetch_members_by_product(product_ids)
-        last_run_map = self._run_set_service.latest_created_at_by_product(product_ids)
         all_members = [m for members in members_by_product.values() for m in members]
         pinned_counts = self._pinned_snapshot_counts(all_members)
         return [
@@ -244,7 +245,6 @@ class DataProductService:
                 table_map,
                 cached,
                 member_rows=members_by_product.get(product.product_id, []),
-                last_run_at=last_run_map.get(product.product_id),
                 pinned_counts=pinned_counts,
             )
             for product, cached in scored
@@ -257,13 +257,11 @@ class DataProductService:
             return None
         product, cached = scored
         member_rows = self._fetch_members(product_id)
-        last_run_map = self._run_set_service.latest_created_at_by_product([product_id])
         return self._build_detail(
             product,
             self._table_summary_map(),
             cached,
             member_rows=member_rows,
-            last_run_at=last_run_map.get(product_id),
             pinned_counts=self._pinned_snapshot_counts(member_rows),
         )
 
@@ -672,16 +670,18 @@ class DataProductService:
         cached_score: CachedScore | None,
         *,
         member_rows: list[_MemberRow],
-        last_run_at: datetime | None,
         pinned_counts: dict[tuple[str, int], tuple[int, int]],
     ) -> DataProductDetail:
         """Assemble one product's detail from PRE-FETCHED batch data.
 
-        Takes the member rows, last-run-at, and pinned-snapshot-count map the
-        caller already fetched (batched across all products on the list path)
-        so building N details issues zero additional queries.
+        Takes the member rows and pinned-snapshot-count map the caller already
+        fetched (batched across all products on the list path) so building N
+        details issues zero additional queries. The product's ``last_run_at``
+        is derived here from the members' denormalized ``last_run_at`` — no
+        separate query.
         """
         members: list[DataProductMemberDetail] = []
+        member_last_runs: list[datetime] = []
         for row in member_rows:
             summary = table_map.get(row.binding_id)
             if summary is None:
@@ -693,6 +693,8 @@ class DataProductService:
                 )
                 continue
             table = summary.table
+            if table.last_run_at is not None:
+                member_last_runs.append(table.last_run_at)
             rules_count, checks_count = self._member_counts(summary, row.pinned_version, pinned_counts)
             members.append(
                 DataProductMemberDetail(
@@ -717,7 +719,13 @@ class DataProductService:
             members=members,
             member_count=len(members),
             runnable_count=sum(1 for m in members if m.runnable),
-            last_run_at=last_run_at,
+            # Table space "last run" = the newest run across its member tables
+            # (B2-15). Derived from the members' denormalized ``last_run_at``
+            # (written on completion by MonitoredTableService.refresh_run_timestamps)
+            # so a member run via EITHER trigger surface — MT-direct or this
+            # space's fan-out — bumps it. Replaces the old product-id-grouped
+            # run-set MAX, which missed MT-surface runs (product_id=None).
+            last_run_at=max(member_last_runs) if member_last_runs else None,
             score=cached.score,
             failed_tests=cached.failed_tests,
             total_tests=cached.total_tests,
