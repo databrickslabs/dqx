@@ -1,6 +1,11 @@
-import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { useGetRunSet, useGetDataProduct, type User as UserType } from "@/lib/api";
+import {
+  useGetRunSet,
+  useGetDataProduct,
+  useListMonitoredTables,
+  type User as UserType,
+} from "@/lib/api";
 import { isAxiosError } from "axios";
 import {
   useListValidationRuns,
@@ -51,7 +56,7 @@ import { invalidateResultsAfterRunCompletion } from "@/lib/results-invalidation"
 import { ErrorBoundary } from "react-error-boundary";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ArrowDown, ArrowUp, ArrowUpDown, CircleStop, ShieldAlert, RotateCcw } from "lucide-react";
-import { parseFqn, formatDateTime as formatDate } from "@/lib/format-utils";
+import { parseFqn, formatDateTime as formatDate, parseServerTimestampMs } from "@/lib/format-utils";
 import { useTranslation } from "react-i18next";
 
 export const Route = createFileRoute("/_sidebar/runs-history")({
@@ -187,18 +192,33 @@ function formatDuration(ms: number): string {
 /** The value shown in the live "Time" column. RUNNING rows tick from
  *  ``created_at`` (driven by the 1s ``now`` clock); settled rows show a fixed
  *  duration — profiling runs report ``duration_seconds`` directly, validation
- *  runs derive it from ``created_at`` → ``updated_at``. */
-function runElapsed(run: HistoryRun, now: number): string {
-  const startedMs = run.created_at ? Date.parse(run.created_at) : NaN;
+ *  runs derive it from ``created_at`` → ``updated_at``.
+ *
+ *  Timestamps are parsed via ``parseServerTimestampMs`` so the zone-less
+ *  ``CAST(ts AS STRING)`` values from the analytical tables are read as UTC
+ *  (matching the warehouse clock) rather than browser-local.
+ *
+ *  Terminal validation runs are a special case: the task runner appends a
+ *  *fresh* result row (``created_at`` = completion instant, ``updated_at``
+ *  null), so no start→end pair survives on the deduplicated row and the
+ *  duration can't be derived. When we watched the run tick to completion we
+ *  fall back to ``frozenElapsedMs`` (the last live elapsed) instead of blanking
+ *  the cell — see the ``lastElapsedRef`` note in ``RunHistoryContent``. A true
+ *  fix needs the backend to persist the run duration (a backend field). */
+function runElapsed(run: HistoryRun, now: number, frozenElapsedMs?: number): string {
+  const startedMs = parseServerTimestampMs(run.created_at);
   if (run.status === "RUNNING") {
     return Number.isNaN(startedMs) ? "—" : formatDuration(now - startedMs);
   }
   if (run.kind === "profiling" && run.duration_seconds != null) {
     return formatDuration(run.duration_seconds * 1000);
   }
-  const endedMs = run.updated_at ? Date.parse(run.updated_at) : NaN;
+  const endedMs = parseServerTimestampMs(run.updated_at);
   if (!Number.isNaN(startedMs) && !Number.isNaN(endedMs) && endedMs >= startedMs) {
     return formatDuration(endedMs - startedMs);
+  }
+  if (frozenElapsedMs != null && frozenElapsedMs >= 0) {
+    return formatDuration(frozenElapsedMs);
   }
   return "—";
 }
@@ -281,6 +301,20 @@ function RunHistoryContent() {
     return host && jobId ? `${host}/jobs/${jobId}/runs` : null;
   }, [workspace]);
 
+  // Map each run's source table FQN to its monitored-table binding id so the
+  // Table cell can deep-link to the table's detail page. Not every run has a
+  // monitored table (ad-hoc dry-run previews, cross-table SQL checks), so this
+  // is a best-effort lookup — an absent entry renders as plain text. Not a
+  // Suspense query: a permission/load failure just means no links.
+  const { data: monitoredTablesResp } = useListMonitoredTables({});
+  const bindingIdByFqn = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const summary of monitoredTablesResp?.data ?? []) {
+      if (summary.table.table_fqn) map.set(summary.table.table_fqn, summary.table.binding_id);
+    }
+    return map;
+  }, [monitoredTablesResp]);
+
   // Run-set filter (Data Products Runs tab) — resolves the set's member
   // run_ids via getRunSet and narrows the table to those rows. Not a Suspense
   // query: an unresolved lookup just means the filter doesn't narrow.
@@ -360,6 +394,23 @@ function RunHistoryContent() {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [hasRunning]);
+
+  // Last live elapsed observed for each RUNNING run, keyed by run. Terminal
+  // validation runs carry no derivable duration (see runElapsed), so when a run
+  // we watched ticking settles we freeze its final elapsed here rather than
+  // blanking the "Time" cell. Only helps runs whose RUNNING→settled transition
+  // we witnessed; rows already terminal on load stay "—" until the backend
+  // persists a real duration.
+  const lastElapsedRef = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    for (const run of allRuns) {
+      if (run.status !== "RUNNING") continue;
+      const startedMs = parseServerTimestampMs(run.created_at);
+      if (!Number.isNaN(startedMs)) {
+        lastElapsedRef.current.set(`${run.kind}:${run.run_id}`, now - startedMs);
+      }
+    }
+  }, [now, allRuns]);
 
   // Poll the listings while any run is in flight (page-visible only) so a
   // RUNNING row settles without a manual refresh.
@@ -621,9 +672,9 @@ function RunHistoryContent() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">{t("runsHistory.allStatuses")}</SelectItem>
-            <SelectItem value="SUCCESS">{t("runsHistory.successOption")}</SelectItem>
             <SelectItem value="FAILED">{t("runsHistory.failedOption")}</SelectItem>
             <SelectItem value="RUNNING">{t("runsHistory.runningOption")}</SelectItem>
+            <SelectItem value="SUCCESS">{t("runsHistory.successOption")}</SelectItem>
           </SelectContent>
         </Select>
 
@@ -730,6 +781,8 @@ function RunHistoryContent() {
                     run={run}
                     now={now}
                     runUrlBase={runUrlBase}
+                    monitoredTableId={bindingIdByFqn.get(run.source_table_fqn) ?? null}
+                    frozenElapsedMs={lastElapsedRef.current.get(`${run.kind}:${run.run_id}`)}
                     isExpanded={expandedRunId === `${run.kind}:${run.run_id}`}
                     onToggle={() =>
                       setExpandedRunId((prev) =>
@@ -818,12 +871,16 @@ function RunHistoryRow({
   run,
   now,
   runUrlBase,
+  monitoredTableId,
+  frozenElapsedMs,
   isExpanded,
   onToggle,
 }: {
   run: HistoryRun;
   now: number;
   runUrlBase: string | null;
+  monitoredTableId: string | null;
+  frozenElapsedMs?: number;
   isExpanded: boolean;
   onToggle: () => void;
 }) {
@@ -852,7 +909,24 @@ function RunHistoryRow({
             )
           ) : null}
         </TableCell>
-        <TableCell className="font-mono text-xs">{cleanFqn(run.source_table_fqn)}</TableCell>
+        <TableCell className="font-mono text-xs">
+          {monitoredTableId ? (
+            <Link
+              to="/monitored-tables/$bindingId"
+              params={{ bindingId: monitoredTableId }}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="text-foreground hover:underline underline-offset-2"
+              title={t("runsHistory.openMonitoredTable")}
+              aria-label={t("runsHistory.openMonitoredTable")}
+            >
+              {cleanFqn(run.source_table_fqn)}
+            </Link>
+          ) : (
+            cleanFqn(run.source_table_fqn)
+          )}
+        </TableCell>
         <TableCell>
           <div className="flex items-center gap-1.5">
             <Badge variant={run.kind === "profiling" ? "secondary" : "outline"} className="text-[10px]">
@@ -872,7 +946,7 @@ function RunHistoryRow({
           {run.requesting_user ?? "—"}
         </TableCell>
         <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
-          {runElapsed(run, now)}
+          {runElapsed(run, now, frozenElapsedMs)}
         </TableCell>
         <TableCell className="text-xs text-muted-foreground whitespace-nowrap" title={run.created_at ?? ""}>
           {formatDate(run.created_at)}
