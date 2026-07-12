@@ -129,55 +129,47 @@ function MonitoredTablesPage() {
   const [page, setPage] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
 
-  // Steward is filtered CLIENT-SIDE (below), not pushed down as a server
-  // param, to match how the Rules Registry and Table Spaces overviews handle
-  // it — and the client-side DQ-score bucket. The backend list route does
-  // honor a `steward` query param, but keeping all facet filtering over the
-  // one already-fetched row set keeps the three overviews consistent and
-  // avoids a refetch per steward change (P25 item 92).
-  const queryParams = useMemo(
-    () => ({
-      catalog: catalogFilter === ALL ? undefined : catalogFilter,
-      schema: schemaFilter === ALL ? undefined : schemaFilter,
-      name: nameSearch.trim() || undefined,
-    }),
-    [catalogFilter, schemaFilter, nameSearch],
-  );
-
-  const { data, isLoading, isError, refetch } = useListMonitoredTables(queryParams);
+  // ONE list fetch, unfiltered — every facet (catalog, schema, name, steward,
+  // DQ-score) is applied CLIENT-SIDE over this single row set (T-perf/B2-3).
+  // The page previously fired TWO `useListMonitoredTables` calls — a
+  // server-filtered one for the rows plus an unfiltered one for the facet
+  // options — which doubled the (already-warehouse-free) list-load cost. All
+  // filter inputs are already on each fetched row, so no server round-trip is
+  // needed per filter change; this also matches how the Rules Registry and
+  // Table Spaces overviews filter (P25 items 91/92). The backend list route
+  // still honors these query params, but the overview no longer uses them.
+  const { data, isLoading, isError, refetch } = useListMonitoredTables({});
   const tables = useMemo(() => data?.data ?? [], [data]);
 
-  // Steward and DQ-score bucket are applied client-side over the
-  // server-filtered rows — the steward and cached score are already on each
-  // row, so no extra fetch is needed (P25 items 91/92, matching how RR/TS
-  // filter steward client-side).
-  const visibleTables = useMemo(
-    () =>
-      tables.filter(
-        (r) =>
-          (stewardFilter === ALL || (r.table.steward ?? "") === stewardFilter) &&
-          matchesDqScoreBucket(r.score, scoreFilter),
-      ),
-    [tables, stewardFilter, scoreFilter],
-  );
+  const visibleTables = useMemo(() => {
+    const needle = nameSearch.trim().toLowerCase();
+    return tables.filter((r) => {
+      const { catalog, schema } = splitFqn(r.table.table_fqn);
+      return (
+        (catalogFilter === ALL || catalog === catalogFilter) &&
+        (schemaFilter === ALL || schema === schemaFilter) &&
+        (!needle || r.table.table_fqn.toLowerCase().includes(needle)) &&
+        (stewardFilter === ALL || (r.table.steward ?? "") === stewardFilter) &&
+        matchesDqScoreBucket(r.score, scoreFilter)
+      );
+    });
+  }, [tables, catalogFilter, schemaFilter, nameSearch, stewardFilter, scoreFilter]);
 
-  // Cascading: schema options restricted to whatever catalog is selected —
-  // derived from the (server-filtered) row set rather than a separate
-  // catalog-browser API call, matching dqlake's BindingsTable approach.
-  const { data: unfilteredData } = useListMonitoredTables({});
-  const allTables = useMemo(() => unfilteredData?.data ?? [], [unfilteredData]);
+  // Facet options are derived from the full fetched row set — always the
+  // complete catalog/steward lists regardless of the active filters, with the
+  // schema list cascading to the selected catalog.
   const catalogOptions = useMemo(
-    () => Array.from(new Set(allTables.map((r) => splitFqn(r.table.table_fqn).catalog))).sort(),
-    [allTables],
+    () => Array.from(new Set(tables.map((r) => splitFqn(r.table.table_fqn).catalog))).sort(),
+    [tables],
   );
   const schemaOptions = useMemo(() => {
-    const rows = catalogFilter === ALL ? allTables : allTables.filter((r) => splitFqn(r.table.table_fqn).catalog === catalogFilter);
+    const rows = catalogFilter === ALL ? tables : tables.filter((r) => splitFqn(r.table.table_fqn).catalog === catalogFilter);
     return Array.from(new Set(rows.map((r) => splitFqn(r.table.table_fqn).schema))).sort();
-  }, [allTables, catalogFilter]);
+  }, [tables, catalogFilter]);
   const stewardOptions = useMemo(
     () =>
-      Array.from(new Set(allTables.map((r) => r.table.steward).filter((s): s is string => !!s))).sort(),
-    [allTables],
+      Array.from(new Set(tables.map((r) => r.table.steward).filter((s): s is string => !!s))).sort(),
+    [tables],
   );
 
   const [sortKey, setSortKey] = useState<MonitoredTablesSortKey | null>(null);

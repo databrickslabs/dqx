@@ -202,7 +202,7 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultWidth: 130,
     sortable: true,
     renderHeader: (label) => label,
-    renderCell: (r) => <RelativeTimeCell iso={r.table.last_profiled_at} />,
+    renderCell: (r) => <RelativeTimeCell iso={r.table.last_run_at} />,
   },
   owner: {
     labelKey: "monitoredTables.colOwner",
@@ -281,7 +281,7 @@ export function getMonitoredTablesSortValue(
     case "version":
       return r.table.version ?? 0;
     case "lastRun":
-      return r.table.last_profiled_at ?? "";
+      return r.table.last_run_at ?? "";
     case "owner":
       return (r.table.created_by ?? "").toLowerCase();
     case "steward":

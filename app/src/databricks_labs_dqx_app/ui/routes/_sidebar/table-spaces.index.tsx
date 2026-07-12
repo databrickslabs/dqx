@@ -110,11 +110,14 @@ function DataProductsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  // Refetch on remount (e.g. navigating back from the create/detail page)
-  // so a newly created product appears without a manual page reload —
-  // ported from dqlake's `DataProductsTable`, which needs the same
-  // override for the same navigation pattern.
-  const { data, isLoading, isError, refetch } = useListDataProducts({ query: { refetchOnMount: "always" } });
+  // Run-completion invalidation (results-invalidation.ts) already refetches
+  // this list when a run settles or a product changes, so the blanket
+  // `refetchOnMount: "always"` is dropped (T-perf/B2-3): it forced a full
+  // refetch — which fans out to member scores/timestamps — on every remount
+  // (e.g. tabbing back), even when nothing changed. React Query's default
+  // staleness handling plus the explicit invalidations keep a newly created
+  // product appearing without the always-refetch cost.
+  const { data, isLoading, isError, refetch } = useListDataProducts();
   const products = useMemo(() => data?.data ?? [], [data]);
 
   const [stewardFilter, setStewardFilter] = useState<string>(ALL);
