@@ -1146,7 +1146,7 @@
     "tableFilterChip": "Filtrado por {{table}}",
     "productFilterChip": "Filtrado por espacio de tablas",
     "surfaceFilterClearAria": "Borrar filtro",
-    "menuViewRuns": "Ver en el Historial de ejecuciones",
+    "menuViewRuns": "Ejecuciones",
     "hasInvalid": "Tiene inválidas",
     "headerInvalid": "Inválidas",
     "headerRequestedBy": "Solicitada por",
