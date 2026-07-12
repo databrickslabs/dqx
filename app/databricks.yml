@@ -350,6 +350,12 @@ resources:
               - "{{job.parameters.run_id}}"
               - "--requesting_user"
               - "{{job.parameters.requesting_user}}"
+              # ``{{job.run_id}}`` is a built-in run-context reference (not a job
+              # parameter) — the Jobs service resolves it per run, so the task
+              # runner can stamp job_run_id onto its terminal result row and the
+              # Runs-History "Run" column can deep-link to this job run.
+              - "--job_run_id"
+              - "{{job.run_id}}"
           environment_key: "default"
       environments:
         - environment_key: "default"

@@ -428,3 +428,96 @@ class TestWriteSqlQuarantineRecords:
         from databricks_labs_dqx_app.backend.routes.v1 import quarantine as q
 
         assert cap >= q._EXPORT_MAX_ROWS
+
+
+# ---------------------------------------------------------------------------
+# _parse_job_run_id — {{job.run_id}} run-context parsing (B2-69)
+# ---------------------------------------------------------------------------
+
+
+class TestParseJobRunId:
+    def test_none_and_empty_return_none(self, runner_module):
+        assert runner_module._parse_job_run_id(None) is None
+        assert runner_module._parse_job_run_id("") is None
+        assert runner_module._parse_job_run_id("   ") is None
+
+    def test_numeric_string_parses(self, runner_module):
+        assert runner_module._parse_job_run_id("123456") == 123456
+
+    def test_surrounding_whitespace_tolerated(self, runner_module):
+        assert runner_module._parse_job_run_id("  789 ") == 789
+
+    def test_unresolved_template_reference_returns_none(self, runner_module):
+        # If the {{job.run_id}} reference is not substituted (local run, SDK
+        # drift) we must not persist the literal — treat it as absent.
+        assert runner_module._parse_job_run_id("{{job.run_id}}") is None
+
+    def test_non_numeric_returns_none(self, runner_module):
+        assert runner_module._parse_job_run_id("abc") is None
+        assert runner_module._parse_job_run_id("12x") is None
+
+
+# ---------------------------------------------------------------------------
+# _stamp_run_provenance — terminal-row field population (B2-69)
+# ---------------------------------------------------------------------------
+
+
+class TestStampRunProvenance:
+    """The task runner appends a fresh terminal row; this helper stamps the
+    provenance columns the Runs-History UI reads off it: ``created_at``,
+    ``updated_at`` (duration source for validation runs) and ``job_run_id``
+    (the "Run" deep-link).
+    """
+
+    def _mock_df(self):
+        df = MagicMock(name="result_row")
+        df.withColumn.return_value = df  # chainable
+        return df
+
+    def _stamped_columns(self, df) -> list[str]:
+        return [call.args[0] for call in df.withColumn.call_args_list]
+
+    def test_stamps_created_updated_and_job_run_id(self, runner_module):
+        df = self._mock_df()
+        out = runner_module._stamp_run_provenance(df, job_run_id=42, duration_seconds=1.5)
+        cols = self._stamped_columns(df)
+        assert "updated_at" in cols
+        assert "created_at" in cols
+        assert "job_run_id" in cols
+        assert out is df
+
+    def test_omits_job_run_id_when_none(self, runner_module):
+        # A missing run context must leave job_run_id unset (NULL) rather than
+        # writing a bogus value — but timestamps are always stamped.
+        df = self._mock_df()
+        runner_module._stamp_run_provenance(df, job_run_id=None, duration_seconds=None)
+        cols = self._stamped_columns(df)
+        assert "job_run_id" not in cols
+        assert "created_at" in cols
+        assert "updated_at" in cols
+
+    def test_zero_duration_still_stamps_created_at(self, runner_module):
+        # duration_seconds=None / 0 collapses created_at to the completion
+        # instant, but the column must still be present.
+        df = self._mock_df()
+        runner_module._stamp_run_provenance(df, job_run_id=None, duration_seconds=0)
+        assert "created_at" in self._stamped_columns(df)
+
+
+# ---------------------------------------------------------------------------
+# _is_permission_denied — quiet the redundant SP-side DROP (B2-70)
+# ---------------------------------------------------------------------------
+
+
+class TestIsPermissionDenied:
+    def test_matches_permission_denied_text(self, runner_module):
+        exc = RuntimeError(
+            "PERMISSION_DENIED: User does not have MANAGE on Table 'cat.dqx_studio_tmp.tmp_view_abc'"
+        )
+        assert runner_module._is_permission_denied(exc) is True
+
+    def test_matches_manage_phrase_case_insensitive(self, runner_module):
+        assert runner_module._is_permission_denied(Exception("user does not have manage on table")) is True
+
+    def test_unrelated_error_is_not_permission_denied(self, runner_module):
+        assert runner_module._is_permission_denied(RuntimeError("connection reset by peer")) is False
