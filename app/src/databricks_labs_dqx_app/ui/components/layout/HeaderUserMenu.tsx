@@ -64,6 +64,15 @@ function HeaderUserMenuContent() {
   const isAdmin = role === "admin";
   const currentLanguage = toSupportedCode(i18n.resolvedLanguage ?? "en");
 
+  // B2-65: present every registered locale in alphabetical order by the label
+  // shown to the user (its native name), so the picker reads Deutsch / English /
+  // Español / … regardless of registration order in SUPPORTED_LANGUAGES.
+  const sortedLanguages = useMemo(
+    () =>
+      [...SUPPORTED_LANGUAGES].sort((a, b) => a.nativeLabel.localeCompare(b.nativeLabel)),
+    [],
+  );
+
   const initials = useMemo(() => {
     const name = user.display_name ?? user.user_name ?? "";
     const parts = name.split(/[\s.@]+/);
@@ -123,7 +132,7 @@ function HeaderUserMenuContent() {
                   value={currentLanguage}
                   onValueChange={handleLanguageChange}
                 >
-                  {SUPPORTED_LANGUAGES.map((lang) => (
+                  {sortedLanguages.map((lang) => (
                     <DropdownMenuRadioItem key={lang.code} value={lang.code}>
                       <span className="font-medium">{lang.nativeLabel}</span>
                       {lang.nativeLabel !== lang.label && (
