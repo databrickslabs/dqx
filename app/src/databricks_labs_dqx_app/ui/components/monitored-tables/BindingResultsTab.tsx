@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import type * as React from "react";
 import { QueryErrorResetBoundary, keepPreviousData } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
@@ -6,6 +6,7 @@ import { Trans, useTranslation } from "react-i18next";
 import { ChevronDown, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
   useGetTableResults,
@@ -230,13 +231,20 @@ export function BindingResultsTab({
                 </div>
               )}
             >
-              <ResultsBody
-                bindingId={bindingId}
-                tableName={tableName}
-                tableFqn={tableFqn}
-                neverApproved={neverApproved}
-                runInProgress={runInProgress}
-              />
+              {/* B2-4 (=dropped #61): the Results tab owns its own Suspense so
+                  its suspending hooks (runs / dimensions / severities) no longer
+                  bubble to the page-level Suspense and re-suspend the whole
+                  detail page on tab switch. Mirrors the TS TabBoundary shape,
+                  with the skeleton localized to this tab body. */}
+              <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+                <ResultsBody
+                  bindingId={bindingId}
+                  tableName={tableName}
+                  tableFqn={tableFqn}
+                  neverApproved={neverApproved}
+                  runInProgress={runInProgress}
+                />
+              </Suspense>
             </ErrorBoundary>
           )}
         </QueryErrorResetBoundary>
