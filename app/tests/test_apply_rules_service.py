@@ -46,8 +46,8 @@ def app_settings():
     # Default matches production default: new applications follow latest
     # unless the caller explicitly pins.
     mock.get_default_auto_upgrade.return_value = True
-    mock.resolve_pinned_version_for_new_attachment.side_effect = (
-        lambda explicit, current: explicit if explicit is not None else (None if mock.get_default_auto_upgrade() else current)
+    mock.resolve_pinned_version_for_new_attachment.side_effect = lambda explicit, current: (
+        explicit if explicit is not None else (None if mock.get_default_auto_upgrade() else current)
     )
     return mock
 
@@ -62,7 +62,9 @@ def _published_rule(rule_id: str = "r1", slot_names: list[str] | None = None) ->
     definition = RuleDefinition.model_validate(
         {
             "body": {"function": "is_not_null", "arguments": {n: f"{{{{{n}}}}}" for n in slot_names}},
-            "slots": [{"name": n, "family": "any", "position": i, "cardinality": "one"} for i, n in enumerate(slot_names)],
+            "slots": [
+                {"name": n, "family": "any", "position": i, "cardinality": "one"} for i, n in enumerate(slot_names)
+            ],
             "parameters": [],
         }
     )
@@ -207,9 +209,7 @@ class TestApplyRule:
         applied = svc.apply_rule("b1", "r1", [{"column": "customer_id"}], "alice@x", pinned_version=7)
         assert applied.pinned_version == 7
 
-    def test_existing_application_explicit_none_unpins_regardless_of_setting(
-        self, svc, sql, registry, app_settings
-    ):
+    def test_existing_application_explicit_none_unpins_regardless_of_setting(self, svc, sql, registry, app_settings):
         # Attach-time-only: default_auto_upgrade must NOT be consulted on an
         # UPDATE of an existing application — an explicit None here means
         # the steward chose to unpin, not "unspecified".
@@ -316,9 +316,7 @@ class TestSaveAppliedRules:
             [existing_row],  # apply_rule -> natural-key match found -> update path
         ]
         desired = [
-            DesiredAppliedRule(
-                rule_id="r1", column_mapping=mapping, pinned_version=3, severity_override="Critical"
-            )
+            DesiredAppliedRule(rule_id="r1", column_mapping=mapping, pinned_version=3, severity_override="Critical")
         ]
         results = svc.save_applied_rules("b1", desired, "alice@x")
         assert results[0].pinned_version == 3
@@ -512,3 +510,20 @@ class TestSetSeverityOverride:
         sql.query.return_value = []
         with pytest.raises(RuntimeError):
             svc.set_severity_override("missing", "Low")
+
+
+# ---------------------------------------------------------------------------
+# rule_display_tags (B2-26 — enriched saveAppliedRules response)
+# ---------------------------------------------------------------------------
+
+
+class TestRuleDisplayTags:
+    def test_derives_tags_from_live_registry_metadata(self, svc, registry):
+        rule = _published_rule()
+        rule.user_metadata = {"name": "Not Null Check", "dimension": "Completeness", "severity": "High"}
+        registry.get_rule.return_value = rule
+        assert svc.rule_display_tags("r1") == ("Not Null Check", "Completeness", "High")
+
+    def test_missing_rule_degrades_to_blanks(self, svc, registry):
+        registry.get_rule.return_value = None
+        assert svc.rule_display_tags("gone") == (None, None, None)

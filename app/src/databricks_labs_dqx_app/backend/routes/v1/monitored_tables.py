@@ -78,6 +78,7 @@ from databricks_labs_dqx_app.backend.services.binding_run_service import (
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
 from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
+    AppliedRuleSummary,
     DuplicateMonitoredTableError,
     MonitoredTableService,
     MonitoredTableSummary,
@@ -111,6 +112,8 @@ def _current_user_email(obo_ws: WorkspaceClient) -> str:
 )
 def list_monitored_tables(
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    materializer: Annotated[Materializer, Depends(get_materializer)],
     status: Annotated[str | None, Query(description="Filter by status")] = None,
     steward: Annotated[str | None, Query(description="Filter by steward")] = None,
     catalog: Annotated[str | None, Query(description="Filter by catalog part of table_fqn")] = None,
@@ -119,13 +122,52 @@ def list_monitored_tables(
 ) -> list[MonitoredTableSummaryOut]:
     """List monitored tables, optionally filtered, with per-table applied-rule counts."""
     try:
-        summaries = svc.list_monitored_tables(
-            status=status, steward=steward, catalog=catalog, schema=schema, name=name
-        )
+        summaries = svc.list_monitored_tables(status=status, steward=steward, catalog=catalog, schema=schema, name=name)
+        _apply_snapshot_check_counts(summaries, version_svc, materializer)
         return [MonitoredTableSummaryOut.from_domain(s) for s in summaries]
     except Exception as e:
         logger.error(f"Failed to list monitored tables: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list monitored tables: {e}")
+
+
+def _apply_snapshot_check_counts(
+    summaries: list[MonitoredTableSummary],
+    version_svc: MonitoredTableVersionService,
+    materializer: Materializer,
+) -> None:
+    """Overwrite each summary's ``check_count`` with a count from the SAME source as its DQ score.
+
+    B2-25: the overview "# Checks" must agree with the DQ score and the detail
+    page. The score is derived from the FROZEN per-version snapshot (via
+    ``dq_metrics``), whereas ``MonitoredTableService.list_monitored_tables``
+    counts live ``dq_quality_rules`` rows — a transient set that a
+    re-materialization can (wrongly, pre-Fix-B) drop to zero, so a scored table
+    could show 0 checks. Count from the snapshot instead:
+
+    * approved binding (``version > 0``) -> ``len(checks_json)`` of its current
+      frozen snapshot, resolved for ALL such bindings in one batched
+      :meth:`MonitoredTableVersionService.snapshot_counts_many` call;
+    * never-approved binding (``version == 0``, no snapshot) -> the live render
+      count (exactly what a draft run would execute).
+
+    Mirrors :class:`DataProductService`'s pinned-vs-live member-count split.
+    """
+    pins = [(s.table.binding_id, s.table.version) for s in summaries if s.table.version > 0]
+    snapshot_counts = version_svc.snapshot_counts_many(pins) if pins else {}
+    for summary in summaries:
+        version = summary.table.version
+        if version > 0:
+            snapshot = snapshot_counts.get((summary.table.binding_id, version))
+            if snapshot is not None:
+                summary.check_count = snapshot[1]
+                continue
+        # Never approved (or an approved binding whose snapshot row is missing):
+        # fall back to the live render count so the overview still reflects
+        # what a draft run would execute.
+        try:
+            summary.check_count = len(materializer.render_binding_checks(summary.table.binding_id))
+        except MaterializationError:
+            summary.check_count = 0
 
 
 @router.get(
@@ -246,8 +288,12 @@ def delete_monitored_table(
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
-        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.MODIFY,
-        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.MODIFY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
     )
     try:
         svc.delete(binding_id, user_email)
@@ -282,8 +328,12 @@ def update_monitored_table_schedule(
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
-        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.MODIFY,
-        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.MODIFY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
     )
     try:
         table = svc.update_schedule(binding_id, body.schedule_cron, body.schedule_tz, user_email)
@@ -385,9 +435,7 @@ def get_monitored_table_version_checks(
     except LookupError:
         checks = []
     except Exception as e:
-        logger.error(
-            f"Failed to get frozen checks for monitored table {binding_id} v{version}: {e}", exc_info=True
-        )
+        logger.error(f"Failed to get frozen checks for monitored table {binding_id} v{version}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get monitored table version checks: {e}")
     return MonitoredTableVersionChecksOut(binding_id=binding_id, version=version, checks=checks)
 
@@ -472,8 +520,12 @@ def apply_rule_to_table(
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
-        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
-        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.APPLY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
     )
     try:
         applied = svc.apply_rule(
@@ -523,8 +575,12 @@ def save_applied_rules(
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
-        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
-        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.APPLY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
     )
     try:
         desired = [
@@ -538,7 +594,25 @@ def save_applied_rules(
             for entry in body.applications
         ]
         applied = svc.save_applied_rules(binding_id, desired, user_email)
-        return [AppliedRuleOut.from_domain(a) for a in applied]
+        # Return the ENRICHED shape (rule_name/dimension/severity populated),
+        # matching how the GET builds ``applied_rules`` via
+        # ``AppliedRuleOut.from_summary`` (B2-26). The lean ``from_domain``
+        # shape would seed the frontend list with raw GUIDs and a blank
+        # severity until the next background refetch.
+        out: list[AppliedRuleOut] = []
+        for a in applied:
+            name, dimension, severity = svc.rule_display_tags(a.rule_id)
+            out.append(
+                AppliedRuleOut.from_summary(
+                    AppliedRuleSummary(
+                        applied_rule=a,
+                        rule_name=name,
+                        rule_dimension=dimension,
+                        rule_severity=severity,
+                    )
+                )
+            )
+        return out
     except MappingIncompleteError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except RuleNotPublishedError as e:
@@ -569,8 +643,12 @@ def remove_applied_rule(
     Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
     """
     perms.require_object(
-        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
-        role=role, principal_ids=set(principal_ids), principal_email=_current_user_email(obo_ws),
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.APPLY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=_current_user_email(obo_ws),
     )
     try:
         svc.remove_applied(applied_rule_id)
@@ -603,8 +681,12 @@ def set_applied_rule_pin(
     Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
     """
     perms.require_object(
-        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
-        role=role, principal_ids=set(principal_ids), principal_email=_current_user_email(obo_ws),
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.APPLY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=_current_user_email(obo_ws),
     )
     try:
         applied = svc.set_pin(applied_rule_id, body.pinned_version)
@@ -637,8 +719,12 @@ def set_applied_rule_severity_override(
     Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
     """
     perms.require_object(
-        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
-        role=role, principal_ids=set(principal_ids), principal_email=_current_user_email(obo_ws),
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.APPLY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=_current_user_email(obo_ws),
     )
     try:
         applied = svc.set_severity_override(applied_rule_id, body.severity)
