@@ -754,7 +754,7 @@ class AppSettingsService:
     # pre-selected. An admin who explicitly saves an empty value gets that
     # empty value back (see the ``raw is None`` check below) rather than being
     # forced back to the default on every read.
-    AI_ENDPOINT_NAME_DEFAULT = "databricks-gpt-5-5"
+    AI_ENDPOINT_NAME_DEFAULT = "databricks-gpt-5-4-nano"
 
     def get_ai_enabled(self) -> bool:
         """Return whether the AI kill-switch is on; defaults to ``True`` (on) when unset.

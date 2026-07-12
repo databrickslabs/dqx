@@ -40,8 +40,8 @@ class TestGetAiSettings:
         # AI is ON by default (per explicit product request); the admin
         # kill-switch (an explicit "false") is what turns it off.
         assert result.ai_enabled is True
-        assert result.ai_endpoint_name == "databricks-gpt-5-5"
-        assert result.ai_endpoint_name_default == "databricks-gpt-5-5"
+        assert result.ai_endpoint_name == "databricks-gpt-5-4-nano"
+        assert result.ai_endpoint_name_default == "databricks-gpt-5-4-nano"
         assert result.ai_rate_limit_per_user_per_hour == 30
         assert result.ai_rate_limit_default == 30
         # Auto-derived (Rules Registry Phase 8B) — no separate admin

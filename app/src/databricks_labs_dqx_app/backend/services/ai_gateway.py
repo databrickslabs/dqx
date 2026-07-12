@@ -202,7 +202,7 @@ class AIGateway:
         """Query the serving endpoint, retrying once without ``temperature`` if it's rejected.
 
         Several Databricks Foundation Model endpoints (notably the GPT-5
-        family, including the default ``databricks-gpt-5-5``) only accept the
+        family, including the default ``databricks-gpt-5-4-nano``) only accept the
         default sampling temperature and return a ``BadRequest`` for any
         explicit ``temperature`` — including ``0``, which callers pass for
         determinism. Rather than couple every caller to each endpoint's
