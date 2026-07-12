@@ -1034,14 +1034,12 @@ function RetentionSettings() {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          The scheduler runs a daily DELETE pass against the analytical tables.
-          <strong className="text-foreground"> Quarantine</strong> holds the full source
-          row payload (errors, warnings, and the row itself) so its window is kept
-          tighter than the trend tables by default. Both values are floored at{" "}
-          <code>{min}</code> days to protect against accidental data loss.
+          How long runs and quarantined rows are kept before the daily cleanup
+          removes them. Quarantine defaults to a shorter window because it holds
+          full source rows. Both are floored at <code>{min}</code> days.
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4">
           <div className="space-y-1.5">
             <Label htmlFor="retention-global" className="text-xs">
               Global retention (days)
@@ -1058,8 +1056,7 @@ function RetentionSettings() {
               className="h-8"
             />
             <p className="text-[11px] text-muted-foreground">
-              Applies to <code>dq_validation_runs</code>, <code>dq_profiling_results</code>,{" "}
-              <code>dq_metrics</code>, and the OLTP history tables.
+              Applies to run history, profiling results, and metrics.
               <br />
               Default: <code>{settings.retention_days_default}</code> days
               {!settings.retention_days_set && " (not yet customised)"}
@@ -1082,8 +1079,7 @@ function RetentionSettings() {
               className="h-8"
             />
             <p className="text-[11px] text-muted-foreground">
-              Applies only to <code>dq_quarantine_records</code> (the table that
-              stores per-row failures, including the source row payload).
+              Applies only to quarantined rows, which hold full source-row payloads.
               <br />
               Default: <code>{settings.quarantine_retention_days_default}</code> days
               {!settings.quarantine_retention_days_set && " (not yet customised)"}
@@ -1381,7 +1377,7 @@ function RunReviewStatusesSettings() {
       seen.add(trimmed);
     }
     const defaults = draft.filter((d) => d.is_default).length;
-    if (defaults === 0) return "Pick one status as the default for unreviewed runs.";
+    if (defaults === 0) return "Pick one status as the default.";
     if (defaults > 1) return "Only one status can be marked default.";
     return null;
   }, [draft]);
@@ -1450,12 +1446,8 @@ function RunReviewStatusesSettings() {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Reviewers tag each validation run with one of these values on the{" "}
-          <strong className="text-foreground">Runs detail</strong> page (next to comments).
-          The dropdown is filterable on the <strong className="text-foreground">Runs History</strong>{" "}
-          page so the team can answer questions like "what's been acknowledged?" at a glance.
-          One value is the <em>default</em> — newly completed runs surface that value until a reviewer
-          changes it, so dashboards never see an empty state.
+          The values reviewers can tag a run with, and filter by on the Runs
+          History page. Mark one as the default so every run starts with a status.
         </p>
 
         <div className="space-y-2">
@@ -1555,11 +1547,7 @@ function RunReviewStatusesSettings() {
                   )}
                   onClick={() => handleMakeDefault(idx)}
                   disabled={!isAdmin || saveMutation.isPending || entry.is_default}
-                  title={
-                    entry.is_default
-                      ? "Default for new runs"
-                      : "Make this the default surfaced for unreviewed runs"
-                  }
+                  title={entry.is_default ? "Default for new runs" : "Make this the default"}
                 >
                   {entry.is_default ? (
                     <>
@@ -1623,10 +1611,8 @@ function RunReviewStatusesSettings() {
 
         <div className="rounded-md border border-muted-foreground/20 bg-muted/40 p-3 text-[11px] text-muted-foreground space-y-1">
           <p>
-            <strong className="text-foreground">Renaming a value</strong> doesn't rewrite existing
-            run history — historical entries keep the old text so the audit trail stays accurate.
-            To retire a value cleanly, leave it in the list (not as default) until the affected
-            runs age out.
+            Renaming a value doesn't change past runs — they keep the label they
+            were tagged with.
           </p>
         </div>
       </CardContent>
@@ -1797,14 +1783,19 @@ function AiSettingsCard() {
           />
         </div>
 
-        <div className="space-y-1">
-          <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsEndpointLabel")}</Label>
-          <ServingEndpointSelect
-            value={aiEndpoint}
-            onChange={setAiEndpoint}
-            endpoints={servingEndpoints}
-            disabled={!isAdmin || saveMutation.isPending}
-          />
+        <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+          <div className="space-y-0.5">
+            <Label className="text-sm">{t("config.aiSettingsEndpointLabel")}</Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.aiSettingsEndpointHint")}</p>
+          </div>
+          <div className="w-64 shrink-0">
+            <ServingEndpointSelect
+              value={aiEndpoint}
+              onChange={setAiEndpoint}
+              endpoints={servingEndpoints}
+              disabled={!isAdmin || saveMutation.isPending}
+            />
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
@@ -2696,15 +2687,16 @@ function ConfigPage() {
             )
           ) : (
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as SettingsTabId)}>
-              <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 bg-transparent p-0">
+              {/* Same segmented tab picker used by the Rules Registry /
+                  Monitored Tables / Table Spaces tab shells (see
+                  MonitoredTableTabsShell / ProductTabsShell): the shadcn
+                  TabsList pill track (bg-muted, h-auto p-1) with the default
+                  raised active-tab styling and gap-1.5 icon triggers. */}
+              <TabsList className="inline-flex h-auto items-center p-1">
                 {tabs.map((tab) => {
                   const Icon = tab.icon;
                   return (
-                    <TabsTrigger
-                      key={tab.id}
-                      value={tab.id}
-                      className="gap-1.5 data-[state=active]:bg-muted"
-                    >
+                    <TabsTrigger key={tab.id} value={tab.id} className="gap-1.5">
                       <Icon className="h-4 w-4 shrink-0" />
                       {tab.label}
                     </TabsTrigger>
