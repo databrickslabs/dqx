@@ -107,6 +107,71 @@ class TestGenerateRule:
         assert result["author_kind"] == "ai_generated"
         assert result["definition"] == {"function": "is_not_null", "arguments": {"column": "id"}}
 
+    async def test_dqx_native_proposal_populates_typed_column_slots(self):
+        # The model names the target column ("id"); the slot carries that name,
+        # its position/cardinality/arg_key, and a family LOCKED to the check's
+        # semantics (is_not_null is polymorphic -> "any").
+        proposal = json.dumps(
+            {
+                "name": "ID not null",
+                "description": "id must not be null",
+                "definition": {"function": "is_not_null", "arguments": {"column": "id"}},
+                "columns": [{"name": "id", "family": "numeric"}],
+            }
+        )
+        service = _service(_gateway_returning(proposal))
+
+        result = await service.generate_rule(description="id must not be null", user_email="a@x")
+
+        assert result["slots"] == [
+            {"name": "id", "family": "any", "position": 0, "cardinality": "one", "arg_key": "column"}
+        ]
+
+    async def test_dqx_native_slot_family_locked_to_check_semantics(self):
+        # is_valid_email's column argument is a "text" slot; the model's chosen
+        # column name is preserved but the family comes from the check function.
+        proposal = json.dumps(
+            {
+                "name": "Email valid",
+                "description": "email must be valid",
+                "definition": {"function": "is_valid_email", "arguments": {"column": "user_email"}},
+            }
+        )
+        service = _service(_gateway_returning(proposal))
+
+        result = await service.generate_rule(description="email must be valid", user_email="a@x")
+
+        assert result["slots"] == [
+            {"name": "user_email", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}
+        ]
+
+    async def test_sql_proposal_carries_no_slots(self):
+        invalid_dqx_native = json.dumps({"definition": {"function": "nope", "arguments": {}}})
+        valid_sql = json.dumps(
+            {"name": "sql", "description": "d", "definition": {"sql_query": "id IS NOT NULL"}}
+        )
+        service = _service(_gateway_returning(invalid_dqx_native, valid_sql))
+
+        result = await service.generate_rule(description="d", user_email="a@x")
+
+        assert result["mode"] == "sql"
+        assert result["slots"] == []
+
+    async def test_generation_requests_deterministic_temperature(self):
+        proposal = json.dumps(
+            {
+                "name": "n",
+                "description": "d",
+                "definition": {"function": "is_not_null", "arguments": {"column": "id"}},
+            }
+        )
+        gateway = _gateway_returning(proposal)
+        service = _service(gateway)
+
+        await service.generate_rule(description="d", user_email="a@x")
+
+        assert gateway.query.call_args.kwargs["temperature"] == 0
+
     async def test_invalid_dqx_native_falls_back_to_sql_candidate(self):
         invalid_dqx_native = json.dumps(
             {
@@ -177,6 +242,37 @@ class TestGenerateRule:
         sent_context = gateway.query.call_args.kwargs["messages"][-1]["content"]
         assert json.dumps([{"id": 4}]) in sent_context or '"id": 4' in sent_context
         assert '"id": 5' not in sent_context
+
+
+class TestDeriveNativeSlots:
+    """Direct unit tests for the typed-column-slot derivation (item B2-32)."""
+
+    def test_names_slot_from_argument_and_locks_family(self):
+        slots = AiRulesService._derive_native_slots(
+            "is_valid_email", {"column": "{{user_email}}"}, None
+        )
+        assert slots == [
+            {"name": "user_email", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}
+        ]
+
+    def test_falls_back_to_declared_columns_then_stays_locked_family(self):
+        # No column reference in the arguments -> name drawn from the model's
+        # columns array; family stays locked to the check function (numeric hint ignored).
+        slots = AiRulesService._derive_native_slots(
+            "is_not_null", {}, [{"name": "customer_id", "family": "numeric"}]
+        )
+        assert slots == [
+            {"name": "customer_id", "family": "any", "position": 0, "cardinality": "one", "arg_key": "column"}
+        ]
+
+    def test_canonical_name_when_nothing_provided(self):
+        slots = AiRulesService._derive_native_slots("is_not_null", {}, None)
+        assert slots == [
+            {"name": "column_1", "family": "any", "position": 0, "cardinality": "one", "arg_key": "column"}
+        ]
+
+    def test_unknown_function_yields_no_slots(self):
+        assert AiRulesService._derive_native_slots("not_a_real_check", {"column": "x"}, None) == []
 
 
 class TestSuggestField:

@@ -251,6 +251,18 @@ class TestHappyPath:
         assert suggestion.dimension == "Completeness"
         assert suggestion.severity == "High"
 
+    async def test_judge_requests_deterministic_temperature(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}, "email": {}})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": []})
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        await suggester.suggest("b1", "user@x")
+
+        assert gateway.query.call_args.kwargs["temperature"] == 0
+
     async def test_no_candidates_from_retriever(self, monitored_tables, registry, apply_rules):
         monitored_tables.get.return_value = _binding_detail()
         monitored_tables.get_latest_profile.return_value = None

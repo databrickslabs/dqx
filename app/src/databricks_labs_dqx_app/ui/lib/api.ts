@@ -129,6 +129,11 @@ export type AiGenerateRuleOutPolarity = string | null;
 export type AiGenerateRuleOutDefinition = { [key: string]: unknown };
 
 /**
+ * Typed column slots for a dqx_native proposal — one per column the rule targets, named from the model's column references with the family locked to the check function's semantics. None/empty for sql proposals.
+ */
+export type AiGenerateRuleOutSlots = RuleSlot[] | null;
+
+/**
  * A validated, AI-generated Rules Registry rule proposal, ready to prefill the create form.
  */
 export interface AiGenerateRuleOut {
@@ -141,6 +146,8 @@ export interface AiGenerateRuleOut {
   polarity?: AiGenerateRuleOutPolarity;
   /** Mode-specific body: {function, arguments} or {sql_query} */
   definition: AiGenerateRuleOutDefinition;
+  /** Typed column slots for a dqx_native proposal — one per column the rule targets, named from the model's column references with the family locked to the check function's semantics. None/empty for sql proposals. */
+  slots?: AiGenerateRuleOutSlots;
   author_kind?: string;
 }
 

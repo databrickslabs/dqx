@@ -18,6 +18,7 @@ from .registry_models import ColumnMappingGroup
 from .registry_models import MonitoredTable as MonitoredTableDomain
 from .registry_models import MonitoredTableStatus as MonitoredTableStatusDomain
 from .registry_models import MonitoredTableVersion as MonitoredTableVersionDomain
+from .registry_models import RuleSlot as RegistryRuleSlot
 from .registry_models import RunSetSource as RegistryRunSetSource
 from .registry_models import RunSetTrigger as RegistryRunSetTrigger
 from .registry_models import DataProductStatus as RegistryDataProductStatus
@@ -114,6 +115,14 @@ class AiGenerateRuleOut(BaseModel):
     severity: str | None = None
     polarity: str | None = None
     definition: dict[str, Any] = Field(description="Mode-specific body: {function, arguments} or {sql_query}")
+    slots: list[RegistryRuleSlot] | None = Field(
+        default=None,
+        description=(
+            "Typed column slots for a dqx_native proposal — one per column the rule targets, "
+            "named from the model's column references with the family locked to the check "
+            "function's semantics. None/empty for sql proposals."
+        ),
+    )
     author_kind: str = Field(default="ai_generated")
 
 
