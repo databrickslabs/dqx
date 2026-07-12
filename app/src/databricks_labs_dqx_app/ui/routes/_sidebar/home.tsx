@@ -6,6 +6,7 @@ import { useCurrentUserSuspense } from "@/lib/api";
 import selector from "@/lib/selector";
 import { HomeGrid } from "@/components/home/HomeGrid";
 import { HomeStats } from "@/components/home/HomeStats";
+import { FadeIn } from "@/components/anim/FadeIn";
 
 /**
  * Faithful port of dqlake's `routes/_sidebar/home.tsx` — welcome heading,
@@ -37,15 +38,17 @@ function WelcomeHeading() {
 function HomePage() {
   const { t } = useTranslation();
   return (
-    <div className="space-y-6 max-w-4xl">
-      <Suspense fallback={<h1 className="text-2xl font-semibold">{t("home.welcome")}</h1>}>
-        <WelcomeHeading />
-      </Suspense>
-      <HomeStats sectionLabelClass={SECTION_LABEL} />
-      <section className="space-y-3">
-        <h2 className={SECTION_LABEL}>{t("home.getStarted")}</h2>
-        <HomeGrid />
-      </section>
-    </div>
+    <FadeIn>
+      <div className="space-y-6 max-w-4xl">
+        <Suspense fallback={<h1 className="text-2xl font-semibold">{t("home.welcome")}</h1>}>
+          <WelcomeHeading />
+        </Suspense>
+        <HomeStats sectionLabelClass={SECTION_LABEL} />
+        <section className="space-y-3">
+          <h2 className={SECTION_LABEL}>{t("home.getStarted")}</h2>
+          <HomeGrid />
+        </section>
+      </div>
+    </FadeIn>
   );
 }

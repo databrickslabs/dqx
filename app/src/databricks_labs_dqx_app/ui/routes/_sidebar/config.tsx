@@ -2424,7 +2424,8 @@ function ConfigPage() {
     : [];
 
   return (
-    <div className="space-y-6">
+    <FadeIn>
+      <div className="space-y-6">
       <div className="space-y-2">
         <PageBreadcrumb page={t("config.breadcrumb")} />
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -2505,6 +2506,7 @@ function ConfigPage() {
           )
         }
       </QueryErrorResetBoundary>
-    </div>
+      </div>
+    </FadeIn>
   );
 }
