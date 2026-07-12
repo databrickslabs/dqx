@@ -1629,6 +1629,11 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
 // Apply Rules tab
 // ---------------------------------------------------------------------------
 
+// Client-side page size for the by-rule lens — rule config cards are tall
+// (expandable), so a screenful is ~10 before the list runs off the bottom
+// (item 51). The by-column lens paginates its own, denser rows internally.
+const RULE_PAGE_SIZE = 10;
+
 function ApplyRulesTab({
   bindingId,
   tableFqn,
@@ -1670,6 +1675,10 @@ function ApplyRulesTab({
   // AddRulesDialog stages new rule(s), so the target card(s) auto-expand in
   // the by-rule lens instead of just scrolling into view.
   const [expandRuleIds, setExpandRuleIds] = useState<string[]>([]);
+  // 1-indexed page for the by-rule lens (item 51). Reset on search/filter
+  // change below; jumped to the target rule's page when a card is
+  // auto-expanded (after staging or a by-column "jump to rule").
+  const [rulePage, setRulePage] = useState(1);
 
   const parts = tableFqn.split(".");
   const columnsQuery = useGetTableColumns(parts[0] ?? "", parts[1] ?? "", parts[2] ?? "", {
@@ -1854,6 +1863,33 @@ function ApplyRulesTab({
     }
     return filtered;
   }, [mergedRules, statuses, filter, search]);
+
+  // Clamp the requested page against the live list length so removing rules
+  // on the last page (or a filter narrowing the set) can't strand the view
+  // on an empty page.
+  const ruleTotalPages = Math.max(1, Math.ceil(visibleMergedRules.length / RULE_PAGE_SIZE));
+  const safeRulePage = Math.min(rulePage, ruleTotalPages);
+  const pagedMergedRules = useMemo(
+    () => visibleMergedRules.slice((safeRulePage - 1) * RULE_PAGE_SIZE, safeRulePage * RULE_PAGE_SIZE),
+    [visibleMergedRules, safeRulePage],
+  );
+
+  // Reset to the first page whenever the search or filter changes so a
+  // narrowed result set starts from the top (item 51). Declared before the
+  // auto-expand effect so that when both fire on the same commit (staging
+  // resets search+filter AND sets expandRuleIds), the jump-to-page wins.
+  useEffect(() => {
+    setRulePage(1);
+  }, [search, filter]);
+
+  // Jump to the page holding the first auto-expanded card so a rule freshly
+  // staged (appended to the end) or targeted by a by-column "jump to rule"
+  // is actually on-screen, not hidden behind pagination.
+  useEffect(() => {
+    if (expandRuleIds.length === 0) return;
+    const idx = visibleMergedRules.findIndex((r) => expandRuleIds.includes(r.rule_id));
+    if (idx >= 0) setRulePage(Math.floor(idx / RULE_PAGE_SIZE) + 1);
+  }, [expandRuleIds, visibleMergedRules]);
 
   const openAddDialog = (column?: ColumnRef) => {
     setAddColumnContext(column ?? null);
@@ -2049,6 +2085,10 @@ function ApplyRulesTab({
               </button>
             ))}
           </div>
+          {/* Divider between the always-visible lens toggle and the
+              edit-only actions — mirrors dqlake's AppliedRulesList toolbar.
+              Only shown alongside the Suggest button so it never dangles. */}
+          {canEdit && aiAvailability.available && <div className="h-5 w-px bg-border mx-1" />}
           {canEdit && (
             <>
               {aiAvailability.available && (
@@ -2082,10 +2122,10 @@ function ApplyRulesTab({
                   {t("monitoredTables.suggestRulesButton")}
                 </Button>
               )}
-              <Button size="sm" className="gap-2" onClick={() => openAddDialog()}>
-                <Plus className="h-3.5 w-3.5" />
-                {t("monitoredTables.addRulesButton")}
-              </Button>
+              {/* Toolbar "Apply rules" button removed (item 36) — the wide
+                  dashed CTA at the bottom of the by-rule list and the
+                  per-column "+ Add rule" CTAs in the by-column lens now cover
+                  adding rules, mirroring dqlake's AppliedRulesList. */}
             </>
           )}
         </div>
@@ -2115,7 +2155,7 @@ function ApplyRulesTab({
                   : t("monitoredTables.emptyAppliedRules")}
             </div>
           ) : (
-            visibleMergedRules.map((rule) => (
+            pagedMergedRules.map((rule) => (
               <RuleConfigCard
                 key={rule.rule_id}
                 rule={rule}
@@ -2148,6 +2188,26 @@ function ApplyRulesTab({
                 }}
               />
             ))
+          )}
+          <Pagination
+            page={safeRulePage}
+            totalItems={visibleMergedRules.length}
+            pageSize={RULE_PAGE_SIZE}
+            onPageChange={setRulePage}
+            className="flex items-center justify-between pt-1"
+          />
+          {/* Wide dashed "Apply rules" CTA — the primary add affordance in
+              the by-rule lens now that the toolbar button is gone (items
+              36/51), ported from dqlake's AppliedRulesList bottom CTA. */}
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => openAddDialog()}
+              className="mt-2 w-full border border-dashed rounded-lg py-4 text-sm text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors flex items-center justify-center gap-1.5"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("monitoredTables.addRulesButton")}
+            </button>
           )}
         </div>
       ) : (
