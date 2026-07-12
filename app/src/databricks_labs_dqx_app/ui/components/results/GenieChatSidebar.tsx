@@ -165,7 +165,7 @@ function GenieResult({
   const showTable = isSampleDataResult(columns, sql) || userAskedForTable(question);
   return (
     <>
-      {plan && <GenieResultChart columns={columns} rows={rows} />}
+      {plan && <GenieResultChart columns={columns} rows={rows} plan={plan} />}
       {showTable && <GenieResultTable columns={columns} rows={rows} />}
     </>
   );

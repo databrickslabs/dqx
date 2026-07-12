@@ -187,12 +187,19 @@ export function planChart(columns: string[], rows: (string | null)[][]): Plan | 
 export function GenieResultChart({
   columns,
   rows,
+  plan: planProp,
 }: {
   columns: string[];
   rows: (string | null)[][];
+  /** Precomputed plan from the parent — the parent already runs planChart to
+   *  decide whether to render this chart at all, so passing the result avoids
+   *  recomputing it here (B2-19). Omit to have the chart compute its own. */
+  plan?: Plan | null;
 }) {
   const { t } = useTranslation();
-  const plan = useMemo(() => planChart(columns, rows), [columns, rows]);
+  // `??` short-circuits: planChart only runs when the parent didn't supply a
+  // plan, so a provided plan is reused without recomputation.
+  const plan = useMemo(() => planProp ?? planChart(columns, rows), [planProp, columns, rows]);
   if (!plan) return null;
 
   const tickColor = "var(--muted-foreground)";
