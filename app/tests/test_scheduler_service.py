@@ -49,6 +49,7 @@ from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _TMP_VIEW_NAME_RE,
     SchedulerService,
 )
+from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.scheduler_service import logger as scheduler_logger
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 
@@ -1175,6 +1176,40 @@ class TestScoreCacheRefreshOnCompletion:
         assert svc._pending_score_runs == {}
         svc._refresh_scores_for_completed_runs(self.NOW)
         score_cache.refresh_all_for_tables.assert_called_once()
+
+    def test_completion_also_denormalizes_run_timestamps(self, make_scheduler):
+        # T-perf / B2-15: the same completion moment writes last_run_at /
+        # last_profiled_at into the OLTP rows so no-browser runs still update
+        # the overview "Last run" without the list path hitting the warehouse.
+        monitored = create_autospec(MonitoredTableService, instance=True)
+        svc, mocks, score_cache = _make_score_scheduler(make_scheduler, monitored_table_service=monitored)
+        svc._track_run_for_score_refresh("r1")
+        svc._track_run_for_score_refresh("r2")
+        mocks.sql.query.return_value = [("r1", "main.sales.orders"), ("r2", "main.sales.customers")]
+
+        svc._refresh_scores_for_completed_runs(self.NOW)
+
+        monitored.refresh_run_timestamps.assert_called_once_with(
+            ["main.sales.customers", "main.sales.orders"]
+        )
+
+    def test_timestamp_refresh_failure_is_swallowed(self, make_scheduler):
+        monitored = create_autospec(MonitoredTableService, instance=True)
+        monitored.refresh_run_timestamps.side_effect = RuntimeError("warehouse hiccup")
+        svc, mocks, _score_cache = _make_score_scheduler(make_scheduler, monitored_table_service=monitored)
+        svc._track_run_for_score_refresh("r1")
+        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+
+        # Best-effort: a timestamp-write failure must not raise out of the tick.
+        svc._refresh_scores_for_completed_runs(self.NOW)
+        monitored.refresh_run_timestamps.assert_called_once()
+
+    def test_no_timestamp_refresh_without_collaborator(self, make_scheduler):
+        svc, mocks, _score_cache = _make_score_scheduler(make_scheduler)  # no monitored_table_service
+        svc._track_run_for_score_refresh("r1")
+        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+        # Must not raise when the collaborator is absent.
+        svc._refresh_scores_for_completed_runs(self.NOW)
 
     def test_no_refresh_while_runs_are_still_running(self, make_scheduler):
         svc, mocks, score_cache = _make_score_scheduler(make_scheduler)

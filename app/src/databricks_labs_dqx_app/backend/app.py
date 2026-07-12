@@ -732,10 +732,11 @@ async def lifespan(app: FastAPI):
             # data sources stay fresh long after the startup refresh above.
             # Same OLTP executor as the other scheduler collaborators; the
             # dims themselves are SP-owned UC tables written via sp_sql.
+            scheduler_monitored_tables = MonitoredTableService(sql=oltp_for_scheduler, profiling_sql=sp_sql)
             metadata_dim_service = MetadataDimService(
                 sp_sql=sp_sql,
                 registry=RegistryService(sql=oltp_for_scheduler),
-                monitored_tables=MonitoredTableService(sql=oltp_for_scheduler, profiling_sql=sp_sql),
+                monitored_tables=scheduler_monitored_tables,
             )
 
             _scheduler = SchedulerService(
@@ -757,6 +758,11 @@ async def lifespan(app: FastAPI):
                 # executor. Lets the scheduler refresh list scores when it
                 # observes a launched run complete server-side (no browser).
                 score_cache_service=ScoreCacheService(oltp=oltp_for_scheduler, warehouse_sql=sp_sql),
+                # Denormalize each completed table's last_run_at/last_profiled_at
+                # server-side too (T-perf / B2-15), sharing the score-refresh and
+                # reconcile cadence so runs no browser observed still update the
+                # overview "Last run" without the list path hitting the warehouse.
+                monitored_table_service=scheduler_monitored_tables,
                 # Startup reconcile (P5.3): the scheduler's first refresh
                 # pass recomputes EVERY monitored table's cached score
                 # (then products + global), healing rows left stale/NULL

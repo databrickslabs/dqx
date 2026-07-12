@@ -41,6 +41,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     NoRunnableMembersError,
 )
 from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
+from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
 
@@ -205,6 +206,7 @@ class SchedulerService:
         data_product_service: DataProductService | None = None,
         binding_run_service: BindingRunService | None = None,
         score_cache_service: ScoreCacheService | None = None,
+        monitored_table_service: MonitoredTableService | None = None,
         metadata_dim_service: MetadataDimService | None = None,
         reconcile_scores_on_start: bool = False,
     ) -> None:
@@ -245,6 +247,14 @@ class SchedulerService:
             gap where the browser-side refresh-scores POST never fires
             because no browser observed the scheduled run complete.
             When ``None`` the refresh step is a no-op.
+        monitored_table_service:
+            Optional collaborator that denormalizes each completed table's
+            ``last_run_at`` / ``last_profiled_at`` into its OLTP
+            ``dq_monitored_tables`` row (T-perf / B2-15), alongside the score
+            refresh above and in the startup reconcile — so the overview
+            "Last run" column and table-space last-run stay current for runs
+            no browser observed, without the list path ever touching the
+            warehouse. When ``None`` the timestamp write is skipped.
         metadata_dim_service:
             Optional collaborator that full-refreshes the rule +
             monitored-table metadata dims (``dim_dq_rules`` /
@@ -296,6 +306,7 @@ class SchedulerService:
         self._data_product_service = data_product_service
         self._binding_run_service = binding_run_service
         self._score_cache_service = score_cache_service
+        self._monitored_table_service = monitored_table_service
         self._metadata_dim_service = metadata_dim_service
         # Scheduler-launched runs awaiting their dq_validation_runs
         # terminal row, run_id -> launch time (UTC). In-memory only:
@@ -1032,6 +1043,27 @@ class SchedulerService:
                 "Score-cache refresh after run completion failed; "
                 "scores stay stale until the next completion or browser refresh"
             )
+        self._refresh_run_timestamps(sorted(fqns))
+
+    def _refresh_run_timestamps(self, fqns: list[str]) -> None:
+        """Denormalize ``last_run_at`` / ``last_profiled_at`` for *fqns* (best-effort).
+
+        The server-side counterpart of the browser's refresh-scores timestamp
+        write (T-perf / B2-15): keeps the overview "Last run" column and
+        table-space last-run current for completed runs no browser observed.
+        A failure only leaves those columns stale until the next completion or
+        reconcile, so it never wedges the tick. No-op without a
+        :class:`MonitoredTableService` collaborator or when *fqns* is empty.
+        """
+        if self._monitored_table_service is None or not fqns:
+            return
+        try:
+            self._monitored_table_service.refresh_run_timestamps(fqns)
+        except Exception:
+            logger.exception(
+                "Monitored-table run-timestamp refresh failed; "
+                "last-run columns stay stale until the next completion or reconcile"
+            )
 
     def _sweep_recent_run_sets(self, now: datetime) -> None:
         """Track every unseen run from run sets created in the last 24h.
@@ -1137,6 +1169,11 @@ class SchedulerService:
                 refreshed_tables,
                 refreshed_products,
             )
+            # Backfill the denormalized run/profile timestamps for the same set
+            # (T-perf / B2-15) so tables whose runs completed before this deploy
+            # — or with no browser watching — get a real "Last run" on the next
+            # list load. Shares the reconcile's once-per-boot cadence.
+            self._refresh_run_timestamps(fqns)
         except Exception:
             if self._score_reconcile_attempts >= _SCORE_RECONCILE_MAX_ATTEMPTS:
                 logger.exception(

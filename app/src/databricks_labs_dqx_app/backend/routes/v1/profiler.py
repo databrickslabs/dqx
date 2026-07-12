@@ -13,6 +13,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     CurrentUserRole,
     get_conf,
     get_job_service,
+    get_monitored_table_service,
     get_obo_ws,
     get_sp_sql_executor,
     get_view_service,
@@ -20,6 +21,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.logger import logger
+from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.models import (
     BatchProfileRunFailure,
     BatchProfileRunIn,
@@ -41,6 +43,25 @@ _PROFILER_TABLE = "dq_profiling_results"
 
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
+
+
+def _refresh_run_timestamps_on_profile_success(
+    monitored_tables: MonitoredTableService, source_table_fqn: str | None
+) -> None:
+    """Best-effort denormalize the monitored table's run/profile timestamps.
+
+    Fired when a profiler run reaches terminal SUCCESS (T-perf / B2-15). No-op
+    for an unmonitored table (``refresh_run_timestamps`` simply writes zero
+    rows) or a missing FQN. Swallows failures — a warehouse hiccup must never
+    turn a successful profiler poll into a 500; the scheduler reconcile heals
+    the column on the next boot.
+    """
+    if not source_table_fqn:
+        return
+    try:
+        monitored_tables.refresh_run_timestamps([source_table_fqn])
+    except Exception:
+        logger.warning("Failed to refresh run timestamps after profiler success", exc_info=True)
 
 
 def _classify_table_error(exc: Exception, table_fqn: str) -> tuple[int, str, str]:
@@ -336,6 +357,7 @@ def get_profile_run_status(
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
 ) -> RunStatusOut:
     """Poll the status of a profiler job run. Cleans up the view when job terminates."""
     try:
@@ -343,6 +365,8 @@ def get_profile_run_status(
         if meta.job_run_id is None:
             terminal = has_terminal_result(sql, app_conf, _PROFILER_TABLE, run_id)
             if terminal:
+                if terminal == "SUCCESS":
+                    _refresh_run_timestamps_on_profile_success(monitored_tables, meta.source_table_fqn)
                 if meta.view_fqn and "tmp_view_" in meta.view_fqn:
                     try:
                         view_svc.drop_view(meta.view_fqn)
@@ -374,6 +398,13 @@ def get_profile_run_status(
                 logger.info("Cleaned up temporary view: %s", meta.view_fqn)
             except Exception as cleanup_err:
                 logger.warning("Failed to clean up view %s: %s", meta.view_fqn, cleanup_err)
+
+        if is_terminal and status.result_state == "SUCCESS":
+            # Profiler-run completion (T-perf / B2-15): denormalize the table's
+            # last_profiled_at (and last_run_at, self-healing) into its OLTP row
+            # so the About tab and overview read a real "last profiled" without
+            # the list/detail path ever touching the warehouse.
+            _refresh_run_timestamps_on_profile_success(monitored_tables, meta.source_table_fqn)
 
         if is_terminal and status.state != "TERMINATED":
             update_run_status(

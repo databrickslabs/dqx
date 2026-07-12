@@ -98,7 +98,7 @@ class TestUpdateRunStatus:
 
 class TestGetRunMetadata:
     def test_full_row_returned(self, sql_executor_mock, app_config):
-        sql_executor_mock.query.return_value = [["main.tmp.v1", "alice@x", "12345"]]
+        sql_executor_mock.query.return_value = [["main.tmp.v1", "alice@x", "12345", "cat.s.tbl"]]
         md = get_run_metadata(
             sql=sql_executor_mock,
             app_conf=app_config,
@@ -109,6 +109,7 @@ class TestGetRunMetadata:
         assert md.view_fqn == "main.tmp.v1"
         assert md.requesting_user == "alice@x"
         assert md.job_run_id == 12345
+        assert md.source_table_fqn == "cat.s.tbl"
 
     def test_missing_row_returns_none_fields(self, sql_executor_mock, app_config):
         sql_executor_mock.query.return_value = []
@@ -116,9 +117,10 @@ class TestGetRunMetadata:
         assert md.view_fqn is None
         assert md.requesting_user is None
         assert md.job_run_id is None
+        assert md.source_table_fqn is None
 
     def test_null_job_run_id_is_handled(self, sql_executor_mock, app_config):
-        sql_executor_mock.query.return_value = [["main.tmp.v1", "alice@x", None]]
+        sql_executor_mock.query.return_value = [["main.tmp.v1", "alice@x", None, "cat.s.tbl"]]
         md = get_run_metadata(sql=sql_executor_mock, app_conf=app_config, table_name="dq_validation_runs", run_id="r1")
         assert md.job_run_id is None
 
@@ -130,10 +132,11 @@ class TestGetRunMetadata:
     def test_query_orders_by_job_run_id_first(self, sql_executor_mock, app_config):
         # The implementation prefers terminal rows that have a non-null
         # job_run_id over the RUNNING placeholder.
-        sql_executor_mock.query.return_value = [["v", "u", "1"]]
+        sql_executor_mock.query.return_value = [["v", "u", "1", "cat.s.t"]]
         get_run_metadata(sql=sql_executor_mock, app_conf=app_config, table_name="dq_validation_runs", run_id="r1")
         sql = sql_executor_mock.query.call_args.args[0]
         assert "ORDER BY job_run_id IS NOT NULL DESC" in sql
+        assert "source_table_fqn" in sql
 
 
 class TestGetRunOwner:
@@ -199,6 +202,7 @@ class TestRunMetadataDataclass:
         assert md.view_fqn is None
         assert md.requesting_user is None
         assert md.job_run_id is None
+        assert md.source_table_fqn is None
 
 
 # ---------------------------------------------------------------------------

@@ -448,6 +448,7 @@ def list_result_dimensions(
 def refresh_dq_scores(
     body: RefreshScoresIn,
     score_cache: Annotated[ScoreCacheService, Depends(get_score_cache_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
 ) -> RefreshScoresOut:
     """Recompute the cached DQ scores for the just-finished tables.
 
@@ -458,6 +459,13 @@ def refresh_dq_scores(
     every table space containing any of them, and the global rollup —
     all upserted into ``dq_score_cache`` so the list pages never touch
     the warehouse on load.
+
+    The same run-completion moment also refreshes each table's denormalized
+    ``last_run_at`` / ``last_profiled_at`` (T-perf / B2-15) so the overview
+    "Last run" column and table-space last-run stay current without the
+    list path ever touching the warehouse. Best-effort: a timestamp-refresh
+    failure only leaves those columns stale until the next completion or the
+    scheduler's reconcile, so it never fails the score refresh.
 
     SP-side by design: the cache is shared/global and viewer-independent;
     the existing catalog filtering on the list endpoints scopes what each
@@ -475,6 +483,10 @@ def refresh_dq_scores(
     except Exception as exc:
         logger.exception("Failed to refresh DQ score cache")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    try:
+        monitored_tables.refresh_run_timestamps(body.table_fqns)
+    except Exception:
+        logger.exception("Failed to refresh monitored-table run timestamps; leaving them stale until next completion")
     return RefreshScoresOut(
         refreshed_tables=refreshed_tables,
         refreshed_products=refreshed_products,
