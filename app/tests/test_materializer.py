@@ -1032,6 +1032,73 @@ class TestCleanup:
         sql.execute.assert_not_called()
 
 
+class TestAllGroupsFailRenderIsNonDestructive:
+    """DATA-LOSS GUARD (B2-27): when an update/auto-upgrade re-renders a
+    follower against a new version whose slots no longer match the follower's
+    stored ``column_mapping``, EVERY group fails to render and
+    ``_iter_rendered_checks`` returns a non-None EMPTY list. That must NOT be
+    treated as delete-all — the existing approved ``dq_quality_rules`` rows
+    must survive intact (they keep serving; the mismatch surfaces for
+    re-review) rather than being wiped.
+    """
+
+    @staticmethod
+    def _mismatched_version(version: int = 2) -> RuleVersion:
+        # New version exposes slot "email"; the follower's mapping binds
+        # "column" -> render_check can't satisfy slot "email" and raises.
+        return RuleVersion(
+            rule_id="r1",
+            version=version,
+            definition=_is_not_null_definition("email"),
+            user_metadata={"name": "Not Null Check", "severity": "High"},
+        )
+
+    @pytest.mark.parametrize("auto_upgrade", [False, True])
+    def test_preserves_existing_rows_when_every_group_fails(
+        self, materializer, sql, registry, monitored_tables, app_settings, auto_upgrade
+    ):
+        app_settings.get_auto_upgrade_without_approval.return_value = auto_upgrade
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule(version=2)
+        registry.get_version.return_value = self._mismatched_version(version=2)
+
+        def fake_query(sql_text: str):
+            # The application still has one materialized approved row.
+            if "SELECT rule_id FROM" in sql_text and "applied_rule_id = " in sql_text:
+                return [["ar1-0"]]
+            return []
+
+        sql.query.side_effect = fake_query
+
+        written = materializer.materialize_binding("b1")
+
+        # The existing row is retained (counted as "written"/expected)...
+        assert written == ["ar1-0"]
+        # ...and NOTHING is deleted or rewritten — no data loss.
+        sql.execute.assert_not_called()
+
+    def test_legitimately_empty_mapping_still_cleans_up_stale_rows(self, materializer, sql, registry, monitored_tables):
+        # An application with NO mapping groups genuinely materializes nothing;
+        # the guard must be narrow enough to still delete a leftover stale row.
+        applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[], mapping_hash="h")
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+
+        def fake_query(sql_text: str):
+            if "SELECT rule_id FROM" in sql_text and "applied_rule_id = " in sql_text:
+                return [["ar1-0"]]  # stale row from a previously-wider mapping
+            return []
+
+        sql.query.side_effect = fake_query
+        materializer.materialize_binding("b1")
+        delete_calls = [c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("DELETE")]
+        assert any("'ar1-0'" in c for c in delete_calls)
+
+
 class TestRematerializeForRule:
     """``rematerialize_for_rule`` — the "publish -> propagate to followers" entry
     point (design spec §5). Wired into ``approve_registry_rule`` so publishing a

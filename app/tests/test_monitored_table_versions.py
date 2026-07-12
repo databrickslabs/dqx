@@ -72,7 +72,9 @@ def _check(applied_rule_id: str | None, column: str) -> dict:
     }
 
 
-def _detail(applied_ids: list[str], table_fqn: str = "cat.schema.customers", status: str = "approved") -> MonitoredTableDetail:
+def _detail(
+    applied_ids: list[str], table_fqn: str = "cat.schema.customers", status: str = "approved"
+) -> MonitoredTableDetail:
     table = MonitoredTable(binding_id="b1", table_fqn=table_fqn, status=status)
     summaries = [
         AppliedRuleSummary(
@@ -182,6 +184,45 @@ class TestRefreezeCurrent:
         sql.execute.assert_not_called()
         monitored_tables.get.assert_not_called()
 
+    def test_refuses_to_overwrite_nonempty_snapshot_with_empty(self, service, sql, monitored_tables, rules_catalog):
+        # DATA-LOSS GUARD (B2-27): the binding's approved rows momentarily
+        # resolve to nothing (e.g. an upstream re-materialization couldn't
+        # re-render a rule against a new version). The re-freeze must KEEP the
+        # previous non-empty snapshot rather than emptying it — otherwise the
+        # pinned version (and every source='approved' run) would have 0 checks.
+        monitored_tables.get.return_value = _detail(["ar1"])
+        rules_catalog.get_approved_checks_for_table.return_value = []  # newly-computed set is empty
+        _dispatch(
+            sql,
+            {
+                f"SELECT version FROM {_TABLES}": [["3"]],
+                f"FROM {_VERSIONS}": [[json.dumps([_check("ar1", "id")])]],  # previous snapshot NON-empty
+            },
+        )
+
+        service.refreeze_current("b1")
+
+        exec_sqls = [c.args[0] for c in sql.execute.call_args_list]
+        assert not any(f"UPDATE {_VERSIONS} SET" in s for s in exec_sqls)
+
+    def test_overwrites_when_previous_snapshot_also_empty(self, service, sql, monitored_tables, rules_catalog):
+        # The guard is narrow: an empty->empty re-freeze is harmless and must
+        # still run (it stamps refrozen_at and refreshes state_json).
+        monitored_tables.get.return_value = _detail(["ar1"])
+        rules_catalog.get_approved_checks_for_table.return_value = []
+        _dispatch(
+            sql,
+            {
+                f"SELECT version FROM {_TABLES}": [["3"]],
+                f"FROM {_VERSIONS}": [[json.dumps([])]],  # previous snapshot already empty
+            },
+        )
+
+        service.refreeze_current("b1")
+
+        exec_sqls = [c.args[0] for c in sql.execute.call_args_list]
+        assert any(f"UPDATE {_VERSIONS} SET" in s and "refrozen_at = now()" in s for s in exec_sqls)
+
 
 # ---------------------------------------------------------------------------
 # refreeze_for_quality_rule (per-rule approve/reject hook)
@@ -246,7 +287,15 @@ class TestListVersions:
             sql,
             {
                 f"FROM {_VERSIONS}": [
-                    ["v2", "b1", "2", json.dumps({"applied_rules": []}), "alice@x", "2026-07-07T00:00:00", "2026-07-07T01:00:00"],
+                    [
+                        "v2",
+                        "b1",
+                        "2",
+                        json.dumps({"applied_rules": []}),
+                        "alice@x",
+                        "2026-07-07T00:00:00",
+                        "2026-07-07T01:00:00",
+                    ],
                     ["v1", "b1", "1", json.dumps({"applied_rules": []}), "alice@x", "2026-07-06T00:00:00", None],
                 ]
             },
@@ -261,10 +310,18 @@ class TestListVersions:
 class TestSnapshotCountsMany:
     def test_resolves_all_pins_in_one_query(self, service, sql):
         sql.query.return_value = [
-            ["b1", "1", json.dumps([_check("ar1", "id"), _check("ar2", "name")]),
-             json.dumps({"applied_rules": [{"applied_rule_id": "ar1"}]})],
-            ["b2", "3", json.dumps([_check("ar9", "id")]),
-             json.dumps({"applied_rules": [{"applied_rule_id": "ar9"}, {"applied_rule_id": "ar10"}]})],
+            [
+                "b1",
+                "1",
+                json.dumps([_check("ar1", "id"), _check("ar2", "name")]),
+                json.dumps({"applied_rules": [{"applied_rule_id": "ar1"}]}),
+            ],
+            [
+                "b2",
+                "3",
+                json.dumps([_check("ar9", "id")]),
+                json.dumps({"applied_rules": [{"applied_rule_id": "ar9"}, {"applied_rule_id": "ar10"}]}),
+            ],
         ]
         result = service.snapshot_counts_many([("b1", 1), ("b2", 3)])
         assert result == {("b1", 1): (1, 2), ("b2", 3): (2, 1)}

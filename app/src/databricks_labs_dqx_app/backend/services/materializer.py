@@ -449,6 +449,31 @@ class Materializer:
         if rendered is None:
             return set()
 
+        # DATA-LOSS GUARD: an EMPTY render is only a legitimate "this
+        # application materializes no rows" signal when the application had no
+        # mapping groups to begin with. When it DID have groups but every one
+        # failed to render (e.g. an auto-upgraded rule's new version no longer
+        # exposes the slots this follower's stored column_mapping binds), an
+        # empty result must NOT be treated as delete-all: doing so would
+        # ``_delete_stale_groups(expected=∅)`` and wipe every approved
+        # ``dq_quality_rules`` row for this application, then the downstream
+        # re-freeze would empty the frozen snapshot and leave the binding
+        # unrunnable. Instead leave the existing rows untouched (mirroring the
+        # ``rendered is None`` early-return) so the previous approved checks
+        # keep serving; the mismatch surfaces for re-review rather than as
+        # silent loss.
+        if not rendered and applied.column_mapping:
+            existing_ids = self._existing_group_ids(applied.id)
+            logger.warning(
+                "All %d mapping group(s) failed to render for applied rule %s (rule %s); "
+                "keeping %d existing materialized row(s) intact for re-review",
+                len(applied.column_mapping),
+                applied.id,
+                applied.rule_id,
+                len(existing_ids),
+            )
+            return existing_ids
+
         pinned = applied.pinned_version is not None
         expected_ids: set[str] = set()
         for row_id, row_table_fqn, check in rendered:
@@ -547,6 +572,22 @@ class Materializer:
         except json.JSONDecodeError:
             normalized = check_json_raw or ""
         return status, normalized
+
+    def _existing_group_ids(self, applied_rule_id: str | None) -> set[str]:
+        """Return the ``dq_quality_rules.rule_id``s currently materialized for *applied_rule_id*.
+
+        Used by :meth:`_materialize_applied_rule` to preserve (and keep
+        counting as "expected") the rows of an application whose every mapping
+        group failed to render against the resolved version — so orphan
+        cleanup never treats them as stale.
+        """
+        if not applied_rule_id:
+            return set()
+        e = escape_sql_string(applied_rule_id)
+        rows = self._sql.query(
+            f"SELECT rule_id FROM {self._quality_rules_table} WHERE applied_rule_id = '{e}'"  # noqa: S608
+        )
+        return {row[0] for row in rows if row and row[0]}
 
     def _delete_stale_groups(self, applied_rule_id: str | None, expected_ids: set[str]) -> None:
         if not applied_rule_id:

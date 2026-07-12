@@ -121,6 +121,15 @@ class MonitoredTableVersionService:
         set and overwrites vN's ``checks_json``/``state_json`` — the version
         integer is unchanged (design spec §3.2 re-freeze-without-bump).
 
+        NEVER destructive: just as version 0 is left untouched, a re-freeze
+        that would replace a NON-EMPTY frozen snapshot with an EMPTY check set
+        is refused. An empty re-computed set here means the binding's approved
+        rows momentarily resolved to nothing — e.g. an upstream
+        re-materialization couldn't re-render a rule against a new version — and
+        blindly writing it would leave the pinned version (and every
+        ``source == "approved"`` run) with zero checks. The previous snapshot is
+        kept instead; the mismatch surfaces for re-review.
+
         Raises:
             LookupError: *binding_id* does not exist.
         """
@@ -131,6 +140,14 @@ class MonitoredTableVersionService:
         if detail is None:
             return
         checks, state = self._current_approved_snapshot(binding_id, detail)
+        if not checks and self._has_nonempty_snapshot(binding_id, current):
+            logger.warning(
+                "Refusing to overwrite non-empty frozen snapshot for binding %s version %d with an "
+                "empty check set; keeping the previous snapshot (re-review required)",
+                binding_id,
+                current,
+            )
+            return
         e = escape_sql_string(binding_id)
         checks_expr = self._sql.json_literal_expr(json.dumps(checks))
         state_expr = self._sql.json_literal_expr(json.dumps(state))
@@ -247,6 +264,18 @@ class MonitoredTableVersionService:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _has_nonempty_snapshot(self, binding_id: str, version: int) -> bool:
+        """True when a frozen snapshot exists for *(binding_id, version)* and carries >=1 check.
+
+        Backs the non-destructive guard in :meth:`refreeze_current`: a missing
+        snapshot (or one already empty) is safe to (re)write, but a non-empty
+        one must never be replaced with an empty array.
+        """
+        try:
+            return len(self.get_checks(binding_id, version)) > 0
+        except LookupError:
+            return False
+
     def _current_version(self, binding_id: str) -> int:
         e = escape_sql_string(binding_id)
         rows = self._sql.query(f"SELECT version FROM {self._tables} WHERE binding_id = '{e}'")  # noqa: S608
@@ -255,9 +284,7 @@ class MonitoredTableVersionService:
         value = rows[0][0]
         return int(value) if value not in (None, "") else 0
 
-    def _current_approved_snapshot(
-        self, binding_id: str, detail: Any
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    def _current_approved_snapshot(self, binding_id: str, detail: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Build ``(checks_json, state_json)`` from the binding's current approved rows."""
         applied_ids = {s.applied_rule.id for s in detail.applied_rules if s.applied_rule.id}
         all_checks = self._rules_catalog.get_approved_checks_for_table(detail.table.table_fqn)
