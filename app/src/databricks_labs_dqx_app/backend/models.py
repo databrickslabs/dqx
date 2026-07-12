@@ -2120,3 +2120,31 @@ class GenieVerifyEntitlementsOut(BaseModel):
     """
 
     results: dict[str, str] = Field(default_factory=dict)
+
+
+class ResetDatabaseIn(BaseModel):
+    """Request body for the admin "Reset database" endpoint.
+
+    Defense-in-depth on top of the ``require_role(ADMIN)`` route gate: the
+    caller must echo back the exact confirmation phrase
+    (:data:`~backend.services.database_reset_service.RESET_CONFIRMATION_PHRASE`).
+    The server rejects any mismatch with a 400, so a stray/replayed request
+    that lacks the phrase cannot trigger the wipe.
+    """
+
+    confirmation_phrase: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Must exactly match the expected reset confirmation phrase.",
+    )
+
+
+class ResetDatabaseOut(BaseModel):
+    """Result of a database reset — what was cleared, kept, and by whom."""
+
+    status: str
+    performed_by: str
+    performed_at: str
+    cleared_tables: list[str] = Field(default_factory=list)
+    failed_tables: dict[str, str] = Field(default_factory=dict)
+    preserved_note: str = ""

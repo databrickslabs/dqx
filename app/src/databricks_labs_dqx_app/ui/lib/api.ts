@@ -2418,6 +2418,38 @@ export interface RequireDraftRunSettingsOut {
   require_draft_run_before_submit: boolean;
 }
 
+/**
+ * Request body for the admin "Reset database" endpoint.
+
+Defense-in-depth on top of the ``require_role(ADMIN)`` route gate: the
+caller must echo back the exact confirmation phrase
+(:data:`~backend.services.database_reset_service.RESET_CONFIRMATION_PHRASE`).
+The server rejects any mismatch with a 400, so a stray/replayed request
+that lacks the phrase cannot trigger the wipe.
+ */
+export interface ResetDatabaseIn {
+  /**
+   * Must exactly match the expected reset confirmation phrase.
+   * @minLength 1
+   * @maxLength 200
+   */
+  confirmation_phrase: string;
+}
+
+export type ResetDatabaseOutFailedTables = {[key: string]: string};
+
+/**
+ * Result of a database reset — what was cleared, kept, and by whom.
+ */
+export interface ResetDatabaseOut {
+  status: string;
+  performed_by: string;
+  performed_at: string;
+  cleared_tables?: string[];
+  failed_tables?: ResetDatabaseOutFailedTables;
+  preserved_note?: string;
+}
+
 export type RetentionSettingsInRetentionDays = number | null;
 
 export type RetentionSettingsInQuarantineRetentionDays = number | null;
@@ -23550,3 +23582,84 @@ export function useGetEffectivePermissionsSuspense<TData = Awaited<ReturnType<ty
 
   return query;
 }
+
+
+
+
+
+/**
+ * Clear ALL DQX Studio-managed data (Admin only). DESTRUCTIVE.
+
+Guardrails:
+
+- **Role**: the router requires :class:`UserRole.ADMIN`; a non-admin is
+  rejected with 403 before this handler runs.
+- **Confirmation phrase**: the request body must carry the exact
+  :data:`RESET_CONFIRMATION_PHRASE`; any mismatch is a 400. This is
+  defense-in-depth on top of the role gate — an accidental or replayed
+  request without the phrase cannot trigger the wipe.
+
+Scope: only the app's own ``dq_*`` tables are cleared (rows DELETEd, not
+tables dropped). The schema, the ``dq_migrations`` version tracker, and
+admin role mappings are preserved so the app keeps working and admins
+keep access. Customer/monitored data tables are never touched.
+ * @summary Reset Database
+ */
+export const resetDatabase = (
+    resetDatabaseIn: ResetDatabaseIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ResetDatabaseOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/admin/reset-database`,
+      resetDatabaseIn,options
+    );
+  }
+
+
+
+export const getResetDatabaseMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetDatabase>>, TError,{data: ResetDatabaseIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof resetDatabase>>, TError,{data: ResetDatabaseIn}, TContext> => {
+
+const mutationKey = ['resetDatabase'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resetDatabase>>, {data: ResetDatabaseIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  resetDatabase(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResetDatabaseMutationResult = NonNullable<Awaited<ReturnType<typeof resetDatabase>>>
+    export type ResetDatabaseMutationBody = ResetDatabaseIn
+    export type ResetDatabaseMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Reset Database
+ */
+export const useResetDatabase = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetDatabase>>, TError,{data: ResetDatabaseIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof resetDatabase>>,
+        TError,
+        {data: ResetDatabaseIn},
+        TContext
+      > => {
+
+      const mutationOptions = getResetDatabaseMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }

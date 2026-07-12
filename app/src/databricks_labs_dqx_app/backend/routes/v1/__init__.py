@@ -31,6 +31,7 @@ from .table_data import router as table_data_router
 from .rule_test import router as rule_test_router
 from .principals import router as principals_router
 from .permissions import router as permissions_router
+from .admin import router as admin_router
 
 v1_router = APIRouter()
 v1_router.include_router(me_router, tags=["meta"])
@@ -64,3 +65,4 @@ v1_router.include_router(table_data_router, prefix="/table-data", tags=["table-d
 v1_router.include_router(rule_test_router, prefix="/rule-tests", tags=["rule-tests"])
 v1_router.include_router(principals_router, prefix="/principals", tags=["principals"])
 v1_router.include_router(permissions_router, prefix="/permissions", tags=["permissions"])
+v1_router.include_router(admin_router, prefix="/admin", tags=["admin"])

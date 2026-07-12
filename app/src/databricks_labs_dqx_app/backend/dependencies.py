@@ -24,6 +24,7 @@ from .services.ai_gateway import AIGateway
 from .services.ai_rules_service import AiRulesService
 from .services.app_settings_service import AppSettingsService
 from .services.contract_rules_service import ContractRulesService
+from .services.database_reset_service import DatabaseResetService
 from .services.discovery import DiscoveryService
 from .services.draft_run_gate_service import DraftRunGateService
 from .services.job_service import JobService
@@ -239,6 +240,19 @@ async def get_role_service(
 ) -> RoleService:
     """Create a RoleService routed at the OLTP executor."""
     return RoleService(sql=sql)
+
+
+async def get_database_reset_service(
+    delta_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    oltp_sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+) -> DatabaseResetService:
+    """Create a DatabaseResetService over the Delta + OLTP executors.
+
+    Analytical tables clear through the Delta (SP) executor; OLTP tables
+    through whichever executor owns them (Postgres when Lakebase is enabled,
+    else the same Delta executor).
+    """
+    return DatabaseResetService(delta_sql=delta_sql, oltp_sql=oltp_sql)
 
 
 async def get_permissions_service(
@@ -857,6 +871,7 @@ __all__ = [
     "get_migration_runner",
     "get_app_settings_service",
     "get_role_service",
+    "get_database_reset_service",
     "get_ai_gateway",
     "get_ai_rules_service",
     "get_contract_rules_service",

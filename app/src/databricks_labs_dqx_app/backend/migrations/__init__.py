@@ -129,6 +129,7 @@ then redeploy — the consolidated baseline runs from scratch.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
@@ -1209,6 +1210,60 @@ MIGRATIONS: list[Migration] = [
 # section of the module docstring for the full recovery contract.
 for _m in MIGRATIONS:
     _validate_template_safe(_m.sql_template)
+
+# ---------------------------------------------------------------------------
+# App-owned table registry (derived, single source of truth)
+# ---------------------------------------------------------------------------
+#
+# The authoritative list of tables the DQX Studio owns is derived directly
+# from the ``CREATE TABLE IF NOT EXISTS`` statements in the migration
+# templates above, so it can never drift from what the migrations actually
+# create. Consumers that need to operate over *all* app-owned tables — most
+# notably the admin "Reset database" feature
+# (``services/database_reset_service.py``) — import these tuples rather than
+# hand-maintaining a parallel list.
+#
+# The split mirrors the physical backend routing (see the module docstring):
+#   * ANALYTICAL — created by ``oltp_fallback=False`` migrations; ALWAYS live
+#     in Delta (the Spark task runner writes them). Cleared via the Delta
+#     (SP) executor.
+#   * OLTP — created by ``oltp_fallback=True`` migrations; live in Lakebase
+#     Postgres when Lakebase is enabled, otherwise in Delta. Cleared via the
+#     injected OLTP executor, which resolves to whichever backend owns them.
+#
+# The ``dq_migrations`` meta-table is deliberately NOT included: it tracks
+# applied schema versions and must survive a data reset so migrations are not
+# re-run against an already-migrated schema.
+_CREATE_TABLE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS \{catalog\}\.\{schema\}\.([a-z_][a-z0-9_]*)")
+
+
+def _created_table_names(*, oltp_fallback: bool) -> tuple[str, ...]:
+    """Extract table names created by migrations with the given fallback flag.
+
+    Scans every :class:`DeltaMigration` whose ``oltp_fallback`` matches
+    *oltp_fallback* for ``CREATE TABLE IF NOT EXISTS`` statements and returns
+    the created table names, de-duplicated and in first-seen order.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    for migration in MIGRATIONS:
+        if not isinstance(migration, DeltaMigration) or migration.oltp_fallback != oltp_fallback:
+            continue
+        for name in _CREATE_TABLE_RE.findall(migration.sql_template):
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+    return tuple(names)
+
+
+# Tables that always live in Delta (analytical / Spark-written).
+ANALYTICAL_TABLE_NAMES: tuple[str, ...] = _created_table_names(oltp_fallback=False)
+
+# Tables that live in Lakebase Postgres when enabled, else Delta (OLTP).
+OLTP_TABLE_NAMES: tuple[str, ...] = _created_table_names(oltp_fallback=True)
+
+# Every table the app owns, across both backends.
+ALL_APP_TABLE_NAMES: tuple[str, ...] = ANALYTICAL_TABLE_NAMES + OLTP_TABLE_NAMES
 
 # ---------------------------------------------------------------------------
 # Runner

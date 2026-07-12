@@ -88,6 +88,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useResetDatabase } from "@/lib/api";
 import type { AxiosError } from "axios";
 import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
@@ -2423,12 +2432,148 @@ const NO_WAREHOUSE_VALUE = "__default__";
 const NO_CLUSTER_VALUE = "__none__";
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Danger zone — the admin "Reset database" action. DESTRUCTIVE: wipes all
+// DQX Studio-managed data. Guardrails are the point:
+//   * The card + button are admin-only (the backend route is *also* hard-gated
+//     to ADMIN; the UI gate is convenience, not the boundary).
+//   * The final confirm button stays disabled until the admin types the exact
+//     phrase, which is then sent to the backend as a confirmation token (the
+//     server rejects a mismatch with 400 — defense-in-depth).
+// The phrase MUST match RESET_CONFIRMATION_PHRASE in
+// backend/services/database_reset_service.py — keep the two in lock-step.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RESET_DB_PHRASE = "reset dqx studio";
+
+function DangerZoneCard() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { isAdmin } = usePermissions();
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  const resetMutation = useResetDatabase();
+
+  const canConfirm = typed.trim() === RESET_DB_PHRASE && !resetMutation.isPending;
+
+  const closeDialog = () => {
+    setOpen(false);
+    setTyped("");
+  };
+
+  const handleConfirm = () => {
+    if (!canConfirm) return;
+    resetMutation.mutate(
+      { data: { confirmation_phrase: RESET_DB_PHRASE } },
+      {
+        onSuccess: (resp) => {
+          const cleared = resp.data.cleared_tables?.length ?? 0;
+          const failed = Object.keys(resp.data.failed_tables ?? {}).length;
+          if (failed > 0) {
+            toast.warning(t("config.resetDbPartial", { count: failed }));
+          } else {
+            toast.success(t("config.resetDbSuccess", { count: cleared }));
+          }
+          closeDialog();
+          // Everything the app cached is now stale — refetch across the board.
+          queryClient.invalidateQueries();
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.resetDbFailed"));
+        },
+      },
+    );
+  };
+
+  return (
+    <Card className="border-destructive/50">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-destructive">
+          <AlertTriangle className="h-5 w-5" />
+          {t("config.resetDbTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-4">
+          <p className="flex items-center gap-2 text-sm font-semibold text-destructive">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            {t("config.resetDbWarningHeading")}
+          </p>
+          <p className="text-xs leading-relaxed text-muted-foreground">{t("config.resetDbWarningBody")}</p>
+          <p className="text-xs text-muted-foreground">{t("config.resetDbPreservedNote")}</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={!isAdmin}
+            onClick={() => {
+              setTyped("");
+              setOpen(true);
+            }}
+            className="gap-1.5"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            {t("config.resetDbButton")}
+          </Button>
+          {!isAdmin && <span className="text-xs text-muted-foreground">{t("config.resetDbAdminOnly")}</span>}
+        </div>
+      </CardContent>
+
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (resetMutation.isPending) return;
+          if (o) setOpen(true);
+          else closeDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-5 w-5" />
+              {t("config.resetDbDialogTitle")}
+            </DialogTitle>
+            <DialogDescription>{t("config.resetDbDialogBody")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="reset-db-confirm" className="text-xs">
+              {t("config.resetDbConfirmLabel", { phrase: RESET_DB_PHRASE })}
+            </Label>
+            <Input
+              id="reset-db-confirm"
+              value={typed}
+              autoComplete="off"
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={t("config.resetDbConfirmPlaceholder")}
+              disabled={resetMutation.isPending}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && canConfirm) handleConfirm();
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={closeDialog} disabled={resetMutation.isPending}>
+              {t("config.resetDbCancel")}
+            </Button>
+            <Button variant="destructive" size="sm" onClick={handleConfirm} disabled={!canConfirm} className="gap-1.5">
+              {resetMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {resetMutation.isPending ? t("config.resetDbInProgress") : t("config.resetDbConfirmButton")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Settings page shell — dqlake-style tabs, one card per setting, plus a
 // client-side search that filters cards across every tab by title/keyword.
 // The individual setting cards above are unchanged; this only regroups them.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type SettingsTabId = "general" | "ai" | "rules" | "entitlements" | "compute" | "data";
+type SettingsTabId = "general" | "ai" | "rules" | "entitlements" | "compute" | "data" | "danger";
 
 /** ErrorBoundary + Suspense wrapper shared by every setting card. */
 function SettingSection({ reset, children }: { reset: () => void; children: ReactNode }) {
@@ -2460,6 +2605,7 @@ function ConfigPage() {
       { id: "entitlements", label: t("config.tabEntitlements"), icon: KeyRound },
       { id: "compute", label: t("config.tabCompute"), icon: Cpu },
       { id: "data", label: t("config.tabData"), icon: Clock },
+      { id: "danger", label: t("config.tabDanger"), icon: AlertTriangle },
     ],
     [t],
   );
@@ -2481,6 +2627,7 @@ function ConfigPage() {
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
       { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
       { id: "retention", tab: "data", title: t("config.retentionTitle"), keywords: t("config.kwRetention"), render: () => <RetentionSettings /> },
+      { id: "resetDatabase", tab: "danger", title: t("config.resetDbTitle"), keywords: t("config.kwDanger"), render: () => <DangerZoneCard /> },
     ],
     [t],
   );
