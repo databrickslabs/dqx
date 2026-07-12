@@ -2403,6 +2403,21 @@ export interface RegistryRuleVersionOut {
   created_at?: RegistryRuleVersionOutCreatedAt;
 }
 
+/**
+ * Update payload for the require-draft-run-before-submit gating setting.
+ */
+export interface RequireDraftRunSettingsIn {
+  require_draft_run_before_submit: boolean;
+}
+
+/**
+ * Effective require-draft-run-before-submit gating setting.
+ */
+export interface RequireDraftRunSettingsOut {
+  /** Whether a draft run must exist for the target table(s) before a monitored table / table space / per-table rule can be submitted (or auto-approved) for review. Defaults to False (no draft-run requirement). Registry rules and cross-table SQL checks are table-agnostic and are never gated. */
+  require_draft_run_before_submit: boolean;
+}
+
 export type RetentionSettingsInRetentionDays = number | null;
 
 export type RetentionSettingsInQuarantineRetentionDays = number | null;
@@ -7538,6 +7553,219 @@ export const useSaveGlobalResultsSettings = <TError = AxiosError<HTTPValidationE
     }
     
 /**
+ * Return whether a draft run is required before submit (defaults to False when unset).
+
+Available to any authenticated user — the RR/MT/TS submit surfaces read it
+to decide whether to disable Submit until a draft run exists.
+ * @summary Get Require Draft Run Settings
+ */
+export const getRequireDraftRunSettings = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RequireDraftRunSettingsOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/config/require-draft-run`,options
+    );
+  }
+
+
+
+
+export const getGetRequireDraftRunSettingsQueryKey = () => {
+    return [
+    `/api/v1/config/require-draft-run`
+    ] as const;
+    }
+
+    
+export const getGetRequireDraftRunSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRequireDraftRunSettingsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRequireDraftRunSettings>>> = ({ signal }) => getRequireDraftRunSettings({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRequireDraftRunSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getRequireDraftRunSettings>>>
+export type GetRequireDraftRunSettingsQueryError = AxiosError<unknown>
+
+
+export function useGetRequireDraftRunSettings<TData = Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError = AxiosError<unknown>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRequireDraftRunSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getRequireDraftRunSettings>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRequireDraftRunSettings<TData = Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRequireDraftRunSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getRequireDraftRunSettings>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRequireDraftRunSettings<TData = Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Require Draft Run Settings
+ */
+
+export function useGetRequireDraftRunSettings<TData = Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRequireDraftRunSettingsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetRequireDraftRunSettingsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRequireDraftRunSettingsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRequireDraftRunSettings>>> = ({ signal }) => getRequireDraftRunSettings({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRequireDraftRunSettingsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getRequireDraftRunSettings>>>
+export type GetRequireDraftRunSettingsSuspenseQueryError = AxiosError<unknown>
+
+
+export function useGetRequireDraftRunSettingsSuspense<TData = Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError = AxiosError<unknown>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRequireDraftRunSettingsSuspense<TData = Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRequireDraftRunSettingsSuspense<TData = Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Require Draft Run Settings
+ */
+
+export function useGetRequireDraftRunSettingsSuspense<TData = Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRequireDraftRunSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRequireDraftRunSettingsSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Enable or disable the require-draft-run-before-submit gate (admin only).
+ * @summary Save Require Draft Run Settings
+ */
+export const saveRequireDraftRunSettings = (
+    requireDraftRunSettingsIn: RequireDraftRunSettingsIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RequireDraftRunSettingsOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/require-draft-run`,
+      requireDraftRunSettingsIn,options
+    );
+  }
+
+
+
+export const getSaveRequireDraftRunSettingsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveRequireDraftRunSettings>>, TError,{data: RequireDraftRunSettingsIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveRequireDraftRunSettings>>, TError,{data: RequireDraftRunSettingsIn}, TContext> => {
+
+const mutationKey = ['saveRequireDraftRunSettings'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveRequireDraftRunSettings>>, {data: RequireDraftRunSettingsIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveRequireDraftRunSettings(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveRequireDraftRunSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof saveRequireDraftRunSettings>>>
+    export type SaveRequireDraftRunSettingsMutationBody = RequireDraftRunSettingsIn
+    export type SaveRequireDraftRunSettingsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Require Draft Run Settings
+ */
+export const useSaveRequireDraftRunSettings = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveRequireDraftRunSettings>>, TError,{data: RequireDraftRunSettingsIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveRequireDraftRunSettings>>,
+        TError,
+        {data: RequireDraftRunSettingsIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveRequireDraftRunSettingsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * Best-effort kick off Vector Search endpoint/index creation (admin-triggered).
 
 No-op when embedding/Vector Search settings aren't fully configured.
@@ -11251,6 +11479,13 @@ straight through ``pending_approval`` to ``approved`` in the same call and
 the caller is recorded as the approver with an ``(auto)`` marker. A
 per-table rule has no object-grant surface of its own, so the auto-bypass
 predicate here is the role-level ``approve_rules`` permission.
+
+Honours the require-draft-run gate (issue B2-12): when the admin setting is
+on, a per-table rule cannot be submitted (nor auto-approved) until a draft
+run has been recorded for its target table. Cross-table SQL checks
+(``__sql_check__/`` FQNs) have no home table and are never gated. The gate
+is checked BEFORE any state transition, so it blocks both the plain submit
+and the auto-approve shortcut, returning 409 when unsatisfied.
  * @summary Submit For Approval
  */
 export const submitRuleForApproval = (
@@ -12231,6 +12466,12 @@ Honours the app-wide approvals mode (issue #94): in ``disabled`` mode, or in
 then published in the same call — running the identical publish side effects
 as the explicit approve route — with the caller recorded as the approver
 carrying an ``(auto)`` marker.
+
+Not gated by the require-draft-run setting (issue B2-12): a registry rule is
+a central, table-agnostic definition with no single table to dry-run against
+until it is APPLIED to a monitored table / table space. The draft-run
+requirement is therefore enforced where a concrete table exists — the MT/TS
+submit paths and the per-table applied-rule submit — not here.
  * @summary Submit Registry Rule
  */
 export const submitRegistryRule = (

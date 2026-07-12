@@ -276,15 +276,16 @@ class TestSubmit:
     def test_submit_success(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1", status="pending_approval", version=0)
-        result = submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
+        result = submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), draft_run_gate=MagicMock(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
         assert result.status == "pending_approval"
         svc.submit.assert_called_once_with("p1", "alice@x")
 
     def test_submit_missing_raises_404(self):
         svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="draft", version=0)
         svc.submit.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
+            submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), draft_run_gate=MagicMock(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
 
     def test_submit_approved_unchanged_raises_409(self):
@@ -294,9 +295,10 @@ class TestSubmit:
         scheduled runs.
         """
         svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="approved", version=1)
         svc.submit.side_effect = InvalidStatusTransitionError("boom")
         with pytest.raises(HTTPException) as excinfo:
-            submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
+            submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), draft_run_gate=MagicMock(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 409
 
 

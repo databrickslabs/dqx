@@ -25,6 +25,7 @@ from .services.ai_rules_service import AiRulesService
 from .services.app_settings_service import AppSettingsService
 from .services.contract_rules_service import ContractRulesService
 from .services.discovery import DiscoveryService
+from .services.draft_run_gate_service import DraftRunGateService
 from .services.job_service import JobService
 from .services.role_service import RoleService
 from .services.permissions_service import PermissionsService
@@ -545,6 +546,18 @@ async def get_run_set_service(
     lives in Delta regardless of whether Lakebase is enabled.
     """
     return RunSetService(oltp_sql=sql, validation_sql=validation_sql)
+
+
+async def get_draft_run_gate_service(
+    validation_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> DraftRunGateService:
+    """Create a DraftRunGateService (issue B2-12).
+
+    ``dq_validation_runs`` is always Delta (written by the runner job), so the
+    gate reads off the SP Delta executor regardless of whether the OLTP tables
+    live in Lakebase.
+    """
+    return DraftRunGateService(validation_sql=validation_sql)
 
 
 async def get_binding_run_service(

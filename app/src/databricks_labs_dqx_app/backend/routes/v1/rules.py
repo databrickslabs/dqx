@@ -8,6 +8,7 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_p
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentUserRole,
     get_app_settings_service,
+    get_draft_run_gate_service,
     get_monitored_table_version_service,
     get_obo_ws,
     get_rules_catalog_service,
@@ -15,6 +16,10 @@ from databricks_labs_dqx_app.backend.dependencies import (
     require_role,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
+    DraftRunGateService,
+    DraftRunRequiredError,
+)
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     BatchSaveRulesIn,
@@ -362,6 +367,7 @@ def submit_for_approval(
     svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    draft_run_gate: Annotated[DraftRunGateService, Depends(get_draft_run_gate_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     user_role: CurrentUserRole,
     body: SetStatusIn | None = None,
@@ -378,11 +384,25 @@ def submit_for_approval(
     the caller is recorded as the approver with an ``(auto)`` marker. A
     per-table rule has no object-grant surface of its own, so the auto-bypass
     predicate here is the role-level ``approve_rules`` permission.
+
+    Honours the require-draft-run gate (issue B2-12): when the admin setting is
+    on, a per-table rule cannot be submitted (nor auto-approved) until a draft
+    run has been recorded for its target table. Cross-table SQL checks
+    (``__sql_check__/`` FQNs) have no home table and are never gated. The gate
+    is checked BEFORE any state transition, so it blocks both the plain submit
+    and the auto-approve shortcut, returning 409 when unsatisfied.
     """
     try:
         user = obo_ws.current_user.me()
         user_email = user.user_name or "unknown"
         _ensure_owner_or_privileged(svc, rule_id, user_email, user_role, "submit")
+        gate_entry = svc.get_by_rule_id(rule_id)
+        if gate_entry is None:
+            raise HTTPException(status_code=404, detail=f"Rule not found: {rule_id}")
+        draft_run_gate.enforce(
+            enabled=app_settings.get_require_draft_run_before_submit(),
+            table_fqns=[gate_entry.table_fqn],
+        )
         expected_version = body.expected_version if body else None
         entry = svc.set_status(rule_id, "pending_approval", user_email, expected_version)
         can_edit_and_approve = "approve_rules" in get_permissions_for_role(user_role)

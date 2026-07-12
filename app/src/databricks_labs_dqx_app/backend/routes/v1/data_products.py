@@ -22,6 +22,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     CurrentUserRole,
     get_app_settings_service,
     get_data_product_service,
+    get_draft_run_gate_service,
     get_monitored_table_version_service,
     get_obo_ws,
     get_permissions_service,
@@ -29,6 +30,10 @@ from databricks_labs_dqx_app.backend.dependencies import (
     require_runner,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
+    DraftRunGateService,
+    DraftRunRequiredError,
+)
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
@@ -371,6 +376,7 @@ def submit_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    draft_run_gate: Annotated[DraftRunGateService, Depends(get_draft_run_gate_service)],
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
@@ -389,6 +395,18 @@ def submit_data_product(
     """
     try:
         user_email = _current_user_email(obo_ws)
+        # Require-draft-run gate (issue B2-12): when the admin setting is on, the
+        # space cannot enter review (nor take the auto-approve shortcut) until a
+        # draft run has been recorded for at least one member table. Checked
+        # BEFORE the submit transition so it blocks both paths. 409 when
+        # unsatisfied; a space with no members is vacuously allowed.
+        gate_detail = svc.get(product_id)
+        if gate_detail is None:
+            raise HTTPException(status_code=404, detail=f"Table space not found: {product_id}")
+        draft_run_gate.enforce(
+            enabled=app_settings.get_require_draft_run_before_submit(),
+            table_fqns=[m.table_fqn for m in gate_detail.members],
+        )
         svc.submit(product_id, user_email)
         # Only the auto-approving modes (``disabled`` / ``auto_bypass``) consult
         # the object-aware predicate; ``enabled`` never auto-approves, so skip
@@ -407,6 +425,10 @@ def submit_data_product(
         detail = svc.get(product_id)
         assert detail is not None  # just submitted it
         return DataProductOut.from_domain(detail)
+    except HTTPException:
+        raise
+    except DraftRunRequiredError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except InvalidStatusTransitionError as e:

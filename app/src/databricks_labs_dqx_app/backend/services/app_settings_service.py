@@ -417,6 +417,36 @@ class AppSettingsService:
         return enabled
 
     # ------------------------------------------------------------------
+    # Require-draft-run-before-submit (issue B2-12) — a governance gate that,
+    # when ON, refuses to SUBMIT a monitored table / table space (or a
+    # per-table applied rule) for review — and equally refuses the
+    # auto-approve shortcut that the approvals-mode setting would otherwise
+    # take — until a draft run has been recorded for the target table(s). This
+    # forces authors to dry-run-test their checks before they enter review.
+    #
+    # Defaults to ``False`` (OFF) so existing deploys keep today's behaviour:
+    # a submit never requires a prior run. Only an explicit ``"true"`` reads as
+    # on; an unset or any other value reads as off. Registry rules are
+    # table-agnostic (no single table to validate) and cross-table SQL checks
+    # have no home table, so the gate does not apply to those submits — see
+    # ``DraftRunGateService`` and the route call sites for the exact scoping.
+    # ------------------------------------------------------------------
+
+    _REQUIRE_DRAFT_RUN_BEFORE_SUBMIT_KEY = "require_draft_run_before_submit"
+
+    def get_require_draft_run_before_submit(self) -> bool:
+        """Return whether a draft run is required before submit; defaults to ``False`` (off) when unset."""
+        raw = self.get_setting(self._REQUIRE_DRAFT_RUN_BEFORE_SUBMIT_KEY)
+        return raw is not None and raw.strip().lower() == "true"
+
+    def save_require_draft_run_before_submit(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the require-draft-run-before-submit setting. Returns the saved value."""
+        self.save_setting(
+            self._REQUIRE_DRAFT_RUN_BEFORE_SUBMIT_KEY, "true" if enabled else "false", user_email=user_email
+        )
+        return enabled
+
+    # ------------------------------------------------------------------
     # Run review statuses — admin-managed list of labels surfaced on the
     # Runs detail page (next to comments) and as a Runs History filter.
     # Stored as a JSON array under ``run_review_statuses_v1``. One entry

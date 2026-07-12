@@ -22,6 +22,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_apply_rules_service,
     get_binding_run_service,
     get_discovery_service,
+    get_draft_run_gate_service,
     get_materializer,
     get_monitored_table_service,
     get_monitored_table_version_service,
@@ -33,6 +34,10 @@ from databricks_labs_dqx_app.backend.dependencies import (
     require_runner,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
+    DraftRunGateService,
+    DraftRunRequiredError,
+)
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
@@ -760,6 +765,7 @@ def submit_monitored_table(
     rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    draft_run_gate: Annotated[DraftRunGateService, Depends(get_draft_run_gate_service)],
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
@@ -786,6 +792,17 @@ def submit_monitored_table(
     """
     try:
         user_email = _current_user_email(obo_ws)
+        # Require-draft-run gate (issue B2-12): when the admin setting is on, the
+        # binding cannot enter review (nor take the auto-approve shortcut) until
+        # a draft run has been recorded for its table. Checked BEFORE any state
+        # transition so it blocks both paths uniformly. 409 when unsatisfied.
+        gate_detail = monitored_tables_svc.get(binding_id)
+        if gate_detail is None:
+            raise HTTPException(status_code=404, detail=f"Monitored table not found: {binding_id}")
+        draft_run_gate.enforce(
+            enabled=app_settings.get_require_draft_run_before_submit(),
+            table_fqns=[gate_detail.table.table_fqn],
+        )
         materializer.materialize_binding(binding_id)
         # Recover rejected checks so an unchanged re-submit re-enters review
         # (rejected -> draft -> pending_approval, both legal transitions).
@@ -832,6 +849,10 @@ def submit_monitored_table(
                 new_version=new_version,
             )
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=submitted)
+    except HTTPException:
+        raise
+    except DraftRunRequiredError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except MaterializationError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:

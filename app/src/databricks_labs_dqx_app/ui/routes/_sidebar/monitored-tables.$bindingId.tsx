@@ -111,6 +111,7 @@ import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-inval
 import { useLabelDefinitions, useWorkspaceHost } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
+import { useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
 import { useMonitoredTableRunActivity } from "@/hooks/use-monitored-table-run-activity";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
@@ -225,6 +226,7 @@ function MonitoredTableDetailPage() {
   const { t } = useTranslation();
   const perms = usePermissions();
   const { willAutoApprove } = useApprovalsMode();
+  const requireDraftRun = useRequireDraftRunBeforeSubmit();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { bindingId } = useParams({ from: "/_sidebar/monitored-tables/$bindingId" });
@@ -457,6 +459,14 @@ function MonitoredTableDetailPage() {
   // would just be a no-op re-approval request (item 11).
   const submitDisabledNoChanges = !isDirty && table.status === "approved";
 
+  // Require-draft-run gate (issue B2-12): when the admin setting is on, block
+  // submit until a run has been recorded for this table. ``last_run_at`` is the
+  // cache-friendly signal already on the binding payload (excludes preview /
+  // in-flight runs); before approval the only run it can reflect is a draft
+  // run. The backend enforces the authoritative check and returns 409 either way.
+  const needsDraftRun = requireDraftRun && !table.last_run_at;
+  const submitBlocked = submitDisabledNoChanges || needsDraftRun;
+
   return (
     <FadeIn>
       <div className="space-y-6">
@@ -506,10 +516,10 @@ function MonitoredTableDetailPage() {
                 <TooltipProvider delayDuration={200}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span className={cn(submitDisabledNoChanges && "cursor-not-allowed")}>
+                      <span className={cn(submitBlocked && "cursor-not-allowed")}>
                         <Button
                           onClick={handleSubmit}
-                          disabled={lifecycleBusy || submitDisabledNoChanges}
+                          disabled={lifecycleBusy || submitBlocked}
                           className="gap-2"
                         >
                           {saveMutation.isPending || submitMutation.isPending ? (
@@ -525,8 +535,12 @@ function MonitoredTableDetailPage() {
                         </Button>
                       </span>
                     </TooltipTrigger>
-                    {submitDisabledNoChanges && (
-                      <TooltipContent side="bottom">{t("monitoredTables.submitDisabledNoChangesHint")}</TooltipContent>
+                    {(needsDraftRun || submitDisabledNoChanges) && (
+                      <TooltipContent side="bottom">
+                        {needsDraftRun
+                          ? t("monitoredTables.submitDisabledNeedsDraftRunHint")
+                          : t("monitoredTables.submitDisabledNoChangesHint")}
+                      </TooltipContent>
                     )}
                   </Tooltip>
                 </TooltipProvider>

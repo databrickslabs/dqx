@@ -354,6 +354,12 @@ def submit_registry_rule(
     then published in the same call — running the identical publish side effects
     as the explicit approve route — with the caller recorded as the approver
     carrying an ``(auto)`` marker.
+
+    Not gated by the require-draft-run setting (issue B2-12): a registry rule is
+    a central, table-agnostic definition with no single table to dry-run against
+    until it is APPLIED to a monitored table / table space. The draft-run
+    requirement is therefore enforced where a concrete table exists — the MT/TS
+    submit paths and the per-table applied-rule submit — not here.
     """
     try:
         rule = svc.submit(rule_id, user_email)

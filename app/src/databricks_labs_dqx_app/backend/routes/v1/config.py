@@ -1301,6 +1301,68 @@ def save_global_results_settings(
 
 
 # ----------------------------------------------------------------------
+# Require-draft-run-before-submit (issue B2-12) — a governance gate that, when
+# on, refuses to submit a monitored table / table space (or a per-table
+# applied rule) for review — and the approvals-mode auto-approve shortcut —
+# until a draft run has been recorded for the target table(s). Read at VIEWER+
+# so every submit surface can decide whether to disable its Submit button;
+# written ADMIN-only, matching the other governance settings above.
+# ----------------------------------------------------------------------
+
+
+class RequireDraftRunSettingsOut(BaseModel):
+    """Effective require-draft-run-before-submit gating setting."""
+
+    require_draft_run_before_submit: bool = Field(
+        description="Whether a draft run must exist for the target table(s) before a monitored "
+        "table / table space / per-table rule can be submitted (or auto-approved) for review. "
+        "Defaults to False (no draft-run requirement). Registry rules and cross-table SQL checks "
+        "are table-agnostic and are never gated."
+    )
+
+
+class RequireDraftRunSettingsIn(BaseModel):
+    """Update payload for the require-draft-run-before-submit gating setting."""
+
+    require_draft_run_before_submit: bool
+
+
+@router.get(
+    "/require-draft-run",
+    response_model=RequireDraftRunSettingsOut,
+    operation_id="getRequireDraftRunSettings",
+)
+def get_require_draft_run_settings(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> RequireDraftRunSettingsOut:
+    """Return whether a draft run is required before submit (defaults to False when unset).
+
+    Available to any authenticated user — the RR/MT/TS submit surfaces read it
+    to decide whether to disable Submit until a draft run exists.
+    """
+    return RequireDraftRunSettingsOut(
+        require_draft_run_before_submit=svc.get_require_draft_run_before_submit()
+    )
+
+
+@router.put(
+    "/require-draft-run",
+    response_model=RequireDraftRunSettingsOut,
+    operation_id="saveRequireDraftRunSettings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_require_draft_run_settings(
+    body: RequireDraftRunSettingsIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> RequireDraftRunSettingsOut:
+    """Enable or disable the require-draft-run-before-submit gate (admin only)."""
+    saved = svc.save_require_draft_run_before_submit(body.require_draft_run_before_submit, user_email=email)
+    logger.info("Saved require_draft_run_before_submit = %s (by=%s)", saved, email)
+    return RequireDraftRunSettingsOut(require_draft_run_before_submit=saved)
+
+
+# ----------------------------------------------------------------------
 # Vector Search auto-provisioning trigger — Rules Registry Phase 7F. A
 # dedicated endpoint (rather than folding this into ``save_ai_settings``)
 # so provisioning can be retried independently of a settings save, and so

@@ -93,6 +93,7 @@ def _submit_mt_extra() -> dict:
     return {
         "version_svc": MagicMock(),
         "app_settings": app_settings,
+        "draft_run_gate": MagicMock(),
         "perms": MagicMock(),
         "role": UserRole.RULE_AUTHOR,
         "principal_ids": frozenset(),

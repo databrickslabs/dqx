@@ -32,6 +32,7 @@ import {
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
+import { useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
 import { useProductRunSets } from "@/hooks/use-product-run-sets";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -288,6 +289,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const queryClient = useQueryClient();
   const perms = usePermissions();
   const { willAutoApprove } = useApprovalsMode();
+  const requireDraftRun = useRequireDraftRunBeforeSubmit();
   const canRun = perms.canRunRules;
   const canApprove = perms.canApproveRules;
 
@@ -328,6 +330,12 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   // monitored-table "Submit for review" disabled-no-changes guard so the
   // button doesn't imply there's something to re-submit when there isn't.
   const submitDisabledNoChanges = !editState.isDirty && product.status === "approved";
+  // Require-draft-run gate (issue B2-12): block submit until a run has been
+  // recorded for this space. ``last_run_at`` (excludes preview / in-flight
+  // runs) is the cache-friendly signal on the product payload; before approval
+  // the only run it can reflect is a draft run. The backend enforces the
+  // authoritative check (409) regardless.
+  const needsDraftRun = requireDraftRun && !product.last_run_at;
   const isPending = product.status === "pending_approval";
   const lifecycleBusy = approveMut.isPending || rejectMut.isPending || editState.submitPending;
 
@@ -471,10 +479,16 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
           {canEdit && (
             <Button
               onClick={() => void editState.handleSubmit()}
-              disabled={editState.submitPending || (submitDisabledNoChanges && !editState.canSave)}
+              disabled={editState.submitPending || needsDraftRun || (submitDisabledNoChanges && !editState.canSave)}
               size="sm"
               className="gap-2"
-              title={submitDisabledNoChanges ? t("dataProducts.submitDisabledNoChangesHint") : undefined}
+              title={
+                needsDraftRun
+                  ? t("dataProducts.submitDisabledNeedsDraftRunHint")
+                  : submitDisabledNoChanges
+                    ? t("dataProducts.submitDisabledNoChangesHint")
+                    : undefined
+              }
             >
               {editState.submitPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               {willAutoApprove

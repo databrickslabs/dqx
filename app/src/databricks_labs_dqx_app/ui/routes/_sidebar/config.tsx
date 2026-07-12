@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, AlertTriangle, CheckCircle2, Circle, Clock, Cpu, Database, Globe, KeyRound, LineChart, Loader2, Lock, Search, Tags, Plus, Trash2, X, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Circle, Clock, Cpu, Database, FlaskConical, Globe, KeyRound, LineChart, Loader2, Lock, Search, Tags, Plus, Trash2, X, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -64,6 +64,9 @@ import {
   useGetGlobalResultsSettings,
   useSaveGlobalResultsSettings,
   getGetGlobalResultsSettingsQueryKey,
+  useGetRequireDraftRunSettings,
+  useSaveRequireDraftRunSettings,
+  getGetRequireDraftRunSettingsQueryKey,
   useListComputeWarehouses,
   useListComputeClusters,
   useGetWarehouseAccess,
@@ -1987,6 +1990,75 @@ function ApprovalsModeCard() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Require a draft run before submit (issue B2-12). When on, a monitored table /
+// table space / per-table rule cannot be submitted for review (nor take the
+// approvals-mode auto-approve shortcut) until a draft run has been recorded for
+// its target table(s). Registry rules and cross-table SQL checks are
+// table-agnostic and are never gated.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RequireDraftRunSettingsCard() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useGetRequireDraftRunSettings({ query: { select: (d) => d.data } });
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveRequireDraftRunSettings();
+  const { isAdmin } = usePermissions();
+
+  if (isLoading || !data) return <Skeleton className="h-40 w-full" />;
+
+  const save = (enabled: boolean) => {
+    saveMutation.mutate(
+      { data: { require_draft_run_before_submit: enabled } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetRequireDraftRunSettingsQueryKey() });
+          toast.success(t("config.requireDraftRunSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.requireDraftRunFailedSave"));
+        },
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <FlaskConical className="h-5 w-5" />
+          {t("config.requireDraftRunTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.requireDraftRunDescription")}
+        </p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="require-draft-run" className="text-sm">
+              {t("config.requireDraftRunLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.requireDraftRunHint")}</p>
+          </div>
+          <Switch
+            id="require-draft-run"
+            checked={data.require_draft_run_before_submit}
+            onCheckedChange={(checked) => save(checked)}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.requireDraftRunAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Permissions — admin default for the per-grant inheritance toggle. When on,
 // a new grant on a table space defaults to flowing down to its member tables.
 // Individual grants can still override this per-grant in the Permissions tab.
@@ -2403,6 +2475,7 @@ function ConfigPage() {
       { id: "labels", tab: "rules", title: t("config.labelsTitle"), keywords: t("config.kwLabels"), render: () => <LabelDefinitionsSettings /> },
       { id: "rulesRegistry", tab: "rules", title: t("config.rulesRegistrySettingsTitle"), keywords: t("config.kwRulesRegistry"), render: () => <RulesRegistrySettingsCard /> },
       { id: "approvalsMode", tab: "rules", title: t("config.approvalsModeTitle"), keywords: t("config.kwApprovalsMode"), render: () => <ApprovalsModeCard /> },
+      { id: "requireDraftRun", tab: "rules", title: t("config.requireDraftRunTitle"), keywords: t("config.kwRequireDraftRun"), render: () => <RequireDraftRunSettingsCard /> },
       { id: "entitlements", tab: "entitlements", title: t("roleManagement.title"), keywords: t("config.kwEntitlements"), render: () => <RoleManagement /> },
       { id: "permissions", tab: "entitlements", title: t("config.permissionsDefaultInheritTitle"), keywords: t("config.kwPermissions"), render: () => <PermissionsSettingsCard /> },
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
