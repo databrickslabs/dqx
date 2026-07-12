@@ -758,6 +758,15 @@ interface RegistryRuleFormDialogProps {
    */
   jsonDialogOpen?: boolean;
   onJsonDialogOpenChange?: (open: boolean) => void;
+  /**
+   * "page" variant only: extra action controls (e.g. the routed detail
+   * page's Approve/Reject buttons + the "…" actions menu) rendered inline,
+   * immediately after the Save/Submit buttons, in the single top-right
+   * header action row — mirroring the Monitored Table / Table Space headers
+   * where the action buttons and the ⋮ menu sit together (B2-7). Ignored in
+   * the dialog variant.
+   */
+  headerActions?: ReactNode;
 }
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -895,6 +904,7 @@ export function RegistryRuleFormDialog({
   onDirtyChange,
   jsonDialogOpen: controlledJsonDialogOpen,
   onJsonDialogOpenChange,
+  headerActions,
 }: RegistryRuleFormDialogProps) {
   const { t } = useTranslation();
   const sourceRule = editingRule ?? viewingRule;
@@ -2702,15 +2712,22 @@ export function RegistryRuleFormDialog({
 
   if (variant === "page") {
     // The routed detail page already renders its own name/status/mode/
-    // author-kind header above this component, so skip the dialog-style
+    // author-kind title above this component, so skip the dialog-style
     // title here (which would duplicate it). Save/Submit actions live in a
-    // top-right header row (matching the MT/TS binding headers) rather than a
-    // bottom footer; the page's breadcrumb covers the dropped Cancel/Close.
-    const headerActions = renderSaveSubmitButtons(true);
+    // single top-right header row (matching the MT/TS binding headers)
+    // rather than a bottom footer; the page's breadcrumb covers the dropped
+    // Cancel/Close. The route passes its Approve/Reject buttons + the "…"
+    // actions menu as `headerActions` so they render inline, immediately
+    // after Save/Submit, in this same row (B2-7) instead of a separate row
+    // in the page's own title header.
+    const saveSubmitButtons = renderSaveSubmitButtons(true);
     return (
       <div className="space-y-6">
-        {headerActions && (
-          <div className="flex flex-wrap items-center justify-end gap-2">{headerActions}</div>
+        {(saveSubmitButtons || headerActions) && (
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {saveSubmitButtons}
+            {headerActions}
+          </div>
         )}
         {formBody}
       </div>

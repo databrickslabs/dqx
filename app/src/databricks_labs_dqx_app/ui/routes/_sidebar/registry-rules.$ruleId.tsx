@@ -266,99 +266,108 @@ function RegistryRuleDetailPage() {
     }
   }, [canEdit]);
 
+  // Approve/Reject + the "…" actions menu. Passed DOWN into
+  // RegistryRuleFormDialog's page-variant header so they render inline,
+  // immediately after the Save/Submit buttons, in ONE top-right action row —
+  // matching the MT/TS headers where the buttons and the ⋮ menu sit together
+  // (B2-7). Save/Submit stay owned by the form (their enabled/disabled state
+  // is deep in its edit state); these route-owned controls just join them.
+  const headerActions = (
+    <>
+      {canApproveReject && (
+        <>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2 h-8 text-emerald-600 border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950"
+            onClick={handleApprove}
+            disabled={lifecycleBusy}
+          >
+            {approveMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <CheckCircle2 className="h-3.5 w-3.5" />
+            )}
+            {t("rulesRegistry.actionApprove")}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2 h-8 text-red-600 border-red-400 hover:bg-red-50 dark:hover:bg-red-950"
+            onClick={() => setRejectConfirmOpen(true)}
+            disabled={lifecycleBusy}
+          >
+            {rejectMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <XCircle className="h-3.5 w-3.5" />
+            )}
+            {t("rulesRegistry.actionReject")}
+          </Button>
+        </>
+      )}
+      {showActionsMenu && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-8 p-0"
+              aria-label={t("rulesRegistry.actionsMenuLabel")}
+            >
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {canApply && (
+              <DropdownMenuItem onClick={() => setApplyModalOpen(true)} className="gap-2">
+                <Table2 className="h-3.5 w-3.5" />
+                {t("rulesRegistry.actionApplyToTables")}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={handleOpenJsonDialog} className="gap-2">
+              <Braces className="h-3.5 w-3.5" />
+              {t("rulesRegistry.actionViewJson")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setCommentsOpen(true)} className="gap-2">
+              <MessageSquare className="h-3.5 w-3.5" />
+              {t("rulesRegistry.actionComments")}
+            </DropdownMenuItem>
+            {canDelete && (
+              <DropdownMenuItem
+                onClick={() => setDeleteConfirmOpen(true)}
+                variant="destructive"
+                className="gap-2"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {t("rulesRegistry.actionDelete")}
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </>
+  );
+
   return (
     <FadeIn>
       <div className="space-y-6">
         <PageBreadcrumb items={[{ label: t("rulesRegistry.title"), to: "/registry-rules" }]} page={name} />
 
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2 min-w-0">
-            <h1 className="text-2xl font-semibold tracking-tight leading-none truncate">{name}</h1>
-            <StatusBadge status={rule.status} />
-            {/* Name + status + version, one header row — matches the
-                Monitored Table / Data Product detail headers (item 21).
-                "Modified since vN" takes priority over the plain vN badge,
-                same precedence as the MT header's VersionBadge. */}
-            {rule.display_status === "modified" ? (
-              <ModifiedBadge version={rule.version} />
-            ) : (
-              <RuleVersionBadge version={rule.version} />
-            )}
-          </div>
-          <div className="flex items-center gap-2 ml-auto">
-            {canApproveReject && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2 h-8 text-emerald-600 border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950"
-                  onClick={handleApprove}
-                  disabled={lifecycleBusy}
-                >
-                  {approveMutation.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                  )}
-                  {t("rulesRegistry.actionApprove")}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2 h-8 text-red-600 border-red-400 hover:bg-red-50 dark:hover:bg-red-950"
-                  onClick={() => setRejectConfirmOpen(true)}
-                  disabled={lifecycleBusy}
-                >
-                  {rejectMutation.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <XCircle className="h-3.5 w-3.5" />
-                  )}
-                  {t("rulesRegistry.actionReject")}
-                </Button>
-              </>
-            )}
-            {showActionsMenu && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0"
-                    aria-label={t("rulesRegistry.actionsMenuLabel")}
-                  >
-                    <MoreVertical className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {canApply && (
-                    <DropdownMenuItem onClick={() => setApplyModalOpen(true)} className="gap-2">
-                      <Table2 className="h-3.5 w-3.5" />
-                      {t("rulesRegistry.actionApplyToTables")}
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem onClick={handleOpenJsonDialog} className="gap-2">
-                    <Braces className="h-3.5 w-3.5" />
-                    {t("rulesRegistry.actionViewJson")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setCommentsOpen(true)} className="gap-2">
-                    <MessageSquare className="h-3.5 w-3.5" />
-                    {t("rulesRegistry.actionComments")}
-                  </DropdownMenuItem>
-                  {canDelete && (
-                    <DropdownMenuItem
-                      onClick={() => setDeleteConfirmOpen(true)}
-                      variant="destructive"
-                      className="gap-2"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      {t("rulesRegistry.actionDelete")}
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </div>
+        {/* Name + status + version title line — matches the Monitored Table /
+            Data Product detail headers (item 21). "Modified since vN" takes
+            priority over the plain vN badge, same precedence as the MT
+            header's VersionBadge. The action buttons + ⋮ menu no longer sit
+            here — they render in the form's single header action row below,
+            inline with Save/Submit (B2-7). */}
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight leading-none truncate">{name}</h1>
+          <StatusBadge status={rule.status} />
+          {rule.display_status === "modified" ? (
+            <ModifiedBadge version={rule.version} />
+          ) : (
+            <RuleVersionBadge version={rule.version} />
+          )}
         </div>
 
         <RegistryRuleFormDialog
@@ -379,6 +388,7 @@ function RegistryRuleDetailPage() {
           onDirtyChange={setIsDirty}
           jsonDialogOpen={formJsonDialogOpen}
           onJsonDialogOpenChange={setFormJsonDialogOpen}
+          headerActions={headerActions}
         />
       </div>
 
