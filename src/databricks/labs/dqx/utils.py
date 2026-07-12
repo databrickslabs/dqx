@@ -240,7 +240,7 @@ def is_sql_query_safe(query: str) -> bool:
     return not any(re.search(rf"\b{kw}\b", normalized_query) for kw in forbidden_statements)
 
 
-def safe_json_load(value: str | None):
+def safe_json_load(value: str | None) -> object:
     """
     Safely load a JSON string, returning the original value if it fails to parse.
     This allows to specify string value without a need to escape the quotes.
