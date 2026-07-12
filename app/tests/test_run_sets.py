@@ -10,7 +10,6 @@ mint-and-join, member counts, and the aggregated-status precedence
 
 from __future__ import annotations
 
-from datetime import datetime
 from unittest.mock import create_autospec
 
 import pytest
@@ -188,32 +187,6 @@ class TestAggregatedStatus:
     def test_list_for_product_empty_run_sets_returns_empty(self, service, oltp_sql):
         oltp_sql.query.return_value = []
         assert service.list_for_product("prod-1") == []
-
-
-class TestLatestCreatedAtByProduct:
-    def test_one_grouped_query_for_all_products(self, service, oltp_sql, validation_sql):
-        oltp_sql.query.return_value = [
-            ["p1", "2026-07-09 12:00:00"],
-            ["p2", "2026-07-08 08:30:00"],
-        ]
-        result = service.latest_created_at_by_product(["p1", "p2", "p3"])
-        assert result == {
-            "p1": datetime(2026, 7, 9, 12, 0, 0),
-            "p2": datetime(2026, 7, 8, 8, 30, 0),
-        }  # p3 has no run sets -> absent
-        assert oltp_sql.query.call_count == 1
-        stmt = oltp_sql.query.call_args[0][0]
-        assert f"FROM {_RUN_SETS}" in stmt
-        assert "MAX(created_at)" in stmt
-        assert "GROUP BY product_id" in stmt
-        assert "IN ('p1', 'p2', 'p3')" in stmt
-        # last-run-at never needs the Delta validation-runs table
-        validation_sql.query.assert_not_called()
-        validation_sql.query_dicts.assert_not_called()
-
-    def test_empty_input_short_circuits_without_sql(self, service, oltp_sql):
-        assert service.latest_created_at_by_product([]) == {}
-        oltp_sql.query.assert_not_called()
 
 
 class TestRunSetIdsByRunId:

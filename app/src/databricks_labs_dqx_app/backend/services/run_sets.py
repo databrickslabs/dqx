@@ -195,31 +195,6 @@ class RunSetService:
             )
         return summaries
 
-    def latest_created_at_by_product(self, product_ids: list[str]) -> dict[str, datetime]:
-        """Return the newest run-set ``created_at`` per product, in ONE grouped query.
-
-        Batched replacement for calling :meth:`list_for_product` once per
-        product just to read the top row's ``created_at`` — that path costs
-        three round-trips per product (run sets + members + a Delta
-        ``dq_validation_runs`` scan for statuses this caller ignores).
-        Products with no run sets are simply absent from the result.
-        """
-        if not product_ids:
-            return {}
-        in_list = ", ".join(f"'{escape_sql_string(p)}'" for p in product_ids)
-        created_at = self._sql.ts_text("MAX(created_at)")
-        sql = (
-            f"SELECT product_id, {created_at} AS last_created_at "  # noqa: S608
-            f"FROM {self._run_sets_table} WHERE product_id IN ({in_list}) GROUP BY product_id"
-        )
-        rows = self._sql.query(sql)
-        result: dict[str, datetime] = {}
-        for row in rows:
-            ts = self._parse_timestamp(row[1])
-            if row[0] and ts is not None:
-                result[row[0]] = ts
-        return result
-
     def run_set_ids_by_run_id(self, run_ids: list[str]) -> dict[str, str]:
         """Map each of *run_ids* to its ``run_set_id`` via ``dq_run_set_members``.
 

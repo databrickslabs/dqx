@@ -154,7 +154,6 @@ def monitored_tables():
 @pytest.fixture
 def run_set_service():
     mock = create_autospec(RunSetService, instance=True)
-    mock.latest_created_at_by_product.return_value = {}
     mock.create.return_value = "rs-new"
     return mock
 
@@ -278,7 +277,6 @@ class TestListAndGet:
         assert "IN ('p1', 'p2', 'p3')" in members_query
         # Per-product last-run is now derived from the members' denormalized
         # last_run_at (B2-15) — no per-product run-set MAX query.
-        run_set_service.latest_created_at_by_product.assert_not_called()
         version_service.snapshot_counts_many.assert_called_once_with([("b2", 1)])
         # The response shape is unchanged: same per-product details as before.
         by_id = {d.product.product_id: d for d in result}
@@ -319,7 +317,6 @@ class TestListAndGet:
         result = service.list_products()
 
         assert result[0].last_run_at == datetime(2026, 7, 11, 18, 0, 0)
-        run_set_service.latest_created_at_by_product.assert_not_called()
 
     def test_list_products_empty(self, service, sql):
         sql.query.return_value = []
