@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, AlertTriangle, CheckCircle2, Circle, Clock, Cpu, Database, Globe, KeyRound, Loader2, Lock, Search, Tags, Plus, Trash2, X, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Circle, Clock, Cpu, Database, Globe, KeyRound, LineChart, Loader2, Lock, Search, Tags, Plus, Trash2, X, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -61,6 +61,9 @@ import {
   useGetPermissionsDefaultInherit,
   useSetPermissionsDefaultInherit,
   getGetPermissionsDefaultInheritQueryKey,
+  useGetGlobalResultsSettings,
+  useSaveGlobalResultsSettings,
+  getGetGlobalResultsSettingsQueryKey,
   useListComputeWarehouses,
   useListComputeClusters,
   useGetWarehouseAccess,
@@ -2050,6 +2053,75 @@ function PermissionsSettingsCard() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Global Results tab (B2-20) — admin opt-in for the app-wide, all-tables
+// Results surface. OFF by default: it duplicates the per-object results tabs
+// and confuses fresh deploys. When enabled, the global Results sidebar nav
+// item AND the homepage overall-score "?" explainer appear. Per-object MT/TS/RR
+// results tabs are unaffected.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function GlobalResultsSettingsCard() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useGetGlobalResultsSettings({ query: { select: (d) => d.data } });
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveGlobalResultsSettings();
+  const { isAdmin } = usePermissions();
+
+  if (isLoading || !data) return <Skeleton className="h-40 w-full" />;
+
+  const save = (enabled: boolean) => {
+    saveMutation.mutate(
+      { data: { global_results_enabled: enabled } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetGlobalResultsSettingsQueryKey() });
+          toast.success(t("config.globalResultsSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.globalResultsFailedSave"));
+        },
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <LineChart className="h-5 w-5" />
+          {t("config.globalResultsTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.globalResultsDescription")}
+        </p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="global-results-enabled" className="text-sm">
+              {t("config.globalResultsLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.globalResultsHint")}</p>
+          </div>
+          <Switch
+            id="global-results-enabled"
+            checked={data.global_results_enabled}
+            onCheckedChange={(checked) => save(checked)}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.globalResultsAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ComputeSettingsCard() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -2326,6 +2398,7 @@ function ConfigPage() {
     () => [
       { id: "timezone", tab: "general", title: t("config.timezoneTitle"), keywords: t("config.kwTimezone"), render: () => <TimezoneSettings /> },
       { id: "reviewStatuses", tab: "general", title: t("config.reviewStatusesTitle"), keywords: t("config.kwReviewStatuses"), render: () => <RunReviewStatusesSettings /> },
+      { id: "globalResults", tab: "general", title: t("config.globalResultsTitle"), keywords: t("config.kwGlobalResults"), render: () => <GlobalResultsSettingsCard /> },
       { id: "ai", tab: "ai", title: t("config.aiSettingsTitle"), keywords: t("config.kwAi"), render: () => <AiSettingsCard /> },
       { id: "labels", tab: "rules", title: t("config.labelsTitle"), keywords: t("config.kwLabels"), render: () => <LabelDefinitionsSettings /> },
       { id: "rulesRegistry", tab: "rules", title: t("config.rulesRegistrySettingsTitle"), keywords: t("config.kwRulesRegistry"), render: () => <RulesRegistrySettingsCard /> },

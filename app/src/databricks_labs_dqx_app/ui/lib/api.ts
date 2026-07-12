@@ -1467,6 +1467,21 @@ export interface GenieVerifyEntitlementsOut {
   results?: GenieVerifyEntitlementsOutResults;
 }
 
+/**
+ * Update payload for the global-Results-tab gating setting.
+ */
+export interface GlobalResultsSettingsIn {
+  global_results_enabled: boolean;
+}
+
+/**
+ * Effective global-Results-tab gating setting.
+ */
+export interface GlobalResultsSettingsOut {
+  /** Whether the app-wide, all-tables Results surface (nav item + homepage overall-score explainer) is enabled. Defaults to False (hidden). */
+  global_results_enabled: boolean;
+}
+
 export interface GrantWarehouseAccessIn {
   warehouse_id: string;
 }
@@ -7294,6 +7309,220 @@ export const useSaveApprovalsMode = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getSaveApprovalsModeMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Return whether the global Results tab is enabled (defaults to False when unset).
+
+Available to any authenticated user — the sidebar and homepage both read
+it to decide whether to surface the global Results nav item and the
+overall-score "?" explainer.
+ * @summary Get Global Results Settings
+ */
+export const getGlobalResultsSettings = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<GlobalResultsSettingsOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/config/global-results-settings`,options
+    );
+  }
+
+
+
+
+export const getGetGlobalResultsSettingsQueryKey = () => {
+    return [
+    `/api/v1/config/global-results-settings`
+    ] as const;
+    }
+
+    
+export const getGetGlobalResultsSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGlobalResultsSettingsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGlobalResultsSettings>>> = ({ signal }) => getGlobalResultsSettings({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetGlobalResultsSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getGlobalResultsSettings>>>
+export type GetGlobalResultsSettingsQueryError = AxiosError<unknown>
+
+
+export function useGetGlobalResultsSettings<TData = Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError = AxiosError<unknown>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getGlobalResultsSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getGlobalResultsSettings>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGlobalResultsSettings<TData = Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getGlobalResultsSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getGlobalResultsSettings>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGlobalResultsSettings<TData = Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Global Results Settings
+ */
+
+export function useGetGlobalResultsSettings<TData = Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetGlobalResultsSettingsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetGlobalResultsSettingsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGlobalResultsSettingsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGlobalResultsSettings>>> = ({ signal }) => getGlobalResultsSettings({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetGlobalResultsSettingsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getGlobalResultsSettings>>>
+export type GetGlobalResultsSettingsSuspenseQueryError = AxiosError<unknown>
+
+
+export function useGetGlobalResultsSettingsSuspense<TData = Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError = AxiosError<unknown>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGlobalResultsSettingsSuspense<TData = Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGlobalResultsSettingsSuspense<TData = Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Global Results Settings
+ */
+
+export function useGetGlobalResultsSettingsSuspense<TData = Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getGlobalResultsSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetGlobalResultsSettingsSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Enable or disable the global Results tab (admin only).
+ * @summary Save Global Results Settings
+ */
+export const saveGlobalResultsSettings = (
+    globalResultsSettingsIn: GlobalResultsSettingsIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<GlobalResultsSettingsOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/global-results-settings`,
+      globalResultsSettingsIn,options
+    );
+  }
+
+
+
+export const getSaveGlobalResultsSettingsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveGlobalResultsSettings>>, TError,{data: GlobalResultsSettingsIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveGlobalResultsSettings>>, TError,{data: GlobalResultsSettingsIn}, TContext> => {
+
+const mutationKey = ['saveGlobalResultsSettings'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveGlobalResultsSettings>>, {data: GlobalResultsSettingsIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveGlobalResultsSettings(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveGlobalResultsSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof saveGlobalResultsSettings>>>
+    export type SaveGlobalResultsSettingsMutationBody = GlobalResultsSettingsIn
+    export type SaveGlobalResultsSettingsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Global Results Settings
+ */
+export const useSaveGlobalResultsSettings = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveGlobalResultsSettings>>, TError,{data: GlobalResultsSettingsIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveGlobalResultsSettings>>,
+        TError,
+        {data: GlobalResultsSettingsIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveGlobalResultsSettingsMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

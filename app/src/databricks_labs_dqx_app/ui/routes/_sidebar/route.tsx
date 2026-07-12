@@ -18,6 +18,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { useGlobalResultsEnabled } from "@/hooks/use-global-results-enabled";
 
 export const Route = createFileRoute("/_sidebar")({
   component: () => <Layout />,
@@ -26,6 +27,10 @@ export const Route = createFileRoute("/_sidebar")({
 function Layout() {
   const location = useLocation();
   const { t } = useTranslation();
+  // The global, all-tables Results surface is admin-gated and OFF by default
+  // (B2-20). Hide the nav item entirely until an admin enables it; per-object
+  // MT/TS/RR results tabs are unaffected.
+  const globalResultsEnabled = useGlobalResultsEnabled();
 
   // The old "Create Rules" expandable group (Single-table rules,
   // Cross-table rules, Profile & Generate) and the standalone "Active
@@ -152,19 +157,23 @@ function Layout() {
 
             {/* Results — org-wide DQ results composition over all monitored
                 tables (dq-results endpoints). Visible to all; the backend
-                filters to the viewer's accessible catalogs. */}
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                asChild
-                isActive={location.pathname.startsWith("/results")}
-                tooltip={t("sidebar.results")}
-              >
-                <Link to="/results">
-                  <LineChart />
-                  <span>{t("sidebar.results")}</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+                filters to the viewer's accessible catalogs. Admin-gated and
+                hidden by default (B2-20) — an admin opts in on the
+                Configuration page. */}
+            {globalResultsEnabled && (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  isActive={location.pathname.startsWith("/results")}
+                  tooltip={t("sidebar.results")}
+                >
+                  <Link to="/results">
+                    <LineChart />
+                    <span>{t("sidebar.results")}</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>

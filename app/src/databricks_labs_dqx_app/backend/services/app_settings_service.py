@@ -392,6 +392,31 @@ class AppSettingsService:
         return current_version
 
     # ------------------------------------------------------------------
+    # Global Results tab (issue B2-20) — the app-wide, all-tables Results
+    # surface (``routes/_sidebar/results.tsx`` + its sidebar entry). OFF by
+    # default: it duplicates per-object results and confuses fresh deploys,
+    # so an admin must explicitly opt in. When off, the global Results nav
+    # item AND the homepage overall-score "?" explainer are hidden (the "?"
+    # only explains a global-results-vs-home divergence that's moot with no
+    # global results screen). Per-object MT/TS/RR results tabs are
+    # unaffected — this gates only the GLOBAL surface. Only an explicit
+    # ``"true"`` reads as on; an unset or any other value reads as off so a
+    # fresh deploy or a corrupt row keeps the surface hidden.
+    # ------------------------------------------------------------------
+
+    _GLOBAL_RESULTS_ENABLED_KEY = "global_results_enabled"
+
+    def get_global_results_enabled(self) -> bool:
+        """Return whether the global Results tab is enabled; defaults to ``False`` (off) when unset."""
+        raw = self.get_setting(self._GLOBAL_RESULTS_ENABLED_KEY)
+        return raw is not None and raw.strip().lower() == "true"
+
+    def save_global_results_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the global-Results-tab setting. Returns the saved value."""
+        self.save_setting(self._GLOBAL_RESULTS_ENABLED_KEY, "true" if enabled else "false", user_email=user_email)
+        return enabled
+
+    # ------------------------------------------------------------------
     # Run review statuses — admin-managed list of labels surfaced on the
     # Runs detail page (next to comments) and as a Runs History filter.
     # Stored as a JSON array under ``run_review_statuses_v1``. One entry

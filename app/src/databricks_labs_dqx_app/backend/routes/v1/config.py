@@ -1243,6 +1243,64 @@ def save_approvals_mode(
 
 
 # ----------------------------------------------------------------------
+# Global Results tab gating (issue B2-20) — an admin toggle that enables
+# the app-wide, all-tables Results surface (hidden by default). Read at
+# VIEWER+ so every authenticated user's sidebar can decide whether to show
+# the global Results nav item (and the homepage overall-score "?" icon),
+# written ADMIN-only, matching the other governance settings above.
+# ----------------------------------------------------------------------
+
+
+class GlobalResultsSettingsOut(BaseModel):
+    """Effective global-Results-tab gating setting."""
+
+    global_results_enabled: bool = Field(
+        description="Whether the app-wide, all-tables Results surface (nav item + homepage "
+        "overall-score explainer) is enabled. Defaults to False (hidden)."
+    )
+
+
+class GlobalResultsSettingsIn(BaseModel):
+    """Update payload for the global-Results-tab gating setting."""
+
+    global_results_enabled: bool
+
+
+@router.get(
+    "/global-results-settings",
+    response_model=GlobalResultsSettingsOut,
+    operation_id="getGlobalResultsSettings",
+)
+def get_global_results_settings(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> GlobalResultsSettingsOut:
+    """Return whether the global Results tab is enabled (defaults to False when unset).
+
+    Available to any authenticated user — the sidebar and homepage both read
+    it to decide whether to surface the global Results nav item and the
+    overall-score "?" explainer.
+    """
+    return GlobalResultsSettingsOut(global_results_enabled=svc.get_global_results_enabled())
+
+
+@router.put(
+    "/global-results-settings",
+    response_model=GlobalResultsSettingsOut,
+    operation_id="saveGlobalResultsSettings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_global_results_settings(
+    body: GlobalResultsSettingsIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> GlobalResultsSettingsOut:
+    """Enable or disable the global Results tab (admin only)."""
+    saved = svc.save_global_results_enabled(body.global_results_enabled, user_email=email)
+    logger.info("Saved global_results_enabled = %s (by=%s)", saved, email)
+    return GlobalResultsSettingsOut(global_results_enabled=saved)
+
+
+# ----------------------------------------------------------------------
 # Vector Search auto-provisioning trigger — Rules Registry Phase 7F. A
 # dedicated endpoint (rather than folding this into ``save_ai_settings``)
 # so provisioning can be retried independently of a settings save, and so

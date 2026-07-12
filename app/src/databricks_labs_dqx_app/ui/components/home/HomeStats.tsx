@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/tooltip";
 import { ScoreTrendChart } from "@/components/results/ScoreTrendChart";
 import { useGetHomeStatsSuspense } from "@/lib/api";
+import { useGlobalResultsEnabled } from "@/hooks/use-global-results-enabled";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { cn } from "@/lib/utils";
 import { countUpValue, deltaDirection, deltaPoints, formatCount, formatScorePercent } from "./statFormat";
@@ -140,7 +141,35 @@ function StatCard({
       )}
       style={{ transitionDelay: `${enterDelayMs}ms` }}
     >
-      <CardContent className="p-5">
+      <CardContent className="relative p-5">
+        {/* B2-1: the "?" explainer is pinned to the card's top-right corner
+            (rather than sitting inline after the label) so a long label +
+            the trigger can never push the big score value onto a second
+            line. B2-20: only rendered when the global Results tab is enabled
+            — the explainer describes a global-results-vs-home divergence
+            that's moot when there's no global results screen. */}
+        {infoText && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className={`absolute right-3 top-3 inline-flex items-center justify-center focus-visible:outline-none ${
+                    inverted
+                      ? "text-background/70 hover:text-background"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  aria-label={infoText}
+                >
+                  <HelpCircle className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-xs">
+                <p>{infoText}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
         <div className="mb-2 flex items-center gap-2">
           <Icon
             className={`h-4 w-4 ${inverted ? "text-background" : "text-muted-foreground"}`}
@@ -152,28 +181,6 @@ function StatCard({
           >
             {label}
           </span>
-          {infoText && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    className={`inline-flex items-center justify-center focus-visible:outline-none ${
-                      inverted
-                        ? "text-background/70 hover:text-background"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                    aria-label={infoText}
-                  >
-                    <HelpCircle className="h-3.5 w-3.5" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs text-xs">
-                  <p>{infoText}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
         </div>
         <div className="flex h-9 items-center gap-2 text-3xl font-semibold tabular-nums sm:h-10 sm:text-4xl">
           {loading ? (
@@ -202,6 +209,9 @@ function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) 
   });
   const { rule_count, monitored_table_count, table_space_count, score, score_delta } = data;
   const trend = data.score_trend ?? [];
+  // B2-20: the score "?" explains a global-results-vs-home divergence, so it's
+  // only shown when the global Results surface is actually enabled.
+  const globalResultsEnabled = useGlobalResultsEnabled();
 
   // "At a Glance" entrance: staggered card fade/slide-in + a count-up of each
   // number, so the data points animate in when the page loads/refreshes.
@@ -232,7 +242,7 @@ function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) 
               icon={c.icon}
               inverted={c.inverted}
               delta={c.key === "score" ? score_delta : undefined}
-              infoText={c.key === "score" ? t("home.stats.scoreInfo") : undefined}
+              infoText={c.key === "score" && globalResultsEnabled ? t("home.stats.scoreInfo") : undefined}
               entered={mounted}
               enterDelayMs={i * 70}
             />
@@ -281,7 +291,6 @@ function HomeStatsLoading({ sectionLabelClass }: { sectionLabelClass: string }) 
               label={t(c.labelKey)}
               icon={c.icon}
               inverted={c.inverted}
-              infoText={c.key === "score" ? t("home.stats.scoreInfo") : undefined}
               loading
             />
           ))}
