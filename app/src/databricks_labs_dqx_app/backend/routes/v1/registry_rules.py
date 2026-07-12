@@ -31,6 +31,9 @@ from databricks_labs_dqx_app.backend.services.permissions_service import Permiss
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     BackfillRuleEmbeddingsOut,
+    BatchImportRegistryRulesFailure,
+    BatchImportRegistryRulesIn,
+    BatchImportRegistryRulesOut,
     CreateRegistryRuleIn,
     CreateRegistryRuleOut,
     RegistryRuleDetailOut,
@@ -164,6 +167,68 @@ def create_registry_rule(
     except Exception as e:
         logger.error(f"Failed to create registry rule: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to create registry rule: {e}")
+
+
+@router.post(
+    "/batch-import",
+    response_model=BatchImportRegistryRulesOut,
+    operation_id="batchImportRegistryRules",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def batch_import_registry_rules(
+    body: BatchImportRegistryRulesIn,
+    svc: Annotated[RegistryService, Depends(get_registry_service)],
+    user_email: CurrentUser,
+) -> BatchImportRegistryRulesOut:
+    """Bulk-create registry drafts from imported checks in a single request.
+
+    Avoids N sequential round-trips (each of which re-resolves Databricks
+    auth) when importing many rules from YAML or a data contract.
+    """
+    created: list[CreateRegistryRuleOut] = []
+    failed: list[BatchImportRegistryRulesFailure] = []
+    submitted = 0
+    submit_failed = 0
+
+    for index, rule_in in enumerate(body.rules):
+        try:
+            rule, warning = svc.create_rule(
+                mode=rule_in.mode,
+                definition=rule_in.definition,
+                user_email=user_email,
+                polarity=rule_in.polarity,
+                author_kind=rule_in.author_kind,
+                user_metadata=rule_in.user_metadata,
+                steward=rule_in.steward,
+                source="import",
+            )
+            out = CreateRegistryRuleOut(rule=RegistryRuleOut.from_domain(rule), dedup_warning=warning)
+            created.append(out)
+
+            if body.also_submit:
+                try:
+                    svc.submit(rule.rule_id, user_email)
+                    submitted += 1
+                except Exception as submit_err:
+                    logger.warning(
+                        "Batch import created rule %s but submit failed: %s",
+                        rule.rule_id,
+                        submit_err,
+                    )
+                    submit_failed += 1
+        except UnsafeSqlQueryError as e:
+            failed.append(BatchImportRegistryRulesFailure(index=index, error=str(e)))
+        except Exception as e:
+            logger.error("Batch import failed for rule index %s: %s", index, e, exc_info=True)
+            failed.append(BatchImportRegistryRulesFailure(index=index, error=str(e)))
+
+    return BatchImportRegistryRulesOut(
+        created=created,
+        saved=len(created),
+        submitted=submitted,
+        submit_failed=submit_failed,
+        failed=failed,
+    )
 
 
 @router.put(

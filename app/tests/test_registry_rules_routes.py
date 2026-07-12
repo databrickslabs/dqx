@@ -15,11 +15,12 @@ import pytest
 from fastapi import HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
-from databricks_labs_dqx_app.backend.models import CreateRegistryRuleIn, UpdateRegistryRuleIn
+from databricks_labs_dqx_app.backend.models import CreateRegistryRuleIn, UpdateRegistryRuleIn, BatchImportRegistryRulesIn
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition
 from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
     approve_registry_rule,
     backfill_rule_embeddings,
+    batch_import_registry_rules,
     create_registry_rule,
     delete_registry_rule,
     deprecate_registry_rule,
@@ -152,6 +153,50 @@ class TestCreateAndUpdate:
             create_registry_rule(body=body, svc=svc, user_email="alice@x")
         assert excinfo.value.status_code == 400
 
+
+class TestBatchImport:
+    def test_batch_import_creates_all_rules(self):
+        svc = MagicMock()
+        svc.create_rule.side_effect = [(_rule("r1"), None), (_rule("r2"), None)]
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+            ],
+        )
+        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x")
+        assert result.saved == 2
+        assert len(result.created) == 2
+        assert svc.create_rule.call_count == 2
+        assert svc.create_rule.call_args_list[0].kwargs["source"] == "import"
+
+    def test_batch_import_submits_when_requested(self):
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())],
+            also_submit=True,
+        )
+        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x")
+        assert result.submitted == 1
+        svc.submit.assert_called_once_with("r1", "alice@x")
+
+    def test_batch_import_continues_after_failure(self):
+        svc = MagicMock()
+        svc.create_rule.side_effect = [ValueError("bad"), (_rule("r2"), None)]
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+            ],
+        )
+        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x")
+        assert result.saved == 1
+        assert len(result.failed) == 1
+        assert result.failed[0].index == 0
+
+
+class TestCreateAndUpdateContinued:
     def test_update_rejects_non_draft_with_400(self):
         svc = MagicMock()
         svc.update_draft.side_effect = ValueError("only draft rules can be edited")

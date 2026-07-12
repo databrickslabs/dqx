@@ -94,6 +94,52 @@ class PgMigration:
 # can be re-targeted for tests/dev/prod without copy-paste.
 _S = "{schema}"
 
+# Backfill for Lakebase DBs where v1 was recorded before Phase 3A
+# piggybacked ``dq_monitored_tables`` / ``dq_applied_rules`` onto the v1
+# baseline. Those DBs skip v1 (already in ``dq_migrations``), so the v5
+# converge step must create the tables before it can ALTER them.
+# ``IF NOT EXISTS`` makes this a no-op on fresh installs (v1 already
+# created them). DDL mirrors the current v1 baseline shape (without the
+# ``version`` column — v6 adds that).
+_PG_MONITORED_TABLES_BACKFILL = (
+    f"CREATE TABLE IF NOT EXISTS {_S}.dq_monitored_tables ("
+    "  binding_id       TEXT PRIMARY KEY,"
+    "  table_fqn        TEXT NOT NULL,"
+    "  steward          TEXT,"
+    "  status           TEXT NOT NULL,"
+    "  schedule_cron    TEXT,"
+    "  schedule_tz      TEXT,"
+    "  last_profiled_at TIMESTAMPTZ,"
+    "  created_by       TEXT,"
+    "  created_at       TIMESTAMPTZ,"
+    "  updated_by       TEXT,"
+    "  updated_at       TIMESTAMPTZ,"
+    "  CONSTRAINT uq_dq_monitored_tables_table_fqn UNIQUE (table_fqn),"
+    "  CONSTRAINT chk_dq_monitored_tables_status "
+    "    CHECK (status IN ('draft','pending_approval','approved','rejected'))"
+    ");"
+    f"CREATE INDEX IF NOT EXISTS idx_dq_monitored_tables_status "
+    f"  ON {_S}.dq_monitored_tables (status);"
+    f"CREATE TABLE IF NOT EXISTS {_S}.dq_applied_rules ("
+    "  id                 TEXT PRIMARY KEY,"
+    "  binding_id         TEXT NOT NULL,"
+    "  rule_id            TEXT NOT NULL,"
+    "  pinned_version     INTEGER,"
+    "  severity_override  TEXT,"
+    "  column_mapping     JSONB,"
+    "  user_metadata      JSONB,"
+    "  mapping_hash       TEXT NOT NULL,"
+    "  created_by         TEXT,"
+    "  created_at         TIMESTAMPTZ,"
+    "  CONSTRAINT uq_dq_applied_rules_binding_rule_mapping "
+    "    UNIQUE (binding_id, rule_id, mapping_hash)"
+    ");"
+    f"CREATE INDEX IF NOT EXISTS idx_dq_applied_rules_binding_id "
+    f"  ON {_S}.dq_applied_rules (binding_id);"
+    f"CREATE INDEX IF NOT EXISTS idx_dq_applied_rules_rule_id "
+    f"  ON {_S}.dq_applied_rules (rule_id);"
+)
+
 
 PG_MIGRATIONS: list[PgMigration] = [
     PgMigration(
@@ -501,19 +547,29 @@ PG_MIGRATIONS: list[PgMigration] = [
     ),
     PgMigration(
         version=5,
-        description="Converge dq_monitored_tables status to the 4-state review set (draft/pending_approval/approved/rejected)",
+        description=(
+            "Backfill dq_monitored_tables/dq_applied_rules when v1 predates Phase 3A; "
+            "converge status to the 4-state review set (draft/pending_approval/approved/rejected)"
+        ),
         sql=(
             # ----------------------------------------------------------
             # Monitored-table status lifecycle converge (P16-H).
             #
             # The v1 baseline above already declares the 4-state CHECK
-            # set, so this migration is a NO-OP on fresh installs. It
-            # exists purely to converge databases already deployed with
-            # the ORIGINAL 2-state constraint (``('draft','published')``)
-            # — the v1 baseline is skipped on those DBs because v1 is
-            # already recorded in ``dq_migrations``, so editing v1 in
-            # place could never reach them. Appending a new version is
-            # the only way the runner re-visits an already-migrated DB.
+            # set, so the converge block below is a NO-OP on fresh
+            # installs. It exists purely to converge databases already
+            # deployed with the ORIGINAL 2-state constraint
+            # (``('draft','published')``) — the v1 baseline is skipped on
+            # those DBs because v1 is already recorded in
+            # ``dq_migrations``, so editing v1 in place could never reach
+            # them. Appending a new version is the only way the runner
+            # re-visits an already-migrated DB.
+            #
+            # A further gap: some DBs recorded v1 *before* Phase 3A
+            # piggybacked ``dq_monitored_tables`` onto the v1 baseline.
+            # They have v1 in ``dq_migrations`` but no monitored-table
+            # tables at all — the backfill above creates them first
+            # (``IF NOT EXISTS``), then the converge runs.
             #
             # Order matters and is safe inside the single transaction the
             # runner wraps every migration in: drop the old constraint
@@ -524,7 +580,8 @@ PG_MIGRATIONS: list[PgMigration] = [
             # fresh install this drops+re-adds an identical constraint and
             # rewrites zero rows.
             # ----------------------------------------------------------
-            f"ALTER TABLE {_S}.dq_monitored_tables "
+            _PG_MONITORED_TABLES_BACKFILL
+            + f"ALTER TABLE {_S}.dq_monitored_tables "
             "  DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_status;"
             f"UPDATE {_S}.dq_monitored_tables SET status = 'approved' WHERE status = 'published';"
             f"ALTER TABLE {_S}.dq_monitored_tables "

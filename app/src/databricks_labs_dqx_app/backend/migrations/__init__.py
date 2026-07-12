@@ -741,6 +741,42 @@ _V8_RULE_EMBEDDINGS = (
 )
 
 
+# Backfill for Delta-OLTP DBs where v2 was recorded before Phase 3A
+# piggybacked ``dq_monitored_tables`` / ``dq_applied_rules`` onto the v2
+# OLTP-fallback baseline. Those DBs skip v2, so the v9 converge step must
+# create the tables before it can ALTER them. ``IF NOT EXISTS`` makes this
+# a no-op on fresh installs (v2 already created them).
+_V9_MONITORED_TABLES_BACKFILL = (
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_monitored_tables ("
+    "  binding_id STRING NOT NULL,"
+    "  table_fqn STRING NOT NULL,"
+    "  steward STRING,"
+    "  status STRING NOT NULL,"
+    "  schedule_cron STRING,"
+    "  schedule_tz STRING,"
+    "  last_profiled_at TIMESTAMP,"
+    "  created_by STRING,"
+    "  created_at TIMESTAMP,"
+    "  updated_by STRING,"
+    "  updated_at TIMESTAMP,"
+    "  CONSTRAINT pk_dq_monitored_tables PRIMARY KEY (binding_id) RELY"
+    ") CLUSTER BY (table_fqn, status);"
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_applied_rules ("
+    "  id STRING NOT NULL,"
+    "  binding_id STRING NOT NULL,"
+    "  rule_id STRING NOT NULL,"
+    "  pinned_version INT,"
+    "  severity_override STRING,"
+    "  column_mapping VARIANT,"
+    "  user_metadata VARIANT,"
+    "  mapping_hash STRING NOT NULL,"
+    "  created_by STRING,"
+    "  created_at TIMESTAMP,"
+    "  CONSTRAINT pk_dq_applied_rules PRIMARY KEY (id) RELY"
+    ") CLUSTER BY (binding_id, rule_id);"
+)
+
+
 # Monitored-table status lifecycle converge (P16-H). The v2 OLTP-fallback
 # baseline above already declares the 4-state CHECK set on
 # ``dq_monitored_tables.status``
@@ -765,7 +801,8 @@ _V8_RULE_EMBEDDINGS = (
 # enabled (the Postgres mirror is v5 in ``backend.migrations.postgres``), so
 # this only runs against Delta when Lakebase is disabled.
 _V9_MONITORED_TABLES_STATUS_CONVERGE = (
-    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
+    _V9_MONITORED_TABLES_BACKFILL
+    + f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
     f"  DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_status;"
     f"UPDATE {_PLACEHOLDER}.dq_monitored_tables SET status = 'approved' WHERE status = 'published';"
     f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "

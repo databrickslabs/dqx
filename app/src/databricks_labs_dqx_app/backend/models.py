@@ -459,6 +459,33 @@ class CreateRegistryRuleOut(BaseModel):
     )
 
 
+class BatchImportRegistryRulesIn(BaseModel):
+    """Bulk-create registry drafts from imported check dicts (YAML, data contract, …)."""
+
+    rules: list[CreateRegistryRuleIn] = Field(min_length=1)
+    also_submit: bool = Field(
+        default=False,
+        description="When true, transition each successfully created draft to pending_approval.",
+    )
+
+
+class BatchImportRegistryRulesFailure(BaseModel):
+    """One rule that failed during a batch import."""
+
+    index: int
+    error: str
+
+
+class BatchImportRegistryRulesOut(BaseModel):
+    """Result of a bulk registry import — partial success is allowed."""
+
+    created: list[CreateRegistryRuleOut] = Field(default_factory=list)
+    saved: int = 0
+    submitted: int = 0
+    submit_failed: int = 0
+    failed: list[BatchImportRegistryRulesFailure] = Field(default_factory=list)
+
+
 class RegistryRuleDetailOut(BaseModel):
     """A registry rule plus its current published snapshot (None if never published)."""
 

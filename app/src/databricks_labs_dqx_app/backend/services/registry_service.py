@@ -308,6 +308,7 @@ class RegistryService:
         author_kind: AuthorKind = "human",
         user_metadata: dict[str, Any] | None = None,
         steward: str | None = None,
+        source: str = "ui",
     ) -> tuple[RegistryRule, str | None]:
         """Create a new draft registry rule.
 
@@ -336,7 +337,7 @@ class RegistryService:
             user_metadata=dict(user_metadata or {}),
             steward=steward,
             is_builtin=False,
-            source="ui",
+            source=source,
             created_by=user_email,
             created_at=now,
             updated_by=user_email,

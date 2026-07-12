@@ -6,7 +6,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import type { UseMutationOptions, UseMutationResult, UseQueryOptions, UseQueryResult } from "@tanstack/react-query";
 import * as axios from "axios";
 import type { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
-import type { RuleCatalogEntryOut, RunStatusOut } from "./api";
+import type { CreateRegistryRuleIn, RuleCatalogEntryOut, RunStatusOut } from "./api";
 
 export interface BatchSaveRulesIn {
   table_fqns: string[];
@@ -51,6 +51,35 @@ export const useBatchSaveRules = <
   };
 
   return useMutation({ mutationFn, mutationKey: ["batchSaveRules"], ...mutationOptions });
+};
+
+// ---------------------------------------------------------------------------
+// Batch import registry rules (YAML / data contract)
+// ---------------------------------------------------------------------------
+
+export interface BatchImportRegistryRulesIn {
+  rules: CreateRegistryRuleIn[];
+  also_submit?: boolean;
+}
+
+export interface BatchImportRegistryRulesFailure {
+  index: number;
+  error: string;
+}
+
+export interface BatchImportRegistryRulesOut {
+  created: Array<{ rule: { rule_id: string }; dedup_warning?: string | null }>;
+  saved: number;
+  submitted: number;
+  submit_failed: number;
+  failed: BatchImportRegistryRulesFailure[];
+}
+
+export const batchImportRegistryRules = (
+  body: BatchImportRegistryRulesIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<BatchImportRegistryRulesOut>> => {
+  return axios.default.post(`/api/v1/registry-rules/batch-import`, body, options);
 };
 
 // ---------------------------------------------------------------------------

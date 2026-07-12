@@ -169,6 +169,15 @@ class TestMonitoredTableStatusConvergePostgres:
         sql = self._converge().sql
         assert "CHECK (status IN ('draft','pending_approval','approved','rejected'))" in sql
 
+    def test_backfills_missing_tables_before_converge(self):
+        """DBs that recorded v1 before Phase 3A never got dq_monitored_tables."""
+        sql = self._converge().sql
+        create_at = sql.index("CREATE TABLE IF NOT EXISTS")
+        drop_at = sql.index("DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_status")
+        assert "dq_monitored_tables" in sql[:drop_at]
+        assert "dq_applied_rules" in sql[:drop_at]
+        assert create_at < drop_at
+
 
 class TestDataProductsPostgres:
     """Task 1 (Data Products plan): PG v6 appends the versioned-monitored-table
@@ -364,6 +373,27 @@ class TestMonitoredTableStatusConvergeDelta:
     def test_readds_four_state_constraint(self):
         sql = self._converge().sql_template
         assert "CHECK (status IN ('draft','pending_approval','approved','rejected'))" in sql
+
+    def test_backfills_missing_tables_before_converge(self):
+        """Delta-OLTP DBs that recorded v2 before Phase 3A never got dq_monitored_tables."""
+        sql = self._converge().sql_template
+        create_at = sql.index("CREATE TABLE IF NOT EXISTS")
+        drop_at = sql.index("DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_status")
+        assert "dq_monitored_tables" in sql[:drop_at]
+        assert "dq_applied_rules" in sql[:drop_at]
+        assert create_at < drop_at
+
+    def test_splits_into_individual_statements(self):
+        """Delta runner splits on ';' — every DDL boundary must be terminated."""
+        sql = self._converge().sql_template.format(catalog="c", schema="s")
+        stmts = [s.strip() for s in sql.split(";") if s.strip()]
+        assert len(stmts) == 5
+        assert stmts[0].startswith("CREATE TABLE IF NOT EXISTS")
+        assert "dq_monitored_tables" in stmts[0]
+        assert "dq_applied_rules" in stmts[1]
+        assert "DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_status" in stmts[2]
+        assert "SET status = 'approved' WHERE status = 'published'" in stmts[3]
+        assert "ADD CONSTRAINT chk_dq_monitored_tables_status" in stmts[4]
 
 
 class TestMonitoredTableScheduleConvergePostgres:

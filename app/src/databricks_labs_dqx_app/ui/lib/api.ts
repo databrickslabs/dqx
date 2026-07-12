@@ -378,6 +378,35 @@ export interface BackfillRuleEmbeddingsOut {
 }
 
 /**
+ * One rule that failed during a batch import.
+ */
+export interface BatchImportRegistryRulesFailure {
+  index: number;
+  error: string;
+}
+
+/**
+ * Bulk-create registry drafts from imported check dicts (YAML, data contract, …).
+ */
+export interface BatchImportRegistryRulesIn {
+  /** @minItems 1 */
+  rules: CreateRegistryRuleIn[];
+  /** When true, transition each successfully created draft to pending_approval. */
+  also_submit?: boolean;
+}
+
+/**
+ * Result of a bulk registry import — partial success is allowed.
+ */
+export interface BatchImportRegistryRulesOut {
+  created?: CreateRegistryRuleOut[];
+  saved?: number;
+  submitted?: number;
+  submit_failed?: number;
+  failed?: BatchImportRegistryRulesFailure[];
+}
+
+/**
  * Stable identifier for known error classes — currently one of ``INSUFFICIENT_PERMISSIONS``, ``TABLE_OR_VIEW_NOT_FOUND``, or ``UNKNOWN``. The UI uses this to surface a friendlier headline.
  */
 export type BatchProfileRunFailureErrorCode = string | null;
@@ -11786,6 +11815,72 @@ export function useListRegistryRuleVersionsSuspense<TData = Awaited<ReturnType<t
 
 
 
+/**
+ * Bulk-create registry drafts from imported checks in a single request.
+
+Avoids N sequential round-trips (each of which re-resolves Databricks
+auth) when importing many rules from YAML or a data contract.
+ * @summary Batch Import Registry Rules
+ */
+export const batchImportRegistryRules = (
+    batchImportRegistryRulesIn: BatchImportRegistryRulesIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<BatchImportRegistryRulesOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/registry-rules/batch-import`,
+      batchImportRegistryRulesIn,options
+    );
+  }
+
+
+
+export const getBatchImportRegistryRulesMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof batchImportRegistryRules>>, TError,{data: BatchImportRegistryRulesIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof batchImportRegistryRules>>, TError,{data: BatchImportRegistryRulesIn}, TContext> => {
+
+const mutationKey = ['batchImportRegistryRules'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof batchImportRegistryRules>>, {data: BatchImportRegistryRulesIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  batchImportRegistryRules(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BatchImportRegistryRulesMutationResult = NonNullable<Awaited<ReturnType<typeof batchImportRegistryRules>>>
+    export type BatchImportRegistryRulesMutationBody = BatchImportRegistryRulesIn
+    export type BatchImportRegistryRulesMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Batch Import Registry Rules
+ */
+export const useBatchImportRegistryRules = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof batchImportRegistryRules>>, TError,{data: BatchImportRegistryRulesIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof batchImportRegistryRules>>,
+        TError,
+        {data: BatchImportRegistryRulesIn},
+        TContext
+      > => {
+
+      const mutationOptions = getBatchImportRegistryRulesMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 /**
  * Submit a draft registry rule for approval.
  * @summary Submit Registry Rule

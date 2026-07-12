@@ -21,6 +21,7 @@ import {
   AlertCircle,
   Library,
   Plus,
+  Upload,
   RotateCcw,
   Search,
   XCircle,
@@ -570,10 +571,20 @@ function RegistryRulesPage() {
             <p className="text-sm text-muted-foreground mt-1">{t("rulesRegistry.description")}</p>
           </div>
           {perms.canCreateRules && (
-            <Button onClick={() => navigate({ to: "/registry-rules/new" })} className="gap-2">
-              <Plus className="h-4 w-4" />
-              {t("rulesRegistry.newRule")}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => navigate({ to: "/registry-rules/import" })}
+                className="gap-2"
+              >
+                <Upload className="h-4 w-4" />
+                {t("rulesRegistry.importRules")}
+              </Button>
+              <Button onClick={() => navigate({ to: "/registry-rules/new" })} className="gap-2">
+                <Plus className="h-4 w-4" />
+                {t("rulesRegistry.newRule")}
+              </Button>
+            </div>
           )}
         </div>
 
