@@ -141,19 +141,6 @@ function HeaderUserMenuContent() {
             </Link>
           </DropdownMenuItem>
         </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
-          {appVersion && <p>v{appVersion}</p>}
-          <a
-            href={GITHUB_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
-          >
-            github.com/databrickslabs/dqx
-            <ExternalLink className="h-3 w-3" aria-hidden />
-          </a>
-        </div>
         {isAdmin && (
           <>
             <DropdownMenuSeparator />
@@ -165,6 +152,19 @@ function HeaderUserMenuContent() {
             </DropdownMenuItem>
           </>
         )}
+        <DropdownMenuSeparator />
+        <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
+          >
+            github.com/databrickslabs/dqx
+            <ExternalLink className="h-3 w-3" aria-hidden />
+          </a>
+          {appVersion && <p>v{appVersion}</p>}
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );
