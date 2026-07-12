@@ -1355,7 +1355,11 @@
     "noLabelsFound": "Nessuna etichetta trovata nella vista corrente.",
     "noMatches": "Nessuna corrispondenza per \"{{query}}\".",
     "selectedSuffix": "selezionate",
-    "clear": "Cancella"
+    "clear": "Cancella",
+    "anyValue": "Qualsiasi",
+    "toggleValues": "Mostra/nascondi valori",
+    "valuesSelected_one": "{{count}} valore selezionato",
+    "valuesSelected_other": "{{count}} valori selezionati"
   },
   "roleManagement": {
     "title": "Autorizzazioni",
@@ -1452,7 +1456,6 @@
     "allSeverities": "Tutte le gravità",
     "allStewards": "Tutti i responsabili",
     "stewardPlaceholder": "Responsabile",
-    "tagPlaceholder": "Tag",
     "statusDraft": "Bozza",
     "statusPendingApproval": "In attesa di approvazione",
     "statusApproved": "Approvata",

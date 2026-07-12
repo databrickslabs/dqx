@@ -5,7 +5,7 @@ import {
   getUserMetadata,
   labelToken,
 } from "@/lib/format-utils";
-import { LabelFilter, LabelsBadges, labelsMatchFilter } from "@/components/Labels";
+import { LabelFilter, LabelsBadges, labelsMatchFilter, type LabelSelection } from "@/components/Labels";
 import { SeverityBadge } from "@/components/RegistryRuleBadges";
 import { useTranslation } from "react-i18next";
 
@@ -931,7 +931,7 @@ function DraftsPage() {
   const [catalogFilter, setCatalogFilter] = useState("all");
   const [schemaFilter, setSchemaFilter] = useState("all");
   const [mySubmissionsOnly, setMySubmissionsOnly] = useState(false);
-  const [labelFilter, setLabelFilter] = useState<Set<string>>(new Set());
+  const [labelFilter, setLabelFilter] = useState<LabelSelection>(new Map());
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "modified", dir: "desc" });
   const sortKey = sort.key;
   const sortDir = sort.dir;
@@ -1510,7 +1510,7 @@ function DraftsPage() {
                     setSchemaFilter("all");
                     setStatusFilter("all");
                     setMySubmissionsOnly(false);
-                    setLabelFilter(new Set());
+                    setLabelFilter(new Map());
                   }}
                 >
                   {t("common.clearFilters")}

@@ -1355,7 +1355,11 @@
     "noLabelsFound": "No se encontraron etiquetas en la vista actual.",
     "noMatches": "Sin coincidencias para \"{{query}}\".",
     "selectedSuffix": "seleccionadas",
-    "clear": "Limpiar"
+    "clear": "Limpiar",
+    "anyValue": "Cualquiera",
+    "toggleValues": "Mostrar/ocultar valores",
+    "valuesSelected_one": "{{count}} valor seleccionado",
+    "valuesSelected_other": "{{count}} valores seleccionados"
   },
   "roleManagement": {
     "title": "Autorizaciones",
@@ -1452,7 +1456,6 @@
     "allSeverities": "Todas las severidades",
     "allStewards": "Todos los responsables",
     "stewardPlaceholder": "Responsable",
-    "tagPlaceholder": "Etiqueta",
     "statusDraft": "Borrador",
     "statusPendingApproval": "Pendiente de aprobación",
     "statusApproved": "Aprobada",

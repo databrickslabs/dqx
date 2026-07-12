@@ -1355,7 +1355,11 @@
     "noLabelsFound": "Nenhum rótulo encontrado na visualização atual.",
     "noMatches": "Nenhuma correspondência para \"{{query}}\".",
     "selectedSuffix": "selecionados",
-    "clear": "Limpar"
+    "clear": "Limpar",
+    "anyValue": "Qualquer",
+    "toggleValues": "Mostrar/ocultar valores",
+    "valuesSelected_one": "{{count}} valor selecionado",
+    "valuesSelected_other": "{{count}} valores selecionados"
   },
   "roleManagement": {
     "title": "Direitos de acesso",
@@ -1452,7 +1456,6 @@
     "allSeverities": "Todas as severidades",
     "allStewards": "Todos os responsáveis",
     "stewardPlaceholder": "Responsável",
-    "tagPlaceholder": "Tag",
     "statusDraft": "Rascunho",
     "statusPendingApproval": "Aguardando aprovação",
     "statusApproved": "Aprovada",

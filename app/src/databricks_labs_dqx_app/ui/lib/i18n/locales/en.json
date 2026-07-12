@@ -1355,7 +1355,11 @@
     "noLabelsFound": "No labels found in the current view.",
     "noMatches": "No matches for \"{{query}}\".",
     "selectedSuffix": "selected",
-    "clear": "Clear"
+    "clear": "Clear",
+    "anyValue": "Any",
+    "toggleValues": "Toggle values",
+    "valuesSelected_one": "{{count}} value selected",
+    "valuesSelected_other": "{{count}} values selected"
   },
   "roleManagement": {
     "title": "Entitlements",
@@ -1452,7 +1456,6 @@
     "allSeverities": "All severities",
     "allStewards": "All stewards",
     "stewardPlaceholder": "Steward",
-    "tagPlaceholder": "Tag",
     "statusDraft": "Draft",
     "statusPendingApproval": "Pending approval",
     "statusApproved": "Approved",
