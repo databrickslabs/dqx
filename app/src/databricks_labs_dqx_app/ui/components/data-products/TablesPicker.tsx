@@ -360,13 +360,18 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
             {rows.length === 0 ? t("dataProducts.pickerNoTables") : t("dataProducts.pickerNoMatches")}
           </div>
         ) : groupBy === "none" ? (
-          <Table className="table-fixed w-full">
-            <colgroup>
-              <col style={{ width: 48 }} />
-              <col />
-              <col style={{ width: 100 }} />
-              <col style={{ width: 140 }} />
-            </colgroup>
+          // B2-14: confine any horizontal overflow inside the dialog (matching
+          // dqlake's picker + the RR/MT/TS overview tables) and keep a sensible
+          // min width so the #rules/status/version-pin columns never cramp on a
+          // narrow viewport — they scroll within this box instead of the page.
+          <div className="overflow-x-auto">
+            <Table className="table-fixed w-full min-w-[640px]">
+              <colgroup>
+                <col style={{ width: 48 }} />
+                <col />
+                <col style={{ width: 100 }} />
+                <col style={{ width: 140 }} />
+              </colgroup>
             <TableHeader>
               <TableRow>
                 <TableHead style={{ width: 48 }} className="text-center" />
@@ -450,7 +455,8 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                 );
               })}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         ) : (
           Array.from(grouped.entries()).map(([group, groupRows]) => {
             const selectableKeys = groupRows.map((r) => r.table.binding_id).filter(isSelectable);
@@ -491,7 +497,8 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                     group's columns, instead of floating once in the toolbar
                     detached from the values. Flat mode has its own in-table
                     header; the colgroup here matches it. */}
-                <Table className="table-fixed w-full">
+                <div className="overflow-x-auto">
+                <Table className="table-fixed w-full min-w-[640px]">
                   <colgroup>
                     <col style={{ width: 48 }} />
                     <col />
@@ -585,6 +592,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                     })}
                   </TableBody>
                 </Table>
+                </div>
               </div>
             );
           })
