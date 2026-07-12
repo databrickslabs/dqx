@@ -75,7 +75,7 @@ but is protected transitively by the instance-level guard.
  ├── dqx_studio_tmp                   ← temp views created via OBO for profiler/dryrun jobs
  └── dqx_studio.wheels (volume)       ← DQX + task-runner wheels uploaded at app startup
 
-Lakebase instance (when enabled, default name = `dqx-studio-lakebase`):
+Lakebase project (when enabled, default project = `dqx-studio-db`, connected via its branch 'primary' endpoint — DQX_LAKEBASE_ENDPOINT):
  └── databricks_postgres              (database — always-present admin DB; no per-app DB provisioned)
      └── dqx_studio                   (schema — created by PgMigrationRunner on first start; configurable via DQX_LAKEBASE_SCHEMA)
          ├── dq_app_settings, dq_role_mappings, dq_quality_rules,

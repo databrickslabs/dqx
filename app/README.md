@@ -103,7 +103,7 @@ The schemas, wheels volume, and Lakebase Postgres **project** are declared as bu
  └── wheels (UC volume)               ← DQX + task-runner wheels uploaded at app startup
 
 Lakebase (Postgres) — when enabled (default):
- dqx-studio-lakebase (database_instance)
+ dqx-studio-db (Lakebase project) → branch → 'primary' endpoint (DQX_LAKEBASE_ENDPOINT)
  └── databricks_postgres (database)    ← always-present admin DB; no per-app logical DB provisioned
      └── dqx_studio (schema)           ← created by PgMigrationRunner on first start (DQX_LAKEBASE_SCHEMA)
          ├── dq_app_settings, dq_role_mappings, dq_quality_rules,
