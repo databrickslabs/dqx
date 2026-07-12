@@ -5,9 +5,13 @@ Backs the admin Configuration page's Compute section (ports dqlake's Settings
 
 Split-auth, mirroring the rest of the app:
 
-- **Listing** warehouses / clusters and **self-inspecting** the app service
-  principal's warehouse permission run as the app SP (``sp_ws``) — these are
-  control-plane reads the SP is entitled to.
+- **Listing** warehouses / clusters runs under the acting user's On-Behalf-Of
+  client (passed per call as ``lister_ws``) so the picker reflects exactly what
+  that user can see — never more than their own Unity Catalog / workspace
+  visibility. The app SP is only a startup-context fallback when no OBO client
+  is available.
+- **Self-inspecting** the app service principal's warehouse permission runs as
+  the app SP (``sp_ws``) — it must read the SP's own ACL entry.
 - **Granting** ``CAN_USE`` to the app SP is applied with the *admin viewer's*
   On-Behalf-Of client (passed per call), because the app SP typically cannot
   ``CAN_MANAGE`` a warehouse it does not own, whereas the admin can. The route
@@ -61,10 +65,16 @@ class ComputeService:
     # Listing (app SP)
     # ------------------------------------------------------------------
 
-    def list_warehouses(self) -> list[WarehouseInfo]:
-        """Return the workspace's SQL warehouses (via the app SP)."""
+    def list_warehouses(self, lister_ws: WorkspaceClient | None = None) -> list[WarehouseInfo]:
+        """Return the workspace's SQL warehouses.
+
+        Listing runs under *lister_ws* — the acting user's On-Behalf-Of client —
+        so the picker reflects the warehouses that user can actually see. Falls
+        back to the app SP only when no OBO client is supplied (e.g. startup).
+        """
+        ws = lister_ws or self._sp_ws
         out: list[WarehouseInfo] = []
-        for warehouse in self._sp_ws.warehouses.list():
+        for warehouse in ws.warehouses.list():
             wid = getattr(warehouse, "id", None)
             if not wid:
                 continue
@@ -81,8 +91,12 @@ class ComputeService:
         out.sort(key=lambda w: w.name.lower())
         return out
 
-    def list_clusters(self) -> list[ClusterInfo]:
-        """Return the workspace's all-purpose clusters (via the app SP).
+    def list_clusters(self, lister_ws: WorkspaceClient | None = None) -> list[ClusterInfo]:
+        """Return the workspace's all-purpose clusters.
+
+        Listing runs under *lister_ws* — the acting user's On-Behalf-Of client —
+        so the picker reflects the clusters that user can actually see. Falls
+        back to the app SP only when no OBO client is supplied (e.g. startup).
 
         Server-side filtered to UI/API cluster sources so the call does not
         paginate over every terminated job/pipeline cluster (dqlake's
@@ -90,9 +104,10 @@ class ComputeService:
         """
         from databricks.sdk.service.compute import ClusterSource, ListClustersFilterBy
 
+        ws = lister_ws or self._sp_ws
         filter_by = ListClustersFilterBy(cluster_sources=[ClusterSource.UI, ClusterSource.API])
         out: list[ClusterInfo] = []
-        for cluster in self._sp_ws.clusters.list(filter_by=filter_by):
+        for cluster in ws.clusters.list(filter_by=filter_by):
             cid = getattr(cluster, "cluster_id", None)
             if not cid:
                 continue
@@ -196,11 +211,11 @@ class ComputeService:
     # Async wrappers (SDK calls are blocking)
     # ------------------------------------------------------------------
 
-    async def list_warehouses_async(self) -> list[WarehouseInfo]:
-        return await asyncio.to_thread(self.list_warehouses)
+    async def list_warehouses_async(self, lister_ws: WorkspaceClient | None = None) -> list[WarehouseInfo]:
+        return await asyncio.to_thread(self.list_warehouses, lister_ws)
 
-    async def list_clusters_async(self) -> list[ClusterInfo]:
-        return await asyncio.to_thread(self.list_clusters)
+    async def list_clusters_async(self, lister_ws: WorkspaceClient | None = None) -> list[ClusterInfo]:
+        return await asyncio.to_thread(self.list_clusters, lister_ws)
 
     async def warehouse_access_status_async(self, warehouse_id: str, reader_ws: WorkspaceClient) -> AccessStatus:
         return await asyncio.to_thread(self.warehouse_access_status, warehouse_id, reader_ws)

@@ -21595,7 +21595,7 @@ export const useRunDataProduct = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
- * List the workspace's SQL warehouses, or ``[]`` on any SDK failure.
+ * List the SQL warehouses the acting user can see (OBO), or ``[]`` on failure.
  * @summary List Warehouses
  */
 export const listComputeWarehouses = (
@@ -21742,7 +21742,7 @@ export function useListComputeWarehousesSuspense<TData = Awaited<ReturnType<type
 
 
 /**
- * List the workspace's all-purpose clusters, or ``[]`` on any SDK failure.
+ * List the all-purpose clusters the acting user can see (OBO), or ``[]`` on failure.
  * @summary List Clusters
  */
 export const listComputeClusters = (

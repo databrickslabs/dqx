@@ -48,6 +48,19 @@ class TestListWarehouses:
         assert result[0].serverless is False and result[0].running is False
         assert result[1].serverless is True and result[1].running is True
 
+    def test_lists_via_obo_client_when_supplied(self, service, sp_ws):
+        """When an OBO client is passed it — not the app SP — is used to list."""
+        obo = MagicMock(name="obo_ws")
+        obo.warehouses.list.return_value = iter(
+            [SimpleNamespace(id="w1", name="Alpha", enable_serverless_compute=False, state=None)]
+        )
+
+        result = service.list_warehouses(lister_ws=obo)
+
+        assert [w.id for w in result] == ["w1"]
+        obo.warehouses.list.assert_called_once()
+        sp_ws.warehouses.list.assert_not_called()
+
 
 class TestListClusters:
     def test_maps_all_purpose_clusters(self, service, sp_ws):
@@ -62,6 +75,18 @@ class TestListClusters:
 
         assert [c.cluster_id for c in result] == ["c1"]
         assert result[0].state == "RUNNING"
+
+    def test_lists_via_obo_client_when_supplied(self, service, sp_ws):
+        obo = MagicMock(name="obo_ws")
+        obo.clusters.list.return_value = iter(
+            [SimpleNamespace(cluster_id="c1", cluster_name="Beta", state=SimpleNamespace(value="RUNNING"))]
+        )
+
+        result = service.list_clusters(lister_ws=obo)
+
+        assert [c.cluster_id for c in result] == ["c1"]
+        obo.clusters.list.assert_called_once()
+        sp_ws.clusters.list.assert_not_called()
 
 
 class TestWarehouseAccessStatus:

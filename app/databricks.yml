@@ -350,6 +350,12 @@ resources:
               - "{{job.parameters.run_id}}"
               - "--requesting_user"
               - "{{job.parameters.requesting_user}}"
+              # SQL warehouse the runner uses to drop the temp view it read from
+              # (see runner.py view-cleanup path). Threaded from the admin's
+              # configured warehouse via JobService.submit_run; "" falls back to
+              # spark.sql cleanup on the job compute.
+              - "--warehouse_id"
+              - "{{job.parameters.warehouse_id}}"
               # ``{{job.run_id}}`` is a built-in run-context reference (not a job
               # parameter) — the Jobs service resolves it per run, so the task
               # runner can stamp job_run_id onto its terminal result row and the
@@ -384,6 +390,8 @@ resources:
           default: ""
         - name: "requesting_user"
           default: "unknown"
+        - name: "warehouse_id"
+          default: ""
 
 # Deploy targets are defined in the untracked ``target.dev.yml`` (see the
 # ``include`` above and ``target.dev.yml.example``).

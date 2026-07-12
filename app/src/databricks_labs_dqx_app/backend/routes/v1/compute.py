@@ -5,20 +5,26 @@ Ports dqlake's Settings "jobs" section: an admin picks the SQL warehouse used
 for app-side ad-hoc SQL (the View Data tab, discovery-style reads) and the jobs
 compute used by the task-runner submission path.
 
-**SQL warehouse** is respected immediately: :func:`resolve_warehouse_id` reads
-this setting (env fallback) wherever the app builds an ad-hoc SqlExecutor — the
-View Data preview executor already honours it (see
-``dependencies.get_preview_sql_executor``).
+**Listing** the available warehouses / clusters runs under the acting user's
+On-Behalf-Of client (``get_obo_ws``), so the pickers reflect exactly what that
+user can see rather than the app SP's broader visibility.
 
-**Jobs compute** is persisted and surfaced, and the app-SP access check covers
-it, but the submission-side wiring is a DOCUMENTED FOLLOW-UP: ``job_service.py``
-is a frozen surface and ``JobService.submit_run`` uses ``jobs.run_now`` with only
-``job_parameters`` — it has no compute-override seam today. Honouring the
-jobs-compute selection at submission time therefore needs a ``job_service.py``
-change (add an ``existing_cluster_id`` / environments override), which is out of
-scope here. Until then the task runner keeps using its bundle-defined
-(serverless) compute regardless of this setting. TODO(job-service): thread the
-configured jobs compute into the run_now payload.
+**SQL warehouse** is respected end-to-end. :func:`resolve_warehouse_id` reads
+this setting (env fallback) wherever the app builds an ad-hoc SqlExecutor — the
+View Data preview executor honours it (``dependencies.get_preview_sql_executor``)
+— and it is now also threaded into the task-runner job: ``get_job_service``
+resolves the configured warehouse and ``JobService.submit_run`` passes it as the
+``warehouse_id`` job parameter, which ``databricks.yml`` declares and forwards to
+the wheel task's ``--warehouse_id`` arg, where the runner uses it for its
+temp-view cleanup path.
+
+**Jobs compute** is persisted, surfaced, and covered by the app-SP access check,
+but is NOT applied at submission time — mirroring dqlake, which likewise only
+records the selection. The task runner runs on its bundle-defined (serverless)
+environment: ``jobs.run_now`` against a pre-defined job takes only
+``job_parameters`` and has no per-run compute-override seam, so honouring an
+``existing_cluster`` selection would require redefining the job's compute rather
+than a run-time override. Left as a documented follow-up.
 
 **Access check + grant** (task 8): the check self-inspects with the app SP and
 falls back to the admin's OBO client to read the warehouse ACL; the grant is
@@ -111,10 +117,11 @@ class GrantWarehouseAccessIn(BaseModel):
 )
 async def list_warehouses(
     svc: Annotated[ComputeService, Depends(get_compute_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> list[WarehouseOut]:
-    """List the workspace's SQL warehouses, or ``[]`` on any SDK failure."""
+    """List the SQL warehouses the acting user can see (OBO), or ``[]`` on failure."""
     try:
-        warehouses = await svc.list_warehouses_async()
+        warehouses = await svc.list_warehouses_async(lister_ws=obo_ws)
     except Exception:
         logger.warning("Failed to list SQL warehouses", exc_info=True)
         return []
@@ -129,10 +136,11 @@ async def list_warehouses(
 )
 async def list_clusters(
     svc: Annotated[ComputeService, Depends(get_compute_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> list[ClusterOut]:
-    """List the workspace's all-purpose clusters, or ``[]`` on any SDK failure."""
+    """List the all-purpose clusters the acting user can see (OBO), or ``[]`` on failure."""
     try:
-        clusters = await svc.list_clusters_async()
+        clusters = await svc.list_clusters_async(lister_ws=obo_ws)
     except Exception:
         logger.warning("Failed to list clusters", exc_info=True)
         return []

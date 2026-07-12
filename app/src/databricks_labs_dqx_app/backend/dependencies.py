@@ -541,12 +541,21 @@ def get_check_validator() -> Callable[[list[Any]], ChecksValidationStatus]:
 async def get_job_service(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> JobService:
     """Create a JobService using app (SP) credentials.
 
-    Job submission and polling run as the app's service principal.
+    Job submission and polling run as the app's service principal. The
+    admin-configured SQL warehouse (``dq_app_settings``) is resolved here and
+    threaded into the submitted run so the task runner's temp-view cleanup path
+    honours it (env fallback when unset).
     """
-    return JobService(ws=sp_ws, job_id=conf.job_id, sql=sql)
+    return JobService(
+        ws=sp_ws,
+        job_id=conf.job_id,
+        sql=sql,
+        warehouse_id=resolve_warehouse_id(app_settings),
+    )
 
 
 async def get_run_set_service(

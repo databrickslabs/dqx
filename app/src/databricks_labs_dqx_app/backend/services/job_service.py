@@ -34,10 +34,16 @@ class JobService:
         ws: WorkspaceClient,
         job_id: str,
         sql: SqlExecutor,
+        warehouse_id: str | None = None,
     ) -> None:
         self._ws = ws
         self._job_id = int(job_id) if job_id else 0
         self._sql = sql
+        # SQL warehouse the task runner uses for its temp-view cleanup path.
+        # The admin-configured warehouse (``dq_app_settings`` → resolved by the
+        # caller) wins; otherwise fall back to the SP executor's env-bound
+        # warehouse so behaviour is unchanged when no override is set.
+        self._warehouse_id = (warehouse_id or "").strip() or (sql.warehouse_id or "")
 
     def submit_run(
         self,
@@ -64,7 +70,7 @@ class JobService:
                 "config_json": json.dumps(config),
                 "run_id": run_id,
                 "requesting_user": requesting_user,
-                "warehouse_id": self._sql.warehouse_id,
+                "warehouse_id": self._warehouse_id,
             },
         )
         logger.info(

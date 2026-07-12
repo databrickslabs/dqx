@@ -39,29 +39,51 @@ def compute_svc():
 class TestListings:
     @pytest.mark.asyncio
     async def test_list_warehouses_maps(self, compute_svc):
-        async def _w():
+        async def _w(*, lister_ws):
             return [WarehouseInfo(id="w1", name="A", serverless=True, running=False)]
 
         compute_svc.list_warehouses_async.side_effect = _w
-        result = await list_warehouses(compute_svc)
+        result = await list_warehouses(compute_svc, MagicMock())
         assert result[0].id == "w1" and result[0].serverless is True
 
     @pytest.mark.asyncio
+    async def test_list_warehouses_runs_under_obo(self, compute_svc):
+        """The acting user's OBO client — not the app SP — drives listing."""
+        captured: dict[str, object] = {}
+
+        async def _w(*, lister_ws):
+            captured["lister_ws"] = lister_ws
+            return []
+
+        compute_svc.list_warehouses_async.side_effect = _w
+        obo = MagicMock(name="obo_ws")
+        await list_warehouses(compute_svc, obo)
+        assert captured["lister_ws"] is obo
+
+    @pytest.mark.asyncio
     async def test_list_warehouses_degrades_to_empty(self, compute_svc):
-        async def _boom():
+        async def _boom(*, lister_ws):
             raise RuntimeError("boom")
 
         compute_svc.list_warehouses_async.side_effect = _boom
-        assert await list_warehouses(compute_svc) == []
+        assert await list_warehouses(compute_svc, MagicMock()) == []
 
     @pytest.mark.asyncio
     async def test_list_clusters_maps(self, compute_svc):
-        async def _c():
+        async def _c(*, lister_ws):
             return [ClusterInfo(cluster_id="c1", cluster_name="B", state="RUNNING")]
 
         compute_svc.list_clusters_async.side_effect = _c
-        result = await list_clusters(compute_svc)
+        result = await list_clusters(compute_svc, MagicMock())
         assert result[0].cluster_id == "c1"
+
+    @pytest.mark.asyncio
+    async def test_list_clusters_degrades_to_empty(self, compute_svc):
+        async def _boom(*, lister_ws):
+            raise RuntimeError("boom")
+
+        compute_svc.list_clusters_async.side_effect = _boom
+        assert await list_clusters(compute_svc, MagicMock()) == []
 
 
 class TestSettings:

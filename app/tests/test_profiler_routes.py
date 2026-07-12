@@ -264,3 +264,59 @@ class TestListProfileRunsTableFqnValidation:
         assert result == []
         job_svc.list_run_rows.assert_called_once()
         assert job_svc.list_run_rows.call_args.kwargs["source_table_fqn"] == "cat.sch.orders"
+
+
+# ---------------------------------------------------------------------------
+# JobService.submit_run — SQL warehouse threading (B2-61)
+# ---------------------------------------------------------------------------
+
+
+class TestSubmitRunWarehouseThreading:
+    """The admin-configured SQL warehouse must reach the task runner as the
+    ``warehouse_id`` job parameter (closes the previously-dead path — see the
+    bundle job param + wheel-task ``--warehouse_id`` arg)."""
+
+    def _run_now_params(self, ws_mock: MagicMock) -> dict[str, str]:
+        return ws_mock.jobs.run_now.call_args.kwargs["job_parameters"]
+
+    def test_configured_warehouse_is_forwarded(
+        self, sql_executor_mock: MagicMock, workspace_client_mock: MagicMock
+    ) -> None:
+        svc = JobService(
+            ws=workspace_client_mock, job_id="123", sql=sql_executor_mock, warehouse_id="cfg-wh-override"
+        )
+        svc.submit_run(
+            task_type="profile",
+            view_fqn="cat.sch.v",
+            config={},
+            run_id="run-1",
+            requesting_user="a@b.com",
+        )
+        assert self._run_now_params(workspace_client_mock)["warehouse_id"] == "cfg-wh-override"
+
+    def test_falls_back_to_executor_warehouse_when_unset(
+        self, sql_executor_mock: MagicMock, workspace_client_mock: MagicMock
+    ) -> None:
+        # ``sql_executor_mock.warehouse_id`` is "test-warehouse" (conftest).
+        svc = JobService(ws=workspace_client_mock, job_id="123", sql=sql_executor_mock)
+        svc.submit_run(
+            task_type="profile",
+            view_fqn="cat.sch.v",
+            config={},
+            run_id="run-1",
+            requesting_user="a@b.com",
+        )
+        assert self._run_now_params(workspace_client_mock)["warehouse_id"] == "test-warehouse"
+
+    def test_blank_configured_warehouse_falls_back(
+        self, sql_executor_mock: MagicMock, workspace_client_mock: MagicMock
+    ) -> None:
+        svc = JobService(ws=workspace_client_mock, job_id="123", sql=sql_executor_mock, warehouse_id="   ")
+        svc.submit_run(
+            task_type="profile",
+            view_fqn="cat.sch.v",
+            config={},
+            run_id="run-1",
+            requesting_user="a@b.com",
+        )
+        assert self._run_now_params(workspace_client_mock)["warehouse_id"] == "test-warehouse"
