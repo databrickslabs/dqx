@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, CircleHelp } from "lucide-react";
@@ -239,20 +239,91 @@ export function formatTs(value: string | number): string {
   });
 }
 
-/** Invert a cursor pixel-y within the plot area to a 0–100 percent value,
- *  clamped to [0, 100]. `plotTop` maps to 100% (top of the plot) and
- *  `plotBottom` to 0%. Used by the percent-mode 2D box-zoom (B2-17) to turn a
- *  vertical drag into a y-domain window. A degenerate (non-positive) span
- *  returns 0. */
-export function percentFromChartY(
+/** Fraction (0–1, clamped) of the plot height a cursor pixel-y sits ABOVE the
+ *  plot bottom: `plotBottom` → 0, `plotTop` → 1. The axis-agnostic basis for
+ *  both the percent-mode box-zoom and the wheel-zoom y-anchor (B2-56). A
+ *  degenerate (non-positive) span returns 0. */
+export function fracFromChartY(
   chartY: number,
   plotTop: number,
   plotBottom: number,
 ): number {
   const span = plotBottom - plotTop;
   if (span <= 0) return 0;
-  const frac = (plotBottom - chartY) / span;
-  return Math.max(0, Math.min(100, frac * 100));
+  return Math.max(0, Math.min(1, (plotBottom - chartY) / span));
+}
+
+/** Invert a cursor pixel-y within the plot area to a 0–100 percent value,
+ *  clamped to [0, 100]. `plotTop` maps to 100% (top of the plot) and
+ *  `plotBottom` to 0%. Used by the percent-mode 2D box-zoom (B2-17) to turn a
+ *  vertical drag into a y-domain window. */
+export function percentFromChartY(
+  chartY: number,
+  plotTop: number,
+  plotBottom: number,
+): number {
+  return fracFromChartY(chartY, plotTop, plotBottom) * 100;
+}
+
+/** Scale a numeric [lo, hi] window around `anchor` by `factor` — factor < 1
+ *  zooms IN (narrower window), > 1 zooms OUT — keeping the anchor value fixed
+ *  in value-space (so wheel-zoom stays centred on the cursor). */
+export function zoomWindow(
+  lo: number,
+  hi: number,
+  anchor: number,
+  factor: number,
+): [number, number] {
+  return [anchor - (anchor - lo) * factor, anchor + (hi - anchor) * factor];
+}
+
+/** Clamp a [lo, hi] window inside [min, max], preserving low≤high ordering. */
+export function clampWindow(
+  lo: number,
+  hi: number,
+  min: number,
+  max: number,
+): [number, number] {
+  return [
+    Math.max(min, Math.min(lo, hi)),
+    Math.min(max, Math.max(lo, hi)),
+  ];
+}
+
+/** Shift a [lo, hi] window by `delta` and clamp inside [min, max] WITHOUT
+ *  changing its width — so a pan stops at the data edge instead of scrolling
+ *  into empty space. A window at least as wide as the extent pins to [min,max]
+ *  (nothing to pan). Powers drag-to-pan (B2-56). */
+export function panWindow(
+  lo: number,
+  hi: number,
+  delta: number,
+  min: number,
+  max: number,
+): [number, number] {
+  const width = hi - lo;
+  if (width >= max - min) return [min, max];
+  let nLo = lo + delta;
+  let nHi = hi + delta;
+  if (nLo < min) {
+    nLo = min;
+    nHi = min + width;
+  } else if (nHi > max) {
+    nHi = max;
+    nLo = max - width;
+  }
+  return [nLo, nHi];
+}
+
+/** True when a window covers (or exceeds) the full [min, max] extent — used to
+ *  collapse a fully zoomed-out axis back to its default (null) domain. */
+export function isFullExtent(
+  lo: number,
+  hi: number,
+  min: number,
+  max: number,
+): boolean {
+  return lo <= min && hi >= max;
 }
 
 type TooltipPayloadEntry = {
@@ -583,16 +654,19 @@ export function ScoreTrendChart({
   const PLOT_TOP = TOP_MARGIN;
   const PLOT_BOTTOM = CHART_HEIGHT - XAXIS_HEIGHT;
 
-  // ── Drag-select-to-zoom. All modes share the numeric time X-axis, so a drag
-  // always zooms X. In PERCENT mode the drag box ALSO zooms Y (2D box zoom,
-  // B2-17): the cursor's pixel y is inverted to a 0–100 value against the plot
-  // geometry above. Count mode's y-axis is [0,"auto"] — not invertible at drag
-  // time — so it stays X-only. Mouse-down anchors one corner, dragging tracks
-  // the other, mouse-up commits [minTs,maxTs] (plus [minY,maxY] in percent
-  // mode). A plain click (no drag → edges equal) commits nothing, so per-series
-  // onClick still works. PAN is deferred: recharts has no first-class pan and
-  // faking it (offsetting both domains on drag) is disproportionate here —
-  // reset and re-drag instead.
+  // ── Zoom + pan (B2-56). Three gestures, all confined to the plot:
+  //   • WHEEL — zooms BOTH axes about the cursor (percent AND count mode). The
+  //     x-anchor is the hovered ts; the y-anchor is the cursor's fractional
+  //     height in the plot, mapped into the live y-domain.
+  //   • SHIFT+DRAG — box-select an arbitrary rectangle (the original B2-17 2D
+  //     zoom): x always, plus y in percent mode (count's y is invertible only
+  //     against a committed numeric domain, so its box stays a full-height band).
+  //   • PLAIN DRAG — pans the zoomed view; the grab point tracks the cursor and
+  //     the window clamps at the data edges (no scrolling into empty space). A
+  //     plain click (no movement) pans nothing, so per-series onClick still fires.
+  // A "Reset" control clears both axes. Wheel/pan act on committed domains via
+  // functional updates, collapsing an axis back to its default (null) once fully
+  // zoomed out.
   const canYZoom = mode === "percent";
   const [dragStart, setDragStart] = useState<number | null>(null);
   const [dragEnd, setDragEnd] = useState<number | null>(null);
@@ -600,14 +674,58 @@ export function ScoreTrendChart({
   const [dragEndY, setDragEndY] = useState<number | null>(null);
   const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
   const [yZoomDomain, setYZoomDomain] = useState<[number, number] | null>(null);
+  const [panning, setPanning] = useState(false);
   const dragging = dragStart != null && dragEnd != null && dragStart !== dragEnd;
   const zoomed = zoomDomain != null;
   const yZoomed = yZoomDomain != null;
 
-  // Recharts passes the chart state as the first mouse-handler arg: `activeLabel`
-  // is the ts under the cursor (numeric time axis) and `chartY` is the cursor's
-  // pixel y within the chart, inverted here to a 0–100 percent value.
+  // Full-extent bounds for clamping zoom/pan, matching the default axis domains:
+  // x uses the widened nice-tick bounds when present (else data min/max); y is
+  // [0,100] in percent mode and [0, dataMax] in count mode. `enoughToZoom` gates
+  // every gesture off for a degenerate (≤1 point / flat) range.
+  const xExtent = useMemo<[number, number] | null>(() => {
+    const ts = points.map((p) => p.ts as number).filter((v) => Number.isFinite(v));
+    if (ts.length < 2) return null;
+    return [Math.min(...ts), Math.max(...ts)];
+  }, [points]);
+  const xLo = hasTimeTicks ? timeTicks[0] : (xExtent?.[0] ?? 0);
+  const xHi = hasTimeTicks ? timeTicks[timeTicks.length - 1] : (xExtent?.[1] ?? 0);
+  const enoughToZoom = xHi > xLo;
+  const countYMax = useMemo(() => {
+    if (mode !== "count") return 0;
+    let m = 0;
+    for (const p of points) {
+      for (const name of series) {
+        const v = p[name];
+        if (typeof v === "number" && v > m) m = v;
+      }
+    }
+    return m;
+  }, [mode, points, series]);
+  const yBase: [number, number] = mode === "count" ? [0, countYMax > 0 ? countYMax : 1] : [0, 100];
+
+  // Plot pixel geometry for pan: the vertical span is fixed (200px chart, 8px
+  // top margin, 30px x-axis → 162px); the horizontal span is the wrapper width
+  // minus the y-axis, margins and x-padding, measured at gesture start.
+  const PLOT_HEIGHT_PX = PLOT_BOTTOM - PLOT_TOP;
+  const PLOT_LEFT_INSET = 68; // div p-2 (8) + YAxis width (44) + x padding-left (16)
+  const PLOT_RIGHT_INSET = 36; // div p-2 (8) + chart right margin (12) + x padding-right (16)
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const plotWidthRef = useRef(1);
+  const gestureRef = useRef<"none" | "box" | "pan">("none");
+  // Latest cursor anchors, tracked on every move so a wheel event knows where to
+  // zoom toward even between drags.
+  const hoverTsRef = useRef<number | null>(null);
+  const hoverFracRef = useRef<number | null>(null);
+  // yBase can change with the data; a ref keeps the stable wheel listener current.
+  const yBaseRef = useRef<[number, number]>(yBase);
+  yBaseRef.current = yBase;
+
+  // Recharts passes the chart state as the first mouse-handler arg (`activeLabel`
+  // = ts under the cursor; `chartY` = cursor pixel-y) and the native event as the
+  // second (read for the Shift modifier and pixel movement).
   type ChartMouseState = { activeLabel?: string | number; chartY?: number } | null;
+  type ChartMouseEvent = React.MouseEvent<SVGElement> | undefined;
   const tsFromState = (s: ChartMouseState): number | null => {
     const v = s?.activeLabel;
     return typeof v === "number" ? v : typeof v === "string" ? Number(v) : null;
@@ -617,33 +735,79 @@ export function ScoreTrendChart({
     if (typeof py !== "number") return null;
     return percentFromChartY(py, PLOT_TOP, PLOT_BOTTOM);
   };
-  const handleMouseDown = (s: ChartMouseState) => {
-    const ts = tsFromState(s);
-    if (ts == null) return;
-    setDragStart(ts);
-    setDragEnd(null);
-    if (canYZoom) {
-      setDragStartY(yFromState(s));
-      setDragEndY(null);
+  const handleMouseDown = (s: ChartMouseState, e: ChartMouseEvent) => {
+    if (!enoughToZoom) return;
+    if (e?.shiftKey) {
+      // Shift+drag → box-select zoom (original B2-17 behaviour).
+      const ts = tsFromState(s);
+      if (ts == null) return;
+      gestureRef.current = "box";
+      setDragStart(ts);
+      setDragEnd(null);
+      if (canYZoom) {
+        setDragStartY(yFromState(s));
+        setDragEndY(null);
+      }
+      return;
     }
+    // Plain drag → pan. Snapshot the plot width so pixel→value stays stable.
+    gestureRef.current = "pan";
+    setPanning(true);
+    const rect = wrapRef.current?.getBoundingClientRect();
+    plotWidthRef.current = rect
+      ? Math.max(1, rect.width - PLOT_LEFT_INSET - PLOT_RIGHT_INSET)
+      : 1;
   };
-  const handleMouseMove = (s: ChartMouseState) => {
-    if (dragStart == null) return;
+  const handleMouseMove = (s: ChartMouseState, e: ChartMouseEvent) => {
     const ts = tsFromState(s);
-    if (ts != null) setDragEnd(ts);
-    if (canYZoom) {
-      const y = yFromState(s);
-      if (y != null) setDragEndY(y);
+    if (ts != null) hoverTsRef.current = ts;
+    if (typeof s?.chartY === "number") {
+      hoverFracRef.current = fracFromChartY(s.chartY, PLOT_TOP, PLOT_BOTTOM);
+    }
+    if (gestureRef.current === "box") {
+      if (dragStart == null) return;
+      if (ts != null) setDragEnd(ts);
+      if (canYZoom) {
+        const y = yFromState(s);
+        if (y != null) setDragEndY(y);
+      }
+      return;
+    }
+    if (gestureRef.current === "pan" && e) {
+      const dx = e.movementX ?? 0;
+      const dy = e.movementY ?? 0;
+      if (dx === 0 && dy === 0) return;
+      const plotW = plotWidthRef.current || 1;
+      // X: content follows the cursor, so the domain shifts opposite the drag.
+      setZoomDomain((prev) => {
+        const [lo, hi] = prev ?? [xLo, xHi];
+        const next = panWindow(lo, hi, -(dx / plotW) * (hi - lo), xLo, xHi);
+        return isFullExtent(next[0], next[1], xLo, xHi) ? null : next;
+      });
+      // Y: dragging down reveals higher values (domain shifts up).
+      const [yb0, yb1] = yBase;
+      setYZoomDomain((prev) => {
+        const [lo, hi] = prev ?? [yb0, yb1];
+        const next = panWindow(lo, hi, (dy / PLOT_HEIGHT_PX) * (hi - lo), yb0, yb1);
+        return isFullExtent(next[0], next[1], yb0, yb1) ? null : next;
+      });
     }
   };
   const handleMouseUp = () => {
-    if (dragStart != null && dragEnd != null && dragStart !== dragEnd) {
+    if (
+      gestureRef.current === "box" &&
+      dragStart != null &&
+      dragEnd != null &&
+      dragStart !== dragEnd
+    ) {
       setZoomDomain([Math.min(dragStart, dragEnd), Math.max(dragStart, dragEnd)]);
       // Commit the y-window alongside the x-window (2D box) in percent mode.
       if (canYZoom && dragStartY != null && dragEndY != null && dragStartY !== dragEndY) {
         setYZoomDomain([Math.min(dragStartY, dragEndY), Math.max(dragStartY, dragEndY)]);
       }
     }
+    gestureRef.current = "none";
+    setPanning(false);
     setDragStart(null);
     setDragEnd(null);
     setDragStartY(null);
@@ -653,6 +817,39 @@ export function ScoreTrendChart({
     setZoomDomain(null);
     setYZoomDomain(null);
   };
+
+  // Wheel-to-zoom both axes about the cursor. Registered as a NON-passive native
+  // listener (React's onWheel is passive, so it can't preventDefault the page
+  // scroll). Reads the live cursor anchors from refs; deps re-bind when the
+  // x-extent changes.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || !enoughToZoom) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
+      setZoomDomain((prev) => {
+        const [lo, hi] = prev ?? [xLo, xHi];
+        const anchor = Math.min(hi, Math.max(lo, hoverTsRef.current ?? (lo + hi) / 2));
+        const z = zoomWindow(lo, hi, anchor, factor);
+        const c = clampWindow(z[0], z[1], xLo, xHi);
+        if (c[1] - c[0] <= 0) return prev;
+        return isFullExtent(c[0], c[1], xLo, xHi) ? null : c;
+      });
+      const [yb0, yb1] = yBaseRef.current;
+      const frac = hoverFracRef.current ?? 0.5;
+      setYZoomDomain((prev) => {
+        const [lo, hi] = prev ?? [yb0, yb1];
+        const anchor = lo + frac * (hi - lo);
+        const z = zoomWindow(lo, hi, anchor, factor);
+        const c = clampWindow(z[0], z[1], yb0, yb1);
+        if (c[1] - c[0] <= 0) return prev;
+        return isFullExtent(c[0], c[1], yb0, yb1) ? null : c;
+      });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [enoughToZoom, xLo, xHi]);
 
   // Effective X domain + ticks: when zoomed, recompute nice time ticks within
   // the zoom window (clipped to it); otherwise use the full-range niceTimeTicks
@@ -810,7 +1007,7 @@ export function ScoreTrendChart({
       <p className="text-sm text-muted-foreground">{t("resultsUi.noRunsYet")}</p>
     ) : (
       <>
-      <div className="relative min-w-0 overflow-hidden rounded-md border p-2 [&_.recharts-surface]:outline-none [&_.recharts-wrapper]:outline-none [&_svg]:outline-none [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
+      <div ref={wrapRef} className="relative min-w-0 overflow-hidden rounded-md border p-2 [&_.recharts-surface]:outline-none [&_.recharts-wrapper]:outline-none [&_svg]:outline-none [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
           {(zoomed || yZoomed) && (
             <button
               type="button"
@@ -831,7 +1028,9 @@ export function ScoreTrendChart({
               style={
                 dragging
                   ? { cursor: canYZoom ? "crosshair" : "ew-resize", userSelect: "none" }
-                  : undefined
+                  : panning
+                    ? { cursor: "grabbing", userSelect: "none" }
+                    : undefined
               }
             >
               {isOverallScore && !yZoomed && (
@@ -926,9 +1125,9 @@ export function ScoreTrendChart({
                   as the pointer moves up and down. */}
               <Tooltip
                 cursor={false}
-                // Suppress the tooltip mid drag-select so it doesn't fight the
-                // zoom-region highlight; restore default behaviour otherwise.
-                active={dragging ? false : undefined}
+                // Suppress the tooltip mid drag-select / pan so it doesn't fight
+                // the zoom-region highlight; restore default behaviour otherwise.
+                active={dragging || panning ? false : undefined}
                 isAnimationActive={false}
                 offset={12}
                 position={{ y: 8 }}

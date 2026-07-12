@@ -1,4 +1,6 @@
 import type * as React from "react";
+import { useEffect, useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { ArrowDown, ArrowUp, CircleHelp } from "lucide-react";
 import {
@@ -7,6 +9,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { countUpValue } from "@/components/home/statFormat";
 
 /**
  * Compact overall-score badge. Background colour interpolates red→green by
@@ -15,6 +18,35 @@ import {
 export function scoreColor(passRate: number | null): string {
   if (passRate == null) return "hsl(0 0% 60%)";
   return `hsl(${Math.round(passRate * 120)} 70% 42%)`;
+}
+
+/**
+ * Animate a number from 0 → `target` (easeOutCubic via rAF), re-running whenever
+ * `target` changes so the score always lands exactly on the real value. Honours
+ * `prefers-reduced-motion`: reduced-motion users get the final value with no
+ * ticking. Shares the `countUpValue` curve with the home "At a Glance" cards.
+ */
+function useCountUp(target: number, durationMs = 900): number {
+  const reduce = useReducedMotion();
+  const [value, setValue] = useState(target);
+  useEffect(() => {
+    if (reduce) {
+      setValue(target);
+      return;
+    }
+    let raf = 0;
+    let startTs = 0;
+    const tick = (now: number) => {
+      if (!startTs) startTs = now;
+      const t = Math.min(1, (now - startTs) / durationMs);
+      setValue(countUpValue(target, t));
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    setValue(0);
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, durationMs, reduce]);
+  return reduce ? target : value;
 }
 
 export function ScoreBox({
@@ -40,7 +72,11 @@ export function ScoreBox({
   info?: React.ReactNode;
 }) {
   const { t } = useTranslation();
-  const pct = passRate == null ? "—" : `${(passRate * 100).toFixed(1)}%`;
+  const reduce = useReducedMotion();
+  // Count the percentage up from 0 on mount and re-animate on every change; the
+  // rAF curve lands exactly on the real value at t≥1 (reduced-motion → static).
+  const animatedPct = useCountUp(passRate == null ? 0 : passRate * 100);
+  const pct = passRate == null ? "—" : `${animatedPct.toFixed(1)}%`;
   const bg = scoreColor(passRate);
   return (
     <div
@@ -52,7 +88,16 @@ export function ScoreBox({
         {label ?? t("resultsUi.overallScoreLabel")}
       </div>
       <div className="flex items-center justify-center gap-1.5 leading-none">
-        <span className="text-4xl font-bold">{pct}</span>
+        {/* Fade + scale the big number in on mount (skipped for reduced-motion).
+            tabular-nums keeps the width stable while the digits tick up. */}
+        <motion.span
+          className="text-4xl font-bold tabular-nums"
+          initial={reduce ? false : { opacity: 0, scale: 0.85 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+        >
+          {pct}
+        </motion.span>
         {trend === "up" && (
           <ArrowUp
             className="h-6 w-6"

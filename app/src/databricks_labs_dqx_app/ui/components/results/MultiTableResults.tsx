@@ -19,6 +19,7 @@ import {
 import selector from "@/lib/selector";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ScoreBox } from "@/components/results/ScoreBox";
+import { FadeIn } from "@/components/anim/FadeIn";
 import { CollapsibleSection } from "@/components/results/CollapsibleSection";
 import { CollapseRegion } from "@/components/results/CollapseRegion";
 import { ScoreTrendChart, type OverallStep } from "@/components/results/ScoreTrendChart";
@@ -646,10 +647,13 @@ export function MultiTableResultsSection({
 
   return (
     <div className="space-y-6">
+      {/* Subtle staggered entrance: the score leads, then the review status,
+          over-time trends and drilldown fade up in sequence (each FadeIn
+          honours prefers-reduced-motion via the shared motion wrapper). */}
       {/* The run-mode dropdown (always) and the run picker (when the caller
           supplies one) overlap the score box's top-right corner; they drop
           below the score on very small screens (mirrors the Tables tab). */}
-      <div className="relative">
+      <FadeIn delay={0} className="relative">
         <div className="z-10 flex items-center gap-2 sm:absolute sm:right-2 sm:top-2 max-sm:mb-2 max-sm:justify-end">
           {!hideRunMode && (
             <RunModeSelect includeDrafts={includeDrafts} onChange={onIncludeDraftsChange} />
@@ -657,7 +661,7 @@ export function MultiTableResultsSection({
           {runPickerSlot}
         </div>
         <div className="sm:pr-2">{scoreBox}</div>
-      </div>
+      </FadeIn>
 
       {/* B2-8: the pinned run's review status in its own full-width
           INTERACTABLE card between the score and the over-time trend (the
@@ -665,11 +669,12 @@ export function MultiTableResultsSection({
           gated for users without permission). Only surfaces that pass a run id
           (the table-space tab) render it; global/rule omit it. */}
       {reviewStatusRunId && (
-        <div className="rounded-lg border bg-card p-4">
+        <FadeIn delay={0.06} className="rounded-lg border bg-card p-4">
           <RunReviewStatusPanel runId={reviewStatusRunId} />
-        </div>
+        </FadeIn>
       )}
 
+      <FadeIn delay={0.12}>
       <CollapsibleSection title={t("resultsUi.overTimeSection")} defaultOpen>
         <div className="space-y-6">
           <ChartFrame>
@@ -725,7 +730,9 @@ export function MultiTableResultsSection({
           </div>
         </div>
       </CollapsibleSection>
+      </FadeIn>
 
+      <FadeIn delay={0.18}>
       <CollapsibleSection
         title={t("resultsUi.drilldownSection")}
         defaultOpen
@@ -918,6 +925,7 @@ export function MultiTableResultsSection({
           )}
         </div>
       </CollapsibleSection>
+      </FadeIn>
     </div>
   );
 }

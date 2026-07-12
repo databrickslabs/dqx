@@ -1,12 +1,17 @@
 import { describe, expect, it } from "bun:test";
 import {
+  clampWindow,
   countSeriesColors,
   COUNT_COLORS,
+  fracFromChartY,
+  isFullExtent,
   niceTimeTicks,
+  panWindow,
   percentFromChartY,
   pivot,
   pivotCounts,
   toggleHidden,
+  zoomWindow,
 } from "./ScoreTrendChart";
 
 describe("pivot", () => {
@@ -160,5 +165,63 @@ describe("percentFromChartY", () => {
   it("returns 0 for a degenerate (non-positive) plot span", () => {
     expect(percentFromChartY(50, 100, 100)).toBe(0);
     expect(percentFromChartY(50, 100, 20)).toBe(0);
+  });
+});
+
+describe("fracFromChartY", () => {
+  const TOP = 8;
+  const BOTTOM = 170;
+  it("maps the plot bottom→0, top→1, mid→0.5", () => {
+    expect(fracFromChartY(BOTTOM, TOP, BOTTOM)).toBe(0);
+    expect(fracFromChartY(TOP, TOP, BOTTOM)).toBe(1);
+    expect(fracFromChartY((TOP + BOTTOM) / 2, TOP, BOTTOM)).toBeCloseTo(0.5, 5);
+  });
+  it("clamps outside the plot to [0,1] and returns 0 for a degenerate span", () => {
+    expect(fracFromChartY(TOP - 20, TOP, BOTTOM)).toBe(1);
+    expect(fracFromChartY(BOTTOM + 20, TOP, BOTTOM)).toBe(0);
+    expect(fracFromChartY(50, 100, 100)).toBe(0);
+  });
+});
+
+describe("zoomWindow", () => {
+  it("zooms IN (factor<1) around the anchor, keeping the anchor fixed", () => {
+    // Anchor at the centre, halve the width.
+    expect(zoomWindow(0, 100, 50, 0.5)).toEqual([25, 75]);
+    // Anchor off-centre stays put.
+    const [lo, hi] = zoomWindow(0, 100, 20, 0.5);
+    expect(lo).toBe(10);
+    expect(hi).toBe(60);
+  });
+  it("zooms OUT (factor>1) around the anchor", () => {
+    expect(zoomWindow(25, 75, 50, 2)).toEqual([0, 100]);
+  });
+});
+
+describe("clampWindow", () => {
+  it("clamps a window inside [min,max] preserving order", () => {
+    expect(clampWindow(-10, 130, 0, 100)).toEqual([0, 100]);
+    expect(clampWindow(20, 80, 0, 100)).toEqual([20, 80]);
+  });
+});
+
+describe("panWindow", () => {
+  it("shifts the window by delta within bounds, preserving width", () => {
+    expect(panWindow(20, 40, 10, 0, 100)).toEqual([30, 50]);
+    expect(panWindow(20, 40, -10, 0, 100)).toEqual([10, 30]);
+  });
+  it("stops at the low/high edge instead of scrolling past", () => {
+    expect(panWindow(10, 30, -50, 0, 100)).toEqual([0, 20]);
+    expect(panWindow(80, 100, 50, 0, 100)).toEqual([80, 100]);
+  });
+  it("pins a window wider than the extent to [min,max]", () => {
+    expect(panWindow(-10, 110, 5, 0, 100)).toEqual([0, 100]);
+  });
+});
+
+describe("isFullExtent", () => {
+  it("is true only when the window covers the whole extent", () => {
+    expect(isFullExtent(0, 100, 0, 100)).toBe(true);
+    expect(isFullExtent(-5, 120, 0, 100)).toBe(true);
+    expect(isFullExtent(10, 90, 0, 100)).toBe(false);
   });
 });
