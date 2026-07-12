@@ -18,13 +18,13 @@ function pt(series: string, run_date: string, pass_rate: number | null = 1): Tre
 }
 
 describe("productRunPickerRuns", () => {
-  it("offers ONLY the latest run (per-table run_ids are not product batches)", () => {
+  it("offers every run batch, newest first (backend rolls runs up per batch, B2-18)", () => {
     const runs = [
       { run_id: "r3", run_ts: "2026-01-03T00:00:00" },
       { run_id: "r2", run_ts: "2026-01-02T00:00:00" },
       { run_id: "r1", run_ts: "2026-01-01T00:00:00" },
     ];
-    expect(productRunPickerRuns(runs)).toEqual([runs[0]]);
+    expect(productRunPickerRuns(runs)).toEqual(runs);
   });
 
   it("is empty when there are no runs", () => {

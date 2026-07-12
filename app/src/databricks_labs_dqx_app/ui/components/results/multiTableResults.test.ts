@@ -51,6 +51,12 @@ describe("breakdownParams", () => {
     const clicked = toggleFacet(EMPTY_FILTERS, "table", "main.sales.orders");
     expect(breakdownParams(clicked).table).toEqual(["main.sales.orders"]);
   });
+
+  it("carries as_of_batch only when a batch is pinned (B2-18 run-batch as-of)", () => {
+    expect("as_of_batch" in breakdownParams(EMPTY_FILTERS)).toBe(false);
+    expect("as_of_batch" in breakdownParams(EMPTY_FILTERS, false, null)).toBe(false);
+    expect(breakdownParams(EMPTY_FILTERS, false, "r2").as_of_batch).toBe("r2");
+  });
 });
 
 describe("nextTableSelection (By table click → selection + table facet, P7.2)", () => {

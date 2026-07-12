@@ -112,11 +112,16 @@ export type UseEntityResults = (
 export function breakdownParams(
   filters: MultiFilters,
   includeDrafts = false,
+  asOfBatch?: string | null,
 ): EntityResultsParams {
   return {
     ...facetQueryParams(filters),
     axes: "breakdown",
     include_drafts: includeDraftsParam(includeDrafts),
+    // The chosen run-batch (a run_id from the batch-keyed picker) caps
+    // every axis to that batch's instant. Omitted entirely when no batch
+    // is pinned so the query stays the "newest" default.
+    ...(asOfBatch ? { as_of_batch: asOfBatch } : {}),
   };
 }
 
@@ -281,6 +286,12 @@ export interface MultiTableResultsSectionProps {
    *  run id; the global and rule surfaces have no coherent single run and omit
    *  it, so no card renders there. */
   reviewStatusRunId?: string | null;
+  /** Chosen run batch (a run_id from the batch-keyed runs picker) to read
+   *  results AS-OF. Threaded into every axis query (trend + breakdown +
+   *  base) so the whole surface truncates to that batch's instant. null /
+   *  omitted = newest (no cap). Only the table-space tab supplies it (it
+   *  owns the RunPicker); the global and rule surfaces omit it. */
+  asOfBatch?: string | null;
 }
 
 /**
@@ -300,6 +311,7 @@ export function MultiTableResultsSection({
   hideRunMode,
   onBaseByTable,
   reviewStatusRunId,
+  asOfBatch,
 }: MultiTableResultsSectionProps) {
   const { t } = useTranslation();
   // Published-only surfaces (hideRunMode) never send `include_drafts`,
@@ -341,6 +353,7 @@ export function MultiTableResultsSection({
       ...facetQueryParams(filters),
       axes: "trend",
       include_drafts: draftsParam,
+      ...(asOfBatch ? { as_of_batch: asOfBatch } : {}),
     },
     { placeholderData: keepPreviousData, ...RESULTS_QUERY_OPTIONS },
   );
@@ -350,7 +363,7 @@ export function MultiTableResultsSection({
   // The FILTERED breakdowns: cross-filtered by the active facet chips (never
   // run-scoped — see breakdownParams). This is the live result in both modes
   // — the numbers always reflect the active filter.
-  const resultsQuery = useEntityResults(breakdownParams(filters, effectiveIncludeDrafts), {
+  const resultsQuery = useEntityResults(breakdownParams(filters, effectiveIncludeDrafts, asOfBatch), {
     placeholderData: keepPreviousData,
     ...RESULTS_QUERY_OPTIONS,
   });
@@ -358,7 +371,7 @@ export function MultiTableResultsSection({
   // The BASE (applicable) breakdowns: NO facet filter. Drives the row set in
   // "All" mode — base rows absent from the filtered result render greyed. In
   // "Applicable" mode it's unused beyond being the same set.
-  const baseQuery = useEntityResults(breakdownParams(EMPTY_FILTERS, effectiveIncludeDrafts), {
+  const baseQuery = useEntityResults(breakdownParams(EMPTY_FILTERS, effectiveIncludeDrafts, asOfBatch), {
     placeholderData: keepPreviousData,
     ...RESULTS_QUERY_OPTIONS,
   });

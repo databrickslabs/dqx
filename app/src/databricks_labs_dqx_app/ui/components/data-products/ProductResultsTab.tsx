@@ -40,24 +40,16 @@ import {
 // set is running, never idle). It is the banner form, not a true X-of-Y
 // progress bar: the run-set summary carries no per-member status to count.
 //
-// RUN-PICKER SEMANTIC ADAPTATION (contract difference disclosed by P2.1):
-// dqlake's product runs endpoint returns batch-keyed ProductRunsOut rows
-// (product_run_id) and the picker pins every query "as of" that batch
-// (`as_of_batch` carry-forward: trends show history up to the batch, scores
-// carry each member's latest run at that instant). Our
-// `/dq-results/product/{id}/runs` returns per-member-table run_id rollups
-// (RunsOut — one row per underlying run, GROUP BY run_id), so a run_id here
-// identifies ONE member table's run, NOT a product-level batch. Filtering a
-// multi-table view by such a run_id silently collapses every breakdown
-// (By dimension/severity/rule/table) to that single member table — a
-// run-selection artifact that masquerades as a permission problem. The
-// picker is therefore restricted to "Latest" (productRunPickerRuns) and the
-// breakdown queries NEVER pass a run_id (breakdownParams); "Latest" keeps
-// dqlake's behaviour exactly (score = last point of the product trend;
-// breakdowns unscoped). The backend's run_id filter stays in place
-// underneath — a product-level batch id landing in dq_metrics (which needs
-// a change to how product runs are submitted; backlog, not now) would
-// restore full dqlake picker parity.
+// RUN-PICKER (B2-18): the picker now offers product-level RUN BATCHES and
+// pins every query AS-OF the chosen batch (dqlake parity). The backend rolls
+// `/dq-results/product/{id}/runs` up per run set (COALESCE(run_set_id,
+// run_id)) so each picker entry is ONE product "Run now" — its run_id is the
+// batch's representative (latest member) run, and passing it as `as_of_batch`
+// caps the trends/breakdowns to that batch's instant (the backend resolves
+// the run_id to its batch and truncates history there; concurrent member runs
+// are consolidated onto the batch instant, so no breakdown collapses to a
+// single member as the old per-run_id filter did). The former Latest-only
+// restriction is therefore lifted.
 
 // Re-exported from the shared composition so this file's public surface (and
 // its bun tests) survive the extraction unchanged. `productBreakdownParams`
@@ -71,12 +63,13 @@ export {
   breakdownParams as productBreakdownParams,
 } from "@/components/results/MultiTableResults";
 
-/** Runs offered by the product tab's RunPicker: the LATEST entry only. Our
- *  run history rows are per-member-table run_id rollups, not product-level
- *  batches, so a non-latest selection cannot scope a multi-table view
- *  coherently (see the run-picker adaptation note in the module comment). */
+/** Runs offered by the product tab's RunPicker. The backend now rolls the
+ *  product runs up per RUN BATCH (one entry per product "Run now"), so every
+ *  entry is a coherent product-level batch that can scope the view AS-OF its
+ *  instant — the whole newest-first list is offered (B2-18). Kept as a named
+ *  pass-through so the picker's run universe stays a single documented seam. */
 export function productRunPickerRuns(runs: Run[]): Run[] {
-  return runs.slice(0, 1);
+  return runs;
 }
 
 /**
@@ -121,6 +114,11 @@ function ResultsBody({ productId }: { productId: string }) {
   // query outside the shared composition; the dropdown itself renders
   // inside the composition (next to the run picker).
   const [includeDrafts, setIncludeDrafts] = useState(false);
+
+  // The pinned run batch (a run_id from the batch-keyed picker), or null for
+  // "Latest". Threaded into the composition as `asOfBatch` so every axis
+  // truncates to that batch's instant (B2-18).
+  const [selectedBatch, setSelectedBatch] = useState<string | null>(null);
 
   // Run-in-progress signal: the shared run-set activity query (deduped with
   // the product header and Runs tab — same params, one cached poll that only
@@ -176,17 +174,20 @@ function ResultsBody({ productId }: { productId: string }) {
           scoreLabel={() => t("resultsUi.averageScoreLabel")}
           includeDrafts={includeDrafts}
           onIncludeDraftsChange={setIncludeDrafts}
-          // Fixed to "Latest": only the newest entry is offered, and selecting it
-          // resolves to the latest path anyway, so onChange is a no-op (see the
-          // run-picker adaptation note in the module comment).
+          // The picker offers product-level run batches; selecting one pins
+          // the view AS-OF that batch (asOfBatch below). null = Latest.
           runPickerSlot={
-            <RunPicker runs={productRunPickerRuns(runs)} value={null} onChange={() => {}} />
+            <RunPicker
+              runs={productRunPickerRuns(runs)}
+              value={selectedBatch}
+              onChange={setSelectedBatch}
+            />
           }
-          // B2-8: the pinned (latest) run's review status renders as an
-          // interactable full-width card between the score and the trend (see
-          // MultiTableResultsSection), replacing the old read-only badge that
-          // sat next to the run picker.
-          reviewStatusRunId={runs[0]?.run_id}
+          asOfBatch={selectedBatch}
+          // B2-8: the selected batch's representative run (its latest member
+          // run) drives the review-status card between the score and the
+          // trend; falls back to the newest batch when nothing is pinned.
+          reviewStatusRunId={selectedBatch ?? runs[0]?.run_id}
         />
       </div>
     </GenieChatProvider>

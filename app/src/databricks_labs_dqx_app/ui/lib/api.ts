@@ -4063,6 +4063,7 @@ table?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
+as_of_batch?: string | null;
 };
 
 export type GetRuleResultsParams = {
@@ -4074,6 +4075,7 @@ table?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
+as_of_batch?: string | null;
 };
 
 export type GetProductResultsRunsParams = {
@@ -4089,6 +4091,7 @@ table?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
+as_of_batch?: string | null;
 };
 
 export type GetDqResultsFailedRowsParams = {
@@ -17722,6 +17725,10 @@ Draft runs are excluded unless *include_drafts*. *table* (P7.2) is
 the By-table cross-filter: a repeatable list of member FQNs, applied
 app-side like the other four facets (the rows it filters are already
 catalog-gated, so an inaccessible value simply matches nothing).
+
+Concurrent member runs of one run set are consolidated onto their
+RUN-BATCH instant (``dq_run_set_members`` join) so the per-table trend
+markers align; *as_of_batch* caps to a chosen batch's instant.
  * @summary Get Global Results
  */
 export const getGlobalResults = (
@@ -18045,6 +18052,11 @@ export function useGetRuleResultsSuspense<TData = Awaited<ReturnType<typeof getR
 
 /**
  * Run rollups across the product's accessible member tables, newest first.
+
+Rolled up per RUN BATCH (``dq_run_set_members`` join): concurrent
+member runs of one Table-Space "Run now" collapse to a single picker
+entry, so the picker offers coherent product-level batches rather than
+per-member-table runs.
  * @summary Get Product Results Runs
  */
 export const getProductResultsRuns = (
@@ -18211,6 +18223,12 @@ Members in inaccessible catalogs are silently filtered (never 403).
 Draft runs are excluded unless *include_drafts*. *table* (P7.2) is
 the By-table cross-filter, constrained to the product's accessible
 member set (out-of-scope values are silently dropped).
+
+Concurrent member runs of one Table-Space "Run now" are consolidated
+onto a single RUN-BATCH instant (``dq_run_set_members`` join), so the
+per-table trend markers share the Average point's x and the trend
+tooltip lists every member. *as_of_batch* (a run_id from the batch-
+keyed runs picker) caps the series/snapshot to that batch's instant.
  * @summary Get Product Results
  */
 export const getProductResults = (
