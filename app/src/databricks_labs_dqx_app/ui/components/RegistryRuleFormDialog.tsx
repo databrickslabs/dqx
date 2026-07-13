@@ -1321,6 +1321,12 @@ export function RegistryRuleFormDialog({
     severity.trim().length > 0 &&
     dimension.trim().length > 0 &&
     (mode !== "dqx_native" || nativeRequiredParamsFilled);
+  // An already-approved rule with no unsaved edits has nothing to resubmit —
+  // resubmitting would just re-run the (already-passed) approval gate. Disable
+  // Submit in that state, matching the Monitored Table / Table Space headers
+  // (ProductHeader's `submitDisabledNoChanges`). Editing it flips `isDirty`
+  // true and re-enables Submit so an approved rule can still be revised.
+  const submitDisabledNoChanges = sourceRule?.status === "approved" && !isDirty;
 
   // Human-readable lists of exactly which field(s) each gate is still
   // waiting on, surfaced as tooltips on the disabled buttons (see
@@ -2703,7 +2709,7 @@ export function RegistryRuleFormDialog({
           // The draft is already persisted and unchanged — submit it
           // for approval directly rather than issuing a redundant save.
           withMissingFieldsTooltip(
-            <Button onClick={handleSubmitOnly} disabled={saving || !canSubmit} className="gap-2">
+            <Button onClick={handleSubmitOnly} disabled={saving || !canSubmit || submitDisabledNoChanges} className="gap-2">
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : submitIcon}
               {willAutoApprove
                 ? t("rulesRegistry.publishNow")
@@ -2717,7 +2723,7 @@ export function RegistryRuleFormDialog({
           )
         ) : (
           withMissingFieldsTooltip(
-            <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit} className="gap-2">
+            <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit || submitDisabledNoChanges} className="gap-2">
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : submitIcon}
               {willAutoApprove
                 ? t("rulesRegistry.saveAndPublish")
