@@ -156,12 +156,34 @@ def _apply_snapshot_check_counts(
       frozen snapshot, resolved for ALL such bindings in one batched
       :meth:`MonitoredTableVersionService.snapshot_counts_many` call;
     * never-approved binding (``version == 0``, no snapshot) -> the live render
-      count (exactly what a draft run would execute).
+      count (exactly what a draft run would execute), resolved for ALL such
+      bindings in one batched
+      :meth:`Materializer.render_binding_checks_counts_many` call.
 
-    Mirrors :class:`DataProductService`'s pinned-vs-live member-count split.
+    Both branches are query-bounded regardless of how many bindings the list
+    holds (B2-141): the never-approved branch previously called
+    ``render_binding_checks`` once per binding, fanning out to ~``3N + 2·ΣR``
+    sequential OLTP round-trips on a fresh (all-draft) install; it now costs a
+    constant handful of grouped queries. Mirrors
+    :class:`DataProductService`'s pinned-vs-live member-count split.
     """
     pins = [(s.table.binding_id, s.table.version) for s in summaries if s.table.version > 0]
     snapshot_counts = version_svc.snapshot_counts_many(pins) if pins else {}
+
+    # Bindings that must fall back to the live draft-render count: every
+    # never-approved binding, plus any approved one whose frozen snapshot row
+    # is missing (so the overview still reflects what a draft run would run).
+    live_bindings: list[tuple[str, str]] = []
+    for summary in summaries:
+        version = summary.table.version
+        if version > 0 and snapshot_counts.get((summary.table.binding_id, version)) is not None:
+            continue
+        live_bindings.append((summary.table.binding_id, summary.table.table_fqn))
+    try:
+        live_counts = materializer.render_binding_checks_counts_many(live_bindings)
+    except MaterializationError:
+        live_counts = {}
+
     for summary in summaries:
         version = summary.table.version
         if version > 0:
@@ -169,13 +191,7 @@ def _apply_snapshot_check_counts(
             if snapshot is not None:
                 summary.check_count = snapshot[1]
                 continue
-        # Never approved (or an approved binding whose snapshot row is missing):
-        # fall back to the live render count so the overview still reflects
-        # what a draft run would execute.
-        try:
-            summary.check_count = len(materializer.render_binding_checks(summary.table.binding_id))
-        except MaterializationError:
-            summary.check_count = 0
+        summary.check_count = live_counts.get(summary.table.binding_id, 0)
 
 
 @router.get(

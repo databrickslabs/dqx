@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Collection
 from datetime import datetime, timezone
 from typing import Any, cast, get_args
 from uuid import uuid4
@@ -315,6 +316,62 @@ class RegistryService:
         that is older than the rule's current published version.
         """
         return self._get_version(rule_id, version)
+
+    def get_rules_many(self, rule_ids: Collection[str]) -> dict[str, RegistryRule]:
+        """Resolve many rules by id in ONE ``IN (...)`` query (no per-id round-trip).
+
+        Mirrors :meth:`get_rule` for a batch of ids — the value at each key is
+        exactly what :meth:`get_rule` would return for that id. Ids with no
+        ``dq_rules`` row are simply absent from the result, so callers can treat
+        a missing key the same as a ``None`` from :meth:`get_rule`. Duplicate
+        ids collapse to one predicate. An empty input issues no query.
+
+        Backs list-view batching (e.g. the monitored-tables draft check-count
+        pass) that must resolve the rules of many applications at once instead
+        of looping :meth:`get_rule` per application.
+        """
+        distinct = {rid for rid in rule_ids if rid}
+        if not distinct:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(rid)}'" for rid in sorted(distinct))
+        sql = f"SELECT {self._select_cols} FROM {self._table} WHERE rule_id IN ({in_list})"  # noqa: S608
+        rows = self._sql.query(sql)
+        result: dict[str, RegistryRule] = {}
+        for row in rows:
+            rule = self._row_to_rule(row)
+            result[rule.rule_id] = rule
+        return result
+
+    def get_versions_many(self, pairs: Collection[tuple[str, int]]) -> dict[tuple[str, int], RuleVersion]:
+        """Resolve many frozen version snapshots by ``(rule_id, version)`` in ONE query.
+
+        The batch counterpart of :meth:`get_version`: the value at each
+        ``(rule_id, version)`` key equals what :meth:`get_version` would return
+        for that pair. Pairs with no ``dq_rule_versions`` row are absent from
+        the result. Duplicate pairs collapse to one predicate; an empty input
+        issues no query. Uses the same predicate-OR shape as
+        :meth:`_attach_modified` / :meth:`MonitoredTableVersionService.snapshot_counts_many`.
+        """
+        distinct = {(rid, int(ver)) for rid, ver in pairs if rid}
+        if not distinct:
+            return {}
+        definition = self._sql.select_json_text("definition")
+        user_metadata = self._sql.select_json_text("user_metadata")
+        created_at = self._sql.ts_text("created_at")
+        predicates = " OR ".join(
+            f"(rule_id = '{escape_sql_string(rid)}' AND version = {int(ver)})" for rid, ver in sorted(distinct)
+        )
+        sql = (
+            f"SELECT rule_id, version, {definition} AS definition_json, polarity, "  # noqa: S608
+            f"{user_metadata} AS user_metadata_json, created_by, {created_at}, mode "
+            f"FROM {self._versions_table} WHERE {predicates}"
+        )
+        rows = self._sql.query(sql)
+        result: dict[tuple[str, int], RuleVersion] = {}
+        for row in rows:
+            version = self._row_to_version(row)
+            result[(version.rule_id, version.version)] = version
+        return result
 
     def get_rule_with_version(self, rule_id: str) -> tuple[RegistryRule, RuleVersion | None] | None:
         """Get a registry rule plus its current published snapshot, if any.

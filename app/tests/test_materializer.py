@@ -1404,3 +1404,107 @@ class TestRenderBindingChecks:
         registry.get_version.return_value = _version_snapshot()  # mode defaults to None
         checks = materializer.render_binding_checks("b1")
         assert checks[0]["check"]["function"] == "is_not_null"
+
+
+class TestRenderBindingChecksCountsMany:
+    """``render_binding_checks_counts_many`` — the BATCHED draft check-count path (B2-141).
+
+    Backs the monitored-tables list load's never-approved count column. The
+    per-binding :meth:`render_binding_checks` version fanned out to
+    ``~3N + 2·ΣR`` sequential OLTP round-trips (N never-approved bindings, R
+    applied rules each); this collapses that to a CONSTANT handful of grouped
+    queries. These tests pin BOTH properties: query-count boundedness
+    (independent of N) AND count parity with the old per-binding render.
+    """
+
+    def test_count_parity_with_per_binding_render_including_for_each_column(
+        self, materializer, registry, monitored_tables
+    ):
+        # A for_each_column / multi-slot rule renders ONE check per mapping
+        # group, so a 3-group application must count 3 — exactly what a
+        # per-binding render_binding_checks would return.
+        multi = AppliedRule(
+            id="ar1",
+            binding_id="b1",
+            rule_id="r1",
+            column_mapping=[{"column": "a"}, {"column": "b"}, {"column": "c"}],
+            mapping_hash="h",
+        )
+        single = AppliedRule(
+            id="ar2", binding_id="b2", rule_id="r1", column_mapping=[{"column": "x"}], mapping_hash="h"
+        )
+        monitored_tables.list_applied_rules_many.return_value = {"b1": [multi], "b2": [single]}
+        registry.get_rules_many.return_value = {"r1": _published_rule()}
+        registry.get_versions_many.return_value = {("r1", 1): _version_snapshot()}
+
+        counts = materializer.render_binding_checks_counts_many(
+            [("b1", "cat.schema.t1"), ("b2", "cat.schema.t2")]
+        )
+
+        assert counts == {"b1": 3, "b2": 1}
+
+        # Parity cross-check: the per-binding render of each binding yields the
+        # same length the batched count reports.
+        monitored_tables.get.return_value = _detail(multi, table_fqn="cat.schema.t1")
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+        assert len(materializer.render_binding_checks("b1")) == counts["b1"]
+
+    def test_query_count_is_bounded_and_independent_of_binding_count(self, materializer, registry, monitored_tables):
+        """The win: the batched path issues a CONSTANT number of registry/
+        applied-rule queries regardless of how many bindings it counts, and
+        NEVER the per-binding ``get_rule`` / ``get_version`` round-trips the
+        old loop paid. Verified for 1 vs 5 bindings — the call counts don't
+        scale with N."""
+
+        def _run(n: int) -> None:
+            bindings = [(f"b{i}", f"cat.schema.t{i}") for i in range(n)]
+            applied_by_binding = {
+                f"b{i}": [
+                    AppliedRule(
+                        id=f"ar{i}",
+                        binding_id=f"b{i}",
+                        rule_id="r1",
+                        column_mapping=[{"column": "a"}, {"column": "b"}],
+                        mapping_hash="h",
+                    )
+                ]
+                for i in range(n)
+            }
+            registry.reset_mock()
+            monitored_tables.reset_mock()
+            monitored_tables.list_applied_rules_many.return_value = applied_by_binding
+            registry.get_rules_many.return_value = {"r1": _published_rule()}
+            registry.get_versions_many.return_value = {("r1", 1): _version_snapshot()}
+
+            counts = materializer.render_binding_checks_counts_many(bindings)
+
+            assert counts == {f"b{i}": 2 for i in range(n)}
+            # ONE grouped query each for applied rules, rules, and versions —
+            # regardless of N.
+            assert monitored_tables.list_applied_rules_many.call_count == 1
+            assert registry.get_rules_many.call_count == 1
+            assert registry.get_versions_many.call_count == 1
+            # The per-binding round-trips the old loop paid are NEVER issued.
+            registry.get_rule.assert_not_called()
+            registry.get_version.assert_not_called()
+            monitored_tables.get.assert_not_called()
+
+        _run(1)
+        _run(5)  # 5x the bindings, SAME (constant) query-call counts
+
+    def test_empty_input_issues_no_queries(self, materializer, registry, monitored_tables):
+        assert materializer.render_binding_checks_counts_many([]) == {}
+        monitored_tables.list_applied_rules_many.assert_not_called()
+        registry.get_rules_many.assert_not_called()
+        registry.get_versions_many.assert_not_called()
+
+    def test_unresolvable_binding_counts_zero(self, materializer, registry, monitored_tables):
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="gone", column_mapping=[{"column": "a"}], mapping_hash="h"
+        )
+        monitored_tables.list_applied_rules_many.return_value = {"b1": [applied]}
+        registry.get_rules_many.return_value = {}  # registry rule vanished
+        registry.get_versions_many.return_value = {}
+        counts = materializer.render_binding_checks_counts_many([("b1", "cat.schema.t1")])
+        assert counts == {"b1": 0}

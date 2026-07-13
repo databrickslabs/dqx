@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from databricks.labs.dqx.errors import UnsafeSqlQueryError
@@ -373,8 +374,55 @@ class Materializer:
         self._cleanup_orphans(applied_ids=applied_ids, written_ids=written_ids)
         return sorted(written_ids)
 
+    def _resolve_registry(
+        self,
+        applied: AppliedRule,
+        *,
+        rules: Mapping[str, RegistryRule] | None = None,
+        versions: Mapping[tuple[str, int], RuleVersion] | None = None,
+    ) -> tuple[RegistryRule, int, RuleVersion] | None:
+        """Resolve an applied rule to its ``(registry_rule, version_number, snapshot)``.
+
+        This is the ONLY place the ``get_rule`` + ``get_version`` OLTP lookups
+        happen for a render. When *rules* / *versions* preloaded maps are
+        supplied (batch path), they are consulted instead of the per-id
+        ``RegistryService`` calls — so a batch caller pays two grouped queries
+        for N applications rather than ``2N`` sequential round-trips. The
+        resolution logic (missing rule, unpublished version, missing snapshot)
+        is identical either way, so single- and batch-path renders stay
+        byte-identical.
+
+        Returns ``None`` (with the same warning logs as before) when the applied
+        rule can't be resolved at all.
+        """
+        registry_rule = rules.get(applied.rule_id) if rules is not None else self._registry.get_rule(applied.rule_id)
+        if registry_rule is None or not applied.id:
+            logger.warning("Skipping applied rule %s: registry rule %s not found", applied.id, applied.rule_id)
+            return None
+
+        version_number = applied.pinned_version or registry_rule.version
+        if version_number <= 0:
+            logger.warning("Skipping applied rule %s: rule %s has no published version", applied.id, applied.rule_id)
+            return None
+
+        if versions is not None:
+            version_snapshot = versions.get((applied.rule_id, version_number))
+        else:
+            version_snapshot = self._registry.get_version(applied.rule_id, version_number)
+        if version_snapshot is None:
+            logger.warning(
+                "Skipping applied rule %s: version %d of rule %s not found", applied.id, version_number, applied.rule_id
+            )
+            return None
+        return registry_rule, version_number, version_snapshot
+
     def _iter_rendered_checks(
-        self, table_fqn: str, applied: AppliedRule
+        self,
+        table_fqn: str,
+        applied: AppliedRule,
+        *,
+        rules: Mapping[str, RegistryRule] | None = None,
+        versions: Mapping[tuple[str, int], RuleVersion] | None = None,
     ) -> list[tuple[str, str, dict[str, Any]]] | None:
         """Resolve + render an applied rule's mapping groups WITHOUT writing anything.
 
@@ -393,24 +441,20 @@ class Materializer:
         order — possibly EMPTY when every group failed to render, which the
         materializer treats as "this application now renders no rows" and
         cleans up accordingly.
+
+        Registry resolution (the ``get_rule`` + ``get_version`` round-trips) is
+        delegated to :meth:`_resolve_registry`; passing a preloaded
+        *rules*/*versions* map lets a batch caller resolve every application's
+        registry rows in two grouped queries and share them here without any
+        per-application round-trip (see :meth:`render_binding_checks_many`).
         """
-        registry_rule = self._registry.get_rule(applied.rule_id)
-        if registry_rule is None or not applied.id:
-            logger.warning("Skipping applied rule %s: registry rule %s not found", applied.id, applied.rule_id)
+        resolved = self._resolve_registry(applied, rules=rules, versions=versions)
+        if resolved is None:
             return None
-
-        version_number = applied.pinned_version or registry_rule.version
-        if version_number <= 0:
-            logger.warning("Skipping applied rule %s: rule %s has no published version", applied.id, applied.rule_id)
-            return None
-
-        version_snapshot = self._registry.get_version(applied.rule_id, version_number)
-        if version_snapshot is None:
-            logger.warning(
-                "Skipping applied rule %s: version %d of rule %s not found", applied.id, version_number, applied.rule_id
-            )
-            return None
-
+        registry_rule, version_number, version_snapshot = resolved
+        # ``_resolve_registry`` already rejected a falsy ``applied.id`` (returning
+        # None), so it is a real str here — narrow it for the type checker.
+        applied_id = applied.id or ""
         effective_severity = (
             applied.severity_override or get_rule_severity(version_snapshot.user_metadata) or _DEFAULT_SEVERITY
         )
@@ -424,7 +468,7 @@ class Materializer:
         rendered_mode = version_snapshot.mode or registry_rule.mode
         rendered: list[tuple[str, str, dict[str, Any]]] = []
         for idx, group in enumerate(applied.column_mapping):
-            row_id = f"{applied.id}-{idx}"
+            row_id = f"{applied_id}-{idx}"
             try:
                 check, is_tableless = render_check(
                     mode=rendered_mode,
@@ -434,7 +478,7 @@ class Materializer:
                     per_application_tags=applied.user_metadata,
                     registry_rule_id=applied.rule_id,
                     registry_version=version_number,
-                    applied_rule_id=applied.id,
+                    applied_rule_id=applied_id,
                     app_settings=self._app_settings,
                 )
             except (ValueError, UnsafeSqlQueryError):
@@ -688,6 +732,68 @@ class Materializer:
                 continue
             checks.extend(check for _row_id, _row_fqn, check in rendered)
         return checks
+
+    def render_binding_checks_counts_many(self, bindings: list[tuple[str, str]]) -> dict[str, int]:
+        """Batched draft-render CHECK COUNT for many *(binding_id, table_fqn)* pairs.
+
+        The bounded-query counterpart of calling :meth:`render_binding_checks`
+        in a loop: it produces the SAME per-binding count (the number of checks
+        a draft run would render) but resolves the registry rows for EVERY
+        binding's applications in a constant handful of grouped queries instead
+        of ``~3N + 2·ΣR`` sequential round-trips (N bindings, R applied rules
+        each):
+
+        1. ONE grouped ``dq_applied_rules`` query for all bindings' applications
+           (:meth:`MonitoredTableService.list_applied_rules_many`);
+        2. ONE ``dq_rules`` ``IN (...)`` query for the distinct rule ids
+           (:meth:`RegistryService.get_rules_many`);
+        3. ONE ``dq_rule_versions`` predicate-OR query for the distinct
+           ``(rule_id, version)`` pairs (:meth:`RegistryService.get_versions_many`).
+
+        Rendering then runs purely in-memory per binding through the SAME
+        :meth:`_iter_rendered_checks` path — so each count is byte-identical to
+        what the per-binding :meth:`render_binding_checks` would return. A
+        binding whose applications all fail to resolve counts 0. Bindings not
+        present in *bindings* are absent from the result; an empty input issues
+        no query and returns ``{{}}``.
+        """
+        if not bindings:
+            return {}
+        binding_fqns = {binding_id: table_fqn for binding_id, table_fqn in bindings}
+        applied_by_binding = self._monitored_tables.list_applied_rules_many(list(binding_fqns))
+
+        rule_ids: set[str] = set()
+        for applied_rules in applied_by_binding.values():
+            for applied in applied_rules:
+                if applied.id:
+                    rule_ids.add(applied.rule_id)
+        rules = self._registry.get_rules_many(rule_ids)
+
+        version_pairs: set[tuple[str, int]] = set()
+        for applied_rules in applied_by_binding.values():
+            for applied in applied_rules:
+                if not applied.id:
+                    continue
+                registry_rule = rules.get(applied.rule_id)
+                if registry_rule is None:
+                    continue
+                version_number = applied.pinned_version or registry_rule.version
+                if version_number > 0:
+                    version_pairs.add((applied.rule_id, version_number))
+        versions = self._registry.get_versions_many(version_pairs)
+
+        counts: dict[str, int] = {}
+        for binding_id, table_fqn in binding_fqns.items():
+            count = 0
+            for applied in applied_by_binding.get(binding_id, []):
+                if not applied.id:
+                    continue
+                rendered = self._iter_rendered_checks(table_fqn, applied, rules=rules, versions=versions)
+                if rendered is None:
+                    continue
+                count += len(rendered)
+            counts[binding_id] = count
+        return counts
 
     def rematerialize_for_rule(self, rule_id: str) -> list[str]:
         """Re-materialize every binding with a FOLLOWING (unpinned) application of *rule_id*.

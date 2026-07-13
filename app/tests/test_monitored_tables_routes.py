@@ -113,7 +113,7 @@ class TestListAndGet:
         version_svc = MagicMock()
         version_svc.snapshot_counts_many.return_value = {}
         materializer = MagicMock()
-        materializer.render_binding_checks.return_value = []
+        materializer.render_binding_checks_counts_many.return_value = {}
         result = list_monitored_tables(svc=svc, version_svc=version_svc, materializer=materializer, status="draft")
         assert len(result) == 1
         assert result[0].table.binding_id == "b1"
@@ -135,24 +135,29 @@ class TestListAndGet:
         version_svc = MagicMock()
         version_svc.snapshot_counts_many.return_value = {("b1", 4): (2, 7)}
         materializer = MagicMock()
+        materializer.render_binding_checks_counts_many.return_value = {}
         result = list_monitored_tables(svc=svc, version_svc=version_svc, materializer=materializer)
         assert result[0].check_count == 7  # snapshot len(checks_json), not 999
         version_svc.snapshot_counts_many.assert_called_once_with([("b1", 4)])
-        materializer.render_binding_checks.assert_not_called()
+        # A snapshot-resolved approved binding is NOT sent to the live-render
+        # fallback (it's excluded from the batched draft-count call).
+        materializer.render_binding_checks_counts_many.assert_called_once_with([])
 
     def test_list_check_count_falls_back_to_live_render_for_never_approved(self):
         # A never-approved binding (version 0) has no snapshot, so the count
-        # comes from the live render (what a draft run would execute).
+        # comes from the batched live render (what a draft run would execute).
         svc = MagicMock()
         draft = MonitoredTableSummary(table=_table(status="draft"), applied_rule_count=1, check_count=999)
         svc.list_monitored_tables.return_value = [draft]
         version_svc = MagicMock()
         version_svc.snapshot_counts_many.return_value = {}
         materializer = MagicMock()
-        materializer.render_binding_checks.return_value = [{"check": {}}, {"check": {}}, {"check": {}}]
+        materializer.render_binding_checks_counts_many.return_value = {"b1": 3}
         result = list_monitored_tables(svc=svc, version_svc=version_svc, materializer=materializer)
         assert result[0].check_count == 3
-        materializer.render_binding_checks.assert_called_once_with("b1")
+        # ONE batched draft-count call for the never-approved binding — never a
+        # per-binding render loop (B2-141).
+        materializer.render_binding_checks_counts_many.assert_called_once_with([("b1", "cat.schema.tbl")])
         # No approved bindings -> no snapshot query issued.
         version_svc.snapshot_counts_many.assert_not_called()
 

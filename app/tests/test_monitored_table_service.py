@@ -778,3 +778,32 @@ class TestGetLatestProfile:
         assert "source_table_fqn = 'cat.schema.tbl'" in query
         assert "status = 'SUCCESS'" in query
         assert "ORDER BY created_at DESC" in query
+
+
+class TestListAppliedRulesMany:
+    """``list_applied_rules_many`` — batched applied-rule fetch for the draft check-count path (B2-141)."""
+
+    def test_groups_by_binding_in_one_query(self, svc, sql):
+        sql.query.return_value = [
+            _applied_row(id_="ar1", binding_id="b1", rule_id="r1"),
+            _applied_row(id_="ar2", binding_id="b1", rule_id="r2"),
+            _applied_row(id_="ar3", binding_id="b2", rule_id="r1"),
+        ]
+        result = svc.list_applied_rules_many(["b1", "b2", "b1"])  # dup binding collapses
+        assert set(result) == {"b1", "b2"}
+        assert [a.id for a in result["b1"]] == ["ar1", "ar2"]
+        assert [a.id for a in result["b2"]] == ["ar3"]
+        # ONE grouped query — never a per-binding round-trip; and NO per-rule
+        # tag lookup (the counting path doesn't need name/dimension/severity).
+        assert sql.query.call_count == 1
+        called_sql = sql.query.call_args[0][0]
+        assert "binding_id IN (" in called_sql
+
+    def test_empty_input_issues_no_query(self, svc, sql):
+        assert svc.list_applied_rules_many([]) == {}
+        sql.query.assert_not_called()
+
+    def test_binding_with_no_rows_absent(self, svc, sql):
+        sql.query.return_value = [_applied_row(id_="ar1", binding_id="b1", rule_id="r1")]
+        result = svc.list_applied_rules_many(["b1", "b2"])
+        assert set(result) == {"b1"}
