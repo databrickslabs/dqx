@@ -1467,7 +1467,7 @@ function RunReviewStatusesSettings() {
                     <Input
                       value={entry.value}
                       onChange={(e) => handlePatch(idx, { value: e.target.value })}
-                      placeholder="e.g. Acknowledged"
+                      placeholder="e.g. Confirmed"
                       maxLength={80}
                       disabled={!isAdmin || saveMutation.isPending}
                       className="h-8 text-xs"

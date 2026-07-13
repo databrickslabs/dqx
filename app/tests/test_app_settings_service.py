@@ -29,7 +29,7 @@ class TestRunReviewStatusReadIsSideEffectFree:
         assert [e["value"] for e in result] == [
             "Pending review",
             "False positive",
-            "Acknowledged",
+            "Confirmed",
             "Resolved",
         ]
         # ...but nothing was persisted (no upsert / write on the read path).

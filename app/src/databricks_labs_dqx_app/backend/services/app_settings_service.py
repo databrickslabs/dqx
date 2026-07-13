@@ -477,13 +477,13 @@ class AppSettingsService:
         {
             "value": "False positive",
             "description": "Rule is wrong, not a real issue",
-            "color": "blue",
+            "color": "amber",
             "is_default": False,
         },
         {
-            "value": "Acknowledged",
+            "value": "Confirmed",
             "description": "Known issue, accepted by owners",
-            "color": "amber",
+            "color": "red",
             "is_default": False,
         },
         {
