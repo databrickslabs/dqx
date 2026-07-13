@@ -1011,7 +1011,30 @@ def get_dq_results_failed_rows(
                 run_ts=raw.get("created_at"),
             )
         )
-    return FailedRowsOut(rows=matched[:limit], total=len(matched), suppressed=False)
+
+    # *total* must reflect the TRUE number of failing records for the
+    # resolved run, not the size of the (capped) preview scan. With NO
+    # active facets, read the run's authoritative distinct failing-row
+    # count from dq_metrics (input_row_count - valid_row_count) so the
+    # "download to view all N" headline is correct even when *rows* is
+    # capped at *limit*. With active facets the filters are applied
+    # app-side over each row's parsed failure structs (not a SQL
+    # predicate), so a true FILTERED count can't come from the mode-wide
+    # metrics number; there *total* stays the count of matches found
+    # within the scanned window (a lower bound when the window is capped)
+    # — the documented pre-existing behaviour.
+    total = len(matched)
+    if not facets.any_active() and raw_rows:
+        # Every returned row belongs to exactly ONE run (the WHERE clause
+        # pins it), so the effective run is the pin or the run the sample
+        # carries.
+        resolved_run_id = run_id or raw_rows[0].get("run_id")
+        if resolved_run_id:
+            failed_by_run = _fetch_failed_records_by_run(sp_sql, app_conf, [table_fqn])
+            true_total = failed_by_run.get((table_fqn, resolved_run_id))
+            if true_total is not None:
+                total = true_total
+    return FailedRowsOut(rows=matched[:limit], total=total, suppressed=False)
 
 
 # ---------------------------------------------------------------------------

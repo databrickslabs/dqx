@@ -1075,6 +1075,20 @@ def quarantine_row(
 FAILED_ROWS_URL = f"/api/v1/dq-results/failed-rows/{FQN}"
 
 
+def _quarantine_stmt(sql_mock: MagicMock) -> str:
+    """The failed-rows endpoint's dq_quarantine_records read.
+
+    On the unfiltered path the LAST statement is now the dq_metrics
+    true-count read, so tests that assert on the quarantine SQL must
+    select it explicitly rather than via ``call_args`` (last call).
+    """
+    return next(
+        call[0][0]
+        for call in reversed(sql_mock.query_dicts.call_args_list)
+        if "dq_quarantine_records" in call[0][0]
+    )
+
+
 class TestFailedRowsSecurity:
     """The Task 7 invariants apply UNCHANGED to the filtered endpoint."""
 
@@ -1309,6 +1323,71 @@ class TestFailedRowsShapeAndFilters:
         sql_mock.query_dicts.assert_not_called()
 
 
+class TestFailedRowsTrueTotal:
+    """B2-99: with no active facets, *total* is the run's TRUE distinct
+    failing-row count from dq_metrics (input_row_count - valid_row_count),
+    independent of the capped preview scan — the "download to view all N"
+    headline must report the real count, not len(sample)."""
+
+    @staticmethod
+    def _metrics_stmts(sql_mock: MagicMock) -> list[str]:
+        return [
+            call[0][0]
+            for call in sql_mock.query_dicts.call_args_list
+            if "dq_metrics" in call[0][0] and "dq_quarantine_records" not in call[0][0]
+        ]
+
+    def test_unfiltered_total_is_true_metrics_count_not_capped_sample(self, client, sql_mock):
+        # The sample is capped at *limit* (1 row here), but the headline
+        # total is the run's real failing-row count: 5000 - 200 = 4800.
+        sql_dispatch(
+            sql_mock,
+            quarantine_rows=[quarantine_row("q1"), quarantine_row("q2")],
+            metrics_rows=[metrics_row(FQN, "r1", input_rows=5000, valid_rows=200)],
+        )
+        body = client.get(FAILED_ROWS_URL, params={"limit": 1}).json()
+        assert len(body["rows"]) == 1  # preview stays capped
+        assert body["total"] == 4800  # NOT 1 (sample) or 2 (scanned window)
+
+    def test_pinned_run_total_uses_that_runs_metrics(self, client, sql_mock):
+        sql_dispatch(
+            sql_mock,
+            quarantine_rows=[quarantine_row("q1")],
+            metrics_rows=[
+                metrics_row(FQN, "r1", input_rows=10, valid_rows=9),
+                metrics_row(FQN, "r2", input_rows=1000, valid_rows=40),
+            ],
+        )
+        body = client.get(FAILED_ROWS_URL, params={"run_id": "r2"}).json()
+        assert body["total"] == 960  # r2's count, not r1's (1) or the sample size
+
+    def test_missing_metrics_falls_back_to_sample_count(self, client, sql_mock):
+        # dq_metrics has no row for the run — degrade to the scanned count
+        # rather than reporting a wrong or empty total.
+        sql_dispatch(sql_mock, quarantine_rows=[quarantine_row("q1")], metrics_rows=[])
+        assert client.get(FAILED_ROWS_URL).json()["total"] == 1
+
+    def test_faceted_total_stays_scan_count_and_skips_metrics_read(self, client, sql_mock):
+        # With filters active the true FILTERED count can't come from the
+        # mode-wide metrics number, so total stays the scanned-window match
+        # count and no dq_metrics read is issued.
+        sql_mock.query_dicts.return_value = [
+            quarantine_row(
+                "q1",
+                errors=[{"name": "c1", "message": "m", "columns": ["id"]}],
+            )
+        ]
+        body = client.get(FAILED_ROWS_URL, params={"rule": "c1"}).json()
+        assert body["total"] == 1
+        assert self._metrics_stmts(sql_mock) == []
+
+    def test_no_rows_yields_zero_total_without_metrics_read(self, client, sql_mock):
+        sql_dispatch(sql_mock, quarantine_rows=[])
+        body = client.get(FAILED_ROWS_URL).json()
+        assert body["total"] == 0
+        assert self._metrics_stmts(sql_mock) == []
+
+
 # ---------------------------------------------------------------------------
 # include_drafts — published-only defaults everywhere (Task P3.3)
 # ---------------------------------------------------------------------------
@@ -1448,7 +1527,7 @@ class TestIncludeDrafts:
         sql_dispatch(sql_mock, quarantine_rows=[quarantine_row("q1")])
         body = client.get(FAILED_ROWS_URL).json()
         assert body["total"] == 1
-        stmt = sql_mock.query_dicts.call_args[0][0]
+        stmt = _quarantine_stmt(sql_mock)
         assert "dq_quarantine_records" in stmt
         assert (
             f"run_id = (SELECT run_id FROM "
@@ -1463,7 +1542,7 @@ class TestIncludeDrafts:
         sql_dispatch(sql_mock, quarantine_rows=[quarantine_row("q1")])
         body = client.get(FAILED_ROWS_URL, params={"include_drafts": "true"}).json()
         assert body["total"] == 1
-        stmt = sql_mock.query_dicts.call_args[0][0]
+        stmt = _quarantine_stmt(sql_mock)
         assert "run_mode" not in stmt
         assert SHAPING_VIEW_NAME in stmt
         assert "run_id = (SELECT run_id FROM" in stmt
@@ -1505,6 +1584,11 @@ class TestFailedRowsRunScoping:
         }
 
         def dispatch(stmt: str, **_kwargs: object) -> list[dict[str, str | None]]:
+            # The unfiltered path also reads dq_metrics for the run's true
+            # failing-row count; it has no canned rows here (the fallback
+            # keeps total == len(matched)).
+            if "dq_metrics" in stmt and "dq_quarantine_records" not in stmt:
+                return []
             assert "dq_quarantine_records" in stmt
             for run, row in rows_by_run.items():
                 if f"run_id = '{run}'" in stmt:
@@ -1526,7 +1610,7 @@ class TestFailedRowsRunScoping:
     def test_default_never_uses_the_stacking_in_subselect(self, client, sql_mock):
         sql_dispatch(sql_mock, quarantine_rows=[quarantine_row("q1")])
         client.get(FAILED_ROWS_URL)
-        stmt = sql_mock.query_dicts.call_args[0][0]
+        stmt = _quarantine_stmt(sql_mock)
         assert "run_id IN (" not in stmt
         assert "run_id = (SELECT run_id FROM" in stmt
 
@@ -1534,7 +1618,7 @@ class TestFailedRowsRunScoping:
         self._two_run_dispatch(sql_mock)
         body = client.get(FAILED_ROWS_URL, params={"run_id": "r1"}).json()
         assert [r["record_key"] for r in body["rows"]] == ["q-old"]
-        stmt = sql_mock.query_dicts.call_args[0][0]
+        stmt = _quarantine_stmt(sql_mock)
         assert "run_id = 'r1'" in stmt
         # A pinned run needs no latest-run resolve.
         assert SHAPING_VIEW_NAME not in stmt
@@ -1545,7 +1629,7 @@ class TestFailedRowsRunScoping:
             FAILED_ROWS_URL, params={"run_id": "r1", "include_drafts": "true"}
         ).json()
         assert [r["record_key"] for r in body["rows"]] == ["q-old"]
-        assert "run_id = 'r1'" in sql_mock.query_dicts.call_args[0][0]
+        assert "run_id = 'r1'" in _quarantine_stmt(sql_mock)
 
     @pytest.mark.parametrize("run_id", ["ab'c", "x' OR '1'='1", "run id"])
     def test_unsafe_run_id_is_rejected_before_the_obo_gates(
