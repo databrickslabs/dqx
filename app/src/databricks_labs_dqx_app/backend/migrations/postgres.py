@@ -344,12 +344,26 @@ PG_MIGRATIONS: list[PgMigration] = [
             # ``dq_data_products`` schedule columns.
             "  schedule_cron    TEXT,"
             "  schedule_tz      TEXT,"
+            # schedule_kind (B2-52): what a scheduled run does — profiling only,
+            # DQ only, or both. NOT NULL with a default so fresh installs carry a
+            # concrete value; v14 below converges already-deployed DBs (the same
+            # edit-in-place trap ``schedule_cron``'s v9 had to correct).
+            "  schedule_kind    TEXT NOT NULL DEFAULT 'dq_only',"
             "  last_profiled_at TIMESTAMPTZ,"
+            # Denormalized run/profile pointers written on completion
+            # (write-on-complete, T-perf) so the list/detail read paths never
+            # hit the warehouse. ``last_run_at`` = newest terminal
+            # ``dq_validation_runs`` created_at for this table (either trigger
+            # surface); ``last_profiled_at`` = newest SUCCESS
+            # ``dq_profiling_results`` created_at. Both self-heal on refresh.
+            "  last_run_at      TIMESTAMPTZ,"
             "  created_by       TEXT,"
             "  created_at       TIMESTAMPTZ,"
             "  updated_by       TEXT,"
             "  updated_at       TIMESTAMPTZ,"
             "  CONSTRAINT uq_dq_monitored_tables_table_fqn UNIQUE (table_fqn),"
+            "  CONSTRAINT chk_dq_monitored_tables_schedule_kind "
+            "    CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq')),"
             "  CONSTRAINT chk_dq_monitored_tables_status "
             "    CHECK (status IN ('draft','pending_approval','approved','rejected'))"
             ");"
@@ -589,6 +603,10 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  steward        TEXT,"
             "  schedule_cron  TEXT,"
             "  schedule_tz    TEXT,"
+            # schedule_kind (B2-52): profiling-only / DQ-only / both for a
+            # scheduled Table Space run. NOT NULL + default; v14 converges DBs
+            # already carrying this v6 table without the column.
+            "  schedule_kind  TEXT NOT NULL DEFAULT 'dq_only',"
             "  status         TEXT NOT NULL,"
             "  version        INTEGER NOT NULL DEFAULT 0,"
             "  created_by     TEXT,"
@@ -596,6 +614,8 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  updated_by     TEXT,"
             "  updated_at     TIMESTAMPTZ,"
             "  CONSTRAINT uq_dq_data_products_name UNIQUE (name),"
+            "  CONSTRAINT chk_dq_data_products_schedule_kind "
+            "    CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq')),"
             "  CONSTRAINT chk_dq_data_products_status "
             "    CHECK (status IN ('draft','pending_approval','approved','rejected'))"
             ");"
@@ -811,6 +831,126 @@ PG_MIGRATIONS: list[PgMigration] = [
             ");"
             f"CREATE INDEX IF NOT EXISTS idx_dq_object_grants_history_object_changed_at "
             f"  ON {_S}.dq_object_grants_history (object_type, object_id, changed_at DESC);"
+        ),
+    ),
+    PgMigration(
+        version=11,
+        description="DQ score cache (dq_score_cache) — list-page score columns, refreshed on run completion (P3.4)",
+        sql=(
+            # ----------------------------------------------------------
+            # dq_score_cache — one row per scored scope, PK (scope_type,
+            # scope_key). ``scope_type`` 'table' rows are keyed by the
+            # three-part table FQN and recomputed from the mv_dq_scores
+            # metric view (latest PUBLISHED run per table, one batched
+            # warehouse query — see ScoreCacheService.refresh_for_tables);
+            # 'product' rows are keyed by dq_data_products.product_id and
+            # 'global' by the literal 'global', both derived from the
+            # cached 'table' rows (unweighted means, no warehouse hit).
+            #
+            # The cache is SHARED/GLOBAL (viewer-independent): the list
+            # endpoints LEFT JOIN it and the existing app-side catalog
+            # filtering scopes what each viewer sees. ``computed_at`` is
+            # surfaced so the UI can show staleness; refresh is triggered
+            # by POST /api/v1/dq-results/refresh-scores at the frontend's
+            # run-completion invalidation moments — no polling, no cron.
+            # ``latest_run_id``/``run_time`` identify the scored run on
+            # 'table' rows and stay NULL on the derived scopes.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_score_cache ("
+            "  scope_type    TEXT NOT NULL,"
+            "  scope_key     TEXT NOT NULL,"
+            "  score         DOUBLE PRECISION,"
+            "  failed_tests  BIGINT,"
+            "  total_tests   BIGINT,"
+            "  latest_run_id TEXT,"
+            "  run_time      TIMESTAMPTZ,"
+            "  computed_at   TIMESTAMPTZ,"
+            "  PRIMARY KEY (scope_type, scope_key),"
+            "  CONSTRAINT chk_dq_score_cache_scope_type "
+            "    CHECK (scope_type IN ('table','product','global'))"
+            ");"
+        ),
+    ),
+    PgMigration(
+        version=12,
+        description="DQ score history (dq_score_history) — append-only trend points for the homepage chart (P3.5)",
+        sql=(
+            # ----------------------------------------------------------
+            # dq_score_history — append-only companion to dq_score_cache:
+            # every scored recompute (non-NULL score) appends one row, so
+            # the homepage can chart the global score over time without a
+            # warehouse query. Same scope keying as the cache; run_time is
+            # the scored run's instant on 'table' rows and NULL on the
+            # derived scopes (whose x-axis is computed_at). Growth is
+            # capped by ScoreCacheService (count-trim to the newest
+            # HISTORY_KEEP_ROWS rows per scope on every append), so no
+            # retention sweep is needed.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_score_history ("
+            "  scope_type    TEXT NOT NULL,"
+            "  scope_key     TEXT NOT NULL,"
+            "  score         DOUBLE PRECISION NOT NULL,"
+            "  failed_tests  BIGINT,"
+            "  total_tests   BIGINT,"
+            "  run_time      TIMESTAMPTZ,"
+            "  computed_at   TIMESTAMPTZ NOT NULL,"
+            "  CONSTRAINT chk_dq_score_history_scope_type "
+            "    CHECK (scope_type IN ('table','product','global'))"
+            ");"
+            # The only read is "last N points for one scope, newest first".
+            f"CREATE INDEX IF NOT EXISTS idx_dq_score_history_scope_computed_at "
+            f"  ON {_S}.dq_score_history (scope_type, scope_key, computed_at DESC);"
+        ),
+    ),
+    PgMigration(
+        version=13,
+        description="Monitored tables: add last_run_at (write-on-complete list-page pointer, T-perf/B2-15)",
+        sql=(
+            # ----------------------------------------------------------
+            # Monitored-table ``last_run_at`` (T-perf / B2-15). The v1
+            # baseline above now declares the column, so this is a NO-OP
+            # on fresh installs. It exists purely to converge databases
+            # already deployed WITHOUT it (v1 is already recorded in
+            # ``dq_migrations`` there, so editing v1 in place could never
+            # reach them — the same edit-in-place trap v5/v8/v9 corrected
+            # after the fact). ``IF NOT EXISTS`` is native Postgres syntax,
+            # so a re-run against an already-converged DB is a true no-op.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_monitored_tables ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;"
+        ),
+    ),
+    PgMigration(
+        version=14,
+        description="Schedulable scope: add schedule_kind to monitored tables + data products (B2-52)",
+        sql=(
+            # ----------------------------------------------------------
+            # Schedule-scope column ``schedule_kind`` (B2-52). The v1
+            # baseline (``dq_monitored_tables``) and the v6 CREATE
+            # (``dq_data_products``) above now declare the column, so this
+            # is a NO-OP on fresh installs. It exists purely to converge
+            # databases already deployed WITHOUT it (v1/v6 are already
+            # recorded in ``dq_migrations`` there, so editing them in place
+            # could never reach them — the same edit-in-place trap v5/v8/v9/
+            # v13 corrected after the fact). ``IF NOT EXISTS`` is native
+            # Postgres syntax, so a re-run against an already-converged DB is
+            # a true no-op. The CHECK constraint is (re-)added guarded by a
+            # DROP IF EXISTS so this converges cleanly whether or not the
+            # column (and its constraint) already exist.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  ADD COLUMN IF NOT EXISTS schedule_kind TEXT NOT NULL DEFAULT 'dq_only';"
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_schedule_kind;"
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  ADD CONSTRAINT chk_dq_monitored_tables_schedule_kind "
+            "    CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'));"
+            f"ALTER TABLE {_S}.dq_data_products "
+            "  ADD COLUMN IF NOT EXISTS schedule_kind TEXT NOT NULL DEFAULT 'dq_only';"
+            f"ALTER TABLE {_S}.dq_data_products "
+            "  DROP CONSTRAINT IF EXISTS chk_dq_data_products_schedule_kind;"
+            f"ALTER TABLE {_S}.dq_data_products "
+            "  ADD CONSTRAINT chk_dq_data_products_schedule_kind "
+            "    CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'));"
         ),
     ),
 ]

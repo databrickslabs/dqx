@@ -107,6 +107,11 @@ class RegistryService:
     # List / Get
     # ------------------------------------------------------------------
 
+    def count(self) -> int:
+        """Total registry rules, any status (homepage stat card)."""
+        rows = self._sql.query(f"SELECT COUNT(*) FROM {self._table}")  # noqa: S608
+        return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+
     def list_rules(
         self,
         status: str | None = None,
@@ -197,6 +202,109 @@ class RegistryService:
         if not rows:
             return None
         return self._row_to_rule(rows[0])
+
+    def get_approved_rule_by_fingerprint(self, fingerprint: str) -> RegistryRule | None:
+        """Get the first ``approved`` registry rule matching *fingerprint*.
+
+        Narrower than :meth:`get_rule_by_fingerprint` — restricted to published
+        rules — so the profiling match-or-create path
+        (:meth:`match_or_create_approved_rule`) reuses an existing applicable
+        (approved) rule rather than a draft/rejected one that a suggestion
+        couldn't apply anyway.
+        """
+        e_fp = escape_sql_string(fingerprint)
+        sql = (
+            f"SELECT {self._select_cols} FROM {self._table} "  # noqa: S608
+            f"WHERE fingerprint = '{e_fp}' AND status = 'approved' LIMIT 1"
+        )
+        rows = self._sql.query(sql)
+        if not rows:
+            return None
+        return self._row_to_rule(rows[0])
+
+    def find_approved_rule_for_definition(self, definition: RuleDefinition) -> RegistryRule | None:
+        """Return the existing **approved** rule structurally equal to *definition*, if any.
+
+        Read-only: computes *definition*'s structural fingerprint and looks up an
+        approved rule with it — it never creates or approves anything. Backs the
+        side-effect-free profile-page suggestion listing (so an already-applied
+        suggestion can be recognised without minting a registry rule) and the
+        match step of :meth:`match_or_create_approved_rule`.
+        """
+        probe = RegistryRule(
+            rule_id="__match_probe__",
+            mode="dqx_native",
+            status="draft",
+            version=0,
+            definition=definition,
+        )
+        return self.get_approved_rule_by_fingerprint(compute_registry_rule_fingerprint(probe))
+
+    def match_or_create_approved_rule(
+        self,
+        definition: RuleDefinition,
+        user_metadata: dict[str, Any],
+        user_email: str,
+    ) -> tuple[RegistryRule | None, bool]:
+        """Return an approved registry rule for *definition*, creating one if absent.
+
+        The match-or-create-and-approve primitive behind the DQX-profiling
+        suggestion flow (the ONLY caller authorized to auto-approve). Idempotent
+        by structural fingerprint — re-running never spawns a duplicate:
+
+        * an existing **approved** rule with the same fingerprint is reused;
+        * a same-fingerprint rule that exists but is **not** approved (e.g. a
+          human's in-flight draft) is left untouched — this method neither
+          duplicates it nor approves someone else's work, returning
+          ``(None, False)`` so the caller drops that one suggestion;
+        * otherwise a new ``dqx_native`` rule is created (``source="profiling"``,
+          ``author_kind="ai_generated"``, ``created_by=user_email`` — a
+          structured, auditable attribution), pushed straight through
+          submit -> approve, and returned.
+
+        Args:
+            definition: The table-agnostic rule template to match or create.
+            user_metadata: Reserved tags (name/description/dimension/severity)
+                for a freshly created rule; ignored on a match.
+            user_email: The actor whose suggest request triggered this;
+                attributed as ``created_by``/``updated_by`` and in the audit log.
+
+        Returns:
+            ``(rule, created)`` — ``rule`` is the approved rule (or ``None`` when
+            a non-approved duplicate blocks creation); ``created`` is ``True``
+            only when a new rule was minted.
+
+        Raises:
+            UnsafeSqlQueryError: *definition*'s SQL body is unsafe (raised by
+                :meth:`create_rule`).
+        """
+        approved = self.find_approved_rule_for_definition(definition)
+        if approved is not None:
+            return approved, False
+        probe = RegistryRule(
+            rule_id="__match_probe__",
+            mode="dqx_native",
+            status="draft",
+            version=0,
+            definition=definition,
+        )
+        if self.get_rule_by_fingerprint(compute_registry_rule_fingerprint(probe)) is not None:
+            # A structurally-identical rule exists but isn't approved — don't
+            # duplicate it and don't auto-approve a rule this flow didn't author.
+            return None, False
+
+        rule, _warning = self.create_rule(
+            mode="dqx_native",
+            definition=definition,
+            user_email=user_email,
+            author_kind="ai_generated",
+            user_metadata=user_metadata,
+            source="profiling",
+        )
+        self.submit(rule.rule_id, user_email)
+        approved = self.approve(rule.rule_id, user_email)
+        logger.info("Auto-created + approved profiling registry rule %s", approved.rule_id)
+        return approved, True
 
     def get_version(self, rule_id: str, version: int) -> RuleVersion | None:
         """Get a specific frozen ``dq_rule_versions`` snapshot by rule id + version number.
@@ -303,6 +411,7 @@ class RegistryService:
         author_kind: AuthorKind = "human",
         user_metadata: dict[str, Any] | None = None,
         steward: str | None = None,
+        source: str = "ui",
     ) -> tuple[RegistryRule, str | None]:
         """Create a new draft registry rule.
 
@@ -310,6 +419,10 @@ class RegistryService:
         never a hard error — a published rule sharing the same structural
         fingerprint doesn't block creation, it just flags the possible
         duplicate for the author to review.
+
+        *source* records how the rule entered the registry (default ``"ui"``
+        for interactive authoring; ``"profiling"`` for a rule auto-created from
+        a DQX profiling suggestion) so auto-created rules stay auditable.
 
         Raises:
             UnsafeSqlQueryError: *definition*'s SQL body fails
@@ -329,9 +442,13 @@ class RegistryService:
             author_kind=author_kind,
             definition=definition,
             user_metadata=dict(user_metadata or {}),
-            steward=steward,
+            # Default the steward to the creator when none was supplied, so a
+            # freshly authored rule always has an accountable owner (mirrors
+            # how table spaces default steward -> creator). An explicit steward
+            # from the caller always wins.
+            steward=steward or user_email,
             is_builtin=False,
-            source="ui",
+            source=source,
             created_by=user_email,
             created_at=now,
             updated_by=user_email,

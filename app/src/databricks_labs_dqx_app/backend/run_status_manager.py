@@ -82,12 +82,19 @@ def get_run_view_fqn(
 class RunMetadata:
     """Server-side metadata for a run, looked up by run_id."""
 
-    __slots__ = ("view_fqn", "requesting_user", "job_run_id")
+    __slots__ = ("view_fqn", "requesting_user", "job_run_id", "source_table_fqn")
 
-    def __init__(self, view_fqn: str | None, requesting_user: str | None, job_run_id: int | None) -> None:
+    def __init__(
+        self,
+        view_fqn: str | None,
+        requesting_user: str | None,
+        job_run_id: int | None,
+        source_table_fqn: str | None = None,
+    ) -> None:
         self.view_fqn = view_fqn
         self.requesting_user = requesting_user
         self.job_run_id = job_run_id
+        self.source_table_fqn = source_table_fqn
 
 
 def has_terminal_result(
@@ -120,7 +127,7 @@ def get_run_metadata(
     table_name: str,
     run_id: str,
 ) -> RunMetadata:
-    """Look up (view_fqn, requesting_user, job_run_id) for a run_id.
+    """Look up (view_fqn, requesting_user, job_run_id, source_table_fqn) for a run_id.
 
     Returns a RunMetadata with None fields when the run is not found.
     """
@@ -129,12 +136,12 @@ def get_run_metadata(
         app_conf,
         table_name,
         run_id,
-        "view_fqn, requesting_user, CAST(job_run_id AS STRING)",
+        "view_fqn, requesting_user, CAST(job_run_id AS STRING), source_table_fqn",
     )
-    if row and len(row) >= 3:
+    if row and len(row) >= 4:
         jri = int(row[2]) if row[2] else None
-        return RunMetadata(view_fqn=row[0], requesting_user=row[1], job_run_id=jri)
-    return RunMetadata(view_fqn=None, requesting_user=None, job_run_id=None)
+        return RunMetadata(view_fqn=row[0], requesting_user=row[1], job_run_id=jri, source_table_fqn=row[3])
+    return RunMetadata(view_fqn=None, requesting_user=None, job_run_id=None, source_table_fqn=None)
 
 
 def _get_run_fields(

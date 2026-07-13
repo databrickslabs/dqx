@@ -23,18 +23,34 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_models import RunSetTrigger
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    DRAFT_RUN_SAMPLE_LIMIT_DEFAULT,
+    AppSettingsService,
+)
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
+from databricks_labs_dqx_app.backend.services.score_view_service import (
+    BINDING_VERSION_TAG,
+    RUN_MODE_DRAFT,
+    RUN_MODE_PUBLISHED,
+    RUN_MODE_TAG,
+)
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
 
 logger = logging.getLogger(__name__)
 
 _SQL_CHECK_PREFIX = "__sql_check__/"
-_DEFAULT_SAMPLE_SIZE = 1000
+# Sampling policy — no caller knob; resolved per source inside run_binding:
+#   * source='approved' → sample_size 0 (whole table), unconditionally.
+#     Published monitoring runs must never sample.
+#   * source='draft'    → the admin setting ``draft_run_sample_limit``
+#     (AppSettingsService; default 1000, 0 = unlimited) so exploratory
+#     draft runs on large tables stay cheap.
+# Dryrun/preview routes (routes/v1/dryrun.py) are a separate flow with
+# their own explicit sampling.
 
 RunSource = Literal["approved", "draft"]
 
@@ -63,6 +79,45 @@ class BindingRunResult:
     run_id: str
     job_run_id: int
     view_fqn: str
+
+
+def _stamp_run_provenance(
+    checks: list[dict[str, Any]], run_mode: str, binding_version: int | None
+) -> list[dict[str, Any]]:
+    """Return a copy of *checks* with uniform run-provenance tags merged into
+    every check's ``user_metadata``.
+
+    The frozen runner's ``_aggregate_rule_labels`` (READ-ONLY
+    ``app/tasks/.../runner.py``) collapses the per-check maps into the
+    run-level ``dq_metrics.user_metadata`` by intersection-with-equal-values,
+    so a tag stamped with the SAME value on EVERY check is guaranteed to
+    survive into the run-level map — that is the carrier the score views read
+    ``run_mode`` / ``binding_version`` back out of. Stamping happens at
+    run-assembly time only: the checks list is copied per check (and the
+    ``user_metadata`` dict re-built), so neither the materializer's rendered
+    output nor the frozen version snapshot is ever mutated.
+
+    Note on fingerprints: *compute_rule_fingerprint* hashes only
+    name/criticality/function/arguments/filter/for_each_column —
+    ``user_metadata`` does not participate — so the stamped tags never change
+    ``rule_set_fingerprint`` and a draft and published run of identical rules
+    still fingerprint identically.
+    """
+    tags: dict[str, str] = {RUN_MODE_TAG: run_mode}
+    if binding_version is not None:
+        tags[BINDING_VERSION_TAG] = str(binding_version)
+    stamped: list[dict[str, Any]] = []
+    for check in checks:
+        if not isinstance(check, dict):
+            stamped.append(check)
+            continue
+        existing = check.get("user_metadata")
+        merged: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
+        merged.update(tags)
+        new_check = dict(check)
+        new_check["user_metadata"] = merged
+        stamped.append(new_check)
+    return stamped
 
 
 def _extract_sql_query(checks: list[dict[str, Any]]) -> str | None:
@@ -111,7 +166,6 @@ class BindingRunService:
         user_email: str,
         trigger: RunSetTrigger = "manual",
         run_set_id: str | None = None,
-        sample_size: int = _DEFAULT_SAMPLE_SIZE,
     ) -> BindingRunResult:
         """Resolve checks for *binding_id* and submit a run.
 
@@ -129,10 +183,20 @@ class BindingRunService:
         Mints a new run set when *run_set_id* is None (a run set of one);
         otherwise joins the caller-supplied run set (product fan-out).
 
-        *sample_size* bounds the number of rows sampled for the run
-        (default 1000); callers should enforce the same upper bound as
-        the dryrun batch route (``BatchRunFromCatalogIn.sample_size``,
-        <= 10,000) before calling this method.
+        Sampling is not a caller choice — it is resolved from *source*:
+        approved/published runs always scan the whole table (sample size
+        0, unconditionally); draft runs are capped by the admin setting
+        ``draft_run_sample_limit`` (default 1000, 0 = unlimited).
+
+        Naming note: the task entrypoint submitted here is historically
+        called ``dryrun`` — that is the frozen runner's task_type for
+        every app-submitted check run, NOT a statement about the run
+        being a preview. The authoritative draft/published signal is the
+        ``run_mode`` provenance tag stamped onto every check below; the
+        manual-vs-scheduled signal is the ``run_type`` derived from
+        *trigger* and threaded through the job config (see below). Approved
+        runs submitted through this method are real monitoring runs and
+        always run full-table.
 
         Raises:
             BindingNotFoundError: *binding_id* does not exist.
@@ -153,7 +217,41 @@ class BindingRunService:
         if not checks:
             raise BindingRunError(f"No checks resolved for binding {binding_id} (source={source})")
 
+        # Stamp uniform run-provenance tags onto every check so the frozen
+        # runner's label intersection carries run_mode / binding_version
+        # into the run-level dq_metrics.user_metadata map (copy-on-write —
+        # the resolved snapshot / rendered checks are never mutated).
+        run_mode = RUN_MODE_DRAFT if source == "draft" else RUN_MODE_PUBLISHED
+        checks = _stamp_run_provenance(checks, run_mode, binding_version)
+
+        # Approved/published runs never sample — force a full-table scan
+        # regardless of any caller wishes. Draft runs are capped by the
+        # admin setting (0 = unlimited); a settings-read failure must not
+        # block a draft run, so fall back to the compiled-in default.
+        if source == "approved":
+            sample_size = 0
+        else:
+            try:
+                limit = self._settings_service.get_draft_run_sample_limit()
+            except Exception:
+                logger.warning(
+                    "Failed to read draft_run_sample_limit; using default %d",
+                    DRAFT_RUN_SAMPLE_LIMIT_DEFAULT,
+                    exc_info=True,
+                )
+                limit = None
+            sample_size = limit if limit is not None else DRAFT_RUN_SAMPLE_LIMIT_DEFAULT
+
         run_id = uuid4().hex[:16]
+        # Persisted ``run_type`` for the ``dq_validation_runs`` row — the
+        # Runs History "Manual"/"Scheduled" sub-label reads this. Derive it
+        # from the run-set trigger so a scheduler-fired binding run is
+        # recorded as ``scheduled`` while a UI-triggered run stays ``dryrun``
+        # (rendered as "Manual"). Threaded through the job config below so the
+        # runner stamps both the RUNNING placeholder and the terminal row with
+        # it — no longer inferred from the sample size, which cannot tell a
+        # manual full-table run from a scheduled one.
+        run_type = "scheduled" if trigger == "scheduled" else "dryrun"
         is_synthetic = table_fqn.startswith(_SQL_CHECK_PREFIX)
         sql_query: str | None = None
         if is_synthetic:
@@ -196,6 +294,7 @@ class BindingRunService:
                 "sample_size": sample_size,
                 "source_table_fqn": table_fqn,
                 "is_sql_check": sql_query is not None,
+                "run_type": run_type,
             }
             custom_metrics = self._settings_service.get_custom_metrics()
             if custom_metrics:
@@ -216,6 +315,7 @@ class BindingRunService:
                 source_table_fqn=table_fqn,
                 view_fqn=view_fqn,
                 sample_size=sample_size,
+                run_type=run_type,
                 job_run_id=job_run_id,
             )
         except Exception:

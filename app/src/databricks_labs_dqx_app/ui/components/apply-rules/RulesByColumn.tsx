@@ -11,14 +11,20 @@
 // by-column view actually target the clicked column instead of silently
 // doing nothing (or opening a fully-blank dialog with no column context).
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Pagination } from "@/components/Pagination";
 import { cn } from "@/lib/utils";
 import { useGetTableColumns, type AppliedRuleOut, type ColumnOut } from "@/lib/api";
 import { familyForType, type ColumnFamily } from "./ColumnPicker";
 import { paletteAt } from "./MappingChips";
+
+// Client-side page size for the by-column lens — column rows are compact
+// (single-line headers), so a screenful holds more than the taller by-rule
+// cards before the list runs off the bottom (item 51).
+const COLUMN_PAGE_SIZE = 15;
 
 export interface ColumnRef {
   name: string;
@@ -219,6 +225,12 @@ export function RulesByColumn({
   const { t } = useTranslation();
   const rulesByColumn = useRulesByColumn(appliedRules);
   const [internalOpenColumn, setInternalOpenColumn] = useState<string | null>(null);
+  // 1-indexed page (item 51). Reset to the first page whenever the search
+  // narrows the column set so it can't strand the view on an empty page.
+  const [page, setPage] = useState(1);
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
 
   // Support both controlled (parent owns state) and uncontrolled modes —
   // mirrors dqlake's RulesByColumn.
@@ -238,6 +250,25 @@ export function RulesByColumn({
   });
   const columns: ColumnOut[] = columnsQuery.data?.data ?? [];
 
+  const visible = useMemo(() => {
+    const q = search?.trim().toLowerCase() ?? "";
+    if (!q) return columns;
+    return columns.filter((col) => {
+      if (col.name.toLowerCase().includes(q)) return true;
+      const entries = rulesByColumn.get(col.name) ?? [];
+      return entries.some((e) => e.ruleName.toLowerCase().includes(q));
+    });
+  }, [columns, rulesByColumn, search]);
+
+  // Keep an auto-opened column (About-tab deep link, or a card expanded right
+  // after a rule was added to it) on-screen by jumping to its page instead of
+  // leaving it hidden behind pagination.
+  useEffect(() => {
+    if (!openColumn) return;
+    const idx = visible.findIndex((c) => c.name === openColumn);
+    if (idx >= 0) setPage(Math.floor(idx / COLUMN_PAGE_SIZE) + 1);
+  }, [openColumn, visible]);
+
   if (columns.length === 0) {
     return (
       <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
@@ -245,15 +276,6 @@ export function RulesByColumn({
       </div>
     );
   }
-
-  const q = search?.trim().toLowerCase() ?? "";
-  const visible = q
-    ? columns.filter((col) => {
-        if (col.name.toLowerCase().includes(q)) return true;
-        const entries = rulesByColumn.get(col.name) ?? [];
-        return entries.some((e) => e.ruleName.toLowerCase().includes(q));
-      })
-    : columns;
 
   if (visible.length === 0) {
     return (
@@ -263,9 +285,13 @@ export function RulesByColumn({
     );
   }
 
+  const totalPages = Math.max(1, Math.ceil(visible.length / COLUMN_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pagedColumns = visible.slice((safePage - 1) * COLUMN_PAGE_SIZE, safePage * COLUMN_PAGE_SIZE);
+
   return (
     <div className="space-y-2">
-      {visible.map((column) => {
+      {pagedColumns.map((column) => {
         const family = familyForType(column.type_name);
         const entries = rulesByColumn.get(column.name) ?? [];
 
@@ -289,6 +315,13 @@ export function RulesByColumn({
           />
         );
       })}
+      <Pagination
+        page={safePage}
+        totalItems={visible.length}
+        pageSize={COLUMN_PAGE_SIZE}
+        onPageChange={setPage}
+        className="flex items-center justify-between pt-1"
+      />
     </div>
   );
 }

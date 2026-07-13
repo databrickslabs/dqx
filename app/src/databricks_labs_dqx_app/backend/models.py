@@ -1,9 +1,10 @@
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from pydantic import BaseModel, Field
 
 from .. import __version__
+from .config import AI_SAMPLE_ROW_LIMIT
 from .registry_models import AuthorKind as RegistryAuthorKind
 from .registry_models import Polarity as RegistryPolarity
 from .registry_models import RegistryRule as RegistryRuleDomain
@@ -17,7 +18,10 @@ from .registry_models import AppliedRule as AppliedRuleDomain
 from .registry_models import ColumnMappingGroup
 from .registry_models import MonitoredTable as MonitoredTableDomain
 from .registry_models import MonitoredTableStatus as MonitoredTableStatusDomain
+from .registry_models import ScheduleKind as RegistryScheduleKind
+from .registry_models import SCHEDULE_KIND_DEFAULT as REGISTRY_SCHEDULE_KIND_DEFAULT
 from .registry_models import MonitoredTableVersion as MonitoredTableVersionDomain
+from .registry_models import RuleSlot as RegistryRuleSlot
 from .registry_models import RunSetSource as RegistryRunSetSource
 from .registry_models import RunSetTrigger as RegistryRunSetTrigger
 from .registry_models import DataProductStatus as RegistryDataProductStatus
@@ -36,6 +40,12 @@ from .services.monitored_table_service import (
     MonitoredTableSummary,
 )
 from .services.rule_suggester import RuleSuggestion, SuggestRulesResult
+
+if TYPE_CHECKING:
+    # Imported for typing only: a runtime import would form a cycle
+    # (models -> profiling_suggestion_service -> profiling_rule_builder -> models,
+    # whose ``CheckFunctionDef`` is defined far below this line).
+    from .services.profiling_suggestion_service import BatchApplyResult, ProfilingSuggestion
 
 
 class VersionOut(BaseModel):
@@ -99,8 +109,8 @@ class AiGenerateRuleIn(BaseModel):
     columns: list[str] | None = Field(default=None, max_length=200, description="Optional candidate column names")
     sample_rows: list[dict[str, Any]] | None = Field(
         default=None,
-        max_length=20,
-        description="Optional sample rows for context; only the first 5 are forwarded to the model",
+        max_length=AI_SAMPLE_ROW_LIMIT,
+        description="Optional sample rows for context; up to AI_SAMPLE_ROW_LIMIT (500) are forwarded to the model",
     )
 
 
@@ -114,6 +124,14 @@ class AiGenerateRuleOut(BaseModel):
     severity: str | None = None
     polarity: str | None = None
     definition: dict[str, Any] = Field(description="Mode-specific body: {function, arguments} or {sql_query}")
+    slots: list[RegistryRuleSlot] | None = Field(
+        default=None,
+        description=(
+            "Typed column slots for a dqx_native proposal — one per column the rule targets, "
+            "named from the model's column references with the family locked to the check "
+            "function's semantics. None/empty for sql proposals."
+        ),
+    )
     author_kind: str = Field(default="ai_generated")
 
 
@@ -270,6 +288,29 @@ class RuleCatalogEntryOut(BaseModel):
     created_at: str | None = None
     updated_by: str | None = None
     updated_at: str | None = None
+
+
+class RuleHistoryEntryOut(BaseModel):
+    """One recorded change from the ``dq_quality_rules_history`` audit log.
+
+    Backs ``getRuleHistory`` — the per-rule change trail that lets Drafts &
+    Review show a previous-vs-proposed diff for a per-table rule draft. Each
+    row carries the post-state ``check`` payload plus the status transition,
+    so the UI can reconstruct what changed without walking the whole log.
+    """
+
+    rule_id: str | None = None
+    table_fqn: str
+    check: dict[str, Any] | None = Field(
+        default=None, description="Post-state DQX check payload recorded at this change (None if not captured)"
+    )
+    version: int | None = None
+    source: str | None = None
+    action: str
+    prev_status: str | None = None
+    new_status: str | None = None
+    changed_by: str | None = None
+    changed_at: str | None = None
 
 
 class SaveRulesIn(BaseModel):
@@ -482,6 +523,10 @@ class UpdateMonitoredTableScheduleIn(BaseModel):
 
     schedule_cron: str | None = Field(default=None, description="5-field POSIX cron; None clears the schedule")
     schedule_tz: str | None = Field(default=None, description="IANA zone the cron is evaluated in; None = UTC")
+    schedule_kind: RegistryScheduleKind = Field(
+        default=REGISTRY_SCHEDULE_KIND_DEFAULT,
+        description="What the scheduled run does: profiling only, DQ only, or both (default both)",
+    )
 
 
 class BulkRegisterMonitoredTablesIn(BaseModel):
@@ -630,7 +675,16 @@ class MonitoredTableOut(BaseModel):
     version: int = Field(default=0, description="0 = never approved; bumped on each table approval")
     schedule_cron: str | None = Field(default=None, description="5-field POSIX cron; None = not scheduled")
     schedule_tz: str | None = Field(default=None, description="IANA zone the cron runs in; None = UTC")
+    schedule_kind: RegistryScheduleKind = Field(
+        default=REGISTRY_SCHEDULE_KIND_DEFAULT,
+        description="What the scheduled run does: profiling only, DQ only, or both (default both)",
+    )
     last_profiled_at: str | None = None
+    last_run_at: str | None = Field(
+        default=None,
+        description="Newest terminal validation-run instant for this table (either trigger surface); "
+        "drives the overview 'Last run' column.",
+    )
     created_by: str | None = None
     created_at: str | None = None
     updated_by: str | None = None
@@ -646,7 +700,9 @@ class MonitoredTableOut(BaseModel):
             version=table.version,
             schedule_cron=table.schedule_cron,
             schedule_tz=table.schedule_tz,
+            schedule_kind=table.schedule_kind,
             last_profiled_at=table.last_profiled_at.isoformat() if table.last_profiled_at else None,
+            last_run_at=table.last_run_at.isoformat() if table.last_run_at else None,
             created_by=table.created_by,
             created_at=table.created_at.isoformat() if table.created_at else None,
             updated_by=table.updated_by,
@@ -699,12 +755,36 @@ class MonitoredTableVersionOut(BaseModel):
         )
 
 
+class MonitoredTableVersionChecksOut(BaseModel):
+    """Frozen ``checks_json`` for one monitored-table version snapshot.
+
+    Backs ``getMonitoredTableVersionChecks`` — the heavy per-version payload
+    that ``listMonitoredTableVersions`` deliberately omits. Lets Drafts &
+    Review diff a binding's previously frozen checks (vN-1) against the
+    proposed (current / vN) rule set.
+    """
+
+    binding_id: str
+    version: int
+    checks: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class MonitoredTableSummaryOut(BaseModel):
-    """A monitored table plus lightweight list-view counters, for ``listMonitoredTables``."""
+    """A monitored table plus lightweight list-view counters, for ``listMonitoredTables``.
+
+    The ``score*`` fields are LEFT-JOINed from the ``dq_score_cache`` OLTP
+    table in the same round-trip (P3.4) — the cached row-weighted DQ score
+    of the table's latest PUBLISHED run. All None when the table has never
+    been scored (no cache row yet).
+    """
 
     table: MonitoredTableOut
     applied_rule_count: int = 0
     check_count: int = 0
+    score: float | None = Field(default=None, description="Cached DQ score in [0, 1]; None = never computed")
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    score_computed_at: str | None = Field(default=None, description="When the cached score was last recomputed")
 
     @classmethod
     def from_domain(cls, summary: MonitoredTableSummary) -> "MonitoredTableSummaryOut":
@@ -712,6 +792,10 @@ class MonitoredTableSummaryOut(BaseModel):
             table=MonitoredTableOut.from_domain(summary.table),
             applied_rule_count=summary.applied_rule_count,
             check_count=summary.check_count,
+            score=summary.score,
+            failed_tests=summary.failed_tests,
+            total_tests=summary.total_tests,
+            score_computed_at=summary.score_computed_at,
         )
 
 
@@ -807,6 +891,77 @@ class SuggestRulesOut(BaseModel):
         )
 
 
+class ProfilingSuggestionOut(BaseModel):
+    """One applicable profiler-derived rule suggestion shown on the Profile page (B2-82).
+
+    Read-only: listing these has NO side effects — no registry rule is created
+    or approved until the user explicitly applies the suggestion (which resolves
+    or creates + approves the rule and binds it via ``applyProfilingSuggestion``).
+    """
+
+    index: int = Field(description="Position of the source check in the latest profile's generated_rules")
+    function: str
+    rule_name: str | None = None
+    description: str | None = None
+    dimension: str | None = None
+    severity: str | None = None
+    column_mapping: ColumnMappingGroup = Field(default_factory=dict)
+
+    @classmethod
+    def from_domain(cls, suggestion: "ProfilingSuggestion") -> "ProfilingSuggestionOut":
+        return cls(
+            index=suggestion.index,
+            function=suggestion.function,
+            rule_name=suggestion.rule_name,
+            description=suggestion.description,
+            dimension=suggestion.dimension,
+            severity=suggestion.severity,
+            column_mapping=suggestion.column_mapping,
+        )
+
+
+class ApplyProfilingSuggestionsIn(BaseModel):
+    """Request body for applying a batch of profiler suggestions to a monitored table (B2-109).
+
+    Each entry is the ``index`` of a suggestion from ``listProfilingSuggestions``.
+    Applying is the ONLY path that resolves-or-creates + approves the underlying
+    registry rules — selecting/showing suggestions creates nothing.
+    """
+
+    indices: list[int] = Field(
+        min_length=1,
+        description="Indices of the profiler suggestions to apply (from listProfilingSuggestions).",
+    )
+
+
+class ProfilingSuggestionApplyFailureOut(BaseModel):
+    """One profiler suggestion that could not be applied during a batch apply."""
+
+    index: int
+    reason: str
+
+
+class ApplyProfilingSuggestionsOut(BaseModel):
+    """Result of a batch profiler-suggestion apply (B2-109).
+
+    Reports partial success explicitly: ``applied`` holds the rules bound to the
+    table and ``failed`` the per-index failures, so one unapplicable suggestion
+    never aborts the rest.
+    """
+
+    applied: list[AppliedRuleOut] = Field(default_factory=list)
+    failed: list[ProfilingSuggestionApplyFailureOut] = Field(default_factory=list)
+
+    @classmethod
+    def from_domain(cls, result: "BatchApplyResult") -> "ApplyProfilingSuggestionsOut":
+        return cls(
+            applied=[AppliedRuleOut.from_domain(a) for a in result.applied],
+            failed=[
+                ProfilingSuggestionApplyFailureOut(index=f.index, reason=f.reason) for f in result.failed
+            ],
+        )
+
+
 class DryRunIn(BaseModel):
     table_fqn: str = Field(description="Fully qualified table name to run checks against")
     checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
@@ -890,9 +1045,21 @@ class ProfileRunSummaryOut(BaseModel):
     columns_profiled: int | None = None
     duration_seconds: float | None = None
     requesting_user: str | None = None
+    # "scheduled" for scheduler-launched profiling runs, "manual" otherwise.
+    # Derived in the read path from ``requesting_user`` provenance because
+    # ``dq_profiling_results`` has no ``run_type`` column (a durable column
+    # would need a Delta migration). Drives the Runs History Manual/Scheduled
+    # sub-label, mirroring ``ValidationRunSummaryOut.run_type``.
+    run_type: str | None = None
     canceled_by: str | None = None
     updated_at: str | None = None
     created_at: str | None = None
+    # Databricks task-runner job run id (``dq_profiling_results.job_run_id``).
+    # Combined with the workspace host + task-runner ``job_id`` (see
+    # ``GET /config/workspace-host``) the UI builds a deep link to the run
+    # page: ``{host}/jobs/{job_id}/runs/{job_run_id}``. None for runs that
+    # predate job-run tracking or never submitted a job.
+    job_run_id: int | None = None
 
 
 class BatchProfileRunIn(BaseModel):
@@ -979,6 +1146,12 @@ class ValidationRunSummaryOut(BaseModel):
     warning_rows: int | None = None
     created_at: str | None = None
     error_message: str | None = None
+    # Databricks task-runner job run id (``dq_validation_runs.job_run_id``).
+    # Combined with the workspace host + task-runner ``job_id`` (see
+    # ``GET /config/workspace-host``) the UI builds a deep link to the run
+    # page: ``{host}/jobs/{job_id}/runs/{job_run_id}``. None for runs that
+    # predate job-run tracking or never submitted a job.
+    job_run_id: int | None = None
     checks: list[dict[str, Any]] = Field(default_factory=list)
     # Per-run review status — set by reviewers on the Runs detail page,
     # filterable on the Runs History page. ``review_status`` is the
@@ -1006,7 +1179,10 @@ class RunMonitoredTableIn(BaseModel):
         default=None,
         description="Pin to a specific approved snapshot version. Ignored when source='draft'.",
     )
-    sample_size: int = Field(default=1000, le=10_000, description="Number of rows to sample")
+    # Deliberately NO sample_size field: approved/published runs always
+    # check the whole table (never sample), and draft runs are capped by
+    # the admin setting ``draft_run_sample_limit`` — sampling is not a
+    # per-request choice. See BindingRunService.run_binding.
 
 
 class RunMonitoredTableOut(BaseModel):
@@ -1088,6 +1264,7 @@ class UpdateDataProductIn(BaseModel):
     steward: str | None = None
     schedule_cron: str | None = None
     schedule_tz: str | None = None
+    schedule_kind: RegistryScheduleKind | None = None
 
 
 class AddDataProductMemberIn(BaseModel):
@@ -1110,7 +1287,13 @@ class RunDataProductIn(BaseModel):
 
 
 class DataProductMemberOut(BaseModel):
-    """A ``dq_data_product_members`` row joined with its binding's live state."""
+    """A ``dq_data_product_members`` row joined with its binding's live state.
+
+    The ``score*`` fields carry the binding's cached table-scope DQ score
+    from ``dq_score_cache`` (P5.3) — same round-trip as the member
+    counters, never a warehouse recompute. All None when the table has
+    never been scored.
+    """
 
     id: str
     binding_id: str
@@ -1121,6 +1304,10 @@ class DataProductMemberOut(BaseModel):
     rules_count: int
     checks_count: int
     runnable: bool = Field(description="binding status == 'approved' AND binding_version > 0")
+    score: float | None = Field(default=None, description="Cached DQ score in [0, 1]; None = never computed")
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    score_computed_at: str | None = Field(default=None, description="When the cached score was last recomputed")
 
     @classmethod
     def from_domain(cls, member: DataProductMemberDetail) -> "DataProductMemberOut":
@@ -1134,6 +1321,10 @@ class DataProductMemberOut(BaseModel):
             rules_count=member.rules_count,
             checks_count=member.checks_count,
             runnable=member.runnable,
+            score=member.score,
+            failed_tests=member.failed_tests,
+            total_tests=member.total_tests,
+            score_computed_at=member.score_computed_at,
         )
 
 
@@ -1146,6 +1337,7 @@ class DataProductOut(BaseModel):
     steward: str | None = None
     schedule_cron: str | None = None
     schedule_tz: str | None = None
+    schedule_kind: RegistryScheduleKind = REGISTRY_SCHEDULE_KIND_DEFAULT
     status: RegistryDataProductStatus
     version: int
     display_status: str = Field(
@@ -1155,6 +1347,13 @@ class DataProductOut(BaseModel):
     member_count: int = 0
     runnable_count: int = 0
     last_run_at: str | None = None
+    # LEFT-JOINed from the dq_score_cache OLTP table in the same round-trip
+    # (P3.4): the cached unweighted mean of member tables' latest published
+    # scores. All None when the product has never been scored.
+    score: float | None = Field(default=None, description="Cached DQ score in [0, 1]; None = never computed")
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    score_computed_at: str | None = Field(default=None, description="When the cached score was last recomputed")
     created_by: str | None = None
     created_at: str | None = None
     updated_by: str | None = None
@@ -1170,6 +1369,7 @@ class DataProductOut(BaseModel):
             steward=product.steward,
             schedule_cron=product.schedule_cron,
             schedule_tz=product.schedule_tz,
+            schedule_kind=product.schedule_kind,
             status=product.status,
             version=product.version,
             display_status=data_product_display_status(product),
@@ -1177,11 +1377,47 @@ class DataProductOut(BaseModel):
             member_count=detail.member_count,
             runnable_count=detail.runnable_count,
             last_run_at=detail.last_run_at.isoformat() if detail.last_run_at else None,
+            score=detail.score,
+            failed_tests=detail.failed_tests,
+            total_tests=detail.total_tests,
+            score_computed_at=detail.score_computed_at,
             created_by=product.created_by,
             created_at=product.created_at.isoformat() if product.created_at else None,
             updated_by=product.updated_by,
             updated_at=product.updated_at.isoformat() if product.updated_at else None,
         )
+
+
+class DataProductReviewMemberOut(BaseModel):
+    """One member of a Table Space under review, with its governed checks.
+
+    Table Spaces have no per-version snapshot store, so the only prior state
+    recoverable for a review diff is each member binding's currently frozen
+    (pinned, else latest-approved) rule set. Backs ``getDataProductReviewChanges``.
+    """
+
+    binding_id: str
+    table_fqn: str
+    pinned_version: int | None = None
+    binding_version: int = 0
+    checks: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DataProductReviewChangesOut(BaseModel):
+    """Recoverable prior/proposed state for a Table Space pending approval.
+
+    NOTE (documented limitation): the app does not persist a per-version
+    snapshot of a Table Space's membership/definition, so there is no true
+    "previous product version" to diff against. What is recoverable is the
+    CURRENT proposed definition — the members being approved and each
+    member's governed (frozen) checks. The UI presents this with a note that
+    no prior product snapshot exists, rather than fabricating a diff.
+    """
+
+    product_id: str
+    name: str
+    version: int
+    members: list[DataProductReviewMemberOut] = Field(default_factory=list)
 
 
 class DataProductRunSubmissionOut(BaseModel):
@@ -1281,6 +1517,28 @@ class QuarantineListOut(BaseModel):
     limit: int = 50
 
 
+class FailingRecordFailureOut(BaseModel):
+    """One rule failure attached to a quarantined row.
+
+    *columns* lists the source columns the failed check inspected (DQX's
+    result-struct *columns* field) — the UI uses it for per-cell
+    highlighting. Empty for legacy rows without column attribution.
+    """
+
+    rule_name: str | None = None
+    message: str | None = None
+    columns: list[str] = Field(default_factory=list)
+
+
+class FailingRecordOut(BaseModel):
+    """One quarantined source row, shaped for per-cell failure highlighting."""
+
+    record_key: str
+    row_values: dict[str, str | None] = Field(default_factory=dict)
+    failed_columns: list[str] = Field(default_factory=list)
+    failures: list[FailingRecordFailureOut] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Metrics models
 # ---------------------------------------------------------------------------
@@ -1328,6 +1586,278 @@ class MetricsSummaryOut(BaseModel):
     latest_run_id: str | None = None
     latest_run_type: str | None = None
     latest_created_at: str | None = None
+
+
+class TableScoreOut(BaseModel):
+    """Row-weighted DQ score for one table, computed from its latest run.
+
+    *score* is None when the latest run has no rows or no per-check
+    breakdown (e.g. runs predating the observer's *check_metrics*
+    emission).
+    """
+
+    source_table_fqn: str
+    score: float | None = None
+    latest_run_id: str | None = None
+    total_tests: int = 0
+    failed_tests: int = 0
+
+
+class RuleScoreOut(BaseModel):
+    """Aggregate DQ score for a registry rule, across every table it is applied to.
+
+    *applied_to_count* is the TOTAL number of applications of the rule
+    (across all bindings), independent of the requesting viewer's catalog
+    access — the frontend disables the rule Results view on
+    ``applied_to_count == 0``, and a rule applied only to tables the
+    viewer cannot see is still applied. *per_table* IS filtered to the
+    viewer's accessible catalogs (deduplicated by table), and
+    *overall_score* is the unweighted mean over the scored entries of
+    *per_table* — None when none are scored.
+    """
+
+    rule_id: str
+    applied_to_count: int = 0
+    overall_score: float | None = None
+    per_table: list[TableScoreOut] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# DQ results models (dqlake-shape port — see routes/v1/dq_results.py).
+# Field names/shapes deliberately mirror dqlake's routers/dq_results.py
+# response models so the ported results UI consumes them nearly verbatim.
+# ---------------------------------------------------------------------------
+
+
+class GroupRowOut(BaseModel):
+    """One breakdown row (by dimension / severity / rule / column / table).
+
+    *label* is None for checks whose rule carries no tag on the grouped
+    axis (dqlake parity: the UI renders an em-dash). *check_count* is
+    None on the by-column breakdown, matching dqlake's by_column query
+    which does not compute it. *binding_id* is filled on the by_table
+    axis only (additive — the monitored-table binding for the row's
+    table, so the UI can link the row; None when the table is not
+    monitored or on every other axis). *rule_id* is filled on the
+    by_rule axis only (additive — the frozen registry rule id the group
+    is keyed on, so the UI can facet-filter by rule IDENTITY across
+    renames; None for legacy/untagged name-keyed groups and on every
+    other axis).
+    """
+
+    label: str | None = None
+    binding_id: str | None = None
+    rule_id: str | None = None
+    pass_rate: float | None = None
+    failed_tests: int | None = None
+    rule_count: int | None = None
+    check_count: int | None = None
+    total_tests: int | None = None
+
+
+class TrendPointOut(BaseModel):
+    """One over-time point; *series* is set on grouped trends only.
+
+    *version* is the monitored-table binding version active at this run
+    instant (the highest approved version whose freeze time is at/-before
+    the run); 0 before the first approval, None when not applicable
+    (grouped trends, or scopes without a single binding). Only the
+    single-table overall trend populates it — the UI marks the runs where
+    it increments.
+    """
+
+    run_date: str | None = None
+    series: str | None = None
+    pass_rate: float | None = None
+    rule_count: int | None = None
+    total_tests: int | None = None
+    version: int | None = None
+
+
+class TrendCountPointOut(BaseModel):
+    """Per-run count axes: distinct rules, checks (rows), and tests
+    (record-level evaluations). Feeds the "Number of Rules, Checks & Tests"
+    chart."""
+
+    run_date: str | None = None
+    rule_count: int | None = None
+    check_count: int | None = None
+    test_count: int | None = None
+
+
+class TrendFailurePointOut(BaseModel):
+    """Per-run failure count axes. A failed check = a check row with >=1
+    failed test; a failed rule = a distinct rule with any failed test.
+    *failed_records* is the run's distinct failing-row count (derived from
+    the observer's input/valid row counts); None when underivable."""
+
+    run_date: str | None = None
+    failed_rule_count: int | None = None
+    failed_check_count: int | None = None
+    failed_test_count: int | None = None
+    failed_records: int | None = None
+
+
+class EntityResultsOut(BaseModel):
+    """Breakdowns + trends for one results entity (table / product / rule / global).
+
+    The table endpoint fills *tables*; the product/global/rule endpoints
+    fill *by_table* and *trend_by_table* (dqlake parity). Keys outside the
+    requested *axes* slice are returned empty so the shape is stable.
+    """
+
+    by_dimension: list[GroupRowOut] = Field(default_factory=list)
+    by_severity: list[GroupRowOut] = Field(default_factory=list)
+    by_column: list[GroupRowOut] = Field(default_factory=list)
+    by_table: list[GroupRowOut] = Field(default_factory=list)
+    by_rule: list[GroupRowOut] = Field(default_factory=list)
+    trend: list[TrendPointOut] = Field(default_factory=list)
+    trend_by_dimension: list[TrendPointOut] = Field(default_factory=list)
+    trend_by_severity: list[TrendPointOut] = Field(default_factory=list)
+    trend_by_table: list[TrendPointOut] = Field(default_factory=list)
+    trend_counts: list[TrendCountPointOut] = Field(default_factory=list)
+    trend_failures: list[TrendFailurePointOut] = Field(default_factory=list)
+    tables: list[GroupRowOut] = Field(default_factory=list)
+
+
+class RunRowOut(BaseModel):
+    """One run's rollup for the run picker (newest first).
+
+    *run_mode* is the run's provenance ('draft' | 'published') — the
+    stamped run-level tag, with untagged legacy runs resolved to
+    'published' (in the shaping view). Only meaningful to display when the
+    caller requested ``include_drafts=true``; the default filter already
+    restricts rows to published runs.
+    """
+
+    run_id: str | None = None
+    run_ts: str | None = None
+    pass_rate: float | None = None
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    run_mode: str | None = None
+
+
+class RunsOut(BaseModel):
+    rows: list[RunRowOut] = Field(default_factory=list)
+
+
+class FailedRowFailureOut(BaseModel):
+    """One rule failure attached to a failing row, enriched with the
+    applied-rule metadata (registry rule id, severity tag, quality
+    dimension) joined via the check name. Enrichment fields are None for
+    checks not attributable to a registry rule application."""
+
+    rule_id: str | None = None
+    rule_name: str | None = None
+    quality_dimension: str | None = None
+    severity: str | None = None
+    message: str | None = None
+    columns: list[str] = Field(default_factory=list)
+
+
+class FailedRowOut(BaseModel):
+    """One failing source row shaped for per-cell failure highlighting."""
+
+    record_key: str | None = None
+    row_values: dict[str, str | None] = Field(default_factory=dict)
+    failed_columns: list[str] = Field(default_factory=list)
+    failures: list[FailedRowFailureOut] = Field(default_factory=list)
+    run_ts: str | None = None
+
+
+class FailedRowsOut(BaseModel):
+    """Filtered failing-rows sample (dqlake shape plus *suppressed*).
+
+    *total* is the number of matching rows found within the scanned
+    window — it can exceed ``len(rows)`` when capped by *limit*.
+    *suppressed* is True when the source table carries fine-grained
+    access controls (Task 7 semantics); an empty non-suppressed response
+    is also what a caller without SELECT on the source table receives.
+    """
+
+    rows: list[FailedRowOut] = Field(default_factory=list)
+    total: int = 0
+    suppressed: bool = False
+
+
+class SeverityOut(BaseModel):
+    """One severity registry entry derived from the reserved label definition."""
+
+    name: str
+    color: str
+    rank: int
+
+
+class DimensionOut(BaseModel):
+    """One quality-dimension registry entry derived from the reserved label definition."""
+
+    name: str
+    color: str
+    rank: int
+
+
+# Guard on the run-completion refresh trigger: the frontend only ever knows
+# a handful of just-finished tables, so a longer list signals a misuse (or
+# an attempt to turn the endpoint into a full-cache recompute).
+REFRESH_SCORES_MAX_TABLES = 100
+
+
+class RefreshScoresIn(BaseModel):
+    """Body of ``POST /dq-results/refresh-scores`` (``refreshDqScores``)."""
+
+    table_fqns: list[str] = Field(
+        min_length=1,
+        max_length=REFRESH_SCORES_MAX_TABLES,
+        description="Three-part FQNs of the tables whose runs just completed",
+    )
+
+
+class RefreshScoresOut(BaseModel):
+    """Summary of one score-cache recompute pass."""
+
+    refreshed_tables: int = 0
+    refreshed_products: int = 0
+    global_refreshed: bool = True
+
+
+class ScoreTrendPointOut(BaseModel):
+    """One homepage trend point from ``dq_score_history`` (P3.5).
+
+    *ts* is the point's ``computed_at`` instant (ISO-ish string, same
+    projection the score-cache reads use); *score* is the 0..1 fraction.
+    """
+
+    ts: str
+    score: float
+
+
+class HomeStatsOut(BaseModel):
+    """Homepage "at a glance" stats (dqlake's ``HomeStatsOut``, adapted).
+
+    Counts come from cheap app-DB COUNT(*) queries; *score* (plus the
+    *failed_tests* / *total_tests* counters behind it) is the cached
+    org-wide aggregate from the ``dq_score_cache`` 'global' row (P3.4) —
+    the endpoint never touches the warehouse. *computed_at* is when that
+    global row was last recomputed (dqlake's *refreshed_at* analogue);
+    None until the first run-completion refresh populates the cache.
+
+    *score_trend* is the last ~30 global points from ``dq_score_history``
+    (oldest first — dqlake's home trend, re-sourced from the OLTP store);
+    *score_delta* is the change between the trend's last two points (a
+    0..1 fraction, e.g. +0.05 = +5 percentage points), None until there
+    are at least two points.
+    """
+
+    rule_count: int = 0
+    monitored_table_count: int = 0
+    table_space_count: int = 0
+    score: float | None = None
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    computed_at: str | None = None
+    score_trend: list[ScoreTrendPointOut] = Field(default_factory=list)
+    score_delta: float | None = None
 
 
 class CatalogOut(BaseModel):
@@ -1600,3 +2130,128 @@ class SetPermissionsDefaultInheritIn(BaseModel):
     """Request body for updating the default-inheritance admin setting."""
 
     enabled: bool
+
+
+# ---------------------------------------------------------------------------
+# Genie chat (Ask Genie over the DQ score views) — dqlake-parity shapes
+# ---------------------------------------------------------------------------
+
+# Genie conversation/message ids are opaque workspace identifiers (hex-ish).
+# The charset constraint keeps them safe to echo into URL paths and logs.
+_GENIE_ID_PATTERN = r"^[A-Za-z0-9_\-]{1,128}$"
+
+
+class GenieAskIn(BaseModel):
+    """Ask (or continue) a Genie conversation. The question may carry a
+    context preamble — ``(Table: <fqn>)`` or
+    ``(Data product: <name> — tables: ...)`` — that the space instructions
+    route on."""
+
+    question: str = Field(min_length=1, max_length=4000)
+    conversation_id: str | None = Field(default=None, pattern=_GENIE_ID_PATTERN)
+
+
+class GenieAnswerOut(BaseModel):
+    """Partial-or-final state of one Genie message (shared by ask/start/poll)."""
+
+    available: bool = Field(description="False when no Genie space is provisioned")
+    conversation_id: str | None = None
+    message_id: str | None = None
+    answer_text: str | None = None
+    sql: str | None = None
+    sql_description: str | None = None
+    # Executed query result for a query-answer: column names + row cells.
+    # None when the answer has no query attachment or the result fetch failed.
+    # Capped server-side (see genie_chat_service) so a large table can't
+    # bloat the response.
+    result_columns: list[str] | None = None
+    result_rows: list[list[str | None]] | None = None
+    status: str | None = None
+    # Short human label for the current step ("Writing SQL", "Running query",
+    # "Summarising results", "Done"), so the chat UI can show live progress
+    # while polling instead of one undifferentiated spinner.
+    stage: str | None = None
+    error: str | None = None
+
+
+class GeniePollIn(BaseModel):
+    """Poll one in-flight Genie message."""
+
+    conversation_id: str = Field(pattern=_GENIE_ID_PATTERN)
+    message_id: str = Field(pattern=_GENIE_ID_PATTERN)
+
+
+class GenieSpaceOut(BaseModel):
+    """Genie space availability + metadata for the chat UI."""
+
+    available: bool
+    space_id: str | None = None
+    sample_questions: list[str] = Field(default_factory=list)
+    # Provisioning lifecycle: "provisioning" | "ready" | "error" | None.
+    # Lets the UI show a calm "getting ready…" state and poll until ready.
+    status: str | None = None
+    # Deep link to the full Genie space in the workspace, when both the space
+    # id and the workspace host are known ("open in new tab").
+    space_url: str | None = None
+
+
+class GenieFeedbackIn(BaseModel):
+    """Thumbs up/down on one Genie answer."""
+
+    message_id: str = Field(pattern=_GENIE_ID_PATTERN)
+    vote: str = Field(pattern=r"^(up|down)$")
+
+
+class GenieFeedbackOut(BaseModel):
+    ok: bool
+
+
+class GenieVerifyEntitlementsIn(BaseModel):
+    """Pre-verify row-level (failing-rows) access for a batch of tables.
+
+    The cap matches ``entitlement_service.VERIFY_ENTITLEMENTS_MAX_FQNS`` —
+    together with the probe semaphore it bounds the worst-case OBO work one
+    request can trigger. FQN syntax is validated per entry by the service
+    (malformed names get an ``error`` outcome, never a probe).
+    """
+
+    table_fqns: list[str] = Field(min_length=1, max_length=50)
+
+
+class GenieVerifyEntitlementsOut(BaseModel):
+    """Per-FQN verification outcome.
+
+    ``verified`` | ``denied`` (no SELECT) | ``suppressed`` (SELECT passed
+    but the table carries fine-grained access controls, mirroring the
+    failed-rows endpoint's suppression) | ``error``.
+    """
+
+    results: dict[str, str] = Field(default_factory=dict)
+
+
+class ResetDatabaseIn(BaseModel):
+    """Request body for the admin "Reset database" endpoint.
+
+    Defense-in-depth on top of the ``require_role(ADMIN)`` route gate: the
+    caller must echo back the exact confirmation phrase
+    (:data:`~backend.services.database_reset_service.RESET_CONFIRMATION_PHRASE`).
+    The server rejects any mismatch with a 400, so a stray/replayed request
+    that lacks the phrase cannot trigger the wipe.
+    """
+
+    confirmation_phrase: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Must exactly match the expected reset confirmation phrase.",
+    )
+
+
+class ResetDatabaseOut(BaseModel):
+    """Result of a database reset — what was cleared, kept, and by whom."""
+
+    status: str
+    performed_by: str
+    performed_at: str
+    cleared_tables: list[str] = Field(default_factory=list)
+    failed_tables: dict[str, str] = Field(default_factory=dict)
+    preserved_note: str = ""

@@ -5,12 +5,19 @@ import re
 from databricks.labs.dqx.config import WorkspaceConfig
 from pydantic import TypeAdapter, ValidationError
 
+from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, normalize_approvals_mode
 from databricks_labs_dqx_app.backend.config import conf
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 
 logger = logging.getLogger(__name__)
 
 _CONFIG_KEY = "workspace_config"
+
+# Compiled-in fallback for the ``draft_run_sample_limit`` setting — the
+# row cap applied to DRAFT monitored-table runs when the admin has not
+# configured one. 0 means unlimited. Shared by ``BindingRunService`` and
+# the ``/config/draft-run-sample-limit`` admin endpoints.
+DRAFT_RUN_SAMPLE_LIMIT_DEFAULT = 1000
 
 # Module-level adapter so we pay the type-tree walk once at import time
 # rather than on every ``get_config`` call. ``TypeAdapter`` is Pydantic's
@@ -192,6 +199,38 @@ class AppSettingsService:
         self.save_setting(self._QUARANTINE_RETENTION_KEY, str(int(days)), user_email=user_email)
         return int(days)
 
+    # ------------------------------------------------------------------
+    # Draft-run sampling — bounds the rows a DRAFT monitored-table run
+    # reads (``BindingRunService.run_binding`` with ``source='draft'``).
+    # Approved/published runs NEVER sample — they always scan the whole
+    # table; this knob exists only so exploratory draft runs on large
+    # tables stay cheap. Stored as a plain integer string:
+    #   * unset / invalid → consumer falls back to
+    #     ``DRAFT_RUN_SAMPLE_LIMIT_DEFAULT`` (1000)
+    #   * 0               → unlimited (draft runs scan the whole table)
+    #   * positive N      → draft runs read at most N rows
+    # ------------------------------------------------------------------
+
+    _DRAFT_RUN_SAMPLE_LIMIT_KEY = "draft_run_sample_limit"
+
+    def get_draft_run_sample_limit(self) -> int | None:
+        """Return the configured draft-run sample limit, or ``None`` if unset.
+
+        0 means unlimited (whole table). Negative stored values are
+        treated as unset so a corrupt row can never disable sampling by
+        accident.
+        """
+        value = self._get_int_setting(self._DRAFT_RUN_SAMPLE_LIMIT_KEY)
+        if value is not None and value < 0:
+            logger.warning("Setting %s is negative (%d); treating as unset", self._DRAFT_RUN_SAMPLE_LIMIT_KEY, value)
+            return None
+        return value
+
+    def save_draft_run_sample_limit(self, limit: int, *, user_email: str | None = None) -> int:
+        """Persist the draft-run sample limit (0 = unlimited). Returns the saved value."""
+        self.save_setting(self._DRAFT_RUN_SAMPLE_LIMIT_KEY, str(int(limit)), user_email=user_email)
+        return int(limit)
+
     def _get_int_setting(self, key: str) -> int | None:
         raw = self.get_setting(key)
         if raw is None or raw == "":
@@ -231,6 +270,38 @@ class AppSettingsService:
         return enabled
 
     # ------------------------------------------------------------------
+    # Approvals mode — app-wide submit→approve gate (issue #94). A 3-value
+    # enum string (see :class:`~backend.common.approvals.ApprovalMode`):
+    #   * ``enabled`` (default) — authors submit, approvers/admins approve.
+    #   * ``auto_bypass`` — gate stays on, but a submit auto-approves when the
+    #     acting user could approve it themselves (admin, or approve_rules +
+    #     edit rights on the object). Everyone else still lands in
+    #     ``pending_approval``.
+    #   * ``disabled`` — no approval step; every submit auto-approves.
+    # An unset/corrupt row reads back as ``enabled`` so the gate can never be
+    # silently disabled by a bad value (see ``normalize_approvals_mode``).
+    # ------------------------------------------------------------------
+
+    _APPROVALS_MODE_KEY = "approvals_mode"
+
+    def get_approvals_mode(self) -> str:
+        """Return the configured approvals mode; defaults to ``enabled`` when unset."""
+        return normalize_approvals_mode(self.get_setting(self._APPROVALS_MODE_KEY))
+
+    def save_approvals_mode(self, mode: str, *, user_email: str | None = None) -> str:
+        """Persist the approvals mode. Returns the normalised (validated) value.
+
+        Raises:
+            ValueError: *mode* is not one of the accepted values (mapped to a
+                400 by the route).
+        """
+        candidate = (mode or "").strip().lower()
+        if candidate not in ApprovalMode.ALL:
+            raise ValueError(f"Invalid approvals mode: {mode!r}. Must be one of {sorted(ApprovalMode.ALL)}.")
+        self.save_setting(self._APPROVALS_MODE_KEY, candidate, user_email=user_email)
+        return candidate
+
+    # ------------------------------------------------------------------
     # Object permissions — default per-grant inheritance (P22-D item 10).
     #
     # Governs the DEFAULT state of the per-grant "inherit to child objects"
@@ -249,9 +320,7 @@ class AppSettingsService:
 
     def save_permissions_default_inherit(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Persist the default per-grant inheritance setting. Returns the saved value."""
-        self.save_setting(
-            self._PERMISSIONS_DEFAULT_INHERIT_KEY, "true" if enabled else "false", user_email=user_email
-        )
+        self.save_setting(self._PERMISSIONS_DEFAULT_INHERIT_KEY, "true" if enabled else "false", user_email=user_email)
         return enabled
 
     # ------------------------------------------------------------------
@@ -323,55 +392,59 @@ class AppSettingsService:
         return current_version
 
     # ------------------------------------------------------------------
-    # Embedded dashboard — Insights page renders a Databricks AI/BI
-    # dashboard inside an iframe. Admins set the dashboard ID + an
-    # optional display title via the Configuration page; the GET
-    # endpoint falls back to ``conf.default_dashboard_id`` (env) when
-    # this setting is unset, so a bundle can ship a starter dashboard
-    # ID without preventing customer overrides.
+    # Global Results tab (issue B2-20) — the app-wide, all-tables Results
+    # surface (``routes/_sidebar/results.tsx`` + its sidebar entry). OFF by
+    # default: it duplicates per-object results and confuses fresh deploys,
+    # so an admin must explicitly opt in. When off, the global Results nav
+    # item AND the homepage overall-score "?" explainer are hidden (the "?"
+    # only explains a global-results-vs-home divergence that's moot with no
+    # global results screen). Per-object MT/TS/RR results tabs are
+    # unaffected — this gates only the GLOBAL surface. Only an explicit
+    # ``"true"`` reads as on; an unset or any other value reads as off so a
+    # fresh deploy or a corrupt row keeps the surface hidden.
     # ------------------------------------------------------------------
 
-    _EMBEDDED_DASHBOARD_KEY = "embedded_dashboard_v1"
+    _GLOBAL_RESULTS_ENABLED_KEY = "global_results_enabled"
 
-    def get_embedded_dashboard(self) -> dict | None:
-        """Return ``{"dashboard_id": str, "title": str | None}`` or ``None`` if unset."""
-        raw = self.get_setting(self._EMBEDDED_DASHBOARD_KEY)
-        if not raw:
-            return None
-        try:
-            parsed = json.loads(raw)
-        except (TypeError, json.JSONDecodeError):
-            logger.warning("embedded_dashboard_v1 setting is not valid JSON; ignoring")
-            return None
-        if not isinstance(parsed, dict):
-            logger.warning("embedded_dashboard_v1 setting is not a dict; ignoring")
-            return None
-        dashboard_id = parsed.get("dashboard_id")
-        if not isinstance(dashboard_id, str) or not dashboard_id.strip():
-            return None
-        title = parsed.get("title")
-        return {
-            "dashboard_id": dashboard_id.strip(),
-            "title": title.strip() if isinstance(title, str) and title.strip() else None,
-        }
+    def get_global_results_enabled(self) -> bool:
+        """Return whether the global Results tab is enabled; defaults to ``False`` (off) when unset."""
+        raw = self.get_setting(self._GLOBAL_RESULTS_ENABLED_KEY)
+        return raw is not None and raw.strip().lower() == "true"
 
-    def save_embedded_dashboard(
-        self,
-        dashboard_id: str,
-        title: str | None = None,
-        *,
-        user_email: str | None = None,
-    ) -> dict:
-        """Persist the embedded dashboard ID + optional title. Returns the saved payload."""
-        cleaned_id = (dashboard_id or "").strip()
-        cleaned_title = (title or "").strip() or None
-        payload = {"dashboard_id": cleaned_id, "title": cleaned_title}
-        self.save_setting(self._EMBEDDED_DASHBOARD_KEY, json.dumps(payload), user_email=user_email)
-        return payload
+    def save_global_results_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the global-Results-tab setting. Returns the saved value."""
+        self.save_setting(self._GLOBAL_RESULTS_ENABLED_KEY, "true" if enabled else "false", user_email=user_email)
+        return enabled
 
-    def delete_embedded_dashboard(self, *, user_email: str | None = None) -> None:
-        """Clear the embedded dashboard setting so the env default takes over again."""
-        self.save_setting(self._EMBEDDED_DASHBOARD_KEY, "", user_email=user_email)
+    # ------------------------------------------------------------------
+    # Require-draft-run-before-submit (issue B2-12) — a governance gate that,
+    # when ON, refuses to SUBMIT a monitored table / table space (or a
+    # per-table applied rule) for review — and equally refuses the
+    # auto-approve shortcut that the approvals-mode setting would otherwise
+    # take — until a draft run has been recorded for the target table(s). This
+    # forces authors to dry-run-test their checks before they enter review.
+    #
+    # Defaults to ``False`` (OFF) so existing deploys keep today's behaviour:
+    # a submit never requires a prior run. Only an explicit ``"true"`` reads as
+    # on; an unset or any other value reads as off. Registry rules are
+    # table-agnostic (no single table to validate) and cross-table SQL checks
+    # have no home table, so the gate does not apply to those submits — see
+    # ``DraftRunGateService`` and the route call sites for the exact scoping.
+    # ------------------------------------------------------------------
+
+    _REQUIRE_DRAFT_RUN_BEFORE_SUBMIT_KEY = "require_draft_run_before_submit"
+
+    def get_require_draft_run_before_submit(self) -> bool:
+        """Return whether a draft run is required before submit; defaults to ``False`` (off) when unset."""
+        raw = self.get_setting(self._REQUIRE_DRAFT_RUN_BEFORE_SUBMIT_KEY)
+        return raw is not None and raw.strip().lower() == "true"
+
+    def save_require_draft_run_before_submit(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the require-draft-run-before-submit setting. Returns the saved value."""
+        self.save_setting(
+            self._REQUIRE_DRAFT_RUN_BEFORE_SUBMIT_KEY, "true" if enabled else "false", user_email=user_email
+        )
+        return enabled
 
     # ------------------------------------------------------------------
     # Run review statuses — admin-managed list of labels surfaced on the
@@ -402,21 +475,21 @@ class AppSettingsService:
             "is_default": True,
         },
         {
-            "value": "Acknowledged",
-            "description": "Known issue, accepted by owners",
+            "value": "False positive",
+            "description": "Rule is wrong, not a real issue",
             "color": "amber",
+            "is_default": False,
+        },
+        {
+            "value": "Confirmed",
+            "description": "Known issue, accepted by owners",
+            "color": "red",
             "is_default": False,
         },
         {
             "value": "Resolved",
             "description": "Fixed upstream",
             "color": "green",
-            "is_default": False,
-        },
-        {
-            "value": "False positive",
-            "description": "Rule is wrong, not a real issue",
-            "color": "blue",
             "is_default": False,
         },
     ]
@@ -601,8 +674,41 @@ class AppSettingsService:
                 "High": "#EA580C",
                 "Critical": "#DC2626",
             },
+            # Admin-editable severity -> DQX criticality mapping consumed by
+            # ``registry_models.resolve_criticality`` (materializer). Matches
+            # the historical hardcoded defaults
+            # (``registry_models.SEVERITY_TO_CRITICALITY``).
+            "value_criticality": {
+                "Low": "warn",
+                "Medium": "warn",
+                "High": "error",
+                "Critical": "error",
+            },
         },
     ]
+
+    def get_label_definitions(self) -> list[dict]:
+        """Return the stored ``label_definitions`` list as raw dicts.
+
+        Defensive read shared by the seeding path below and
+        ``registry_models.resolve_criticality``: malformed JSON, a
+        non-list payload, or non-dict entries degrade to an empty /
+        filtered list with a WARNING rather than propagating. Kept as
+        raw dicts (not the ``LabelDefinition`` pydantic model) to avoid
+        a services -> routes import cycle — see the class-level note.
+        """
+        raw = self.get_setting(self._LABEL_DEFINITIONS_KEY)
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("label_definitions setting is not valid JSON; treating as empty")
+            return []
+        if not isinstance(parsed, list):
+            logger.warning("label_definitions setting is not a list; treating as empty")
+            return []
+        return [item for item in parsed if isinstance(item, dict)]
 
     def seed_reserved_label_definitions_if_absent(self, *, user_email: str | None = None) -> bool:
         """Ensure the reserved ``dimension``/``severity`` label keys exist.
@@ -613,18 +719,7 @@ class AppSettingsService:
         entry (admin-edited or not) untouched. Returns ``True`` iff a
         write happened.
         """
-        raw = self.get_setting(self._LABEL_DEFINITIONS_KEY)
-        existing: list[dict] = []
-        if raw:
-            try:
-                parsed = json.loads(raw)
-                if isinstance(parsed, list):
-                    existing = [item for item in parsed if isinstance(item, dict)]
-                else:
-                    logger.warning("label_definitions setting is not a list; seeding onto an empty list")
-            except (TypeError, json.JSONDecodeError):
-                logger.warning("label_definitions setting is not valid JSON; seeding onto an empty list")
-
+        existing = self.get_label_definitions()
         existing_keys = {item.get("key") for item in existing}
         missing = [seed for seed in self._RESERVED_LABEL_DEFINITION_SEEDS if seed["key"] not in existing_keys]
         if not missing:
@@ -638,9 +733,13 @@ class AppSettingsService:
     # ------------------------------------------------------------------
     # AI Gateway settings — Rules Registry Phase 4A. Kill-switch, serving
     # endpoint name, and per-user hourly rate limit for AIGateway
-    # (services/ai_gateway.py). Defaults keep AI OFF and unconfigured until
-    # an admin explicitly turns it on, so a deploy with no AI infra behaves
-    # exactly like today: every AI route returns a clean 503, never a 500.
+    # (services/ai_gateway.py). AI is ON by default (per explicit product
+    # request) so the AI-assisted authoring surfaces work out of the box on
+    # a fresh deploy. The admin kill-switch remains: setting ``ai_enabled``
+    # to ``false`` turns every AI affordance off app-wide. Note the cost
+    # implication — AI serving-endpoint calls run On-Behalf-Of the caller
+    # (see ``get_ai_gateway``), so an enabled default means those calls can
+    # be incurred without an explicit opt-in.
     # ------------------------------------------------------------------
 
     _AI_ENABLED_KEY = "ai_enabled"
@@ -650,18 +749,26 @@ class AppSettingsService:
     AI_RATE_LIMIT_DEFAULT = 30
 
     # Seeded default AI serving endpoint — a reasonable out-of-the-box
-    # selection for the admin dropdown (Rules Registry Phase 7F). AI stays
-    # OFF by default regardless (``ai_enabled`` defaults to ``False``); this
-    # only changes what shows up pre-selected once an admin turns it on. An
-    # admin who explicitly saves an empty value gets that empty value back
-    # (see the ``raw is None`` check below) rather than being forced back to
-    # the default on every read.
-    AI_ENDPOINT_NAME_DEFAULT = "databricks-gpt-5-5"
+    # selection for the admin dropdown (Rules Registry Phase 7F). AI is ON by
+    # default (see :meth:`get_ai_enabled`) and this endpoint is what shows up
+    # pre-selected. An admin who explicitly saves an empty value gets that
+    # empty value back (see the ``raw is None`` check below) rather than being
+    # forced back to the default on every read.
+    AI_ENDPOINT_NAME_DEFAULT = "databricks-gpt-5-4-nano"
 
     def get_ai_enabled(self) -> bool:
-        """Return whether the AI kill-switch is on; defaults to ``False`` (off) when unset."""
+        """Return whether the AI kill-switch is on; defaults to ``True`` (on) when unset.
+
+        AI features are enabled by default so a fresh deploy is usable without
+        an explicit opt-in. An admin can still turn everything off by saving
+        ``ai_enabled = false`` (the kill-switch). Only an unset value (no row)
+        or an explicit ``"true"`` reads as on; any other stored value — including
+        ``"false"`` — is off.
+        """
         raw = self.get_setting(self._AI_ENABLED_KEY)
-        return raw is not None and raw.strip().lower() == "true"
+        if raw is None:
+            return True
+        return raw.strip().lower() == "true"
 
     def save_ai_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Persist the AI kill-switch setting. Returns the saved value."""

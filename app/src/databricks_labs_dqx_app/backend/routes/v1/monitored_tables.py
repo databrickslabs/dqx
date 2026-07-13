@@ -12,22 +12,32 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentPrincipalIds,
     CurrentUserRole,
+    get_app_settings_service,
     get_apply_rules_service,
     get_binding_run_service,
+    get_discovery_service,
+    get_draft_run_gate_service,
     get_materializer,
     get_monitored_table_service,
     get_monitored_table_version_service,
     get_obo_ws,
     get_permissions_service,
+    get_profiling_suggestion_service,
     get_rule_suggester,
     get_rules_catalog_service,
     require_role,
     require_runner,
+)
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
+    DraftRunGateService,
+    DraftRunRequiredError,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.logger import logger
@@ -41,7 +51,11 @@ from databricks_labs_dqx_app.backend.models import (
     MonitoredTableProfileOut,
     MonitoredTableReviewOut,
     MonitoredTableSummaryOut,
+    MonitoredTableVersionChecksOut,
     MonitoredTableVersionOut,
+    ApplyProfilingSuggestionsIn,
+    ApplyProfilingSuggestionsOut,
+    ProfilingSuggestionOut,
     RegisterMonitoredTableIn,
     RunMonitoredTableIn,
     RunMonitoredTableOut,
@@ -51,6 +65,7 @@ from databricks_labs_dqx_app.backend.models import (
     SetAppliedRuleSeverityOverrideIn,
     SuggestRulesOut,
 )
+from databricks_labs_dqx_app.backend.registry_models import MonitoredTable
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     ApplyRulesService,
     DesiredAppliedRule,
@@ -64,13 +79,19 @@ from databricks_labs_dqx_app.backend.services.binding_run_service import (
     MissingSnapshotError,
     NeverApprovedError,
 )
+from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
 from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
+    AppliedRuleSummary,
     DuplicateMonitoredTableError,
     MonitoredTableService,
     MonitoredTableSummary,
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+from databricks_labs_dqx_app.backend.services.profiling_suggestion_service import (
+    BindingNotFoundError as ProfilingBindingNotFoundError,
+    ProfilingSuggestionService,
+)
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggester
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 
@@ -99,6 +120,8 @@ def _current_user_email(obo_ws: WorkspaceClient) -> str:
 )
 def list_monitored_tables(
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    materializer: Annotated[Materializer, Depends(get_materializer)],
     status: Annotated[str | None, Query(description="Filter by status")] = None,
     steward: Annotated[str | None, Query(description="Filter by steward")] = None,
     catalog: Annotated[str | None, Query(description="Filter by catalog part of table_fqn")] = None,
@@ -107,13 +130,52 @@ def list_monitored_tables(
 ) -> list[MonitoredTableSummaryOut]:
     """List monitored tables, optionally filtered, with per-table applied-rule counts."""
     try:
-        summaries = svc.list_monitored_tables(
-            status=status, steward=steward, catalog=catalog, schema=schema, name=name
-        )
+        summaries = svc.list_monitored_tables(status=status, steward=steward, catalog=catalog, schema=schema, name=name)
+        _apply_snapshot_check_counts(summaries, version_svc, materializer)
         return [MonitoredTableSummaryOut.from_domain(s) for s in summaries]
     except Exception as e:
         logger.error(f"Failed to list monitored tables: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list monitored tables: {e}")
+
+
+def _apply_snapshot_check_counts(
+    summaries: list[MonitoredTableSummary],
+    version_svc: MonitoredTableVersionService,
+    materializer: Materializer,
+) -> None:
+    """Overwrite each summary's ``check_count`` with a count from the SAME source as its DQ score.
+
+    B2-25: the overview "# Checks" must agree with the DQ score and the detail
+    page. The score is derived from the FROZEN per-version snapshot (via
+    ``dq_metrics``), whereas ``MonitoredTableService.list_monitored_tables``
+    counts live ``dq_quality_rules`` rows — a transient set that a
+    re-materialization can (wrongly, pre-Fix-B) drop to zero, so a scored table
+    could show 0 checks. Count from the snapshot instead:
+
+    * approved binding (``version > 0``) -> ``len(checks_json)`` of its current
+      frozen snapshot, resolved for ALL such bindings in one batched
+      :meth:`MonitoredTableVersionService.snapshot_counts_many` call;
+    * never-approved binding (``version == 0``, no snapshot) -> the live render
+      count (exactly what a draft run would execute).
+
+    Mirrors :class:`DataProductService`'s pinned-vs-live member-count split.
+    """
+    pins = [(s.table.binding_id, s.table.version) for s in summaries if s.table.version > 0]
+    snapshot_counts = version_svc.snapshot_counts_many(pins) if pins else {}
+    for summary in summaries:
+        version = summary.table.version
+        if version > 0:
+            snapshot = snapshot_counts.get((summary.table.binding_id, version))
+            if snapshot is not None:
+                summary.check_count = snapshot[1]
+                continue
+        # Never approved (or an approved binding whose snapshot row is missing):
+        # fall back to the live render count so the overview still reflects
+        # what a draft run would execute.
+        try:
+            summary.check_count = len(materializer.render_binding_checks(summary.table.binding_id))
+        except MaterializationError:
+            summary.check_count = 0
 
 
 @router.get(
@@ -154,11 +216,19 @@ def register_monitored_table(
     body: RegisterMonitoredTableIn,
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
 ) -> MonitoredTableSummaryOut:
-    """Register a table under Rules Registry governance (status ``draft``)."""
+    """Register a table under Rules Registry governance (status ``draft``).
+
+    When the caller does not pin a steward, default it to the table's Unity
+    Catalog owner (resolved on-behalf-of the caller, so UC permissions are
+    honoured), falling back to the creator when the owner can't be read. The
+    owner may be a user, group, or service principal — it is stored verbatim.
+    """
     try:
         user_email = _current_user_email(obo_ws)
-        table = svc.register(body.table_fqn, user_email, steward=body.steward)
+        steward = body.steward or discovery.get_table_owner(body.table_fqn)
+        table = svc.register(body.table_fqn, user_email, steward=steward)
         return MonitoredTableSummaryOut.from_domain(MonitoredTableSummary(table=table, applied_rule_count=0))
     except DuplicateMonitoredTableError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -185,6 +255,13 @@ def bulk_register_monitored_tables(
     Already-monitored tables and syntactically invalid FQNs are reported
     back in the summary rather than failing the whole batch — see
     :meth:`MonitoredTableService.bulk_register`.
+
+    Unlike single register, bulk register does **not** resolve each table's
+    Unity Catalog owner: that would be one ``tables.get`` round-trip per table
+    (N calls, plus rate-limit exposure) on a path meant for onboarding many
+    tables quickly. When no steward is pinned, every binding defaults to the
+    creator; a per-table owner can be assigned afterwards from the table's
+    Permissions tab.
     """
     try:
         user_email = _current_user_email(obo_ws)
@@ -219,8 +296,12 @@ def delete_monitored_table(
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
-        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.MODIFY,
-        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.MODIFY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
     )
     try:
         svc.delete(binding_id, user_email)
@@ -255,11 +336,17 @@ def update_monitored_table_schedule(
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
-        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.MODIFY,
-        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.MODIFY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
     )
     try:
-        table = svc.update_schedule(binding_id, body.schedule_cron, body.schedule_tz, user_email)
+        table = svc.update_schedule(
+            binding_id, body.schedule_cron, body.schedule_tz, user_email, schedule_kind=body.schedule_kind
+        )
         return MonitoredTableOut.from_domain(table)
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -334,6 +421,35 @@ def list_monitored_table_versions(
         raise HTTPException(status_code=500, detail=f"Failed to list monitored table versions: {e}")
 
 
+@router.get(
+    "/{binding_id}/versions/{version}/checks",
+    response_model=MonitoredTableVersionChecksOut,
+    operation_id="getMonitoredTableVersionChecks",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def get_monitored_table_version_checks(
+    binding_id: str,
+    version: int,
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+) -> MonitoredTableVersionChecksOut:
+    """Return the frozen ``checks_json`` for a specific monitored-table version.
+
+    Complements ``listMonitoredTableVersions`` (metadata only): this is the
+    heavy per-version check payload that backs the Drafts & Review change-diff
+    popout, letting the UI diff a binding's previously frozen checks (vN-1)
+    against the proposed (current) rule set. Returns an empty ``checks`` list
+    when no snapshot exists for the requested version.
+    """
+    try:
+        checks = version_svc.get_checks(binding_id, version)
+    except LookupError:
+        checks = []
+    except Exception as e:
+        logger.error(f"Failed to get frozen checks for monitored table {binding_id} v{version}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get monitored table version checks: {e}")
+    return MonitoredTableVersionChecksOut(binding_id=binding_id, version=version, checks=checks)
+
+
 @router.post(
     "/{binding_id}/run",
     response_model=RunMonitoredTableOut,
@@ -366,7 +482,6 @@ def run_monitored_table(
             version=body.version,
             user_email=user_email,
             trigger="manual",
-            sample_size=body.sample_size,
         )
         return RunMonitoredTableOut(
             run_set_id=result.run_set_id,
@@ -415,8 +530,12 @@ def apply_rule_to_table(
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
-        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
-        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.APPLY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
     )
     try:
         applied = svc.apply_rule(
@@ -466,8 +585,12 @@ def save_applied_rules(
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
-        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
-        role=role, principal_ids=set(principal_ids), principal_email=user_email,
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.APPLY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
     )
     try:
         desired = [
@@ -481,7 +604,25 @@ def save_applied_rules(
             for entry in body.applications
         ]
         applied = svc.save_applied_rules(binding_id, desired, user_email)
-        return [AppliedRuleOut.from_domain(a) for a in applied]
+        # Return the ENRICHED shape (rule_name/dimension/severity populated),
+        # matching how the GET builds ``applied_rules`` via
+        # ``AppliedRuleOut.from_summary`` (B2-26). The lean ``from_domain``
+        # shape would seed the frontend list with raw GUIDs and a blank
+        # severity until the next background refetch.
+        out: list[AppliedRuleOut] = []
+        for a in applied:
+            name, dimension, severity = svc.rule_display_tags(a.rule_id)
+            out.append(
+                AppliedRuleOut.from_summary(
+                    AppliedRuleSummary(
+                        applied_rule=a,
+                        rule_name=name,
+                        rule_dimension=dimension,
+                        rule_severity=severity,
+                    )
+                )
+            )
+        return out
     except MappingIncompleteError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except RuleNotPublishedError as e:
@@ -512,8 +653,12 @@ def remove_applied_rule(
     Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
     """
     perms.require_object(
-        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
-        role=role, principal_ids=set(principal_ids), principal_email=_current_user_email(obo_ws),
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.APPLY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=_current_user_email(obo_ws),
     )
     try:
         svc.remove_applied(applied_rule_id)
@@ -546,8 +691,12 @@ def set_applied_rule_pin(
     Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
     """
     perms.require_object(
-        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
-        role=role, principal_ids=set(principal_ids), principal_email=_current_user_email(obo_ws),
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.APPLY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=_current_user_email(obo_ws),
     )
     try:
         applied = svc.set_pin(applied_rule_id, body.pinned_version)
@@ -580,8 +729,12 @@ def set_applied_rule_severity_override(
     Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
     """
     perms.require_object(
-        ObjectType.MONITORED_TABLE.value, binding_id, Privilege.APPLY,
-        role=role, principal_ids=set(principal_ids), principal_email=_current_user_email(obo_ws),
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.APPLY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=_current_user_email(obo_ws),
     )
     try:
         applied = svc.set_severity_override(applied_rule_id, body.severity)
@@ -665,6 +818,36 @@ def _rollup_binding_status(monitored_tables_svc: MonitoredTableService, binding_
     return "draft"
 
 
+def _approve_binding_checks(
+    monitored_tables_svc: MonitoredTableService,
+    rules_catalog: RulesCatalogService,
+    version_svc: MonitoredTableVersionService,
+    binding_id: str,
+    approver: str,
+) -> tuple[MonitoredTable, int, int | None]:
+    """Approve a binding's ``pending_approval`` checks, roll up, and freeze a version.
+
+    The approval half shared by :func:`approve_monitored_table` (explicit
+    approve) and :func:`submit_monitored_table` (auto-approve under the
+    ``auto_bypass`` / ``disabled`` approvals modes). Assumes the binding's
+    checks are already at ``pending_approval`` (the submit half puts them there).
+    Returns ``(table, approved_count, new_version)``.
+    """
+    approved = _transition_binding_checks(
+        monitored_tables_svc,
+        rules_catalog,
+        binding_id,
+        from_status="pending_approval",
+        to_status="approved",
+        user_email=approver,
+    )
+    table = monitored_tables_svc.set_status(
+        binding_id, _rollup_binding_status(monitored_tables_svc, binding_id), approver
+    )
+    new_version = version_svc.freeze_new_version(binding_id, approver)
+    return table, approved, new_version
+
+
 @router.post(
     "/{binding_id}/submit",
     response_model=MonitoredTableReviewOut,
@@ -676,6 +859,12 @@ def submit_monitored_table(
     monitored_tables_svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     materializer: Annotated[Materializer, Depends(get_materializer)],
     rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    draft_run_gate: Annotated[DraftRunGateService, Depends(get_draft_run_gate_service)],
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> MonitoredTableReviewOut:
     """Submit a monitored table for review.
@@ -699,6 +888,17 @@ def submit_monitored_table(
     """
     try:
         user_email = _current_user_email(obo_ws)
+        # Require-draft-run gate (issue B2-12): when the admin setting is on, the
+        # binding cannot enter review (nor take the auto-approve shortcut) until
+        # a draft run has been recorded for its table. Checked BEFORE any state
+        # transition so it blocks both paths uniformly. 409 when unsatisfied.
+        gate_detail = monitored_tables_svc.get(binding_id)
+        if gate_detail is None:
+            raise HTTPException(status_code=404, detail=f"Monitored table not found: {binding_id}")
+        draft_run_gate.enforce(
+            enabled=app_settings.get_require_draft_run_before_submit(),
+            table_fqns=[gate_detail.table.table_fqn],
+        )
         materializer.materialize_binding(binding_id)
         # Recover rejected checks so an unchanged re-submit re-enters review
         # (rejected -> draft -> pending_approval, both legal transitions).
@@ -721,7 +921,34 @@ def submit_monitored_table(
         table = monitored_tables_svc.set_status(
             binding_id, _rollup_binding_status(monitored_tables_svc, binding_id), user_email
         )
+        # Approvals mode (issue #94): in ``disabled`` mode, or ``auto_bypass``
+        # when the caller can edit AND approve this binding, publish in the same
+        # call — the caller is recorded as the approver with an ``(auto)`` marker.
+        # ``enabled`` never auto-approves, so skip the predicate's permission +
+        # owner lookups entirely in that (default) mode.
+        mode = app_settings.get_approvals_mode()
+        can_edit_and_approve = mode != ApprovalMode.ENABLED and perms.can_edit_and_approve(
+            ObjectType.MONITORED_TABLE.value,
+            binding_id,
+            role=role,
+            principal_ids=set(principal_ids),
+            owner_email=perms.get_object_owner(ObjectType.MONITORED_TABLE.value, binding_id),
+            principal_email=user_email,
+        )
+        if should_auto_approve(mode, can_edit_and_approve=can_edit_and_approve):
+            table, approved, new_version = _approve_binding_checks(
+                monitored_tables_svc, rules_catalog, version_svc, binding_id, mark_auto_approver(user_email)
+            )
+            return MonitoredTableReviewOut(
+                table=MonitoredTableOut.from_domain(table),
+                affected_check_count=approved,
+                new_version=new_version,
+            )
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=submitted)
+    except HTTPException:
+        raise
+    except DraftRunRequiredError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except MaterializationError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:
@@ -775,18 +1002,9 @@ def approve_monitored_table(
                 ),
             )
         user_email = _current_user_email(obo_ws)
-        approved = _transition_binding_checks(
-            monitored_tables_svc,
-            rules_catalog,
-            binding_id,
-            from_status="pending_approval",
-            to_status="approved",
-            user_email=user_email,
+        table, approved, new_version = _approve_binding_checks(
+            monitored_tables_svc, rules_catalog, version_svc, binding_id, user_email
         )
-        table = monitored_tables_svc.set_status(
-            binding_id, _rollup_binding_status(monitored_tables_svc, binding_id), user_email
-        )
-        new_version = version_svc.freeze_new_version(binding_id, user_email)
         return MonitoredTableReviewOut(
             table=MonitoredTableOut.from_domain(table),
             affected_check_count=approved,
@@ -886,3 +1104,80 @@ async def suggest_rules_for_table(
     user_email = _current_user_email(obo_ws)
     result = await svc.suggest(binding_id, user_email)
     return SuggestRulesOut.from_domain(result)
+
+
+# ------------------------------------------------------------------
+# Profile-page profiler suggestions (B2-82 — dqlake-style placement)
+# ------------------------------------------------------------------
+
+
+@router.get(
+    "/{binding_id}/profile/suggestions",
+    response_model=list[ProfilingSuggestionOut],
+    operation_id="listProfilingSuggestions",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def list_profiling_suggestions(
+    binding_id: str,
+    svc: Annotated[ProfilingSuggestionService, Depends(get_profiling_suggestion_service)],
+) -> list[ProfilingSuggestionOut]:
+    """List the DQX profiler's applicable rule suggestions for the Profile page.
+
+    Read-only and side-effect-free: it introspects the latest profile's
+    generated checks against the check-function registry to build applicable
+    suggestions. NO registry rule is created or approved here — that happens
+    only when a user explicitly applies one via ``applyProfilingSuggestion``.
+    Returns an empty list when the table has no profile yet.
+    """
+    try:
+        suggestions = svc.list_suggestions(binding_id)
+    except ProfilingBindingNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to list profiling suggestions for monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list profiling suggestions: {e}")
+    return [ProfilingSuggestionOut.from_domain(s) for s in suggestions]
+
+
+@router.post(
+    "/{binding_id}/profile/suggestions/apply",
+    response_model=ApplyProfilingSuggestionsOut,
+    operation_id="applyProfilingSuggestions",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def apply_profiling_suggestions(
+    binding_id: str,
+    body: ApplyProfilingSuggestionsIn,
+    svc: Annotated[ProfilingSuggestionService, Depends(get_profiling_suggestion_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+) -> ApplyProfilingSuggestionsOut:
+    """Apply the selected profiler suggestions to the monitored table in one action.
+
+    This is the ONLY path that resolves-or-creates + approves the underlying
+    registry rules (via ``RegistryService.match_or_create_approved_rule`` —
+    idempotent, validated, audited) before binding them to the table. Selecting
+    or listing suggestions creates nothing. Requires ``APPLY`` on the monitored
+    table (mirroring the ``applyRuleToTable`` gate) unless the caller is an
+    admin/approver. Partial failures are reported in the response body
+    (``failed``) rather than aborting the whole request.
+    """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.APPLY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
+    )
+    try:
+        result = svc.apply_suggestions(binding_id, body.indices, user_email)
+        return ApplyProfilingSuggestionsOut.from_domain(result)
+    except ProfilingBindingNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to apply profiling suggestions to monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to apply profiling suggestions: {e}")

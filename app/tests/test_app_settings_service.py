@@ -28,9 +28,9 @@ class TestRunReviewStatusReadIsSideEffectFree:
         # Seed is returned virtually...
         assert [e["value"] for e in result] == [
             "Pending review",
-            "Acknowledged",
-            "Resolved",
             "False positive",
+            "Confirmed",
+            "Resolved",
         ]
         # ...but nothing was persisted (no upsert / write on the read path).
         sql_executor_mock.upsert.assert_not_called()
@@ -69,14 +69,24 @@ class TestSeedRunReviewStatuses:
 class TestAiGatewaySettings:
     """AI Gateway settings (Rules Registry Phase 4A) — kill-switch, endpoint, rate limit.
 
-    All three default to a safe "AI is off / unconfigured" state when the underlying
-    setting row is absent, so a fresh deploy with no AI infra never accidentally calls a
-    serving endpoint.
+    AI is ON by default (per explicit product request) so a fresh deploy is usable
+    without an admin opt-in; the endpoint + rate limit default to sensible values.
+    Saving ``ai_enabled = false`` is the kill-switch that turns AI off app-wide.
     """
 
-    def test_ai_enabled_defaults_to_false(self, settings_service):
+    def test_ai_enabled_defaults_to_true(self, settings_service):
+        # AI is ON by default (per explicit product request) so a fresh
+        # deploy is usable without an admin opt-in; the kill-switch (an
+        # explicit "false") is what turns it off.
         svc, sql_executor_mock = settings_service
         sql_executor_mock.query.return_value = []
+
+        assert svc.get_ai_enabled() is True
+
+    def test_ai_enabled_kill_switch_reads_false(self, settings_service):
+        # An explicit "false" (the admin kill-switch) disables AI.
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["false"]]
 
         assert svc.get_ai_enabled() is False
 
@@ -92,12 +102,12 @@ class TestAiGatewaySettings:
         sql_executor_mock.query.return_value = [["true"]]
         assert svc.get_ai_enabled() is True
 
-    def test_ai_endpoint_name_defaults_to_databricks_gpt_5_5(self, settings_service):
+    def test_ai_endpoint_name_defaults_to_databricks_gpt_5_4_nano(self, settings_service):
         svc, sql_executor_mock = settings_service
         sql_executor_mock.query.return_value = []
 
-        assert svc.get_ai_endpoint_name() == "databricks-gpt-5-5"
-        assert svc.AI_ENDPOINT_NAME_DEFAULT == "databricks-gpt-5-5"
+        assert svc.get_ai_endpoint_name() == "databricks-gpt-5-4-nano"
+        assert svc.AI_ENDPOINT_NAME_DEFAULT == "databricks-gpt-5-4-nano"
 
     def test_ai_endpoint_name_respects_explicit_empty_value(self, settings_service):
         """An admin who explicitly clears the endpoint gets '', not the default."""
@@ -138,6 +148,40 @@ class TestAiGatewaySettings:
         sql_executor_mock.query.return_value = [["not-a-number"]]
 
         assert svc.get_ai_rate_limit_per_user_per_hour() == 30
+
+
+class TestGlobalResultsEnabled:
+    """Global Results tab gating (issue B2-20) — OFF by default; explicit opt-in only."""
+
+    def test_defaults_to_false_when_unset(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []
+
+        assert svc.get_global_results_enabled() is False
+
+    def test_explicit_true_reads_on(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["true"]]
+
+        assert svc.get_global_results_enabled() is True
+
+    def test_non_true_value_reads_off(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["false"]]
+
+        assert svc.get_global_results_enabled() is False
+
+    def test_save_and_read_round_trips(self, settings_service):
+        svc, sql_executor_mock = settings_service
+
+        svc.save_global_results_enabled(True, user_email="admin@x")
+
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["key_cols"] == {"setting_key": "global_results_enabled"}
+        assert kwargs["value_cols"]["setting_value"] == "true"
+
+        sql_executor_mock.query.return_value = [["true"]]
+        assert svc.get_global_results_enabled() is True
 
 
 class TestVectorSearchSettings:

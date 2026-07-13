@@ -150,6 +150,17 @@ resources:
         - catalog.schemas:read
         - catalog.tables:read
         - serving.serving-endpoints
+        # Ask Genie chat runs on-behalf-of the signed-in user (P4.2), so the
+        # OBO token must carry the Genie API scope. The chat service keeps
+        # its SP fallback regardless — harmless once OBO works, and it
+        # protects workspaces whose OAuth integration strips scopes.
+        - dashboards.genie
+        # The admin Configuration → Compute section lists all-purpose clusters
+        # on-behalf-of the signed-in admin (ComputeService.list_clusters via
+        # get_obo_ws). Without this scope the OBO token can't call the Clusters
+        # API and ws.clusters.list() raises PermissionDenied ("required scopes:
+        # clusters"); the service degrades to [] but the picker can't populate.
+        - clusters
 
       resources:
         # Binding the bundle-managed warehouse to the app grants the app SP CAN_USE.
@@ -345,6 +356,18 @@ resources:
               - "{{job.parameters.run_id}}"
               - "--requesting_user"
               - "{{job.parameters.requesting_user}}"
+              # SQL warehouse the runner uses to drop the temp view it read from
+              # (see runner.py view-cleanup path). Threaded from the admin's
+              # configured warehouse via JobService.submit_run; "" falls back to
+              # spark.sql cleanup on the job compute.
+              - "--warehouse_id"
+              - "{{job.parameters.warehouse_id}}"
+              # ``{{job.run_id}}`` is a built-in run-context reference (not a job
+              # parameter) — the Jobs service resolves it per run, so the task
+              # runner can stamp job_run_id onto its terminal result row and the
+              # Runs-History "Run" column can deep-link to this job run.
+              - "--job_run_id"
+              - "{{job.run_id}}"
           environment_key: "default"
       environments:
         - environment_key: "default"
@@ -373,6 +396,8 @@ resources:
           default: ""
         - name: "requesting_user"
           default: "unknown"
+        - name: "warehouse_id"
+          default: ""
 
 # Deploy targets are defined in the untracked ``target.dev.yml`` (see the
 # ``include`` above and ``target.dev.yml.example``).

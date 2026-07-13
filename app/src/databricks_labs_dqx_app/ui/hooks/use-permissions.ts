@@ -44,7 +44,13 @@ export interface UsePermissionsResult {
 }
 
 export function usePermissions(): UsePermissionsResult {
-  const { data } = useCurrentUserRoleSuspense(selector<UserRoleOut>());
+  // B2-22: the user's role is app-config that doesn't change during a session,
+  // so pin it to staleTime: Infinity — it's fetched once and served from cache
+  // on every mount (usePermissions runs on nearly every page) instead of
+  // refetching per route/tab.
+  const { data } = useCurrentUserRoleSuspense({
+    query: { ...selector<UserRoleOut>().query, staleTime: Infinity },
+  });
 
   return useMemo(() => {
     const role = data?.role ?? "viewer";

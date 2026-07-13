@@ -17,7 +17,7 @@ from databricks.labs.dqx.llm.llm_core import _filter_unsafe_sql_rules
 from databricks.labs.dqx.llm.llm_utils import get_required_check_functions_definitions
 from databricks.labs.dqx.utils import is_sql_query_safe
 
-from databricks_labs_dqx_app.backend.config import conf
+from databricks_labs_dqx_app.backend.config import AI_SAMPLE_ROW_LIMIT, conf
 from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
 
 logger = logging.getLogger(__name__)
@@ -59,17 +59,33 @@ Return ONLY a JSON object with these fields:
   - "severity": one of Low, Medium, High, Critical
   - "polarity": "pass" or "fail" (use "pass" for dqx_native; for sql, "pass" means the SQL \
 predicate must be true for a row to pass)
-  - "definition": {definition_shape}
+  - "definition": {definition_shape}{columns_field}
 
 Guidelines:
 - Use double quotes for all JSON keys and string values.
-- Do not include any prose outside the JSON object.
+- Do not include any prose outside the JSON object.{columns_guidance}
 
 Available check functions:
 {available_functions}"""
 
-_DQX_NATIVE_DEFINITION_SHAPE = '{"function": "<check function name>", "arguments": {...}}'
+_DQX_NATIVE_DEFINITION_SHAPE = '{"function": "<check function name>", "arguments": {<arg name>: <value>, ...}}'
 _SQL_DEFINITION_SHAPE = '{"sql_query": "<a SELECT-only predicate expression, no DML/DDL>"}'
+
+# Extra prompt fragments injected only for the dqx_native mode so the model
+# also names the VARIABLE COLUMN SLOTS the rule targets (item B2-32). A registry
+# rule is table-agnostic, so each column argument is a reusable named slot, not a
+# hard-coded column. The model picks meaningful slot names; the slot FAMILY it
+# returns is only a hint — the backend re-derives (locks) each native slot's
+# family from the check function's own semantics in `_derive_native_slots`.
+_DQX_NATIVE_COLUMNS_FIELD = (
+    '\n  - "columns": a JSON array of {"name": "<snake_case slot name>", "family": '
+    '"any"|"numeric"|"text"|"temporal"|"boolean"|"array"} objects, ONE per column the rule targets'
+)
+_DQX_NATIVE_COLUMNS_GUIDANCE = (
+    '\n- Give each targeted column a meaningful snake_case slot name (e.g. "user_email", '
+    '"order_amount") in "columns", and use those exact names as the column argument VALUES '
+    'inside "definition".arguments.'
+)
 
 _FIELD_SUGGESTION_SYSTEM_TEMPLATE = """\
 You are helping a data steward fill in one field of a data quality rule definition. Given the \
@@ -133,6 +149,10 @@ class SqlPredicateResult(TypedDict):
 _VALID_DIMENSIONS = frozenset({"Validity", "Completeness", "Accuracy", "Consistency", "Uniqueness", "Timeliness"})
 _VALID_SEVERITIES = frozenset({"Low", "Medium", "High", "Critical"})
 _VALID_POLARITIES = frozenset({"pass", "fail"})
+# Mirrors registry_models.SlotFamily — the closed vocabulary a native column slot's
+# family may take. Used to validate any family hint the model returns for a slot.
+_VALID_SLOT_FAMILIES = frozenset({"numeric", "text", "temporal", "boolean", "array", "any"})
+_SLOT_TOKEN_RE = re.compile(r"^\{\{\s*(.+?)\s*\}\}$")
 
 
 class AiRulesService:
@@ -322,6 +342,7 @@ class AiRulesService:
             purpose="generate_checks",
             messages=messages,
             max_tokens=conf.llm_max_tokens,
+            temperature=0,  # deterministic generation (B2-33); gateway retries w/o it for reasoning models
         )
         checks = self._parse_response(content)
         return _filter_unsafe_sql_rules(checks)
@@ -368,9 +389,12 @@ class AiRulesService:
         context: str,
         user_email: str,
     ) -> dict[str, Any] | None:
+        is_native = mode == "dqx_native"
         system = _RULE_PROPOSAL_SYSTEM_TEMPLATE.format(
             mode=mode,
             definition_shape=definition_shape,
+            columns_field=_DQX_NATIVE_COLUMNS_FIELD if is_native else "",
+            columns_guidance=_DQX_NATIVE_COLUMNS_GUIDANCE if is_native else "",
             available_functions=self._get_available_functions(),
         )
         messages = [
@@ -382,6 +406,10 @@ class AiRulesService:
             purpose=f"generate_rule:{mode}",
             messages=messages,
             max_tokens=conf.llm_max_tokens,
+            # Deterministic generation (B2-33). The gateway transparently drops the
+            # explicit temperature and retries for reasoning endpoints (e.g. the GPT-5
+            # family) that reject any non-default temperature — see AIGateway._query_endpoint.
+            temperature=0,
         )
         try:
             return AIGateway.parse_json_object(content)
@@ -402,9 +430,12 @@ class AiRulesService:
         if columns:
             parts.append(f"columns: {json.dumps(columns)}")
         if sample_rows:
-            # Bounded: never forward more than a handful of sample rows to the model
-            # (OWASP LLM04/LLM06 — bound the prompt, avoid echoing large data samples).
-            parts.append(f"sample_rows: {json.dumps(sample_rows[:5])}")
+            # Bounded to AI_SAMPLE_ROW_LIMIT (500) — the same sample cap the
+            # "ask a question about this data" path uses — so every AI/LLM
+            # sample-data path is consistent. Still a hard, finite bound
+            # (OWASP LLM04/LLM06): it caps prompt size and the volume of raw
+            # data echoed into a model call.
+            parts.append(f"sample_rows: {json.dumps(sample_rows[:AI_SAMPLE_ROW_LIMIT])}")
         return "\n".join(parts)
 
     def _validate_and_repair_proposal(self, proposal: dict[str, Any]) -> dict[str, Any] | None:
@@ -425,6 +456,7 @@ class AiRulesService:
         elif "sql_query" in definition:
             mode = "sql"
 
+        slots: list[dict[str, Any]] = []
         if mode == "dqx_native":
             function = definition.get("function")
             arguments = definition.get("arguments", {})
@@ -435,6 +467,10 @@ class AiRulesService:
             if validation.has_errors:
                 logger.warning("AI-generated dqx_native rule failed validation: %s", validation.errors)
                 return None
+            # Populate the typed column slots the create form binds to real columns
+            # (item B2-32): names come from the model's chosen column references,
+            # families are locked to the check function's own semantics.
+            slots = self._derive_native_slots(function, arguments, proposal.get("columns"))
         elif mode == "sql":
             sql_query = definition.get("sql_query")
             if not isinstance(sql_query, str) or not sql_query.strip():
@@ -453,7 +489,116 @@ class AiRulesService:
             "severity": self._clean_choice(proposal.get("severity"), _VALID_SEVERITIES),
             "polarity": self._clean_choice(proposal.get("polarity"), _VALID_POLARITIES) or "pass",
             "definition": definition,
+            "slots": slots,
         }
+
+    @staticmethod
+    def _derive_native_slots(
+        function: str,
+        arguments: dict[str, Any],
+        ai_columns: object,
+    ) -> list[dict[str, Any]]:
+        """Build RuleSlot-shaped dicts for a validated ``dqx_native`` proposal.
+
+        Each column-bearing parameter of *function* becomes one or more slots
+        (a ``columns``-kind parameter can bind several). A slot's ``name`` is
+        taken from the model's column reference in *arguments* (a ``{{token}}``
+        placeholder or a bare identifier), falling back to a canonical
+        ``column_N`` when the model referenced nothing usable. The slot
+        ``family`` is LOCKED to the check function's declared column family
+        (never the model's) — mirroring the authoring UI, which does not let a
+        native slot's family be edited. When the arguments referenced nothing
+        usable for a column parameter, its name is drawn from the model's
+        top-level ``columns`` array, then finally a canonical ``column_N``. The
+        ``arg_key`` records the real function parameter so the frontend rebuilds
+        ``arguments`` from the (possibly author-renamed) slots correctly.
+
+        Args:
+            function: The validated check-function name.
+            arguments: The proposal's ``definition.arguments`` (already validated).
+            ai_columns: The model's optional top-level ``columns`` array; only
+                its entries' ``name`` values are used, as a name fallback for a
+                column parameter the arguments didn't reference. Non-list ignored.
+
+        Returns:
+            A list of RuleSlot-shaped dicts (``name``, ``family``, ``position``,
+            ``cardinality``, ``arg_key``), or ``[]`` when the function is
+            unknown or has no column parameters.
+        """
+        from ..routes.v1.check_functions import _introspect_check_functions  # noqa: PLC0415
+
+        fn_def = next((f for f in _introspect_check_functions() if f.name == function), None)
+        if fn_def is None:
+            return []
+
+        # Ordered pool of the model's declared column-slot names, consumed only
+        # to name a column parameter the arguments didn't reference.
+        fallback_names: list[str] = []
+        if isinstance(ai_columns, list):
+            for col in ai_columns:
+                if isinstance(col, dict) and isinstance(col.get("name"), str) and col["name"].strip():
+                    fallback_names.append(col["name"].strip())
+        fallback_pool = iter(fallback_names)
+
+        slots: list[dict[str, Any]] = []
+        position = 0
+        canonical_index = 1
+        for param in fn_def.params:
+            if param.kind not in ("column", "columns"):
+                continue
+            # Family is locked to the check's own semantics (item 10 typed slots),
+            # never the model's — an author cannot edit a native slot's family.
+            family = param.family if param.family in _VALID_SLOT_FAMILIES else "any"
+            raw_names = AiRulesService._slot_names_from_arg(arguments.get(param.name))
+            if not raw_names:
+                next_name = next(fallback_pool, None)
+                raw_names = [next_name] if next_name else [f"column_{canonical_index}"]
+                if next_name is None:
+                    canonical_index += 1
+            for raw_name in raw_names:
+                name = AiRulesService._sanitize_slot_name(raw_name)
+                if not name:
+                    name = f"column_{canonical_index}"
+                    canonical_index += 1
+                slots.append(
+                    {
+                        "name": name,
+                        "family": family,
+                        "position": position,
+                        "cardinality": "one",
+                        "arg_key": param.name,
+                    }
+                )
+                position += 1
+        return slots
+
+    @staticmethod
+    def _slot_names_from_arg(value: object) -> list[str]:
+        """Extract the model's column reference name(s) from one argument value.
+
+        A ``{{token}}`` placeholder yields the inner name; a bare string yields
+        itself; a list yields each of its usable string members, in order. Any
+        non-string member is skipped.
+        """
+
+        def one(candidate: object) -> str | None:
+            if not isinstance(candidate, str):
+                return None
+            text = candidate.strip()
+            if not text:
+                return None
+            token = _SLOT_TOKEN_RE.match(text)
+            return token.group(1).strip() if token else text
+
+        if isinstance(value, list):
+            return [name for name in (one(item) for item in value) if name]
+        name = one(value)
+        return [name] if name else []
+
+    @staticmethod
+    def _sanitize_slot_name(raw: str) -> str:
+        """Normalise a model-proposed column reference into a safe snake_case slot name."""
+        return re.sub(r"[^0-9a-zA-Z_]+", "_", raw.strip()).strip("_").lower()
 
     @staticmethod
     def _clean_str(value: Any) -> str | None:
@@ -481,6 +626,7 @@ class AiRulesService:
             purpose=f"suggest_field:{field}",
             messages=messages,
             max_tokens=2048,
+            temperature=0,  # deterministic suggestion (B2-33); gateway retries w/o it for reasoning models
         )
         parsed = AIGateway.parse_json_object(content)
         value = parsed.get("value")
@@ -520,6 +666,7 @@ class AiRulesService:
                 {"role": "user", "content": context},
             ],
             max_tokens=conf.llm_max_tokens,
+            temperature=0,  # deterministic generation (B2-33); gateway retries w/o it for reasoning models
         )
         return self._parse_sql_predicate(content)
 
@@ -552,6 +699,7 @@ class AiRulesService:
                 {"role": "user", "content": "\n".join(parts)},
             ],
             max_tokens=conf.llm_max_tokens,
+            temperature=0,  # deterministic refinement (B2-33); gateway retries w/o it for reasoning models
         )
         return self._parse_sql_predicate(content)
 
@@ -574,6 +722,7 @@ class AiRulesService:
                 {"role": "user", "content": predicate},
             ],
             max_tokens=2048,
+            temperature=0,  # deterministic explanation (B2-33); gateway retries w/o it for reasoning models
         )
         parsed = AIGateway.parse_json_object(content)
         explanation = parsed.get("explanation")

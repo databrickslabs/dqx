@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import { DEFAULT_SCHEDULE_KIND, type ScheduleKind } from "@/components/common/ScheduleEditor";
 import {
   useUpdateDataProduct,
   useAddDataProductMember,
@@ -58,6 +59,7 @@ export function useEditProductState(product: DataProductOut) {
   const [steward, setStewardLocal] = useState(product.steward ?? "");
   const [scheduleCron, setScheduleCronLocal] = useState<string | null>(product.schedule_cron ?? null);
   const [scheduleTz, setScheduleTzLocal] = useState<string>(product.schedule_tz ?? "UTC");
+  const [scheduleKind, setScheduleKindLocal] = useState<ScheduleKind>(product.schedule_kind ?? DEFAULT_SCHEDULE_KIND);
   // Set by Task 9's ProductSchedulingTab/SchedulePicker while the raw-cron
   // (custom) editor holds an expression the backend scheduler would reject.
   // Gates the header's Save buttons below so a malformed cron never reaches
@@ -70,6 +72,7 @@ export function useEditProductState(product: DataProductOut) {
     setScheduleCronLocal(cron);
     if (tz) setScheduleTzLocal(tz);
   }, []);
+  const setScheduleKind = useCallback((kind: ScheduleKind) => setScheduleKindLocal(kind), []);
 
   /** Add a member to the buffer. Newly added members carry no id yet and no
    *  counts — those land after save + refetch. */
@@ -92,6 +95,19 @@ export function useEditProductState(product: DataProductOut) {
     setMembers((prev) => prev.map((x) => (memberKey(x) === memberKey(m) ? { ...x, pinned_version: version } : x)));
   }, []);
 
+  // Set right after a successful save/submit so the NEXT server refetch is
+  // adopted wholesale into the buffer, overriding the pin-preserving bail
+  // below. Right after a save the buffer *is* the just-persisted state, so
+  // there is no unsaved edit to protect — and the server may have resolved a
+  // value the buffer sent optimistically (most importantly a "follow latest"
+  // `pinned_version: null` that the backend pins to a concrete version when
+  // `default_auto_upgrade` is off). Without adopting the server's resolved
+  // value the buffer clings to its optimistic one and `isDirty` never settles
+  // back to false, leaving the space permanently "dirty" (and the nav guard's
+  // bypass permanently stuck). See B2-66. Consumed (cleared) by the re-seed
+  // effect on the first refetch it sees.
+  const resyncRef = useRef(false);
+
   // Re-seed the buffer from the server after a save/publish refetch, so a
   // just-added member's real rule/check counts populate without a manual
   // refresh. Only adopt when the buffered member SET (keys + pins) already
@@ -99,6 +115,13 @@ export function useEditProductState(product: DataProductOut) {
   useEffect(() => {
     const serverMembers = product.members ?? [];
     setMembers((prev) => {
+      // Post-save resync: adopt the server's resolved member state verbatim
+      // (real ids, server-resolved pins, refreshed counts). Safe because it
+      // only fires on the refetch that immediately follows an explicit save.
+      if (resyncRef.current) {
+        resyncRef.current = false;
+        return serverMembers;
+      }
       if (prev.length !== serverMembers.length) return prev;
       const serverByKey = new Map(serverMembers.map((m) => [memberKey(m), m]));
       for (const m of prev) {
@@ -119,10 +142,12 @@ export function useEditProductState(product: DataProductOut) {
   const scheduleDirty = useMemo(() => {
     const serverCron = product.schedule_cron ?? null;
     const serverTz = product.schedule_tz ?? "UTC";
+    const serverKind: ScheduleKind = product.schedule_kind ?? DEFAULT_SCHEDULE_KIND;
     if (scheduleCron !== serverCron) return true;
-    if (scheduleCron !== null && scheduleTz !== serverTz) return true;
+    // Timezone + scope-kind only matter while a schedule exists.
+    if (scheduleCron !== null && (scheduleTz !== serverTz || scheduleKind !== serverKind)) return true;
     return false;
-  }, [scheduleCron, scheduleTz, product.schedule_cron, product.schedule_tz]);
+  }, [scheduleCron, scheduleTz, scheduleKind, product.schedule_cron, product.schedule_tz, product.schedule_kind]);
 
   const membersDirty = useMemo(() => {
     const cur = new Set(members.map(memberKey));
@@ -205,6 +230,9 @@ export function useEditProductState(product: DataProductOut) {
     if (scheduleDirty) {
       patch.schedule_cron = scheduleCron;
       patch.schedule_tz = scheduleCron !== null ? scheduleTz : (product.schedule_tz ?? "UTC");
+      // Only send the scope kind while a schedule exists; clearing the cron
+      // leaves the stored kind untouched (the backend never nulls it).
+      if (scheduleCron !== null) patch.schedule_kind = scheduleKind;
       patchNeeded = true;
     }
 
@@ -241,6 +269,7 @@ export function useEditProductState(product: DataProductOut) {
     stewardDirty,
     scheduleCron,
     scheduleTz,
+    scheduleKind,
     scheduleDirty,
     members,
     serverMemberKeys,
@@ -255,6 +284,7 @@ export function useEditProductState(product: DataProductOut) {
     try {
       await persist();
       bypassGuardRef.current = true;
+      resyncRef.current = true;
       invalidate();
       toast.success(t("dataProducts.toastSavedDraft"));
       return true;
@@ -272,6 +302,7 @@ export function useEditProductState(product: DataProductOut) {
       await persist();
       await submitMut.mutateAsync({ productId: product.product_id });
       bypassGuardRef.current = true;
+      resyncRef.current = true;
       invalidate();
       toast.success(t("dataProducts.toastSubmitted"));
       return true;
@@ -280,6 +311,22 @@ export function useEditProductState(product: DataProductOut) {
       return false;
     }
   }, [persist, submitMut, product.product_id, invalidate, t]);
+
+  // Called by the approve handlers (the space-level approve banner AND the
+  // member-level review popover) after a successful approval — but ONLY when
+  // the buffer was clean beforehand (the caller checks `isDirty`). Approval
+  // refetches the product; between the mutation resolving and that refetch
+  // settling, the buffer can momentarily disagree with the still-stale query
+  // data and trip a spurious "unsaved changes" guard (the same window B10 fixed
+  // for the save path). Engaging the bypass suppresses that, and the resync
+  // adopts the refreshed server truth so `isDirty` settles cleanly afterwards.
+  // Both are safe precisely because the caller only invokes this when there was
+  // nothing unsaved to lose — a genuine unsaved edit takes the `isDirty` branch
+  // and never calls this, so the guard still fires for it. (B2-66)
+  const markApprovedWhenClean = useCallback(() => {
+    bypassGuardRef.current = true;
+    resyncRef.current = true;
+  }, []);
 
   // A save touches several endpoints; treat any in flight as "save pending".
   const savePending = updateMut.isPending || addMut.isPending || removeMut.isPending;
@@ -296,6 +343,8 @@ export function useEditProductState(product: DataProductOut) {
     scheduleCron,
     scheduleTz,
     setSchedule,
+    scheduleKind,
+    setScheduleKind,
     scheduleCronInvalid,
     setScheduleCronInvalid,
 
@@ -307,6 +356,7 @@ export function useEditProductState(product: DataProductOut) {
     isDirty,
     canSave,
     bypassGuardRef,
+    markApprovedWhenClean,
     handleSaveDraft,
     handleSubmit,
     savePending,

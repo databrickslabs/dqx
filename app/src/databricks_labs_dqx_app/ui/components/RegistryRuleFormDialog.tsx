@@ -43,18 +43,24 @@ import {
   Braces,
   Check,
   ChevronDown,
+  LineChart,
   FlaskConical,
   History as HistoryIcon,
   Info,
   Loader2,
+  Send,
   Shield,
   Sparkles,
   Wrench,
   X,
 } from "lucide-react";
+import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { LabelsEditor } from "@/components/Labels";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
+import { RuleResultsTab } from "@/components/registry-rules/RuleResultsTab";
+import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
+import { ruleResultsState } from "@/lib/results-display";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { PredicatePolaritySwitch } from "@/components/rules/PredicatePolaritySwitch";
 import { PredicateEditorExplainer } from "@/components/rules/PredicateEditorExplainer";
@@ -83,6 +89,7 @@ import {
   useUpdateRegistryRule,
   useSubmitRegistryRule,
   useListRegistryRuleVersions,
+  useGetRuleScore,
   useListCheckFunctions,
   useGetTableColumns,
   useAiGenerateRule,
@@ -115,6 +122,7 @@ import {
   nativeArguments,
   parseParamValue,
   paramValueToRaw,
+  severityValueCriticality,
   type ParsedCheckDefinition,
 } from "@/lib/registry-rule-conversion";
 import { RegistryRuleFormJsonDialog } from "@/components/registry-rules/RegistryRuleFormJsonDialog";
@@ -131,7 +139,7 @@ type Polarity = "pass" | "fail";
 // Top-level page tabs. Persisted to the URL (`?tab=`) by the routed detail
 // page so browser back/forward moves between them, mirroring the old dqx
 // editor's page-based structure.
-export type PageTab = "about" | "permissions" | "implementation" | "test" | "history";
+export type PageTab = "about" | "permissions" | "implementation" | "test" | "history" | "results";
 
 // Mirrors the backend's `forbidden_statements` list verbatim — see
 // `is_sql_query_safe()` in `src/databricks/labs/dqx/utils.py`, the source of
@@ -326,7 +334,7 @@ function SectionHeader({
   return (
     <div className="flex items-center justify-between gap-3">
       <div className="flex items-center gap-1.5">
-        <h3 className="text-xs font-medium leading-none">{children}</h3>
+        <h2 className="text-sm font-semibold leading-none">{children}</h2>
         {tooltip && <HelpTooltip text={tooltip} />}
       </div>
       {action}
@@ -495,7 +503,17 @@ function SlotsPanel({
       const target = e.target as HTMLElement | null;
       if (!target) return;
       if (rootRef.current?.contains(target)) return;
-      if (target.closest("[data-radix-popper-content-wrapper]")) return;
+      // Ignore clicks inside any portaled Radix overlay: popper-positioned
+      // content exposes `data-radix-popper-content-wrapper`, but an
+      // item-aligned Select's content is portaled without that wrapper — match
+      // its `data-slot="select-content"` / `role="listbox"` too so committing a
+      // selection in such a Select doesn't collapse the slot editor mid-click.
+      if (
+        target.closest(
+          '[data-radix-popper-content-wrapper], [data-slot="select-content"], [role="listbox"]',
+        )
+      )
+        return;
       setExpanded(null);
     };
     document.addEventListener("mousedown", handler);
@@ -633,7 +651,7 @@ function SlotsPanel({
                         <SelectTrigger className="h-8 text-xs w-full">
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent position="popper">
                           {SLOT_FAMILIES.map((f) => (
                             <SelectItem key={f} value={f} className="text-xs">
                               {familyLabel(f)}
@@ -740,6 +758,23 @@ interface RegistryRuleFormDialogProps {
    */
   jsonDialogOpen?: boolean;
   onJsonDialogOpenChange?: (open: boolean) => void;
+  /**
+   * "page" variant only: extra action controls (e.g. the routed detail
+   * page's Approve/Reject buttons + the "…" actions menu) rendered inline,
+   * immediately after the Save/Submit buttons, in the single top-right
+   * header action row — mirroring the Monitored Table / Table Space headers
+   * where the action buttons and the ⋮ menu sit together (B2-7). Ignored in
+   * the dialog variant.
+   */
+  headerActions?: ReactNode;
+  /**
+   * "page" variant only: the page's title block (name + status/version
+   * badges). Rendered on the LEFT of the single top-right header row so the
+   * title and the Save/Submit + Approve/Reject + "…" actions share one line
+   * (B2-78) — no dropped action row, no extra vertical gap above the tabs.
+   * Ignored in the dialog variant (which renders its own DialogTitle).
+   */
+  headerTitle?: ReactNode;
 }
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -877,6 +912,8 @@ export function RegistryRuleFormDialog({
   onDirtyChange,
   jsonDialogOpen: controlledJsonDialogOpen,
   onJsonDialogOpenChange,
+  headerActions,
+  headerTitle,
 }: RegistryRuleFormDialogProps) {
   const { t } = useTranslation();
   const sourceRule = editingRule ?? viewingRule;
@@ -931,6 +968,13 @@ export function RegistryRuleFormDialog({
   const [lowcodeAst, setLowcodeAst] = useState<LowcodeAstV2>(EMPTY_LOWCODE_AST);
   const [groupBy, setGroupBy] = useState("");
   const [modeSwitch, setModeSwitch] = useState<{ direction: ModeSwitchDirection; next: RegistryMode } | null>(null);
+  // item 5: cache the last Low-Code AST + group-by when leaving Low-Code for
+  // SQL, so switching back RESTORES the built conditions instead of a blank
+  // stack (covers flitting between the two). The cache is honored only when the
+  // SQL still matches what the cached AST compiles to; if the SQL was
+  // hand-edited away from that, the built conditions can't be reconstructed —
+  // the cache is dropped and the builder is cleared with a warning.
+  const lowcodeCacheRef = useRef<{ ast: LowcodeAstV2; groupBy: string } | null>(null);
   // Joined-table columns feed the Low-Code row/aggregate/group-by pickers
   // alongside the declared `{{slot}}` placeholders — qualified as
   // `<fqn>.<col>` so the compiler emits them as raw SQL, not placeholders.
@@ -953,6 +997,11 @@ export function RegistryRuleFormDialog({
   const [nameError, setNameError] = useState<string | null>(null);
   const [authorKind, setAuthorKind] = useState<CreateRegistryRuleInAuthorKind | undefined>(undefined);
   const [pendingNativeArgs, setPendingNativeArgs] = useState<Record<string, unknown> | null>(null);
+  // Typed column slots carried by an AI proposal (item B2-32), stashed
+  // alongside `pendingNativeArgs` and flushed once the function catalog
+  // resolves. Preserves the model's chosen slot names/families instead of
+  // re-seeding canonical `column_N` slots. `null` = no AI slots to apply.
+  const [pendingNativeSlots, setPendingNativeSlots] = useState<RuleSlot[] | null>(null);
   // "As JSON" surface (item 11, P24-C) — edits round-trip back into the form
   // state below via `applyParsedToForm`, for both the create form and
   // in-place editing of an existing rule. The open state can be driven
@@ -995,6 +1044,9 @@ export function RegistryRuleFormDialog({
     const key = `${open}:${sourceRule?.rule_id ?? "new"}`;
     if (rehydrateKeyRef.current === key) return;
     rehydrateKeyRef.current = key;
+    // Drop any Low-Code cache from a previous rule/session (item 5) so a
+    // reopened dialog never restores conditions that belong to another rule.
+    lowcodeCacheRef.current = null;
 
     const md = (sourceRule?.user_metadata ?? {}) as Record<string, unknown>;
     const asString = (k: string) => (typeof md[k] === "string" ? (md[k] as string) : "");
@@ -1007,6 +1059,7 @@ export function RegistryRuleFormDialog({
     setErrorMessage(sourceRule?.definition?.error_message ?? "");
     setAiDescription("");
     setPendingNativeArgs(null);
+    setPendingNativeSlots(null);
     const freeTags: Record<string, string> = {};
     for (const [k, v] of Object.entries(md)) {
       if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY) continue;
@@ -1101,7 +1154,24 @@ export function RegistryRuleFormDialog({
     if (pendingNativeArgs === null) return;
     if (checkFunctions.length === 0) return;
     if (!selectedFn) {
+      // The AI named a function that isn't in the frontend catalog (e.g. an
+      // optional module not installed on this deployment). Don't silently drop
+      // everything: still surface the AI's raw scalar arguments (best-effort)
+      // and any typed slots it carried, then warn the steward that the function
+      // couldn't be matched so they can pick a real one. Column-slot arguments
+      // are placeholders, so only the non-`{{…}}` scalar args are shown.
+      const raw: Record<string, string> = {};
+      for (const [key, v] of Object.entries(pendingNativeArgs)) {
+        if (v === undefined || v === null) continue;
+        const rendered = Array.isArray(v) ? v.join(", ") : String(v);
+        if (/^\{\{.*\}\}$/.test(rendered.trim())) continue;
+        raw[key] = rendered;
+      }
+      setParamRawValues(raw);
+      if (pendingNativeSlots && pendingNativeSlots.length > 0) setNativeSlots(pendingNativeSlots);
       setPendingNativeArgs(null);
+      setPendingNativeSlots(null);
+      toast.warning(t("rulesRegistry.aiFunctionUnavailable"));
       return;
     }
     const raw: Record<string, string> = {};
@@ -1112,16 +1182,21 @@ export function RegistryRuleFormDialog({
       }
     }
     setParamRawValues(raw);
-    // The AI proposal picked the function; re-seed the slot set to match
-    // its arity (fresh canonical names — an AI proposal never carries
-    // author-chosen slot names).
-    setNativeSlots(fnDerivedSlots);
+    // Prefer the AI proposal's typed column slots (author-meaningful names +
+    // families locked to the check's semantics — item B2-32). Fall back to the
+    // canonical `column_N` slots derived from the function signature only when
+    // the proposal carried none.
+    setNativeSlots(pendingNativeSlots && pendingNativeSlots.length > 0 ? pendingNativeSlots : fnDerivedSlots);
     setPendingNativeArgs(null);
-  }, [pendingNativeArgs, checkFunctions, selectedFn, derivedParams, fnDerivedSlots]);
+    setPendingNativeSlots(null);
+  }, [pendingNativeArgs, pendingNativeSlots, checkFunctions, selectedFn, derivedParams, fnDerivedSlots, t]);
 
   const createMutation = useCreateRegistryRule();
   const updateMutation = useUpdateRegistryRule();
   const submitMutation = useSubmitRegistryRule();
+  // When the approvals mode will auto-approve this user's submit (#94), the
+  // submit buttons publish in one step — relabel them accordingly.
+  const { willAutoApprove } = useApprovalsMode();
   const [saving, setSaving] = useState(false);
 
   // Published version lineage for the History tab. Only queried for a rule
@@ -1132,6 +1207,28 @@ export function RegistryRuleFormDialog({
     query: { enabled: open && Boolean(sourceRule && sourceRule.version > 0) },
   });
   const publishedVersions = useMemo(() => versionsQuery.data?.data ?? [], [versionsQuery.data]);
+
+  // Rule-level DQ score, fetched here (non-suspending) only to decide the
+  // Results tab trigger's enabled state: a rule with zero current
+  // applications has no results, so the trigger is disabled with a tooltip
+  // telling the steward to apply the rule to a monitored table first. The
+  // tab CONTENT re-reads the same query via its own suspense boundary
+  // (RuleResultsTab), so the two never disagree. Never refetches on its own
+  // (RESULTS_QUERY_OPTIONS) — run-completion invalidation is the only
+  // refresh, same as every other score query.
+  const ruleScoreQuery = useGetRuleScore(versionsRuleId, undefined, {
+    query: { enabled: open && Boolean(sourceRule), select: (d) => d.data, ...RESULTS_QUERY_OPTIONS },
+  });
+  const ruleScore = ruleScoreQuery.data;
+  const resultsNotApplied = ruleScore !== undefined && ruleResultsState(ruleScore) === "not-applied";
+  // A FAILED score fetch also leaves the trigger disabled, but with its own
+  // explanatory tooltip + click-to-retry — previously it was silently
+  // disabled, indistinguishable from the still-loading state (P3.6).
+  const resultsScoreError = ruleScoreQuery.isError;
+  // Disabled while there's no saved rule (create flow, like History) or the
+  // score hasn't loaded yet — the tooltip only shows for the definitive
+  // "not applied anywhere" / fetch-error states.
+  const resultsDisabled = !sourceRule || ruleScore === undefined || resultsNotApplied;
 
   // -- Dirty (unsaved-changes) tracking -------------------------------------
   // Editing an existing rule diffs against the last-persisted rule (mirrors
@@ -1224,6 +1321,12 @@ export function RegistryRuleFormDialog({
     severity.trim().length > 0 &&
     dimension.trim().length > 0 &&
     (mode !== "dqx_native" || nativeRequiredParamsFilled);
+  // An already-approved rule with no unsaved edits has nothing to resubmit —
+  // resubmitting would just re-run the (already-passed) approval gate. Disable
+  // Submit in that state, matching the Monitored Table / Table Space headers
+  // (ProductHeader's `submitDisabledNoChanges`). Editing it flips `isDirty`
+  // true and re-enables Submit so an approved rule can still be revised.
+  const submitDisabledNoChanges = sourceRule?.status === "approved" && !isDirty;
 
   // Human-readable lists of exactly which field(s) each gate is still
   // waiting on, surfaced as tooltips on the disabled buttons (see
@@ -1414,6 +1517,7 @@ export function RegistryRuleFormDialog({
       setFunctionName("");
       setParamRawValues({});
       setPendingNativeArgs(null);
+      setPendingNativeSlots(null);
     } else {
       setFunctionName(nativeFn);
       setSqlPredicate("");
@@ -1422,8 +1526,13 @@ export function RegistryRuleFormDialog({
           ? (body.arguments as Record<string, unknown>)
           : {};
       setPendingNativeArgs(args);
+      // Stash the proposal's typed column slots (if any) to flush alongside the
+      // args once the function catalog resolves (item B2-32).
+      setPendingNativeSlots(proposal.slots ?? null);
     }
-    setAiDescription("");
+    // NOTE: intentionally do NOT clear `aiDescription` here (item B2-32 Part B) —
+    // the steward's typed prompt survives after a generation so they can tweak
+    // and regenerate without retyping.
     // Jump to Implementation so the steward immediately sees what the
     // proposal filled in, regardless of which page tab they were on when
     // they used the (now always-visible) Build-with-AI banner.
@@ -1663,7 +1772,7 @@ export function RegistryRuleFormDialog({
   const aboutTabContent = (
     <div className="space-y-4 pt-2">
       <div className="space-y-1.5">
-        <Label className="text-xs">
+        <Label>
           {t("rulesRegistry.nameLabel")} <span className="text-destructive">*</span>
         </Label>
         <div className="relative group">
@@ -1692,7 +1801,7 @@ export function RegistryRuleFormDialog({
       </div>
 
       <div className="space-y-1.5">
-        <Label className="text-xs">{t("rulesRegistry.descriptionLabel")}</Label>
+        <Label>{t("rulesRegistry.descriptionLabel")}</Label>
         <div className="relative group">
           <Textarea
             className={cn("text-xs min-h-[60px]", showFieldSuggest && "pr-9")}
@@ -1717,7 +1826,7 @@ export function RegistryRuleFormDialog({
 
       <div className="space-y-1.5">
         <div className="flex items-center gap-1.5">
-          <Label className="text-xs">
+          <Label>
             {t("rulesRegistry.severityLabel")} <span className="text-destructive">*</span>
           </Label>
           <HelpTooltip text={t("rulesRegistry.severityTooltip")} />
@@ -1762,7 +1871,7 @@ export function RegistryRuleFormDialog({
 
       <div className="space-y-1.5">
         <div className="flex items-center gap-1.5">
-          <Label className="text-xs">
+          <Label>
             {t("rulesRegistry.dimensionLabel")} <span className="text-destructive">*</span>
           </Label>
           <HelpTooltip text={t("rulesRegistry.dimensionTooltip")} />
@@ -1853,8 +1962,10 @@ export function RegistryRuleFormDialog({
   // preserve; otherwise switches immediately.
   const performModeSwitch = (next: RegistryMode) => {
     // Low-Code -> SQL: translate the built rows + joins into the SQL editor
-    // so the author keeps their work instead of retyping it.
+    // so the author keeps their work instead of retyping it, and cache the
+    // AST + group-by so switching back can restore it (item 5).
     if (mode === "lowcode" && next === "sql") {
+      lowcodeCacheRef.current = { ast: lowcodeAst, groupBy };
       const predicate = compileAstToSql(lowcodeAst);
       const joinsSql = compileJoinsToSql(lowcodeAst.joins);
       if (predicate) setSqlPredicate(predicate);
@@ -1864,6 +1975,32 @@ export function RegistryRuleFormDialog({
         // nothing is silently dropped.
         setSqlPredicate((prev) => prev || predicate);
       }
+    }
+    // SQL -> Low-Code with a cached AST (item 5): restore the built conditions
+    // when the SQL still matches what that AST compiles to. If the SQL was
+    // hand-edited away from the compiled output, the structured rows can't be
+    // recovered from free SQL — drop the cache, clear the builder and warn,
+    // rather than silently restoring a stale, mismatched AST. With no cache
+    // (SQL authored from scratch) this falls through to the blank seed below.
+    if (mode === "sql" && next === "lowcode" && lowcodeCacheRef.current) {
+      const cache = lowcodeCacheRef.current;
+      const compiledFromCache = compileAstToSql(cache.ast).trim();
+      const currentSql = stripSqlLineComments(sqlPredicate).trim();
+      if (compiledFromCache === currentSql) {
+        setLowcodeAst(cache.ast);
+        setGroupBy(cache.groupBy);
+      } else {
+        lowcodeCacheRef.current = null;
+        setGroupBy("");
+        setLowcodeAst({
+          ...EMPTY_LOWCODE_AST,
+          rows: [seededFirstLowcodeRow(lowcodeColumns[0]?.name ?? "column_1")],
+        });
+        toast.warning(t("rulesRegistry.lowcodeSqlDivergedWarning"));
+      }
+      setMode(next);
+      setModeSwitch(null);
+      return;
     }
     // Landing in Low-Code with nothing translated over (e.g. from a blank SQL
     // predicate) — seed the first condition row (item 7) rather than leaving
@@ -1951,7 +2088,7 @@ export function RegistryRuleFormDialog({
       {mode === "lowcode" && (
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label className="text-xs">{t("rulesRegistry.conditionLabel")}</Label>
+            <Label>{t("rulesRegistry.conditionLabel")}</Label>
             {/* Unlike Native/SQL, Low-Code renders "IF" inline with the first
                 condition row (vertically centered against it, item 6) rather
                 than as a standalone label above the builder — there's no
@@ -1971,6 +2108,17 @@ export function RegistryRuleFormDialog({
             label={t("rulesRegistry.advancedSectionLabel")}
             defaultOpen={!!groupBy || lowcodeAst.joins.length > 0}
           >
+            {/* Joins come first: they widen the set of columns available to
+                the condition (and to group-by below) by pulling in
+                joined-table columns, so configuring them before grouping
+                matches the data-flow the compiled SQL follows. Gets the full
+                `lowcodeColumns` (declared slots + joined-table columns). */}
+            <JoinsBuilder
+              ast={lowcodeAst}
+              onChange={setLowcodeAst}
+              declaredColumns={lowcodeColumns}
+              readOnly={readOnly}
+            />
             {/* Group-by is restricted to declared `{{slot}}` columns (not
                 joined-table columns): a grouping key becomes a `merge_column`,
                 and DQX's row-level merge-back requires those columns to exist
@@ -1980,12 +2128,6 @@ export function RegistryRuleFormDialog({
               onChange={setGroupBy}
               declaredColumns={lowcodeColumns.filter((c) => !c.name.includes("."))}
               disabled={readOnly}
-            />
-            <JoinsBuilder
-              ast={lowcodeAst}
-              onChange={setLowcodeAst}
-              declaredColumns={lowcodeColumns}
-              readOnly={readOnly}
             />
           </AdvancedDisclosure>
           <div className="flex flex-wrap items-center gap-3">
@@ -1998,7 +2140,7 @@ export function RegistryRuleFormDialog({
       {mode === "dqx_native" && (
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label className="text-xs">
+            <Label>
               {t("rulesRegistry.conditionLabel")} <span className="text-destructive">*</span>
             </Label>
             {/* IF on its own line with the same vertical breathing room before
@@ -2167,7 +2309,7 @@ export function RegistryRuleFormDialog({
       {mode === "sql" && (
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label className="text-xs">
+            <Label>
               {t("rulesRegistry.conditionLabel")} <span className="text-destructive">*</span>
             </Label>
             {/* IF on its own line, more vertical breathing room before the
@@ -2419,6 +2561,55 @@ export function RegistryRuleFormDialog({
               <HistoryIcon className="h-3.5 w-3.5" />
               {t("rulesRegistry.tabHistory")}
             </TabsTrigger>
+            {/* Muted vertical rule separating Test / History from Results —
+                the same divider MT/TS use, which RR was missing (item 25).
+                Kept OUTSIDE the Results trigger's disabled/enabled conditional
+                below so it renders in both states, and it doubles as item 77's
+                "Results sits in its own group" placement. */}
+            <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
+            {/* Results is only meaningful once the rule is applied to at
+                least one monitored table (applied_to_count > 0). Until then
+                the trigger is disabled; the tooltip explains why for the
+                definitive not-applied state. The wrapping <span> is the
+                tooltip trigger because the disabled button itself swallows
+                pointer events (`disabled:pointer-events-none`). */}
+            {resultsNotApplied || resultsScoreError ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    tabIndex={0}
+                    className={cn(
+                      "inline-flex h-full",
+                      resultsScoreError ? "cursor-pointer" : "cursor-not-allowed",
+                    )}
+                    aria-disabled="true"
+                    // On a fetch error the wrapper doubles as the retry
+                    // affordance (the disabled trigger swallows clicks).
+                    onClick={resultsScoreError ? () => void ruleScoreQuery.refetch() : undefined}
+                  >
+                    <TabsTrigger value="results" className="gap-1.5" disabled aria-disabled="true">
+                      <LineChart className="h-3.5 w-3.5" />
+                      {t("rulesRegistry.tabResults")}
+                    </TabsTrigger>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  {resultsScoreError
+                    ? t("rulesRegistry.resultsScoreErrorTooltip")
+                    : t("rulesRegistry.resultsNotAppliedTooltip")}
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <TabsTrigger
+                value="results"
+                className="gap-1.5"
+                disabled={resultsDisabled}
+                aria-disabled={resultsDisabled}
+              >
+                <LineChart className="h-3.5 w-3.5" />
+                {t("rulesRegistry.tabResults")}
+              </TabsTrigger>
+            )}
           </TabsList>
         </div>
         <TabsContent value="about" className="pt-4">{aboutTabContent}</TabsContent>
@@ -2426,19 +2617,25 @@ export function RegistryRuleFormDialog({
         <TabsContent value="implementation" className="pt-4">{implementationTabContent}</TabsContent>
         <TabsContent value="test" className="pt-4">{testTabContent}</TabsContent>
         <TabsContent value="history" className="pt-4">{historyTabContent}</TabsContent>
+        <TabsContent value="results" className="pt-4">
+          {sourceRule && <RuleResultsTab ruleId={sourceRule.rule_id} />}
+        </TabsContent>
       </Tabs>
       {jsonDialogOpen && !readOnly && (
         <RegistryRuleFormJsonDialog
           open={jsonDialogOpen}
           onOpenChange={setJsonDialogOpen}
           description={t("rulesRegistry.jsonDialogDescriptionApply")}
-          checkJson={buildDqxCheckJson({
-            ...(sourceRule ?? {}),
-            mode,
-            definition: buildDefinition(),
-            polarity: polarityIsMeaningful ? polarity : null,
-            user_metadata: buildUserMetadata(),
-          } as RegistryRuleOut)}
+          checkJson={buildDqxCheckJson(
+            {
+              ...(sourceRule ?? {}),
+              mode,
+              definition: buildDefinition(),
+              polarity: polarityIsMeaningful ? polarity : null,
+              user_metadata: buildUserMetadata(),
+            } as RegistryRuleOut,
+            severityValueCriticality(labelDefinitions),
+          )}
           currentDefinition={buildDefinition()}
           currentUserMetadata={buildUserMetadata()}
           currentMode={mode}
@@ -2477,6 +2674,72 @@ export function RegistryRuleFormDialog({
     );
   };
 
+  // Save-draft + submit buttons, shared by the dialog footer and the page
+  // header. `showSubmitIcon` adds the Send glyph on the submit button to match
+  // the MT/TS header treatment; the dialog footer keeps its icon-less look by
+  // passing `false`. All label/disabled logic (approvals-mode relabel via
+  // `willAutoApprove`, published-revision wording, the `isEditing && !isDirty`
+  // submit-only branch, and the missing-fields tooltips) is preserved verbatim.
+  const renderSaveSubmitButtons = (showSubmitIcon: boolean): ReactNode => {
+    if (readOnly) return null;
+    const submitIcon = showSubmitIcon ? <Send className="h-3.5 w-3.5" /> : null;
+    return (
+      <>
+        {/* Grey out once there's nothing to save — either a blank,
+            untouched create form or an already-persisted draft with no
+            pending edits (re-saving it would just churn the audit log
+            with no real change), matching dqlake's steward editor.
+            Draft saves only need structural validity (`canSaveDraft`);
+            the completeness bar applies to the submit buttons below. */}
+        {withMissingFieldsTooltip(
+          <Button
+            variant="secondary"
+            onClick={() => handleSave(false)}
+            disabled={saving || !isDirty || !canSaveDraft}
+            className="gap-2"
+          >
+            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {isPublishedRevision ? t("rulesRegistry.saveRevision") : t("rulesRegistry.saveDraft")}
+          </Button>,
+          !canSaveDraft,
+          missingDraftFieldLabels,
+          "rulesRegistry.canSaveMissingFieldsTooltip",
+        )}
+        {isEditing && !isDirty ? (
+          // The draft is already persisted and unchanged — submit it
+          // for approval directly rather than issuing a redundant save.
+          withMissingFieldsTooltip(
+            <Button onClick={handleSubmitOnly} disabled={saving || !canSubmit || submitDisabledNoChanges} className="gap-2">
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : submitIcon}
+              {willAutoApprove
+                ? t("rulesRegistry.publishNow")
+                : isPublishedRevision
+                  ? t("rulesRegistry.submitForReview")
+                  : t("rulesRegistry.actionSubmit")}
+            </Button>,
+            !canSubmit,
+            missingSubmitFieldLabels,
+            "rulesRegistry.canSubmitMissingFieldsTooltip",
+          )
+        ) : (
+          withMissingFieldsTooltip(
+            <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit || submitDisabledNoChanges} className="gap-2">
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : submitIcon}
+              {willAutoApprove
+                ? t("rulesRegistry.saveAndPublish")
+                : isPublishedRevision
+                  ? t("rulesRegistry.saveAndSubmitReview")
+                  : t("rulesRegistry.saveAndSubmit")}
+            </Button>,
+            !canSubmit,
+            missingSubmitFieldLabels,
+            "rulesRegistry.canSubmitMissingFieldsTooltip",
+          )
+        )}
+      </>
+    );
+  };
+
   const footerButtons = (
     <>
       {/* Item 18: the routed detail page ("page" variant) already offers a
@@ -2489,67 +2752,41 @@ export function RegistryRuleFormDialog({
           {readOnly ? t("common.close") : t("common.cancel")}
         </Button>
       )}
-      {!readOnly && (
-        <>
-          {/* Grey out once there's nothing to save — either a blank,
-              untouched create form or an already-persisted draft with no
-              pending edits (re-saving it would just churn the audit log
-              with no real change), matching dqlake's steward editor.
-              Draft saves only need structural validity (`canSaveDraft`);
-              the completeness bar applies to the submit buttons below. */}
-          {withMissingFieldsTooltip(
-            <Button
-              variant="secondary"
-              onClick={() => handleSave(false)}
-              disabled={saving || !isDirty || !canSaveDraft}
-              className="gap-2"
-            >
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {isPublishedRevision ? t("rulesRegistry.saveRevision") : t("rulesRegistry.saveDraft")}
-            </Button>,
-            !canSaveDraft,
-            missingDraftFieldLabels,
-            "rulesRegistry.canSaveMissingFieldsTooltip",
-          )}
-          {isEditing && !isDirty ? (
-            // The draft is already persisted and unchanged — submit it
-            // for approval directly rather than issuing a redundant save.
-            withMissingFieldsTooltip(
-              <Button onClick={handleSubmitOnly} disabled={saving || !canSubmit} className="gap-2">
-                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {isPublishedRevision ? t("rulesRegistry.submitForReview") : t("rulesRegistry.actionSubmit")}
-              </Button>,
-              !canSubmit,
-              missingSubmitFieldLabels,
-              "rulesRegistry.canSubmitMissingFieldsTooltip",
-            )
-          ) : (
-            withMissingFieldsTooltip(
-              <Button onClick={() => handleSave(true)} disabled={saving || !isDirty || !canSubmit} className="gap-2">
-                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {isPublishedRevision ? t("rulesRegistry.saveAndSubmitReview") : t("rulesRegistry.saveAndSubmit")}
-              </Button>,
-              !canSubmit,
-              missingSubmitFieldLabels,
-              "rulesRegistry.canSubmitMissingFieldsTooltip",
-            )
-          )}
-        </>
-      )}
+      {renderSaveSubmitButtons(false)}
     </>
   );
 
   if (variant === "page") {
     // The routed detail page already renders its own name/status/mode/
-    // author-kind header above this component, so skip the dialog-style
-    // title here (which would duplicate it) and keep just the helper text.
+    // author-kind title above this component, so skip the dialog-style
+    // title here (which would duplicate it). Save/Submit actions live in a
+    // single top-right header row (matching the MT/TS binding headers)
+    // rather than a bottom footer; the page's breadcrumb covers the dropped
+    // Cancel/Close. The route passes its Approve/Reject buttons + the "…"
+    // actions menu as `headerActions` so they render inline, immediately
+    // after Save/Submit, in this same row (B2-7) instead of a separate row
+    // in the page's own title header.
+    const saveSubmitButtons = renderSaveSubmitButtons(true);
+    const hasHeaderActions = !!(saveSubmitButtons || headerActions);
     return (
       <div className="space-y-6">
-        <p className="text-sm text-muted-foreground">{t("rulesRegistry.dialogDescription")}</p>
+        {(headerTitle || hasHeaderActions) && (
+          // Title (left) + Save/Submit + Approve/Reject + "…" (right) share
+          // ONE row so pending-approval actions sit in line with the title
+          // rather than dropping to a separate row below it (B2-78). The
+          // title flexes/truncates; the actions never wrap under the title
+          // until the viewport genuinely can't fit both.
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            {headerTitle ? <div className="flex min-w-0 flex-1 items-center">{headerTitle}</div> : <div />}
+            {hasHeaderActions && (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {saveSubmitButtons}
+                {headerActions}
+              </div>
+            )}
+          </div>
+        )}
         {formBody}
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-2 pt-4 border-t">
-          {footerButtons}
-        </div>
       </div>
     );
   }
@@ -2562,7 +2799,7 @@ export function RegistryRuleFormDialog({
             {dialogTitle}
             {authorKindBadges}
           </DialogTitle>
-          <DialogDescription>{t("rulesRegistry.dialogDescription")}</DialogDescription>
+          <DialogDescription className="sr-only">{t("rulesRegistry.dialogSrDescription")}</DialogDescription>
         </DialogHeader>
         {formBody}
         <DialogFooter>{footerButtons}</DialogFooter>

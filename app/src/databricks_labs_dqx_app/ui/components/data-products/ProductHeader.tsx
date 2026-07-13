@@ -31,6 +31,8 @@ import {
   type DataProductMemberOut,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useApprovalsMode } from "@/hooks/use-approvals-mode";
+import { useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
 import { useProductRunSets } from "@/hooks/use-product-run-sets";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,7 +49,8 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { CheckCircle2, Clock, History, Loader2, MoreVertical, Play, Save, Send, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, History, Loader2, MessageSquare, MoreVertical, Play, Save, Send, Trash2, XCircle } from "lucide-react";
+import { CommentsDialog } from "@/components/CommentThread";
 import { cn } from "@/lib/utils";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
 
@@ -63,9 +66,11 @@ import type { EditProductState } from "@/components/data-products/useEditProduct
 function ReviewPendingChangesButton({
   productId,
   members,
+  editState,
 }: {
   productId: string;
   members: DataProductMemberOut[];
+  editState: EditProductState;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -93,11 +98,16 @@ function ReviewPendingChangesButton({
 
   const handleApprove = (member: DataProductMemberOut) => {
     if (busyBindingId) return;
+    // Captured before the mutation: only suppress the nav guard for the
+    // approve-triggered refetch window when there were no unsaved edits to
+    // begin with, so a genuine unsaved edit still warns (B2-66).
+    const wasClean = !editState.isDirty;
     setBusyBindingId(member.binding_id);
     approveMutation.mutate(
       { bindingId: member.binding_id },
       {
         onSuccess: () => {
+          if (wasClean) editState.markApprovedWhenClean();
           toast.success(t("dataProducts.reviewChangesToastApproved", { table: member.table_fqn }));
           invalidateAfterAction(member.binding_id);
         },
@@ -285,6 +295,8 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const perms = usePermissions();
+  const { willAutoApprove } = useApprovalsMode();
+  const requireDraftRun = useRequireDraftRunBeforeSubmit();
   const canRun = perms.canRunRules;
   const canApprove = perms.canApproveRules;
 
@@ -295,6 +307,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
   const [busyRun, setBusyRun] = useState(false);
   // Bridges the gap between a successful submit and the next 4s poll
   // catching the new RUNNING run set, so the button doesn't flash back to
@@ -324,6 +337,12 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   // monitored-table "Submit for review" disabled-no-changes guard so the
   // button doesn't imply there's something to re-submit when there isn't.
   const submitDisabledNoChanges = !editState.isDirty && product.status === "approved";
+  // Require-draft-run gate (issue B2-12): block submit until a run has been
+  // recorded for this space. ``last_run_at`` (excludes preview / in-flight
+  // runs) is the cache-friendly signal on the product payload; before approval
+  // the only run it can reflect is a draft run. The backend enforces the
+  // authoritative check (409) regardless.
+  const needsDraftRun = requireDraftRun && !product.last_run_at;
   const isPending = product.status === "pending_approval";
   const lifecycleBusy = approveMut.isPending || rejectMut.isPending || editState.submitPending;
 
@@ -335,8 +354,12 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   };
 
   const handleApprove = async () => {
+    // See ReviewPendingChangesButton.handleApprove: only bypass the guard for
+    // the post-approve refetch window when nothing was unsaved (B2-66).
+    const wasClean = !editState.isDirty;
     try {
       await approveMut.mutateAsync({ productId: product.product_id });
+      if (wasClean) editState.markApprovedWhenClean();
       toast.success(t("dataProducts.toastApproved"));
       invalidateLifecycle();
     } catch (e) {
@@ -354,12 +377,12 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
     }
   };
 
-  const goToRuns = () =>
-    void navigate({
-      to: "/table-spaces/$productId",
-      params: { productId: product.product_id },
-      search: (prev) => ({ ...prev, tab: "runs" }),
-    });
+  // Deep-link into the global Runs History, pre-filtered to this table
+  // space's member tables (Stream I #17). The in-page Runs tab is reachable
+  // from the tab bar, so the ⋮ menu only offers this global-history link
+  // (matching the Monitored Table detail menu — avoids a duplicate "Runs").
+  const goToRunsHistory = () =>
+    void navigate({ to: "/runs-history", search: { productId: product.product_id } });
 
   const handleRun = async (source: (typeof RunDataProductInSource)[keyof typeof RunDataProductInSource]) => {
     setBusyRun(true);
@@ -390,6 +413,10 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   // edits, they are SAVED first (so the draft run reflects them) and a save
   // failure is surfaced without running.
   const canRunDraft = (product.status === "draft" || editState.isDirty) && editState.members.length > 0;
+  // When there's a draft to run, Run draft is the PRIMARY button and Run now
+  // (approved) is demoted into the ⋮ menu; otherwise Run now is primary and
+  // Run draft is demoted. Draft wins as primary when both exist (item 59).
+  const draftIsPrimary = canRunDraft;
 
   const handleRunDraft = async () => {
     // Spans the whole save-then-run sequence, not just the run mutation, so a
@@ -438,7 +465,11 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
         </div>
         <div className="flex gap-2 items-center">
           {canApprove && (
-            <ReviewPendingChangesButton productId={product.product_id} members={editState.members} />
+            <ReviewPendingChangesButton
+              productId={product.product_id}
+              members={editState.members}
+              editState={editState}
+            />
           )}
 
           {canEdit && (
@@ -457,28 +488,54 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
           {canEdit && (
             <Button
               onClick={() => void editState.handleSubmit()}
-              disabled={editState.submitPending || (submitDisabledNoChanges && !editState.canSave)}
+              disabled={editState.submitPending || needsDraftRun || (submitDisabledNoChanges && !editState.canSave)}
               size="sm"
               className="gap-2"
-              title={submitDisabledNoChanges ? t("dataProducts.submitDisabledNoChangesHint") : undefined}
+              title={
+                needsDraftRun
+                  ? t("dataProducts.submitDisabledNeedsDraftRunHint")
+                  : submitDisabledNoChanges
+                    ? t("dataProducts.submitDisabledNoChangesHint")
+                    : undefined
+              }
             >
               {editState.submitPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              {t("dataProducts.submitForReviewButton")}
+              {willAutoApprove
+                ? t("dataProducts.saveAndPublishButton")
+                : t("dataProducts.submitForReviewButton")}
             </Button>
           )}
 
-          {canRun && (
-            <Button
-              onClick={() => void handleRun(RunDataProductInSource.approved)}
-              disabled={runPending || runnableCount === 0}
-              size="sm"
-              className="gap-2"
-              title={runnableCount === 0 ? t("dataProducts.runNowDisabledHint") : undefined}
-            >
-              {runPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              {runPending ? t("dataProducts.runningLabel") : t("dataProducts.runNowButton")}
-            </Button>
-          )}
+          {canRun &&
+            (draftIsPrimary ? (
+              <Button
+                onClick={() => void handleRunDraft()}
+                disabled={runPending}
+                size="sm"
+                className="gap-2"
+                title={hasActive ? t("dataProducts.runInProgressHint") : undefined}
+              >
+                {runPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                {runPending ? t("dataProducts.runningLabel") : t("dataProducts.runDraftAction")}
+              </Button>
+            ) : (
+              <Button
+                onClick={() => void handleRun(RunDataProductInSource.approved)}
+                disabled={runPending || runnableCount === 0}
+                size="sm"
+                className="gap-2"
+                title={
+                  runnableCount === 0
+                    ? t("dataProducts.runNowDisabledHint")
+                    : hasActive
+                      ? t("dataProducts.runInProgressHint")
+                      : undefined
+                }
+              >
+                {runPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                {runPending ? t("dataProducts.runningLabel") : t("dataProducts.runNowButton")}
+              </Button>
+            ))}
 
           {/* ⋮ menu — Runs (dqlake-exact, item 29), Run draft, Delete. */}
           <DropdownMenu>
@@ -488,36 +545,64 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {/* Run draft at the TOP (item 15): only when the space is a draft
-                  or has pending edits; those edits are saved first. Disabled +
-                  tooltip otherwise, matching the app's convention. */}
-              {canRun && (
-                <TooltipProvider delayDuration={200}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className={cn(!canRunDraft && "cursor-not-allowed")}>
-                        <DropdownMenuItem
-                          onSelect={(e) => {
-                            e.preventDefault();
-                            void handleRunDraft();
-                          }}
-                          disabled={runPending || !canRunDraft}
-                          className="gap-2"
-                        >
-                          <Play className="h-3.5 w-3.5" />
-                          {t("dataProducts.runDraftAction")}
-                        </DropdownMenuItem>
-                      </span>
-                    </TooltipTrigger>
-                    {!canRunDraft && (
-                      <TooltipContent side="left">{t("dataProducts.runDraftDisabledHint")}</TooltipContent>
-                    )}
-                  </Tooltip>
-                </TooltipProvider>
-              )}
-              <DropdownMenuItem onSelect={goToRuns} className="gap-2">
+              {/* The run action NOT shown as the primary button is demoted here
+                  at the top of the ⋮ menu (item 59). Both save-then-run (draft)
+                  and its disabled/tooltip conventions are preserved. */}
+              {canRun &&
+                (draftIsPrimary ? (
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className={cn(runnableCount === 0 && "cursor-not-allowed")}>
+                          <DropdownMenuItem
+                            onSelect={(e) => {
+                              e.preventDefault();
+                              void handleRun(RunDataProductInSource.approved);
+                            }}
+                            disabled={runPending || runnableCount === 0}
+                            className="gap-2"
+                          >
+                            <Play className="h-3.5 w-3.5" />
+                            {t("dataProducts.runNowApprovedOption")}
+                          </DropdownMenuItem>
+                        </span>
+                      </TooltipTrigger>
+                      {runnableCount === 0 && (
+                        <TooltipContent side="left">{t("dataProducts.runNowDisabledHint")}</TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : (
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className={cn(!canRunDraft && "cursor-not-allowed")}>
+                          <DropdownMenuItem
+                            onSelect={(e) => {
+                              e.preventDefault();
+                              void handleRunDraft();
+                            }}
+                            disabled={runPending || !canRunDraft}
+                            className="gap-2"
+                          >
+                            <Play className="h-3.5 w-3.5" />
+                            {t("dataProducts.runDraftAction")}
+                          </DropdownMenuItem>
+                        </span>
+                      </TooltipTrigger>
+                      {!canRunDraft && (
+                        <TooltipContent side="left">{t("dataProducts.runDraftDisabledHint")}</TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
+                ))}
+              <DropdownMenuItem onSelect={goToRunsHistory} className="gap-2">
                 <History className="h-3.5 w-3.5" />
-                {t("dataProducts.tabRuns")}
+                {t("runsHistory.menuViewRuns")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setCommentsOpen(true)} className="gap-2">
+                <MessageSquare className="h-3.5 w-3.5" />
+                {t("dataProducts.actionComments")}
               </DropdownMenuItem>
               {canEdit && <DropdownMenuSeparator />}
               {canEdit && (
@@ -627,6 +712,13 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <CommentsDialog
+        entityType="data_product"
+        entityId={product.product_id}
+        open={commentsOpen}
+        onOpenChange={setCommentsOpen}
+      />
     </div>
   );
 }

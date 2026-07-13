@@ -129,6 +129,7 @@ then redeploy — the consolidated baseline runs from scratch.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
@@ -590,7 +591,19 @@ _V2_OLTP_FALLBACK = (
     # scheduler, mirroring ``dq_data_products``'s schedule columns below.
     "  schedule_cron STRING,"
     "  schedule_tz STRING,"
+    # schedule_kind (B2-52): profiling-only / DQ-only / both for a scheduled
+    # run. Plain STRING (like schedule_cron) — the service writes a concrete
+    # value on insert; the CHECK below allows NULL (Delta CHECK passes on NULL)
+    # so legacy rows converged by v18 aren't rejected.
+    "  schedule_kind STRING,"
     "  last_profiled_at TIMESTAMP,"
+    # Denormalized last-run/last-profiled pointers written on run completion
+    # (write-on-complete, T-perf): the list/detail read paths read these plain
+    # OLTP columns so a page load never touches the warehouse. ``last_run_at``
+    # is the newest terminal ``dq_validation_runs`` created_at for this table
+    # (either trigger surface); ``last_profiled_at`` the newest SUCCESS
+    # ``dq_profiling_results`` created_at. Both derive-on-complete/self-heal.
+    "  last_run_at TIMESTAMP,"
     "  created_by STRING,"
     "  created_at TIMESTAMP,"
     "  updated_by STRING,"
@@ -600,6 +613,9 @@ _V2_OLTP_FALLBACK = (
     f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
     f"  ADD CONSTRAINT chk_dq_monitored_tables_status "
     f"  CHECK (status IN ('draft','pending_approval','approved','rejected'));"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
+    f"  ADD CONSTRAINT chk_dq_monitored_tables_schedule_kind "
+    f"  CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'));"
     #
     # dq_applied_rules — the LIVE LINK between a published registry rule
     # and a monitored table's column mapping. ``pinned_version`` NULL
@@ -830,6 +846,9 @@ _V10_DATA_PRODUCTS = (
     "  steward        STRING,"
     "  schedule_cron  STRING,"
     "  schedule_tz    STRING,"
+    # schedule_kind (B2-52): profiling-only / DQ-only / both for a scheduled
+    # Table Space run. Plain STRING; CHECK allows NULL for legacy rows (v18).
+    "  schedule_kind  STRING,"
     "  status         STRING NOT NULL,"
     "  version        INT NOT NULL,"
     "  created_by     STRING,"
@@ -841,6 +860,9 @@ _V10_DATA_PRODUCTS = (
     f"ALTER TABLE {_PLACEHOLDER}.dq_data_products "
     f"  ADD CONSTRAINT chk_dq_data_products_status "
     f"  CHECK (status IN ('draft','pending_approval','approved','rejected'));"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products "
+    f"  ADD CONSTRAINT chk_dq_data_products_schedule_kind "
+    f"  CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'));"
     #
     # dq_data_product_members — table membership within a product (design
     # spec §3.4).
@@ -992,6 +1014,100 @@ _V13_MONITORED_TABLES_SCHEDULE = (
 )
 
 
+# DQ score cache — Delta OLTP fallback for ``dq_score_cache`` (P3.4).
+# Mirrors the Postgres v11 migration: one row per scored scope, PK
+# (scope_type, scope_key). 'table' rows are recomputed from the
+# mv_dq_scores metric view (latest PUBLISHED run per table, one batched
+# warehouse query); 'product'/'global' rows derive from the cached
+# 'table' rows (unweighted means). The list endpoints LEFT JOIN this
+# table so the monitored-tables and table-spaces pages render scores
+# without touching the warehouse. Only present on Delta when Lakebase
+# is disabled (``oltp_fallback=True``) — see the Postgres v11 comment
+# for the full semantics.
+_V15_SCORE_CACHE = (
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_score_cache ("
+    "  scope_type    STRING NOT NULL,"
+    "  scope_key     STRING NOT NULL,"
+    "  score         DOUBLE,"
+    "  failed_tests  BIGINT,"
+    "  total_tests   BIGINT,"
+    "  latest_run_id STRING,"
+    "  run_time      TIMESTAMP,"
+    "  computed_at   TIMESTAMP,"
+    "  CONSTRAINT pk_dq_score_cache PRIMARY KEY (scope_type, scope_key) RELY"
+    ") CLUSTER BY (scope_type, scope_key);"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_score_cache "
+    f"  ADD CONSTRAINT chk_dq_score_cache_scope_type "
+    f"  CHECK (scope_type IN ('table','product','global'))"
+)
+
+
+# DQ score history — Delta OLTP fallback for ``dq_score_history`` (P3.5).
+# Mirrors the Postgres v12 migration: an append-only companion to
+# dq_score_cache — every scored recompute (non-NULL score) appends one
+# row so the homepage can chart the global score over time without a
+# warehouse query. Growth is capped by ScoreCacheService (count-trim to
+# the newest HISTORY_KEEP_ROWS rows per scope on every append). Only
+# present on Delta when Lakebase is disabled (``oltp_fallback=True``) —
+# see the Postgres v12 comment for the full semantics.
+_V16_SCORE_HISTORY = (
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_score_history ("
+    "  scope_type    STRING NOT NULL,"
+    "  scope_key     STRING NOT NULL,"
+    "  score         DOUBLE NOT NULL,"
+    "  failed_tests  BIGINT,"
+    "  total_tests   BIGINT,"
+    "  run_time      TIMESTAMP,"
+    "  computed_at   TIMESTAMP NOT NULL"
+    ") CLUSTER BY (scope_type, scope_key, computed_at)"
+)
+
+
+# Monitored tables gain a denormalized ``last_run_at`` (T-perf / B2-15). The v2
+# OLTP-fallback baseline above now declares the column, so this is a NO-OP on
+# fresh installs; it exists purely to converge Delta-OLTP databases already
+# deployed WITHOUT it (v2 is already recorded in ``dq_migrations`` there, so
+# editing v2 in place could never reach them — the same edit-in-place trap
+# corrected by v9/v12/v13). One plain ``ADD COLUMN`` (not ``ADD COLUMN IF NOT
+# EXISTS`` — unsupported on some warehouse versions); on an already-converged
+# DB it raises ``COLUMN_ALREADY_EXISTS`` which ``_IDEMPOTENT_ERROR_FRAGMENTS``
+# swallows.
+#
+# Marked ``oltp_fallback=True``: ``dq_monitored_tables`` lives in Lakebase when
+# enabled (the Postgres mirror is v13 in ``backend.migrations.postgres``), so
+# this only runs against Delta when Lakebase is disabled.
+_V17_MONITORED_TABLES_LAST_RUN_AT = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN last_run_at TIMESTAMP"
+)
+
+
+# Schedulable scope: add ``schedule_kind`` to monitored tables + data products
+# (B2-52). The v2 OLTP-fallback baseline above now declares the column (and its
+# CHECK) on both tables, so this is a NO-OP on fresh installs; it exists purely
+# to converge Delta-OLTP databases already deployed WITHOUT it (v2 is already
+# recorded in ``dq_migrations`` there, so editing v2 in place could never reach
+# them — the same edit-in-place trap corrected by v9/v12/v13/v17). Plain
+# ``ADD COLUMN`` / ``ADD CONSTRAINT`` (not ``IF NOT EXISTS`` — unsupported on
+# some warehouse versions); on an already-converged DB each raises
+# ``COLUMN_ALREADY_EXISTS`` / ``DELTA_CONSTRAINT_ALREADY_EXISTS`` which
+# ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows. The CHECK passes on the NULL
+# ``schedule_kind`` legacy rows carry until the service next writes them.
+#
+# Marked ``oltp_fallback=True``: both tables live in Lakebase when enabled (the
+# Postgres mirror is v14 in ``backend.migrations.postgres``), so this only runs
+# against Delta when Lakebase is disabled.
+_V18_SCHEDULE_KIND = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN schedule_kind STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
+    f"  ADD CONSTRAINT chk_dq_monitored_tables_schedule_kind "
+    f"  CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'));"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN schedule_kind STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products "
+    f"  ADD CONSTRAINT chk_dq_data_products_schedule_kind "
+    f"  CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'))"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -1104,6 +1220,34 @@ MIGRATIONS: list[Migration] = [
         sql_template=_V14_OBJECT_GRANTS,
         oltp_fallback=True,
     ),
+    DeltaMigration(
+        version=15,
+        description="DQ score cache (dq_score_cache) — list-page score columns (P3.4), "
+        "used only when Lakebase is disabled",
+        sql_template=_V15_SCORE_CACHE,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=16,
+        description="DQ score history (dq_score_history) — append-only trend points for the "
+        "homepage chart (P3.5), used only when Lakebase is disabled",
+        sql_template=_V16_SCORE_HISTORY,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=17,
+        description="Monitored tables: add last_run_at (write-on-complete list-page pointer, T-perf/B2-15) "
+        "— used only when Lakebase is disabled",
+        sql_template=_V17_MONITORED_TABLES_LAST_RUN_AT,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=18,
+        description="Schedulable scope: add schedule_kind to monitored tables + data products (B2-52) "
+        "— used only when Lakebase is disabled",
+        sql_template=_V18_SCHEDULE_KIND,
+        oltp_fallback=True,
+    ),
 ]
 
 
@@ -1114,6 +1258,60 @@ MIGRATIONS: list[Migration] = [
 # section of the module docstring for the full recovery contract.
 for _m in MIGRATIONS:
     _validate_template_safe(_m.sql_template)
+
+# ---------------------------------------------------------------------------
+# App-owned table registry (derived, single source of truth)
+# ---------------------------------------------------------------------------
+#
+# The authoritative list of tables the DQX Studio owns is derived directly
+# from the ``CREATE TABLE IF NOT EXISTS`` statements in the migration
+# templates above, so it can never drift from what the migrations actually
+# create. Consumers that need to operate over *all* app-owned tables — most
+# notably the admin "Reset database" feature
+# (``services/database_reset_service.py``) — import these tuples rather than
+# hand-maintaining a parallel list.
+#
+# The split mirrors the physical backend routing (see the module docstring):
+#   * ANALYTICAL — created by ``oltp_fallback=False`` migrations; ALWAYS live
+#     in Delta (the Spark task runner writes them). Cleared via the Delta
+#     (SP) executor.
+#   * OLTP — created by ``oltp_fallback=True`` migrations; live in Lakebase
+#     Postgres when Lakebase is enabled, otherwise in Delta. Cleared via the
+#     injected OLTP executor, which resolves to whichever backend owns them.
+#
+# The ``dq_migrations`` meta-table is deliberately NOT included: it tracks
+# applied schema versions and must survive a data reset so migrations are not
+# re-run against an already-migrated schema.
+_CREATE_TABLE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS \{catalog\}\.\{schema\}\.([a-z_][a-z0-9_]*)")
+
+
+def _created_table_names(*, oltp_fallback: bool) -> tuple[str, ...]:
+    """Extract table names created by migrations with the given fallback flag.
+
+    Scans every :class:`DeltaMigration` whose ``oltp_fallback`` matches
+    *oltp_fallback* for ``CREATE TABLE IF NOT EXISTS`` statements and returns
+    the created table names, de-duplicated and in first-seen order.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    for migration in MIGRATIONS:
+        if not isinstance(migration, DeltaMigration) or migration.oltp_fallback != oltp_fallback:
+            continue
+        for name in _CREATE_TABLE_RE.findall(migration.sql_template):
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+    return tuple(names)
+
+
+# Tables that always live in Delta (analytical / Spark-written).
+ANALYTICAL_TABLE_NAMES: tuple[str, ...] = _created_table_names(oltp_fallback=False)
+
+# Tables that live in Lakebase Postgres when enabled, else Delta (OLTP).
+OLTP_TABLE_NAMES: tuple[str, ...] = _created_table_names(oltp_fallback=True)
+
+# Every table the app owns, across both backends.
+ALL_APP_TABLE_NAMES: tuple[str, ...] = ANALYTICAL_TABLE_NAMES + OLTP_TABLE_NAMES
 
 # ---------------------------------------------------------------------------
 # Runner

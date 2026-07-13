@@ -330,3 +330,18 @@
   -webkit-text-fill-color: transparent;
   animation: ai-text-shine-fwd 4s linear infinite;
 }
+
+/* Genie "typing" indicator — three dots that gently bounce while an answer
+   loads. Tasteful, not noisy: small travel, staggered per-dot delay. */
+@keyframes dq-typing-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}

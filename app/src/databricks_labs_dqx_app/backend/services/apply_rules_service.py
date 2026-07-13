@@ -30,6 +30,9 @@ from databricks_labs_dqx_app.backend.registry_models import (
     AppliedRule,
     ColumnMappingGroup,
     compute_mapping_hash,
+    get_rule_dimension,
+    get_rule_name,
+    get_rule_severity,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
@@ -182,9 +185,7 @@ class ApplyRulesService:
             created_at=now,
         )
         self._insert(applied)
-        logger.info(
-            "Applied registry rule %s to binding %s (applied_rule_id=%s)", rule_id, binding_id, applied.id
-        )
+        logger.info("Applied registry rule %s to binding %s (applied_rule_id=%s)", rule_id, binding_id, applied.id)
         return applied
 
     @staticmethod
@@ -211,8 +212,7 @@ class ApplyRulesService:
                 if extra:
                     detail_parts.append(f"unknown slot(s) {sorted(extra)}")
                 raise MappingIncompleteError(
-                    f"column_mapping group {group} does not cover the rule's slots exactly: "
-                    + "; ".join(detail_parts)
+                    f"column_mapping group {group} does not cover the rule's slots exactly: " + "; ".join(detail_parts)
                 )
 
     def _update_mutable_fields(
@@ -374,6 +374,23 @@ class ApplyRulesService:
         )
         return results
 
+    def rule_display_tags(self, rule_id: str) -> tuple[str | None, str | None, str | None]:
+        """Return the ``(name, dimension, severity)`` reserved tags for *rule_id*.
+
+        Read from the LIVE registry rule's ``user_metadata`` — the same source
+        ``MonitoredTableService`` joins when it builds the detail view's
+        applied-rule summaries. Lets callers (e.g. the ``saveAppliedRules``
+        route) return the ENRICHED :class:`AppliedRuleOut` shape without a
+        second round-trip through ``MonitoredTableService``. Returns
+        ``(None, None, None)`` when the rule row is missing so the caller
+        degrades to a blank display rather than failing the whole save.
+        """
+        rule = self._registry.get_rule(rule_id)
+        if rule is None:
+            return None, None, None
+        metadata = rule.user_metadata
+        return get_rule_name(metadata), get_rule_dimension(metadata), get_rule_severity(metadata)
+
     # ------------------------------------------------------------------
     # List / Get
     # ------------------------------------------------------------------
@@ -384,6 +401,21 @@ class ApplyRulesService:
         sql = (
             f"SELECT {self._select_cols} FROM {self._table} "  # noqa: S608
             f"WHERE binding_id = '{e}' ORDER BY created_at"
+        )
+        rows = self._sql.query(sql)
+        return [self._row_to_applied_rule(row) for row in rows]
+
+    def list_bindings_for_rule(self, rule_id: str) -> list[AppliedRule]:
+        """List every application of *rule_id*, across all monitored-table bindings.
+
+        Reverse lookup of :meth:`list_applied` — same row shape, filtered on
+        ``rule_id`` instead of ``binding_id``. Used by the rule-level DQ score
+        aggregate to fan out to each binding's source table.
+        """
+        e = escape_sql_string(rule_id)
+        sql = (
+            f"SELECT {self._select_cols} FROM {self._table} "  # noqa: S608
+            f"WHERE rule_id = '{e}' ORDER BY created_at"
         )
         rows = self._sql.query(sql)
         return [self._row_to_applied_rule(row) for row in rows]
@@ -424,7 +456,9 @@ class ApplyRulesService:
         e = escape_sql_string(applied_rule_id)
         self._sql.execute(f"DELETE FROM {self._quality_rules_table} WHERE applied_rule_id = '{e}'")
         self._sql.execute(f"DELETE FROM {self._table} WHERE id = '{e}'")
-        logger.info("Removed applied rule %s (binding=%s, rule=%s)", applied_rule_id, existing.binding_id, existing.rule_id)
+        logger.info(
+            "Removed applied rule %s (binding=%s, rule=%s)", applied_rule_id, existing.binding_id, existing.rule_id
+        )
 
     # ------------------------------------------------------------------
     # Pin / severity override

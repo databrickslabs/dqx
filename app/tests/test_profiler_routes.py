@@ -16,14 +16,23 @@ covered by their own service-level tests, so we focus the suite on:
 
 from __future__ import annotations
 
-import pytest
+from unittest.mock import MagicMock, create_autospec
 
+import pytest
+from fastapi import HTTPException
+
+from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.models import (
     BatchProfileRunFailure,
     BatchProfileRunOut,
     ProfileRunOut,
 )
-from databricks_labs_dqx_app.backend.routes.v1.profiler import _classify_table_error
+from databricks_labs_dqx_app.backend.routes.v1.profiler import (
+    _classify_table_error,
+    _profile_run_type,
+    list_profile_runs,
+)
+from databricks_labs_dqx_app.backend.services.job_service import JobService
 
 
 # ---------------------------------------------------------------------------
@@ -191,3 +200,151 @@ def test_classify_returns_documented_status_codes(raw_error: str, expected_statu
     status, code, _ = _classify_table_error(Exception(raw_error), "x.y.z")
     assert status == expected_status
     assert code == expected_code
+
+
+# ---------------------------------------------------------------------------
+# JobService.list_run_rows — server-side ``source_table_fqn`` filter (item 49)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def job_service(sql_executor_mock: MagicMock, workspace_client_mock: MagicMock) -> JobService:
+    """A ``JobService`` wired to the shared spec-bound mocks from conftest."""
+    return JobService(ws=workspace_client_mock, job_id="123", sql=sql_executor_mock)
+
+
+class TestListRunRowsSourceTableFilter:
+    """The single-table profile view scopes the runs query server-side rather
+    than pulling the full history (limit 500) and filtering in the browser."""
+
+    def test_no_filter_emits_no_where_clause(self, job_service: JobService, sql_executor_mock: MagicMock) -> None:
+        job_service.list_run_rows("main.dqx.dq_profiling_results")
+        emitted = sql_executor_mock.query_dicts.call_args.args[0]
+        assert "WHERE source_table_fqn" not in emitted
+
+    def test_filter_scopes_by_source_table_fqn(self, job_service: JobService, sql_executor_mock: MagicMock) -> None:
+        job_service.list_run_rows("main.dqx.dq_profiling_results", source_table_fqn="cat.sch.orders")
+        emitted = sql_executor_mock.query_dicts.call_args.args[0]
+        assert "WHERE source_table_fqn = 'cat.sch.orders'" in emitted
+
+    def test_filter_escapes_single_quotes(self, job_service: JobService, sql_executor_mock: MagicMock) -> None:
+        """A source FQN can't legitimately contain a quote, but the literal
+        must still be escaped (doubled) so it can never break out of the
+        string — matching every other literal on the Delta SQL path."""
+        job_service.list_run_rows("main.dqx.dq_profiling_results", source_table_fqn="a.b.o'x")
+        emitted = sql_executor_mock.query_dicts.call_args.args[0]
+        assert "'a.b.o''x'" in emitted
+
+
+# ---------------------------------------------------------------------------
+# list_profile_runs — table_fqn is validated before it reaches the WHERE builder
+# ---------------------------------------------------------------------------
+
+
+class TestListProfileRunsTableFqnValidation:
+    """``escape_sql_string`` does not escape backslashes and relies on
+    ``validate_fqn`` upstream. The route must reject a backslash-containing /
+    otherwise-invalid ``table_fqn`` with a 400 before it hits ``list_run_rows``.
+    """
+
+    def test_backslash_table_fqn_rejected_before_query(self, app_config: AppConfig) -> None:
+        job_svc = create_autospec(JobService, instance=True)
+        with pytest.raises(HTTPException) as exc_info:
+            list_profile_runs(job_svc, app_config, table_fqn="cat.sch.tab\\x")
+        assert exc_info.value.status_code == 400
+        job_svc.list_run_rows.assert_not_called()
+
+    def test_non_three_part_table_fqn_rejected(self, app_config: AppConfig) -> None:
+        job_svc = create_autospec(JobService, instance=True)
+        with pytest.raises(HTTPException) as exc_info:
+            list_profile_runs(job_svc, app_config, table_fqn="not_a_fqn")
+        assert exc_info.value.status_code == 400
+        job_svc.list_run_rows.assert_not_called()
+
+    def test_valid_table_fqn_reaches_service(self, app_config: AppConfig) -> None:
+        job_svc = create_autospec(JobService, instance=True)
+        job_svc.list_run_rows.return_value = []
+        result = list_profile_runs(job_svc, app_config, table_fqn="cat.sch.orders")
+        assert result == []
+        job_svc.list_run_rows.assert_called_once()
+        assert job_svc.list_run_rows.call_args.kwargs["source_table_fqn"] == "cat.sch.orders"
+
+    def test_run_type_derived_from_requesting_user(self, app_config: AppConfig) -> None:
+        """``dq_profiling_results`` has no ``run_type`` column, so the list route
+        derives it from the scheduler's ``requesting_user`` provenance — a
+        scheduler-launched run is "scheduled", an end-user run is "manual"."""
+        job_svc = create_autospec(JobService, instance=True)
+        job_svc.list_run_rows.return_value = [
+            {"run_id": "r1", "source_table_fqn": "cat.sch.t", "requesting_user": "scheduler:table:b1"},
+            {"run_id": "r2", "source_table_fqn": "cat.sch.t", "requesting_user": "alice@example.com"},
+        ]
+        result = list_profile_runs(job_svc, app_config)
+        assert [r.run_type for r in result] == ["scheduled", "manual"]
+
+
+class TestProfileRunTypeClassifier:
+    def test_scheduler_prefixed_user_is_scheduled(self) -> None:
+        assert _profile_run_type("scheduler:table:b1") == "scheduled"
+        assert _profile_run_type("scheduler:product:p1") == "scheduled"
+
+    def test_end_user_email_is_manual(self) -> None:
+        assert _profile_run_type("alice@example.com") == "manual"
+
+    def test_none_is_manual(self) -> None:
+        assert _profile_run_type(None) == "manual"
+
+
+# ---------------------------------------------------------------------------
+# JobService.submit_run — SQL warehouse threading (B2-61)
+# ---------------------------------------------------------------------------
+
+
+class TestSubmitRunWarehouseThreading:
+    """The admin-configured SQL warehouse must reach the task runner as the
+    ``warehouse_id`` job parameter (closes the previously-dead path — see the
+    bundle job param + wheel-task ``--warehouse_id`` arg)."""
+
+    def _run_now_params(self, ws_mock: MagicMock) -> dict[str, str]:
+        return ws_mock.jobs.run_now.call_args.kwargs["job_parameters"]
+
+    def test_configured_warehouse_is_forwarded(
+        self, sql_executor_mock: MagicMock, workspace_client_mock: MagicMock
+    ) -> None:
+        svc = JobService(
+            ws=workspace_client_mock, job_id="123", sql=sql_executor_mock, warehouse_id="cfg-wh-override"
+        )
+        svc.submit_run(
+            task_type="profile",
+            view_fqn="cat.sch.v",
+            config={},
+            run_id="run-1",
+            requesting_user="a@b.com",
+        )
+        assert self._run_now_params(workspace_client_mock)["warehouse_id"] == "cfg-wh-override"
+
+    def test_falls_back_to_executor_warehouse_when_unset(
+        self, sql_executor_mock: MagicMock, workspace_client_mock: MagicMock
+    ) -> None:
+        # ``sql_executor_mock.warehouse_id`` is "test-warehouse" (conftest).
+        svc = JobService(ws=workspace_client_mock, job_id="123", sql=sql_executor_mock)
+        svc.submit_run(
+            task_type="profile",
+            view_fqn="cat.sch.v",
+            config={},
+            run_id="run-1",
+            requesting_user="a@b.com",
+        )
+        assert self._run_now_params(workspace_client_mock)["warehouse_id"] == "test-warehouse"
+
+    def test_blank_configured_warehouse_falls_back(
+        self, sql_executor_mock: MagicMock, workspace_client_mock: MagicMock
+    ) -> None:
+        svc = JobService(ws=workspace_client_mock, job_id="123", sql=sql_executor_mock, warehouse_id="   ")
+        svc.submit_run(
+            task_type="profile",
+            view_fqn="cat.sch.v",
+            config={},
+            run_id="run-1",
+            requesting_user="a@b.com",
+        )
+        assert self._run_now_params(workspace_client_mock)["warehouse_id"] == "test-warehouse"

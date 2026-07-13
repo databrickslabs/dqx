@@ -10,9 +10,10 @@ from databricks.sdk.errors.base import DatabricksError
 from fastapi import APIRouter, Depends, HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
-from databricks_labs_dqx_app.backend.config import conf
+from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
+    get_conf,
     get_sp_ws,
     get_vector_store_provisioner,
     require_role,
@@ -26,16 +27,11 @@ from databricks_labs_dqx_app.backend.models import (
     RunConfigIn,
     RunConfigOut,
 )
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    DRAFT_RUN_SAMPLE_LIMIT_DEFAULT,
+    AppSettingsService,
+)
 from databricks_labs_dqx_app.backend.services.vector_store import VectorStoreProvisioner
-
-# Everyone except VIEWER. Used to gate the embedded-dashboard GET: the
-# Lakeview iframe is published with ``embed_credentials: true``
-# (app/databricks.yml), so it renders with the publisher's credentials
-# rather than the caller's — the "underlying dashboard enforces UC
-# permissions" assumption does not hold, and a VIEWER could otherwise see
-# data they lack UC grants for. Mirrors ``_NON_VIEWERS`` in routes/v1/dryrun.py.
-_NON_VIEWERS = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
 
 _TZ_SETTING_KEY = "display_timezone"
 _TZ_DEFAULT = "UTC"
@@ -94,6 +90,14 @@ class LabelDefinition(BaseModel):
     picked (e.g. the ``dimension`` key's per-dimension descriptions). Both
     maps are pruned to keys present in ``values`` on save.
 
+    ``value_criticality`` optionally maps a subset (or all) of ``values`` to a
+    DQX ``criticality`` (``"warn"`` or ``"error"``). Only meaningful on the
+    reserved ``severity`` key today: the materializer reads it to decide which
+    criticality a registry rule's effective severity renders as (see
+    ``registry_models.resolve_criticality``). Unmapped values fall back to the
+    built-in defaults. Pruned to keys present in ``values`` on save, like the
+    other per-value maps.
+
     ``is_builtin`` flags a reserved, pre-seeded key (e.g. the Rules Registry
     ``dimension``/``severity`` tags) — such keys cannot be deleted or renamed
     via :func:`save_label_definitions`, though their values, colors, and
@@ -108,6 +112,7 @@ class LabelDefinition(BaseModel):
     allow_custom_values: bool = False
     value_colors: dict[str, str] | None = None
     value_descriptions: dict[str, str] | None = None
+    value_criticality: dict[str, str] | None = None
     is_builtin: bool = False
 
     @field_validator("value_colors")
@@ -118,6 +123,18 @@ class LabelDefinition(BaseModel):
         for label_value, color in value.items():
             if not _HEX_COLOR_RE.match(color):
                 raise ValueError(f"Invalid color {color!r} for value {label_value!r}; expected '#RRGGBB' hex format.")
+        return value
+
+    @field_validator("value_criticality")
+    @classmethod
+    def _validate_value_criticality(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        for label_value, criticality in value.items():
+            if criticality not in ("warn", "error"):
+                raise ValueError(
+                    f"Invalid criticality {criticality!r} for value {label_value!r}; expected 'warn' or 'error'."
+                )
         return value
 
 
@@ -389,6 +406,70 @@ def save_retention_settings(
 
 
 # ---------------------------------------------------------------------------
+# Draft-run sample limit — admin knob capping the rows a DRAFT monitored-
+# table run reads. Approved/published runs never sample (they always scan
+# the whole table — see ``BindingRunService.run_binding``); this setting
+# exists only so exploratory draft runs on large tables stay cheap.
+# 0 = unlimited (draft runs also scan the whole table).
+# ---------------------------------------------------------------------------
+
+# Generous ceiling — a draft "sample" past ten million rows is almost
+# certainly a typo; admins wanting full scans should use 0 (unlimited).
+_DRAFT_SAMPLE_LIMIT_MAX = 10_000_000
+
+
+class DraftRunSampleLimitOut(BaseModel):
+    """Effective draft-run sample limit + the default/bounds for the UI."""
+
+    draft_run_sample_limit: int
+    draft_run_sample_limit_default: int = DRAFT_RUN_SAMPLE_LIMIT_DEFAULT
+    draft_run_sample_limit_max: int = _DRAFT_SAMPLE_LIMIT_MAX
+    draft_run_sample_limit_set: bool
+
+
+class DraftRunSampleLimitIn(BaseModel):
+    draft_run_sample_limit: int = Field(
+        ge=0,
+        le=_DRAFT_SAMPLE_LIMIT_MAX,
+        description="Draft runs sample at most this many rows; 0 checks the whole table.",
+    )
+
+
+@router.get(
+    "/draft-run-sample-limit",
+    response_model=DraftRunSampleLimitOut,
+    operation_id="getDraftRunSampleLimit",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def get_draft_run_sample_limit(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> DraftRunSampleLimitOut:
+    """Return the current draft-run sample limit + default (admin only)."""
+    limit = svc.get_draft_run_sample_limit()
+    return DraftRunSampleLimitOut(
+        draft_run_sample_limit=limit if limit is not None else DRAFT_RUN_SAMPLE_LIMIT_DEFAULT,
+        draft_run_sample_limit_set=limit is not None,
+    )
+
+
+@router.put(
+    "/draft-run-sample-limit",
+    response_model=DraftRunSampleLimitOut,
+    operation_id="saveDraftRunSampleLimit",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_draft_run_sample_limit(
+    body: DraftRunSampleLimitIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> DraftRunSampleLimitOut:
+    """Update the draft-run sample limit (admin only). 0 = unlimited."""
+    svc.save_draft_run_sample_limit(body.draft_run_sample_limit, user_email=email)
+    logger.info("Saved draft_run_sample_limit=%d", body.draft_run_sample_limit)
+    return get_draft_run_sample_limit(svc)
+
+
+# ---------------------------------------------------------------------------
 # Label definitions — admin-managed catalog of label keys + allowed values.
 # Powers the constrained-mode label picker on rule authoring pages, and
 # (via the reserved ``weight`` key) the weight selector. Storage is one JSON
@@ -510,8 +591,11 @@ def save_label_definitions(
 
         cleaned_colors = {v: c for v, c in (d.value_colors or {}).items() if v in seen_values} or None
         cleaned_descriptions = {
-            v: desc.strip() for v, desc in (d.value_descriptions or {}).items() if v in seen_values and (desc or "").strip()
+            v: desc.strip()
+            for v, desc in (d.value_descriptions or {}).items()
+            if v in seen_values and (desc or "").strip()
         } or None
+        cleaned_criticality = {v: c for v, c in (d.value_criticality or {}).items() if v in seen_values} or None
 
         cleaned.append(
             LabelDefinition(
@@ -521,6 +605,7 @@ def save_label_definitions(
                 allow_custom_values=False if key in _NO_CUSTOM_VALUE_BUILTIN_KEYS else bool(d.allow_custom_values),
                 value_colors=cleaned_colors,
                 value_descriptions=cleaned_descriptions,
+                value_criticality=cleaned_criticality,
                 # Authoritative from the previously-persisted state, never
                 # from the client payload — a caller cannot grant or strip
                 # ``is_builtin`` protection via the request body.
@@ -636,55 +721,10 @@ def save_custom_metrics(
 
 
 # ----------------------------------------------------------------------
-# Embedded dashboard — the Insights page renders a Databricks AI/BI
-# dashboard inside an iframe. Admins set the dashboard ID (and an
-# optional display title) here; the GET endpoint falls back to the env
-# default (``conf.default_dashboard_id`` from ``DQX_DEFAULT_DASHBOARD_ID``)
-# so the bundle can ship a starter dashboard without preventing
-# customer overrides. The workspace host is read from
-# ``DATABRICKS_HOST`` (always set inside a Databricks App container)
-# and included in the response so the frontend can build the embed
-# URL without a second roundtrip.
+# Workspace host — read from ``DATABRICKS_HOST`` (always set inside a
+# Databricks App container) and exposed so the frontend can build deep
+# links into the workspace UI (e.g. Unity Catalog explorer, run pages).
 # ----------------------------------------------------------------------
-
-# Conservative ID validation: Databricks AI/BI dashboard IDs are
-# UUIDs or shorter slugs, so we accept letters, digits, hyphens, and
-# underscores. We deliberately reject anything that could be a URL
-# fragment or path traversal so admins can't accidentally paste a full
-# URL and break iframe rendering downstream.
-_DASHBOARD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-
-
-class EmbeddedDashboardOut(BaseModel):
-    """Current embedded-dashboard configuration + the bits the UI needs to render the iframe."""
-
-    dashboard_id: str = Field(
-        default="",
-        description="Effective dashboard ID. Empty string means 'nothing configured'.",
-    )
-    title: str | None = Field(
-        default=None,
-        description="Optional admin-provided display title. The UI falls back to a generic label when null.",
-    )
-    workspace_host: str = Field(
-        default="",
-        description="Workspace host (e.g. 'https://e2-...cloud.databricks.com') used to build the iframe URL.",
-    )
-    is_set: bool = Field(
-        default=False,
-        description="True when the admin has saved an explicit setting (independent of the env default).",
-    )
-    is_default: bool = Field(
-        default=False,
-        description="True when the response is serving the env-provided default rather than an admin override.",
-    )
-
-
-class EmbeddedDashboardIn(BaseModel):
-    """Update payload — admins write the dashboard ID and optionally a display title."""
-
-    dashboard_id: str
-    title: str | None = None
 
 
 def _workspace_host() -> str:
@@ -711,6 +751,15 @@ class WorkspaceHostOut(BaseModel):
             "Empty string when unset (local dev)."
         ),
     )
+    job_id: str = Field(
+        default="",
+        description=(
+            "Task-runner Databricks job id (``DQX_JOB_ID``). Combined with the host "
+            "and a run's ``job_run_id`` the UI builds a deep link to the run page: "
+            "``{workspace_host}/jobs/{job_id}/runs/{job_run_id}``. Empty when unset "
+            "(local dev / job not configured)."
+        ),
+    )
 
 
 @router.get(
@@ -718,112 +767,14 @@ class WorkspaceHostOut(BaseModel):
     response_model=WorkspaceHostOut,
     operation_id="getWorkspaceHost",
 )
-def get_workspace_host() -> WorkspaceHostOut:
-    """Return the workspace host (accessible by all authenticated users).
+def get_workspace_host(conf: Annotated[AppConfig, Depends(get_conf)]) -> WorkspaceHostOut:
+    """Return the workspace host + task-runner job id (accessible by all authenticated users).
 
-    Unlike the embedded-dashboard config, the host alone grants no data
-    access — links built from it (e.g. Unity Catalog explorer) still
-    enforce the caller's own workspace/UC permissions on arrival.
+    Neither value grants data access on its own — links built from them (e.g.
+    Unity Catalog explorer, job-run pages) still enforce the caller's own
+    workspace/UC permissions on arrival.
     """
-    return WorkspaceHostOut(workspace_host=_workspace_host())
-
-
-@router.get(
-    "/embedded-dashboard",
-    response_model=EmbeddedDashboardOut,
-    operation_id="getEmbeddedDashboard",
-    dependencies=[require_role(*_NON_VIEWERS)],
-)
-def get_embedded_dashboard(
-    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
-) -> EmbeddedDashboardOut:
-    """Return the current embedded-dashboard config.
-
-    Gated to non-VIEWER roles. The Lakeview iframe is published with
-    ``embed_credentials: true`` (app/databricks.yml), so it renders with
-    the publisher's credentials rather than the caller's — the dashboard
-    does NOT re-enforce UC permissions per viewer, so handing a VIEWER the
-    dashboard id + workspace host would let them see data they lack UC
-    grants for. See ``_NON_VIEWERS``.
-    """
-    saved = svc.get_embedded_dashboard()
-    workspace_host = _workspace_host()
-    if saved:
-        return EmbeddedDashboardOut(
-            dashboard_id=saved["dashboard_id"],
-            title=saved.get("title"),
-            workspace_host=workspace_host,
-            is_set=True,
-            is_default=False,
-        )
-    env_default = (conf.default_dashboard_id or "").strip()
-    return EmbeddedDashboardOut(
-        dashboard_id=env_default,
-        title=None,
-        workspace_host=workspace_host,
-        is_set=False,
-        is_default=bool(env_default),
-    )
-
-
-@router.put(
-    "/embedded-dashboard",
-    response_model=EmbeddedDashboardOut,
-    operation_id="saveEmbeddedDashboard",
-    dependencies=[require_role(UserRole.ADMIN)],
-)
-def save_embedded_dashboard(
-    body: EmbeddedDashboardIn,
-    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
-    email: Annotated[str, Depends(get_user_email)],
-) -> EmbeddedDashboardOut:
-    """Save the embedded-dashboard configuration (admin only)."""
-    dashboard_id = (body.dashboard_id or "").strip()
-    if not dashboard_id:
-        raise HTTPException(status_code=400, detail="dashboard_id is required.")
-    if not _DASHBOARD_ID_RE.match(dashboard_id):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Invalid dashboard_id. Paste the ID portion only "
-                "(letters, digits, hyphens, underscores; up to 128 chars) — "
-                "not a full dashboard URL."
-            ),
-        )
-    title = (body.title or "").strip() or None
-    if title and len(title) > 200:
-        raise HTTPException(status_code=400, detail="title must be 200 characters or fewer.")
-
-    svc.save_embedded_dashboard(dashboard_id, title, user_email=email)
-    logger.info("Saved embedded dashboard id=%s title=%r (by=%s)", dashboard_id, title, email)
-    return EmbeddedDashboardOut(
-        dashboard_id=dashboard_id,
-        title=title,
-        workspace_host=_workspace_host(),
-        is_set=True,
-        is_default=False,
-    )
-
-
-@router.delete(
-    "/embedded-dashboard",
-    response_model=EmbeddedDashboardOut,
-    operation_id="deleteEmbeddedDashboard",
-    dependencies=[require_role(UserRole.ADMIN)],
-)
-def delete_embedded_dashboard(
-    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
-    email: Annotated[str, Depends(get_user_email)],
-) -> EmbeddedDashboardOut:
-    """Clear the admin override (admin only).
-
-    The env-provided default — if any — takes over again. Useful when
-    the bundle ships a starter dashboard and the admin wants to revert
-    to it after a botched custom ID.
-    """
-    svc.delete_embedded_dashboard(user_email=email)
-    logger.info("Cleared embedded dashboard override (by=%s)", email)
-    return get_embedded_dashboard(svc)
+    return WorkspaceHostOut(workspace_host=_workspace_host(), job_id=conf.job_id)
 
 
 # ----------------------------------------------------------------------
@@ -1228,6 +1179,187 @@ def save_rules_registry_settings(
         svc.save_default_auto_upgrade(body.default_auto_upgrade, user_email=email)
     logger.info("Saved Rules Registry governance settings (by=%s)", email)
     return _rules_registry_settings_out(svc)
+
+
+# ----------------------------------------------------------------------
+# Approvals mode (issue #94) — the app-wide submit→approve gate. A 3-value
+# enum string: ``enabled`` (default), ``auto_bypass``, ``disabled`` (see
+# ``backend.common.approvals.ApprovalMode``). Read at VIEWER+ (every submit/
+# approve surface needs to know the effective mode to render the right button)
+# and written ADMIN-only, matching the other governance settings above.
+# ----------------------------------------------------------------------
+
+
+class ApprovalsModeOut(BaseModel):
+    """Effective approvals-workflow mode."""
+
+    mode: str = Field(
+        description="One of 'enabled' (authors submit, approvers approve), "
+        "'auto_bypass' (submit auto-approves when the caller could approve it "
+        "themselves), or 'disabled' (every submit auto-approves)."
+    )
+
+
+class ApprovalsModeIn(BaseModel):
+    """Update payload for the approvals mode."""
+
+    mode: str
+
+
+@router.get(
+    "/approvals-mode",
+    response_model=ApprovalsModeOut,
+    operation_id="getApprovalsMode",
+)
+def get_approvals_mode(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> ApprovalsModeOut:
+    """Return the current approvals mode (defaults to ``enabled`` when unset).
+
+    Available to any authenticated user — every submit/approve surface reads it
+    to decide whether to show "Submit for review" vs "Save & publish".
+    """
+    return ApprovalsModeOut(mode=svc.get_approvals_mode())
+
+
+@router.put(
+    "/approvals-mode",
+    response_model=ApprovalsModeOut,
+    operation_id="saveApprovalsMode",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_approvals_mode(
+    body: ApprovalsModeIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> ApprovalsModeOut:
+    """Update the approvals mode (admin only). 400 on an unrecognised value."""
+    try:
+        saved = svc.save_approvals_mode(body.mode, user_email=email)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info("Saved approvals mode = %s (by=%s)", saved, email)
+    return ApprovalsModeOut(mode=saved)
+
+
+# ----------------------------------------------------------------------
+# Global Results tab gating (issue B2-20) — an admin toggle that enables
+# the app-wide, all-tables Results surface (hidden by default). Read at
+# VIEWER+ so every authenticated user's sidebar can decide whether to show
+# the global Results nav item (and the homepage overall-score "?" icon),
+# written ADMIN-only, matching the other governance settings above.
+# ----------------------------------------------------------------------
+
+
+class GlobalResultsSettingsOut(BaseModel):
+    """Effective global-Results-tab gating setting."""
+
+    global_results_enabled: bool = Field(
+        description="Whether the app-wide, all-tables Results surface (nav item + homepage "
+        "overall-score explainer) is enabled. Defaults to False (hidden)."
+    )
+
+
+class GlobalResultsSettingsIn(BaseModel):
+    """Update payload for the global-Results-tab gating setting."""
+
+    global_results_enabled: bool
+
+
+@router.get(
+    "/global-results-settings",
+    response_model=GlobalResultsSettingsOut,
+    operation_id="getGlobalResultsSettings",
+)
+def get_global_results_settings(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> GlobalResultsSettingsOut:
+    """Return whether the global Results tab is enabled (defaults to False when unset).
+
+    Available to any authenticated user — the sidebar and homepage both read
+    it to decide whether to surface the global Results nav item and the
+    overall-score "?" explainer.
+    """
+    return GlobalResultsSettingsOut(global_results_enabled=svc.get_global_results_enabled())
+
+
+@router.put(
+    "/global-results-settings",
+    response_model=GlobalResultsSettingsOut,
+    operation_id="saveGlobalResultsSettings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_global_results_settings(
+    body: GlobalResultsSettingsIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> GlobalResultsSettingsOut:
+    """Enable or disable the global Results tab (admin only)."""
+    saved = svc.save_global_results_enabled(body.global_results_enabled, user_email=email)
+    logger.info("Saved global_results_enabled = %s (by=%s)", saved, email)
+    return GlobalResultsSettingsOut(global_results_enabled=saved)
+
+
+# ----------------------------------------------------------------------
+# Require-draft-run-before-submit (issue B2-12) — a governance gate that, when
+# on, refuses to submit a monitored table / table space (or a per-table
+# applied rule) for review — and the approvals-mode auto-approve shortcut —
+# until a draft run has been recorded for the target table(s). Read at VIEWER+
+# so every submit surface can decide whether to disable its Submit button;
+# written ADMIN-only, matching the other governance settings above.
+# ----------------------------------------------------------------------
+
+
+class RequireDraftRunSettingsOut(BaseModel):
+    """Effective require-draft-run-before-submit gating setting."""
+
+    require_draft_run_before_submit: bool = Field(
+        description="Whether a draft run must exist for the target table(s) before a monitored "
+        "table / table space / per-table rule can be submitted (or auto-approved) for review. "
+        "Defaults to False (no draft-run requirement). Registry rules and cross-table SQL checks "
+        "are table-agnostic and are never gated."
+    )
+
+
+class RequireDraftRunSettingsIn(BaseModel):
+    """Update payload for the require-draft-run-before-submit gating setting."""
+
+    require_draft_run_before_submit: bool
+
+
+@router.get(
+    "/require-draft-run",
+    response_model=RequireDraftRunSettingsOut,
+    operation_id="getRequireDraftRunSettings",
+)
+def get_require_draft_run_settings(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> RequireDraftRunSettingsOut:
+    """Return whether a draft run is required before submit (defaults to False when unset).
+
+    Available to any authenticated user — the RR/MT/TS submit surfaces read it
+    to decide whether to disable Submit until a draft run exists.
+    """
+    return RequireDraftRunSettingsOut(
+        require_draft_run_before_submit=svc.get_require_draft_run_before_submit()
+    )
+
+
+@router.put(
+    "/require-draft-run",
+    response_model=RequireDraftRunSettingsOut,
+    operation_id="saveRequireDraftRunSettings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_require_draft_run_settings(
+    body: RequireDraftRunSettingsIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> RequireDraftRunSettingsOut:
+    """Enable or disable the require-draft-run-before-submit gate (admin only)."""
+    saved = svc.save_require_draft_run_before_submit(body.require_draft_run_before_submit, user_email=email)
+    logger.info("Saved require_draft_run_before_submit = %s (by=%s)", saved, email)
+    return RequireDraftRunSettingsOut(require_draft_run_before_submit=saved)
 
 
 # ----------------------------------------------------------------------

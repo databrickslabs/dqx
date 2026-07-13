@@ -15,7 +15,6 @@ new optional fields on :class:`MetricSnapshotOut`.
 
 from __future__ import annotations
 
-import json
 import logging
 from collections import defaultdict
 from typing import Annotated, Any
@@ -30,12 +29,18 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_user_catalog_names,
     require_role,
 )
+from databricks_labs_dqx_app.backend.metrics_utils import (
+    catalog_of,
+    parse_check_metrics,
+    safe_int,
+)
 from databricks_labs_dqx_app.backend.models import (
     CheckMetricBreakdown,
     MetricSnapshotOut,
     MetricsSummaryOut,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -44,48 +49,6 @@ _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, User
 _BUILTIN_METRIC_NAMES = frozenset(
     {"input_row_count", "error_row_count", "warning_row_count", "valid_row_count", "check_metrics"}
 )
-
-
-def _catalog_of(fqn: str) -> str:
-    """Extract the catalog part from a fully qualified table name."""
-    parts = fqn.split(".", 1)
-    return parts[0] if parts else ""
-
-
-def _safe_int(value: Any) -> int | None:
-    """Best-effort string→int that tolerates ``None`` and decimal strings."""
-    if value in (None, ""):
-        return None
-    try:
-        # Accept '123', '123.0', 123, 123.0 — counts can be promoted to
-        # bigint by Spark and arrive as strings.
-        return int(float(value))
-    except (TypeError, ValueError):
-        return None
-
-
-def _parse_check_metrics(raw: Any) -> list[CheckMetricBreakdown]:
-    """Parse the ``check_metrics`` JSON-string emitted by the observer."""
-    if not raw:
-        return []
-    try:
-        items = json.loads(raw) if isinstance(raw, str) else raw
-    except (json.JSONDecodeError, TypeError):
-        return []
-    if not isinstance(items, list):
-        return []
-    out: list[CheckMetricBreakdown] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        out.append(
-            CheckMetricBreakdown(
-                check_name=str(item.get("check_name") or "unknown"),
-                error_count=int(item.get("error_count") or 0),
-                warning_count=int(item.get("warning_count") or 0),
-            )
-        )
-    return out
 
 
 def _check_metrics_to_error_breakdown(items: list[CheckMetricBreakdown]) -> list[dict[str, Any]] | None:
@@ -144,17 +107,17 @@ def _pivot_rows(rows: list[dict[str, Any]]) -> list[MetricSnapshotOut]:
             if name:
                 metrics[name] = value if value is not None else ""
 
-        total = _safe_int(metrics.get("input_row_count"))
-        valid = _safe_int(metrics.get("valid_row_count"))
-        errors = _safe_int(metrics.get("error_row_count"))
-        warnings = _safe_int(metrics.get("warning_row_count"))
+        total = safe_int(metrics.get("input_row_count"))
+        valid = safe_int(metrics.get("valid_row_count"))
+        errors = safe_int(metrics.get("error_row_count"))
+        warnings = safe_int(metrics.get("warning_row_count"))
         invalid = errors  # 'invalid' in the legacy DTO == 'error_row_count'
 
         pass_rate = (valid / total * 100.0) if total and total > 0 and valid is not None else None
         if pass_rate is not None:
             pass_rate = round(pass_rate, 4)
 
-        check_metrics = _parse_check_metrics(metrics.get("check_metrics"))
+        check_metrics = parse_check_metrics(metrics.get("check_metrics"))
         custom_metrics = {k: v for k, v in metrics.items() if k not in _BUILTIN_METRIC_NAMES} or None
 
         out.append(
@@ -205,11 +168,13 @@ def get_metrics_trend(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    if _catalog_of(table_fqn) not in user_catalogs:
+    if catalog_of(table_fqn) not in user_catalogs:
         raise HTTPException(status_code=403, detail="You do not have access to this table's catalog")
 
-    metrics_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_metrics"
-    runs_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
+    # Catalog/schema are backtick-quoted (quote_object_fqn) so hyphenated
+    # app catalogs stay parseable — same convention as the dq_results reads.
+    metrics_table = quote_object_fqn(app_conf.catalog, app_conf.schema_name, "dq_metrics")
+    runs_table = quote_object_fqn(app_conf.catalog, app_conf.schema_name, "dq_validation_runs")
     e_fqn = escape_sql_string(table_fqn)
 
     # Pull the latest ``limit`` runs for this table (DESC by run_time)
@@ -251,8 +216,8 @@ def get_metrics_summary(
     Computes pass rate inline from ``valid_row_count`` and
     ``input_row_count`` so we don't need a stored ``pass_rate`` column.
     """
-    metrics_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_metrics"
-    runs_table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
+    metrics_table = quote_object_fqn(app_conf.catalog, app_conf.schema_name, "dq_metrics")
+    runs_table = quote_object_fqn(app_conf.catalog, app_conf.schema_name, "dq_validation_runs")
 
     # For each (input_location), find the most recent run_id, then pull
     # input/valid counts plus run_type/created_at from the runs table.
@@ -283,10 +248,10 @@ def get_metrics_summary(
     out: list[MetricsSummaryOut] = []
     for r in rows:
         fqn = r.get("source_table_fqn") or ""
-        if _catalog_of(fqn) not in user_catalogs:
+        if catalog_of(fqn) not in user_catalogs:
             continue
-        total = _safe_int(r.get("total"))
-        valid = _safe_int(r.get("valid"))
+        total = safe_int(r.get("total"))
+        valid = safe_int(r.get("valid"))
         pass_rate = (valid / total * 100.0) if total and total > 0 and valid is not None else None
         out.append(
             MetricsSummaryOut(

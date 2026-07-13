@@ -64,20 +64,6 @@ class AppConfig(BaseSettings):
     dryrun_default_sample_size: int = Field(default=1_000)
 
     # ------------------------------------------------------------------
-    # Embedded dashboard (Insights page)
-    # ------------------------------------------------------------------
-    # The Insights page renders a Databricks AI/BI dashboard inside an
-    # iframe. Admins set the dashboard ID via the Configuration page,
-    # which writes to ``dq_app_settings`` and overrides this default.
-    # When unset, this env var lets the bundle ship a starter
-    # dashboard ID so the page works out-of-the-box.
-    default_dashboard_id: str = Field(
-        default="",
-        validation_alias="DQX_DEFAULT_DASHBOARD_ID",
-        description="Fallback dashboard ID for the Insights page when no admin override is set.",
-    )
-
-    # ------------------------------------------------------------------
     # Lakebase (Postgres) backend
     # ------------------------------------------------------------------
     # When ``lakebase_endpoint`` is set the OLTP-style tables
@@ -200,6 +186,16 @@ class AppConfig(BaseSettings):
 
 
 conf = AppConfig()
+
+
+# Maximum number of sample table rows fed into an AI/LLM prompt (e.g. the AI
+# rule generator's optional sample-row context). Mirrors the 500-row sample the
+# "ask a question about this data" path already uses
+# (services.table_data_service.TableDataService.PREVIEW_LIMIT), so every place
+# that samples table data for an AI/LLM question caps at the same 500 rows.
+# Still a hard, finite bound (OWASP LLM04/LLM06): it limits prompt size and the
+# volume of raw data echoed into a model call.
+AI_SAMPLE_ROW_LIMIT = 500
 
 
 def get_sql_warehouse_path() -> str:

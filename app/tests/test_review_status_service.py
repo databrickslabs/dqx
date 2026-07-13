@@ -29,7 +29,7 @@ def review_status_service(sql_executor_mock):
     settings = MagicMock(name="AppSettingsService")
     settings.get_run_review_statuses.return_value = [
         {"value": "Pending review", "is_default": True},
-        {"value": "Acknowledged"},
+        {"value": "Confirmed"},
     ]
     settings.get_default_run_review_status.return_value = "Pending review"
 
@@ -48,13 +48,13 @@ def _history_inserts(sql_executor_mock) -> list[str]:
 class TestSetStatusHistory:
     def test_set_status_records_history(self, review_status_service):
         svc, sql_executor_mock = review_status_service
-        svc.set_status("run-1", "Acknowledged", user_email="alice@example.com")
+        svc.set_status("run-1", "Confirmed", user_email="alice@example.com")
 
         sql_executor_mock.upsert.assert_called_once()
         inserts = _history_inserts(sql_executor_mock)
         assert len(inserts) == 1, f"expected one history INSERT, got: {inserts}"
         sql = inserts[0]
-        assert "'Acknowledged'" in sql
+        assert "'Confirmed'" in sql
         assert "'Pending review'" in sql  # previous effective (virtual default)
         assert "'alice@example.com'" in sql
         # Timestamp from the DB, not the app clock.
@@ -66,9 +66,9 @@ class TestSetStatusHistory:
         # failure there must not surface (the upsert already committed).
         sql_executor_mock.execute.side_effect = RuntimeError("history table unavailable")
 
-        record = svc.set_status("run-1", "Acknowledged", user_email="alice@example.com")
+        record = svc.set_status("run-1", "Confirmed", user_email="alice@example.com")
 
-        assert record.status == "Acknowledged"
+        assert record.status == "Confirmed"
         assert record.is_default is False
         sql_executor_mock.upsert.assert_called_once()
 

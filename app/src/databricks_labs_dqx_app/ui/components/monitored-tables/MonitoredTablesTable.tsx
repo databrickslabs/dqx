@@ -16,7 +16,13 @@ import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
-import { STICKY_ACTIONS_HEAD_CLASS, STICKY_ACTIONS_CELL_CLASS } from "@/components/data-table/sticky-actions";
+import { ScoreBarCell } from "@/components/data-table/ScoreBarCell";
+import {
+  STICKY_ACTIONS_HEAD_CLASS,
+  STICKY_ACTIONS_CELL_CLASS,
+  ACTIONS_COL_WIDTH,
+} from "@/components/data-table/sticky-actions";
+import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
 import type { MonitoredTableSummaryOut } from "@/lib/api";
 
 /** Column keys that carry a comparable value and can drive client sort. */
@@ -40,6 +46,12 @@ interface ColumnDef {
   defaultVisible: boolean;
   defaultWidth: number;
   sortable: boolean;
+  /** First-click sort direction (B2-92). Defaults to "asc" when omitted. */
+  defaultSortDir?: SortDirection;
+  /** When true, rows with a missing ("never") value sort to the TOP
+   *  regardless of direction; omitted/false → they sort to the bottom
+   *  (B2-92). */
+  nullsFirst?: boolean;
   resizable?: boolean;
   headClassName?: string;
   renderHeader(label: string): ReactNode;
@@ -158,6 +170,8 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
+    // Most checks first (B2-92): the best-covered tables lead.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (r) => <span className="tabular-nums">{r.check_count ?? 0}</span>,
   },
@@ -167,20 +181,26 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
+    // Most applied rules first (B2-92): the best-covered tables lead.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (r) => <span className="tabular-nums">{r.applied_rule_count ?? 0}</span>,
   },
   dqScore: {
-    // No quality-score aggregate is exposed on MonitoredTableSummaryOut
-    // yet; column is present (hidden by default) for layout parity with
-    // dqlake and to avoid another localStorage-key migration once it lands.
+    // Cached DQ score of the latest published run, LEFT-JOINed from the
+    // dq_score_cache OLTP table by the list endpoint (P3.4) — no warehouse
+    // hit on page load. Cell presentation copied from dqlake's
+    // BindingsTable dqScore column (bar + whole-number percent).
     labelKey: "monitoredTables.colDqScore",
     toggleable: true,
-    defaultVisible: false,
+    defaultVisible: true,
     defaultWidth: 140,
-    sortable: false,
+    sortable: true,
+    // Highest score first (B2-92): the best-performing tables lead;
+    // never-scored tables (no published run) sort last.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
-    renderCell: () => <span className="text-muted-foreground">—</span>,
+    renderCell: (r) => <ScoreBarCell score={r.score} />,
   },
   version: {
     // The binding's approved snapshot version (Data Products Task 1/2):
@@ -190,6 +210,8 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
+    // Latest version first (B2-92); never-approved (v0) sorts last.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (r) => <VersionCell version={r.table.version ?? 0} />,
   },
@@ -199,8 +221,10 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 130,
     sortable: true,
+    // Most recent run first (B2-92); never-run tables sort last.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
-    renderCell: (r) => <RelativeTimeCell iso={r.table.last_profiled_at} />,
+    renderCell: (r) => <RelativeTimeCell iso={r.table.last_run_at} />,
   },
   owner: {
     labelKey: "monitoredTables.colOwner",
@@ -217,6 +241,7 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 180,
     sortable: true,
+    // A→Z through the named stewards (B2-92); un-stewarded tables sort last.
     renderHeader: (label) => label,
     renderCell: (r) => <TruncatedCell text={r.table.steward || "—"} className="text-muted-foreground" />,
   },
@@ -254,42 +279,66 @@ const DEFAULT_ORDER: MonitoredTablesSortKey[] = [
   "status",
 ];
 
+/** Lifecycle-status sort rank (B2-92): a first-click ASC sort leads with the
+ *  live/approved tables, then work in progress (pending approval, draft),
+ *  with rejected and retired (deprecated) sinking to the bottom. */
+const STATUS_RANK: Record<string, number> = {
+  approved: 0,
+  pending_approval: 1,
+  draft: 2,
+  rejected: 3,
+  deprecated: 4,
+};
+
 /** Returns the sortable value for a given column + row, shared between this
- *  component's click-to-sort handling and any caller that pre-sorts rows. */
+ *  component's click-to-sort handling and any caller that pre-sorts rows.
+ *  `null` marks a missing/"never" value that {@link compareSortValues} pins
+ *  per the column's `nullsFirst` flag. */
 export function getMonitoredTablesSortValue(
   key: MonitoredTablesSortKey,
   r: MonitoredTableSummaryOut,
-): string | number {
+): SortValue {
   const fqn = splitFqn(r.table.table_fqn);
   switch (key) {
     case "catalog":
-      return fqn.catalog.toLowerCase();
+      return fqn.catalog.toLowerCase() || null;
     case "schema":
-      return fqn.schema.toLowerCase();
+      return fqn.schema.toLowerCase() || null;
     case "table":
-      return fqn.table.toLowerCase();
+      return fqn.table.toLowerCase() || null;
     case "description":
-      return "";
+      return null;
     case "checksCount":
       return r.check_count ?? 0;
     case "rulesCount":
       return r.applied_rule_count ?? 0;
     case "dqScore":
-      return -1;
+      return r.score ?? null;
     case "version":
-      return r.table.version ?? 0;
+      return r.table.version && r.table.version > 0 ? r.table.version : null;
     case "lastRun":
-      return r.table.last_profiled_at ?? "";
+      return r.table.last_run_at || null;
     case "owner":
-      return (r.table.created_by ?? "").toLowerCase();
+      return (r.table.created_by ?? "").toLowerCase() || null;
     case "steward":
-      return (r.table.steward ?? "").toLowerCase();
+      return (r.table.steward ?? "").toLowerCase() || null;
     case "status":
-      return r.table.status;
+      return STATUS_RANK[r.table.status] ?? Object.keys(STATUS_RANK).length;
   }
 }
 
-const LS_KEY_LAYOUT = "dqx.monitoredTables.layout";
+/** Resolves a column's first-click direction + null placement (B2-92) from
+ *  its declarative `COLUMNS` config, for the overview route's sort handling. */
+export function getMonitoredTablesSortConfig(key: MonitoredTablesSortKey): SortColumnConfig {
+  const def = COLUMNS[key];
+  return { dir: def.defaultSortDir ?? "asc", nullsFirst: def.nullsFirst ?? false };
+}
+
+// v2: DQ Score went live (visible + sortable by default) — bumping the key
+// makes the new default visibility take effect for users whose stored
+// layout still carries the old hidden-placeholder preference (the dqlake
+// `dqlake.products.layout.vN` convention).
+const LS_KEY_LAYOUT = "dqx.monitoredTables.layout.v2";
 
 export interface MonitoredTablesTableProps {
   /** Rows to render — already filtered, sorted, and paginated by the caller. */
@@ -347,7 +396,8 @@ export function MonitoredTablesTable({
   }
 
   const totalWidth =
-    visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0) + (hasActions ? 96 : 0);
+    visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0) +
+    (hasActions ? ACTIONS_COL_WIDTH : 0);
 
   return (
     <div className="space-y-4">
@@ -370,7 +420,7 @@ export function MonitoredTablesTable({
             {visibleKeys.map((k) => (
               <col key={k} style={{ width: colWidths[k] ?? COLUMNS[k].defaultWidth }} />
             ))}
-            {hasActions && <col style={{ width: 96 }} />}
+            {hasActions && <col style={{ width: ACTIONS_COL_WIDTH }} />}
           </colgroup>
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
@@ -418,7 +468,7 @@ export function MonitoredTablesTable({
               {hasActions && (
                 <TableHead
                   className={cn("text-right text-xs font-medium px-2", STICKY_ACTIONS_HEAD_CLASS)}
-                  style={{ width: 96 }}
+                  style={{ width: ACTIONS_COL_WIDTH }}
                 >
                   {t("monitoredTables.colActions")}
                 </TableHead>
@@ -450,7 +500,7 @@ export function MonitoredTablesTable({
                   })}
                   {hasActions && (
                     <TableCell
-                      style={{ width: 96 }}
+                      style={{ width: ACTIONS_COL_WIDTH }}
                       className={cn("text-right p-2", STICKY_ACTIONS_CELL_CLASS)}
                       onClick={(e) => e.stopPropagation()}
                     >

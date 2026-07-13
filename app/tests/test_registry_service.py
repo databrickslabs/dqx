@@ -84,6 +84,17 @@ class TestCreateRule:
         inserted_sql = sql.execute.call_args_list[0].args[0]
         assert "INSERT INTO dqx_test.dqx_app_test.dq_rules" in inserted_sql
 
+    def test_defaults_steward_to_creator_when_unset(self, svc):
+        # No steward supplied -> the creator becomes the accountable steward.
+        rule, _ = svc.create_rule(mode="dqx_native", definition=_native_definition(), user_email="alice@x")
+        assert rule.steward == "alice@x"
+
+    def test_explicit_steward_wins_over_creator(self, svc):
+        rule, _ = svc.create_rule(
+            mode="dqx_native", definition=_native_definition(), user_email="alice@x", steward="bob@x"
+        )
+        assert rule.steward == "bob@x"
+
     def test_error_message_persists_through_create(self, svc, sql):
         """Phase 7C-a: optional custom failure message threads through create
         as part of the ``definition`` jsonb blob (no separate column)."""
@@ -796,3 +807,121 @@ class TestListVersions:
     def test_empty_when_no_versions(self, svc, sql):
         sql.query.return_value = []
         assert svc.list_versions("r1") == []
+
+
+class TestMatchOrCreateApprovedRule:
+    """The profiling match-or-create-and-approve primitive (idempotent by fingerprint)."""
+
+    def _approved(self):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        rule = RegistryRule(
+            rule_id="approved1",
+            mode="dqx_native",
+            status="approved",
+            version=1,
+            definition=_native_definition(),
+            user_metadata={"name": "Is not null"},
+        )
+        rule.fingerprint = "fp-existing"
+        return rule
+
+    def test_reuses_existing_approved_rule_without_creating(self, svc, sql):
+        approved = self._approved()
+        sql.query.return_value = [_row_for(approved)]
+
+        rule, created = svc.match_or_create_approved_rule(_native_definition(), {"name": "x"}, "alice@x")
+
+        assert created is False
+        assert rule is not None
+        assert rule.rule_id == "approved1"
+        # No INSERT into dq_rules — the existing approved rule was reused.
+        assert not any("INSERT INTO dqx_test.dqx_app_test.dq_rules " in c.args[0] for c in sql.execute.call_args_list)
+
+    def test_idempotent_on_rerun(self, svc, sql):
+        # A second suggest run finds the rule the first run created (same
+        # fingerprint) and reuses it — never a duplicate.
+        approved = self._approved()
+        sql.query.return_value = [_row_for(approved)]
+
+        first, first_created = svc.match_or_create_approved_rule(_native_definition(), {}, "alice@x")
+        second, second_created = svc.match_or_create_approved_rule(_native_definition(), {}, "alice@x")
+
+        assert first_created is False and second_created is False
+        assert first.rule_id == second.rule_id == "approved1"
+
+    def test_skips_when_non_approved_duplicate_exists(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        draft = RegistryRule(
+            rule_id="draft1", mode="dqx_native", status="draft", version=0, definition=_native_definition()
+        )
+        # get_approved -> none; get_rule_by_fingerprint -> a draft (foreign work).
+        sql.query.side_effect = [[], [_row_for(draft)]]
+
+        rule, created = svc.match_or_create_approved_rule(_native_definition(), {}, "alice@x")
+
+        assert rule is None
+        assert created is False
+        # Neither duplicated nor auto-approved someone else's draft.
+        assert not sql.execute.called
+
+    def test_creates_and_approves_when_absent(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        # Query order: get_approved([]), get_rule_by_fingerprint([]),
+        # create_rule._dedup_warning([]), submit._get(draft), _transition._get(draft),
+        # approve._get(pending).
+        def draft_row():
+            r = RegistryRule(
+                rule_id="new1", mode="dqx_native", status="draft", version=0, definition=_native_definition()
+            )
+            return _row_for(r)
+
+        def pending_row():
+            r = RegistryRule(
+                rule_id="new1", mode="dqx_native", status="pending_approval", version=0, definition=_native_definition()
+            )
+            return _row_for(r)
+
+        sql.query.side_effect = [[], [], [], [draft_row()], [draft_row()], [pending_row()]]
+
+        rule, created = svc.match_or_create_approved_rule(
+            _native_definition(), {"name": "Is not null", "dimension": "Completeness"}, "alice@x"
+        )
+
+        assert created is True
+        assert rule is not None
+        assert rule.status == "approved"
+        assert rule.version == 1
+        executed = [c.args[0] for c in sql.execute.call_args_list]
+        # A new dq_rules row was inserted and a frozen version snapshot written
+        # (i.e. it was published/approved, not left as a draft).
+        assert any("INSERT INTO dqx_test.dqx_app_test.dq_rules " in s for s in executed)
+        assert any("INSERT INTO dqx_test.dqx_app_test.dq_rule_versions" in s for s in executed)
+
+    def test_new_rule_attributed_to_profiling(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        def draft_row():
+            r = RegistryRule(
+                rule_id="new1", mode="dqx_native", status="draft", version=0, definition=_native_definition()
+            )
+            return _row_for(r)
+
+        def pending_row():
+            r = RegistryRule(
+                rule_id="new1", mode="dqx_native", status="pending_approval", version=0, definition=_native_definition()
+            )
+            return _row_for(r)
+
+        sql.query.side_effect = [[], [], [], [draft_row()], [draft_row()], [pending_row()]]
+
+        svc.match_or_create_approved_rule(_native_definition(), {}, "alice@x")
+
+        insert = next(
+            c.args[0] for c in sql.execute.call_args_list if "INSERT INTO dqx_test.dqx_app_test.dq_rules " in c.args[0]
+        )
+        # source='profiling' + author_kind='ai_generated' make the auto-created rule auditable.
+        assert "'profiling'" in insert
+        assert "'ai_generated'" in insert

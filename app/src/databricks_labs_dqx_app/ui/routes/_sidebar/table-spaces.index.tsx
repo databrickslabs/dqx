@@ -10,8 +10,10 @@ import { Pagination } from "@/components/Pagination";
 import {
   DataProductsTable,
   getDataProductsSortValue,
+  getDataProductsSortConfig,
   type DataProductsSortKey,
 } from "@/components/data-products/DataProductsTable";
+import { compareSortValues } from "@/components/data-table/sort";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,17 +35,25 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, Boxes, CheckCircle2, Loader2, Plus, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
+import { AlertCircle, Boxes, CheckCircle2, Loader2, Play, Plus, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
 import {
   useListDataProducts,
   useApproveDataProduct,
   useRejectDataProduct,
   useDeleteDataProduct,
+  useRunDataProduct,
   getListDataProductsQueryKey,
   getGetDataProductQueryKey,
   type DataProductOut,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/use-permissions";
+import {
+  DQ_SCORE_BUCKETS,
+  DQ_SCORE_FILTER_ALL,
+  FILTER_TRIGGER_CLASS,
+  matchesDqScoreBucket,
+} from "@/components/data-table/filter-bar";
+import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { cn } from "@/lib/utils";
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -102,14 +112,18 @@ function DataProductsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  // Refetch on remount (e.g. navigating back from the create/detail page)
-  // so a newly created product appears without a manual page reload —
-  // ported from dqlake's `DataProductsTable`, which needs the same
-  // override for the same navigation pattern.
-  const { data, isLoading, isError, refetch } = useListDataProducts({ query: { refetchOnMount: "always" } });
+  // Run-completion invalidation (results-invalidation.ts) already refetches
+  // this list when a run settles or a product changes, so the blanket
+  // `refetchOnMount: "always"` is dropped (T-perf/B2-3): it forced a full
+  // refetch — which fans out to member scores/timestamps — on every remount
+  // (e.g. tabbing back), even when nothing changed. React Query's default
+  // staleness handling plus the explicit invalidations keep a newly created
+  // product appearing without the always-refetch cost.
+  const { data, isLoading, isError, refetch } = useListDataProducts();
   const products = useMemo(() => data?.data ?? [], [data]);
 
   const [stewardFilter, setStewardFilter] = useState<string>(ALL);
+  const [scoreFilter, setScoreFilter] = useState<string>(DQ_SCORE_FILTER_ALL);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
 
@@ -122,24 +136,28 @@ function DataProductsPage() {
     const q = search.trim().toLowerCase();
     return products.filter((p) => {
       if (stewardFilter !== ALL && (p.steward ?? "") !== stewardFilter) return false;
+      if (!matchesDqScoreBucket(p.score, scoreFilter)) return false;
       if (!q) return true;
       const hay = `${p.name} ${p.description ?? ""} ${p.steward ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [products, stewardFilter, search]);
+  }, [products, stewardFilter, scoreFilter, search]);
 
   const [sortKey, setSortKey] = useState<DataProductsSortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const handleHeaderClick = useCallback(
     (key: DataProductsSortKey) => {
+      // First click uses the column's steward-first default direction (B2-92);
+      // repeat clicks toggle to the opposite direction, then clear.
+      const { dir } = getDataProductsSortConfig(key);
       if (sortKey !== key) {
         setSortKey(key);
-        setSortDir("asc");
+        setSortDir(dir);
         return;
       }
-      if (sortDir === "asc") {
-        setSortDir("desc");
+      if (sortDir === dir) {
+        setSortDir(dir === "asc" ? "desc" : "asc");
         return;
       }
       setSortKey(null);
@@ -149,14 +167,16 @@ function DataProductsPage() {
 
   const sorted = useMemo(() => {
     if (!sortKey) return filtered;
+    const { nullsFirst } = getDataProductsSortConfig(sortKey);
     const copy = [...filtered];
-    copy.sort((a, b) => {
-      const av = getDataProductsSortValue(sortKey, a);
-      const bv = getDataProductsSortValue(sortKey, b);
-      if (av < bv) return sortDir === "asc" ? -1 : 1;
-      if (av > bv) return sortDir === "asc" ? 1 : -1;
-      return 0;
-    });
+    copy.sort((a, b) =>
+      compareSortValues(
+        getDataProductsSortValue(sortKey, a),
+        getDataProductsSortValue(sortKey, b),
+        sortDir,
+        nullsFirst,
+      ),
+    );
     return copy;
   }, [filtered, sortKey, sortDir]);
 
@@ -165,7 +185,7 @@ function DataProductsPage() {
     return sorted.slice(start, start + PAGE_SIZE);
   }, [sorted, page]);
 
-  const hasActiveFilters = stewardFilter !== ALL || search.trim() !== "";
+  const hasActiveFilters = stewardFilter !== ALL || scoreFilter !== DQ_SCORE_FILTER_ALL || search.trim() !== "";
 
   const applyFilter = useCallback(
     <T,>(setter: (v: T) => void) =>
@@ -187,6 +207,7 @@ function DataProductsPage() {
   const approveMutation = useApproveDataProduct();
   const rejectMutation = useRejectDataProduct();
   const deleteMutation = useDeleteDataProduct();
+  const runMutation = useRunDataProduct();
 
   const invalidateAfterChange = useCallback(
     (productId: string) => {
@@ -222,6 +243,33 @@ function DataProductsPage() {
       t("dataProducts.toastApproved"),
       t("dataProducts.toastApproveFailed"),
     );
+
+  // Run the approved snapshot (item 76). Gated to spaces with at least one
+  // runnable member (`runnable_count > 0`) below. Not routed through
+  // `runRowAction` because the run endpoint returns 200 even when every
+  // member failed to launch (empty `submitted`, run set rolled back) — that
+  // must surface as a failure, mirroring the detail header's `handleRun`.
+  // `pendingId` swaps the row's action cell to a spinner while in flight; a
+  // cross-session "already running" gate would need the per-row run-activity
+  // feed the far-left running cog needs, deferred with it (see report).
+  const handleRun = (product: DataProductOut) => {
+    if (pendingId) return;
+    setPendingId(product.product_id);
+    runMutation
+      .mutateAsync({ productId: product.product_id, data: { source: "approved" } })
+      .then((resp) => {
+        if ((resp.data.submitted?.length ?? 0) === 0) {
+          toast.error(t("dataProducts.toastRunNoneStarted"), { duration: 6000 });
+          return;
+        }
+        toast.success(t("dataProducts.toastRunStarted"));
+        invalidateAfterChange(product.product_id);
+      })
+      .catch((err: unknown) => {
+        toast.error(extractApiError(err, t("dataProducts.toastRunFailed")), { duration: 6000 });
+      })
+      .finally(() => setPendingId(null));
+  };
 
   // Reject is destructive (sends the space back to draft) so it is gated
   // behind a confirm dialog, mirroring the detail header's reject button —
@@ -277,10 +325,27 @@ function DataProductsPage() {
           pendingProductId={pendingId}
           renderActions={
             // Actions column stays visible for anyone who can approve OR
-            // create/delete — mirrors Monitored Tables overview's gating.
-            perms.canApproveRules || perms.canCreateRules
+            // create/delete OR run — mirrors Monitored Tables overview's
+            // gating, now including the runner-only case (item 76).
+            perms.canApproveRules || perms.canCreateRules || perms.canRunRules
               ? (product) => (
                   <div className="flex items-center justify-end gap-1">
+                    {perms.canRunRules && (product.runnable_count ?? 0) > 0 && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            aria-label={t("dataProducts.runAction")}
+                            onClick={() => handleRun(product)}
+                          >
+                            <Play className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("dataProducts.runAction")}</TooltipContent>
+                      </Tooltip>
+                    )}
                     {product.status === "pending_approval" && perms.canApproveRules && (
                       <>
                         <Tooltip>
@@ -344,19 +409,28 @@ function DataProductsPage() {
                   className="h-8 text-xs pl-7"
                 />
               </div>
-              {stewardOptions.length > 0 && (
-                <Select value={stewardFilter} onValueChange={applyFilter(setStewardFilter)}>
-                  <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("dataProducts.colSteward")}>
-                    <SelectValue placeholder={t("dataProducts.stewardPlaceholder")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL} className="text-xs">{t("dataProducts.allStewards")}</SelectItem>
-                    {stewardOptions.map((s) => (
-                      <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
+              <SearchableSelect
+                value={stewardFilter}
+                onChange={applyFilter(setStewardFilter)}
+                options={stewardOptions.map((s) => ({ value: s, label: s }))}
+                allValue={ALL}
+                allLabel={t("dataProducts.allStewards")}
+                searchPlaceholder={t("common.search")}
+                emptyText={t("common.noMatches")}
+                ariaLabel={t("dataProducts.colSteward")}
+              />
+              <Select value={scoreFilter} onValueChange={applyFilter(setScoreFilter)}>
+                <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("dataProducts.colDqScore")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DQ_SCORE_BUCKETS.map((b) => (
+                    <SelectItem key={b.value} value={b.value} className="text-xs">
+                      {t(b.labelKey)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </>
           }
           emptyState={

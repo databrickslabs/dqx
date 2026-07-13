@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, AlertTriangle, CheckCircle2, Circle, Clock, Cpu, Database, Globe, KeyRound, LayoutDashboard, Loader2, Lock, Search, Tags, Plus, Trash2, X, ExternalLink, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Circle, Clock, Cpu, Database, FlaskConical, Globe, KeyRound, LineChart, Loader2, Lock, Scale, Search, Tags, Plus, Trash2, X, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -20,16 +20,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
   useTimezone,
   useSaveTimezone,
   getTimezoneQueryKey,
@@ -39,17 +29,20 @@ import {
   useRetentionSettings,
   useSaveRetentionSettings,
   getRetentionSettingsQueryKey,
-  useEmbeddedDashboard,
-  useSaveEmbeddedDashboard,
-  useDeleteEmbeddedDashboard,
-  getEmbeddedDashboardQueryKey,
   useRunReviewStatuses,
   useSaveRunReviewStatuses,
   getRunReviewStatusesQueryKey,
-  type LabelDefinition,
   type RetentionSettingsOut,
   type RunReviewStatusOption,
 } from "@/lib/api-custom";
+import {
+  HEX_COLOR_RE,
+  defToDraft,
+  draftToDef,
+  type CriticalityValue,
+  type DraftDefinition,
+} from "@/lib/label-definition-drafts";
+import { resolveCriticality } from "@/lib/registry-rule-conversion";
 import {
   useGetAiSettings,
   useSaveAiSettings,
@@ -59,17 +52,29 @@ import {
   useGetRulesRegistrySettings,
   useSaveRulesRegistrySettings,
   getGetRulesRegistrySettingsQueryKey,
+  useGetApprovalsMode,
+  useSaveApprovalsMode,
+  getGetApprovalsModeQueryKey,
   useGetComputeSettings,
   useSaveComputeSettings,
   getGetComputeSettingsQueryKey,
   useGetPermissionsDefaultInherit,
   useSetPermissionsDefaultInherit,
   getGetPermissionsDefaultInheritQueryKey,
+  useGetGlobalResultsSettings,
+  useSaveGlobalResultsSettings,
+  getGetGlobalResultsSettingsQueryKey,
+  useGetRequireDraftRunSettings,
+  useSaveRequireDraftRunSettings,
+  getGetRequireDraftRunSettingsQueryKey,
   useListComputeWarehouses,
   useListComputeClusters,
   useGetWarehouseAccess,
   getGetWarehouseAccessQueryKey,
   useGrantWarehouseAccess,
+  useGetDraftRunSampleLimit,
+  useSaveDraftRunSampleLimit,
+  getGetDraftRunSampleLimitQueryKey,
   type AiSettingsIn,
   type RulesRegistrySettingsIn,
   type ComputeSettingsIn,
@@ -83,12 +88,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useResetDatabase } from "@/lib/api";
 import type { AxiosError } from "axios";
 import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
 import { usePermissions } from "@/hooks/use-permissions";
-import { Suspense, useMemo, useState, useRef, useEffect } from "react";
+import { Suspense, useMemo, useState, useRef, useEffect, type ComponentType, type ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import {
   Popover,
@@ -286,7 +301,6 @@ function TimezoneSettings() {
 
 const LABEL_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
 const RESERVED_WEIGHT_KEY = "weight";
-const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
 const RESERVED_SEVERITY_KEY = "severity";
 
 /** Red asterisk marking a required field — pair with a label, no annotation needed for optional fields. */
@@ -320,44 +334,9 @@ function LockedFieldHint({ text }: { text: string }) {
   );
 }
 
-interface DraftDefinition extends LabelDefinition {
-  draftId: string;
-}
-
-function defToDraft(d: LabelDefinition): DraftDefinition {
-  return {
-    draftId: crypto.randomUUID(),
-    key: d.key,
-    description: d.description ?? "",
-    values: [...d.values],
-    allow_custom_values: !!d.allow_custom_values,
-    value_colors: d.value_colors ? { ...d.value_colors } : null,
-    value_descriptions: d.value_descriptions ? { ...d.value_descriptions } : null,
-    is_builtin: !!d.is_builtin,
-  };
-}
-
-function draftToDef(d: DraftDefinition): LabelDefinition {
-  const values = d.values.map((v) => v.trim()).filter(Boolean);
-  const valueSet = new Set(values);
-  const colors: Record<string, string> = {};
-  for (const [value, color] of Object.entries(d.value_colors ?? {})) {
-    if (valueSet.has(value) && HEX_COLOR_RE.test(color)) colors[value] = color;
-  }
-  const descriptions: Record<string, string> = {};
-  for (const [value, desc] of Object.entries(d.value_descriptions ?? {})) {
-    if (valueSet.has(value) && desc.trim()) descriptions[value] = desc;
-  }
-  return {
-    key: d.key.trim(),
-    description: (d.description ?? "").trim(),
-    values,
-    allow_custom_values: d.allow_custom_values,
-    value_colors: Object.keys(colors).length > 0 ? colors : null,
-    value_descriptions: Object.keys(descriptions).length > 0 ? descriptions : null,
-    is_builtin: !!d.is_builtin,
-  };
-}
+// Draft <-> API mapping (`DraftDefinition` / `defToDraft` / `draftToDef`)
+// lives in `lib/label-definition-drafts.ts` so it's unit-testable without
+// rendering this route.
 
 function LabelDefinitionsSettings() {
   const { t } = useTranslation();
@@ -419,6 +398,7 @@ function LabelDefinitionsSettings() {
         allow_custom_values: false,
         value_colors: null,
         value_descriptions: null,
+        value_criticality: null,
         is_builtin: false,
       },
     ]);
@@ -650,6 +630,7 @@ function AllowedValuesEditor({
   const values = draft.values;
   const colors = draft.value_colors ?? {};
   const descriptions = draft.value_descriptions ?? {};
+  const criticalities = draft.value_criticality ?? {};
 
   // Severity values are stored/seeded lowest-first (Low..Critical) so they
   // read as an ascending scale when authored, but every display surface
@@ -662,12 +643,16 @@ function AllowedValuesEditor({
     ? values.map((_, i) => i).reverse()
     : values.map((_, i) => i);
 
-  const patchValue = (i: number, patch: { name?: string; color?: string | null; description?: string }) => {
+  const patchValue = (
+    i: number,
+    patch: { name?: string; color?: string | null; description?: string; criticality?: CriticalityValue },
+  ) => {
     const current = values[i];
     if (current === undefined) return;
     let nextValues = values;
     let nextColors = colors;
     let nextDescriptions = descriptions;
+    let nextCriticalities = criticalities;
 
     if (patch.name !== undefined && patch.name !== current) {
       nextValues = values.map((v, idx) => (idx === i ? patch.name! : v));
@@ -680,6 +665,11 @@ function AllowedValuesEditor({
         nextDescriptions = { ...descriptions };
         nextDescriptions[patch.name] = nextDescriptions[current];
         delete nextDescriptions[current];
+      }
+      if (criticalities[current] !== undefined) {
+        nextCriticalities = { ...criticalities };
+        nextCriticalities[patch.name] = nextCriticalities[current];
+        delete nextCriticalities[current];
       }
     }
     const targetKey = patch.name ?? current;
@@ -694,11 +684,15 @@ function AllowedValuesEditor({
       if (patch.description.trim()) nextDescriptions[targetKey] = patch.description;
       else delete nextDescriptions[targetKey];
     }
+    if (patch.criticality !== undefined) {
+      nextCriticalities = { ...nextCriticalities, [targetKey]: patch.criticality };
+    }
 
     onChange({
       values: nextValues,
       value_colors: Object.keys(nextColors).length > 0 ? nextColors : null,
       value_descriptions: Object.keys(nextDescriptions).length > 0 ? nextDescriptions : null,
+      value_criticality: Object.keys(nextCriticalities).length > 0 ? nextCriticalities : null,
     });
   };
 
@@ -708,10 +702,13 @@ function AllowedValuesEditor({
     delete nextColors[current];
     const nextDescriptions = { ...descriptions };
     delete nextDescriptions[current];
+    const nextCriticalities = { ...criticalities };
+    delete nextCriticalities[current];
     onChange({
       values: values.filter((_, idx) => idx !== i),
       value_colors: Object.keys(nextColors).length > 0 ? nextColors : null,
       value_descriptions: Object.keys(nextDescriptions).length > 0 ? nextDescriptions : null,
+      value_criticality: Object.keys(nextCriticalities).length > 0 ? nextCriticalities : null,
     });
     if (expanded === i) setExpanded(null);
   };
@@ -741,7 +738,12 @@ function AllowedValuesEditor({
             )}
             onClick={() => setExpanded(isOpen ? null : i)}
           >
-            <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 px-2.5 py-1.5">
+            <div
+              className={cn(
+                "grid items-center gap-2 px-2.5 py-1.5",
+                isSeverity ? "grid-cols-[auto_1fr_auto_auto]" : "grid-cols-[auto_1fr_auto]",
+              )}
+            >
               <ValueColorEditor value={v} color={color} onSetColor={(c) => patchValue(i, { color: c })} />
               <span className="flex items-baseline gap-2 min-w-0">
                 <span className="font-mono text-xs shrink-0">{v}</span>
@@ -749,6 +751,36 @@ function AllowedValuesEditor({
                   <span className="truncate text-[11px] text-muted-foreground">{description}</span>
                 )}
               </span>
+              {/* Severity values additionally carry the admin-editable DQX
+                  criticality they materialize as (warn/error) — read by the
+                  backend's `resolve_criticality`; unset values fall back to
+                  the built-in defaults, which is what `resolveCriticality`
+                  renders here so the selector always shows the effective
+                  criticality. */}
+              {isSeverity && (
+                <span onClick={(e) => e.stopPropagation()}>
+                  <Select
+                    value={resolveCriticality(v, draft.value_criticality)}
+                    onValueChange={(next) => patchValue(i, { criticality: next as CriticalityValue })}
+                  >
+                    <SelectTrigger
+                      aria-label={t("config.valueCriticalityAria", { value: v })}
+                      title={t("config.valueCriticalityTitle", { value: v })}
+                      className="h-6 w-24 text-xs"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="warn" className="text-xs">
+                        {t("config.criticalityWarn")}
+                      </SelectItem>
+                      <SelectItem value="error" className="text-xs">
+                        {t("config.criticalityError")}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </span>
+              )}
               <button
                 type="button"
                 aria-label={t("config.removeValueAria", { value: v })}
@@ -997,19 +1029,17 @@ function RetentionSettings() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Clock className="h-5 w-5" />
-          Data Retention
+          {t("config.retentionTitle")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          The scheduler runs a daily DELETE pass against the analytical tables.
-          <strong className="text-foreground"> Quarantine</strong> holds the full source
-          row payload (errors, warnings, and the row itself) so its window is kept
-          tighter than the trend tables by default. Both values are floored at{" "}
-          <code>{min}</code> days to protect against accidental data loss.
+          How long runs and quarantined rows are kept before the daily cleanup
+          removes them. Quarantine defaults to a shorter window because it holds
+          full source rows. Both are floored at <code>{min}</code> days.
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4">
           <div className="space-y-1.5">
             <Label htmlFor="retention-global" className="text-xs">
               Global retention (days)
@@ -1026,8 +1056,7 @@ function RetentionSettings() {
               className="h-8"
             />
             <p className="text-[11px] text-muted-foreground">
-              Applies to <code>dq_validation_runs</code>, <code>dq_profiling_results</code>,{" "}
-              <code>dq_metrics</code>, and the OLTP history tables.
+              Applies to run history, profiling results, and metrics.
               <br />
               Default: <code>{settings.retention_days_default}</code> days
               {!settings.retention_days_set && " (not yet customised)"}
@@ -1050,8 +1079,7 @@ function RetentionSettings() {
               className="h-8"
             />
             <p className="text-[11px] text-muted-foreground">
-              Applies only to <code>dq_quarantine_records</code> (the table that
-              stores per-row failures, including the source row payload).
+              Applies only to quarantined rows, which hold full source-row payloads.
               <br />
               Default: <code>{settings.quarantine_retention_days_default}</code> days
               {!settings.quarantine_retention_days_set && " (not yet customised)"}
@@ -1108,247 +1136,112 @@ function RetentionSettings() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Embedded Dashboard — pins a Databricks AI/BI dashboard ID into app state so
-// the Insights page can render it inside an iframe. Falls back to the env
-// default (set by the bundle's DQX_DEFAULT_DASHBOARD_ID) when unset, so a
-// shipped starter dashboard works out-of-the-box.
+// Draft-run sample limit — admin knob capping the rows a DRAFT monitored-table
+// run reads (0 = whole table). Approved/published runs never sample; they
+// always scan the full table, so there is deliberately no knob for them.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function EmbeddedDashboardSettings() {
+function DraftRunSampleLimitSettings() {
   const { t } = useTranslation();
-  const { data, isLoading } = useEmbeddedDashboard();
   const queryClient = useQueryClient();
-  const saveMutation = useSaveEmbeddedDashboard();
-  const deleteMutation = useDeleteEmbeddedDashboard();
+  const { data: resp, isLoading } = useGetDraftRunSampleLimit();
+  const settings = resp?.data;
+  const saveMutation = useSaveDraftRunSampleLimit();
   const { data: role } = useCurrentUserRoleSuspense();
   const isAdmin = role?.data?.role === "admin";
 
-  const [dashboardId, setDashboardId] = useState<string>("");
-  const [title, setTitle] = useState<string>("");
+  const [limit, setLimit] = useState<string>("");
   const [hydrated, setHydrated] = useState(false);
-  // Clearing the dashboard override affects every user immediately —
-  // gate it behind a confirm dialog so a stray click doesn't blow away
-  // a pinned dashboard.
-  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
 
   useEffect(() => {
-    if (data && !hydrated) {
-      // Only seed the inputs with admin-saved values. If only the env
-      // default is in play, leave the inputs blank so the placeholder
-      // copy makes clear the field is empty (and saving an empty value
-      // would be rejected).
-      if (data.is_set) {
-        setDashboardId(data.dashboard_id);
-        setTitle(data.title ?? "");
-      }
+    if (settings && !hydrated) {
+      setLimit(String(settings.draft_run_sample_limit));
       setHydrated(true);
     }
-  }, [data, hydrated]);
+  }, [settings, hydrated]);
 
-  const trimmedId = dashboardId.trim();
-  const trimmedTitle = title.trim();
-
-  const isDirty = useMemo(() => {
-    if (!data) return false;
-    if (!data.is_set) return trimmedId !== "";
-    return trimmedId !== data.dashboard_id || trimmedTitle !== (data.title ?? "");
-  }, [data, trimmedId, trimmedTitle]);
-
-  const validationError = useMemo(() => {
-    if (!trimmedId) return null;
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(trimmedId)) {
-      return "Use the ID only (letters/digits/_/-, ≤128 chars) — not a full URL.";
-    }
-    return null;
-  }, [trimmedId]);
-
-  const previewUrl = useMemo(() => {
-    if (!data?.workspace_host || !trimmedId || validationError) return null;
-    return `${data.workspace_host}/dashboardsv3/${trimmedId}`;
-  }, [data?.workspace_host, trimmedId, validationError]);
+  const max = settings?.draft_run_sample_limit_max ?? 10_000_000;
+  const parsed = Number.parseInt(limit, 10);
+  const isInvalid = Number.isNaN(parsed) || parsed < 0 || parsed > max;
+  const isDirty = settings != null && !Number.isNaN(parsed) && parsed !== settings.draft_run_sample_limit;
 
   const handleSave = () => {
-    if (!trimmedId || validationError) return;
+    if (!settings || isInvalid || !isDirty) return;
     saveMutation.mutate(
-      { data: { dashboard_id: trimmedId, title: trimmedTitle || null } },
+      { data: { draft_run_sample_limit: parsed } },
       {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getEmbeddedDashboardQueryKey() });
-          toast.success(t("config.dashboardSaved"));
+        onSuccess: (saved) => {
+          queryClient.invalidateQueries({ queryKey: getGetDraftRunSampleLimitQueryKey() });
+          setLimit(String(saved.data.draft_run_sample_limit));
+          toast.success(t("config.draftSampleSaved"));
         },
         onError: (err: unknown) => {
           const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveDashboard"));
+          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveDraftSample"));
         },
       },
     );
   };
 
-  const handleClear = () => {
-    setConfirmClearOpen(true);
-  };
-
-  const confirmClear = () => {
-    setConfirmClearOpen(false);
-    deleteMutation.mutate(undefined, {
-      onSuccess: () => {
-        setDashboardId("");
-        setTitle("");
-        setHydrated(false);
-        queryClient.invalidateQueries({ queryKey: getEmbeddedDashboardQueryKey() });
-        toast.success(t("config.clearedDashboardOverride"));
-      },
-      onError: () => toast.error(t("config.failedClearDashboardOverride")),
-    });
-  };
-
-  if (isLoading || !data) return <Skeleton className="h-40 w-full" />;
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <LayoutDashboard className="h-5 w-5" />
-          Insights dashboard
+          <Database className="h-5 w-5" />
+          {t("config.draftSampleTitle")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Pin a Databricks AI/BI dashboard to the <strong className="text-foreground">Insights</strong> page.
-          Anyone with access to this app sees the dashboard rendered as an iframe; row-level visibility
-          is enforced by Unity Catalog on the underlying tables. Build your dashboard against{" "}
-          <code>dq_validation_runs</code>, <code>dq_metrics</code>, <code>dq_quarantine_records</code>, and{" "}
-          <code>dq_profiling_results</code>, then paste the ID below.
+          {t("config.draftSampleDescription")}
         </p>
-
-        {data.is_default && !data.is_set && (
-          <div className="rounded-md border border-blue-200/60 bg-blue-50/30 p-3 text-xs text-blue-900">
-            A default dashboard is configured by the deployment bundle. Saving below overrides it
-            for this workspace; "Restore default" reverts.
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 sm:grid-cols-[1fr_300px] gap-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="embedded-dashboard-id" className="text-xs">
-              Dashboard ID
-            </Label>
-            <Input
-              id="embedded-dashboard-id"
-              value={dashboardId}
-              onChange={(e) => setDashboardId(e.target.value)}
-              placeholder={
-                data.is_default
-                  ? `e.g. ${data.dashboard_id} (default)`
-                  : "e.g. 01abc23d456789..."
-              }
-              disabled={!isAdmin || saveMutation.isPending || deleteMutation.isPending}
-              className={cn("h-8 font-mono text-xs", validationError && "border-destructive")}
-              autoComplete="off"
-            />
-            {validationError && (
-              <p className="text-[11px] text-destructive flex items-center gap-1">
-                <AlertCircle className="h-3 w-3" />
-                {validationError}
-              </p>
-            )}
-            <p className="text-[11px] text-muted-foreground">
-              Find the ID in the dashboard URL after <code>/dashboardsv3/</code>.
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="embedded-dashboard-title" className="text-xs">
-              Display title <span className="text-muted-foreground">(optional)</span>
-            </Label>
-            <Input
-              id="embedded-dashboard-title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Quality Overview"
-              maxLength={200}
-              disabled={!isAdmin || saveMutation.isPending || deleteMutation.isPending}
-              className="h-8 text-xs"
-            />
-            <p className="text-[11px] text-muted-foreground">Shown on the Insights page header.</p>
-          </div>
+        <div className="space-y-1.5 max-w-sm">
+          <Label htmlFor="draft-sample-limit" className="text-xs">
+            {t("config.draftSampleLabel")}
+          </Label>
+          <Input
+            id="draft-sample-limit"
+            type="number"
+            min={0}
+            max={max}
+            step={1}
+            value={limit}
+            disabled={!isAdmin || saveMutation.isPending}
+            onChange={(e) => setLimit(e.target.value)}
+            className="h-8"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            {t("config.draftSampleDefaultHint", { value: settings.draft_run_sample_limit_default })}
+            {!settings.draft_run_sample_limit_set && ` ${t("config.draftSampleNotCustomised")}`}
+          </p>
         </div>
-
-        <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
+        {isInvalid && (
+          <p className="text-xs text-destructive flex items-start gap-1.5">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <span>{t("config.draftSampleInvalid", { max })}</span>
+          </p>
+        )}
+        <div className="flex items-center gap-2 pt-2 border-t">
           <Button
             size="sm"
             onClick={handleSave}
-            disabled={
-              !isAdmin ||
-              !isDirty ||
-              !!validationError ||
-              !trimmedId ||
-              saveMutation.isPending ||
-              deleteMutation.isPending
-            }
+            disabled={!isAdmin || !isDirty || isInvalid || saveMutation.isPending}
           >
             {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-            Save changes
+            {t("config.draftSampleSave")}
           </Button>
-          {data.is_set && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleClear}
-              disabled={!isAdmin || saveMutation.isPending || deleteMutation.isPending}
-              title={
-                data.is_default
-                  ? "Clear the workspace override and fall back to the default shipped by the bundle"
-                  : "Clear the saved dashboard ID — the Insights page will show an empty state"
-              }
-              className="gap-1.5"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              {data.is_default ? "Restore default" : "Clear"}
-            </Button>
-          )}
-          {previewUrl && (
-            <Button
-              size="sm"
-              variant="ghost"
-              asChild
-              className="gap-1.5 text-xs text-muted-foreground"
-              title="Open the dashboard in a new tab to verify the ID is correct and you have access"
-            >
-              <a href={previewUrl} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-3.5 w-3.5" />
-                Preview in Databricks
-              </a>
-            </Button>
-          )}
-          {!isAdmin && (
-            <span className="text-xs text-muted-foreground">Only admins can change this setting</span>
-          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setLimit(String(settings.draft_run_sample_limit))}
+            disabled={!isAdmin || !isDirty || saveMutation.isPending}
+          >
+            {t("config.draftSampleReset")}
+          </Button>
         </div>
       </CardContent>
-
-      <AlertDialog open={confirmClearOpen} onOpenChange={setConfirmClearOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {data?.is_default ? "Restore default dashboard?" : "Clear the dashboard override?"}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {data?.is_default
-                ? "This removes the workspace-level override. The Insights page will fall back to the default dashboard shipped by the deployment bundle."
-                : "This clears the saved dashboard ID for every user of this app. The Insights page will show an empty state until a new dashboard is pinned."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmClear}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {data?.is_default ? "Restore default" : "Clear"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </Card>
   );
 }
@@ -1484,7 +1377,7 @@ function RunReviewStatusesSettings() {
       seen.add(trimmed);
     }
     const defaults = draft.filter((d) => d.is_default).length;
-    if (defaults === 0) return "Pick one status as the default for unreviewed runs.";
+    if (defaults === 0) return "Pick one status as the default.";
     if (defaults > 1) return "Only one status can be marked default.";
     return null;
   }, [draft]);
@@ -1548,17 +1441,13 @@ function RunReviewStatusesSettings() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <ShieldCheck className="h-5 w-5" />
-          Run review statuses
+          {t("config.reviewStatusesTitle")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Reviewers tag each validation run with one of these values on the{" "}
-          <strong className="text-foreground">Runs detail</strong> page (next to comments).
-          The dropdown is filterable on the <strong className="text-foreground">Runs History</strong>{" "}
-          page so the team can answer questions like "what's been acknowledged?" at a glance.
-          One value is the <em>default</em> — newly completed runs surface that value until a reviewer
-          changes it, so dashboards never see an empty state.
+          The values reviewers can tag a run with, and filter by on the Runs
+          History page. Mark one as the default so every run starts with a status.
         </p>
 
         <div className="space-y-2">
@@ -1578,7 +1467,7 @@ function RunReviewStatusesSettings() {
                     <Input
                       value={entry.value}
                       onChange={(e) => handlePatch(idx, { value: e.target.value })}
-                      placeholder="e.g. Acknowledged"
+                      placeholder="e.g. Confirmed"
                       maxLength={80}
                       disabled={!isAdmin || saveMutation.isPending}
                       className="h-8 text-xs"
@@ -1658,11 +1547,7 @@ function RunReviewStatusesSettings() {
                   )}
                   onClick={() => handleMakeDefault(idx)}
                   disabled={!isAdmin || saveMutation.isPending || entry.is_default}
-                  title={
-                    entry.is_default
-                      ? "Default for new runs"
-                      : "Make this the default surfaced for unreviewed runs"
-                  }
+                  title={entry.is_default ? "Default for new runs" : "Make this the default"}
                 >
                   {entry.is_default ? (
                     <>
@@ -1726,10 +1611,8 @@ function RunReviewStatusesSettings() {
 
         <div className="rounded-md border border-muted-foreground/20 bg-muted/40 p-3 text-[11px] text-muted-foreground space-y-1">
           <p>
-            <strong className="text-foreground">Renaming a value</strong> doesn't rewrite existing
-            run history — historical entries keep the old text so the audit trail stays accurate.
-            To retire a value cleanly, leave it in the list (not as default) until the affected
-            runs age out.
+            Renaming a value doesn't change past runs — they keep the label they
+            were tagged with.
           </p>
         </div>
       </CardContent>
@@ -1900,14 +1783,19 @@ function AiSettingsCard() {
           />
         </div>
 
-        <div className="space-y-1">
-          <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsEndpointLabel")}</Label>
-          <ServingEndpointSelect
-            value={aiEndpoint}
-            onChange={setAiEndpoint}
-            endpoints={servingEndpoints}
-            disabled={!isAdmin || saveMutation.isPending}
-          />
+        <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+          <div className="space-y-0.5">
+            <Label className="text-sm">{t("config.aiSettingsEndpointLabel")}</Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.aiSettingsEndpointHint")}</p>
+          </div>
+          <div className="w-64 shrink-0">
+            <ServingEndpointSelect
+              value={aiEndpoint}
+              onChange={setAiEndpoint}
+              endpoints={servingEndpoints}
+              disabled={!isAdmin || saveMutation.isPending}
+            />
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
@@ -2022,6 +1910,155 @@ function RulesRegistrySettingsCard() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Approvals mode (#94) — the app-wide submit→approve gate. A 3-state select:
+// enabled (author submits, approver approves), auto_bypass (submit auto-approves
+// when the caller could approve it themselves), disabled (every submit
+// auto-approves). Read by all submit/approve surfaces to pick the right button.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const APPROVAL_MODES = ["enabled", "auto_bypass", "disabled"] as const;
+
+function ApprovalsModeCard() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useGetApprovalsMode();
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveApprovalsMode();
+  const { isAdmin } = usePermissions();
+
+  const mode = data?.data?.mode;
+
+  if (isLoading || !mode) return <Skeleton className="h-40 w-full" />;
+
+  const save = (next: string) => {
+    saveMutation.mutate(
+      { data: { mode: next } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetApprovalsModeQueryKey() });
+          toast.success(t("config.approvalsModeSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.approvalsModeFailedSave"));
+        },
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5" />
+          {t("config.approvalsModeTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.approvalsModeDescription")}
+        </p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="approvals-mode" className="text-sm">
+              {t("config.approvalsModeLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">
+              {t(`config.approvalsMode_${mode}_hint`)}
+            </p>
+          </div>
+          <Select value={mode} onValueChange={save} disabled={!isAdmin || saveMutation.isPending}>
+            <SelectTrigger id="approvals-mode" className="h-8 w-52 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {APPROVAL_MODES.map((m) => (
+                <SelectItem key={m} value={m} className="text-xs">
+                  {t(`config.approvalsMode_${m}_option`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.approvalsModeAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Require a draft run before submit (issue B2-12). When on, a monitored table /
+// table space / per-table rule cannot be submitted for review (nor take the
+// approvals-mode auto-approve shortcut) until a draft run has been recorded for
+// its target table(s). Registry rules and cross-table SQL checks are
+// table-agnostic and are never gated.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RequireDraftRunSettingsCard() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useGetRequireDraftRunSettings({ query: { select: (d) => d.data } });
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveRequireDraftRunSettings();
+  const { isAdmin } = usePermissions();
+
+  if (isLoading || !data) return <Skeleton className="h-40 w-full" />;
+
+  const save = (enabled: boolean) => {
+    saveMutation.mutate(
+      { data: { require_draft_run_before_submit: enabled } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetRequireDraftRunSettingsQueryKey() });
+          toast.success(t("config.requireDraftRunSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.requireDraftRunFailedSave"));
+        },
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <FlaskConical className="h-5 w-5" />
+          {t("config.requireDraftRunTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.requireDraftRunDescription")}
+        </p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="require-draft-run" className="text-sm">
+              {t("config.requireDraftRunLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.requireDraftRunHint")}</p>
+          </div>
+          <Switch
+            id="require-draft-run"
+            checked={data.require_draft_run_before_submit}
+            onCheckedChange={(checked) => save(checked)}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.requireDraftRunAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Permissions — admin default for the per-grant inheritance toggle. When on,
 // a new grant on a table space defaults to flowing down to its member tables.
 // Individual grants can still override this per-grant in the Permissions tab.
@@ -2088,10 +2125,79 @@ function PermissionsSettingsCard() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Global Results tab (B2-20) — admin opt-in for the app-wide, all-tables
+// Results surface. OFF by default: it duplicates the per-object results tabs
+// and confuses fresh deploys. When enabled, the global Results sidebar nav
+// item AND the homepage overall-score "?" explainer appear. Per-object MT/TS/RR
+// results tabs are unaffected.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function GlobalResultsSettingsCard() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useGetGlobalResultsSettings({ query: { select: (d) => d.data } });
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveGlobalResultsSettings();
+  const { isAdmin } = usePermissions();
+
+  if (isLoading || !data) return <Skeleton className="h-40 w-full" />;
+
+  const save = (enabled: boolean) => {
+    saveMutation.mutate(
+      { data: { global_results_enabled: enabled } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetGlobalResultsSettingsQueryKey() });
+          toast.success(t("config.globalResultsSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.globalResultsFailedSave"));
+        },
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <LineChart className="h-5 w-5" />
+          {t("config.globalResultsTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.globalResultsDescription")}
+        </p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="global-results-enabled" className="text-sm">
+              {t("config.globalResultsLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.globalResultsHint")}</p>
+          </div>
+          <Switch
+            id="global-results-enabled"
+            checked={data.global_results_enabled}
+            onCheckedChange={(checked) => save(checked)}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.globalResultsAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ComputeSettingsCard() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data: settingsResp, isLoading } = useGetComputeSettings();
+  const { data: settingsResp, isLoading, isError: settingsError, refetch: refetchSettings } = useGetComputeSettings();
   const settings = settingsResp?.data;
   const { data: role } = useCurrentUserRoleSuspense();
   const isAdmin = role?.data?.role === "admin";
@@ -2100,7 +2206,12 @@ function ComputeSettingsCard() {
   const grantMutation = useGrantWarehouseAccess();
   const { data: warehousesResp } = useListComputeWarehouses();
   const warehouses = useMemo(() => warehousesResp?.data ?? [], [warehousesResp]);
-  const { data: clustersResp } = useListComputeClusters();
+  // The clusters list is best-effort: the backend swallows a missing-scope /
+  // permission error to `[]` (200), so a genuinely empty list and a
+  // permission-blocked list both surface here as `[]`. `clustersError` only
+  // trips on a hard transport error (network / 500). Either way we degrade to a
+  // subtle inline note in the picker — never a hard section failure.
+  const { data: clustersResp, isError: clustersError } = useListComputeClusters();
   const clusters = useMemo(() => clustersResp?.data ?? [], [clustersResp]);
 
   const [warehouseId, setWarehouseId] = useState("");
@@ -2173,7 +2284,34 @@ function ComputeSettingsCard() {
     );
   };
 
-  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+  if (isLoading) return <Skeleton className="h-40 w-full" />;
+
+  // Only the compute *settings* fetch is load-bearing for this card. If it
+  // fails we degrade to a soft, in-card notice with a retry rather than an
+  // infinite skeleton (which reads as the whole section "failing to load").
+  // The warehouse / cluster lists are best-effort and handled inline below.
+  if (settingsError || !settings) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Cpu className="h-4 w-4" />
+            {t("config.computeTitle")}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col items-start gap-2">
+            <p className="text-sm text-muted-foreground flex items-center gap-1.5">
+              <AlertCircle className="h-4 w-4" /> {t("config.computeSettingsLoadFailed")}
+            </p>
+            <Button variant="outline" size="sm" onClick={() => refetchSettings()}>
+              {t("common.retry")}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -2285,7 +2423,9 @@ function ComputeSettingsCard() {
                 </SelectTrigger>
                 <SelectContent>
                   {clusters.length === 0 && (
-                    <SelectLabel className="font-normal">{t("config.computeNoClusters")}</SelectLabel>
+                    <SelectLabel className="font-normal">
+                      {clustersError ? t("config.computeClustersUnavailable") : t("config.computeNoClusters")}
+                    </SelectLabel>
                   )}
                   {clusters.map((c) => (
                     <SelectItem key={c.cluster_id} value={c.cluster_id} className="text-xs font-mono">
@@ -2316,10 +2456,165 @@ function ComputeSettingsCard() {
 const NO_WAREHOUSE_VALUE = "__default__";
 const NO_CLUSTER_VALUE = "__none__";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Danger zone — the admin "Reset database" action. DESTRUCTIVE: wipes all
+// DQX Studio-managed data. Guardrails are the point:
+//   * The card + button are admin-only (the backend route is *also* hard-gated
+//     to ADMIN; the UI gate is convenience, not the boundary).
+//   * The final confirm button stays disabled until the admin types the exact
+//     phrase, which is then sent to the backend as a confirmation token (the
+//     server rejects a mismatch with 400 — defense-in-depth).
+// The phrase MUST match RESET_CONFIRMATION_PHRASE in
+// backend/services/database_reset_service.py — keep the two in lock-step.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RESET_DB_PHRASE = "reset dqx studio";
+
+function DangerZoneCard() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { isAdmin } = usePermissions();
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  const resetMutation = useResetDatabase();
+
+  const canConfirm = typed.trim() === RESET_DB_PHRASE && !resetMutation.isPending;
+
+  const closeDialog = () => {
+    setOpen(false);
+    setTyped("");
+  };
+
+  const handleConfirm = () => {
+    if (!canConfirm) return;
+    resetMutation.mutate(
+      { data: { confirmation_phrase: RESET_DB_PHRASE } },
+      {
+        onSuccess: (resp) => {
+          const cleared = resp.data.cleared_tables?.length ?? 0;
+          const failed = Object.keys(resp.data.failed_tables ?? {}).length;
+          if (failed > 0) {
+            toast.warning(t("config.resetDbPartial", { count: failed }));
+          } else {
+            toast.success(t("config.resetDbSuccess", { count: cleared }));
+          }
+          closeDialog();
+          // Everything the app cached is now stale — refetch across the board.
+          queryClient.invalidateQueries();
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.resetDbFailed"));
+        },
+      },
+    );
+  };
+
+  return (
+    <Card className="border-destructive/50">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-destructive">
+          <AlertTriangle className="h-5 w-5" />
+          {t("config.resetDbTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-4">
+          <p className="flex items-center gap-2 text-sm font-semibold text-destructive">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            {t("config.resetDbWarningHeading")}
+          </p>
+          <p className="text-xs leading-relaxed text-muted-foreground">{t("config.resetDbWarningBody")}</p>
+          <p className="text-xs text-muted-foreground">{t("config.resetDbPreservedNote")}</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={!isAdmin}
+            onClick={() => {
+              setTyped("");
+              setOpen(true);
+            }}
+            className="gap-1.5"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            {t("config.resetDbButton")}
+          </Button>
+          {!isAdmin && <span className="text-xs text-muted-foreground">{t("config.resetDbAdminOnly")}</span>}
+        </div>
+      </CardContent>
+
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (resetMutation.isPending) return;
+          if (o) setOpen(true);
+          else closeDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-5 w-5" />
+              {t("config.resetDbDialogTitle")}
+            </DialogTitle>
+            <DialogDescription>{t("config.resetDbDialogBody")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="reset-db-confirm" className="text-xs">
+              {t("config.resetDbConfirmLabel", { phrase: RESET_DB_PHRASE })}
+            </Label>
+            <Input
+              id="reset-db-confirm"
+              value={typed}
+              autoComplete="off"
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={t("config.resetDbConfirmPlaceholder")}
+              disabled={resetMutation.isPending}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && canConfirm) handleConfirm();
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={closeDialog} disabled={resetMutation.isPending}>
+              {t("config.resetDbCancel")}
+            </Button>
+            <Button variant="destructive" size="sm" onClick={handleConfirm} disabled={!canConfirm} className="gap-1.5">
+              {resetMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {resetMutation.isPending ? t("config.resetDbInProgress") : t("config.resetDbConfirmButton")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Settings page shell — dqlake-style tabs, one card per setting, plus a
+// client-side search that filters cards across every tab by title/keyword.
+// The individual setting cards above are unchanged; this only regroups them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type SettingsTabId = "general" | "ai" | "governance" | "tags" | "entitlements" | "compute" | "danger";
+
+/** ErrorBoundary + Suspense wrapper shared by every setting card. */
+function SettingSection({ reset, children }: { reset: () => void; children: ReactNode }) {
+  return (
+    <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
+      <Suspense fallback={<Skeleton className="h-40 w-full" />}>{children}</Suspense>
+    </ErrorBoundary>
+  );
+}
+
 function ConfigPage() {
   const { t } = useTranslation();
   const { isAdmin } = usePermissions();
   const navigate = useNavigate();
+  const [search, setSearch] = useState("");
+  const [activeTab, setActiveTab] = useState<SettingsTabId>("general");
 
   useEffect(() => {
     if (!isAdmin) {
@@ -2327,98 +2622,148 @@ function ConfigPage() {
     }
   }, [isAdmin, navigate]);
 
+  const tabs = useMemo<{ id: SettingsTabId; label: string; icon: ComponentType<{ className?: string }> }[]>(
+    () => [
+      { id: "general", label: t("config.tabGeneral"), icon: Globe },
+      { id: "ai", label: t("config.tabAi"), icon: Sparkles },
+      { id: "governance", label: t("config.tabGovernance"), icon: Scale },
+      { id: "tags", label: t("config.tabTags"), icon: Tags },
+      { id: "entitlements", label: t("config.tabEntitlements"), icon: KeyRound },
+      { id: "compute", label: t("config.tabCompute"), icon: Cpu },
+      { id: "danger", label: t("config.tabDanger"), icon: AlertTriangle },
+    ],
+    [t],
+  );
+
+  const entries = useMemo<
+    { id: string; tab: SettingsTabId; title: string; keywords: string; render: () => ReactNode }[]
+  >(
+    () => [
+      { id: "timezone", tab: "general", title: t("config.timezoneTitle"), keywords: t("config.kwTimezone"), render: () => <TimezoneSettings /> },
+      { id: "reviewStatuses", tab: "general", title: t("config.reviewStatusesTitle"), keywords: t("config.kwReviewStatuses"), render: () => <RunReviewStatusesSettings /> },
+      { id: "globalResults", tab: "general", title: t("config.globalResultsTitle"), keywords: t("config.kwGlobalResults"), render: () => <GlobalResultsSettingsCard /> },
+      { id: "ai", tab: "ai", title: t("config.aiSettingsTitle"), keywords: t("config.kwAi"), render: () => <AiSettingsCard /> },
+      { id: "labels", tab: "tags", title: t("config.labelsTitle"), keywords: t("config.kwLabels"), render: () => <LabelDefinitionsSettings /> },
+      { id: "rulesRegistry", tab: "governance", title: t("config.rulesRegistrySettingsTitle"), keywords: t("config.kwRulesRegistry"), render: () => <RulesRegistrySettingsCard /> },
+      { id: "approvalsMode", tab: "governance", title: t("config.approvalsModeTitle"), keywords: t("config.kwApprovalsMode"), render: () => <ApprovalsModeCard /> },
+      { id: "requireDraftRun", tab: "governance", title: t("config.requireDraftRunTitle"), keywords: t("config.kwRequireDraftRun"), render: () => <RequireDraftRunSettingsCard /> },
+      { id: "retention", tab: "governance", title: t("config.retentionTitle"), keywords: t("config.kwRetention"), render: () => <RetentionSettings /> },
+      { id: "entitlements", tab: "entitlements", title: t("roleManagement.title"), keywords: t("config.kwEntitlements"), render: () => <RoleManagement /> },
+      { id: "permissions", tab: "entitlements", title: t("config.permissionsDefaultInheritTitle"), keywords: t("config.kwPermissions"), render: () => <PermissionsSettingsCard /> },
+      { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
+      { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
+      { id: "resetDatabase", tab: "danger", title: t("config.resetDbTitle"), keywords: t("config.kwDanger"), render: () => <DangerZoneCard /> },
+    ],
+    [t],
+  );
+
   if (!isAdmin) {
     return null;
   }
 
+  const query = search.trim().toLowerCase();
+  const matches = query
+    ? entries.filter(
+        (e) => e.title.toLowerCase().includes(query) || e.keywords.toLowerCase().includes(query),
+      )
+    : [];
+
   return (
-    <div className="space-y-6">
+    <FadeIn>
+      <div className="space-y-6">
       <div className="space-y-2">
         <PageBreadcrumb page={t("config.breadcrumb")} />
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            <ShinyText text={t("config.title")} speed={6} className="font-bold" />
-          </h1>
-          <p className="text-muted-foreground">
-            {t("config.subtitle")}
-          </p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">
+              <ShinyText text={t("config.title")} speed={6} className="font-bold" />
+            </h1>
+            <p className="text-muted-foreground">{t("config.subtitle")}</p>
+          </div>
+          <div className="relative w-full sm:w-72">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={t("config.searchPlaceholder")}
+              className="h-9 pl-9"
+              aria-label={t("config.searchPlaceholder")}
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                aria-label={t("common.close")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       <QueryErrorResetBoundary>
-        {({ reset }) => (
-          <div className="space-y-6 pb-8">
-            <FadeIn delay={0.05}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <TimezoneSettings />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.1}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <LabelDefinitionsSettings />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.15}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <RunReviewStatusesSettings />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.17}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <AiSettingsCard />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.18}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <RulesRegistrySettingsCard />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.185}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <PermissionsSettingsCard />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.19}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <ComputeSettingsCard />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.2}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <EmbeddedDashboardSettings />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.25}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-                  <RetentionSettings />
-                </Suspense>
-              </ErrorBoundary>
-            </FadeIn>
-            <FadeIn delay={0.3}>
-              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
-                <RoleManagement />
-              </ErrorBoundary>
-            </FadeIn>
-          </div>
-        )}
+        {({ reset }) =>
+          query ? (
+            matches.length > 0 ? (
+              <div className="space-y-6 pb-8">
+                {matches.map((e) => (
+                  <FadeIn key={e.id}>
+                    <SettingSection reset={reset}>{e.render()}</SettingSection>
+                  </FadeIn>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-md border border-dashed p-10 text-center text-sm text-muted-foreground">
+                {t("config.searchNoResults", { query: search.trim() })}
+              </div>
+            )
+          ) : (
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as SettingsTabId)}>
+              {/* Same segmented tab picker used by the Rules Registry /
+                  Monitored Tables / Table Spaces tab shells (see
+                  MonitoredTableTabsShell / ProductTabsShell): the shadcn
+                  TabsList pill track (bg-muted, h-auto p-1) with the default
+                  raised active-tab styling and gap-1.5 icon triggers. */}
+              <TabsList className="inline-flex h-auto items-center p-1">
+                {tabs.map((tab) => {
+                  const Icon = tab.icon;
+                  return (
+                    <TabsTrigger
+                      key={tab.id}
+                      value={tab.id}
+                      className={cn(
+                        "gap-1.5",
+                        // Danger Zone reads as destructive: label + icon stay red in
+                        // every state (inactive/active, light/dark). tailwind-merge
+                        // lets these override the trigger's default text tokens.
+                        tab.id === "danger" &&
+                          "text-destructive dark:text-destructive data-[state=active]:text-destructive dark:data-[state=active]:text-destructive",
+                      )}
+                    >
+                      <Icon className="h-4 w-4 shrink-0" />
+                      {tab.label}
+                    </TabsTrigger>
+                  );
+                })}
+              </TabsList>
+              {tabs.map((tab) => (
+                <TabsContent key={tab.id} value={tab.id} className="mt-4 space-y-6 pb-8">
+                  {entries
+                    .filter((e) => e.tab === tab.id)
+                    .map((e) => (
+                      <FadeIn key={e.id}>
+                        <SettingSection reset={reset}>{e.render()}</SettingSection>
+                      </FadeIn>
+                    ))}
+                </TabsContent>
+              ))}
+            </Tabs>
+          )
+        }
       </QueryErrorResetBoundary>
-    </div>
+      </div>
+    </FadeIn>
   );
 }

@@ -1,5 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useListRunSets, type RunSetSummaryOut } from "@/lib/api";
+import { invalidateResultsAfterRunCompletion } from "@/lib/results-invalidation";
 
 /** Shared page size for the header's activity probe and the Runs tab's
  *  listing — MUST stay identical across every caller so React Query
@@ -29,6 +31,22 @@ export function useProductRunSets(productId: string, { extraPoll = false }: { ex
   const runSets: RunSetSummaryOut[] = data ?? [];
   const hasActive = runSets.some((rs) => rs.status === "running");
   const shouldPoll = hasActive || extraPoll;
+
+  // Run-completion detection for the score / failing-records queries, which
+  // never refetch on their own (staleTime: Infinity — see
+  // lib/results-invalidation). When a run set this poll saw as `running`
+  // settles (or drops off the listing), invalidate them. Summary rows don't
+  // carry member table FQNs, so the invalidation is broad (all tables).
+  const queryClient = useQueryClient();
+  const runningSetIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const current = new Set(
+      (data ?? []).filter((rs) => rs.status === "running").map((rs) => rs.run_set_id),
+    );
+    const anyCompleted = [...runningSetIdsRef.current].some((id) => !current.has(id));
+    runningSetIdsRef.current = current;
+    if (anyCompleted) invalidateResultsAfterRunCompletion(queryClient);
+  }, [data, queryClient]);
 
   useEffect(() => {
     if (!shouldPoll) return;

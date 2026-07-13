@@ -183,6 +183,10 @@ export interface ValidationRunSummaryOut {
   warning_rows: number | null;
   created_at: string | null;
   error_message: string | null;
+  /** Databricks task-runner job run id — combined with the workspace host +
+   *  task-runner job id (from getWorkspaceHost) to build a deep link to the
+   *  run page. Null for runs predating job-run tracking. */
+  job_run_id?: number | null;
   checks: Record<string, unknown>[];
   review_status?: string | null;
   review_status_is_default?: boolean;
@@ -866,6 +870,14 @@ export interface LabelDefinition {
   /** Optional value → short description map (e.g. per-dimension explanations). */
   value_descriptions?: Record<string, string> | null;
   /**
+   * Optional value → DQX criticality ("warn" | "error") map. Only meaningful
+   * on the reserved ``severity`` key: the materializer reads it to decide
+   * which criticality a registry rule's effective severity renders as (see
+   * `registry_models.resolve_criticality`); unmapped values fall back to the
+   * built-in defaults. Pruned to keys present in ``values`` on save.
+   */
+  value_criticality?: Record<string, string> | null;
+  /**
    * True for reserved, pre-seeded keys (e.g. the Rules Registry
    * ``dimension``/``severity`` tags). Such keys cannot be deleted or
    * renamed via `saveLabelDefinitions`, though their values, colors, and
@@ -1029,6 +1041,10 @@ export const useSaveRetentionSettings = <
 
 export interface WorkspaceHostOut {
   workspace_host: string;
+  /** Task-runner Databricks job id. Combined with the host and a run's
+   *  job_run_id the UI builds a link to the run page:
+   *  ``{workspace_host}/jobs/{job_id}/runs/{job_run_id}``. Empty when unset. */
+  job_id?: string;
 }
 
 export const getWorkspaceHost = (
@@ -1056,116 +1072,6 @@ export const useWorkspaceHost = <
     staleTime: Infinity,
     ...queryOptions,
   }) as UseQueryResult<TData, TError>;
-};
-
-// ---------------------------------------------------------------------------
-// Embedded dashboard (Insights page). The dashboard ID can be set by an
-// admin via the Configuration page; when unset, the backend falls back to
-// the env-provided DQX_DEFAULT_DASHBOARD_ID (so the bundle can ship a
-// starter dashboard). ``is_set`` distinguishes admin override from env
-// default in the UI.
-// ---------------------------------------------------------------------------
-
-export interface EmbeddedDashboardOut {
-  dashboard_id: string;
-  title: string | null;
-  workspace_host: string;
-  is_set: boolean;
-  is_default: boolean;
-}
-
-export interface EmbeddedDashboardIn {
-  dashboard_id: string;
-  title?: string | null;
-}
-
-export const getEmbeddedDashboard = (
-  options?: AxiosRequestConfig,
-): Promise<AxiosResponse<EmbeddedDashboardOut>> =>
-  axios.default.get("/api/v1/config/embedded-dashboard", options);
-
-export const getEmbeddedDashboardQueryKey = () => ["embedded-dashboard"] as const;
-
-export const useEmbeddedDashboard = <
-  TData = Awaited<ReturnType<typeof getEmbeddedDashboard>>["data"],
-  TError = AxiosError<unknown>,
->(
-  options?: {
-    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getEmbeddedDashboard>>, TError, TData>>;
-    axios?: AxiosRequestConfig;
-  },
-): UseQueryResult<TData, TError> => {
-  const { query: queryOptions, axios: axiosOptions } = options ?? {};
-  return useQuery({
-    queryKey: queryOptions?.queryKey ?? getEmbeddedDashboardQueryKey(),
-    queryFn: () => getEmbeddedDashboard(axiosOptions),
-    select: ((resp: Awaited<ReturnType<typeof getEmbeddedDashboard>>) => resp.data) as never,
-    staleTime: 60 * 1000,
-    ...queryOptions,
-  }) as UseQueryResult<TData, TError>;
-};
-
-export const saveEmbeddedDashboard = (
-  body: EmbeddedDashboardIn,
-  options?: AxiosRequestConfig,
-): Promise<AxiosResponse<EmbeddedDashboardOut>> =>
-  axios.default.put("/api/v1/config/embedded-dashboard", body, options);
-
-export const useSaveEmbeddedDashboard = <
-  TError = AxiosError<unknown>,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof saveEmbeddedDashboard>>,
-      TError,
-      { data: EmbeddedDashboardIn },
-      TContext
-    >;
-    axios?: AxiosRequestConfig;
-  },
-): UseMutationResult<
-  Awaited<ReturnType<typeof saveEmbeddedDashboard>>,
-  TError,
-  { data: EmbeddedDashboardIn },
-  TContext
-> => {
-  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
-  return useMutation({
-    mutationFn: ({ data }: { data: EmbeddedDashboardIn }) => saveEmbeddedDashboard(data, axiosOptions),
-    ...mutationOptions,
-  });
-};
-
-export const deleteEmbeddedDashboard = (
-  options?: AxiosRequestConfig,
-): Promise<AxiosResponse<EmbeddedDashboardOut>> =>
-  axios.default.delete("/api/v1/config/embedded-dashboard", options);
-
-export const useDeleteEmbeddedDashboard = <
-  TError = AxiosError<unknown>,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof deleteEmbeddedDashboard>>,
-      TError,
-      void,
-      TContext
-    >;
-    axios?: AxiosRequestConfig;
-  },
-): UseMutationResult<
-  Awaited<ReturnType<typeof deleteEmbeddedDashboard>>,
-  TError,
-  void,
-  TContext
-> => {
-  const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
-  return useMutation({
-    mutationFn: () => deleteEmbeddedDashboard(axiosOptions),
-    ...mutationOptions,
-  });
 };
 
 // ---------------------------------------------------------------------------

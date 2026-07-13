@@ -10,8 +10,10 @@ import { Pagination } from "@/components/Pagination";
 import {
   MonitoredTablesTable,
   getMonitoredTablesSortValue,
+  getMonitoredTablesSortConfig,
   type MonitoredTablesSortKey,
 } from "@/components/monitored-tables/MonitoredTablesTable";
+import { compareSortValues } from "@/components/data-table/sort";
 import { AddMonitoredTableModal } from "@/components/monitored-tables/AddMonitoredTableModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,16 +36,24 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, CheckCircle2, Loader2, Plus, RotateCcw, Search, Table2, Trash2, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Play, Plus, RotateCcw, Search, Table2, Trash2, XCircle } from "lucide-react";
 import {
   useListMonitoredTables,
   useDeleteMonitoredTable,
   useApproveMonitoredTable,
   useRejectMonitoredTable,
+  useRunMonitoredTable,
   type MonitoredTableSummaryOut,
 } from "@/lib/api";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { usePermissions } from "@/hooks/use-permissions";
+import {
+  DQ_SCORE_BUCKETS,
+  DQ_SCORE_FILTER_ALL,
+  FILTER_TRIGGER_CLASS,
+  matchesDqScoreBucket,
+} from "@/components/data-table/filter-bar";
+import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
@@ -111,47 +121,57 @@ function MonitoredTablesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [stewardFilter, setStewardFilter] = useState<string>(ALL);
   const [catalogFilter, setCatalogFilter] = useState<string>(ALL);
   const [schemaFilter, setSchemaFilter] = useState<string>(ALL);
+  const [scoreFilter, setScoreFilter] = useState<string>(DQ_SCORE_FILTER_ALL);
   const [nameSearch, setNameSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<MonitoredTableSummaryOut | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
 
-  const queryParams = useMemo(
-    () => ({
-      status: statusFilter === ALL ? undefined : statusFilter,
-      steward: stewardFilter === ALL ? undefined : stewardFilter,
-      catalog: catalogFilter === ALL ? undefined : catalogFilter,
-      schema: schemaFilter === ALL ? undefined : schemaFilter,
-      name: nameSearch.trim() || undefined,
-    }),
-    [statusFilter, stewardFilter, catalogFilter, schemaFilter, nameSearch],
-  );
-
-  const { data, isLoading, isError, refetch } = useListMonitoredTables(queryParams);
+  // ONE list fetch, unfiltered — every facet (catalog, schema, name, steward,
+  // DQ-score) is applied CLIENT-SIDE over this single row set (T-perf/B2-3).
+  // The page previously fired TWO `useListMonitoredTables` calls — a
+  // server-filtered one for the rows plus an unfiltered one for the facet
+  // options — which doubled the (already-warehouse-free) list-load cost. All
+  // filter inputs are already on each fetched row, so no server round-trip is
+  // needed per filter change; this also matches how the Rules Registry and
+  // Table Spaces overviews filter (P25 items 91/92). The backend list route
+  // still honors these query params, but the overview no longer uses them.
+  const { data, isLoading, isError, refetch } = useListMonitoredTables({});
   const tables = useMemo(() => data?.data ?? [], [data]);
 
-  // Cascading: schema options restricted to whatever catalog is selected —
-  // derived from the (server-filtered) row set rather than a separate
-  // catalog-browser API call, matching dqlake's BindingsTable approach.
-  const { data: unfilteredData } = useListMonitoredTables({});
-  const allTables = useMemo(() => unfilteredData?.data ?? [], [unfilteredData]);
+  const visibleTables = useMemo(() => {
+    const needle = nameSearch.trim().toLowerCase();
+    return tables.filter((r) => {
+      const { catalog, schema } = splitFqn(r.table.table_fqn);
+      return (
+        (catalogFilter === ALL || catalog === catalogFilter) &&
+        (schemaFilter === ALL || schema === schemaFilter) &&
+        (!needle || r.table.table_fqn.toLowerCase().includes(needle)) &&
+        (stewardFilter === ALL || (r.table.steward ?? "") === stewardFilter) &&
+        matchesDqScoreBucket(r.score, scoreFilter)
+      );
+    });
+  }, [tables, catalogFilter, schemaFilter, nameSearch, stewardFilter, scoreFilter]);
+
+  // Facet options are derived from the full fetched row set — always the
+  // complete catalog/steward lists regardless of the active filters, with the
+  // schema list cascading to the selected catalog.
   const catalogOptions = useMemo(
-    () => Array.from(new Set(allTables.map((r) => splitFqn(r.table.table_fqn).catalog))).sort(),
-    [allTables],
+    () => Array.from(new Set(tables.map((r) => splitFqn(r.table.table_fqn).catalog))).sort(),
+    [tables],
   );
   const schemaOptions = useMemo(() => {
-    const rows = catalogFilter === ALL ? allTables : allTables.filter((r) => splitFqn(r.table.table_fqn).catalog === catalogFilter);
+    const rows = catalogFilter === ALL ? tables : tables.filter((r) => splitFqn(r.table.table_fqn).catalog === catalogFilter);
     return Array.from(new Set(rows.map((r) => splitFqn(r.table.table_fqn).schema))).sort();
-  }, [allTables, catalogFilter]);
+  }, [tables, catalogFilter]);
   const stewardOptions = useMemo(
     () =>
-      Array.from(new Set(allTables.map((r) => r.table.steward).filter((s): s is string => !!s))).sort(),
-    [allTables],
+      Array.from(new Set(tables.map((r) => r.table.steward).filter((s): s is string => !!s))).sort(),
+    [tables],
   );
 
   const [sortKey, setSortKey] = useState<MonitoredTablesSortKey | null>(null);
@@ -159,13 +179,16 @@ function MonitoredTablesPage() {
 
   const handleHeaderClick = useCallback(
     (key: MonitoredTablesSortKey) => {
+      // First click uses the column's steward-first default direction (B2-92);
+      // repeat clicks toggle to the opposite direction, then clear.
+      const { dir } = getMonitoredTablesSortConfig(key);
       if (sortKey !== key) {
         setSortKey(key);
-        setSortDir("asc");
+        setSortDir(dir);
         return;
       }
-      if (sortDir === "asc") {
-        setSortDir("desc");
+      if (sortDir === dir) {
+        setSortDir(dir === "asc" ? "desc" : "asc");
         return;
       }
       setSortKey(null);
@@ -174,17 +197,19 @@ function MonitoredTablesPage() {
   );
 
   const sortedTables = useMemo(() => {
-    if (!sortKey) return tables;
-    const copy = [...tables];
-    copy.sort((a, b) => {
-      const av = getMonitoredTablesSortValue(sortKey, a);
-      const bv = getMonitoredTablesSortValue(sortKey, b);
-      if (av < bv) return sortDir === "asc" ? -1 : 1;
-      if (av > bv) return sortDir === "asc" ? 1 : -1;
-      return 0;
-    });
+    if (!sortKey) return visibleTables;
+    const { nullsFirst } = getMonitoredTablesSortConfig(sortKey);
+    const copy = [...visibleTables];
+    copy.sort((a, b) =>
+      compareSortValues(
+        getMonitoredTablesSortValue(sortKey, a),
+        getMonitoredTablesSortValue(sortKey, b),
+        sortDir,
+        nullsFirst,
+      ),
+    );
     return copy;
-  }, [tables, sortKey, sortDir]);
+  }, [visibleTables, sortKey, sortDir]);
 
   const pagedTables = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
@@ -192,10 +217,10 @@ function MonitoredTablesPage() {
   }, [sortedTables, page]);
 
   const hasActiveFilters =
-    statusFilter !== ALL ||
     stewardFilter !== ALL ||
     catalogFilter !== ALL ||
     schemaFilter !== ALL ||
+    scoreFilter !== DQ_SCORE_FILTER_ALL ||
     nameSearch.trim() !== "";
 
   const applyFilter = useCallback(
@@ -210,6 +235,7 @@ function MonitoredTablesPage() {
   const deleteMutation = useDeleteMonitoredTable();
   const approveMutation = useApproveMonitoredTable();
   const rejectMutation = useRejectMonitoredTable();
+  const runMutation = useRunMonitoredTable();
   const [rejectTarget, setRejectTarget] = useState<MonitoredTableSummaryOut | null>(null);
 
   // Shared runner for the row-level approve/reject actions — mirrors the
@@ -237,6 +263,20 @@ function MonitoredTablesPage() {
       () => approveMutation.mutateAsync({ bindingId: summary.table.binding_id }),
       t("monitoredTables.toastApproved"),
       t("monitoredTables.toastApproveFailed"),
+    );
+
+  // Run the approved snapshot (item 76). Gated to tables that have an
+  // approved version (version > 0) below; `runRowAction` sets `pendingId`,
+  // which swaps this row's action cell to a spinner until the submit
+  // settles. A cross-session "already running" gate would need the same
+  // per-row run-activity feed the far-left running cog needs — deferred
+  // with it (see report), so the guard here is the in-flight pending state.
+  const handleRun = (summary: MonitoredTableSummaryOut) =>
+    runRowAction(
+      summary.table.binding_id,
+      () => runMutation.mutateAsync({ bindingId: summary.table.binding_id, data: { source: "approved" } }),
+      t("monitoredTables.toastRunStarted"),
+      t("monitoredTables.toastRunFailed"),
     );
 
   // Reject is destructive (moves the table out of the approval queue) so it
@@ -318,48 +358,45 @@ function MonitoredTablesPage() {
                   className="h-8 text-xs pl-7"
                 />
               </div>
-              <Select value={catalogFilter} onValueChange={applyFilter(setCatalogFilter)}>
-                <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("monitoredTables.colCatalog")}>
+              <SearchableSelect
+                value={catalogFilter}
+                onChange={applyFilter(setCatalogFilter)}
+                options={catalogOptions.map((c) => ({ value: c, label: c }))}
+                allValue={ALL}
+                allLabel={t("monitoredTables.allCatalogs")}
+                searchPlaceholder={t("common.search")}
+                emptyText={t("common.noMatches")}
+                ariaLabel={t("monitoredTables.colCatalog")}
+              />
+              <SearchableSelect
+                value={schemaFilter}
+                onChange={applyFilter(setSchemaFilter)}
+                options={schemaOptions.map((s) => ({ value: s, label: s }))}
+                allValue={ALL}
+                allLabel={t("monitoredTables.allSchemas")}
+                searchPlaceholder={t("common.search")}
+                emptyText={t("common.noMatches")}
+                ariaLabel={t("monitoredTables.colSchema")}
+              />
+              <SearchableSelect
+                value={stewardFilter}
+                onChange={applyFilter(setStewardFilter)}
+                options={stewardOptions.map((s) => ({ value: s, label: s }))}
+                allValue={ALL}
+                allLabel={t("monitoredTables.allStewards")}
+                searchPlaceholder={t("common.search")}
+                emptyText={t("common.noMatches")}
+                ariaLabel={t("monitoredTables.colSteward")}
+              />
+              <Select value={scoreFilter} onValueChange={applyFilter(setScoreFilter)}>
+                <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colDqScore")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allCatalogs")}</SelectItem>
-                  {catalogOptions.map((c) => (
-                    <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={schemaFilter} onValueChange={applyFilter(setSchemaFilter)}>
-                <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("monitoredTables.colSchema")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allSchemas")}</SelectItem>
-                  {schemaOptions.map((s) => (
-                    <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={statusFilter} onValueChange={applyFilter(setStatusFilter)}>
-                <SelectTrigger className="h-8 w-40 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allStatuses")}</SelectItem>
-                  <SelectItem value="draft" className="text-xs">{t("monitoredTables.statusDraft")}</SelectItem>
-                  <SelectItem value="pending_approval" className="text-xs">{t("monitoredTables.statusPendingApproval")}</SelectItem>
-                  <SelectItem value="approved" className="text-xs">{t("monitoredTables.statusApproved")}</SelectItem>
-                  <SelectItem value="rejected" className="text-xs">{t("monitoredTables.statusRejected")}</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={stewardFilter} onValueChange={applyFilter(setStewardFilter)}>
-                <SelectTrigger className="h-8 w-40 text-xs" aria-label={t("monitoredTables.colSteward")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL} className="text-xs">{t("monitoredTables.allStewards")}</SelectItem>
-                  {stewardOptions.map((s) => (
-                    <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
+                  {DQ_SCORE_BUCKETS.map((b) => (
+                    <SelectItem key={b.value} value={b.value} className="text-xs">
+                      {t(b.labelKey)}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -367,13 +404,30 @@ function MonitoredTablesPage() {
           }
           renderActions={
             // Actions column stays visible for anyone who can approve OR
-            // create/delete — an approver-only user still needs to see the
-            // approve/reject buttons even without create/delete rights, and
-            // vice versa. Mirrors RulesTable's per-status action gating
+            // create/delete OR run — an approver-only user still needs to
+            // see the approve/reject buttons even without create/delete
+            // rights, and a runner needs the Run button (item 76). Mirrors
+            // RulesTable's per-status action gating
             // (registry-rules.index.tsx#renderActionsCell).
-            perms.canApproveRules || perms.canCreateRules
+            perms.canApproveRules || perms.canCreateRules || perms.canRunRules
               ? (summary) => (
                   <div className="flex items-center justify-end gap-1">
+                    {perms.canRunRules && (summary.table.version ?? 0) > 0 && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            aria-label={t("monitoredTables.runAction")}
+                            onClick={() => handleRun(summary)}
+                          >
+                            <Play className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("monitoredTables.runAction")}</TooltipContent>
+                      </Tooltip>
+                    )}
                     {summary.table.status === "pending_approval" && perms.canApproveRules && (
                       <>
                         <Tooltip>
@@ -459,8 +513,8 @@ function MonitoredTablesPage() {
           }
         />
 
-        {tables.length > 0 && (
-          <Pagination page={page} totalItems={tables.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
+        {visibleTables.length > 0 && (
+          <Pagination page={page} totalItems={visibleTables.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
         )}
       </div>
 

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { BarChart3, ClipboardList, Columns3, Info } from "lucide-react";
+import { BarChart3, LineChart, Columns3, Info } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 /**
@@ -30,7 +30,7 @@ const ALL_TABS: { key: MonitoredTableTabKey; labelKey: string; icon: typeof Info
   { key: "about", labelKey: "monitoredTables.tabAbout", icon: Info },
   { key: "profile", labelKey: "monitoredTables.tabProfile", icon: BarChart3 },
   { key: "apply", labelKey: "monitoredTables.tabApplyRules", icon: Columns3 },
-  { key: "results", labelKey: "monitoredTables.tabResults", icon: ClipboardList },
+  { key: "results", labelKey: "monitoredTables.tabResults", icon: LineChart },
 ];
 
 // Groups define the visual separator layout — mirrors dqlake's

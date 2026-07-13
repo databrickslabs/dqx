@@ -4,9 +4,7 @@
  *
  * UX outline:
  * - A coloured badge shows the effective review status. Unreviewed runs
- *   carry the catalogue default (e.g. "Pending review") with an "(auto)"
- *   hint so the row is visually distinct from one where someone
- *   explicitly picked the same value.
+ *   carry the catalogue default (e.g. "Pending review").
  * - A dropdown lets any authenticated user move the run to another
  *   value from the admin-managed catalogue.
  * - A small "Last changed by X at Y" line records who moved the run
@@ -68,12 +66,14 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
 
   const { data: current, isLoading: currentLoading } = useRunReviewStatus(runId);
   const { data: catalogue, isLoading: catalogueLoading } = useRunReviewStatuses();
-  const { data: history, isLoading: historyLoading } = useRunReviewStatusHistory(runId, {
-    // Don't pay for the audit-trail roundtrip until the user opens it.
-    // Audit views are a minority of interactions and the data is rarely
-    // useful at-a-glance.
-    query: { enabled: historyOpen },
-  });
+  // Fetch the audit trail eagerly (lightweight GET) so we can decide
+  // whether the "Show history" affordance is worth rendering at all —
+  // there's no history-count on the status payload and ``is_default`` is
+  // not a reliable proxy (a run reverted to the default still has rows).
+  // The control stays hidden until we know there's something to show.
+  const { data: history } = useRunReviewStatusHistory(runId);
+  const historyEntries = history?.history ?? [];
+  const hasHistory = historyEntries.length > 0;
 
   const setMutation = useSetRunReviewStatus();
   const clearMutation = useClearRunReviewStatus();
@@ -161,11 +161,6 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
               >
                 {current.status || t("runReviewPanel.none")}
               </Badge>
-              {current.is_default && (
-                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                  {t("runReviewPanel.auto")}
-                </span>
-              )}
               <ChevronDown className="h-3 w-3 opacity-60" />
             </Button>
           </PopoverTrigger>
@@ -183,28 +178,30 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
                   key={opt.value}
                   type="button"
                   className={cn(
-                    "flex w-full items-start gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted",
+                    "flex w-full flex-col items-start gap-1 rounded px-2 py-1.5 text-left text-xs hover:bg-muted",
                     opt.value === current.status && "bg-muted",
                   )}
                   disabled={busy}
                   onClick={() => handleSelect(opt.value)}
                 >
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "text-[10px] font-normal mt-0.5 shrink-0",
-                      reviewStatusBadgeClasses(opt.color),
+                  <span className="flex w-full items-center gap-2">
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "text-[10px] font-normal shrink-0",
+                        reviewStatusBadgeClasses(opt.color),
+                      )}
+                    >
+                      {opt.value}
+                    </Badge>
+                    {opt.value === current.status && !current.is_default && (
+                      <Check className="h-3 w-3 ml-auto shrink-0 opacity-70" />
                     )}
-                  >
-                    {opt.value}
-                  </Badge>
+                  </span>
                   {opt.description && (
-                    <span className="text-muted-foreground text-[11px] leading-tight flex-1">
+                    <span className="text-muted-foreground text-[11px] leading-tight">
                       {opt.description}
                     </span>
-                  )}
-                  {opt.value === current.status && !current.is_default && (
-                    <Check className="h-3 w-3 ml-auto self-center opacity-70" />
                   )}
                 </button>
               ))}
@@ -237,37 +234,26 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
           </span>
         )}
 
-        {current.is_default && (
-          <span className="text-[11px] text-muted-foreground italic">
-            {t("runReviewPanel.defaultForUnreviewed")}
-          </span>
-        )}
       </div>
 
-      <button
-        type="button"
-        onClick={() => setHistoryOpen((o) => !o)}
-        aria-expanded={historyOpen}
-        className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <History className="h-3 w-3" />
-        {historyOpen ? t("runReviewPanel.hideHistory") : t("runReviewPanel.showHistory")}
-      </button>
+      {/* Only surface the audit trail when there's actually something to
+          show. While the eager history query is still loading, hasHistory
+          is false so the control stays hidden — no flash-then-vanish. */}
+      {hasHistory && (
+        <button
+          type="button"
+          onClick={() => setHistoryOpen((o) => !o)}
+          aria-expanded={historyOpen}
+          className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <History className="h-3 w-3" />
+          {historyOpen ? t("runReviewPanel.hideHistory") : t("runReviewPanel.showHistory")}
+        </button>
+      )}
 
-      {historyOpen && (
+      {hasHistory && historyOpen && (
         <div className="pl-5 border-l-2 border-muted space-y-1.5">
-          {historyLoading && (
-            <div className="flex items-center gap-2 text-[11px] text-muted-foreground py-1">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              {t("runReviewPanel.loadingHistory")}
-            </div>
-          )}
-          {!historyLoading && (history?.history.length ?? 0) === 0 && (
-            <p className="text-[11px] text-muted-foreground py-1">
-              {t("runReviewPanel.noExplicitChanges")}
-            </p>
-          )}
-          {history?.history.map((entry, i) => (
+          {historyEntries.map((entry, i) => (
             <div
               key={`${entry.changed_at}-${i}`}
               className="flex flex-wrap items-center gap-1.5 text-[11px]"

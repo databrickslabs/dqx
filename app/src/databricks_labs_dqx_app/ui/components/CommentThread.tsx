@@ -13,7 +13,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { formatDateTime } from "@/lib/format-utils";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -24,12 +32,21 @@ import {
   type CommentOut,
 } from "@/lib/api-custom";
 
+// Comment threads are keyed by a generic (entity_type, entity_id) pair on the
+// backend, so the union here just mirrors the backend allowlist. `rule` keys
+// on rule_id, `monitored_table` on binding_id, `data_product` on product_id,
+// `run` on run_id.
+export type CommentEntityType = "run" | "rule" | "monitored_table" | "data_product";
+
 interface CommentThreadProps {
-  entityType: "run" | "rule";
+  entityType: CommentEntityType;
   entityId: string;
+  // When embedded (e.g. inside a dialog), the thread renders always-open with
+  // no collapse toggle and drops the inline left rule/indent used on list rows.
+  embedded?: boolean;
 }
 
-export function CommentThread({ entityType, entityId }: CommentThreadProps) {
+export function CommentThread({ entityType, entityId, embedded = false }: CommentThreadProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [newComment, setNewComment] = useState("");
@@ -39,8 +56,12 @@ export function CommentThread({ entityType, entityId }: CommentThreadProps) {
   // silently nuke a comment.
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
+  // Embedded threads are open by design; the query only fires once open so a
+  // collapsed thread on a list row stays cheap.
+  const open = embedded || isOpen;
+
   const { data: commentsResp, isLoading } = useListComments(entityType, entityId, {
-    query: { enabled: isOpen },
+    query: { enabled: open },
   });
   const comments: CommentOut[] = commentsResp?.data ?? [];
 
@@ -73,20 +94,22 @@ export function CommentThread({ entityType, entityId }: CommentThreadProps) {
 
   return (
     <div className="space-y-3">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        aria-expanded={isOpen}
-        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <MessageSquare className="h-4 w-4" />
-        <span>
-          {isOpen ? t("commentThread.hideComments") : t("commentThread.showComments")} {t("commentThread.commentsSuffix")}
-          {comments.length > 0 && ` (${comments.length})`}
-        </span>
-      </button>
+      {!embedded && (
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          aria-expanded={isOpen}
+          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <MessageSquare className="h-4 w-4" />
+          <span>
+            {isOpen ? t("commentThread.hideComments") : t("commentThread.showComments")} {t("commentThread.commentsSuffix")}
+            {comments.length > 0 && ` (${comments.length})`}
+          </span>
+        </button>
+      )}
 
-      {isOpen && (
-        <div className="space-y-3 pl-6 border-l-2 border-muted">
+      {open && (
+        <div className={cn("space-y-3", !embedded && "pl-6 border-l-2 border-muted")}>
           {isLoading && (
             <div className="flex items-center gap-2 text-muted-foreground text-xs py-2">
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -180,5 +203,36 @@ export function CommentThread({ entityType, entityId }: CommentThreadProps) {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+/**
+ * Comment thread presented in a modal dialog — mounted from the 3-dot menu on
+ * the registry-rule, monitored-table, and table-space detail pages so comments
+ * live in a consistent place across governed objects.
+ */
+export function CommentsDialog({
+  entityType,
+  entityId,
+  open,
+  onOpenChange,
+}: {
+  entityType: CommentEntityType;
+  entityId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t("commentThread.dialogTitle")}</DialogTitle>
+          <DialogDescription>{t("commentThread.dialogDescription")}</DialogDescription>
+        </DialogHeader>
+        {/* Remount per open so the thread refetches and resets its composer. */}
+        {open && <CommentThread entityType={entityType} entityId={entityId} embedded />}
+      </DialogContent>
+    </Dialog>
   );
 }

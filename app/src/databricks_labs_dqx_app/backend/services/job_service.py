@@ -34,10 +34,16 @@ class JobService:
         ws: WorkspaceClient,
         job_id: str,
         sql: SqlExecutor,
+        warehouse_id: str | None = None,
     ) -> None:
         self._ws = ws
         self._job_id = int(job_id) if job_id else 0
         self._sql = sql
+        # SQL warehouse the task runner uses for its temp-view cleanup path.
+        # The admin-configured warehouse (``dq_app_settings`` → resolved by the
+        # caller) wins; otherwise fall back to the SP executor's env-bound
+        # warehouse so behaviour is unchanged when no override is set.
+        self._warehouse_id = (warehouse_id or "").strip() or (sql.warehouse_id or "")
 
     def submit_run(
         self,
@@ -64,7 +70,7 @@ class JobService:
                 "config_json": json.dumps(config),
                 "run_id": run_id,
                 "requesting_user": requesting_user,
-                "warehouse_id": self._sql.warehouse_id,
+                "warehouse_id": self._warehouse_id,
             },
         )
         logger.info(
@@ -211,7 +217,7 @@ class JobService:
     _PROFILE_COLS = (
         "run_id, requesting_user, source_table_fqn, view_fqn, sample_limit, "
         "rows_profiled, columns_profiled, duration_seconds, summary_json, "
-        "generated_rules_json, status, error_message, canceled_by, "
+        "generated_rules_json, status, error_message, canceled_by, job_run_id, "
         "CAST(updated_at AS STRING) AS updated_at, "
         "CAST(created_at AS STRING) AS created_at"
     )
@@ -219,7 +225,7 @@ class JobService:
     _DRYRUN_COLS = (
         "run_id, requesting_user, source_table_fqn, sample_size, "
         "total_rows, valid_rows, invalid_rows, error_rows, warning_rows, "
-        "status, error_message, canceled_by, "
+        "status, error_message, canceled_by, job_run_id, "
         "CAST(updated_at AS STRING) AS updated_at, "
         "CAST(created_at AS STRING) AS created_at, "
         "COALESCE(run_type, 'dryrun') AS run_type, "
@@ -231,12 +237,22 @@ class JobService:
         table: str,
         select_cols: str,
         limit: int = 500,
+        source_table_fqn: str | None = None,
     ) -> list[dict[str, str | None]]:
         """Read the most recent result rows from a Delta table, newest first.
 
         Deduplicates by run_id -- if both a RUNNING placeholder and a terminal
         row exist for the same run_id, only the terminal row is returned.
+
+        When ``source_table_fqn`` is given, only rows for that source table are
+        returned (server-side filter), so callers scoped to a single table
+        don't have to pull the full history and filter client-side.
         """
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        where = ""
+        if source_table_fqn:
+            where = f"  WHERE source_table_fqn = '{escape_sql_string(source_table_fqn)}' "
         sql = (
             f"SELECT {select_cols} "  # noqa: S608
             f"FROM ("
@@ -245,14 +261,20 @@ class JobService:
             f"    ORDER BY CASE WHEN status = 'RUNNING' THEN 1 ELSE 0 END ASC, created_at DESC"
             f"  ) AS rn "
             f"  FROM {table}"
+            f"{where}"
             f") WHERE rn = 1 "
             f"ORDER BY created_at DESC LIMIT {int(limit)}"
         )
         return self._sql.query_dicts(sql)
 
-    def list_run_rows(self, table: str, limit: int = 500) -> list[dict[str, str | None]]:
-        """Read the most recent profiler result rows."""
-        return self._list_deduplicated_rows(table, self._PROFILE_COLS, limit)
+    def list_run_rows(
+        self,
+        table: str,
+        limit: int = 500,
+        source_table_fqn: str | None = None,
+    ) -> list[dict[str, str | None]]:
+        """Read the most recent profiler result rows, optionally scoped to one source table."""
+        return self._list_deduplicated_rows(table, self._PROFILE_COLS, limit, source_table_fqn)
 
     def list_dryrun_rows(self, table: str, limit: int = 500) -> list[dict[str, str | None]]:
         """Read the most recent dry-run result rows, excluding ad-hoc preview runs.

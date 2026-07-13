@@ -153,9 +153,12 @@ async def run_rule_test(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        # Never relay raw warehouse errors — they can echo schema/data.
+        # The test runs the user's OWN OBO query against a table THEY chose, so the
+        # underlying SQL/warehouse failure (permission denied, unknown column, syntax
+        # error) is theirs to see — surfacing it is what makes a failed run actionable.
+        # Only the error text from that query reaches the client; nothing else leaks.
         logger.error("Failed to run rule test: %s", e, exc_info=True)
-        raise HTTPException(status_code=502, detail="Could not run the test. Check the SQL warehouse and your access.")
+        raise HTTPException(status_code=502, detail=f"Could not run the test: {e}") from e
     return _to_out(result)
 
 

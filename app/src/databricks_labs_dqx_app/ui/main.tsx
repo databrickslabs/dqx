@@ -2,6 +2,10 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import "@/styles/globals.css";
+// Side-effect import: installs the axios defaults the generated client
+// relies on — notably the repeated-key array-param serializer that the
+// FastAPI list query params (results drilldown facet filters) require.
+import "@/lib/axios-config";
 import { i18nReady } from "@/lib/i18n";
 import { routeTree } from "@/types/routeTree.gen";
 
@@ -9,6 +13,7 @@ import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthGuard } from "@/components/AuthGuard";
 import { toast } from "sonner";
+import { errorToast } from "@/lib/toast";
 
 const mutationCache = new MutationCache({
   onSuccess: (_data, _vars, _ctx, mutation) => {
@@ -17,7 +22,9 @@ const mutationCache = new MutationCache({
   },
   onError: (_error, _vars, _ctx, mutation) => {
     const meta = mutation.meta as { errorMessage?: string } | undefined;
-    if (meta?.errorMessage) toast.error(meta.errorMessage);
+    // B2-30: error toasts carry a "Copy" action (copies the message text) in
+    // addition to the global dismiss X on the Toaster.
+    if (meta?.errorMessage) errorToast(meta.errorMessage);
   },
 });
 
@@ -28,6 +35,12 @@ const queryClient = new QueryClient({
     queries: {
       // Don't retry by default - AuthGuard handles initial auth flow
       retry: false,
+      // B2-22: keep query results fresh for 5 minutes so app-wide data
+      // (role, version, approvals mode, global-results flag, and everything
+      // else) is served from cache instead of refetching on every route
+      // mount / tab switch. Run-completion invalidation and explicit
+      // invalidateQueries still refresh what needs to change.
+      staleTime: 5 * 60 * 1000,
     },
   },
 });

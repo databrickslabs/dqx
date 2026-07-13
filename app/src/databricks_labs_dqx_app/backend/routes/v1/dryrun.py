@@ -210,6 +210,7 @@ async def list_validation_runs(
                     created_at=row.get("created_at"),
                     run_type=row.get("run_type"),
                     error_message=row.get("error_message"),
+                    job_run_id=int(v) if (v := row.get("job_run_id")) else None,
                     checks=checks,
                     review_status=review_value,
                     review_status_is_default=bool(review.is_default) if review else False,

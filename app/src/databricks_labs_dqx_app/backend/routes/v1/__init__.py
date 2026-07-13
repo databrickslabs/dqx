@@ -18,6 +18,10 @@ from .roles import router as roles_router
 from .comments import router as comments_router
 from .quarantine import router as quarantine_router
 from .metrics import router as metrics_router
+from .dq_score import router as dq_score_router
+from .dq_results import router as dq_results_router
+from .genie import router as genie_router
+from .home import router as home_router
 from .review_status import router as review_status_router
 from .schedules import router as schedules_router
 from .run_sets import router as run_sets_router
@@ -27,6 +31,7 @@ from .table_data import router as table_data_router
 from .rule_test import router as rule_test_router
 from .principals import router as principals_router
 from .permissions import router as permissions_router
+from .admin import router as admin_router
 
 v1_router = APIRouter()
 v1_router.include_router(me_router, tags=["meta"])
@@ -48,6 +53,10 @@ v1_router.include_router(settings_router, prefix="/settings", tags=["settings"])
 v1_router.include_router(comments_router, prefix="/comments", tags=["comments"])
 v1_router.include_router(quarantine_router, prefix="/quarantine", tags=["quarantine"])
 v1_router.include_router(metrics_router, prefix="/metrics", tags=["metrics"])
+v1_router.include_router(dq_score_router, prefix="/dq-score", tags=["dq-score"])
+v1_router.include_router(dq_results_router, prefix="/dq-results", tags=["dq-results"])
+v1_router.include_router(genie_router, prefix="/genie", tags=["genie"])
+v1_router.include_router(home_router, prefix="/home", tags=["home"])
 v1_router.include_router(review_status_router, prefix="/runs", tags=["review-status"])
 v1_router.include_router(run_sets_router, prefix="/run-sets", tags=["run-sets"])
 v1_router.include_router(data_products_router, prefix="/data-products", tags=["data-products"])
@@ -56,3 +65,4 @@ v1_router.include_router(table_data_router, prefix="/table-data", tags=["table-d
 v1_router.include_router(rule_test_router, prefix="/rule-tests", tags=["rule-tests"])
 v1_router.include_router(principals_router, prefix="/principals", tags=["principals"])
 v1_router.include_router(permissions_router, prefix="/permissions", tags=["permissions"])
+v1_router.include_router(admin_router, prefix="/admin", tags=["admin"])

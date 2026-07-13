@@ -10,6 +10,7 @@ middleware.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -38,6 +39,7 @@ from databricks_labs_dqx_app.backend.routes.v1.data_products import (
     update_data_product,
 )
 from databricks_labs_dqx_app.backend.services.data_product_service import (
+    BindingNotApprovedError,
     DataProductDetail,
     DataProductRunResult,
     DuplicateDataProductNameError,
@@ -60,6 +62,13 @@ def _mock_obo_ws(user_email: str = "alice@x") -> MagicMock:
     me.user_name = user_email
     obo.current_user.me.return_value = me
     return obo
+
+
+def _enabled_settings() -> MagicMock:
+    """App-settings mock with approvals mode = ``enabled`` (no auto-approve)."""
+    app_settings = MagicMock()
+    app_settings.get_approvals_mode.return_value = "enabled"
+    return app_settings
 
 
 def _route_required_roles(operation_id: str) -> set[UserRole]:
@@ -234,6 +243,20 @@ class TestMembers:
             add_data_product_member("p1", body=AddDataProductMemberIn(binding_id="invalid_binding"), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
         assert excinfo.value.status_code == 404
 
+    def test_add_member_non_approved_binding_raises_400(self):
+        """P3.2: a draft/pending/rejected/never-approved binding cannot join —
+        the service's BindingNotApprovedError maps to a clear 400."""
+        svc = MagicMock()
+        svc.add_member.side_effect = BindingNotApprovedError(
+            "Cannot add table 'cat.schema.tbl' to this table space: its status is 'draft', expected 'approved'. "
+            "Only approved tables can join a table space."
+        )
+        with pytest.raises(HTTPException) as excinfo:
+            add_data_product_member("p1", body=AddDataProductMemberIn(binding_id="b1"), svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock())
+        assert excinfo.value.status_code == 400
+        assert "cat.schema.tbl" in excinfo.value.detail
+        assert "'draft'" in excinfo.value.detail
+
     def test_remove_member_success(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1")
@@ -253,15 +276,16 @@ class TestSubmit:
     def test_submit_success(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1", status="pending_approval", version=0)
-        result = submit_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+        result = submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), draft_run_gate=MagicMock(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
         assert result.status == "pending_approval"
         svc.submit.assert_called_once_with("p1", "alice@x")
 
     def test_submit_missing_raises_404(self):
         svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="draft", version=0)
         svc.submit.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            submit_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+            submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), draft_run_gate=MagicMock(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
 
     def test_submit_approved_unchanged_raises_409(self):
@@ -271,9 +295,10 @@ class TestSubmit:
         scheduled runs.
         """
         svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="approved", version=1)
         svc.submit.side_effect = InvalidStatusTransitionError("boom")
         with pytest.raises(HTTPException) as excinfo:
-            submit_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+            submit_data_product("p1", svc=svc, app_settings=_enabled_settings(), draft_run_gate=MagicMock(), perms=MagicMock(), role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 409
 
 
@@ -337,3 +362,53 @@ class TestRun:
         with pytest.raises(HTTPException) as excinfo:
             run_data_product("p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# getDataProductReviewChanges — Table Space change-diff backing
+# ---------------------------------------------------------------------------
+
+
+class TestReviewChanges:
+    def test_review_changes_is_viewer_plus(self):
+        roles = _route_required_roles("getDataProductReviewChanges")
+        assert UserRole.VIEWER in roles
+
+    def test_404_when_missing(self):
+        svc = MagicMock()
+        svc.get.return_value = None
+        version_svc = MagicMock()
+        with pytest.raises(HTTPException) as exc:
+            dp_routes.get_data_product_review_changes("nope", svc, version_svc)
+        assert exc.value.status_code == 404
+
+    def test_resolves_frozen_checks_per_member(self):
+        member = SimpleNamespace(
+            binding_id="b1", table_fqn="c.s.t", pinned_version=None, binding_version=2
+        )
+        detail = DataProductDetail(product=_product(product_id="p1", name="Orders", version=3))
+        detail.members = [member]  # type: ignore[attr-defined]
+        svc = MagicMock()
+        svc.get.return_value = detail
+        version_svc = MagicMock()
+        version_svc.get_checks.return_value = [{"check": {"function": "is_not_null"}}]
+        out = dp_routes.get_data_product_review_changes("p1", svc, version_svc)
+        assert out.product_id == "p1"
+        assert out.version == 3
+        assert len(out.members) == 1
+        assert out.members[0].checks == [{"check": {"function": "is_not_null"}}]
+        # pinned_version None -> effective = binding_version (2)
+        version_svc.get_checks.assert_called_once_with("b1", 2)
+
+    def test_no_prior_snapshot_when_binding_never_approved(self):
+        member = SimpleNamespace(
+            binding_id="b1", table_fqn="c.s.t", pinned_version=None, binding_version=0
+        )
+        detail = DataProductDetail(product=_product(product_id="p1"))
+        detail.members = [member]  # type: ignore[attr-defined]
+        svc = MagicMock()
+        svc.get.return_value = detail
+        version_svc = MagicMock()
+        out = dp_routes.get_data_product_review_changes("p1", svc, version_svc)
+        assert out.members[0].checks == []
+        version_svc.get_checks.assert_not_called()

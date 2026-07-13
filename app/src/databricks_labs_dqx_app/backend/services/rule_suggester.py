@@ -17,7 +17,6 @@ declared slots before it is returned (see :meth:`RuleSuggester._post_process`).
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from dataclasses import dataclass, field

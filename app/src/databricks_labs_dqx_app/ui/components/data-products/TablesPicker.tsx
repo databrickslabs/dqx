@@ -14,9 +14,12 @@
  * fetch per group).
  *
  * Preserves the pre-existing contract dqlake's port relied on:
- *   - Sourced from ALL monitored tables regardless of approval status — per
- *     the Table Spaces design spec §6, unapproved rows are marked "not
- *     ready" but stay addable.
+ *   - Sourced from ALL monitored tables regardless of approval status, but
+ *     (P3.2 — superseding the design spec §6 "stay addable" behaviour) rows
+ *     that are not approved render disabled with a "not ready" badge +
+ *     tooltip and cannot be selected. Eligibility matches the backend's
+ *     add_member guard exactly: status === "approved" AND version > 0 — the
+ *     same predicate as `DataProductMemberOut.runnable`.
  *   - Already-member rows (`disabledKeys`) render checked + non-interactive.
  *   - Props key off `binding_id` (DQX has a real binding concept dqlake
  *     doesn't, so there's no need to key off the FQN).
@@ -115,6 +118,17 @@ type GroupMode = "catalog" | "schema" | "none";
 
 const ALL = "ALL";
 
+/**
+ * P3.2 eligibility: only approved bindings (status "approved" AND version > 0
+ * — the backend's `_is_runnable` / `DataProductMemberOut.runnable` predicate)
+ * can join a table space; the backend rejects the rest with a 400. A binding
+ * shown as "modified" (approved with unapproved edits) is still approved
+ * underneath and stays eligible.
+ */
+function isEligible(r: MonitoredTableSummaryOut): boolean {
+  return r.table.status === "approved" && (r.table.version ?? 0) > 0;
+}
+
 export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, pins, onPinChange }: Props) {
   const { t } = useTranslation();
   const { data } = useListMonitoredTablesSuspense(undefined, { ...selector<MonitoredTableSummaryOut[]>() });
@@ -124,6 +138,14 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
     onRowsLoaded?.(rows);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
+
+  // Non-approved bindings can't be selected (P3.2) — see isEligible above.
+  const ineligibleKeys = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of rows) if (!isEligible(r)) s.add(r.table.binding_id);
+    return s;
+  }, [rows]);
+  const isSelectable = (key: string) => !disabledKeys?.has(key) && !ineligibleKeys.has(key);
 
   const [groupBy, setGroupBy] = useState<GroupMode>("catalog");
   const [search, setSearch] = useState("");
@@ -179,15 +201,26 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
   }, [filtered, groupBy, t]);
 
   function toggleRow(key: string) {
-    if (disabledKeys?.has(key)) return;
+    if (!isSelectable(key)) return;
     const next = new Set(selected);
     if (next.has(key)) next.delete(key);
     else next.add(key);
     onChange(next);
   }
 
+  // Item 41(c): interacting with the version picker also selects the row.
+  // This is an idempotent add (never a toggle), so opening the picker on an
+  // unselected row marks it selected, while the wrapper's stopPropagation
+  // keeps the whole-row onClick from also firing and double-toggling it.
+  function selectRow(key: string) {
+    if (!isSelectable(key) || selected.has(key)) return;
+    const next = new Set(selected);
+    next.add(key);
+    onChange(next);
+  }
+
   function toggleGroup(groupRows: MonitoredTableSummaryOut[]) {
-    const selectableKeys = groupRows.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k));
+    const selectableKeys = groupRows.map((r) => r.table.binding_id).filter(isSelectable);
     const allSelected = selectableKeys.length > 0 && selectableKeys.every((k) => selected.has(k));
     const next = new Set(selected);
     if (allSelected) {
@@ -206,8 +239,8 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
   // the current filter are left untouched); unchecking it clears the
   // selection entirely, same as the old "Clear" button.
   const allFilteredSelectableKeys = useMemo(
-    () => filtered.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k)),
-    [filtered, disabledKeys],
+    () => filtered.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k) && !ineligibleKeys.has(k)),
+    [filtered, disabledKeys, ineligibleKeys],
   );
   const allFilteredSelected =
     allFilteredSelectableKeys.length > 0 && allFilteredSelectableKeys.every((k) => selected.has(k));
@@ -319,23 +352,6 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
           onChange={(e) => setSearch(e.target.value)}
           className="w-48 h-8 text-xs"
         />
-
-        {/* Grouped mode's per-group mini header rows are gone (P25 item 3a);
-            the "#Rules"/"Status" column labels render once up here instead
-            (item 3b). Widths + padding mirror the group tables' colgroup
-            (100px right-aligned / 140px) so, right-aligned via ml-auto, the
-            labels sit over their columns. Flat mode keeps its own in-table
-            header, so these only show while grouping. */}
-        {groupBy !== "none" && (
-          <div className="ml-auto flex items-center shrink-0">
-            <span className="w-[100px] px-2 text-right text-xs font-medium text-muted-foreground">
-              {t("dataProducts.colRules")}
-            </span>
-            <span className="w-[140px] px-2 text-xs font-medium text-muted-foreground">
-              {t("dataProducts.colStatus")}
-            </span>
-          </div>
-        )}
       </div>
 
       <div className="space-y-3 min-h-[20rem]">
@@ -344,13 +360,18 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
             {rows.length === 0 ? t("dataProducts.pickerNoTables") : t("dataProducts.pickerNoMatches")}
           </div>
         ) : groupBy === "none" ? (
-          <Table className="table-fixed w-full">
-            <colgroup>
-              <col style={{ width: 48 }} />
-              <col />
-              <col style={{ width: 100 }} />
-              <col style={{ width: 140 }} />
-            </colgroup>
+          // B2-14: confine any horizontal overflow inside the dialog (matching
+          // dqlake's picker + the RR/MT/TS overview tables) and keep a sensible
+          // min width so the #rules/status/version-pin columns never cramp on a
+          // narrow viewport — they scroll within this box instead of the page.
+          <div className="overflow-x-auto">
+            <Table className="table-fixed w-full min-w-[640px]">
+              <colgroup>
+                <col style={{ width: 48 }} />
+                <col />
+                <col style={{ width: 100 }} />
+                <col style={{ width: 140 }} />
+              </colgroup>
             <TableHeader>
               <TableRow>
                 <TableHead style={{ width: 48 }} className="text-center" />
@@ -362,9 +383,12 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
             <TableBody>
               {filtered.map((r) => {
                 const key = r.table.binding_id;
-                const isDisabled = disabledKeys?.has(key) ?? false;
-                const isChecked = isDisabled || selected.has(key);
-                const notReady = r.table.status !== "approved";
+                const isMember = disabledKeys?.has(key) ?? false;
+                const notEligible = ineligibleKeys.has(key);
+                // Members render checked; ineligible non-members render
+                // unchecked but equally non-interactive (P3.2).
+                const isDisabled = isMember || notEligible;
+                const isChecked = isMember || selected.has(key);
                 return (
                   <TableRow
                     key={key}
@@ -386,17 +410,32 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                     <TableCell className="overflow-hidden">
                       <span className="inline-flex items-center gap-2 max-w-full">
                         <TruncatedCell text={r.table.table_fqn} className="font-mono text-xs" />
-                        {notReady && (
-                          <Badge variant="outline" className="text-[10px] shrink-0">
-                            {t("dataProducts.pickerNotReadyBadge")}
-                          </Badge>
+                        {notEligible && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge variant="outline" className="text-[10px] shrink-0">
+                                {t("dataProducts.pickerNotReadyBadge")}
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs text-wrap">
+                              {t("dataProducts.pickerNotEligibleTooltip")}
+                            </TooltipContent>
+                          </Tooltip>
                         )}
                         {/* Version pin, inline right after the table name —
                             P24 item 16 (replaces the old standalone "Version
-                            to track" section). Shown once the row is
-                            checked, same reveal condition as "not ready". */}
-                        {!isDisabled && selected.has(key) && (
-                          <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                            to track" section). Item 41(a): always shown for
+                            selectable rows, not only after selection, so the
+                            pin choice is visible up front. Clicking it selects
+                            the row via selectRow (41c). */}
+                        {!isDisabled && (
+                          <span
+                            className="shrink-0"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              selectRow(key);
+                            }}
+                          >
                             <MemberVersionPin
                               bindingVersion={r.table.version ?? 0}
                               pinnedVersion={pins.get(key) ?? null}
@@ -416,10 +455,11 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                 );
               })}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         ) : (
           Array.from(grouped.entries()).map(([group, groupRows]) => {
-            const selectableKeys = groupRows.map((r) => r.table.binding_id).filter((k) => !disabledKeys?.has(k));
+            const selectableKeys = groupRows.map((r) => r.table.binding_id).filter(isSelectable);
             const allSelected = selectableKeys.length > 0 && selectableKeys.every((k) => selected.has(k));
             const someSelected = selectableKeys.some((k) => selected.has(k));
             return (
@@ -451,22 +491,37 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                     </Badge>
                   </div>
                 </div>
-                {/* No per-group header row (P25 item 3a) — the column labels
-                    live once in the toolbar above; the colgroup keeps the
-                    rows aligned with them. */}
-                <Table className="table-fixed w-full">
+                {/* Per-group header row (P29 item 40, reversing P25 item 3a):
+                    the "#Rules"/"Status" column labels live in a TableHeader
+                    directly above each group's rows so they read as that
+                    group's columns, instead of floating once in the toolbar
+                    detached from the values. Flat mode has its own in-table
+                    header; the colgroup here matches it. */}
+                <div className="overflow-x-auto">
+                <Table className="table-fixed w-full min-w-[640px]">
                   <colgroup>
                     <col style={{ width: 48 }} />
                     <col />
                     <col style={{ width: 100 }} />
                     <col style={{ width: 140 }} />
                   </colgroup>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead style={{ width: 48 }} className="text-center" />
+                      <TableHead>{t("monitoredTables.colTableName")}</TableHead>
+                      <TableHead className="text-right">{t("dataProducts.colRules")}</TableHead>
+                      <TableHead>{t("dataProducts.colStatus")}</TableHead>
+                    </TableRow>
+                  </TableHeader>
                   <TableBody>
                     {groupRows.map((r) => {
                       const key = r.table.binding_id;
-                      const isDisabled = disabledKeys?.has(key) ?? false;
-                      const isChecked = isDisabled || selected.has(key);
-                      const notReady = r.table.status !== "approved";
+                      const isMember = disabledKeys?.has(key) ?? false;
+                      const notEligible = ineligibleKeys.has(key);
+                      // Members render checked; ineligible non-members render
+                      // unchecked but equally non-interactive (P3.2).
+                      const isDisabled = isMember || notEligible;
+                      const isChecked = isMember || selected.has(key);
                       return (
                         <TableRow
                           key={key}
@@ -492,17 +547,31 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                                 fullText={r.table.table_fqn}
                                 className="font-mono text-xs"
                               />
-                              {notReady && (
-                                <Badge variant="outline" className="text-[10px] shrink-0">
-                                  {t("dataProducts.pickerNotReadyBadge")}
-                                </Badge>
+                              {notEligible && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="outline" className="text-[10px] shrink-0">
+                                      {t("dataProducts.pickerNotReadyBadge")}
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-xs text-wrap">
+                                    {t("dataProducts.pickerNotEligibleTooltip")}
+                                  </TooltipContent>
+                                </Tooltip>
                               )}
                               {/* Version pin, inline right after the table
-                                  name — P24 item 16. Shown once the row is
-                                  checked, same reveal condition as "not
-                                  ready". */}
-                              {!isDisabled && selected.has(key) && (
-                                <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                                  name — P24 item 16. Item 41(a): always shown
+                                  for selectable rows, not only after
+                                  selection. Clicking it selects the row via
+                                  selectRow (41c). */}
+                              {!isDisabled && (
+                                <span
+                                  className="shrink-0"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    selectRow(key);
+                                  }}
+                                >
                                   <MemberVersionPin
                                     bindingVersion={r.table.version ?? 0}
                                     pinnedVersion={pins.get(key) ?? null}
@@ -523,6 +592,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
                     })}
                   </TableBody>
                 </Table>
+                </div>
               </div>
             );
           })

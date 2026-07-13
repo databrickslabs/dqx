@@ -269,13 +269,13 @@ function RoleMappingRow({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex items-center justify-between py-2 px-3 bg-muted/30 rounded-md">
+    <div className="flex items-center justify-between rounded-md border bg-muted/30 p-3">
       <div className="flex items-center gap-3">
+        <span className="font-medium">{mapping.group_name}</span>
+        <span className="text-sm text-muted-foreground">→</span>
         <Badge variant="outline" className="font-mono">
           {getRoleLabel(mapping.role, t)}
         </Badge>
-        <span className="text-sm text-muted-foreground">→</span>
-        <span className="font-medium">{mapping.group_name}</span>
       </div>
       <Button
         variant="ghost"
@@ -335,8 +335,14 @@ function AddRoleMappingForm({
   };
 
   return (
-    <div className="flex items-end gap-3 pt-4 border-t">
-      <div className="flex-1 space-y-1">
+    <div className="flex flex-wrap items-end gap-3 border-t pt-4">
+      {/* Group first, then Role — you pick who, then what they get. */}
+      <div className="flex-1 min-w-[200px] space-y-1.5">
+        <label className="text-sm font-medium">{t("roleManagement.databricksGroup")}</label>
+        <GroupCombobox value={selectedGroup} onChange={setSelectedGroup} />
+      </div>
+
+      <div className="flex-1 min-w-[200px] space-y-1.5">
         <label className="text-sm font-medium">{t("roleManagement.role")}</label>
         <Select value={selectedRole} onValueChange={setSelectedRole} disabled={isAdding}>
           <SelectTrigger>
@@ -355,11 +361,6 @@ function AddRoleMappingForm({
             ))}
           </SelectContent>
         </Select>
-      </div>
-
-      <div className="flex-1 space-y-1">
-        <label className="text-sm font-medium">{t("roleManagement.databricksGroup")}</label>
-        <GroupCombobox value={selectedGroup} onChange={setSelectedGroup} />
       </div>
 
       <Button

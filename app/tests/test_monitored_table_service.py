@@ -64,7 +64,18 @@ def _table_row(
     schedule_cron: str | None = None,
     schedule_tz: str | None = None,
     last_profiled_at: str | None = None,
+    last_run_at: str | None = None,
+    schedule_kind: str | None = "profiling_and_dq",
+    score: str | None = None,
+    failed_tests: str | None = None,
+    total_tests: str | None = None,
+    score_computed_at: str | None = None,
 ) -> list[str]:
+    # ``schedule_kind`` (B2-52) is selected last among the base columns
+    # (index 13); the trailing 4 cells are the dq_score_cache LEFT-JOIN
+    # columns the list query selects (P3.4) — all None when the table has
+    # never been scored. The single-row read paths select only the first 14
+    # columns; the extra cells are simply ignored by _row_to_table.
     return [
         binding_id,
         table_fqn,
@@ -74,10 +85,16 @@ def _table_row(
         schedule_cron,
         schedule_tz,
         last_profiled_at,
+        last_run_at,
         "alice@x",
         "2026-07-02T00:00:00+00:00",
         "alice@x",
         "2026-07-02T00:00:00+00:00",
+        schedule_kind,
+        score,
+        failed_tests,
+        total_tests,
+        score_computed_at,
     ]
 
 
@@ -122,6 +139,15 @@ class TestRegister:
         insert_sql = sql.execute.call_args[0][0]
         assert "INSERT INTO dqx_test.dqx_app_test.dq_monitored_tables" in insert_sql
         assert "cat.schema.tbl" in insert_sql
+
+    def test_defaults_steward_to_creator_when_unset(self, svc, sql):
+        # No steward supplied (owner unresolved upstream) -> the creator becomes
+        # the accountable steward so no binding is ever left ownerless.
+        sql.query.return_value = []
+        table = svc.register("cat.schema.tbl", "alice@x")
+        assert table.steward == "alice@x"
+        insert_sql = sql.execute.call_args[0][0]
+        assert "alice@x" in insert_sql
 
     def test_rejects_duplicate_table_fqn(self, svc, sql):
         sql.query.return_value = [_table_row(table_fqn="cat.schema.tbl")]
@@ -187,6 +213,14 @@ class TestBulkRegister:
         assert any("cat.schema.new1" in v for v in inserted_fqns)
         assert any("cat.schema.new2" in v for v in inserted_fqns)
 
+    def test_defaults_steward_to_creator_when_unset(self, svc, sql):
+        # Bulk register with no shared steward -> each binding defaults to the
+        # creator (no per-table UC owner lookup on the bulk path).
+        sql.query.return_value = []
+        svc.bulk_register(["cat.schema.new1"], "alice@x")
+        insert_sql = sql.execute.call_args[0][0]
+        assert "alice@x" in insert_sql
+
     def test_dedupes_within_input(self, svc, sql):
         sql.query.return_value = []
         result = svc.bulk_register(["cat.schema.new1", "cat.schema.new1"], "alice@x")
@@ -218,11 +252,12 @@ class TestBulkRegister:
 class TestListMonitoredTables:
     def test_lists_with_applied_rule_counts(self, svc, sql):
         sql.query.side_effect = [
-            [_table_row(binding_id="b1"), _table_row(binding_id="b2")],
-            [["2"]],  # applied-rule count for b1
-            [["3"]],  # materialized-check count for b1
-            [["0"]],  # applied-rule count for b2
-            [["0"]],  # materialized-check count for b2
+            [
+                _table_row(binding_id="b1", table_fqn="cat.schema.t1"),
+                _table_row(binding_id="b2", table_fqn="cat.schema.t2"),
+            ],
+            [["b1", "2"]],  # grouped applied-rule counts (b2 absent -> 0)
+            [["cat.schema.t1", "3"]],  # grouped materialized-check counts (t2 absent -> 0)
         ]
         summaries = svc.list_monitored_tables()
         assert len(summaries) == 2
@@ -230,6 +265,16 @@ class TestListMonitoredTables:
         assert summaries[0].check_count == 3
         assert summaries[1].applied_rule_count == 0
         assert summaries[1].check_count == 0
+        # Counts are batched: bindings query + ONE grouped query per count
+        # kind, regardless of how many bindings are listed (no per-binding N+1).
+        assert sql.query.call_count == 3
+        applied_sql = sql.query.call_args_list[1][0][0]
+        assert "GROUP BY binding_id" in applied_sql
+        assert "IN ('b1', 'b2')" in applied_sql
+        checks_sql = sql.query.call_args_list[2][0][0]
+        assert "GROUP BY table_fqn" in checks_sql
+        assert "IN ('cat.schema.t1', 'cat.schema.t2')" in checks_sql
+        assert "status != 'rejected'" in checks_sql
 
     def test_filters_by_status_pushed_to_sql(self, svc, sql):
         sql.query.return_value = []
@@ -249,8 +294,8 @@ class TestListMonitoredTables:
                 _table_row(binding_id="b1", table_fqn="cat1.schema.tbl"),
                 _table_row(binding_id="b2", table_fqn="cat2.schema.tbl"),
             ],
-            [["0"]],  # applied-rule count for the one row surviving the filter
-            [["0"]],  # materialized-check count for the one row surviving the filter
+            [],  # grouped applied-rule counts — none for the surviving row
+            [],  # grouped materialized-check counts — none for the surviving row
         ]
         summaries = svc.list_monitored_tables(catalog="cat1")
         assert len(summaries) == 1
@@ -262,12 +307,51 @@ class TestListMonitoredTables:
                 _table_row(binding_id="b1", table_fqn="cat.schema.orders"),
                 _table_row(binding_id="b2", table_fqn="cat.schema.customers"),
             ],
-            [["0"]],  # applied-rule count for the one row surviving the filter
-            [["0"]],  # materialized-check count for the one row surviving the filter
+            [],  # grouped applied-rule counts — none for the surviving row
+            [],  # grouped materialized-check counts — none for the surviving row
         ]
         summaries = svc.list_monitored_tables(name="order")
         assert len(summaries) == 1
         assert summaries[0].table.table_fqn == "cat.schema.orders"
+
+    def test_list_left_joins_score_cache_in_same_round_trip(self, svc, sql):
+        """P3.4: the cached score columns ride along the bindings query —
+        no extra round trip and NEVER a warehouse recompute on page load."""
+        sql.query.side_effect = [
+            [
+                _table_row(
+                    binding_id="b1",
+                    score="0.9876",
+                    failed_tests="12",
+                    total_tests="1000",
+                    score_computed_at="2026-07-10T00:00:00",
+                )
+            ],
+            [["b1", "2"]],  # grouped applied-rule counts
+            [["cat.schema.tbl", "3"]],  # grouped materialized-check counts
+        ]
+        summaries = svc.list_monitored_tables()
+        list_sql = sql.query.call_args_list[0][0][0]
+        assert "LEFT JOIN dqx_test.dqx_app_test.dq_score_cache" in list_sql
+        assert "sc.scope_type = 'table'" in list_sql
+        assert "sc.scope_key = mt.table_fqn" in list_sql
+        summary = summaries[0]
+        assert summary.score == 0.9876
+        assert summary.failed_tests == 12
+        assert summary.total_tests == 1000
+        assert summary.score_computed_at == "2026-07-10T00:00:00"
+
+    def test_list_score_fields_none_when_never_scored(self, svc, sql):
+        sql.query.side_effect = [
+            [_table_row(binding_id="b1")],
+            [],  # grouped applied-rule counts
+            [],  # grouped materialized-check counts
+        ]
+        summary = svc.list_monitored_tables()[0]
+        assert summary.score is None
+        assert summary.failed_tests is None
+        assert summary.total_tests is None
+        assert summary.score_computed_at is None
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +393,151 @@ class TestGet:
         assert summary.rule_name is None
         assert summary.rule_dimension is None
         assert summary.rule_severity is None
+
+
+class TestRunTimestampsReadFromOltp:
+    """`last_profiled_at` / `last_run_at` are read straight off the OLTP row
+    (T-perf): they are denormalized on run/profiler completion by
+    ``refresh_run_timestamps``, so the list/detail read paths must NOT touch
+    the always-Delta ``dq_profiling_results`` / ``dq_validation_runs`` tables.
+    """
+
+    def test_get_reads_timestamps_from_oltp_without_warehouse(self, svc, sql, profiling_sql):
+        sql.query.side_effect = [
+            [
+                _table_row(
+                    binding_id="b1",
+                    table_fqn="cat.schema.tbl",
+                    last_profiled_at="2026-07-10 12:00:00",
+                    last_run_at="2026-07-11 09:00:00",
+                )
+            ],
+            [],  # no applied rules
+        ]
+        detail = svc.get("b1")
+
+        assert detail is not None
+        assert detail.table.last_profiled_at is not None
+        assert detail.table.last_profiled_at.year == 2026
+        assert detail.table.last_run_at is not None
+        assert detail.table.last_run_at.day == 11
+        # The detail load never touches the warehouse executor.
+        profiling_sql.query.assert_not_called()
+
+    def test_list_reads_timestamps_from_oltp_without_warehouse(self, svc, sql, profiling_sql):
+        sql.query.side_effect = [
+            [
+                _table_row(binding_id="b1", table_fqn="cat.s.t1", last_run_at="2026-07-09 08:00:00"),
+                _table_row(binding_id="b2", table_fqn="cat.s.t2"),
+            ],
+            [],  # applied-rule counts
+            [],  # materialized-check counts
+        ]
+        summaries = svc.list_monitored_tables()
+
+        by_id = {s.table.binding_id: s for s in summaries}
+        assert by_id["b1"].table.last_run_at is not None
+        assert by_id["b1"].table.last_run_at.year == 2026
+        assert by_id["b2"].table.last_run_at is None
+        # P3.4/T-perf contract: a page load NEVER hits the warehouse executor.
+        profiling_sql.query.assert_not_called()
+
+
+class TestRefreshRunTimestamps:
+    """Write-on-complete: derive last_run_at / last_profiled_at from their Delta
+    sources and denormalize them into the OLTP ``dq_monitored_tables`` row.
+    """
+
+    def test_writes_both_columns_from_delta_sources(self, svc, sql, profiling_sql):
+        profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+        # 1st profiling_sql.query = validation-runs MAX; 2nd = profiling MAX.
+        profiling_sql.query.side_effect = [
+            [["cat.s.t1", "2026-07-11 09:00:00"]],
+            [["cat.s.t1", "2026-07-10 12:00:00"]],
+        ]
+        written = svc.refresh_run_timestamps(["cat.s.t1"])
+
+        assert written == 1
+        # last_run_at is read from dq_validation_runs, terminal + non-preview.
+        run_sql = profiling_sql.query.call_args_list[0][0][0]
+        assert "dq_validation_runs" in run_sql
+        assert "UPPER(status) <> 'RUNNING'" in run_sql
+        assert "run_type" in run_sql and "preview" in run_sql
+        assert "GROUP BY source_table_fqn" in run_sql
+        # One OLTP UPDATE that sets BOTH columns and never touches updated_at.
+        sql.execute.assert_called_once()
+        update_sql = sql.execute.call_args[0][0]
+        assert "UPDATE dqx_test.dqx_app_test.dq_monitored_tables" in update_sql
+        assert "last_run_at = CAST(" in update_sql
+        assert "last_profiled_at = CAST(" in update_sql
+        assert "updated_at" not in update_sql
+        assert "WHERE table_fqn = 'cat.s.t1'" in update_sql
+
+    def test_skips_tables_with_no_runs_and_no_profiles(self, svc, sql, profiling_sql):
+        profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+        profiling_sql.query.side_effect = [[], []]  # neither a run nor a profile
+        written = svc.refresh_run_timestamps(["cat.s.t1"])
+        assert written == 0
+        sql.execute.assert_not_called()
+
+    def test_writes_null_for_missing_side(self, svc, sql, profiling_sql):
+        # A table with a run but no successful profile writes last_run_at and
+        # NULLs last_profiled_at (idempotent, self-healing).
+        profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+        profiling_sql.query.side_effect = [
+            [["cat.s.t1", "2026-07-11 09:00:00"]],  # validation run
+            [],  # no profile
+        ]
+        written = svc.refresh_run_timestamps(["cat.s.t1"])
+        assert written == 1
+        update_sql = sql.execute.call_args[0][0]
+        assert "last_run_at = CAST(" in update_sql
+        assert "last_profiled_at = NULL" in update_sql
+
+    def test_drops_invalid_fqns_before_interpolation(self, svc, sql, profiling_sql):
+        profiling_sql.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+        profiling_sql.query.side_effect = [[], []]
+        written = svc.refresh_run_timestamps(["cat.s.evil\\", "not-three-parts"])
+        assert written == 0
+        # All inputs invalid -> no Delta lookups, no OLTP write.
+        profiling_sql.query.assert_not_called()
+        sql.execute.assert_not_called()
+
+    def test_empty_input_short_circuits(self, svc, sql, profiling_sql):
+        assert svc.refresh_run_timestamps([]) == 0
+        profiling_sql.query.assert_not_called()
+        sql.execute.assert_not_called()
+
+
+class TestGetBindingIdsByTableFqn:
+    """Batched ``table_fqn -> binding_id`` lookup for the by_table axis."""
+
+    def test_maps_fqns_to_binding_ids_in_one_query(self, svc, sql):
+        sql.query.return_value = [["main.a.t1", "b1"], ["main.a.t2", "b2"]]
+        out = svc.get_binding_ids_by_table_fqn(["main.a.t1", "main.a.t2", "main.a.unmonitored"])
+        assert out == {"main.a.t1": "b1", "main.a.t2": "b2"}
+        assert sql.query.call_count == 1
+        stmt = sql.query.call_args[0][0]
+        assert "SELECT table_fqn, binding_id FROM dqx_test.dqx_app_test.dq_monitored_tables" in stmt
+        assert "IN ('main.a.t1', 'main.a.t2', 'main.a.unmonitored')" in stmt
+
+    def test_empty_input_short_circuits_without_sql(self, svc, sql):
+        assert svc.get_binding_ids_by_table_fqn([]) == {}
+        sql.query.assert_not_called()
+
+    def test_invalid_fqns_are_dropped_before_interpolation(self, svc, sql):
+        # Inputs can be warehouse-sourced (dq_metrics.input_location):
+        # anything failing validate_fqn never reaches the IN list.
+        sql.query.return_value = [["main.a.t1", "b1"]]
+        out = svc.get_binding_ids_by_table_fqn(["main.a.t1", "main.a.evil\\", "not-three-parts"])
+        assert out == {"main.a.t1": "b1"}
+        stmt = sql.query.call_args[0][0]
+        assert "evil" not in stmt
+        assert "not-three-parts" not in stmt
+
+    def test_all_invalid_input_short_circuits_without_sql(self, svc, sql):
+        assert svc.get_binding_ids_by_table_fqn(["main.a.evil\\"]) == {}
+        sql.query.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +597,19 @@ class TestUpdateSchedule:
         update_sql = sql.execute.call_args[0][0]
         assert "schedule_cron = NULL" in update_sql
         assert "schedule_tz = NULL" in update_sql
+
+    def test_persists_schedule_kind(self, svc, sql):
+        sql.query.return_value = [_table_row(binding_id="b1", status="approved")]
+        table = svc.update_schedule("b1", "0 6 * * *", "UTC", "alice@x", schedule_kind="profiling_only")
+        assert table.schedule_kind == "profiling_only"
+        update_sql = sql.execute.call_args[0][0]
+        assert "schedule_kind = 'profiling_only'" in update_sql
+
+    def test_defaults_schedule_kind_to_dq_only(self, svc, sql):
+        sql.query.return_value = [_table_row(binding_id="b1", status="approved")]
+        table = svc.update_schedule("b1", "0 6 * * *", "UTC", "alice@x")
+        assert table.schedule_kind == "dq_only"
+        assert "schedule_kind = 'dq_only'" in sql.execute.call_args[0][0]
 
     def test_raises_when_missing(self, svc, sql):
         sql.query.return_value = []

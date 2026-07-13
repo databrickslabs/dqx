@@ -27,7 +27,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatLabel, labelToken, tokenToLabel } from "@/lib/format-utils";
+import { formatLabel } from "@/lib/format-utils";
 import type { LabelDefinition } from "@/lib/api-custom";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -212,7 +212,7 @@ export function LabelsEditor({
           <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
         )}
         <Tags className="h-3.5 w-3.5 text-muted-foreground" />
-        <Label className="text-xs cursor-pointer">{editorTitle}</Label>
+        <Label className="cursor-pointer">{editorTitle}</Label>
         {count > 0 && (
           <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
             {count}
@@ -745,13 +745,27 @@ export function LabelsBadges({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LabelFilter — multi-select filter for list pages
+// LabelFilter — key-first multi-select filter for list pages
+//
+// The user first picks label KEYS. Selecting a key with no specific value =
+// "match any value of that key". Optionally, a per-key value sub-list can be
+// expanded to narrow to specific value(s). Selection state is therefore a
+// ``key → set-of-values`` map (``LabelSelection``): a key present with an
+// empty value set means "any value"; a non-empty set means "one of these
+// values".
+//
+// Matching semantics (see ``labelsMatchFilter``) are OR across the whole
+// selection — a row matches if it satisfies ANY selected key — preserving the
+// behaviour of the previous flat token multi-select.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** key → selected values. Empty value set for a key = "match any value". */
+export type LabelSelection = Map<string, Set<string>>;
 
 interface LabelFilterProps {
   available: { key: string; value: string }[];
-  selected: Set<string>;
-  onChange: (selected: Set<string>) => void;
+  selected: LabelSelection;
+  onChange: (selected: LabelSelection) => void;
   className?: string;
 }
 
@@ -764,45 +778,87 @@ export function LabelFilter({
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const tokens = useMemo(() => {
-    const set = new Map<string, { key: string; value: string }>();
+  // Distinct non-empty values seen per key. Boolean-style labels (value
+  // "true"/"") contribute no distinct values, so their key renders without a
+  // value sub-list and is filterable by key presence only.
+  const valuesByKey = useMemo(() => {
+    const m = new Map<string, Set<string>>();
     for (const { key, value } of available) {
-      const tok = labelToken(key, value);
-      if (!set.has(tok)) set.set(tok, { key, value });
+      if (!m.has(key)) m.set(key, new Set());
+      if (value !== "" && value !== "true") m.get(key)!.add(value);
     }
-    return [...set.entries()].sort(([, a], [, b]) =>
-      `${a.key}=${a.value}`.localeCompare(`${b.key}=${b.value}`),
-    );
+    return m;
   }, [available]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return tokens;
-    return tokens.filter(([, { key, value }]) =>
-      `${key}=${value}`.toLowerCase().includes(q),
-    );
-  }, [tokens, query]);
+  const keys = useMemo(
+    () => [...valuesByKey.keys()].sort((a, b) => a.localeCompare(b)),
+    [valuesByKey],
+  );
 
-  const toggle = (token: string) => {
-    const next = new Set(selected);
-    if (next.has(token)) next.delete(token);
-    else next.add(token);
+  const q = query.trim().toLowerCase();
+
+  // A key row is shown when the query is empty, the key matches, or one of its
+  // values matches. When matched by value only, we surface just the matching
+  // values and force the row open so the match is visible.
+  const rows = useMemo(() => {
+    const out: { key: string; values: string[]; forceOpen: boolean }[] = [];
+    for (const key of keys) {
+      const all = [...(valuesByKey.get(key) ?? [])].sort((a, b) =>
+        a.localeCompare(b),
+      );
+      if (!q || key.toLowerCase().includes(q)) {
+        out.push({ key, values: all, forceOpen: false });
+        continue;
+      }
+      const matching = all.filter((v) => v.toLowerCase().includes(q));
+      if (matching.length > 0) {
+        out.push({ key, values: matching, forceOpen: true });
+      }
+    }
+    return out;
+  }, [keys, valuesByKey, q]);
+
+  const toggleKey = (key: string) => {
+    const next = new Map(selected);
+    if (next.has(key)) next.delete(key);
+    else next.set(key, new Set());
     onChange(next);
   };
 
-  const clearAll = () => onChange(new Set());
+  const toggleValue = (key: string, value: string) => {
+    const next = new Map(selected);
+    const cur = new Set(next.get(key) ?? []);
+    if (cur.has(value)) cur.delete(value);
+    else cur.add(value);
+    // Keep the key present even when its value set empties out — an empty set
+    // reads as "any value"; use the key checkbox to deselect it entirely.
+    next.set(key, cur);
+    onChange(next);
+  };
 
+  const toggleExpanded = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const clearAll = () => onChange(new Map());
+
+  const selectedKeys = [...selected.keys()];
   const triggerLabel =
-    selected.size === 0
+    selectedKeys.length === 0
       ? t("labelFilter.allLabels")
-      : selected.size === 1
+      : selectedKeys.length === 1
         ? (() => {
-            const tok = [...selected][0];
-            const { key, value } = tokenToLabel(tok);
-            return formatLabel(key, value);
+            const key = selectedKeys[0];
+            const vals = selected.get(key) ?? new Set<string>();
+            return vals.size === 0 ? key : `${key}: ${[...vals].join(", ")}`;
           })()
-        : t("labelFilter.labelsCount", { count: selected.size });
+        : t("labelFilter.labelsCount", { count: selectedKeys.length });
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -810,9 +866,7 @@ export function LabelFilter({
         <Button
           variant="outline"
           size="sm"
-          className={["h-9 gap-1.5 text-xs justify-between font-normal", className]
-            .filter(Boolean)
-            .join(" ")}
+          className={cn("h-9 gap-1.5 text-xs justify-between font-normal", className)}
         >
           <span className="flex items-center gap-1.5 truncate">
             <Tags className="h-3.5 w-3.5 shrink-0 opacity-70" />
@@ -831,35 +885,90 @@ export function LabelFilter({
             autoFocus
           />
           <div className="max-h-64 overflow-y-auto space-y-0.5">
-            {tokens.length === 0 && (
+            {keys.length === 0 && (
               <p className="text-xs text-muted-foreground italic px-2 py-3 text-center">
                 {t("labelFilter.noLabelsFound")}
               </p>
             )}
-            {tokens.length > 0 && filtered.length === 0 && (
+            {keys.length > 0 && rows.length === 0 && (
               <p className="text-xs text-muted-foreground italic px-2 py-3 text-center">
                 {t("labelFilter.noMatches", { query })}
               </p>
             )}
-            {filtered.map(([token, { key, value }]) => (
-              <label
-                key={token}
-                className="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted cursor-pointer"
-              >
-                <Checkbox
-                  checked={selected.has(token)}
-                  onCheckedChange={() => toggle(token)}
-                />
-                <span className="text-xs font-mono truncate flex-1" title={`${key}=${value}`}>
-                  {formatLabel(key, value)}
-                </span>
-              </label>
-            ))}
+            {rows.map(({ key, values, forceOpen }) => {
+              const keySelected = selected.has(key);
+              const selectedValues = selected.get(key) ?? new Set<string>();
+              const hasValues = values.length > 0;
+              const isOpen = forceOpen || expanded.has(key);
+              return (
+                <div key={key}>
+                  <div className="flex items-center gap-1 px-0.5 py-0.5 rounded hover:bg-muted">
+                    {hasValues ? (
+                      <button
+                        type="button"
+                        onClick={() => toggleExpanded(key)}
+                        className="shrink-0 p-0.5 text-muted-foreground hover:text-foreground"
+                        aria-label={t("labelFilter.toggleValues")}
+                      >
+                        {isOpen ? (
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        ) : (
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    ) : (
+                      <span className="w-[1.375rem] shrink-0" />
+                    )}
+                    <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                      <Checkbox
+                        checked={keySelected}
+                        onCheckedChange={() => toggleKey(key)}
+                      />
+                      <span className="text-xs font-mono truncate flex-1" title={key}>
+                        {key}
+                      </span>
+                      {keySelected && selectedValues.size === 0 && (
+                        <Badge variant="secondary" className="text-[10px] h-4 px-1.5 shrink-0">
+                          {t("labelFilter.anyValue")}
+                        </Badge>
+                      )}
+                      {selectedValues.size > 0 && (
+                        <Badge
+                          variant="secondary"
+                          className="text-[10px] h-4 px-1.5 shrink-0"
+                          title={t("labelFilter.valuesSelected", { count: selectedValues.size })}
+                        >
+                          {selectedValues.size}
+                        </Badge>
+                      )}
+                    </label>
+                  </div>
+                  {hasValues && isOpen && (
+                    <div className="ml-6 mt-0.5 space-y-0.5">
+                      {values.map((v) => (
+                        <label
+                          key={v}
+                          className="flex items-center gap-2 px-1.5 py-0.5 rounded hover:bg-muted cursor-pointer"
+                        >
+                          <Checkbox
+                            checked={selectedValues.has(v)}
+                            onCheckedChange={() => toggleValue(key, v)}
+                          />
+                          <span className="text-xs font-mono truncate flex-1" title={v}>
+                            {v}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-          {selected.size > 0 && (
+          {selectedKeys.length > 0 && (
             <div className="flex items-center justify-between border-t pt-2">
               <span className="text-[11px] text-muted-foreground">
-                {selected.size} {t("labelFilter.selectedSuffix")}
+                {selectedKeys.length} {t("labelFilter.selectedSuffix")}
               </span>
               <Button
                 variant="ghost"
@@ -879,17 +988,20 @@ export function LabelFilter({
 
 /**
  * Helper used by list pages to test whether a labels map matches the current
- * filter selection. Returns true if no filter is active or if any selected
- * (key, value) pair appears in ``labels``.
+ * key-first filter selection. Returns true if no filter is active, or if the
+ * map satisfies ANY selected key (OR semantics): a selected key with no values
+ * matches when the key is present with any value; a selected key with values
+ * matches when the map's value for that key is one of them.
  */
 export function labelsMatchFilter(
   labels: Record<string, string>,
-  selected: Set<string>,
+  selected: LabelSelection,
 ): boolean {
   if (selected.size === 0) return true;
-  for (const tok of selected) {
-    const { key, value } = tokenToLabel(tok);
-    if (labels[key] === value) return true;
+  for (const [key, values] of selected) {
+    if (!(key in labels)) continue;
+    if (values.size === 0) return true;
+    if (values.has(labels[key])) return true;
   }
   return false;
 }

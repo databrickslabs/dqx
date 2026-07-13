@@ -20,9 +20,12 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 
 # ---------------------------------------------------------------------------
 # Type aliases (mirrors the CHECK constraints on dq_rules / dq_rule_versions)
@@ -193,6 +196,13 @@ class RuleVersion(BaseModel):
 
 MonitoredTableStatus = Literal["draft", "pending_approval", "approved", "rejected"]
 
+# What a scheduled run does (B2-52). Applies to both monitored tables and
+# Table Spaces: profile only, run DQ only, or both. Default ``dq_only``
+# mirrors the ``schedule_kind`` column default in both migration backends
+# (preserves prior behavior — existing schedules stay DQ-only on upgrade).
+ScheduleKind = Literal["profiling_only", "dq_only", "profiling_and_dq"]
+SCHEDULE_KIND_DEFAULT: ScheduleKind = "dq_only"
+
 # One mapping GROUP is ``{slot_name: column_name}`` — the slot→column binding
 # for exactly one materialized check. ``column_mapping`` on an applied rule is
 # a list of such groups so a single rule can be applied to a table more than
@@ -221,7 +231,16 @@ class MonitoredTable(BaseModel):
         description="5-field POSIX cron; None = not scheduled. Approved tables with a cron fire on the scheduler.",
     )
     schedule_tz: str | None = Field(default=None, description="IANA zone the cron is evaluated in; None = UTC")
+    schedule_kind: ScheduleKind = Field(
+        default=SCHEDULE_KIND_DEFAULT,
+        description="What a scheduled run does: profiling only, DQ only, or both (default both)",
+    )
     last_profiled_at: datetime | None = None
+    last_run_at: datetime | None = Field(
+        default=None,
+        description="Newest terminal validation-run instant for this table (either trigger surface); "
+        "written on run completion so the list/detail read paths never touch the warehouse.",
+    )
     created_by: str | None = None
     created_at: datetime | None = None
     updated_by: str | None = None
@@ -334,6 +353,7 @@ class DataProduct(BaseModel):
     steward: str | None = None
     schedule_cron: str | None = None
     schedule_tz: str | None = None
+    schedule_kind: ScheduleKind = SCHEDULE_KIND_DEFAULT
     status: DataProductStatus = "draft"
     version: int = Field(default=0, description="0 until first approval; bumped ONLY on approve")
     created_by: str | None = None
@@ -509,10 +529,15 @@ def registry_display_status(status: str, version: int, modified_since_publish: b
 # that decides which output DataFrame a failing row lands in — it is NOT
 # the same axis as the registry's ``severity`` tag (Low/Medium/High/
 # Critical), but the materializer has to pick *some* concrete criticality
-# when it renders a ``dq_quality_rules`` row, so this is the single mapping
-# used everywhere that conversion happens. Matches the per-function severity
-# seed map's own implicit scale (``builtin_rules_seed._SEVERITY_SEED_MAP``:
-# High for integrity/consistency checks, Low for informational geo checks).
+# when it renders a ``dq_quality_rules`` row, so this is the single place
+# that conversion happens. The mapping is admin-editable: it lives in the
+# ``value_criticality`` map on the reserved ``severity`` label definition
+# (``dq_app_settings`` / ``label_definitions``), with
+# :data:`SEVERITY_TO_CRITICALITY` as the built-in default for installs
+# whose stored definition predates the field. The defaults match the
+# per-function severity seed map's own implicit scale
+# (``builtin_rules_seed._SEVERITY_SEED_MAP``: High for integrity/
+# consistency checks, Low for informational geo checks).
 
 DEFAULT_CRITICALITY = "warn"
 
@@ -523,21 +548,35 @@ SEVERITY_TO_CRITICALITY: dict[str, str] = {
     "Critical": "error",
 }
 
+_SEVERITY_LABEL_KEY = "severity"
 
-def resolve_criticality(severity: str | None) -> str:
+
+def resolve_criticality(severity: str | None, app_settings_service: AppSettingsService) -> str:
     """Map a registry ``severity`` tag value to a DQX ``criticality`` value.
 
-    Falls back to :data:`DEFAULT_CRITICALITY` ("warn") for ``None`` or any
-    value not in :data:`SEVERITY_TO_CRITICALITY` (e.g. a custom severity
-    value an admin added to the reserved ``severity`` label definition).
+    Reads the admin-editable ``value_criticality`` map on the reserved
+    ``severity`` label definition. Resolution order for a non-``None``
+    *severity*: the stored ``value_criticality`` entry if present, then the
+    built-in :data:`SEVERITY_TO_CRITICALITY` default (so pre-existing
+    installs whose stored definition predates ``value_criticality`` keep
+    the historical behavior), then :data:`DEFAULT_CRITICALITY` (e.g. a
+    custom severity value with no explicit mapping).
 
     Args:
         severity: The effective severity tag value (already resolved from
             ``severity_override`` or the rule's own tag by the caller).
+        app_settings_service: Settings service used to read the stored
+            label definitions.
 
     Returns:
         ``"error"`` or ``"warn"``.
     """
     if severity is None:
         return DEFAULT_CRITICALITY
+    for definition in app_settings_service.get_label_definitions():
+        if definition.get("key") == _SEVERITY_LABEL_KEY:
+            mapping = definition.get("value_criticality")
+            if isinstance(mapping, dict) and severity in mapping:
+                return str(mapping[severity])
+            break
     return SEVERITY_TO_CRITICALITY.get(severity, DEFAULT_CRITICALITY)

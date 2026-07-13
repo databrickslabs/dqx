@@ -14,16 +14,25 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
+from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentPrincipalIds,
     CurrentUserRole,
+    get_app_settings_service,
     get_data_product_service,
+    get_draft_run_gate_service,
+    get_monitored_table_version_service,
     get_obo_ws,
     get_permissions_service,
     require_role,
     require_runner,
+)
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
+    DraftRunGateService,
+    DraftRunRequiredError,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.logger import logger
@@ -31,11 +40,15 @@ from databricks_labs_dqx_app.backend.models import (
     AddDataProductMemberIn,
     CreateDataProductIn,
     DataProductOut,
+    DataProductReviewChangesOut,
+    DataProductReviewMemberOut,
     RunDataProductIn,
     RunDataProductOut,
     UpdateDataProductIn,
 )
+from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.data_product_service import (
+    BindingNotApprovedError,
     DataProductService,
     DuplicateDataProductNameError,
     InvalidStatusTransitionError,
@@ -97,6 +110,61 @@ def get_data_product(
     except Exception as e:
         logger.error(f"Failed to get data product {product_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get data product: {e}")
+
+
+@router.get(
+    "/{product_id}/review-changes",
+    response_model=DataProductReviewChangesOut,
+    operation_id="getDataProductReviewChanges",
+    dependencies=[require_role(*_VIEWERS_PLUS)],
+)
+def get_data_product_review_changes(
+    product_id: str,
+    svc: Annotated[DataProductService, Depends(get_data_product_service)],
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+) -> DataProductReviewChangesOut:
+    """Return the recoverable prior/proposed state for a Table Space under review.
+
+    Table Spaces have no per-version snapshot store, so there is no true
+    "previous product version" to diff against (documented limitation). What
+    is recoverable is the CURRENT proposed definition — the members being
+    approved and each member's frozen (pinned, else latest-approved) checks.
+    The Drafts & Review popout shows this with a note that no prior product
+    snapshot exists, rather than fabricating a diff.
+    """
+    try:
+        detail = svc.get(product_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"Data product not found: {product_id}")
+        members: list[DataProductReviewMemberOut] = []
+        for member in detail.members:
+            effective_version = member.pinned_version or member.binding_version
+            checks: list[dict[str, object]] = []
+            if effective_version and effective_version > 0:
+                try:
+                    checks = version_svc.get_checks(member.binding_id, effective_version)
+                except LookupError:
+                    checks = []
+            members.append(
+                DataProductReviewMemberOut(
+                    binding_id=member.binding_id,
+                    table_fqn=member.table_fqn,
+                    pinned_version=member.pinned_version,
+                    binding_version=member.binding_version,
+                    checks=checks,
+                )
+            )
+        return DataProductReviewChangesOut(
+            product_id=detail.product.product_id,
+            name=detail.product.name,
+            version=detail.product.version,
+            members=members,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get review changes for data product {product_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get data product review changes: {e}")
 
 
 # ------------------------------------------------------------------
@@ -229,6 +297,9 @@ def add_data_product_member(
     Adding a table to a space mutates the space, so it requires ``APPLY`` on
     the table space (in the day-one baseline; tightenable via a grant) unless
     the caller is an admin/approver.
+
+    400 if the binding is not approved (P3.2 — draft tables cannot join
+    table spaces); 404 if the product or binding does not exist.
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
@@ -242,6 +313,8 @@ def add_data_product_member(
         return DataProductOut.from_domain(detail)
     except (LookupError, RuntimeError) as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except BindingNotApprovedError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to add member to data product {product_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to add data product member: {e}")
@@ -302,19 +375,60 @@ def remove_data_product_member(
 def submit_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    draft_run_gate: Annotated[DraftRunGateService, Depends(get_draft_run_gate_service)],
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> DataProductOut:
     """Submit a Table Space for review — moves ``draft``/``rejected`` -> ``pending_approval``.
 
     409 if the space is already ``approved`` with no changes since publish
     (:meth:`DataProductService.submit`).
+
+    Honours the app-wide approvals mode (issue #94): in ``disabled`` mode, or in
+    ``auto_bypass`` mode when the caller can edit AND approve the space
+    (:meth:`PermissionsService.can_edit_and_approve`), the space is approved in
+    the same call (bumping its version) with the caller recorded as the approver
+    carrying an ``(auto)`` marker.
     """
     try:
         user_email = _current_user_email(obo_ws)
+        # Require-draft-run gate (issue B2-12): when the admin setting is on, the
+        # space cannot enter review (nor take the auto-approve shortcut) until a
+        # draft run has been recorded for at least one member table. Checked
+        # BEFORE the submit transition so it blocks both paths. 409 when
+        # unsatisfied; a space with no members is vacuously allowed.
+        gate_detail = svc.get(product_id)
+        if gate_detail is None:
+            raise HTTPException(status_code=404, detail=f"Table space not found: {product_id}")
+        draft_run_gate.enforce(
+            enabled=app_settings.get_require_draft_run_before_submit(),
+            table_fqns=[m.table_fqn for m in gate_detail.members],
+        )
         svc.submit(product_id, user_email)
+        # Only the auto-approving modes (``disabled`` / ``auto_bypass``) consult
+        # the object-aware predicate; ``enabled`` never auto-approves, so skip
+        # its permission + owner lookups entirely.
+        mode = app_settings.get_approvals_mode()
+        can_edit_and_approve = mode != ApprovalMode.ENABLED and perms.can_edit_and_approve(
+            ObjectType.DATA_PRODUCT.value,
+            product_id,
+            role=role,
+            principal_ids=set(principal_ids),
+            owner_email=perms.get_object_owner(ObjectType.DATA_PRODUCT.value, product_id),
+            principal_email=user_email,
+        )
+        if should_auto_approve(mode, can_edit_and_approve=can_edit_and_approve):
+            svc.approve(product_id, mark_auto_approver(user_email))
         detail = svc.get(product_id)
         assert detail is not None  # just submitted it
         return DataProductOut.from_domain(detail)
+    except HTTPException:
+        raise
+    except DraftRunRequiredError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except InvalidStatusTransitionError as e:

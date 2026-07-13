@@ -18,14 +18,56 @@ export function getDisplayTimezone(): string {
 }
 
 // ---------------------------------------------------------------------------
+// Date parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalize a server timestamp string so JS parses the instant correctly.
+ *
+ * The analytical tables serialize timestamps via Spark ``CAST(ts AS STRING)``,
+ * which yields a zone-less ``"YYYY-MM-DD HH:MM:SS"`` (space separator, no
+ * ``Z``/offset). ``new Date()`` would read that as *browser-local* time, but
+ * the warehouse clock is UTC — so a value gets shifted by the viewer's UTC
+ * offset before the display-timezone projection, producing a wrong clock time.
+ *
+ * We pin any zone-less date-time to UTC (space → ``T``, append ``Z``). Strings
+ * that already carry a timezone designator (``Z`` or ``±HH:MM``) pass through
+ * untouched, as do values we can't confidently classify.
+ */
+function normalizeServerTimestamp(iso: string): string {
+  const s = iso.trim();
+  const hasZone = /([zZ]|[+-]\d{2}:?\d{2})$/.test(s);
+  const isZonelessDateTime = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s);
+  if (!hasZone && isZonelessDateTime) {
+    return `${s.replace(" ", "T")}Z`;
+  }
+  return s;
+}
+
+/** Parse a server timestamp into a ``Date`` (zone-less values treated as UTC),
+ *  or ``null`` when unparseable. */
+export function parseServerDate(iso: string | null | undefined): Date | null {
+  if (!iso) return null;
+  const d = new Date(normalizeServerTimestamp(iso));
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** Parse a server timestamp into epoch milliseconds (zone-less values treated
+ *  as UTC), or ``NaN`` when unparseable. */
+export function parseServerTimestampMs(iso: string | null | undefined): number {
+  const d = parseServerDate(iso);
+  return d ? d.getTime() : NaN;
+}
+
+// ---------------------------------------------------------------------------
 // Date formatting
 // ---------------------------------------------------------------------------
 
 export function formatDateShort(iso: string | null | undefined): string {
   if (!iso) return "—";
   try {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return "—";
+    const d = parseServerDate(iso);
+    if (!d) return "—";
     const tz = _displayTimezone;
     return d.toLocaleDateString(undefined, {
       month: "short",
@@ -41,8 +83,8 @@ export function formatDateShort(iso: string | null | undefined): string {
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   try {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return "—";
+    const d = parseServerDate(iso);
+    if (!d) return "—";
     const tz = _displayTimezone;
     return d.toLocaleDateString(undefined, {
       month: "short",
@@ -71,9 +113,8 @@ export type RelativeTimeParts =
  * `formatDateTime`.
  */
 export function getRelativeTimeParts(iso: string | null | undefined): RelativeTimeParts | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return null;
+  const d = parseServerDate(iso);
+  if (!d) return null;
   const ms = Date.now() - d.getTime();
   const m = Math.floor(ms / 60000);
   if (m < 1) return { key: "justNow" };

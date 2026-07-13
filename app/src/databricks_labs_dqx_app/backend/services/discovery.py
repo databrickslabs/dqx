@@ -51,6 +51,24 @@ class DiscoveryService:
     def list_tables(self, catalog: str, schema: str) -> list[TableInfo]:
         return list(self._ws.tables.list(catalog_name=catalog, schema_name=schema))
 
+    def get_table_owner(self, table_fqn: str) -> str | None:
+        """Return the Unity Catalog owner of *table_fqn*, or ``None``.
+
+        Runs on-behalf-of the calling user, so it only succeeds when the user
+        can read the table's metadata. The owner is UC's raw principal display
+        value — it may be a user, a group, or a service principal; callers
+        store it verbatim and must not assume it is a person. Any failure
+        (missing table, permission denied, transient error) is swallowed and
+        reported as ``None`` so callers can fall back gracefully.
+        """
+        try:
+            table_info = self._ws.tables.get(full_name=table_fqn)
+        except Exception as e:
+            logger.warning("Failed to resolve UC owner for %s: %s", table_fqn, e)
+            return None
+        owner = (table_info.owner or "").strip()
+        return owner or None
+
     def get_table_columns(self, catalog: str, schema: str, table: str) -> list[TableColumn]:
         full_name = f"{catalog}.{schema}.{table}"
         table_info = self._ws.tables.get(full_name=full_name)

@@ -5,6 +5,27 @@
     <link rel="icon" type="image/svg+xml" href="/dqx-logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DQX Studio</title>
+    <script>
+      // Apply the theme class before React (and the AuthGuard loading screen)
+      // mounts, so the initial paint — including the pre-auth loading spinner
+      // rendered before ThemeProvider's effect runs — uses the right tokens.
+      // Must stay in sync with ThemeProvider: same storageKey ("cdh-ui-theme")
+      // and same app default (dark) when nothing is stored.
+      (function () {
+        try {
+          var stored = localStorage.getItem("cdh-ui-theme");
+          var theme = stored || "dark";
+          if (theme === "system") {
+            theme = window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+          }
+          document.documentElement.classList.add(theme);
+        } catch (e) {
+          document.documentElement.classList.add("dark");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

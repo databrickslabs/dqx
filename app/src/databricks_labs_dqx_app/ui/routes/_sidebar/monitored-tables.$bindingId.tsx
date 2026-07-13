@@ -1,18 +1,11 @@
-import { createFileRoute, Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createFileRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { toast } from "sonner";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -34,6 +27,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import {
   AlertCircle,
@@ -44,7 +44,6 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  ClipboardList,
   Clock,
   Columns3,
   Database,
@@ -52,16 +51,18 @@ import {
   History,
   Info,
   KeyRound,
+  LineChart,
   Loader2,
+  MessageSquare,
   MoreVertical,
   Play,
   Plus,
   RefreshCw,
   RotateCcw,
+  Save,
   Send,
   Sparkles,
   Trash2,
-  UploadCloud,
   X,
   XCircle,
 } from "lucide-react";
@@ -73,6 +74,7 @@ import {
   useSubmitProfileRun,
   getProfileRunStatus,
   useListProfileRuns,
+  useGetProfileRunResults,
   getListProfileRunsQueryKey,
   useSubmitMonitoredTable,
   useApproveMonitoredTable,
@@ -80,7 +82,6 @@ import {
   useSaveAppliedRules,
   useListRegistryRules,
   useGetTableColumns,
-  useGetRules,
   useListMonitoredTableVersions,
   useRunMonitoredTable,
   useSuggestRulesForTable,
@@ -104,9 +105,14 @@ import {
 import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
+import { CommentsDialog } from "@/components/CommentThread";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
+import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import { useLabelDefinitions, useWorkspaceHost } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useApprovalsMode } from "@/hooks/use-approvals-mode";
+import { useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
+import { useMonitoredTableRunActivity } from "@/hooks/use-monitored-table-run-activity";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import { formatDateShort } from "@/lib/format-utils";
@@ -130,6 +136,8 @@ import {
 } from "@/components/apply-rules/shared";
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
+import { ProfileSuggestionsCard } from "@/components/bindings/ProfileSuggestionsCard";
+import { BindingResultsTab } from "@/components/monitored-tables/BindingResultsTab";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 import { MonitoredTableHistoryTab } from "@/components/monitored-tables/MonitoredTableHistoryTab";
 
@@ -218,6 +226,8 @@ function DetailSkeleton() {
 function MonitoredTableDetailPage() {
   const { t } = useTranslation();
   const perms = usePermissions();
+  const { willAutoApprove } = useApprovalsMode();
+  const requireDraftRun = useRequireDraftRunBeforeSubmit();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { bindingId } = useParams({ from: "/_sidebar/monitored-tables/$bindingId" });
@@ -229,10 +239,16 @@ function MonitoredTableDetailPage() {
     tab && (DETAIL_TAB_KEYS as readonly string[]).includes(tab) ? (tab as DetailTab) : "about";
   const handleTabChange = useCallback(
     (next: string) => {
-      navigate({
-        to: "/monitored-tables/$bindingId",
-        params: { bindingId },
-        search: (prev) => ({ ...prev, tab: next }),
+      // B2-23: mark the tab-switch navigate as a transition so that if any
+      // query elsewhere on the page re-suspends as a result of the URL change,
+      // React keeps the CURRENT tab content on screen instead of surfacing the
+      // page-level DetailSkeleton fallback and blanking the whole page.
+      startTransition(() => {
+        navigate({
+          to: "/monitored-tables/$bindingId",
+          params: { bindingId },
+          search: (prev) => ({ ...prev, tab: next }),
+        });
       });
     },
     [navigate, bindingId],
@@ -261,6 +277,14 @@ function MonitoredTableDetailPage() {
     () => invalidateAfterMonitoredTableChange(queryClient, bindingId),
     [queryClient, bindingId],
   );
+
+  // Binding-scoped run-in-progress signal (item 69). Tracks a run set
+  // triggered from this page (persisted across reloads via sessionStorage),
+  // polls it to completion, and refreshes this table's results/score once it
+  // settles. Shared by the Run action (spinner/disable) and the Results-tab
+  // in-progress banner — replaces the old in-component `trackedRunSetId` state,
+  // which was lost on reload.
+  const runActivity = useMonitoredTableRunActivity(bindingId, { tableFqn: table.table_fqn });
 
   // ---------------------------------------------------------------------
   // Staged editor (P16-F) — every add/mapping-edit/severity-override/pin/
@@ -316,6 +340,7 @@ function MonitoredTableDetailPage() {
   const deleteMutation = useDeleteMonitoredTable();
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
 
   const persistStagedRows = useCallback(
     () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
@@ -333,12 +358,19 @@ function MonitoredTableDetailPage() {
       setBaseline(normalized);
       justSavedRef.current = true;
       invalidateLifecycleQueries();
+      // The persisted applied-rule set changed (apply/unapply/severity
+      // override), which moves the dq-score / dq-results aggregates —
+      // notably a rule score's `applied_to_count`, which gates the registry
+      // rule's Results tab. Those queries never refetch on their own
+      // (staleTime Infinity), so invalidate them here or the tab stays
+      // stale-disabled until a full reload.
+      invalidateResultsAfterRuleApplicationChange(queryClient);
       return true;
     } catch (err: unknown) {
       toast.error(extractApiError(err, t("monitoredTables.toastSaveFailed")), { duration: 6000 });
       return false;
     }
-  }, [persistStagedRows, invalidateLifecycleQueries, t]);
+  }, [persistStagedRows, invalidateLifecycleQueries, queryClient, t]);
 
   const handleSaveAsDraft = () => {
     void saveDraft().then((ok) => {
@@ -356,6 +388,13 @@ function MonitoredTableDetailPage() {
           const normalized = normalizeStagedRows(resp.data);
           setStagedRows(normalized);
           setBaseline(normalized);
+          // Invalidate HERE — as soon as the persist succeeds — not in the
+          // shared success handler below: the applied-rule set has already
+          // changed server-side at this point, so if the follow-on submit
+          // fails the score/results caches must still refresh (staleTime
+          // Infinity — see saveDraft for the full rationale). The !isDirty
+          // branch persists nothing, so it needs no invalidation.
+          invalidateResultsAfterRuleApplicationChange(queryClient);
         })
       : Promise.resolve();
     persistFirst
@@ -402,6 +441,10 @@ function MonitoredTableDetailPage() {
       () => {
         toast.success(t("monitoredTables.toastDeleted"));
         invalidateLifecycleQueries();
+        // Deleting the binding unapplies every rule that was applied to it —
+        // see saveDraft for why the score/results caches must be invalidated
+        // when the applied-rule set changes.
+        invalidateResultsAfterRuleApplicationChange(queryClient);
         justSavedRef.current = true;
         void navigate({ to: "/monitored-tables" });
       },
@@ -422,6 +465,14 @@ function MonitoredTableDetailPage() {
   // edits) and this version is already approved, so "Submit for review"
   // would just be a no-op re-approval request (item 11).
   const submitDisabledNoChanges = !isDirty && table.status === "approved";
+
+  // Require-draft-run gate (issue B2-12): when the admin setting is on, block
+  // submit until a run has been recorded for this table. ``last_run_at`` is the
+  // cache-friendly signal already on the binding payload (excludes preview /
+  // in-flight runs); before approval the only run it can reflect is a draft
+  // run. The backend enforces the authoritative check and returns 409 either way.
+  const needsDraftRun = requireDraftRun && !table.last_run_at;
+  const submitBlocked = submitDisabledNoChanges || needsDraftRun;
 
   return (
     <FadeIn>
@@ -466,29 +517,37 @@ function MonitoredTableDetailPage() {
                   disabled={!isDirty || lifecycleBusy}
                   className="gap-2"
                 >
-                  {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                   {t("monitoredTables.saveAsDraftButton")}
                 </Button>
                 <TooltipProvider delayDuration={200}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span className={cn(submitDisabledNoChanges && "cursor-not-allowed")}>
+                      <span className={cn(submitBlocked && "cursor-not-allowed")}>
                         <Button
                           onClick={handleSubmit}
-                          disabled={lifecycleBusy || submitDisabledNoChanges}
+                          disabled={lifecycleBusy || submitBlocked}
                           className="gap-2"
                         >
                           {saveMutation.isPending || submitMutation.isPending ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
                           ) : (
-                            <UploadCloud className="h-4 w-4" />
+                            <Send className="h-4 w-4" />
                           )}
-                          {submitMutation.isPending ? t("monitoredTables.submitting") : t("monitoredTables.submitButton")}
+                          {submitMutation.isPending
+                            ? t("monitoredTables.submitting")
+                            : willAutoApprove
+                              ? t("monitoredTables.saveAndPublishButton")
+                              : t("monitoredTables.submitButton")}
                         </Button>
                       </span>
                     </TooltipTrigger>
-                    {submitDisabledNoChanges && (
-                      <TooltipContent side="bottom">{t("monitoredTables.submitDisabledNoChangesHint")}</TooltipContent>
+                    {(needsDraftRun || submitDisabledNoChanges) && (
+                      <TooltipContent side="bottom">
+                        {needsDraftRun
+                          ? t("monitoredTables.submitDisabledNeedsDraftRunHint")
+                          : t("monitoredTables.submitDisabledNoChangesHint")}
+                      </TooltipContent>
                     )}
                   </Tooltip>
                 </TooltipProvider>
@@ -502,26 +561,41 @@ function MonitoredTableDetailPage() {
                 bindingId={bindingId}
                 table={table}
                 isDirty={isDirty}
+                runInProgress={runActivity.hasActive}
                 onSaveDraft={saveDraft}
+                onRunStarted={runActivity.registerRun}
                 {...computeRunGating(baseline.length, stagedRows.length)}
               />
             )}
-            {/* ⋮ menu — Delete (confirm) only. Schedule moved back to its
-                own tab (P25 item 1 reverted P23 item 13), so the menu is
-                editor-only and hidden for viewers. */}
-            {perms.canCreateRules && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0"
-                    aria-label={t("monitoredTables.actionsMenuLabel")}
-                  >
-                    <MoreVertical className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+            {/* ⋮ menu — "View in Runs History" (all roles) + Delete (editors
+                only). Schedule moved back to its own tab (P25 item 1 reverted
+                P23 item 13). */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  aria-label={t("monitoredTables.actionsMenuLabel")}
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() =>
+                    void navigate({ to: "/runs-history", search: { tableFqn: table.table_fqn } })
+                  }
+                  className="gap-2"
+                >
+                  <History className="h-3.5 w-3.5" />
+                  {t("runsHistory.menuViewRuns")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setCommentsOpen(true)} className="gap-2">
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  {t("monitoredTables.actionComments")}
+                </DropdownMenuItem>
+                {perms.canCreateRules && (
                   <DropdownMenuItem
                     onClick={() => setDeleteConfirmOpen(true)}
                     variant="destructive"
@@ -530,9 +604,9 @@ function MonitoredTableDetailPage() {
                     <Trash2 className="h-3.5 w-3.5" />
                     {t("monitoredTables.actionDelete")}
                   </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -644,7 +718,7 @@ function MonitoredTableDetailPage() {
               </TabsTrigger>
               <TabGroupDivider />
               <TabsTrigger value="results" className="gap-1.5">
-                <ClipboardList className="h-3.5 w-3.5" />
+                <LineChart className="h-3.5 w-3.5" />
                 {t("monitoredTables.tabResults")}
               </TabsTrigger>
             </TabsList>
@@ -676,7 +750,7 @@ function MonitoredTableDetailPage() {
           </TabsContent>
 
           <TabsContent value="profile">
-            <ProfileTab bindingId={bindingId} tableFqn={table.table_fqn} />
+            <ProfileTab bindingId={bindingId} tableFqn={table.table_fqn} canApply={perms.canCreateRules} />
           </TabsContent>
 
           <TabsContent value="apply-rules">
@@ -692,7 +766,13 @@ function MonitoredTableDetailPage() {
           </TabsContent>
 
           <TabsContent value="results">
-            <ResultsTab tableFqn={table.table_fqn} status={table.status} />
+            <BindingResultsTab
+              bindingId={bindingId}
+              tableName={tableName}
+              tableFqn={table.table_fqn}
+              neverApproved={(table.version ?? 0) === 0}
+              runInProgress={runActivity.hasActive}
+            />
           </TabsContent>
 
           <TabsContent value="schedule">
@@ -729,6 +809,13 @@ function MonitoredTableDetailPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <CommentsDialog
+        entityType="monitored_table"
+        entityId={bindingId}
+        open={commentsOpen}
+        onOpenChange={setCommentsOpen}
+      />
 
       <AlertDialog open={blocker.status === "blocked"}>
         <AlertDialogContent>
@@ -789,14 +876,23 @@ function RunTableAction({
   bindingId,
   table,
   isDirty,
+  runInProgress = false,
   onSaveDraft,
+  onRunStarted,
   runNowHasRules,
   runDraftHasRules,
 }: {
   bindingId: string;
   table: MonitoredTableOut;
   isDirty: boolean;
+  /** True while a run triggered from this page is still executing (item 69) —
+   *  shows a spinner and (item 58) disables every run affordance so a second
+   *  run can't be launched on top of the in-flight one. */
+  runInProgress?: boolean;
   onSaveDraft: () => Promise<boolean>;
+  /** Reports the just-submitted run set's id so the page can track it to
+   *  completion (in-progress banner + results refresh on settle). */
+  onRunStarted?: (runSetId: string) => void;
   /** True when there is a persisted (approved) applied-rule set to run —
    *  i.e. the last-saved baseline is non-empty. "Run now" executes that
    *  server-side snapshot, so it must gate on the baseline, NOT on the
@@ -832,6 +928,7 @@ function RunTableAction({
       { bindingId, data: { source, version } },
       {
         onSuccess: (resp) => {
+          onRunStarted?.(resp.data.run_set_id);
           toast.success(t("monitoredTables.toastRunStarted"), {
             action: {
               label: t("monitoredTables.toastRunStartedViewAction"),
@@ -862,75 +959,153 @@ function RunTableAction({
     }
   };
 
+  // Any run mutation, the save-then-run leg, or an already-running run set all
+  // block launching another (item 58).
+  const busy = runMutation.isPending || runDraftBusy || runInProgress;
+  // When there's a draft to run (draft status OR unsaved edits), Run draft is
+  // the PRIMARY action and Run now (approved) is demoted into the menu; with no
+  // draft, Run now (approved) is primary and Run draft is demoted (item 59).
+  // Draft wins as primary whenever both a draft and an approved version exist.
+  const draftIsPrimary = canRunDraft;
+
+  // The split-button arrow only offers the demoted run action plus any past
+  // approved versions; disable it when NONE of those is actionable (item 34),
+  // not merely while a run is pending. The demoted action is Run now (approved)
+  // when Run draft is primary, else Run draft.
+  const demotedActionable = draftIsPrimary
+    ? hasApproved && !noRulesRunNow
+    : canRunDraft && !noRulesRunDraft;
+  const menuHasActionable = versions.length > 0 || demotedActionable;
+
+  const approvedDisabled = !hasApproved || noRulesRunNow || busy;
+  // Even when enabled, the approved run shows a tooltip naming the version it
+  // runs (item 52) — the button label itself is a plain "Run now".
+  const approvedTooltip = runInProgress
+    ? t("monitoredTables.runInProgressHint")
+    : noRulesRunNow
+      ? t("monitoredTables.runDisabledNoRulesHint")
+      : !hasApproved
+        ? t("monitoredTables.runNowDisabledHint")
+        : t("monitoredTables.runNowTooltip", { version: table.version });
+  const draftDisabled = !canRunDraft || noRulesRunDraft || busy;
+  const draftTooltip = runInProgress
+    ? t("monitoredTables.runInProgressHint")
+    : noRulesRunDraft
+      ? t("monitoredTables.runDisabledNoRulesHint")
+      : !canRunDraft
+        ? t("monitoredTables.runDraftDisabledHint")
+        : null;
+
+  const spinnerOrPlay = busy ? (
+    <Loader2 className="h-4 w-4 animate-spin" />
+  ) : (
+    <Play className="h-4 w-4" />
+  );
+
+  const runNowPrimary = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn(approvedDisabled && "cursor-not-allowed")}>
+          <Button
+            onClick={() => handleRun("approved")}
+            disabled={approvedDisabled}
+            className="gap-2 rounded-r-none"
+          >
+            {spinnerOrPlay}
+            {t("monitoredTables.runNowButtonNoVersion")}
+          </Button>
+        </span>
+      </TooltipTrigger>
+      {approvedTooltip && <TooltipContent side="bottom">{approvedTooltip}</TooltipContent>}
+    </Tooltip>
+  );
+
+  const runDraftPrimary = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn(draftDisabled && "cursor-not-allowed")}>
+          <Button
+            onClick={() => void handleRunDraft()}
+            disabled={draftDisabled}
+            className="gap-2 rounded-r-none"
+          >
+            {spinnerOrPlay}
+            {t("monitoredTables.runDraftAction")}
+          </Button>
+        </span>
+      </TooltipTrigger>
+      {draftTooltip && <TooltipContent side="bottom">{draftTooltip}</TooltipContent>}
+    </Tooltip>
+  );
+
+  const runNowMenuItem = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn(approvedDisabled && "cursor-not-allowed")}>
+          <DropdownMenuItem
+            disabled={approvedDisabled}
+            onSelect={(e) => {
+              e.preventDefault();
+              handleRun("approved");
+            }}
+          >
+            {t("monitoredTables.runNowApprovedOption")}
+          </DropdownMenuItem>
+        </span>
+      </TooltipTrigger>
+      {approvedTooltip && <TooltipContent side="left">{approvedTooltip}</TooltipContent>}
+    </Tooltip>
+  );
+
+  const runDraftMenuItem = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn(draftDisabled && "cursor-not-allowed")}>
+          <DropdownMenuItem
+            disabled={draftDisabled}
+            onSelect={(e) => {
+              e.preventDefault();
+              void handleRunDraft();
+            }}
+          >
+            {t("monitoredTables.runDraftAction")}
+          </DropdownMenuItem>
+        </span>
+      </TooltipTrigger>
+      {draftTooltip && <TooltipContent side="left">{draftTooltip}</TooltipContent>}
+    </Tooltip>
+  );
+
   return (
     <div className="inline-flex" role="group" aria-label={t("monitoredTables.runActionGroupAria")}>
       <TooltipProvider delayDuration={200}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className={cn((!hasApproved || noRulesRunNow) && "cursor-not-allowed")}>
-              <Button
-                onClick={() => handleRun("approved")}
-                disabled={!hasApproved || runMutation.isPending || noRulesRunNow}
-                className="gap-2 rounded-r-none"
+        {draftIsPrimary ? runDraftPrimary : runNowPrimary}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              className="rounded-l-none border-l border-primary-foreground/20 px-2"
+              disabled={busy || !menuHasActionable}
+              aria-label={t("monitoredTables.runMenuAria")}
+            >
+              <ChevronDown className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {/* The action NOT shown as primary is demoted here at the top. */}
+            {draftIsPrimary ? runNowMenuItem : runDraftMenuItem}
+            {versions.length > 0 && <DropdownMenuSeparator />}
+            {versions.map((v: MonitoredTableVersionOut) => (
+              <DropdownMenuItem
+                key={v.version}
+                disabled={busy}
+                onSelect={() => handleRun("approved", v.version)}
               >
-                {runMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                {hasApproved
-                  ? t("monitoredTables.runNowButton", { version: table.version })
-                  : t("monitoredTables.runNowButtonNoVersion")}
-              </Button>
-            </span>
-          </TooltipTrigger>
-          {noRulesRunNow ? (
-            <TooltipContent side="bottom">{t("monitoredTables.runDisabledNoRulesHint")}</TooltipContent>
-          ) : (
-            !hasApproved && <TooltipContent side="bottom">{t("monitoredTables.runNowDisabledHint")}</TooltipContent>
-          )}
-        </Tooltip>
+                {t("monitoredTables.runVersionOption", { version: v.version })}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </TooltipProvider>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            className="rounded-l-none border-l border-primary-foreground/20 px-2"
-            disabled={runMutation.isPending}
-            aria-label={t("monitoredTables.runMenuAria")}
-          >
-            <ChevronDown className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {/* Run draft at the TOP (item 15), disabled+tooltip when unavailable. */}
-          <TooltipProvider delayDuration={200}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className={cn((!canRunDraft || noRulesRunDraft) && "cursor-not-allowed")}>
-                  <DropdownMenuItem
-                    disabled={!canRunDraft || runMutation.isPending || runDraftBusy || noRulesRunDraft}
-                    onSelect={(e) => {
-                      e.preventDefault();
-                      void handleRunDraft();
-                    }}
-                  >
-                    {t("monitoredTables.runDraftAction")}
-                  </DropdownMenuItem>
-                </span>
-              </TooltipTrigger>
-              {noRulesRunDraft ? (
-                <TooltipContent side="left">{t("monitoredTables.runDisabledNoRulesHint")}</TooltipContent>
-              ) : (
-                !canRunDraft && (
-                  <TooltipContent side="left">{t("monitoredTables.runDraftDisabledHint")}</TooltipContent>
-                )
-              )}
-            </Tooltip>
-          </TooltipProvider>
-          {versions.length > 0 && <DropdownMenuSeparator />}
-          {versions.map((v: MonitoredTableVersionOut) => (
-            <DropdownMenuItem key={v.version} onSelect={() => handleRun("approved", v.version)}>
-              {t("monitoredTables.runVersionOption", { version: v.version })}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
     </div>
   );
 }
@@ -1094,25 +1269,27 @@ function AboutTab({
                     </thead>
                     <tbody>
                       {pagedColumns.map((c) => (
-                        <tr key={c.name} className="border-t h-8">
+                        <tr
+                          key={c.name}
+                          className="border-t h-8 cursor-pointer hover:bg-muted"
+                          role="button"
+                          tabIndex={0}
+                          aria-label={t("monitoredTables.aboutColumnJumpTooltip")}
+                          onClick={() => {
+                            // A click that ends a text selection shouldn't also
+                            // navigate — let the user copy a value in peace.
+                            if (window.getSelection()?.toString()) return;
+                            onColumnClick(c.name);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onColumnClick(c.name);
+                            }
+                          }}
+                        >
                           <td className="px-3 py-1 overflow-hidden">
-                            <TooltipProvider delayDuration={300}>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <button
-                                    type="button"
-                                    onClick={() => onColumnClick(c.name)}
-                                    className="font-mono text-xs text-left hover:underline hover:text-primary focus-visible:underline focus-visible:outline-none block max-w-full truncate"
-                                  >
-                                    {c.name}
-                                  </button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <span className="font-mono">{c.name}</span>
-                                  <span className="block">{t("monitoredTables.aboutColumnJumpTooltip")}</span>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
+                            <span className="font-mono text-xs block max-w-full truncate">{c.name}</span>
                           </td>
                           <td className="px-3 py-1 overflow-hidden">
                             <Badge
@@ -1179,7 +1356,15 @@ interface LlmPrimaryKeyInfo {
   confidence?: string;
 }
 
-function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: string }) {
+function ProfileTab({
+  bindingId,
+  tableFqn,
+  canApply,
+}: {
+  bindingId: string;
+  tableFqn: string;
+  canApply: boolean;
+}) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const profileQuery = useGetMonitoredTableProfile(bindingId);
@@ -1209,7 +1394,10 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
   // navigated away. Radix unmounts an inactive tab, so a run kicked off here
   // otherwise vanishes from local state on return; without re-attaching, the
   // in-flight run "disappears" (the exact reported bug).
-  const runsQuery = useListProfileRuns();
+  // Scoped server-side to this table (item 49) so we fetch only its own runs
+  // instead of the full history. The client-side filter stays as a cheap
+  // guard in case a shared cache entry ever carries other tables' rows.
+  const runsQuery = useListProfileRuns({ table_fqn: tableFqn });
   const runsForTable = useMemo(
     () => (runsQuery.data?.data ?? []).filter((r) => r.source_table_fqn === tableFqn),
     [runsQuery.data, tableFqn],
@@ -1218,7 +1406,29 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
     () => runsForTable.find((r) => r.status === "RUNNING") ?? null,
     [runsForTable],
   );
-  const pastRuns = useMemo(() => runsForTable.filter((r) => r.status !== "RUNNING"), [runsForTable]);
+  // Successful past runs power the version switcher (dqlake-style). Every run's
+  // full result set is already persisted per run_id (dq_profiling_results), so
+  // switching just re-points the column list at getProfileRunResults(runId) —
+  // no extra storage. Newest first (runsForTable is already created_at DESC).
+  const successfulRuns = useMemo(
+    () => runsForTable.filter((r) => r.status === "SUCCESS" && r.run_id),
+    [runsForTable],
+  );
+
+  // null = show the latest profile (via getMonitoredTableProfile); a run_id =
+  // that historical run's persisted results (via getProfileRunResults).
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const historyResultsQuery = useGetProfileRunResults(selectedRunId ?? "", {
+    query: { enabled: selectedRunId !== null },
+  });
+
+  // A picked run that no longer exists (history refetched, run rolled off) or
+  // clearing the table selection falls back to the latest profile.
+  useEffect(() => {
+    if (selectedRunId !== null && !successfulRuns.some((r) => r.run_id === selectedRunId)) {
+      setSelectedRunId(null);
+    }
+  }, [selectedRunId, successfulRuns]);
 
   const submitMutation = useSubmitProfileRun();
 
@@ -1289,23 +1499,29 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
   }, [submitMutation, tableFqn, t, queryClient]);
 
   const summary = (profile?.summary ?? {}) as Record<string, unknown>;
+
+  // The column list reflects the run picked in the version switcher: the latest
+  // profile by default, or a selected historical run's persisted results. The
+  // header stats stay pinned to the latest profile.
+  const historyResult = historyResultsQuery.data?.data;
+  const activeSummary =
+    selectedRunId !== null ? ((historyResult?.summary ?? {}) as Record<string, unknown>) : summary;
+  const activeRowCount = selectedRunId !== null ? historyResult?.rows_profiled : profile?.rows_profiled;
+
   const columnStats = useMemo(() => {
-    const entries = Object.entries(summary).filter(
+    const entries = Object.entries(activeSummary).filter(
       (e): e is [string, Record<string, unknown>] =>
         e[0] !== LLM_PK_SUMMARY_KEY && typeof e[1] === "object" && e[1] !== null && !Array.isArray(e[1]),
     );
     return Object.fromEntries(entries);
-  }, [summary]);
+  }, [activeSummary]);
 
-  if (profileQuery.isLoading) {
-    return (
-      <div className="space-y-2 pt-4">
-        <Skeleton className="h-16 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    );
-  }
-
+  // Staggered paint (items 49/96): the run/refresh header renders immediately;
+  // only the column-list region waits on its own query. This stops the whole
+  // tab from blocking behind one skeleton (slow-to-load) and lets the empty
+  // state / Run CTA appear promptly when there's no profile yet.
+  const initialLoading = profileQuery.isLoading;
+  const historyLoading = selectedRunId !== null && historyResultsQuery.isLoading;
   const hasProfile = !profileQuery.error && profile != null;
   const pkInfo = summary[LLM_PK_SUMMARY_KEY] as LlmPrimaryKeyInfo | undefined;
   const pkColumns = pkInfo?.detected_columns ?? [];
@@ -1345,7 +1561,9 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
         </Button>
       </div>
 
-      {!hasProfile ? (
+      {initialLoading ? (
+        <Skeleton className="h-64 w-full" />
+      ) : !hasProfile ? (
         <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed rounded-lg">
           {running ? (
             <Loader2 className="h-10 w-10 text-muted-foreground/40 mb-3 animate-spin" />
@@ -1365,44 +1583,57 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
             </Button>
           )}
         </div>
-      ) : hasColumns ? (
-        <ProfileColumnList columnStats={columnStats} columnTypes={columnTypes} rowCount={profile?.rows_profiled} />
       ) : (
-        <div className="py-8 text-center text-xs text-muted-foreground border border-dashed rounded-md">
-          {t("monitoredTables.profileNoColumnsMatch")}
-        </div>
-      )}
+        <div className="space-y-3">
+          {/* Profiler rule suggestions (B2-82) — dqlake-style placement: the
+              profiler's generated checks live here on the Profile page (not in
+              the AI Suggest-rules dialog). Only shown for the latest profile,
+              not a historical run. */}
+          {selectedRunId === null && <ProfileSuggestionsCard bindingId={bindingId} canApply={canApply} />}
 
-      {pastRuns.length > 0 && (
-        <div className="pt-2">
-          <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
-            {t("monitoredTables.profileHistoryTitle")}
-          </h4>
-          <ul className="divide-y rounded-md border text-xs">
-            {pastRuns.slice(0, 10).map((r) => (
-              <li key={r.run_id} className="flex items-center justify-between gap-3 px-3 py-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Badge
-                    variant={r.status === "SUCCESS" ? "secondary" : "destructive"}
-                    className="font-mono text-[10px] shrink-0"
-                  >
-                    {r.status ?? "—"}
-                  </Badge>
-                  <span className="font-mono text-muted-foreground truncate">
-                    {r.created_at ? formatDateShort(r.created_at) : "—"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3 shrink-0 text-muted-foreground">
-                  {r.rows_profiled != null && (
-                    <span className="font-mono">
-                      {t("monitoredTables.profileHistoryRows", { count: r.rows_profiled })}
-                    </span>
-                  )}
-                  {r.requesting_user && <span className="truncate max-w-[12rem]">{r.requesting_user}</span>}
-                </div>
-              </li>
-            ))}
-          </ul>
+          {/* Version switcher (items 50/31) — pick any past run; its full
+              results are already persisted per run_id, so this just re-points
+              the column list. Replaces the old log-style history list. */}
+          {successfulRuns.length > 1 && (
+            <div className="flex items-center justify-end gap-2">
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                {t("monitoredTables.profileVersionLabel")}
+              </span>
+              <Select
+                value={selectedRunId ?? profile?.run_id ?? ""}
+                onValueChange={(v) => setSelectedRunId(v === profile?.run_id ? null : v)}
+              >
+                <SelectTrigger className="h-8 w-[280px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {successfulRuns.map((r, i) => (
+                    <SelectItem key={r.run_id} value={r.run_id ?? ""} className="text-xs">
+                      {i === 0
+                        ? t("monitoredTables.profileVersionOptionLatest", {
+                            date: r.created_at ? formatDateShort(r.created_at) : "—",
+                            count: r.rows_profiled ?? 0,
+                          })
+                        : t("monitoredTables.profileVersionOption", {
+                            date: r.created_at ? formatDateShort(r.created_at) : "—",
+                            count: r.rows_profiled ?? 0,
+                          })}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {historyLoading ? (
+            <Skeleton className="h-64 w-full" />
+          ) : hasColumns ? (
+            <ProfileColumnList columnStats={columnStats} columnTypes={columnTypes} rowCount={activeRowCount} />
+          ) : (
+            <div className="py-8 text-center text-xs text-muted-foreground border border-dashed rounded-md">
+              {t("monitoredTables.profileNoColumnsMatch")}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1412,6 +1643,11 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
 // ---------------------------------------------------------------------------
 // Apply Rules tab
 // ---------------------------------------------------------------------------
+
+// Client-side page size for the by-rule lens — rule config cards are tall
+// (expandable), so a screenful is ~10 before the list runs off the bottom
+// (item 51). The by-column lens paginates its own, denser rows internally.
+const RULE_PAGE_SIZE = 10;
 
 function ApplyRulesTab({
   bindingId,
@@ -1454,6 +1690,10 @@ function ApplyRulesTab({
   // AddRulesDialog stages new rule(s), so the target card(s) auto-expand in
   // the by-rule lens instead of just scrolling into view.
   const [expandRuleIds, setExpandRuleIds] = useState<string[]>([]);
+  // 1-indexed page for the by-rule lens (item 51). Reset on search/filter
+  // change below; jumped to the target rule's page when a card is
+  // auto-expanded (after staging or a by-column "jump to rule").
+  const [rulePage, setRulePage] = useState(1);
 
   const parts = tableFqn.split(".");
   const columnsQuery = useGetTableColumns(parts[0] ?? "", parts[1] ?? "", parts[2] ?? "", {
@@ -1638,6 +1878,33 @@ function ApplyRulesTab({
     }
     return filtered;
   }, [mergedRules, statuses, filter, search]);
+
+  // Clamp the requested page against the live list length so removing rules
+  // on the last page (or a filter narrowing the set) can't strand the view
+  // on an empty page.
+  const ruleTotalPages = Math.max(1, Math.ceil(visibleMergedRules.length / RULE_PAGE_SIZE));
+  const safeRulePage = Math.min(rulePage, ruleTotalPages);
+  const pagedMergedRules = useMemo(
+    () => visibleMergedRules.slice((safeRulePage - 1) * RULE_PAGE_SIZE, safeRulePage * RULE_PAGE_SIZE),
+    [visibleMergedRules, safeRulePage],
+  );
+
+  // Reset to the first page whenever the search or filter changes so a
+  // narrowed result set starts from the top (item 51). Declared before the
+  // auto-expand effect so that when both fire on the same commit (staging
+  // resets search+filter AND sets expandRuleIds), the jump-to-page wins.
+  useEffect(() => {
+    setRulePage(1);
+  }, [search, filter]);
+
+  // Jump to the page holding the first auto-expanded card so a rule freshly
+  // staged (appended to the end) or targeted by a by-column "jump to rule"
+  // is actually on-screen, not hidden behind pagination.
+  useEffect(() => {
+    if (expandRuleIds.length === 0) return;
+    const idx = visibleMergedRules.findIndex((r) => expandRuleIds.includes(r.rule_id));
+    if (idx >= 0) setRulePage(Math.floor(idx / RULE_PAGE_SIZE) + 1);
+  }, [expandRuleIds, visibleMergedRules]);
 
   const openAddDialog = (column?: ColumnRef) => {
     setAddColumnContext(column ?? null);
@@ -1833,6 +2100,10 @@ function ApplyRulesTab({
               </button>
             ))}
           </div>
+          {/* Divider between the always-visible lens toggle and the
+              edit-only actions — mirrors dqlake's AppliedRulesList toolbar.
+              Only shown alongside the Suggest button so it never dangles. */}
+          {canEdit && aiAvailability.available && <div className="h-5 w-px bg-border mx-1" />}
           {canEdit && (
             <>
               {aiAvailability.available && (
@@ -1866,10 +2137,10 @@ function ApplyRulesTab({
                   {t("monitoredTables.suggestRulesButton")}
                 </Button>
               )}
-              <Button size="sm" className="gap-2" onClick={() => openAddDialog()}>
-                <Plus className="h-3.5 w-3.5" />
-                {t("monitoredTables.addRulesButton")}
-              </Button>
+              {/* Toolbar "Apply rules" button removed (item 36) — the wide
+                  dashed CTA at the bottom of the by-rule list and the
+                  per-column "+ Add rule" CTAs in the by-column lens now cover
+                  adding rules, mirroring dqlake's AppliedRulesList. */}
             </>
           )}
         </div>
@@ -1899,7 +2170,7 @@ function ApplyRulesTab({
                   : t("monitoredTables.emptyAppliedRules")}
             </div>
           ) : (
-            visibleMergedRules.map((rule) => (
+            pagedMergedRules.map((rule) => (
               <RuleConfigCard
                 key={rule.rule_id}
                 rule={rule}
@@ -1932,6 +2203,26 @@ function ApplyRulesTab({
                 }}
               />
             ))
+          )}
+          <Pagination
+            page={safeRulePage}
+            totalItems={visibleMergedRules.length}
+            pageSize={RULE_PAGE_SIZE}
+            onPageChange={setRulePage}
+            className="flex items-center justify-between pt-1"
+          />
+          {/* Wide dashed "Apply rules" CTA — the primary add affordance in
+              the by-rule lens now that the toolbar button is gone (items
+              36/51), ported from dqlake's AppliedRulesList bottom CTA. */}
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => openAddDialog()}
+              className="mt-2 w-full border border-dashed rounded-lg py-4 text-sm text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors flex items-center justify-center gap-1.5"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("monitoredTables.addRulesButton")}
+            </button>
           )}
         </div>
       ) : (
@@ -2112,7 +2403,6 @@ function DataGrid({ columns, rows, emptyLabel }: { columns: string[]; rows: Reco
                 <td
                   key={col}
                   className="p-2 max-w-[240px] truncate font-mono"
-                  title={String(row[col] ?? "")}
                 >
                   {String(row[col] ?? "")}
                 </td>
@@ -2121,6 +2411,41 @@ function DataGrid({ columns, rows, emptyLabel }: { columns: string[]; rows: Reco
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// Composed loading skeleton mirroring the real View Data layout (item 70):
+// the ask bar (icon + input + button), a row of ~3 pill chips, and a table
+// with a header row and eight body rows — far closer to the eventual content
+// than the old flat 256px block.
+function ViewDataSkeleton() {
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2 rounded-lg border px-3 py-3">
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-3.5 w-3.5 shrink-0 rounded-full" />
+          <Skeleton className="h-8 flex-1" />
+          <Skeleton className="h-8 w-20 shrink-0" />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-6 w-44 rounded-full" />
+          ))}
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-md border">
+        <div className="border-b bg-muted/30 p-2">
+          <Skeleton className="h-4 w-full" />
+        </div>
+        <div className="divide-y">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="p-2">
+              <Skeleton className="h-4 w-full" />
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -2205,7 +2530,7 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
   const suggestions = aiQuestions.length > 0 ? aiQuestions : staticSuggestions;
 
   if (previewMutation.isPending && !preview) {
-    return <Skeleton className="h-64 w-full" />;
+    return <ViewDataSkeleton />;
   }
 
   if (previewMutation.isError && !preview) {
@@ -2361,67 +2686,3 @@ function ViewDataTab({ tableFqn }: { tableFqn: string }) {
 
 // The preview row cap mirrors the backend TableDataService.PREVIEW_LIMIT.
 const TableDataService_PREVIEW_LIMIT = 500;
-
-// ---------------------------------------------------------------------------
-// Results tab
-// ---------------------------------------------------------------------------
-
-function ResultsTab({ tableFqn, status }: { tableFqn: string; status: string }) {
-  const { t } = useTranslation();
-
-  // Submitting the table materializes its applied rules into dq_quality_rules
-  // and moves them into the pending_approval queue; they only actually run
-  // once an approver flips them to `approved`, exactly like a manually
-  // authored rule. Nothing runs while the binding is still `draft` (nothing
-  // has been materialized yet), so only fetch/count checks once it has left
-  // draft, and point the steward at the existing Drafts & Review queue for
-  // any still awaiting review.
-  const materialized = status !== "draft";
-  const rulesQuery = useGetRules(tableFqn, {
-    query: { enabled: materialized, retry: false },
-  });
-  const checks = rulesQuery.data?.data ?? [];
-  const pendingCount = checks.filter((c) => c.status === "draft" || c.status === "pending_approval").length;
-
-  return (
-    <Card className="mt-4">
-      <CardHeader>
-        <CardTitle className="text-sm flex items-center gap-2">
-          <ClipboardList className="h-4 w-4" />
-          {t("monitoredTables.resultsTitle")}
-        </CardTitle>
-        <CardDescription>{t("monitoredTables.resultsDescription")}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {!materialized && (
-          <p className="text-sm text-muted-foreground">{t("monitoredTables.notYetPublishedResultsHint")}</p>
-        )}
-        {pendingCount > 0 && (
-          <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700">
-            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-                {t("monitoredTables.resultsApprovalBannerTitle")}
-              </p>
-              <p className="text-sm text-amber-800/90 dark:text-amber-300/90">
-                {t("monitoredTables.resultsApprovalBannerBody", { count: pendingCount })}
-              </p>
-              <Button asChild size="sm" variant="outline" className="gap-1.5 h-7 text-xs border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900">
-                <Link to="/rules/drafts">{t("monitoredTables.resultsApprovalBannerCta")}</Link>
-              </Button>
-            </div>
-          </div>
-        )}
-        <p className="text-sm text-muted-foreground">
-          {t("monitoredTables.resultsTableFqnHint", { table: tableFqn })}
-        </p>
-        <Button asChild variant="outline" size="sm" className="gap-2">
-          <Link to="/runs-history">
-            <ArrowLeft className="h-3.5 w-3.5 rotate-180" />
-            {t("monitoredTables.viewRunsHistory")}
-          </Link>
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}

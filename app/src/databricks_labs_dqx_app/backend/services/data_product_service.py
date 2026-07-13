@@ -43,14 +43,17 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast, get_args
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_models import (
+    SCHEDULE_KIND_DEFAULT,
     DataProduct,
     DataProductMember,
+    MonitoredTable,
     RunSetSource,
     RunSetTrigger,
+    ScheduleKind,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
@@ -60,6 +63,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
+from databricks_labs_dqx_app.backend.services.score_cache_service import CachedScore, parse_cached_score
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
@@ -76,6 +80,14 @@ class NoRunnableMembersError(ValueError):
     """Raised by :meth:`DataProductService.run` when zero members resolve to a runnable check set."""
 
 
+class BindingNotApprovedError(ValueError):
+    """Raised by :meth:`DataProductService.add_member` for a binding that is not approved.
+
+    Only bindings satisfying :func:`_is_runnable` (status ``approved`` AND
+    ``version > 0``) may JOIN a table space. Maps to HTTP 400 at the route.
+    """
+
+
 class InvalidStatusTransitionError(ValueError):
     """Raised by :meth:`DataProductService.approve`/:meth:`reject` when the space is not ``pending_approval``.
 
@@ -86,7 +98,14 @@ class InvalidStatusTransitionError(ValueError):
 
 @dataclass
 class DataProductMemberDetail:
-    """A ``dq_data_product_members`` row joined with its binding's live state."""
+    """A ``dq_data_product_members`` row joined with its binding's live state.
+
+    The ``score*`` fields carry the binding's cached table-scope DQ score
+    (P5.3) — sourced from the monitored-table summaries the member build
+    already fetches (which LEFT JOIN ``dq_score_cache`` in their own
+    round-trip), so the Tables tab's score column costs no extra query.
+    All ``None`` when the table has never been scored.
+    """
 
     id: str
     binding_id: str
@@ -97,17 +116,30 @@ class DataProductMemberDetail:
     rules_count: int
     checks_count: int
     runnable: bool
+    score: float | None = None
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    score_computed_at: str | None = None
 
 
 @dataclass
 class DataProductDetail:
-    """A ``dq_data_products`` row plus resolved members and list-view counters."""
+    """A ``dq_data_products`` row plus resolved members and list-view counters.
+
+    The ``score*`` fields carry the cached DQ score LEFT-JOINed from
+    ``dq_score_cache`` (P3.4) — all ``None`` when the product has never
+    been scored. ``score_computed_at`` is the executor's ``ts_text`` string.
+    """
 
     product: DataProduct
     members: list[DataProductMemberDetail] = field(default_factory=list)
     member_count: int = 0
     runnable_count: int = 0
     last_run_at: datetime | None = None
+    score: float | None = None
+    failed_tests: int | None = None
+    total_tests: int | None = None
+    score_computed_at: str | None = None
 
 
 @dataclass
@@ -178,25 +210,62 @@ class DataProductService:
         self._app_settings = app_settings
         self._products_table = sql.fqn("dq_data_products")
         self._members_table = sql.fqn("dq_data_product_members")
+        self._score_cache_table = sql.fqn("dq_score_cache")
 
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
 
+    def count(self) -> int:
+        """Total table spaces (data products), any status (homepage stat card)."""
+        rows = self._sql.query(f"SELECT COUNT(*) FROM {self._products_table}")  # noqa: S608
+        return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+
     def list_products(self) -> list[DataProductDetail]:
-        """List every data product, newest-updated first, with resolved members."""
-        products = self._fetch_products()
-        if not products:
+        """List every data product, newest-updated first, with resolved members.
+
+        The cached DQ score columns are LEFT-JOINed from ``dq_score_cache``
+        in the same round-trip (P3.4) — never recomputed here. Everything
+        else the per-product detail needs is fetched in a BOUNDED number of
+        batched queries, independent of product count: one for all products'
+        members and (only when pins exist) one for the pinned frozen-snapshot
+        counts. Never one-query-per-product. The per-product "last run" is
+        derived from the already-fetched member ``last_run_at`` columns — no
+        extra query.
+        """
+        scored = self._fetch_products_with_scores()
+        if not scored:
             return []
         table_map = self._table_summary_map()
-        return [self._build_detail(p, table_map) for p in products]
+        product_ids = [product.product_id for product, _ in scored]
+        members_by_product = self._fetch_members_by_product(product_ids)
+        all_members = [m for members in members_by_product.values() for m in members]
+        pinned_counts = self._pinned_snapshot_counts(all_members)
+        return [
+            self._build_detail(
+                product,
+                table_map,
+                cached,
+                member_rows=members_by_product.get(product.product_id, []),
+                pinned_counts=pinned_counts,
+            )
+            for product, cached in scored
+        ]
 
     def get(self, product_id: str) -> DataProductDetail | None:
         """Get a single data product with resolved members, or None if it doesn't exist."""
-        product = self._fetch_product(product_id)
-        if product is None:
+        scored = self._fetch_product_with_score(product_id)
+        if scored is None:
             return None
-        return self._build_detail(product, self._table_summary_map())
+        product, cached = scored
+        member_rows = self._fetch_members(product_id)
+        return self._build_detail(
+            product,
+            self._table_summary_map(),
+            cached,
+            member_rows=member_rows,
+            pinned_counts=self._pinned_snapshot_counts(member_rows),
+        )
 
     # ------------------------------------------------------------------
     # CRUD
@@ -229,10 +298,11 @@ class DataProductService:
         )
         self._sql.execute(
             f"INSERT INTO {self._products_table} "
-            "(product_id, name, description, steward, schedule_cron, schedule_tz, status, version, "
+            "(product_id, name, description, steward, schedule_cron, schedule_tz, schedule_kind, status, version, "
             "created_by, created_at, updated_by, updated_at) VALUES ("
             f"'{escape_sql_string(product.product_id)}', '{escape_sql_string(product.name)}', "
             f"{self._opt_str(product.description)}, {self._opt_str(product.steward)}, NULL, NULL, "
+            f"{self._opt_str(product.schedule_kind)}, "
             f"'{product.status}', 0, {self._opt_str(created_by)}, now(), {self._opt_str(created_by)}, now())"
         )
         logger.info("Created data product %s (product_id=%s)", name, product.product_id)
@@ -268,10 +338,19 @@ class DataProductService:
         for col in _UPDATABLE_FIELDS:
             if col in updates:
                 set_clauses.append(f"{col} = {self._opt_str(updates[col])}")
+        # schedule_kind (B2-52) is handled separately from _UPDATABLE_FIELDS
+        # because its column is NOT NULL on Postgres: only a concrete, valid
+        # kind is ever written, so an omitted/None value leaves the stored
+        # value untouched rather than violating the constraint.
+        apply_kind = updates.get("schedule_kind") in get_args(ScheduleKind)
+        if apply_kind:
+            set_clauses.append(f"schedule_kind = {self._opt_str(updates['schedule_kind'])}")
         e = escape_sql_string(product_id)
         self._sql.execute(f"UPDATE {self._products_table} SET {', '.join(set_clauses)} WHERE product_id = '{e}'")
 
         applied = {k: v for k, v in updates.items() if k in _UPDATABLE_FIELDS}
+        if apply_kind:
+            applied["schedule_kind"] = updates["schedule_kind"]
         return product.model_copy(
             update={**applied, "status": "draft", "updated_by": updated_by, "updated_at": datetime.now(timezone.utc)}
         )
@@ -301,9 +380,21 @@ class DataProductService:
 
         Flips the space back to ``draft`` (P21 item 30).
 
-        On a brand-new member (no existing row for *binding_id*), an
-        unspecified *pinned_version* (``None``) is resolved against the
-        ``default_auto_upgrade`` app-setting — see
+        On a brand-new member (no existing row for *binding_id*), the binding
+        must be APPROVED — :func:`_is_runnable`'s predicate (status
+        ``approved`` AND ``version > 0``), the same definition
+        ``DataProductMemberDetail.runnable`` exposes. A binding whose approved
+        rules carry unapproved edits ("modified" in the UI) still has
+        ``status == "approved"`` underneath plus a frozen approved snapshot,
+        so it stays eligible; draft / pending_approval / rejected /
+        never-approved (``version == 0``) bindings are rejected. This is
+        attach-time-only enforcement: the ``UPDATE`` branch (pin change on an
+        EXISTING member) deliberately skips the check, so members whose
+        binding later leaves ``approved`` are never retroactively evicted —
+        the ``run()`` fan-out already skips them under ``source="approved"``.
+
+        On a brand-new member, an unspecified *pinned_version* (``None``) is
+        resolved against the ``default_auto_upgrade`` app-setting — see
         :meth:`~databricks_labs_dqx_app.backend.services.app_settings_service.AppSettingsService.resolve_pinned_version_for_new_attachment`.
         This is attach-time-only: re-adding an existing member (the
         ``UPDATE`` branch) always honours the caller's ``pinned_version``
@@ -313,6 +404,8 @@ class DataProductService:
         Raises:
             LookupError: *product_id* does not exist.
             RuntimeError: *binding_id* does not exist (when adding a new member).
+            BindingNotApprovedError: the binding is not approved (when adding
+                a new member) — maps to HTTP 400 at the route.
         """
         if self._fetch_product(product_id) is None:
             raise LookupError(f"Data product not found: {product_id}")
@@ -329,15 +422,14 @@ class DataProductService:
                 f"WHERE id = '{escape_sql_string(member_id)}'"
             )
         else:
-            # New member: validate the binding exists before inserting
-            self._require_binding_exists(binding_id)
+            # New member: the binding must exist AND be approved before it can
+            # join the space (P3.2) — see the docstring for the exact predicate
+            # and the deliberate no-retroactive-eviction asymmetry with the
+            # UPDATE branch above.
+            table = self._require_approved_binding(binding_id)
             member_id = uuid4().hex
             if pinned_version is None:
-                binding_detail = self._monitored_tables.get(binding_id)
-                current_version = binding_detail.table.version if binding_detail is not None else 0
-                pinned_version = self._app_settings.resolve_pinned_version_for_new_attachment(
-                    None, current_version
-                )
+                pinned_version = self._app_settings.resolve_pinned_version_for_new_attachment(None, table.version)
             self._sql.execute(
                 f"INSERT INTO {self._members_table} (id, product_id, binding_id, pinned_version) VALUES "
                 f"('{escape_sql_string(member_id)}', '{e_pid}', '{e_bid}', {self._opt_int(pinned_version)})"
@@ -579,13 +671,52 @@ class DataProductService:
 
         return DataProductRunResult(run_set_id=run_set_id, submitted=submitted, skipped=skipped)
 
+    def member_table_fqns(self, product_id: str) -> list[str]:
+        """Return the distinct real source table FQNs of a product's members.
+
+        Used by the scheduler's profiling fan-out (B2-52): a Table Space
+        profiling run profiles each member table. Cross-table synthetic keys
+        (``__sql_check__/<name>``) and members whose binding no longer exists
+        are skipped — there is no physical table to profile. Order follows
+        the members list; duplicates are collapsed.
+        """
+        member_rows = self._fetch_members(product_id)
+        table_map = self._table_summary_map()
+        seen: set[str] = set()
+        fqns: list[str] = []
+        for row in member_rows:
+            summary = table_map.get(row.binding_id)
+            if summary is None:
+                continue
+            fqn = summary.table.table_fqn
+            if fqn and fqn not in seen and not fqn.startswith("__sql_check__/"):
+                seen.add(fqn)
+                fqns.append(fqn)
+        return fqns
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_detail(self, product: DataProduct, table_map: dict[str, MonitoredTableSummary]) -> DataProductDetail:
-        member_rows = self._fetch_members(product.product_id)
+    def _build_detail(
+        self,
+        product: DataProduct,
+        table_map: dict[str, MonitoredTableSummary],
+        cached_score: CachedScore | None,
+        *,
+        member_rows: list[_MemberRow],
+        pinned_counts: dict[tuple[str, int], tuple[int, int]],
+    ) -> DataProductDetail:
+        """Assemble one product's detail from PRE-FETCHED batch data.
+
+        Takes the member rows and pinned-snapshot-count map the caller already
+        fetched (batched across all products on the list path) so building N
+        details issues zero additional queries. The product's ``last_run_at``
+        is derived here from the members' denormalized ``last_run_at`` — no
+        separate query.
+        """
         members: list[DataProductMemberDetail] = []
+        member_last_runs: list[datetime] = []
         for row in member_rows:
             summary = table_map.get(row.binding_id)
             if summary is None:
@@ -597,7 +728,9 @@ class DataProductService:
                 )
                 continue
             table = summary.table
-            rules_count, checks_count = self._member_counts(summary, row.pinned_version)
+            if table.last_run_at is not None:
+                member_last_runs.append(table.last_run_at)
+            rules_count, checks_count = self._member_counts(summary, row.pinned_version, pinned_counts)
             members.append(
                 DataProductMemberDetail(
                     id=row.id,
@@ -609,39 +742,62 @@ class DataProductService:
                     rules_count=rules_count,
                     checks_count=checks_count,
                     runnable=_is_runnable(table.status, table.version),
+                    score=summary.score,
+                    failed_tests=summary.failed_tests,
+                    total_tests=summary.total_tests,
+                    score_computed_at=summary.score_computed_at,
                 )
             )
-        last_run_at = self._last_run_at(product.product_id)
+        cached = cached_score or CachedScore()
         return DataProductDetail(
             product=product,
             members=members,
             member_count=len(members),
             runnable_count=sum(1 for m in members if m.runnable),
-            last_run_at=last_run_at,
+            # Table space "last run" = the newest run across its member tables
+            # (B2-15). Derived from the members' denormalized ``last_run_at``
+            # (written on completion by MonitoredTableService.refresh_run_timestamps)
+            # so a member run via EITHER trigger surface — MT-direct or this
+            # space's fan-out — bumps it. Replaces the old product-id-grouped
+            # run-set MAX, which missed MT-surface runs (product_id=None).
+            last_run_at=max(member_last_runs) if member_last_runs else None,
+            score=cached.score,
+            failed_tests=cached.failed_tests,
+            total_tests=cached.total_tests,
+            score_computed_at=cached.computed_at,
         )
 
-    def _member_counts(self, summary: MonitoredTableSummary, pinned_version: int | None) -> tuple[int, int]:
+    @staticmethod
+    def _member_counts(
+        summary: MonitoredTableSummary,
+        pinned_version: int | None,
+        pinned_counts: dict[tuple[str, int], tuple[int, int]],
+    ) -> tuple[int, int]:
         """Return ``(rules_count, checks_count)`` for a member.
 
         An UNPINNED member tracks the binding's latest approved state, so it
         reports the live summary counts. A member PINNED to a specific version
         enforces that version's FROZEN snapshot, so it must report the
         snapshot's counts (``dq_monitored_table_versions.state_json`` /
-        ``checks_json`` lengths) — not the binding's current (possibly newer or
-        emptied) live count, which would otherwise mislead the owner about what
-        the pin actually enforces. Falls back to the live counts if the pinned
-        snapshot can't be resolved (defensive: a pin should always have a
-        matching frozen row).
+        ``checks_json`` lengths) — resolved from the pre-fetched
+        *pinned_counts* map (see :meth:`_pinned_snapshot_counts`), not the
+        binding's current (possibly newer or emptied) live count, which would
+        otherwise mislead the owner about what the pin actually enforces.
+        Falls back to the live counts if the pinned snapshot can't be resolved
+        (defensive: a pin should always have a matching frozen row).
         """
         if pinned_version is not None:
-            snapshot = self._version_service.snapshot_counts(summary.table.binding_id, pinned_version)
+            snapshot = pinned_counts.get((summary.table.binding_id, pinned_version))
             if snapshot is not None:
                 return snapshot
         return summary.applied_rule_count, summary.check_count
 
-    def _last_run_at(self, product_id: str) -> datetime | None:
-        run_sets = self._run_set_service.list_for_product(product_id, limit=1)
-        return run_sets[0].created_at if run_sets else None
+    def _pinned_snapshot_counts(self, member_rows: list[_MemberRow]) -> dict[tuple[str, int], tuple[int, int]]:
+        """Resolve every pinned member's frozen-snapshot counts in one batched query."""
+        pins = [(row.binding_id, row.pinned_version) for row in member_rows if row.pinned_version is not None]
+        if not pins:
+            return {}
+        return self._version_service.snapshot_counts_many(pins)
 
     def _table_summary_map(self) -> dict[str, MonitoredTableSummary]:
         summaries = self._monitored_tables.list_monitored_tables()
@@ -668,22 +824,69 @@ class DataProductService:
         )
         return [_MemberRow(id=row[0], binding_id=row[1], pinned_version=self._parse_int(row[2])) for row in rows]
 
-    def _select_cols(self) -> str:
-        created_at = self._sql.ts_text("created_at")
-        updated_at = self._sql.ts_text("updated_at")
+    def _fetch_members_by_product(self, product_ids: list[str]) -> dict[str, list[_MemberRow]]:
+        """Fetch ALL listed products' members in ONE query, grouped app-side.
+
+        Batched counterpart of :meth:`_fetch_members` for the list path — one
+        ``IN (...)`` round-trip instead of one query per product.
+        """
+        if not product_ids:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(p)}'" for p in product_ids)
+        rows = self._sql.query(
+            f"SELECT id, product_id, binding_id, pinned_version FROM {self._members_table} "  # noqa: S608
+            f"WHERE product_id IN ({in_list})"
+        )
+        result: dict[str, list[_MemberRow]] = {}
+        for row in rows:
+            result.setdefault(row[1], []).append(
+                _MemberRow(id=row[0], binding_id=row[2], pinned_version=self._parse_int(row[3]))
+            )
+        return result
+
+    def _select_cols(self, prefix: str = "") -> str:
+        created_at = self._sql.ts_text(f"{prefix}created_at")
+        updated_at = self._sql.ts_text(f"{prefix}updated_at")
         return (
-            "product_id, name, description, steward, schedule_cron, schedule_tz, status, version, "
-            f"created_by, {created_at} AS created_at, updated_by, {updated_at} AS updated_at"
+            f"{prefix}product_id, {prefix}name, {prefix}description, {prefix}steward, "
+            f"{prefix}schedule_cron, {prefix}schedule_tz, {prefix}status, {prefix}version, "
+            f"{prefix}created_by, {created_at} AS created_at, "
+            f"{prefix}updated_by, {updated_at} AS updated_at, "
+            # schedule_kind (B2-52) appended last so the score-join columns keep
+            # their relative offset (score cols follow at +1..+4).
+            f"{prefix}schedule_kind"
         )
 
-    def _require_binding_exists(self, binding_id: str) -> None:
-        """Validate that a monitored table binding exists.
+    def _require_approved_binding(self, binding_id: str) -> MonitoredTable:
+        """Validate that a monitored table binding exists and is approved.
+
+        "Approved" is :func:`_is_runnable`'s predicate — status ``approved``
+        AND ``version > 0`` — NOT the UI display status: a binding shown as
+        "modified" (approved with unapproved edits) is still ``approved``
+        underneath and passes.
+
+        Returns:
+            The binding's :class:`MonitoredTable` row.
 
         Raises:
             RuntimeError: *binding_id* does not exist.
+            BindingNotApprovedError: the binding is not approved.
         """
-        if self._monitored_tables.get(binding_id) is None:
+        detail = self._monitored_tables.get(binding_id)
+        if detail is None:
             raise RuntimeError(f"Monitored table not found: {binding_id}")
+        table = detail.table
+        if not _is_runnable(table.status, table.version):
+            reason = (
+                "it has never been approved"
+                if table.version == 0
+                else f"its status is '{table.status}', expected 'approved'"
+            )
+            raise BindingNotApprovedError(
+                f"Cannot add table '{table.table_fqn}' to this table space: {reason}. "
+                "Only approved tables can join a table space."
+            )
+        return table
 
     def _fetch_product(self, product_id: str) -> DataProduct | None:
         e = escape_sql_string(product_id)
@@ -693,10 +896,30 @@ class DataProductService:
             return None
         return self._row_to_product(rows[0])
 
-    def _fetch_products(self) -> list[DataProduct]:
-        sql = f"SELECT {self._select_cols()} FROM {self._products_table} ORDER BY updated_at DESC"  # noqa: S608
+    def _score_joined_select(self) -> str:
+        """SELECT + FROM + LEFT JOIN fragment for the score-carrying read paths."""
+        score_computed_at = self._sql.ts_text("sc.computed_at")
+        return (
+            f"SELECT {self._select_cols('p.')}, "
+            f"sc.score, sc.failed_tests, sc.total_tests, {score_computed_at} AS score_computed_at "
+            f"FROM {self._products_table} p "
+            f"LEFT JOIN {self._score_cache_table} sc "
+            f"ON sc.scope_type = 'product' AND sc.scope_key = p.product_id"
+        )
+
+    def _fetch_product_with_score(self, product_id: str) -> tuple[DataProduct, CachedScore] | None:
+        e = escape_sql_string(product_id)
+        sql = f"{self._score_joined_select()} WHERE p.product_id = '{e}'"  # noqa: S608
         rows = self._sql.query(sql)
-        return [self._row_to_product(row) for row in rows]
+        if not rows:
+            return None
+        row = rows[0]
+        return self._row_to_product(row), parse_cached_score(row[13], row[14], row[15], row[16])
+
+    def _fetch_products_with_scores(self) -> list[tuple[DataProduct, CachedScore]]:
+        sql = f"{self._score_joined_select()} ORDER BY p.updated_at DESC"  # noqa: S608
+        rows = self._sql.query(sql)
+        return [(self._row_to_product(row), parse_cached_score(row[13], row[14], row[15], row[16])) for row in rows]
 
     def _row_to_product(self, row: list[str]) -> DataProduct:
         return DataProduct(
@@ -712,6 +935,11 @@ class DataProductService:
             created_at=self._parse_timestamp(row[9]),
             updated_by=row[10],
             updated_at=self._parse_timestamp(row[11]),
+            schedule_kind=(
+                cast(ScheduleKind, row[12])
+                if len(row) > 12 and row[12] in get_args(ScheduleKind)
+                else SCHEDULE_KIND_DEFAULT
+            ),
         )
 
     @staticmethod

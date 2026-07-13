@@ -121,6 +121,15 @@ class MonitoredTableVersionService:
         set and overwrites vN's ``checks_json``/``state_json`` — the version
         integer is unchanged (design spec §3.2 re-freeze-without-bump).
 
+        NEVER destructive: just as version 0 is left untouched, a re-freeze
+        that would replace a NON-EMPTY frozen snapshot with an EMPTY check set
+        is refused. An empty re-computed set here means the binding's approved
+        rows momentarily resolved to nothing — e.g. an upstream
+        re-materialization couldn't re-render a rule against a new version — and
+        blindly writing it would leave the pinned version (and every
+        ``source == "approved"`` run) with zero checks. The previous snapshot is
+        kept instead; the mismatch surfaces for re-review.
+
         Raises:
             LookupError: *binding_id* does not exist.
         """
@@ -131,6 +140,14 @@ class MonitoredTableVersionService:
         if detail is None:
             return
         checks, state = self._current_approved_snapshot(binding_id, detail)
+        if not checks and self._has_nonempty_snapshot(binding_id, current):
+            logger.warning(
+                "Refusing to overwrite non-empty frozen snapshot for binding %s version %d with an "
+                "empty check set; keeping the previous snapshot (re-review required)",
+                binding_id,
+                current,
+            )
+            return
         e = escape_sql_string(binding_id)
         checks_expr = self._sql.json_literal_expr(json.dumps(checks))
         state_expr = self._sql.json_literal_expr(json.dumps(state))
@@ -207,38 +224,57 @@ class MonitoredTableVersionService:
             raise LookupError(f"No frozen snapshot for binding {binding_id} version {version}")
         return self._parse_checks(rows[0][0])
 
-    def snapshot_counts(self, binding_id: str, version: int) -> tuple[int, int] | None:
-        """Return ``(applied_rule_count, check_count)`` for a frozen snapshot, or ``None``.
+    def snapshot_counts_many(self, pins: list[tuple[str, int]]) -> dict[tuple[str, int], tuple[int, int]]:
+        """Return ``(applied_rule_count, check_count)`` per frozen *(binding_id, version)* pin.
 
         ``check_count`` is the length of the frozen ``checks_json`` (the exact
         checks the runner would execute for that pin); ``applied_rule_count``
-        is the number of applied rules recorded in ``state_json``. Returns
-        ``None`` when no snapshot exists for *(binding_id, version)*, so callers
-        can fall back to the live binding counts.
+        is the number of applied rules recorded in ``state_json``. All pins
+        are resolved in ONE query (no per-pin round-trip); a pin with no
+        snapshot row is simply absent from the result, so callers can fall
+        back to the live binding counts.
 
         Used by :class:`~.data_product_service.DataProductService` so a
         version-pinned product member reports the counts of the PINNED
         snapshot rather than the binding's current (possibly newer) live state.
         """
-        e = escape_sql_string(binding_id)
+        if not pins:
+            return {}
         checks_text = self._sql.select_json_text("checks_json")
         state_text = self._sql.select_json_text("state_json")
+        predicates = " OR ".join(
+            f"(binding_id = '{escape_sql_string(binding_id)}' AND version = {int(version)})"
+            for binding_id, version in sorted(set(pins))
+        )
         sql = (
-            f"SELECT {checks_text}, {state_text} FROM {self._versions_table} "  # noqa: S608
-            f"WHERE binding_id = '{e}' AND version = {int(version)}"
+            f"SELECT binding_id, version, {checks_text} AS checks_json, {state_text} AS state_json "  # noqa: S608
+            f"FROM {self._versions_table} WHERE {predicates}"
         )
         rows = self._sql.query(sql)
-        if not rows:
-            return None
-        checks = self._parse_checks(rows[0][0])
-        state = self._parse_state(rows[0][1])
-        applied = state.get("applied_rules")
-        rules_count = len(applied) if isinstance(applied, list) else 0
-        return rules_count, len(checks)
+        result: dict[tuple[str, int], tuple[int, int]] = {}
+        for row in rows:
+            checks = self._parse_checks(row[2])
+            applied = self._parse_state(row[3]).get("applied_rules")
+            rules_count = len(applied) if isinstance(applied, list) else 0
+            version = int(row[1]) if row[1] not in (None, "") else 0
+            result[(row[0], version)] = (rules_count, len(checks))
+        return result
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _has_nonempty_snapshot(self, binding_id: str, version: int) -> bool:
+        """True when a frozen snapshot exists for *(binding_id, version)* and carries >=1 check.
+
+        Backs the non-destructive guard in :meth:`refreeze_current`: a missing
+        snapshot (or one already empty) is safe to (re)write, but a non-empty
+        one must never be replaced with an empty array.
+        """
+        try:
+            return len(self.get_checks(binding_id, version)) > 0
+        except LookupError:
+            return False
 
     def _current_version(self, binding_id: str) -> int:
         e = escape_sql_string(binding_id)
@@ -248,9 +284,7 @@ class MonitoredTableVersionService:
         value = rows[0][0]
         return int(value) if value not in (None, "") else 0
 
-    def _current_approved_snapshot(
-        self, binding_id: str, detail: Any
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    def _current_approved_snapshot(self, binding_id: str, detail: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Build ``(checks_json, state_json)`` from the binding's current approved rows."""
         applied_ids = {s.applied_rule.id for s in detail.applied_rules if s.applied_rule.id}
         all_checks = self._rules_catalog.get_approved_checks_for_table(detail.table.table_fqn)

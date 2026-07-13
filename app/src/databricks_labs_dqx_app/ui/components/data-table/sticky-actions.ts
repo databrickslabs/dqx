@@ -23,3 +23,13 @@ export const STICKY_ACTIONS_HEAD_CLASS = "sticky right-0 z-10 bg-muted border-l"
  *  22b), for the same show-through reason as the header cell above. */
 export const STICKY_ACTIONS_CELL_CLASS =
   "sticky right-0 z-10 bg-background border-l transition-colors group-hover:bg-muted";
+
+/**
+ * Shared width (px) for the pinned Actions column, kept in one place so all
+ * three overview tables (RulesTable, MonitoredTablesTable, DataProductsTable)
+ * stay consistent (item B2-43). The widest row state shows 4 ghost icon
+ * buttons (Run + Approve + Reject + Delete): 4 × 28px (`h-7 w-7`) + 3 × 4px
+ * (`gap-1`) + 2 × 8px cell padding (`p-2`) = 140px of content. 152 leaves
+ * ~12px of slack so nothing bleeds into the adjacent column.
+ */
+export const ACTIONS_COL_WIDTH = 152;

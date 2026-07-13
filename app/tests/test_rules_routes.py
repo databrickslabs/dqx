@@ -288,3 +288,73 @@ class TestSaveRulesOwnership:
             )
         assert excinfo.value.status_code == 404
         svc.update_rule.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# get_rule_history — Drafts & Review change-diff backing
+# ---------------------------------------------------------------------------
+
+
+class TestGetRuleHistory:
+    @staticmethod
+    def _history_row(table_fqn: str = "c.s.t") -> dict:
+        return {
+            "rule_id": "r1",
+            "table_fqn": table_fqn,
+            "check": {"function": "is_not_null"},
+            "version": 2,
+            "source": "ui",
+            "action": "submit",
+            "prev_status": "draft",
+            "new_status": "pending_approval",
+            "changed_by": "a@x",
+            "changed_at": "t2",
+        }
+
+    def test_maps_service_rows_to_out_models(self):
+        from databricks_labs_dqx_app.backend.routes.v1.rules import get_rule_history
+
+        svc = MagicMock()
+        svc.get_history.return_value = [self._history_row()]
+        out = get_rule_history("r1", svc, frozenset({"c"}))
+        assert len(out) == 1
+        assert out[0].rule_id == "r1"
+        assert out[0].check == {"function": "is_not_null"}
+        assert out[0].action == "submit"
+        svc.get_history.assert_called_once_with("r1")
+
+    def test_empty_history(self):
+        from databricks_labs_dqx_app.backend.routes.v1.rules import get_rule_history
+
+        svc = MagicMock()
+        svc.get_history.return_value = []
+        assert get_rule_history("r1", svc, frozenset({"c"})) == []
+
+    def test_forbidden_when_catalog_not_accessible(self):
+        # A user whose catalog set EXCLUDES the rule's catalog must not see the
+        # table_fqn / check payloads — mirrors the getRules 403 catalog gate.
+        from databricks_labs_dqx_app.backend.routes.v1.rules import get_rule_history
+
+        svc = MagicMock()
+        svc.get_history.return_value = [self._history_row("secret_cat.s.t")]
+        with pytest.raises(HTTPException) as excinfo:
+            get_rule_history("r1", svc, frozenset({"allowed_cat"}))
+        assert excinfo.value.status_code == 403
+
+    def test_allowed_when_catalog_accessible(self):
+        from databricks_labs_dqx_app.backend.routes.v1.rules import get_rule_history
+
+        svc = MagicMock()
+        svc.get_history.return_value = [self._history_row("allowed_cat.s.t")]
+        out = get_rule_history("r1", svc, frozenset({"allowed_cat"}))
+        assert len(out) == 1
+        assert out[0].table_fqn == "allowed_cat.s.t"
+
+    def test_sql_check_always_allowed(self):
+        # Cross-table SQL checks carry no home catalog; never 403 on catalog.
+        from databricks_labs_dqx_app.backend.routes.v1.rules import get_rule_history
+
+        svc = MagicMock()
+        svc.get_history.return_value = [self._history_row("__sql_check__/my-rule")]
+        out = get_rule_history("r1", svc, frozenset())
+        assert len(out) == 1

@@ -180,8 +180,13 @@ def render_check(
     registry_rule_id: str,
     registry_version: int,
     applied_rule_id: str,
+    app_settings: AppSettingsService,
 ) -> tuple[dict[str, Any], bool]:
     """Render one materialized ``dq_quality_rules.check`` dict for one mapping group.
+
+    *app_settings* is only read to resolve the rendered ``criticality``: the
+    severity -> criticality mapping is admin-editable via the reserved
+    ``severity`` label definition (see ``registry_models.resolve_criticality``).
 
     Returns ``(check_dict, is_tableless)`` — *is_tableless* is ``True`` only
     for a dataset-level ``sql`` rule with no column slots at all (a genuine
@@ -271,7 +276,7 @@ def render_check(
     )
 
     check_dict: dict[str, Any] = {
-        "criticality": resolve_criticality(effective_severity),
+        "criticality": resolve_criticality(effective_severity, app_settings),
         "check": check_inner,
         "user_metadata": user_metadata,
     }
@@ -407,9 +412,7 @@ class Materializer:
             return None
 
         effective_severity = (
-            applied.severity_override
-            or get_rule_severity(version_snapshot.user_metadata)
-            or _DEFAULT_SEVERITY
+            applied.severity_override or get_rule_severity(version_snapshot.user_metadata) or _DEFAULT_SEVERITY
         )
         # Render with the mode FROZEN into the version snapshot, not the live
         # rule's mode: an approved rule is editable in place (its mode can be
@@ -432,6 +435,7 @@ class Materializer:
                     registry_rule_id=applied.rule_id,
                     registry_version=version_number,
                     applied_rule_id=applied.id,
+                    app_settings=self._app_settings,
                 )
             except (ValueError, UnsafeSqlQueryError):
                 logger.warning("Failed to render applied rule %s group %d", applied.id, idx, exc_info=True)
@@ -440,12 +444,35 @@ class Materializer:
             rendered.append((row_id, row_table_fqn, check))
         return rendered
 
-    def _materialize_applied_rule(
-        self, table_fqn: str, applied: AppliedRule, auto_upgrade: bool
-    ) -> set[str]:
+    def _materialize_applied_rule(self, table_fqn: str, applied: AppliedRule, auto_upgrade: bool) -> set[str]:
         rendered = self._iter_rendered_checks(table_fqn, applied)
         if rendered is None:
             return set()
+
+        # DATA-LOSS GUARD: an EMPTY render is only a legitimate "this
+        # application materializes no rows" signal when the application had no
+        # mapping groups to begin with. When it DID have groups but every one
+        # failed to render (e.g. an auto-upgraded rule's new version no longer
+        # exposes the slots this follower's stored column_mapping binds), an
+        # empty result must NOT be treated as delete-all: doing so would
+        # ``_delete_stale_groups(expected=∅)`` and wipe every approved
+        # ``dq_quality_rules`` row for this application, then the downstream
+        # re-freeze would empty the frozen snapshot and leave the binding
+        # unrunnable. Instead leave the existing rows untouched (mirroring the
+        # ``rendered is None`` early-return) so the previous approved checks
+        # keep serving; the mismatch surfaces for re-review rather than as
+        # silent loss.
+        if not rendered and applied.column_mapping:
+            existing_ids = self._existing_group_ids(applied.id)
+            logger.warning(
+                "All %d mapping group(s) failed to render for applied rule %s (rule %s); "
+                "keeping %d existing materialized row(s) intact for re-review",
+                len(applied.column_mapping),
+                applied.id,
+                applied.rule_id,
+                len(existing_ids),
+            )
+            return existing_ids
 
         pinned = applied.pinned_version is not None
         expected_ids: set[str] = set()
@@ -503,9 +530,16 @@ class Materializer:
             )
             return
 
-        existing_status, existing_check_json = existing
+        existing_status, existing_registry_version, existing_check_json = existing
         content_changed = existing_check_json != check_json
-        new_status = self._decide_status(existing_status, content_changed, pinned, auto_upgrade)
+        # A DIRECT edit (severity override, unpin, or any change that leaves the
+        # resolved registry version untouched) must always return an approved
+        # row to review — only a genuine VERSION move of an unpinned follower is
+        # eligible for the auto-upgrade "keep approved" shortcut. Legacy rows
+        # with no recorded registry_version can't be proven to be a version
+        # move, so they take the safe (re-review) branch.
+        version_changed = existing_registry_version is not None and existing_registry_version != version_number
+        new_status = self._decide_status(existing_status, content_changed, pinned, auto_upgrade, version_changed)
         self._sql.execute(
             f"UPDATE {self._quality_rules_table} SET "
             f"  table_fqn = '{escape_sql_string(table_fqn)}', "
@@ -521,30 +555,69 @@ class Materializer:
         )
 
     @staticmethod
-    def _decide_status(existing_status: str, content_changed: bool, pinned: bool, auto_upgrade: bool) -> str:
+    def _decide_status(
+        existing_status: str,
+        content_changed: bool,
+        pinned: bool,
+        auto_upgrade: bool,
+        version_changed: bool,
+    ) -> str:
         if not content_changed:
             return existing_status
         if existing_status == "approved":
-            if pinned:
+            # An approved row whose content changed falls into three cases:
+            #   * Same resolved version (version_changed=False) — e.g. a
+            #     severity override — always returns to review.
+            #   * A pinned row always returns to review: a pin's content only
+            #     changes through a deliberate edit (severity override, or a pin
+            #     bump to a different version), which is exactly what re-approval
+            #     exists to gate.
+            #   * A genuine VERSION move of an unpinned follower is eligible to
+            #     stay approved, but only when the admin enabled auto-upgrade;
+            #     otherwise it returns to review. Unpinning FROM a stale pinned
+            #     version also moves the resolved version, so it lands in this
+            #     branch and is (correctly) treated as a version move rather
+            #     than a same-version edit.
+            if pinned or not version_changed:
                 return "pending_approval"
             return "approved" if auto_upgrade else "pending_approval"
         if existing_status == "rejected":
             return "draft"
         return existing_status
 
-    def _get_materialized_row(self, row_id: str) -> tuple[str, str] | None:
+    def _get_materialized_row(self, row_id: str) -> tuple[str, int | None, str] | None:
         check_text = self._sql.select_json_text(self._check_col)
         e = escape_sql_string(row_id)
-        sql = f"SELECT status, {check_text} FROM {self._quality_rules_table} WHERE rule_id = '{e}'"  # noqa: S608
+        sql = (
+            f"SELECT status, registry_version, {check_text} "  # noqa: S608
+            f"FROM {self._quality_rules_table} WHERE rule_id = '{e}'"
+        )
         rows = self._sql.query(sql)
         if not rows:
             return None
-        status, check_json_raw = rows[0][0], rows[0][1]
+        status, registry_version_raw, check_json_raw = rows[0][0], rows[0][1], rows[0][2]
         try:
             normalized = json.dumps(json.loads(check_json_raw), sort_keys=True) if check_json_raw else ""
         except json.JSONDecodeError:
             normalized = check_json_raw or ""
-        return status, normalized
+        registry_version = int(registry_version_raw) if registry_version_raw not in (None, "") else None
+        return status, registry_version, normalized
+
+    def _existing_group_ids(self, applied_rule_id: str | None) -> set[str]:
+        """Return the ``dq_quality_rules.rule_id``s currently materialized for *applied_rule_id*.
+
+        Used by :meth:`_materialize_applied_rule` to preserve (and keep
+        counting as "expected") the rows of an application whose every mapping
+        group failed to render against the resolved version — so orphan
+        cleanup never treats them as stale.
+        """
+        if not applied_rule_id:
+            return set()
+        e = escape_sql_string(applied_rule_id)
+        rows = self._sql.query(
+            f"SELECT rule_id FROM {self._quality_rules_table} WHERE applied_rule_id = '{e}'"  # noqa: S608
+        )
+        return {row[0] for row in rows if row and row[0]}
 
     def _delete_stale_groups(self, applied_rule_id: str | None, expected_ids: set[str]) -> None:
         if not applied_rule_id:

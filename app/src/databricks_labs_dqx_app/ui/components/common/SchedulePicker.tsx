@@ -123,7 +123,7 @@ export function SchedulePicker({ cron, timezone, onChange, onValidityChange, can
             </section>
           ) : (
             <section className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-muted-foreground">{t("dataProducts.scheduleEveryLabel")}</span>
+              <span className="text-sm font-medium leading-none">{t("dataProducts.scheduleEveryLabel")}</span>
               <Select
                 value={cadence}
                 onValueChange={(v) => setCadenceAndPush(v as SimpleCadence)}

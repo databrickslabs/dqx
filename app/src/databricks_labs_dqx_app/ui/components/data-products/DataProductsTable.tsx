@@ -15,12 +15,19 @@ import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
-import { STICKY_ACTIONS_HEAD_CLASS, STICKY_ACTIONS_CELL_CLASS } from "@/components/data-table/sticky-actions";
+import { ScoreBarCell } from "@/components/data-table/ScoreBarCell";
+import {
+  STICKY_ACTIONS_HEAD_CLASS,
+  STICKY_ACTIONS_CELL_CLASS,
+  ACTIONS_COL_WIDTH,
+} from "@/components/data-table/sticky-actions";
+import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
 import type { DataProductOut } from "@/lib/api";
 
 /** Column keys that carry a comparable value and can drive client sort.
- *  NO DQ Score column — dqlake's `dqScore` column is intentionally omitted
- *  (design spec §8: no quality-score dashboard in this port). */
+ *  `dqScore` renders the cached score LEFT-JOINed from dq_score_cache by
+ *  the list endpoint (P3.4) — dqlake's `dqScore` column, restored now that
+ *  the DQ Score / Results work landed the backing aggregate. */
 export type DataProductsSortKey =
   | "name"
   | "description"
@@ -30,6 +37,7 @@ export type DataProductsSortKey =
   | "tables"
   | "rules"
   | "checks"
+  | "dqScore"
   | "lastRun"
   | "schedule";
 
@@ -39,6 +47,12 @@ interface ColumnDef {
   defaultVisible: boolean;
   defaultWidth: number;
   sortable: boolean;
+  /** First-click sort direction (B2-92). Defaults to "asc" when omitted. */
+  defaultSortDir?: SortDirection;
+  /** When true, rows with a missing ("never") value sort to the TOP
+   *  regardless of direction; omitted/false → they sort to the bottom
+   *  (B2-92). */
+  nullsFirst?: boolean;
   resizable?: boolean;
   headClassName?: string;
   renderHeader(label: string): ReactNode;
@@ -181,6 +195,7 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: false,
     defaultWidth: 280,
     sortable: true,
+    // A→Z (B2-92); undocumented products (no description) sort last.
     renderHeader: (label) => label,
     renderCell: (p) =>
       p.description ? (
@@ -204,6 +219,8 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
+    // Latest version first (B2-92); never-approved (v0) sorts last.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (p) => <VersionCell version={p.version ?? 0} />,
   },
@@ -213,6 +230,7 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 180,
     sortable: true,
+    // A→Z through the named stewards (B2-92); un-stewarded products sort last.
     renderHeader: (label) => label,
     renderCell: (p) =>
       p.steward ? <TruncatedCell text={p.steward} /> : <span className="text-muted-foreground">—</span>,
@@ -223,6 +241,8 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 150,
     sortable: true,
+    // Most tables first (B2-92): the largest, most-built-out products lead.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (p) => <TablesCell product={p} />,
   },
@@ -232,6 +252,8 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
+    // Most rules first (B2-92): the best-covered products lead.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (p) => <span className="tabular-nums">{sumMembers(p, (r) => r)}</span>,
   },
@@ -241,8 +263,26 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
+    // Most checks first (B2-92): the best-covered products lead.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (p) => <span className="tabular-nums">{sumMembers(p, (_r, c) => c)}</span>,
+  },
+  dqScore: {
+    // Cached unweighted mean of member tables' latest published scores,
+    // LEFT-JOINed from the dq_score_cache OLTP table by the list endpoint
+    // (P3.4) — no warehouse hit on page load. Cell presentation copied
+    // from dqlake's DataProductsTable dqScore column.
+    labelKey: "dataProducts.colDqScore",
+    toggleable: true,
+    defaultVisible: true,
+    defaultWidth: 140,
+    sortable: true,
+    // Highest score first (B2-92): the best-performing products lead;
+    // never-scored products (no published run) sort last.
+    defaultSortDir: "desc",
+    renderHeader: (label) => label,
+    renderCell: (p) => <ScoreBarCell score={p.score} />,
   },
   lastRun: {
     labelKey: "dataProducts.colLastRun",
@@ -250,6 +290,8 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 120,
     sortable: true,
+    // Most recent run first (B2-92); never-run products sort last.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (p) => <RelativeTimeCell iso={p.last_run_at} />,
   },
@@ -259,37 +301,62 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: false,
     defaultWidth: 110,
     sortable: true,
+    // Scheduled (actively-monitored) products first (B2-92); on-demand ones
+    // sort after them.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (p) => <ScheduleCell product={p} />,
   },
 };
 
+/** Review-status sort rank (B2-92): a first-click ASC sort leads with the
+ *  live/approved products, then approved-with-unpublished-edits and work in
+ *  progress (pending approval, draft), with rejected products sinking to the
+ *  bottom. */
+const STATUS_RANK: Record<string, number> = {
+  approved: 0,
+  modified: 1,
+  pending_approval: 2,
+  draft: 3,
+  rejected: 4,
+};
+
 /** Returns the sortable value for a given column + row — shared between
  *  this component's click-to-sort handling and any caller that needs to
- *  pre-sort rows. */
-export function getDataProductsSortValue(key: DataProductsSortKey, p: DataProductOut): string | number {
+ *  pre-sort rows. `null` marks a missing/"never" value that
+ *  {@link compareSortValues} pins per the column's `nullsFirst` flag. */
+export function getDataProductsSortValue(key: DataProductsSortKey, p: DataProductOut): SortValue {
   switch (key) {
     case "name":
-      return p.name.toLowerCase();
+      return p.name.toLowerCase() || null;
     case "description":
-      return (p.description ?? "").toLowerCase();
+      return (p.description ?? "").toLowerCase() || null;
     case "status":
-      return p.display_status ?? "";
+      return STATUS_RANK[p.display_status] ?? Object.keys(STATUS_RANK).length;
     case "version":
-      return p.version ?? 0;
+      return p.version && p.version > 0 ? p.version : null;
     case "steward":
-      return (p.steward ?? "").toLowerCase();
+      return (p.steward ?? "").toLowerCase() || null;
     case "tables":
       return p.member_count ?? 0;
     case "rules":
       return sumMembers(p, (r) => r);
     case "checks":
       return sumMembers(p, (_r, c) => c);
+    case "dqScore":
+      return p.score ?? null;
     case "lastRun":
-      return p.last_run_at ? new Date(p.last_run_at).getTime() : -1;
+      return p.last_run_at ? new Date(p.last_run_at).getTime() : null;
     case "schedule":
       return p.schedule_cron ? 1 : 0;
   }
+}
+
+/** Resolves a column's first-click direction + null placement (B2-92) from
+ *  its declarative `COLUMNS` config, for the overview route's sort handling. */
+export function getDataProductsSortConfig(key: DataProductsSortKey): SortColumnConfig {
+  const def = COLUMNS[key];
+  return { dir: def.defaultSortDir ?? "asc", nullsFirst: def.nullsFirst ?? false };
 }
 
 const DEFAULT_ORDER: DataProductsSortKey[] = [
@@ -301,11 +368,15 @@ const DEFAULT_ORDER: DataProductsSortKey[] = [
   "tables",
   "rules",
   "checks",
+  "dqScore",
   "lastRun",
   "schedule",
 ];
 
-const LS_KEY_LAYOUT = "dqx.products.layout.v1";
+// v2: added the DQ Score column (visible by default) — bumping the key
+// slots it into its DEFAULT_ORDER position for users with a stored v1
+// layout (the dqlake `dqlake.products.layout.vN` convention).
+const LS_KEY_LAYOUT = "dqx.products.layout.v2";
 
 export interface DataProductsTableProps {
   /** Rows to render — already filtered, sorted, and paginated by the caller. */
@@ -325,10 +396,11 @@ export interface DataProductsTableProps {
  * The Data Products list table: selectable + drag-reorderable columns
  * (persisted to localStorage), stable widths across sort clicks. Ported
  * from dqlake's `DataProductsTable` and adapted to DQX's `DataProductOut`
- * shape — the DQ Score column is cut (design spec §8) and #Rules/#Checks
- * are summed client-side from `members` (DQX's list endpoint doesn't
- * surface aggregate rule/check counts on the product itself the way
- * dqlake's `DataProductOutBrief` does).
+ * shape — #Rules/#Checks are summed client-side from `members` (DQX's
+ * list endpoint doesn't surface aggregate rule/check counts on the
+ * product itself the way dqlake's `DataProductOutBrief` does), and the
+ * DQ Score column reads the cached aggregate the list endpoint LEFT
+ * JOINs from dq_score_cache (P3.4).
  */
 export function DataProductsTable({
   rows,
@@ -365,7 +437,8 @@ export function DataProductsTable({
   }
 
   const totalWidth =
-    visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0) + (hasActions ? 96 : 0);
+    visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0) +
+    (hasActions ? ACTIONS_COL_WIDTH : 0);
 
   return (
     <div className="space-y-4">
@@ -388,7 +461,7 @@ export function DataProductsTable({
             {visibleKeys.map((k) => (
               <col key={k} style={{ width: colWidths[k] ?? COLUMNS[k].defaultWidth }} />
             ))}
-            {hasActions && <col style={{ width: 96 }} />}
+            {hasActions && <col style={{ width: ACTIONS_COL_WIDTH }} />}
           </colgroup>
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
@@ -434,7 +507,7 @@ export function DataProductsTable({
               {hasActions && (
                 <TableHead
                   className={cn("text-right text-xs font-medium px-2", STICKY_ACTIONS_HEAD_CLASS)}
-                  style={{ width: 96 }}
+                  style={{ width: ACTIONS_COL_WIDTH }}
                 >
                   {t("dataProducts.colActions")}
                 </TableHead>
@@ -460,7 +533,7 @@ export function DataProductsTable({
                   })}
                   {hasActions && (
                     <TableCell
-                      style={{ width: 96 }}
+                      style={{ width: ACTIONS_COL_WIDTH }}
                       className={cn("text-right p-2", STICKY_ACTIONS_CELL_CLASS)}
                       onClick={(e) => e.stopPropagation()}
                     >

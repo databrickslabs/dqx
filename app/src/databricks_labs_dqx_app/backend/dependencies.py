@@ -24,7 +24,9 @@ from .services.ai_gateway import AIGateway
 from .services.ai_rules_service import AiRulesService
 from .services.app_settings_service import AppSettingsService
 from .services.contract_rules_service import ContractRulesService
+from .services.database_reset_service import DatabaseResetService
 from .services.discovery import DiscoveryService
+from .services.draft_run_gate_service import DraftRunGateService
 from .services.job_service import JobService
 from .services.role_service import RoleService
 from .services.permissions_service import PermissionsService
@@ -36,7 +38,10 @@ from .services.monitored_table_versions import MonitoredTableVersionService
 from .services.run_sets import RunSetService
 from .services.binding_run_service import BindingRunService
 from .services.data_product_service import DataProductService
+from .services.entitlement_service import EntitlementService
 from .services.rule_embeddings import RuleEmbeddingsService
+from .services.score_cache_service import ScoreCacheService
+from .services.profiling_suggestion_service import ProfilingSuggestionService
 from .services.rule_retriever import CosineRuleRetriever, RuleRetriever
 from .services.rule_suggester import RuleSuggester
 from .services.rules_catalog_service import RulesCatalogService
@@ -82,6 +87,7 @@ def get_oltp_executor() -> OltpExecutorProtocol | None:
 
 _SP_TTL = 45 * 60  # 45 minutes
 _OBO_TTL = 45 * 60  # 45 minutes
+_CATALOG_TTL = 30  # seconds — see get_user_catalog_names for the revocation trade-off
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +241,19 @@ async def get_role_service(
 ) -> RoleService:
     """Create a RoleService routed at the OLTP executor."""
     return RoleService(sql=sql)
+
+
+async def get_database_reset_service(
+    delta_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    oltp_sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+) -> DatabaseResetService:
+    """Create a DatabaseResetService over the Delta + OLTP executors.
+
+    Analytical tables clear through the Delta (SP) executor; OLTP tables
+    through whichever executor owns them (Postgres when Lakebase is enabled,
+    else the same Delta executor).
+    """
+    return DatabaseResetService(delta_sql=delta_sql, oltp_sql=oltp_sql)
 
 
 async def get_permissions_service(
@@ -421,6 +440,24 @@ async def get_rule_suggester(
     )
 
 
+async def get_profiling_suggestion_service(
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+) -> ProfilingSuggestionService:
+    """Create a ProfilingSuggestionService for the Profile page's profiler suggestions (B2-82).
+
+    Listing suggestions is side-effect-free; applying one resolves-or-creates +
+    approves the registry rule (via ``RegistryService.match_or_create_approved_rule``)
+    and binds it through ``ApplyRulesService``.
+    """
+    return ProfilingSuggestionService(
+        monitored_tables=monitored_tables,
+        registry=registry,
+        apply_rules=apply_rules,
+    )
+
+
 async def get_view_service(
     sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
     sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
@@ -523,12 +560,21 @@ def get_check_validator() -> Callable[[list[Any]], ChecksValidationStatus]:
 async def get_job_service(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> JobService:
     """Create a JobService using app (SP) credentials.
 
-    Job submission and polling run as the app's service principal.
+    Job submission and polling run as the app's service principal. The
+    admin-configured SQL warehouse (``dq_app_settings``) is resolved here and
+    threaded into the submitted run so the task runner's temp-view cleanup path
+    honours it (env fallback when unset).
     """
-    return JobService(ws=sp_ws, job_id=conf.job_id, sql=sql)
+    return JobService(
+        ws=sp_ws,
+        job_id=conf.job_id,
+        sql=sql,
+        warehouse_id=resolve_warehouse_id(app_settings),
+    )
 
 
 async def get_run_set_service(
@@ -542,6 +588,18 @@ async def get_run_set_service(
     lives in Delta regardless of whether Lakebase is enabled.
     """
     return RunSetService(oltp_sql=sql, validation_sql=validation_sql)
+
+
+async def get_draft_run_gate_service(
+    validation_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> DraftRunGateService:
+    """Create a DraftRunGateService (issue B2-12).
+
+    ``dq_validation_runs`` is always Delta (written by the runner job), so the
+    gate reads off the SP Delta executor regardless of whether the OLTP tables
+    live in Lakebase.
+    """
+    return DraftRunGateService(validation_sql=validation_sql)
 
 
 async def get_binding_run_service(
@@ -571,6 +629,34 @@ async def get_binding_run_service(
         settings_service=settings_service,
         runs_table=sp_sql.fqn("dq_validation_runs"),
     )
+
+
+async def get_score_cache_service(
+    oltp: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    warehouse_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> ScoreCacheService:
+    """Create a ScoreCacheService (P3.4 Lakebase score cache).
+
+    The cache table (plus the product-membership lookups the derived
+    scopes need) lives on the OLTP executor; the batched published-score
+    recompute reads the ``mv_dq_scores`` metric view via the SP warehouse
+    executor. SP-side by design — the cache is shared/global and
+    viewer-independent; catalog filtering happens at read time on the
+    list endpoints.
+    """
+    return ScoreCacheService(oltp=oltp, warehouse_sql=warehouse_sql)
+
+
+async def get_entitlement_service(
+    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> EntitlementService:
+    """Create an EntitlementService over the SP warehouse executor (P4.1).
+
+    SP-side by design: the entitlement table and the gated failing-rows
+    view are SP-owned UC objects. The caller's OBO executor (for the
+    self-verification probes) is passed per call, never stored.
+    """
+    return EntitlementService(sql=sp_sql)
 
 
 async def get_data_product_service(
@@ -761,19 +847,42 @@ def require_runner():
     return Depends(_check)
 
 
+async def _fetch_catalog_names(obo_ws: WorkspaceClient) -> frozenset[str]:
+    """Issue the UC ``catalogs.list`` call via the caller's OBO client."""
+    catalogs = await asyncio.to_thread(lambda: list(obo_ws.catalogs.list()))
+    return frozenset(c.name for c in catalogs if c.name)
+
+
+@app_cache.cached("auth:catalogs:{token_hash}", ttl=_CATALOG_TTL)
+async def _list_user_catalog_names(token_hash: str, obo_ws: WorkspaceClient) -> frozenset[str]:  # noqa: ARG001
+    return await _fetch_catalog_names(obo_ws)
+
+
 async def get_user_catalog_names(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
 ) -> frozenset[str]:
     """Return the set of catalog names the current user can access (via OBO).
 
-    Intentionally **not** cached: this list drives authorization filtering on
+    Cached per token hash for a short TTL (*_CATALOG_TTL*, 30 s), mirroring
+    the *_create_obo_ws* idiom. This list drives authorization filtering on
     list endpoints (rules, dry-run runs/results), so a stale entry could leak
-    rows for a catalog whose grant was just revoked. The underlying OBO
-    ``WorkspaceClient`` is already cached, so each call only re-issues the
-    UC ``catalogs.list`` request, not the full auth handshake.
+    rows for a catalog whose grant was just revoked — that is why the TTL is
+    deliberately short. The explicit trade-off: a revoked catalog grant can
+    remain visible in list filtering for up to 30 seconds; in exchange, list
+    endpoints no longer pay a per-request UC ``catalogs.list`` round trip
+    (live-measured as the dominant list-page latency). The underlying OBO
+    ``WorkspaceClient`` is cached separately (45 min), so a cache miss only
+    re-issues the ``catalogs.list`` request, not the full auth handshake.
+
+    Local-dev fallback: when the OBO header is absent (``get_obo_ws`` fell
+    back to the local default-auth client) there is no per-user token to key
+    on, so the listing stays uncached — exactly the previous behaviour.
     """
-    catalogs = await asyncio.to_thread(lambda: list(obo_ws.catalogs.list()))
-    return frozenset(c.name for c in catalogs if c.name)
+    if not token:
+        return await _fetch_catalog_names(obo_ws)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    return await _list_user_catalog_names(token_hash, obo_ws)
 
 
 # Re-export rt for any remaining usages during transition
@@ -790,6 +899,7 @@ __all__ = [
     "get_migration_runner",
     "get_app_settings_service",
     "get_role_service",
+    "get_database_reset_service",
     "get_ai_gateway",
     "get_ai_rules_service",
     "get_contract_rules_service",

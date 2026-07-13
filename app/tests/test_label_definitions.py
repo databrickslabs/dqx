@@ -53,6 +53,27 @@ class TestLabelDefinitionModel:
         with pytest.raises(Exception):
             LabelDefinition(key="dimension", values=["Validity"], value_colors={"Validity": "#FFF"})
 
+    def test_value_criticality_defaults_to_none(self, LabelDefinition):
+        d = LabelDefinition(key="severity", values=["Low"])
+        assert d.value_criticality is None
+
+    def test_accepts_value_criticality(self, LabelDefinition):
+        definition = LabelDefinition(
+            key="severity",
+            values=["Low", "Critical"],
+            value_criticality={"Low": "warn", "Critical": "error"},
+            is_builtin=True,
+        )
+        assert definition.value_criticality == {"Low": "warn", "Critical": "error"}
+
+    def test_rejects_invalid_criticality_value(self, LabelDefinition):
+        with pytest.raises(ValueError):
+            LabelDefinition(
+                key="severity",
+                values=["Low"],
+                value_criticality={"Low": "not-a-real-criticality"},
+            )
+
 
 # ---------------------------------------------------------------------------
 # Task 1.2 — seeding reserved dimension + severity keys
@@ -75,7 +96,11 @@ class TestSeedReservedLabelDefinitions:
         assert result is True
         assert sql.upsert.called
         kwargs = sql.upsert.call_args.kwargs
-        payload = kwargs["value_cols"]["setting_value"] if "value_cols" in kwargs else sql.upsert.call_args.args[2]["setting_value"]
+        payload = (
+            kwargs["value_cols"]["setting_value"]
+            if "value_cols" in kwargs
+            else sql.upsert.call_args.args[2]["setting_value"]
+        )
         saved = json.loads(payload)
         keys = {d["key"]: d for d in saved}
         assert "dimension" in keys
@@ -93,7 +118,15 @@ class TestSeedReservedLabelDefinitions:
         # Fixed, admin-curated catalog — never author-extensible.
         assert keys["dimension"]["allow_custom_values"] is False
         assert set(keys["severity"]["values"]) == {"Low", "Medium", "High", "Critical"}
-        assert keys["dimension"]["value_descriptions"]["Validity"] == "Whether values match the expected format or rules."
+        assert keys["severity"]["value_criticality"] == {
+            "Low": "warn",
+            "Medium": "warn",
+            "High": "error",
+            "Critical": "error",
+        }
+        assert (
+            keys["dimension"]["value_descriptions"]["Validity"] == "Whether values match the expected format or rules."
+        )
 
     def test_noop_when_both_present(self, svc):
         s, sql = svc
@@ -120,7 +153,11 @@ class TestSeedReservedLabelDefinitions:
 
         assert result is True
         kwargs = sql.upsert.call_args.kwargs
-        payload = kwargs["value_cols"]["setting_value"] if "value_cols" in kwargs else sql.upsert.call_args.args[2]["setting_value"]
+        payload = (
+            kwargs["value_cols"]["setting_value"]
+            if "value_cols" in kwargs
+            else sql.upsert.call_args.args[2]["setting_value"]
+        )
         saved = json.loads(payload)
         keys = {d["key"]: d for d in saved}
         assert keys["dimension"]["values"] == ["Custom1"]
@@ -280,3 +317,22 @@ class TestSaveLabelDefinitionsReservedGuard:
         result = save_label_definitions(body, svc, "admin@example.com")
         keys = {d.key for d in result.definitions}
         assert keys == {"dimension", "severity"}
+
+    def test_save_prunes_value_criticality_to_present_values(self, route_ctx):
+        # Entries for values no longer in the list are dropped on save,
+        # exactly like value_colors/value_descriptions pruning.
+        save_label_definitions, LabelDefinition, LabelDefinitionsIn, svc, sql = route_ctx
+        body = LabelDefinitionsIn(
+            definitions=[
+                LabelDefinition(key="dimension", values=["Validity"], is_builtin=True),
+                LabelDefinition(
+                    key="severity",
+                    values=["Low", "High"],
+                    is_builtin=True,
+                    value_criticality={"Low": "warn", "High": "error", "Removed": "error"},
+                ),
+            ]
+        )
+        result = save_label_definitions(body, svc, "admin@example.com")
+        sev = next(d for d in result.definitions if d.key == "severity")
+        assert sev.value_criticality == {"Low": "warn", "High": "error"}

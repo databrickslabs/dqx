@@ -18,14 +18,16 @@ interface Props {
 
 export function ProductSchedulingTab({ editState, canEdit }: Props) {
   const { t } = useTranslation();
-  const { scheduleCron, scheduleTz, setSchedule, setScheduleCronInvalid } = editState;
+  const { scheduleCron, scheduleTz, setSchedule, scheduleKind, setScheduleKind, setScheduleCronInvalid } = editState;
 
   return (
     <ScheduleEditor
       cron={scheduleCron}
       timezone={scheduleTz}
       canEdit={canEdit}
+      scheduleKind={scheduleKind}
       onChange={(cron, tz) => setSchedule(cron, tz)}
+      onKindChange={setScheduleKind}
       onRemove={() => setSchedule(null)}
       onValidityChange={(valid) => setScheduleCronInvalid(!valid)}
       footerNote={t("dataProducts.scheduleFooterNote")}

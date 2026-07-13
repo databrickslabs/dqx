@@ -135,6 +135,27 @@ class TestLiveMigrationsAreTemplateSafe:
                 )
 
 
+class TestScheduleKindDeltaMigration:
+    """B2-52: schedule_kind is declared on the Delta baseline + converged by v18."""
+
+    def test_v18_adds_schedule_kind_to_both_tables(self) -> None:
+        v18 = next(m for m in MIGRATIONS if m.version == 18)
+        assert "dq_monitored_tables ADD COLUMN schedule_kind STRING" in v18.sql_template
+        assert "dq_data_products ADD COLUMN schedule_kind STRING" in v18.sql_template
+        assert "chk_dq_monitored_tables_schedule_kind" in v18.sql_template
+        assert "chk_dq_data_products_schedule_kind" in v18.sql_template
+
+    def test_delta_baselines_declare_schedule_kind(self) -> None:
+        # v2 = Delta OLTP-fallback baseline (dq_monitored_tables);
+        # v10 = Data Products baseline (dq_data_products).
+        v2 = next(m for m in MIGRATIONS if m.version == 2)
+        v10 = next(m for m in MIGRATIONS if m.version == 10)
+        assert "schedule_kind" in v2.sql_template
+        assert "chk_dq_monitored_tables_schedule_kind" in v2.sql_template
+        assert "schedule_kind" in v10.sql_template
+        assert "chk_dq_data_products_schedule_kind" in v10.sql_template
+
+
 # ---------------------------------------------------------------------------
 # Identifier-quoting contract — review item #8.
 # ---------------------------------------------------------------------------
