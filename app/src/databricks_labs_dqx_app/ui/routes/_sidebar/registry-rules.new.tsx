@@ -70,14 +70,24 @@ function RegistryRuleCreatePage() {
     [queryClient, navigate, backToList],
   );
 
+  // Page title, passed to the form as `headerTitle` so it renders on the LEFT
+  // of the same top-right header row as the Save/Submit actions — matching the
+  // existing-rule detail page and the Monitored Table / Table Space headers
+  // (B2-112). The rule's own name is an input the user types on the About tab;
+  // this heading anchors the row so the actions sit inline with it instead of
+  // floating alone against an empty left slot.
+  const headerTitle = (
+    <div className="flex flex-wrap items-center gap-2 min-w-0">
+      <h1 className="text-2xl font-semibold tracking-tight leading-none truncate">
+        {t("rulesRegistry.createTitle")}
+      </h1>
+    </div>
+  );
+
   return (
     <FadeIn>
       <div className="space-y-6">
         <PageBreadcrumb items={[{ label: t("rulesRegistry.title"), to: "/registry-rules" }]} page={t("rulesRegistry.newRule")} />
-
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight truncate">{t("rulesRegistry.createTitle")}</h1>
-        </div>
 
         <RegistryRuleFormDialog
           variant="page"
@@ -96,6 +106,7 @@ function RegistryRuleCreatePage() {
           activeTab={tab as PageTab | undefined}
           onActiveTabChange={handleActiveTabChange}
           onDirtyChange={setIsDirty}
+          headerTitle={headerTitle}
         />
       </div>
 
