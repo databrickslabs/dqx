@@ -111,7 +111,7 @@ import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-inval
 import { useLabelDefinitions, useWorkspaceHost } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
-import { useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
+import { isRunStale, useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
 import { useMonitoredTableRunActivity } from "@/hooks/use-monitored-table-run-activity";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
@@ -466,12 +466,15 @@ function MonitoredTableDetailPage() {
   // would just be a no-op re-approval request (item 11).
   const submitDisabledNoChanges = !isDirty && table.status === "approved";
 
-  // Require-draft-run gate (issue B2-12): when the admin setting is on, block
-  // submit until a run has been recorded for this table. ``last_run_at`` is the
-  // cache-friendly signal already on the binding payload (excludes preview /
-  // in-flight runs); before approval the only run it can reflect is a draft
-  // run. The backend enforces the authoritative check and returns 409 either way.
-  const needsDraftRun = requireDraftRun && !table.last_run_at;
+  // Require-draft-run gate (issues B2-12 / B2-118): when the admin setting is
+  // on, block submit until a draft run has been recorded for this table AND
+  // that run is newer than the last edit. ``last_run_at`` (excludes preview /
+  // in-flight runs) and ``updated_at`` (bumped on every applied-rules save) are
+  // both cache-friendly signals already on the binding payload. A run older
+  // than ``updated_at`` is stale — the rules changed since it ran. The backend
+  // enforces the authoritative check and returns 409 either way.
+  const staleDraftRun = isRunStale(table.last_run_at, table.updated_at);
+  const needsDraftRun = requireDraftRun && (!table.last_run_at || staleDraftRun);
   const submitBlocked = submitDisabledNoChanges || needsDraftRun;
 
   return (
@@ -542,7 +545,9 @@ function MonitoredTableDetailPage() {
                     {(needsDraftRun || submitDisabledNoChanges) && (
                       <TooltipContent side="bottom">
                         {needsDraftRun
-                          ? t("monitoredTables.submitDisabledNeedsDraftRunHint")
+                          ? staleDraftRun
+                            ? t("monitoredTables.submitDisabledStaleDraftRunHint")
+                            : t("monitoredTables.submitDisabledNeedsDraftRunHint")
                           : t("monitoredTables.submitDisabledNoChangesHint")}
                       </TooltipContent>
                     )}

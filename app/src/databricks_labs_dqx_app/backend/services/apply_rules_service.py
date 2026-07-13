@@ -255,6 +255,20 @@ class ApplyRulesService:
         )
         self._sql.execute(sql)
 
+    def _touch_binding(self, binding_id: str, user_email: str) -> None:
+        """Bump the monitored table's ``updated_at`` / ``updated_by`` after an edit.
+
+        Applied-rule writes land in ``dq_applied_rules``, not the binding row,
+        so without this an edit would leave ``dq_monitored_tables.updated_at``
+        stale — and the B2-118 draft-run gate reads that column as the binding's
+        last-change instant. ``now()`` rewrites to each backend's native syntax.
+        """
+        e = escape_sql_string(binding_id)
+        self._sql.execute(
+            f"UPDATE {self._monitored_table} SET updated_at = now(), "  # noqa: S608
+            f"updated_by = {self._opt_str(user_email)} WHERE binding_id = '{e}'"
+        )
+
     def _require_binding_exists(self, binding_id: str) -> None:
         e = escape_sql_string(binding_id)
         sql = f"SELECT binding_id FROM {self._monitored_table} WHERE binding_id = '{e}'"  # noqa: S608
@@ -366,6 +380,13 @@ class ApplyRulesService:
             )
             for entry in deduped_entries
         ]
+        # B2-118: stamp the binding's ``updated_at`` so this edit is recorded as
+        # the monitored table's most-recent-change instant. The draft-run gate
+        # (``DraftRunGateService.enforce``) compares a run's ``created_at``
+        # against this to require a FRESH draft run after any rule edit — adds,
+        # removals, mapping changes, and in-place pin / severity overrides alike,
+        # none of which touch ``dq_monitored_tables`` otherwise.
+        self._touch_binding(binding_id, user_email)
         logger.info(
             "Reconciled applied rules for binding %s: %d desired, %d resulting",
             binding_id,

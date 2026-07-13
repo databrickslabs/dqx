@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import type { RegistryRuleOut } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
+import { useDefaultAutoUpgrade } from "@/hooks/use-default-auto-upgrade";
 import { RulesPicker } from "./RulesPicker";
 import type { ColumnRef } from "./RulesByColumn";
 import { newStagedRow } from "./shared";
@@ -79,6 +80,7 @@ export function AddRulesDialog({
   onRetryRules,
 }: AddRulesDialogProps) {
   const { t } = useTranslation();
+  const defaultAutoUpgrade = useDefaultAutoUpgrade();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const applied = appliedRuleIds ?? new Set<string>();
@@ -115,7 +117,7 @@ export function AddRulesDialog({
       // staged with an empty column_mapping so the by-rule card can
       // complete the mapping afterward.
       const columnMapping = hasSlots ? [] : [{}];
-      return newStagedRow(bindingId, rule, columnMapping);
+      return newStagedRow(bindingId, rule, columnMapping, defaultAutoUpgrade);
     });
     onAdd(rows);
     toast.success(t("monitoredTables.toastAppliedCount", { count: rows.length }));

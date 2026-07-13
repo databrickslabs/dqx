@@ -264,9 +264,12 @@ class TestSaveAppliedRules:
         ]
         results = svc.save_applied_rules("b1", desired, "alice@x")
         assert [r.rule_id for r in results] == ["r1", "r2"]
-        insert_calls = [c.args[0] for c in sql.execute.call_args_list]
+        calls = [c.args[0] for c in sql.execute.call_args_list]
+        insert_calls = [c for c in calls if "INSERT INTO dqx_test.dqx_app_test.dq_applied_rules" in c]
         assert len(insert_calls) == 2
-        assert all("INSERT INTO dqx_test.dqx_app_test.dq_applied_rules" in c for c in insert_calls)
+        # B2-118: the save also bumps the binding's updated_at so an edit forces
+        # a fresh draft run before submit.
+        assert any("UPDATE dqx_test.dqx_app_test.dq_monitored_tables" in c and "updated_at" in c for c in calls)
 
     def test_mapping_change_removes_old_row_and_inserts_new(self, svc, sql, registry):
         registry.get_rule.return_value = _published_rule()
@@ -322,9 +325,13 @@ class TestSaveAppliedRules:
         assert results[0].pinned_version == 3
         assert results[0].severity_override == "Critical"
         calls = [c.args[0] for c in sql.execute.call_args_list]
-        assert len(calls) == 1
-        assert "UPDATE dqx_test.dqx_app_test.dq_applied_rules" in calls[0]
+        # Two writes: the in-place applied-rule update, then the B2-118 binding
+        # touch (updated_at bump) — no DELETE/INSERT since the mapping is unchanged.
+        applied_updates = [c for c in calls if "UPDATE dqx_test.dqx_app_test.dq_applied_rules" in c]
+        assert len(applied_updates) == 1
+        assert any("UPDATE dqx_test.dqx_app_test.dq_monitored_tables" in c and "updated_at" in c for c in calls)
         assert not any("DELETE" in c for c in calls)
+        assert not any("INSERT" in c for c in calls)
 
     def test_allows_empty_mapping_to_stage(self, svc, sql, registry):
         registry.get_rule.return_value = _published_rule()

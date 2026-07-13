@@ -152,17 +152,26 @@ export function normalizeStagedRows(rows: AppliedRuleOut[]): AppliedRuleOut[] {
  *  anywhere. Display metadata (name/dimension/severity tags) is denormalized
  *  onto the row up front, exactly like the server's `AppliedRuleOut.from_summary`
  *  join, so every display component that reads `rule_name`/`rule_dimension`/
- *  `rule_severity` off a row works identically for staged and persisted rows. */
+ *  `rule_severity` off a row works identically for staged and persisted rows.
+ *
+ *  B2-116: the initial version pin is seeded from the admin
+ *  `default_auto_upgrade` setting so the staged row reflects it, matching the
+ *  server-side `resolve_pinned_version_for_new_attachment` resolution applied
+ *  at save time. `defaultAutoUpgrade` ON → follow latest (`pinned_version:
+ *  null`); OFF → pin to the rule's current version (`rule.version`), so the row
+ *  shows "Pinned (vN)" instead of "Following latest". The per-row pin control
+ *  (RuleConfigCard's VersionPinDropdown) can still override this either way. */
 export function newStagedRow(
   bindingId: string,
   rule: RegistryRuleOut,
   columnMapping: AppliedRuleOutColumnMappingItem[],
+  defaultAutoUpgrade: boolean,
 ): AppliedRuleOut {
   return {
     id: nextLocalRowId(),
     binding_id: bindingId,
     rule_id: rule.rule_id,
-    pinned_version: null,
+    pinned_version: defaultAutoUpgrade ? null : (rule.version ?? null),
     severity_override: null,
     column_mapping: columnMapping,
     user_metadata: {},
