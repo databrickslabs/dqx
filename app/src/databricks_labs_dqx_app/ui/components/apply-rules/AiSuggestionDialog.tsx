@@ -16,7 +16,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { ArrowRight, Check, Database, Loader2, Minus, Sparkles } from "lucide-react";
+import { ArrowRight, Check, Loader2, Minus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -575,7 +575,6 @@ function MappingRow({
     <SuggestionRow label={cols || s.rule_name || s.rule_id} selected={selected} onToggle={onToggle}>
       <MappingChipsInline suggestion={s} />
       {s.explanation && <p className="text-xs text-muted-foreground">{s.explanation}</p>}
-      <SuggestionReason reason={s.reason} />
     </SuggestionRow>
   );
 }
@@ -653,21 +652,6 @@ function ColumnRuleRow({
       </div>
       {s.explanation && <p className="text-xs text-muted-foreground">{s.explanation}</p>}
       <MappingChipsInline suggestion={s} />
-      <SuggestionReason reason={s.reason} />
     </SuggestionRow>
-  );
-}
-
-/** Subtle source-attribution line shown under a suggestion. Present only on
- *  profiler-derived suggestions (the AI-judged ones carry an `explanation`
- *  instead), so it doubles as the "from profiling" origin marker. The reason
- *  is server-generated content (like `explanation`), rendered verbatim. */
-function SuggestionReason({ reason }: { reason?: string }) {
-  if (!reason) return null;
-  return (
-    <p className="flex items-center gap-1 text-[11px] italic text-muted-foreground/70">
-      <Database className="h-3 w-3 shrink-0" />
-      {reason}
-    </p>
   );
 }

@@ -1,4 +1,4 @@
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from pydantic import BaseModel, Field
@@ -39,6 +39,12 @@ from .services.monitored_table_service import (
     MonitoredTableSummary,
 )
 from .services.rule_suggester import RuleSuggestion, SuggestRulesResult
+
+if TYPE_CHECKING:
+    # Imported for typing only: a runtime import would form a cycle
+    # (models -> profiling_suggestion_service -> profiling_rule_builder -> models,
+    # whose ``CheckFunctionDef`` is defined far below this line).
+    from .services.profiling_suggestion_service import ProfilingSuggestion
 
 
 class VersionOut(BaseModel):
@@ -850,13 +856,6 @@ class SuggestedRuleMappingOut(BaseModel):
     severity: str | None = None
     column_mapping: ColumnMappingGroup
     explanation: str = ""
-    reason: str = Field(
-        default="",
-        description=(
-            "Source attribution. Empty for AI-judged suggestions (which carry an 'explanation'); "
-            "'Suggested based on DQX profiling' for profiler-derived suggestions."
-        ),
-    )
 
     @classmethod
     def from_domain(cls, suggestion: RuleSuggestion) -> "SuggestedRuleMappingOut":
@@ -867,7 +866,6 @@ class SuggestedRuleMappingOut(BaseModel):
             severity=suggestion.severity,
             column_mapping=suggestion.column_mapping,
             explanation=suggestion.explanation,
-            reason=suggestion.reason,
         )
 
 
@@ -889,6 +887,35 @@ class SuggestRulesOut(BaseModel):
             available=result.available,
             reason=result.reason,
             suggestions=[SuggestedRuleMappingOut.from_domain(s) for s in result.suggestions],
+        )
+
+
+class ProfilingSuggestionOut(BaseModel):
+    """One applicable profiler-derived rule suggestion shown on the Profile page (B2-82).
+
+    Read-only: listing these has NO side effects — no registry rule is created
+    or approved until the user explicitly applies the suggestion (which resolves
+    or creates + approves the rule and binds it via ``applyProfilingSuggestion``).
+    """
+
+    index: int = Field(description="Position of the source check in the latest profile's generated_rules")
+    function: str
+    rule_name: str | None = None
+    description: str | None = None
+    dimension: str | None = None
+    severity: str | None = None
+    column_mapping: ColumnMappingGroup = Field(default_factory=dict)
+
+    @classmethod
+    def from_domain(cls, suggestion: "ProfilingSuggestion") -> "ProfilingSuggestionOut":
+        return cls(
+            index=suggestion.index,
+            function=suggestion.function,
+            rule_name=suggestion.rule_name,
+            description=suggestion.description,
+            dimension=suggestion.dimension,
+            severity=suggestion.severity,
+            column_mapping=suggestion.column_mapping,
         )
 
 

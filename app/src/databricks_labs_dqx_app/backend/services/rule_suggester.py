@@ -17,7 +17,6 @@ declared slots before it is returned (see :meth:`RuleSuggester._post_process`).
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -85,11 +84,6 @@ _NO_PUBLISHED_RULES_REASON = "No published rules to suggest from yet. Publish ru
 _NO_MATCH_REASON = "No published rules matched this table's columns."
 _NO_CLEAN_MAPPING_REASON = "Found related rules, but none mapped cleanly to this table's columns."
 
-# Attribution carried on every profiler-derived suggestion (verbatim, per the
-# feature spec). Surfaced by the dialog to distinguish a profiling suggestion
-# from an AI-judged one.
-_PROFILING_REASON = "Suggested based on DQX profiling"
-
 _JUDGE_SYSTEM_PROMPT = (
     "You are a conservative data-quality rule mapping assistant. Given a table's columns (each with a name, "
     "type, family, and optional comment) and a list of candidate published rules (each with input slots that "
@@ -150,10 +144,6 @@ class RuleSuggestion:
     severity: str | None
     column_mapping: ColumnMappingGroup
     explanation: str = ""
-    # Source attribution. Empty for AI-judged suggestions (which surface an
-    # ``explanation`` instead); set to ``_PROFILING_REASON`` for profiler-derived
-    # suggestions so the dialog can label their origin.
-    reason: str = ""
 
 
 @dataclass
@@ -202,97 +192,36 @@ class RuleSuggester:
                 rate limiting and audit.
 
         Returns:
-            A :class:`SuggestRulesResult`. Profiler-derived suggestions
-            (independent of AI/Vector Search) are merged with the AI-judged
-            ones. ``available=False`` (never an exception) covers the
-            AI-degraded paths — unknown binding, embedding endpoint not
-            configured, AI not configured/rate-limited, retrieval failure, or
-            judge failure — UNLESS the profiler path produced suggestions, in
-            which case those still surface with ``available=True``.
+            A :class:`SuggestRulesResult`. ``available=False`` (never an
+            exception) covers: unknown binding, embedding endpoint not
+            configured, AI not configured/rate-limited, retrieval failure,
+            or judge failure.
         """
         detail = self._monitored_tables.get(binding_id)
         if detail is None:
             return SuggestRulesResult(available=False, reason=f"Monitored table not found: {binding_id}")
 
-        table_fqn = detail.table.table_fqn
-        profile = self._monitored_tables.get_latest_profile(table_fqn)
-        already_applied = self._already_applied_keys(binding_id)
-
-        # Profiler-derived suggestions are computed first and independently of
-        # AI/Vector Search — the profiler already proposed concrete checks, so
-        # they reach the UI even on a deployment with no AI infra. This runs
-        # synchronous OLTP SQL (match/create/approve per profiler check), so it
-        # is offloaded to a worker thread to avoid stalling the event loop.
-        profiling = await asyncio.to_thread(
-            self._profiling_suggestions, profile, already_applied, user_email
-        )
-
-        ai_available, ai_suggestions, ai_reason = await self._ai_suggestions(
-            detail, table_fqn, profile, already_applied, user_email
-        )
-
-        merged = self._merge_suggestions(ai_suggestions, profiling)
-        if merged:
-            return SuggestRulesResult(available=True, suggestions=merged)
-        # Nothing to show: preserve the AI path's degraded-vs-empty semantics so
-        # the dialog can explain *why* (missing infra vs no matches) rather than
-        # showing a blank panel.
-        return SuggestRulesResult(available=ai_available, suggestions=[], reason=ai_reason)
-
-    @staticmethod
-    def _merge_suggestions(
-        ai_suggestions: list[RuleSuggestion], profiling: list[RuleSuggestion]
-    ) -> list[RuleSuggestion]:
-        """Concatenate AI + profiling suggestions, dropping profiling duplicates.
-
-        Dedup is by the resolved ``(rule_id, mapping_hash)`` — the AI path wins
-        so its grounded explanation is kept when the same rule+mapping was found
-        both ways.
-        """
-        ai_keys = {(s.rule_id, compute_mapping_hash([s.column_mapping])) for s in ai_suggestions}
-        merged = list(ai_suggestions)
-        for suggestion in profiling:
-            key = (suggestion.rule_id, compute_mapping_hash([suggestion.column_mapping]))
-            if key in ai_keys:
-                continue
-            merged.append(suggestion)
-        return merged
-
-    async def _ai_suggestions(
-        self,
-        detail: object,
-        table_fqn: str,
-        profile: LatestProfile | None,
-        already_applied: set[tuple[str, str]],
-        user_email: str,
-    ) -> tuple[bool, list[RuleSuggestion], str]:
-        """Run the AI retrieve -> judge -> post-process pipeline.
-
-        Returns ``(available, suggestions, reason)`` instead of raising, so
-        :meth:`suggest` can merge these with the profiler-derived suggestions.
-        ``available=False`` covers every degraded AI path (Vector Search /
-        embedding / AI not configured, retrieval error, judge error, unparsable
-        judge response); ``reason`` carries the human-readable explanation.
-        """
         available, reason = self._retriever.is_available()
         if not available:
-            return False, [], reason
+            return SuggestRulesResult(available=False, reason=reason)
         if not self._ai_gateway.is_enabled() or not self._ai_gateway.endpoint_name():
-            return False, [], "AI features are not configured."
+            return SuggestRulesResult(available=False, reason="AI features are not configured.")
 
+        table_fqn = detail.table.table_fqn
+        profile = self._monitored_tables.get_latest_profile(table_fqn)
         columns = await self._resolve_columns(table_fqn, profile)
         query_text = self._build_query_text(table_fqn, columns)
 
         try:
             candidates = self._retriever.retrieve(query_text, self._top_k)
         except RuleRetrievalUnavailableError as e:
-            return False, [], str(e)
+            return SuggestRulesResult(available=False, reason=str(e))
         except Exception:
-            logger.warning("Rule retrieval failed for %s", table_fqn, exc_info=True)
-            return False, [], "Rule retrieval failed."
+            logger.warning("Rule retrieval failed for binding %s", binding_id, exc_info=True)
+            return SuggestRulesResult(available=False, reason="Rule retrieval failed.")
 
         if not candidates:
-            return True, [], _NO_PUBLISHED_RULES_REASON
+            return SuggestRulesResult(available=True, suggestions=[], reason=_NO_PUBLISHED_RULES_REASON)
 
         candidate_rules: list[RegistryRule] = []
         for candidate in candidates:
@@ -301,85 +230,30 @@ class RuleSuggester:
                 candidate_rules.append(rule)
 
         if not candidate_rules:
-            return True, [], _NO_PUBLISHED_RULES_REASON
+            return SuggestRulesResult(available=True, suggestions=[], reason=_NO_PUBLISHED_RULES_REASON)
 
         try:
             judged = await self._judge(candidate_rules, columns, table_fqn, user_email)
         except (AIUnavailableError, AIRateLimitExceededError) as e:
-            return False, [], str(e)
+            return SuggestRulesResult(available=False, reason=str(e))
         except AIResponseParseError:
-            logger.warning("AI judge returned an unparsable response for %s", table_fqn, exc_info=True)
-            return False, [], "AI judge returned an unparsable response."
+            logger.warning("AI judge returned an unparsable response for binding %s", binding_id, exc_info=True)
+            return SuggestRulesResult(available=False, reason="AI judge returned an unparsable response.")
         except Exception:
-            logger.warning("AI judge failed for %s", table_fqn, exc_info=True)
-            return False, [], "AI judge failed to produce suggestions."
+            logger.warning("AI judge failed for binding %s", binding_id, exc_info=True)
+            return SuggestRulesResult(available=False, reason="AI judge failed to produce suggestions.")
 
+        already_applied = self._already_applied_keys(binding_id)
         suggestions = self._post_process(judged, candidate_rules, columns, already_applied)
         if not suggestions:
-            # Distinguish the two zero-result shapes: the judge proposed
-            # mappings that all failed validation / were already applied, vs the
-            # judge found no rule that fits this table's columns at all.
-            return True, [], (_NO_CLEAN_MAPPING_REASON if judged else _NO_MATCH_REASON)
-        return True, suggestions, ""
-
-    def _profiling_suggestions(
-        self,
-        profile: LatestProfile | None,
-        already_applied: set[tuple[str, str]],
-        user_email: str,
-    ) -> list[RuleSuggestion]:
-        """Turn the latest profile's generated checks into registry-rule suggestions.
-
-        Each profiler check is mapped to a registry rule via
-        :func:`build_profiling_rule` + :meth:`RegistryService.match_or_create_approved_rule`
-        (match an existing approved rule by structural fingerprint, else
-        silently create + approve one — idempotent, so re-running never spawns
-        duplicates). Suggestions already staged/applied for this binding, and
-        duplicates within the profile, are excluded. Best-effort per check: a
-        check that can't be mapped or persisted is skipped, never fatal.
-        """
-        if not isinstance(profile, LatestProfile):
-            return []
-        # Imported lazily: this module is imported (via ``models``) during app
-        # startup, and ``profiling_rule_builder`` pulls in the check-function
-        # introspection chain that imports ``models`` back — a top-level import
-        # here would be a circular import.
-        from databricks_labs_dqx_app.backend.profiling_rule_builder import build_profiling_rule
-
-        seen: set[tuple[str, str]] = set()
-        out: list[RuleSuggestion] = []
-        for check in profile.generated_rules:
-            if not isinstance(check, dict):
-                continue
-            candidate = build_profiling_rule(check)
-            if candidate is None:
-                continue
-            try:
-                rule, _created = self._registry.match_or_create_approved_rule(
-                    candidate.definition, candidate.metadata, user_email
-                )
-            except Exception:
-                logger.warning("Failed to match-or-create a profiling registry rule", exc_info=True)
-                continue
-            if rule is None:
-                continue
-            mapping_hash = compute_mapping_hash([candidate.mapping])
-            key = (rule.rule_id, mapping_hash)
-            if key in seen or key in already_applied:
-                continue
-            seen.add(key)
-            out.append(
-                RuleSuggestion(
-                    rule_id=rule.rule_id,
-                    rule_name=get_rule_name(rule.user_metadata),
-                    dimension=get_rule_dimension(rule.user_metadata),
-                    severity=get_rule_severity(rule.user_metadata),
-                    column_mapping=candidate.mapping,
-                    explanation="",
-                    reason=_PROFILING_REASON,
-                )
-            )
-        return out
+            # AI ran successfully but produced nothing to add. Distinguish the
+            # two zero-result shapes so the dialog can say *why* rather than
+            # showing a blank panel: the judge proposed mappings that all
+            # failed validation / were already applied, vs the judge found no
+            # rule that fits this table's columns at all.
+            reason = _NO_CLEAN_MAPPING_REASON if judged else _NO_MATCH_REASON
+            return SuggestRulesResult(available=True, suggestions=[], reason=reason)
+        return SuggestRulesResult(available=True, suggestions=suggestions)
 
     # ------------------------------------------------------------------
     # Query construction

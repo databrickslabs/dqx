@@ -136,6 +136,7 @@ import {
 } from "@/components/apply-rules/shared";
 import { orderSeverityValuesForDisplay } from "@/components/RegistryRuleBadges";
 import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
+import { ProfileSuggestionsCard } from "@/components/bindings/ProfileSuggestionsCard";
 import { BindingResultsTab } from "@/components/monitored-tables/BindingResultsTab";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
 import { MonitoredTableHistoryTab } from "@/components/monitored-tables/MonitoredTableHistoryTab";
@@ -749,7 +750,7 @@ function MonitoredTableDetailPage() {
           </TabsContent>
 
           <TabsContent value="profile">
-            <ProfileTab bindingId={bindingId} tableFqn={table.table_fqn} />
+            <ProfileTab bindingId={bindingId} tableFqn={table.table_fqn} canApply={perms.canCreateRules} />
           </TabsContent>
 
           <TabsContent value="apply-rules">
@@ -1355,7 +1356,15 @@ interface LlmPrimaryKeyInfo {
   confidence?: string;
 }
 
-function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: string }) {
+function ProfileTab({
+  bindingId,
+  tableFqn,
+  canApply,
+}: {
+  bindingId: string;
+  tableFqn: string;
+  canApply: boolean;
+}) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const profileQuery = useGetMonitoredTableProfile(bindingId);
@@ -1576,6 +1585,12 @@ function ProfileTab({ bindingId, tableFqn }: { bindingId: string; tableFqn: stri
         </div>
       ) : (
         <div className="space-y-3">
+          {/* Profiler rule suggestions (B2-82) — dqlake-style placement: the
+              profiler's generated checks live here on the Profile page (not in
+              the AI Suggest-rules dialog). Only shown for the latest profile,
+              not a historical run. */}
+          {selectedRunId === null && <ProfileSuggestionsCard bindingId={bindingId} canApply={canApply} />}
+
           {/* Version switcher (items 50/31) — pick any past run; its full
               results are already persisted per run_id, so this just re-points
               the column list. Replaces the old log-style history list. */}
@@ -1822,18 +1837,6 @@ function ApplyRulesTab({
     for (const r of publishedRules) m.set(r.rule_id, r);
     return m;
   }, [publishedRules]);
-
-  // Profiling-derived suggestions (those carrying a `reason`) may have
-  // auto-created + approved brand-new registry rules server-side. Those
-  // rule_ids won't be in the approved-rules snapshot this tab (and the Suggest
-  // dialog) fetched earlier, so refetch it once such a result arrives — without
-  // it those suggestions would render with a raw rule_id and be dropped on Add
-  // (see `newStagedRow`, which needs the full rule to denormalize).
-  useEffect(() => {
-    if (suggestState?.suggestions.some((s) => s.reason)) {
-      void refetchRegistry();
-    }
-  }, [suggestState, refetchRegistry]);
 
   // Completeness status per rule group — drives the "needs attention"
   // filter and the by-rule/by-column incomplete-mapping indicators.

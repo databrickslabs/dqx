@@ -41,6 +41,7 @@ from .services.data_product_service import DataProductService
 from .services.entitlement_service import EntitlementService
 from .services.rule_embeddings import RuleEmbeddingsService
 from .services.score_cache_service import ScoreCacheService
+from .services.profiling_suggestion_service import ProfilingSuggestionService
 from .services.rule_retriever import CosineRuleRetriever, RuleRetriever
 from .services.rule_suggester import RuleSuggester
 from .services.rules_catalog_service import RulesCatalogService
@@ -436,6 +437,24 @@ async def get_rule_suggester(
         retriever=retriever,
         ai_gateway=ai_gateway,
         discovery=discovery,
+    )
+
+
+async def get_profiling_suggestion_service(
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+) -> ProfilingSuggestionService:
+    """Create a ProfilingSuggestionService for the Profile page's profiler suggestions (B2-82).
+
+    Listing suggestions is side-effect-free; applying one resolves-or-creates +
+    approves the registry rule (via ``RegistryService.match_or_create_approved_rule``)
+    and binds it through ``ApplyRulesService``.
+    """
+    return ProfilingSuggestionService(
+        monitored_tables=monitored_tables,
+        registry=registry,
+        apply_rules=apply_rules,
     )
 
 

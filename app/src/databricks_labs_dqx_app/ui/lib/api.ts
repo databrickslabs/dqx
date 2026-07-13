@@ -2255,6 +2255,34 @@ export interface ProfilerConfig {
   max_empty_ratio?: ProfilerConfigMaxEmptyRatio;
 }
 
+export type ProfilingSuggestionOutRuleName = string | null;
+
+export type ProfilingSuggestionOutDescription = string | null;
+
+export type ProfilingSuggestionOutDimension = string | null;
+
+export type ProfilingSuggestionOutSeverity = string | null;
+
+export type ProfilingSuggestionOutColumnMapping = {[key: string]: string};
+
+/**
+ * One applicable profiler-derived rule suggestion shown on the Profile page (B2-82).
+
+Read-only: listing these has NO side effects — no registry rule is created
+or approved until the user explicitly applies the suggestion (which resolves
+or creates + approves the rule and binds it via ``applyProfilingSuggestion``).
+ */
+export interface ProfilingSuggestionOut {
+  /** Position of the source check in the latest profile's generated_rules */
+  index: number;
+  function: string;
+  rule_name?: ProfilingSuggestionOutRuleName;
+  description?: ProfilingSuggestionOutDescription;
+  dimension?: ProfilingSuggestionOutDimension;
+  severity?: ProfilingSuggestionOutSeverity;
+  column_mapping?: ProfilingSuggestionOutColumnMapping;
+}
+
 export interface QuarantineListOut {
   records?: QuarantineRecordOut[];
   total_count?: number;
@@ -3408,8 +3436,6 @@ export interface SuggestedRuleMappingOut {
   severity?: SuggestedRuleMappingOutSeverity;
   column_mapping: SuggestedRuleMappingOutColumnMapping;
   explanation?: string;
-  /** Source attribution. Empty for AI-judged suggestions (which carry an 'explanation'); 'Suggested based on DQX profiling' for profiler-derived suggestions. */
-  reason?: string;
 }
 
 export type TableDataOutRowsItem = {[key: string]: string | null};
@@ -14696,6 +14722,228 @@ export const useSuggestRulesForTable = <TError = AxiosError<HTTPValidationError>
       > => {
 
       const mutationOptions = getSuggestRulesForTableMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * List the DQX profiler's applicable rule suggestions for the Profile page.
+
+Read-only and side-effect-free: it introspects the latest profile's
+generated checks against the check-function registry to build applicable
+suggestions. NO registry rule is created or approved here — that happens
+only when a user explicitly applies one via ``applyProfilingSuggestion``.
+Returns an empty list when the table has no profile yet.
+ * @summary List Profiling Suggestions
+ */
+export const listProfilingSuggestions = (
+    bindingId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ProfilingSuggestionOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitored-tables/${bindingId}/profile/suggestions`,options
+    );
+  }
+
+
+
+
+export const getListProfilingSuggestionsQueryKey = (bindingId?: string,) => {
+    return [
+    `/api/v1/monitored-tables/${bindingId}/profile/suggestions`
+    ] as const;
+    }
+
+    
+export const getListProfilingSuggestionsQueryOptions = <TData = Awaited<ReturnType<typeof listProfilingSuggestions>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfilingSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListProfilingSuggestionsQueryKey(bindingId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listProfilingSuggestions>>> = ({ signal }) => listProfilingSuggestions(bindingId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(bindingId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listProfilingSuggestions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListProfilingSuggestionsQueryResult = NonNullable<Awaited<ReturnType<typeof listProfilingSuggestions>>>
+export type ListProfilingSuggestionsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListProfilingSuggestions<TData = Awaited<ReturnType<typeof listProfilingSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfilingSuggestions>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listProfilingSuggestions>>,
+          TError,
+          Awaited<ReturnType<typeof listProfilingSuggestions>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListProfilingSuggestions<TData = Awaited<ReturnType<typeof listProfilingSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfilingSuggestions>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listProfilingSuggestions>>,
+          TError,
+          Awaited<ReturnType<typeof listProfilingSuggestions>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListProfilingSuggestions<TData = Awaited<ReturnType<typeof listProfilingSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfilingSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Profiling Suggestions
+ */
+
+export function useListProfilingSuggestions<TData = Awaited<ReturnType<typeof listProfilingSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProfilingSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListProfilingSuggestionsQueryOptions(bindingId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListProfilingSuggestionsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listProfilingSuggestions>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfilingSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListProfilingSuggestionsQueryKey(bindingId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listProfilingSuggestions>>> = ({ signal }) => listProfilingSuggestions(bindingId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfilingSuggestions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListProfilingSuggestionsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listProfilingSuggestions>>>
+export type ListProfilingSuggestionsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListProfilingSuggestionsSuspense<TData = Awaited<ReturnType<typeof listProfilingSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfilingSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListProfilingSuggestionsSuspense<TData = Awaited<ReturnType<typeof listProfilingSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfilingSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListProfilingSuggestionsSuspense<TData = Awaited<ReturnType<typeof listProfilingSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfilingSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Profiling Suggestions
+ */
+
+export function useListProfilingSuggestionsSuspense<TData = Awaited<ReturnType<typeof listProfilingSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listProfilingSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListProfilingSuggestionsSuspenseQueryOptions(bindingId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Apply one profiler suggestion to the monitored table.
+
+This is the ONLY path that resolves-or-creates + approves the underlying
+registry rule (via ``RegistryService.match_or_create_approved_rule`` —
+idempotent, validated, audited) before binding it to the table. Requires
+``APPLY`` on the monitored table (mirroring the ``applyRuleToTable`` gate)
+unless the caller is an admin/approver.
+ * @summary Apply Profiling Suggestion
+ */
+export const applyProfilingSuggestion = (
+    bindingId: string,
+    index: number, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AppliedRuleOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/monitored-tables/${bindingId}/profile/suggestions/${index}/apply`,undefined,options
+    );
+  }
+
+
+
+export const getApplyProfilingSuggestionMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyProfilingSuggestion>>, TError,{bindingId: string;index: number}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof applyProfilingSuggestion>>, TError,{bindingId: string;index: number}, TContext> => {
+
+const mutationKey = ['applyProfilingSuggestion'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applyProfilingSuggestion>>, {bindingId: string;index: number}> = (props) => {
+          const {bindingId,index} = props ?? {};
+
+          return  applyProfilingSuggestion(bindingId,index,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApplyProfilingSuggestionMutationResult = NonNullable<Awaited<ReturnType<typeof applyProfilingSuggestion>>>
+    
+    export type ApplyProfilingSuggestionMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Apply Profiling Suggestion
+ */
+export const useApplyProfilingSuggestion = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyProfilingSuggestion>>, TError,{bindingId: string;index: number}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof applyProfilingSuggestion>>,
+        TError,
+        {bindingId: string;index: number},
+        TContext
+      > => {
+
+      const mutationOptions = getApplyProfilingSuggestionMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

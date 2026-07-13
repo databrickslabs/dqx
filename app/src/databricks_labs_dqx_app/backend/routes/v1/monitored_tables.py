@@ -28,6 +28,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_monitored_table_version_service,
     get_obo_ws,
     get_permissions_service,
+    get_profiling_suggestion_service,
     get_rule_suggester,
     get_rules_catalog_service,
     require_role,
@@ -52,6 +53,7 @@ from databricks_labs_dqx_app.backend.models import (
     MonitoredTableSummaryOut,
     MonitoredTableVersionChecksOut,
     MonitoredTableVersionOut,
+    ProfilingSuggestionOut,
     RegisterMonitoredTableIn,
     RunMonitoredTableIn,
     RunMonitoredTableOut,
@@ -84,6 +86,11 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableSummary,
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+from databricks_labs_dqx_app.backend.services.profiling_suggestion_service import (
+    BindingNotFoundError as ProfilingBindingNotFoundError,
+    ProfilingSuggestionService,
+    SuggestionNotApplicableError,
+)
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggester
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 
@@ -1096,3 +1103,86 @@ async def suggest_rules_for_table(
     user_email = _current_user_email(obo_ws)
     result = await svc.suggest(binding_id, user_email)
     return SuggestRulesOut.from_domain(result)
+
+
+# ------------------------------------------------------------------
+# Profile-page profiler suggestions (B2-82 — dqlake-style placement)
+# ------------------------------------------------------------------
+
+
+@router.get(
+    "/{binding_id}/profile/suggestions",
+    response_model=list[ProfilingSuggestionOut],
+    operation_id="listProfilingSuggestions",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def list_profiling_suggestions(
+    binding_id: str,
+    svc: Annotated[ProfilingSuggestionService, Depends(get_profiling_suggestion_service)],
+) -> list[ProfilingSuggestionOut]:
+    """List the DQX profiler's applicable rule suggestions for the Profile page.
+
+    Read-only and side-effect-free: it introspects the latest profile's
+    generated checks against the check-function registry to build applicable
+    suggestions. NO registry rule is created or approved here — that happens
+    only when a user explicitly applies one via ``applyProfilingSuggestion``.
+    Returns an empty list when the table has no profile yet.
+    """
+    try:
+        suggestions = svc.list_suggestions(binding_id)
+    except ProfilingBindingNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to list profiling suggestions for monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list profiling suggestions: {e}")
+    return [ProfilingSuggestionOut.from_domain(s) for s in suggestions]
+
+
+@router.post(
+    "/{binding_id}/profile/suggestions/{index}/apply",
+    response_model=AppliedRuleOut,
+    operation_id="applyProfilingSuggestion",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def apply_profiling_suggestion(
+    binding_id: str,
+    index: int,
+    svc: Annotated[ProfilingSuggestionService, Depends(get_profiling_suggestion_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+) -> AppliedRuleOut:
+    """Apply one profiler suggestion to the monitored table.
+
+    This is the ONLY path that resolves-or-creates + approves the underlying
+    registry rule (via ``RegistryService.match_or_create_approved_rule`` —
+    idempotent, validated, audited) before binding it to the table. Requires
+    ``APPLY`` on the monitored table (mirroring the ``applyRuleToTable`` gate)
+    unless the caller is an admin/approver.
+    """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.APPLY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
+    )
+    try:
+        applied = svc.apply_suggestion(binding_id, index, user_email)
+        return AppliedRuleOut.from_domain(applied)
+    except ProfilingBindingNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except SuggestionNotApplicableError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except MappingIncompleteError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuleNotPublishedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to apply profiling suggestion to monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to apply profiling suggestion: {e}")

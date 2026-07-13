@@ -222,6 +222,24 @@ class RegistryService:
             return None
         return self._row_to_rule(rows[0])
 
+    def find_approved_rule_for_definition(self, definition: RuleDefinition) -> RegistryRule | None:
+        """Return the existing **approved** rule structurally equal to *definition*, if any.
+
+        Read-only: computes *definition*'s structural fingerprint and looks up an
+        approved rule with it — it never creates or approves anything. Backs the
+        side-effect-free profile-page suggestion listing (so an already-applied
+        suggestion can be recognised without minting a registry rule) and the
+        match step of :meth:`match_or_create_approved_rule`.
+        """
+        probe = RegistryRule(
+            rule_id="__match_probe__",
+            mode="dqx_native",
+            status="draft",
+            version=0,
+            definition=definition,
+        )
+        return self.get_approved_rule_by_fingerprint(compute_registry_rule_fingerprint(probe))
+
     def match_or_create_approved_rule(
         self,
         definition: RuleDefinition,
@@ -260,6 +278,9 @@ class RegistryService:
             UnsafeSqlQueryError: *definition*'s SQL body is unsafe (raised by
                 :meth:`create_rule`).
         """
+        approved = self.find_approved_rule_for_definition(definition)
+        if approved is not None:
+            return approved, False
         probe = RegistryRule(
             rule_id="__match_probe__",
             mode="dqx_native",
@@ -267,12 +288,7 @@ class RegistryService:
             version=0,
             definition=definition,
         )
-        fingerprint = compute_registry_rule_fingerprint(probe)
-
-        approved = self.get_approved_rule_by_fingerprint(fingerprint)
-        if approved is not None:
-            return approved, False
-        if self.get_rule_by_fingerprint(fingerprint) is not None:
+        if self.get_rule_by_fingerprint(compute_registry_rule_fingerprint(probe)) is not None:
             # A structurally-identical rule exists but isn't approved — don't
             # duplicate it and don't auto-approve a rule this flow didn't author.
             return None, False
