@@ -1809,6 +1809,7 @@
     "removeConfirmDescription": "Questo elimina \"{{name}}\" da questa tabella, inclusi eventuali controlli materializzati. Non può essere annullato.",
     "toastApplied": "Regola applicata.",
     "toastApplyFailed": "Applicazione della regola non riuscita.",
+    "profileSuggestionAppliedToast": "Regola applicata alla tabella.",
     "toastRemoved": "Regola applicata rimossa.",
     "toastRemoveFailed": "Rimozione della regola applicata non riuscita.",
     "toastPinSet": "Fissaggio versione aggiornato.",

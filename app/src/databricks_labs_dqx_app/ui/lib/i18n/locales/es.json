@@ -1809,6 +1809,7 @@
     "removeConfirmDescription": "Esto elimina \"{{name}}\" de esta tabla, incluida cualquier comprobación materializada. Esto no se puede deshacer.",
     "toastApplied": "Regla aplicada.",
     "toastApplyFailed": "No se pudo aplicar la regla.",
+    "profileSuggestionAppliedToast": "Regla aplicada a la tabla.",
     "toastRemoved": "Regla aplicada eliminada.",
     "toastRemoveFailed": "No se pudo quitar la regla aplicada.",
     "toastPinSet": "Fijación de versión actualizada.",

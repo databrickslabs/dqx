@@ -1809,6 +1809,7 @@
     "removeConfirmDescription": "This deletes \"{{name}}\" from this table, including any materialized checks. This can't be undone.",
     "toastApplied": "Rule applied.",
     "toastApplyFailed": "Failed to apply rule.",
+    "profileSuggestionAppliedToast": "Rule applied to the table.",
     "toastRemoved": "Applied rule removed.",
     "toastRemoveFailed": "Failed to remove applied rule.",
     "toastPinSet": "Version pin updated.",

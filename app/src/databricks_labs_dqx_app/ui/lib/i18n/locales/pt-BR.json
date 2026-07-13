@@ -1809,6 +1809,7 @@
     "removeConfirmDescription": "Isso exclui \"{{name}}\" desta tabela, incluindo qualquer checagem materializada. Isso não pode ser desfeito.",
     "toastApplied": "Regra aplicada.",
     "toastApplyFailed": "Falha ao aplicar a regra.",
+    "profileSuggestionAppliedToast": "Regra aplicada à tabela.",
     "toastRemoved": "Regra aplicada removida.",
     "toastRemoveFailed": "Falha ao remover a regra aplicada.",
     "toastPinSet": "Fixação de versão atualizada.",
