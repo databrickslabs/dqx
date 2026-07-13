@@ -212,7 +212,7 @@ export function LabelsEditor({
           <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
         )}
         <Tags className="h-3.5 w-3.5 text-muted-foreground" />
-        <Label className="text-xs cursor-pointer">{editorTitle}</Label>
+        <Label className="cursor-pointer">{editorTitle}</Label>
         {count > 0 && (
           <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
             {count}

@@ -349,26 +349,29 @@ function RegistryRuleDetailPage() {
     </>
   );
 
+  // Name + status + version title line — matches the Monitored Table /
+  // Data Product detail headers (item 21). "Modified since vN" takes
+  // priority over the plain vN badge, same precedence as the MT header's
+  // VersionBadge. Passed to the form as `headerTitle` so it renders on the
+  // LEFT of the same row as the Save/Submit + Approve/Reject + ⋮ actions
+  // (B2-78) — the title and actions share one line, tabs sit directly below,
+  // with no dropped action row or extra vertical gap.
+  const headerTitle = (
+    <div className="flex flex-wrap items-center gap-2 min-w-0">
+      <h1 className="text-2xl font-semibold tracking-tight leading-none truncate">{name}</h1>
+      <StatusBadge status={rule.status} />
+      {rule.display_status === "modified" ? (
+        <ModifiedBadge version={rule.version} />
+      ) : (
+        <RuleVersionBadge version={rule.version} />
+      )}
+    </div>
+  );
+
   return (
     <FadeIn>
       <div className="space-y-6">
         <PageBreadcrumb items={[{ label: t("rulesRegistry.title"), to: "/registry-rules" }]} page={name} />
-
-        {/* Name + status + version title line — matches the Monitored Table /
-            Data Product detail headers (item 21). "Modified since vN" takes
-            priority over the plain vN badge, same precedence as the MT
-            header's VersionBadge. The action buttons + ⋮ menu no longer sit
-            here — they render in the form's single header action row below,
-            inline with Save/Submit (B2-7). */}
-        <div className="flex flex-wrap items-center gap-2 min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight leading-none truncate">{name}</h1>
-          <StatusBadge status={rule.status} />
-          {rule.display_status === "modified" ? (
-            <ModifiedBadge version={rule.version} />
-          ) : (
-            <RuleVersionBadge version={rule.version} />
-          )}
-        </div>
 
         <RegistryRuleFormDialog
           variant="page"
@@ -389,6 +392,7 @@ function RegistryRuleDetailPage() {
           jsonDialogOpen={formJsonDialogOpen}
           onJsonDialogOpenChange={setFormJsonDialogOpen}
           headerActions={headerActions}
+          headerTitle={headerTitle}
         />
       </div>
 

@@ -767,6 +767,14 @@ interface RegistryRuleFormDialogProps {
    * the dialog variant.
    */
   headerActions?: ReactNode;
+  /**
+   * "page" variant only: the page's title block (name + status/version
+   * badges). Rendered on the LEFT of the single top-right header row so the
+   * title and the Save/Submit + Approve/Reject + "…" actions share one line
+   * (B2-78) — no dropped action row, no extra vertical gap above the tabs.
+   * Ignored in the dialog variant (which renders its own DialogTitle).
+   */
+  headerTitle?: ReactNode;
 }
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -905,6 +913,7 @@ export function RegistryRuleFormDialog({
   jsonDialogOpen: controlledJsonDialogOpen,
   onJsonDialogOpenChange,
   headerActions,
+  headerTitle,
 }: RegistryRuleFormDialogProps) {
   const { t } = useTranslation();
   const sourceRule = editingRule ?? viewingRule;
@@ -1757,7 +1766,7 @@ export function RegistryRuleFormDialog({
   const aboutTabContent = (
     <div className="space-y-4 pt-2">
       <div className="space-y-1.5">
-        <Label className="text-xs">
+        <Label>
           {t("rulesRegistry.nameLabel")} <span className="text-destructive">*</span>
         </Label>
         <div className="relative group">
@@ -1786,7 +1795,7 @@ export function RegistryRuleFormDialog({
       </div>
 
       <div className="space-y-1.5">
-        <Label className="text-xs">{t("rulesRegistry.descriptionLabel")}</Label>
+        <Label>{t("rulesRegistry.descriptionLabel")}</Label>
         <div className="relative group">
           <Textarea
             className={cn("text-xs min-h-[60px]", showFieldSuggest && "pr-9")}
@@ -1811,7 +1820,7 @@ export function RegistryRuleFormDialog({
 
       <div className="space-y-1.5">
         <div className="flex items-center gap-1.5">
-          <Label className="text-xs">
+          <Label>
             {t("rulesRegistry.severityLabel")} <span className="text-destructive">*</span>
           </Label>
           <HelpTooltip text={t("rulesRegistry.severityTooltip")} />
@@ -1856,7 +1865,7 @@ export function RegistryRuleFormDialog({
 
       <div className="space-y-1.5">
         <div className="flex items-center gap-1.5">
-          <Label className="text-xs">
+          <Label>
             {t("rulesRegistry.dimensionLabel")} <span className="text-destructive">*</span>
           </Label>
           <HelpTooltip text={t("rulesRegistry.dimensionTooltip")} />
@@ -2073,7 +2082,7 @@ export function RegistryRuleFormDialog({
       {mode === "lowcode" && (
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label className="text-xs">{t("rulesRegistry.conditionLabel")}</Label>
+            <Label>{t("rulesRegistry.conditionLabel")}</Label>
             {/* Unlike Native/SQL, Low-Code renders "IF" inline with the first
                 condition row (vertically centered against it, item 6) rather
                 than as a standalone label above the builder — there's no
@@ -2125,7 +2134,7 @@ export function RegistryRuleFormDialog({
       {mode === "dqx_native" && (
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label className="text-xs">
+            <Label>
               {t("rulesRegistry.conditionLabel")} <span className="text-destructive">*</span>
             </Label>
             {/* IF on its own line with the same vertical breathing room before
@@ -2294,7 +2303,7 @@ export function RegistryRuleFormDialog({
       {mode === "sql" && (
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label className="text-xs">
+            <Label>
               {t("rulesRegistry.conditionLabel")} <span className="text-destructive">*</span>
             </Label>
             {/* IF on its own line, more vertical breathing room before the
@@ -2752,12 +2761,23 @@ export function RegistryRuleFormDialog({
     // after Save/Submit, in this same row (B2-7) instead of a separate row
     // in the page's own title header.
     const saveSubmitButtons = renderSaveSubmitButtons(true);
+    const hasHeaderActions = !!(saveSubmitButtons || headerActions);
     return (
       <div className="space-y-6">
-        {(saveSubmitButtons || headerActions) && (
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            {saveSubmitButtons}
-            {headerActions}
+        {(headerTitle || hasHeaderActions) && (
+          // Title (left) + Save/Submit + Approve/Reject + "…" (right) share
+          // ONE row so pending-approval actions sit in line with the title
+          // rather than dropping to a separate row below it (B2-78). The
+          // title flexes/truncates; the actions never wrap under the title
+          // until the viewport genuinely can't fit both.
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            {headerTitle ? <div className="flex min-w-0 flex-1 items-center">{headerTitle}</div> : <div />}
+            {hasHeaderActions && (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {saveSubmitButtons}
+                {headerActions}
+              </div>
+            )}
           </div>
         )}
         {formBody}
