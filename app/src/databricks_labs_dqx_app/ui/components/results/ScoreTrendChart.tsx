@@ -114,12 +114,18 @@ export type TrendRow = {
   run_date: string;
   series?: string;
   pass_rate: number | null;
+  /** True when this point's contributing run(s) were DRAFT (not published),
+   *  so the tooltip can badge it (B2-136). */
+  is_draft?: boolean;
 };
 
 /** A single point in a COUNT-mode series (raw counts, not percentages). */
 export type CountRow = { run_date: string; series: string; value: number | null };
 
 const DEFAULT_SERIES = "Pass rate";
+/** Reserved pivot-row key flagging a draft point (value 1). Kept off the
+ *  series list so it's never plotted — only read by the tooltip (B2-136). */
+export const DRAFT_KEY = "__is_draft";
 const CHART_FALLBACK = [
   "var(--chart-1)",
   "var(--chart-2)",
@@ -161,6 +167,10 @@ export function pivot(
       byDate.set(d.run_date, row);
     }
     row[name] = d.pass_rate == null ? null : d.pass_rate * 100;
+    // A run_date row collapses every series present at that instant; it's a
+    // draft point if ANY contributing series/run was a draft (B2-136). Stored
+    // under a reserved numeric key (1 = draft) since row values are numeric.
+    if (d.is_draft) row[DRAFT_KEY] = 1;
   }
 
   const points = Array.from(byDate.values()).sort(
@@ -326,6 +336,31 @@ export function isFullExtent(
   return lo <= min && hi >= max;
 }
 
+/** Whether the Overall-DQ-score custom dot at (`ts`, `value`) should be clipped
+ *  (not painted). The hand-rolled dots aren't clipped by recharts, so under an
+ *  ACTIVE zoom (the only time an axis carries allowDataOverflow) a point outside
+ *  the window would otherwise render a "phantom" dot pinned at the plot edge —
+ *  hide it. When neither axis is zoomed, recharts already clips its own marks to
+ *  the auto domain, so nothing is clipped here. Gating strictly on the presence
+ *  of a zoom domain (rather than a data-derived [xLo,xHi] range) is also what
+ *  makes a single/first run render its dot (B2-139): a one-point series has no
+ *  time ticks and no derived x-extent, so an x-range check would wrongly treat
+ *  the lone point's epoch-ms as out-of-range and drop it. */
+export function isScoreDotClipped(
+  value: number | null,
+  ts: number | null,
+  zoomDomain: [number, number] | null,
+  yZoomDomain: [number, number] | null,
+): boolean {
+  if (zoomDomain && ts != null && (ts < zoomDomain[0] || ts > zoomDomain[1])) {
+    return true;
+  }
+  if (yZoomDomain && value != null && (value < yZoomDomain[0] || value > yZoomDomain[1])) {
+    return true;
+  }
+  return false;
+}
+
 type TooltipPayloadEntry = {
   name?: string | number;
   value?: string | number | null;
@@ -425,11 +460,23 @@ export function TrendTooltip({
     mode === "count"
       ? [...payload].sort((a, b) => orderIdx(a.name) - orderIdx(b.name))
       : (consolidatedItems ?? payload);
+  // Draft badge (B2-136): the hovered instant is a draft point when its pivot
+  // row carries the reserved DRAFT_KEY flag. Shown prominently at the top so a
+  // draft run reads at a glance without decoding the series values.
+  const hoveredRow = points?.find((p) => Number(p.ts) === Number(runKey));
+  const isDraftPoint = hoveredRow?.[DRAFT_KEY] === 1;
   return (
     <div
       className="rounded-md border bg-popover text-popover-foreground p-2 text-xs shadow-md"
       style={{ borderColor: "var(--border)" }}
     >
+      {isDraftPoint && (
+        <div className="mb-1 flex items-center gap-1">
+          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {t("resultsUi.trendDraftPointLabel")}
+          </span>
+        </div>
+      )}
       <div className="mb-1 font-medium">{formatTs(runKey ?? "")}</div>
       <ul className="space-y-0.5">
         {items.map((p, i) => {
@@ -1326,16 +1373,15 @@ export function ScoreTrendChart({
                   // edge — the "phantom point" seen mid zoom-in. The Area path is
                   // clipped by recharts; these hand-rolled dots are not, so we
                   // gate them here against the current domains (percent mode).
-                  const xdom = zoomDomain ?? [xLo, xHi];
-                  const ydom = yZoomDomain ?? [0, 100];
+                  // Clip the hand-rolled dots ONLY against an ACTIVE zoom window
+                  // (see isScoreDotClipped) — this also fixes the one-point /
+                  // first-run case (B2-139).
                   const dotOutside = (
                     v: number | null,
                     payload?: Record<string, unknown>,
                   ): boolean => {
                     const ts = typeof payload?.ts === "number" ? payload.ts : null;
-                    if (ts != null && (ts < xdom[0] || ts > xdom[1])) return true;
-                    if (v != null && (v < ydom[0] || v > ydom[1])) return true;
-                    return false;
+                    return isScoreDotClipped(v, ts, zoomDomain, yZoomDomain);
                   };
                   const scoreDot = (props: {
                     cx?: number;

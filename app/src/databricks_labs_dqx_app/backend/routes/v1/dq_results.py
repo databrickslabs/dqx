@@ -186,7 +186,7 @@ def _fetch_check_rows(
     where = f"WHERE {' AND '.join(conds)} " if conds else ""
     stmt = (
         f"SELECT input_location, run_id, CAST(run_time AS STRING) AS run_date, "
-        f"check_name, error_count, warning_count, input_row_count, "
+        f"check_name, error_count, warning_count, input_row_count, run_mode, "
         # As-of-run attribution baked into the view rows (frozen
         # checks_json payload — see score_view_service).
         f"severity, dimension, registry_rule_id, to_json(columns) AS columns_json "
@@ -229,7 +229,7 @@ def _fetch_asof_check_rows(
         conds.append(f"run_id = '{escape_sql_string(run_id)}'")
     stmt = (
         f"SELECT input_location, run_id, CAST(as_of_time AS STRING) AS run_date, "
-        f"check_name, error_count, warning_count, input_row_count, "
+        f"check_name, error_count, warning_count, input_row_count, run_mode, "
         f"severity, dimension, registry_rule_id, to_json(columns) AS columns_json "
         f"FROM {view} "  # noqa: S608
         f"WHERE {' AND '.join(conds)} "

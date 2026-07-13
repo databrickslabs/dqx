@@ -119,17 +119,23 @@ class AiGenerateRuleOut(BaseModel):
 
     name: str
     description: str
-    mode: str = Field(description="dqx_native | sql")
+    mode: str = Field(description="lowcode | dqx_native | sql")
     dimension: str | None = None
     severity: str | None = None
     polarity: str | None = None
-    definition: dict[str, Any] = Field(description="Mode-specific body: {function, arguments} or {sql_query}")
+    definition: dict[str, Any] = Field(
+        description=(
+            "Mode-specific body: {function, arguments} (dqx_native), {sql_query} (sql), or "
+            "{lowcode_ast, group_by?, predicate | sql_query, merge_columns?} (lowcode)"
+        )
+    )
     slots: list[RegistryRuleSlot] | None = Field(
         default=None,
         description=(
-            "Typed column slots for a dqx_native proposal — one per column the rule targets, "
+            "Typed column slots. For a dqx_native proposal, one per column the rule targets, "
             "named from the model's column references with the family locked to the check "
-            "function's semantics. None/empty for sql proposals."
+            "function's semantics. For a lowcode proposal, one per {{slot}} placeholder in the "
+            "compiled body. None/empty for sql proposals."
         ),
     )
     author_kind: str = Field(default="ai_generated")
@@ -1670,6 +1676,13 @@ class TrendPointOut(BaseModel):
     (grouped trends, or scopes without a single binding). Only the
     single-table overall trend populates it — the UI marks the runs where
     it increments.
+
+    *is_draft* marks a point whose contributing run(s) were DRAFT (not
+    published) so the over-time tooltip can badge it (B2-136). When a point
+    collapses several runs onto one instant (multi-table pooling, or the
+    as-of carry-forward), it is draft if ANY contributing run was a draft —
+    the conservative choice so a mixed instant is never silently shown as
+    fully published.
     """
 
     run_date: str | None = None
@@ -1678,6 +1691,7 @@ class TrendPointOut(BaseModel):
     rule_count: int | None = None
     total_tests: int | None = None
     version: int | None = None
+    is_draft: bool = False
 
 
 class TrendCountPointOut(BaseModel):

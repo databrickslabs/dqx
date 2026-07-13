@@ -124,12 +124,12 @@ export type AiGenerateRuleOutSeverity = string | null;
 export type AiGenerateRuleOutPolarity = string | null;
 
 /**
- * Mode-specific body: {function, arguments} or {sql_query}
+ * Mode-specific body: {function, arguments} (dqx_native), {sql_query} (sql), or {lowcode_ast, group_by?, predicate | sql_query, merge_columns?} (lowcode)
  */
 export type AiGenerateRuleOutDefinition = { [key: string]: unknown };
 
 /**
- * Typed column slots for a dqx_native proposal — one per column the rule targets, named from the model's column references with the family locked to the check function's semantics. None/empty for sql proposals.
+ * Typed column slots. For a dqx_native proposal, one per column the rule targets, named from the model's column references with the family locked to the check function's semantics. For a lowcode proposal, one per {{slot}} placeholder in the compiled body. None/empty for sql proposals.
  */
 export type AiGenerateRuleOutSlots = RuleSlot[] | null;
 
@@ -139,14 +139,14 @@ export type AiGenerateRuleOutSlots = RuleSlot[] | null;
 export interface AiGenerateRuleOut {
   name: string;
   description: string;
-  /** dqx_native | sql */
+  /** lowcode | dqx_native | sql */
   mode: string;
   dimension?: AiGenerateRuleOutDimension;
   severity?: AiGenerateRuleOutSeverity;
   polarity?: AiGenerateRuleOutPolarity;
-  /** Mode-specific body: {function, arguments} or {sql_query} */
+  /** Mode-specific body: {function, arguments} (dqx_native), {sql_query} (sql), or {lowcode_ast, group_by?, predicate | sql_query, merge_columns?} (lowcode) */
   definition: AiGenerateRuleOutDefinition;
-  /** Typed column slots for a dqx_native proposal — one per column the rule targets, named from the model's column references with the family locked to the check function's semantics. None/empty for sql proposals. */
+  /** Typed column slots. For a dqx_native proposal, one per column the rule targets, named from the model's column references with the family locked to the check function's semantics. For a lowcode proposal, one per {{slot}} placeholder in the compiled body. None/empty for sql proposals. */
   slots?: AiGenerateRuleOutSlots;
   author_kind?: string;
 }
@@ -3669,6 +3669,13 @@ the run); 0 before the first approval, None when not applicable
 (grouped trends, or scopes without a single binding). Only the
 single-table overall trend populates it — the UI marks the runs where
 it increments.
+
+*is_draft* marks a point whose contributing run(s) were DRAFT (not
+published) so the over-time tooltip can badge it (B2-136). When a point
+collapses several runs onto one instant (multi-table pooling, or the
+as-of carry-forward), it is draft if ANY contributing run was a draft —
+the conservative choice so a mixed instant is never silently shown as
+fully published.
  */
 export interface TrendPointOut {
   run_date?: TrendPointOutRunDate;
@@ -3677,6 +3684,7 @@ export interface TrendPointOut {
   rule_count?: TrendPointOutRuleCount;
   total_tests?: TrendPointOutTotalTests;
   version?: TrendPointOutVersion;
+  is_draft?: boolean;
 }
 
 export type UpdateDataProductInName = string | null;

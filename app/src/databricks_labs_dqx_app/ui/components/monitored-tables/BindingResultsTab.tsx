@@ -365,8 +365,11 @@ function ResultsBody({
   // Run mode: "Published only" (default) or "Published + Draft". Per-surface
   // state — every dq-results query on THIS tab gets `include_drafts` from it
   // (true only when drafts are included; omitted otherwise so the backend's
-  // published-only default applies).
-  const [includeDrafts, setIncludeDrafts] = useState(false);
+  // published-only default applies). A never-approved binding only has draft
+  // runs (the published-only default would hide them all), so seed the picker
+  // to "Published + Draft" in that case so those runs are visible without the
+  // user switching (still user-toggleable afterwards).
+  const [includeDrafts, setIncludeDrafts] = useState(Boolean(neverApproved));
   const draftsParam = includeDraftsParam(includeDrafts);
   // Drilldown scope: "applicable" (default) cross-filters the breakdowns by the
   // active chips; "all" shows each breakdown's full set ignoring those chips.
@@ -405,9 +408,12 @@ function ResultsBody({
     },
   );
   const runsData = runsQuery.data;
-  // First load only (no rows yet) drives the score skeleton; a keepPreviousData
-  // refetch keeps the old score on screen instead of a spinner.
-  const runsLoading = runsQuery.isPending;
+  // Show the score skeleton on the first load AND while a re-keyed refetch is in
+  // flight (B2-138): a run-mode switch re-keys this query, and keepPreviousData
+  // keeps `isPending` false (old rows shown as placeholder) while `isFetching`
+  // is true — so we key the skeleton off `isFetching` to surface loading during
+  // the switch instead of showing stale data until it swaps.
+  const runsLoading = runsQuery.isFetching;
   const runs = (runsData?.rows ?? []).filter(
     (r): r is typeof r & { run_id: string } => typeof r.run_id === "string",
   );
@@ -427,7 +433,10 @@ function ResultsBody({
     },
   );
   const trend = trendQuery.data?.data;
-  const trendsLoading = trendQuery.isPending;
+  // isFetching (not isPending) so the chart frames re-show their spinner while a
+  // run-mode switch re-fetches (B2-138) — keepPreviousData otherwise keeps the
+  // stale chart up with isPending false.
+  const trendsLoading = trendQuery.isFetching;
 
   // The FILTERED breakdown: run-scoped AND cross-filtered by the active facet
   // chips. This is the live result in both modes — the numbers always reflect
@@ -603,11 +612,13 @@ function ResultsBody({
       run_date: String(p.run_date ?? ""),
       series: p.series ?? undefined,
       pass_rate: toNum(p.pass_rate),
+      is_draft: p.is_draft ?? false,
     }));
   const toTrend = (rows: EntityResultsOut["trend"]) =>
     (rows ?? []).map((tp) => ({
       run_date: String(tp.run_date ?? ""),
       pass_rate: toNum(tp.pass_rate),
+      is_draft: tp.is_draft ?? false,
     }));
 
   // B5/B6 count series. Series keys are the ENGLISH canonical names — the
@@ -700,15 +711,6 @@ function ResultsBody({
       <RunInProgressBanner show={Boolean(runInProgress)}>
         {t("resultsUi.runInProgressBanner")}
       </RunInProgressBanner>
-
-      {/* Draft-binding context (P3.6): a never-approved binding only has
-          draft runs, which the published-only default hides — one plain
-          informational line pointing at the run-mode dropdown. */}
-      {neverApproved && (
-        <p className="text-xs text-muted-foreground" role="note">
-          {t("resultsUi.draftBindingNotice")}
-        </p>
-      )}
 
       {/* A2: the run picker (plus the run-mode dropdown) overlaps the score
           box's top-right corner; it drops below the score on very small

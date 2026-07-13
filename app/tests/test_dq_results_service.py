@@ -46,6 +46,7 @@ def make_row(
     dimension: str | None = None,
     columns: tuple[str, ...] = (),
     rule_id: str | None = None,
+    run_mode: str | None = None,
 ) -> CheckResultRow:
     return CheckResultRow(
         table_fqn=fqn,
@@ -58,6 +59,7 @@ def make_row(
         dimension=dimension,
         columns=columns,
         rule_id=rule_id,
+        run_mode=run_mode,
     )
 
 
@@ -1171,3 +1173,59 @@ class TestBatchConsolidation:
         )
         assert {p.run_date for p in out.trend_by_table} == {"2026-07-02 10:05:00"}
         assert {p.series for p in out.trend_by_table} == {self.A, self.B}
+
+
+class TestTrendDraftFlag:
+    """B2-136: trend points carry an is_draft flag from their run(s)' provenance."""
+
+    def test_parse_check_rows_reads_run_mode(self):
+        rows = parse_check_rows(
+            [
+                {
+                    "input_location": FQN,
+                    "run_id": "r1",
+                    "run_date": "2026-07-01 00:00:00",
+                    "check_name": "c1",
+                    "error_count": "0",
+                    "warning_count": "0",
+                    "input_row_count": "100",
+                    "run_mode": "draft",
+                }
+            ]
+        )
+        assert rows[0].run_mode == "draft"
+
+    def test_published_points_are_not_draft(self):
+        rows = [make_row(run_id="r1", run_date="2026-07-01 00:00:00", run_mode="published")]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.trend[0].is_draft is False
+
+    def test_draft_run_marks_overall_and_grouped_points(self):
+        rows = [
+            make_row(
+                run_id="r1",
+                run_date="2026-07-02 00:00:00",
+                run_mode="draft",
+                dimension="Completeness",
+            )
+        ]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.trend[0].is_draft is True
+        assert all(p.is_draft for p in out.trend_by_dimension)
+
+    def test_mixed_instant_is_draft_when_any_contributing_run_is_draft(self):
+        # Two tables run at the same instant; one draft, one published. The
+        # pooled overall point is conservatively marked draft.
+        rows = [
+            make_row(fqn="c.s.a", run_id="ra", run_date="2026-07-02 00:00:00", run_mode="published"),
+            make_row(fqn="c.s.b", run_id="rb", run_date="2026-07-02 00:00:00", run_mode="draft"),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table", asof_rows=rows)
+        assert out.trend[0].is_draft is True
+
+    def test_untagged_legacy_run_is_not_draft(self):
+        # The shaping view resolves untagged runs to 'published', so a None
+        # run_mode must not mark a point draft.
+        rows = [make_row(run_id="r1", run_date="2026-07-01 00:00:00", run_mode=None)]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.trend[0].is_draft is False

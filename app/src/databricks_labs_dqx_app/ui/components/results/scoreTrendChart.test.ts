@@ -3,8 +3,10 @@ import {
   clampWindow,
   countSeriesColors,
   COUNT_COLORS,
+  DRAFT_KEY,
   fracFromChartY,
   isFullExtent,
+  isScoreDotClipped,
   niceTimeTicks,
   panWindow,
   percentFromChartY,
@@ -59,6 +61,23 @@ describe("pivot", () => {
   it("keeps null pass rates as null (gap), not 0", () => {
     const { points } = pivot([{ run_date: "2026-06-10", pass_rate: null }]);
     expect(points[0]["Pass rate"]).toBeNull();
+  });
+
+  it("flags a draft point via DRAFT_KEY (B2-136)", () => {
+    const { points } = pivot([
+      { run_date: "2026-06-10", pass_rate: 0.9, is_draft: true },
+      { run_date: "2026-06-11", pass_rate: 0.8, is_draft: false },
+    ]);
+    expect(points[0][DRAFT_KEY]).toBe(1);
+    expect(points[1][DRAFT_KEY]).toBeUndefined();
+  });
+
+  it("marks a run_date row draft when ANY series at that instant is draft", () => {
+    const { points } = pivot([
+      { run_date: "2026-06-10", series: "A", pass_rate: 1, is_draft: false },
+      { run_date: "2026-06-10", series: "B", pass_rate: 0.5, is_draft: true },
+    ]);
+    expect(points[0][DRAFT_KEY]).toBe(1);
   });
 });
 
@@ -223,5 +242,35 @@ describe("isFullExtent", () => {
     expect(isFullExtent(0, 100, 0, 100)).toBe(true);
     expect(isFullExtent(-5, 120, 0, 100)).toBe(true);
     expect(isFullExtent(10, 90, 0, 100)).toBe(false);
+  });
+});
+
+describe("isScoreDotClipped", () => {
+  const ts = Date.parse("2026-06-10T10:00:00Z");
+
+  it("never clips when neither axis is zoomed — the first/only-run case (B2-139)", () => {
+    // A single/first run: no zoom domains at all. The dot must render even
+    // though its epoch-ms ts is far from any data-derived [xLo,xHi]=[0,0].
+    expect(isScoreDotClipped(90, ts, null, null)).toBe(false);
+    // Extreme edge values are fine too when unzoomed.
+    expect(isScoreDotClipped(0, ts, null, null)).toBe(false);
+    expect(isScoreDotClipped(100, ts, null, null)).toBe(false);
+  });
+
+  it("clips a point whose ts falls outside an ACTIVE x-zoom window", () => {
+    const inWindow: [number, number] = [ts - 1000, ts + 1000];
+    expect(isScoreDotClipped(90, ts, inWindow, null)).toBe(false);
+    const rightOfWindow: [number, number] = [ts - 2000, ts - 1000];
+    expect(isScoreDotClipped(90, ts, rightOfWindow, null)).toBe(true);
+  });
+
+  it("clips a point whose value falls outside an ACTIVE y-zoom window", () => {
+    expect(isScoreDotClipped(90, ts, null, [80, 100])).toBe(false);
+    expect(isScoreDotClipped(50, ts, null, [80, 100])).toBe(true);
+  });
+
+  it("does not clip null values / null ts against a zoom window", () => {
+    expect(isScoreDotClipped(null, ts, null, [80, 100])).toBe(false);
+    expect(isScoreDotClipped(90, null, [ts + 1000, ts + 2000], null)).toBe(false);
   });
 });

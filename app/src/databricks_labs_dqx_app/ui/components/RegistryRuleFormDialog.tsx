@@ -1476,8 +1476,10 @@ export function RegistryRuleFormDialog({
     // never on DQX Native with that function selected, which would force
     // the steward to redirect out manually via the same special-case the
     // Function combobox applies below.
-    const isSqlProposal = proposal.mode === "sql" || nativeFn === "sql_query" || nativeFn === "sql_expression";
-    const appliedMode: RegistryMode = isSqlProposal ? "sql" : "dqx_native";
+    const isLowcodeProposal = proposal.mode === "lowcode";
+    const isSqlProposal =
+      !isLowcodeProposal && (proposal.mode === "sql" || nativeFn === "sql_query" || nativeFn === "sql_expression");
+    const appliedMode: RegistryMode = isLowcodeProposal ? "lowcode" : isSqlProposal ? "sql" : "dqx_native";
     // Switch the mode segmented control onto the real authoring mode so the
     // steward immediately sees (and can tweak) what the proposal filled in.
     setMode(appliedMode);
@@ -1498,7 +1500,21 @@ export function RegistryRuleFormDialog({
         : "ai_generated",
     );
 
-    if (isSqlProposal) {
+    if (isLowcodeProposal) {
+      // A low-code proposal carries the re-editable AST (+ optional group-by)
+      // the visual builder rehydrates from, plus the declared {{slot}} columns
+      // and a PASS/FAIL polarity — load them straight into the low-code editor.
+      const storedAst = body.lowcode_ast;
+      setLowcodeAst(isV2Ast(storedAst) ? storedAst : EMPTY_LOWCODE_AST);
+      setGroupBy(typeof body.group_by === "string" ? body.group_by : "");
+      setSqlSlots(proposal.slots ?? []);
+      setPolarity(proposal.polarity === "fail" ? "fail" : "pass");
+      setSqlPredicate("");
+      setFunctionName("");
+      setParamRawValues({});
+      setPendingNativeArgs(null);
+      setPendingNativeSlots(null);
+    } else if (isSqlProposal) {
       const nativeArgs =
         body.arguments && typeof body.arguments === "object"
           ? (body.arguments as Record<string, unknown>)
