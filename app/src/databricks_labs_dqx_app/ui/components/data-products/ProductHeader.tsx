@@ -377,16 +377,10 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
     }
   };
 
-  const goToRuns = () =>
-    void navigate({
-      to: "/table-spaces/$productId",
-      params: { productId: product.product_id },
-      search: (prev) => ({ ...prev, tab: "runs" }),
-    });
-
   // Deep-link into the global Runs History, pre-filtered to this table
-  // space's member tables (Stream I #17). Distinct from `goToRuns`, which
-  // opens the in-page Runs tab.
+  // space's member tables (Stream I #17). The in-page Runs tab is reachable
+  // from the tab bar, so the ⋮ menu only offers this global-history link
+  // (matching the Monitored Table detail menu — avoids a duplicate "Runs").
   const goToRunsHistory = () =>
     void navigate({ to: "/runs-history", search: { productId: product.product_id } });
 
@@ -602,10 +596,6 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                     </Tooltip>
                   </TooltipProvider>
                 ))}
-              <DropdownMenuItem onSelect={goToRuns} className="gap-2">
-                <History className="h-3.5 w-3.5" />
-                {t("dataProducts.tabRuns")}
-              </DropdownMenuItem>
               <DropdownMenuItem onSelect={goToRunsHistory} className="gap-2">
                 <History className="h-3.5 w-3.5" />
                 {t("runsHistory.menuViewRuns")}
