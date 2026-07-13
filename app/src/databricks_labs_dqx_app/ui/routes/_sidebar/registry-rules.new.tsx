@@ -2,8 +2,16 @@ import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router"
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
+import { Braces, MoreVertical } from "lucide-react";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,6 +48,10 @@ function RegistryRuleCreatePage() {
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
 
   const [isDirty, setIsDirty] = useState(false);
+  // "As JSON" edit-in-place dialog — opened from the ⋮ overflow menu below and
+  // applied straight into the form (B2-114). Drives RegistryRuleFormDialog's
+  // controlled `jsonDialogOpen` prop, mirroring the existing-rule detail page.
+  const [formJsonDialogOpen, setFormJsonDialogOpen] = useState(false);
   // Set right before a successful save navigates us away, so the guard
   // doesn't fire a spurious "unsaved changes" prompt on our own redirect.
   const justSavedRef = useRef(false);
@@ -84,6 +96,32 @@ function RegistryRuleCreatePage() {
     </div>
   );
 
+  // ⋮ overflow menu, passed DOWN into the form's page-variant header so it
+  // renders inline, immediately after the Save/Submit buttons, in ONE
+  // top-right action row — mirroring the existing-rule detail page's header
+  // (B2-114). "As JSON" now lives here rather than as a standalone button on
+  // the Implementation tab.
+  const headerActions = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0"
+          aria-label={t("rulesRegistry.actionsMenuLabel")}
+        >
+          <MoreVertical className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => setFormJsonDialogOpen(true)} className="gap-2">
+          <Braces className="h-3.5 w-3.5" />
+          {t("rulesRegistry.actionAsJson")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   return (
     <FadeIn>
       <div className="space-y-6">
@@ -106,6 +144,9 @@ function RegistryRuleCreatePage() {
           activeTab={tab as PageTab | undefined}
           onActiveTabChange={handleActiveTabChange}
           onDirtyChange={setIsDirty}
+          jsonDialogOpen={formJsonDialogOpen}
+          onJsonDialogOpenChange={setFormJsonDialogOpen}
+          headerActions={headerActions}
           headerTitle={headerTitle}
         />
       </div>
