@@ -488,7 +488,7 @@ function MonitoredTablesPage() {
               </div>
             ) : isError ? (
               <div className="flex flex-col items-center justify-center text-center">
-                <AlertCircle className="h-10 w-10 text-destructive/30 mb-3" />
+                <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
                 <p className="text-sm text-muted-foreground mb-3">{t("common.loadFailed")}</p>
                 <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-2">
                   <RotateCcw className="h-3 w-3" />
