@@ -326,6 +326,31 @@ export function isFullExtent(
   return lo <= min && hi >= max;
 }
 
+/** Whether the Overall-DQ-score custom dot at (`ts`, `value`) should be clipped
+ *  (not painted). The hand-rolled dots aren't clipped by recharts, so under an
+ *  ACTIVE zoom (the only time an axis carries allowDataOverflow) a point outside
+ *  the window would otherwise render a "phantom" dot pinned at the plot edge —
+ *  hide it. When neither axis is zoomed, recharts already clips its own marks to
+ *  the auto domain, so nothing is clipped here. Gating strictly on the presence
+ *  of a zoom domain (rather than a data-derived [xLo,xHi] range) is also what
+ *  makes a single/first run render its dot (B2-139): a one-point series has no
+ *  time ticks and no derived x-extent, so an x-range check would wrongly treat
+ *  the lone point's epoch-ms as out-of-range and drop it. */
+export function isScoreDotClipped(
+  value: number | null,
+  ts: number | null,
+  zoomDomain: [number, number] | null,
+  yZoomDomain: [number, number] | null,
+): boolean {
+  if (zoomDomain && ts != null && (ts < zoomDomain[0] || ts > zoomDomain[1])) {
+    return true;
+  }
+  if (yZoomDomain && value != null && (value < yZoomDomain[0] || value > yZoomDomain[1])) {
+    return true;
+  }
+  return false;
+}
+
 type TooltipPayloadEntry = {
   name?: string | number;
   value?: string | number | null;
@@ -1326,16 +1351,15 @@ export function ScoreTrendChart({
                   // edge — the "phantom point" seen mid zoom-in. The Area path is
                   // clipped by recharts; these hand-rolled dots are not, so we
                   // gate them here against the current domains (percent mode).
-                  const xdom = zoomDomain ?? [xLo, xHi];
-                  const ydom = yZoomDomain ?? [0, 100];
+                  // Clip the hand-rolled dots ONLY against an ACTIVE zoom window
+                  // (see isScoreDotClipped) — this also fixes the one-point /
+                  // first-run case (B2-139).
                   const dotOutside = (
                     v: number | null,
                     payload?: Record<string, unknown>,
                   ): boolean => {
                     const ts = typeof payload?.ts === "number" ? payload.ts : null;
-                    if (ts != null && (ts < xdom[0] || ts > xdom[1])) return true;
-                    if (v != null && (v < ydom[0] || v > ydom[1])) return true;
-                    return false;
+                    return isScoreDotClipped(v, ts, zoomDomain, yZoomDomain);
                   };
                   const scoreDot = (props: {
                     cx?: number;

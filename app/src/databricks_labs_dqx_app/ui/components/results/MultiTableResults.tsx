@@ -359,7 +359,10 @@ export function MultiTableResultsSection({
     { placeholderData: keepPreviousData, ...RESULTS_QUERY_OPTIONS },
   );
   const trends = trendQuery.data?.data;
-  const loading = trendQuery.isPending;
+  // isFetching (not isPending) so the chart frames re-show their spinner while a
+  // run-mode switch (or facet change) re-fetches (B2-138) — keepPreviousData
+  // otherwise keeps the stale charts up with isPending false, hiding the load.
+  const loading = trendQuery.isFetching;
 
   // The FILTERED breakdowns: cross-filtered by the active facet chips (never
   // run-scoped — see breakdownParams). This is the live result in both modes

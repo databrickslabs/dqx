@@ -109,11 +109,18 @@ export function ProductResultsTab({ productId }: { productId: string }) {
 function ResultsBody({ productId }: { productId: string }) {
   const { t } = useTranslation();
 
+  // The product (with members) supplies the member FQNs for the Genie chat
+  // scope below, and its version tells us whether it has ever been approved.
+  const { data: product } = useGetDataProductSuspense(productId, selector<DataProductOut>());
+
   // Run mode ("Published only" vs "Published + Draft") for THIS surface —
   // owned here because the runs list below is a surface-level dq-results
   // query outside the shared composition; the dropdown itself renders
-  // inside the composition (next to the run picker).
-  const [includeDrafts, setIncludeDrafts] = useState(false);
+  // inside the composition (next to the run picker). A never-approved space
+  // (version 0) only has draft runs, which the published-only default would
+  // hide entirely, so seed the picker to "Published + Draft" in that case so
+  // those runs are visible without the user switching (still toggleable).
+  const [includeDrafts, setIncludeDrafts] = useState(product.version === 0);
 
   // The pinned run batch (a run_id from the batch-keyed picker), or null for
   // "Latest". Threaded into the composition as `asOfBatch` so every axis
@@ -139,10 +146,9 @@ function ResultsBody({ productId }: { productId: string }) {
     (r): r is typeof r & { run_id: string } => typeof r.run_id === "string",
   );
 
-  // The product (with members) supplies the member FQNs for the Genie
-  // chat scope below (the Average line itself is server-computed from the
-  // as-of view; no client-side member universe is needed).
-  const { data: product } = useGetDataProductSuspense(productId, selector<DataProductOut>());
+  // The product's members supply the member FQNs for the Genie chat scope
+  // below (the Average line itself is server-computed from the as-of view;
+  // no client-side member universe is needed).
   const memberFqns = Array.from(
     new Set((product.members ?? []).map((m) => m.table_fqn)),
   );

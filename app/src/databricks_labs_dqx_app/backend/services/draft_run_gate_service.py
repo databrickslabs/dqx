@@ -71,10 +71,7 @@ DRAFT_RUN_REQUIRED_MESSAGE = (
 
 #: User-facing 409 message when a qualifying run DOES exist but predates the
 #: most recent change — the edit needs to be re-tested (B2-118).
-DRAFT_RUN_STALE_MESSAGE = (
-    "The rules changed since the last draft run. "
-    "Run the checks in draft mode again, then submit."
-)
+DRAFT_RUN_STALE_MESSAGE = "You cannot submit for approval without first running your draft"
 
 
 class DraftRunRequiredError(RuntimeError):

@@ -5,6 +5,7 @@ import {
   COUNT_COLORS,
   fracFromChartY,
   isFullExtent,
+  isScoreDotClipped,
   niceTimeTicks,
   panWindow,
   percentFromChartY,
@@ -223,5 +224,35 @@ describe("isFullExtent", () => {
     expect(isFullExtent(0, 100, 0, 100)).toBe(true);
     expect(isFullExtent(-5, 120, 0, 100)).toBe(true);
     expect(isFullExtent(10, 90, 0, 100)).toBe(false);
+  });
+});
+
+describe("isScoreDotClipped", () => {
+  const ts = Date.parse("2026-06-10T10:00:00Z");
+
+  it("never clips when neither axis is zoomed — the first/only-run case (B2-139)", () => {
+    // A single/first run: no zoom domains at all. The dot must render even
+    // though its epoch-ms ts is far from any data-derived [xLo,xHi]=[0,0].
+    expect(isScoreDotClipped(90, ts, null, null)).toBe(false);
+    // Extreme edge values are fine too when unzoomed.
+    expect(isScoreDotClipped(0, ts, null, null)).toBe(false);
+    expect(isScoreDotClipped(100, ts, null, null)).toBe(false);
+  });
+
+  it("clips a point whose ts falls outside an ACTIVE x-zoom window", () => {
+    const inWindow: [number, number] = [ts - 1000, ts + 1000];
+    expect(isScoreDotClipped(90, ts, inWindow, null)).toBe(false);
+    const rightOfWindow: [number, number] = [ts - 2000, ts - 1000];
+    expect(isScoreDotClipped(90, ts, rightOfWindow, null)).toBe(true);
+  });
+
+  it("clips a point whose value falls outside an ACTIVE y-zoom window", () => {
+    expect(isScoreDotClipped(90, ts, null, [80, 100])).toBe(false);
+    expect(isScoreDotClipped(50, ts, null, [80, 100])).toBe(true);
+  });
+
+  it("does not clip null values / null ts against a zoom window", () => {
+    expect(isScoreDotClipped(null, ts, null, [80, 100])).toBe(false);
+    expect(isScoreDotClipped(90, null, [ts + 1000, ts + 2000], null)).toBe(false);
   });
 });
