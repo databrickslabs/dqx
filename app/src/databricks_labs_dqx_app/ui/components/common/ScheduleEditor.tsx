@@ -25,7 +25,7 @@ const DEFAULT_CADENCE_CRON = simpleToCron("daily", "06:00");
 const DEFAULT_TZ = "UTC";
 
 /** What a scheduled run does (B2-52). Kept in step with the backend
- *  ``schedule_kind`` enum; default is "both". */
+ *  ``schedule_kind`` enum; default is ``dq_only``. */
 export type ScheduleKind = "profiling_only" | "dq_only" | "profiling_and_dq";
 
 export const DEFAULT_SCHEDULE_KIND: ScheduleKind = "dq_only";
