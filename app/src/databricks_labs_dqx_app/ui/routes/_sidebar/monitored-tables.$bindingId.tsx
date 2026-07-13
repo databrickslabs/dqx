@@ -504,9 +504,6 @@ function MonitoredTableDetailPage() {
               <StatusBadge status={table.status} />
               <VersionBadge table={table} />
             </div>
-            {table.steward && (
-              <p className="text-sm text-muted-foreground mt-1">{t("monitoredTables.colSteward")}: {table.steward}</p>
-            )}
           </div>
           <div className="flex items-center gap-2">
             {perms.canCreateRules && (
