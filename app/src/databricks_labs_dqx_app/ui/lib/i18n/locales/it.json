@@ -1742,8 +1742,6 @@
     "profileDistinctSuffix": "{{pct}} distinti",
     "profileDistinctCountSuffix": "{{count}} distinti",
     "profileStatisticsHeading": "Statistiche",
-    "profileMostCommonValuesHeading": "Valori più comuni",
-    "profileTopValuesUnavailable": "Valori più frequenti non disponibili",
     "profileStatPercentiles": "P25 / P50 / P75",
     "profileStatCountNull": "Null",
     "profileStatCountNonNull": "Non null",

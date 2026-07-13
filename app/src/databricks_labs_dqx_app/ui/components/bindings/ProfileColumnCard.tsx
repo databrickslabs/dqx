@@ -113,7 +113,7 @@ export function ProfileColumnCard({ name, sparkType, stats, rowCount, open, onTo
         )}
       >
         <div className="min-h-0 overflow-hidden border-t border-border">
-          <ProfileColumnExpanded stats={stats} rowCount={rowCount} sparkType={sparkType} />
+          <ProfileColumnExpanded stats={stats} sparkType={sparkType} />
         </div>
       </div>
     </div>
