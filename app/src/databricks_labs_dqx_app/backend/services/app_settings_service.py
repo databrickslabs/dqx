@@ -475,6 +475,12 @@ class AppSettingsService:
             "is_default": True,
         },
         {
+            "value": "False positive",
+            "description": "Rule is wrong, not a real issue",
+            "color": "blue",
+            "is_default": False,
+        },
+        {
             "value": "Acknowledged",
             "description": "Known issue, accepted by owners",
             "color": "amber",
@@ -484,12 +490,6 @@ class AppSettingsService:
             "value": "Resolved",
             "description": "Fixed upstream",
             "color": "green",
-            "is_default": False,
-        },
-        {
-            "value": "False positive",
-            "description": "Rule is wrong, not a real issue",
-            "color": "blue",
             "is_default": False,
         },
     ]

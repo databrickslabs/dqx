@@ -28,9 +28,9 @@ class TestRunReviewStatusReadIsSideEffectFree:
         # Seed is returned virtually...
         assert [e["value"] for e in result] == [
             "Pending review",
+            "False positive",
             "Acknowledged",
             "Resolved",
-            "False positive",
         ]
         # ...but nothing was persisted (no upsert / write on the read path).
         sql_executor_mock.upsert.assert_not_called()

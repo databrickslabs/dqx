@@ -4,9 +4,7 @@
  *
  * UX outline:
  * - A coloured badge shows the effective review status. Unreviewed runs
- *   carry the catalogue default (e.g. "Pending review") with an "(auto)"
- *   hint so the row is visually distinct from one where someone
- *   explicitly picked the same value.
+ *   carry the catalogue default (e.g. "Pending review").
  * - A dropdown lets any authenticated user move the run to another
  *   value from the admin-managed catalogue.
  * - A small "Last changed by X at Y" line records who moved the run
@@ -163,11 +161,6 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
               >
                 {current.status || t("runReviewPanel.none")}
               </Badge>
-              {current.is_default && (
-                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                  {t("runReviewPanel.auto")}
-                </span>
-              )}
               <ChevronDown className="h-3 w-3 opacity-60" />
             </Button>
           </PopoverTrigger>

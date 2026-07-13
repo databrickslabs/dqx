@@ -1293,7 +1293,6 @@
   "runReviewPanel": {
     "loading": "Carregando status de revisão…",
     "label": "Status de revisão",
-    "auto": "auto",
     "none": "(nenhum)",
     "orphanPrefix": "O valor atual",
     "orphanSuffix": "não está mais no catálogo. Escolha um substituto.",

@@ -1293,7 +1293,6 @@
   "runReviewPanel": {
     "loading": "Loading review status…",
     "label": "Review status",
-    "auto": "auto",
     "none": "(none)",
     "orphanPrefix": "Current value",
     "orphanSuffix": "is no longer in the catalogue. Pick a replacement.",
