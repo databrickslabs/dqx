@@ -21,12 +21,14 @@ export function scoreColor(passRate: number | null): string {
 }
 
 /**
- * Animate a number from 0 → `target` (easeOutCubic via rAF), re-running whenever
- * `target` changes so the score always lands exactly on the real value. Honours
- * `prefers-reduced-motion`: reduced-motion users get the final value with no
- * ticking. Shares the `countUpValue` curve with the home "At a Glance" cards.
+ * Animate a number from `from` → `target` (easeOutCubic via rAF), re-running
+ * whenever `from`/`target` change so the score always lands exactly on the real
+ * value. `from` defaults to 0 (count up); pass 100 to count down toward a lower
+ * score. Honours `prefers-reduced-motion`: reduced-motion users get the final
+ * value with no ticking. `countUpValue(1, t)` is the shared easeOutCubic 0..1
+ * progress fraction (same curve as the home "At a Glance" cards).
  */
-function useCountUp(target: number, durationMs = 900): number {
+function useCountUp(target: number, from = 0, durationMs = 900): number {
   const reduce = useReducedMotion();
   const [value, setValue] = useState(target);
   useEffect(() => {
@@ -39,13 +41,13 @@ function useCountUp(target: number, durationMs = 900): number {
     const tick = (now: number) => {
       if (!startTs) startTs = now;
       const t = Math.min(1, (now - startTs) / durationMs);
-      setValue(countUpValue(target, t));
+      setValue(from + (target - from) * countUpValue(1, t));
       if (t < 1) raf = requestAnimationFrame(tick);
     };
-    setValue(0);
+    setValue(from);
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [target, durationMs, reduce]);
+  }, [target, from, durationMs, reduce]);
   return reduce ? target : value;
 }
 
@@ -73,9 +75,15 @@ export function ScoreBox({
 }) {
   const { t } = useTranslation();
   const reduce = useReducedMotion();
-  // Count the percentage up from 0 on mount and re-animate on every change; the
-  // rAF curve lands exactly on the real value at t≥1 (reduced-motion → static).
-  const animatedPct = useCountUp(passRate == null ? 0 : passRate * 100);
+  // B2-83: make the count-up directional off the same `trend` signal that drives
+  // the up/down arrow. A declined score (trend "down") counts DOWN from 100%;
+  // an improved/equal score, or a first run with no comparison (trend up/null),
+  // counts UP from 0% as before. Either way the rAF curve lands exactly on the
+  // real value at t≥1 (reduced-motion → static).
+  const animatedPct = useCountUp(
+    passRate == null ? 0 : passRate * 100,
+    trend === "down" ? 100 : 0,
+  );
   const pct = passRate == null ? "—" : `${animatedPct.toFixed(1)}%`;
   const bg = scoreColor(passRate);
   return (
