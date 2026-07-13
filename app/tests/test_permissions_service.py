@@ -37,6 +37,8 @@ class _FakeOltp:
     def __init__(self) -> None:
         self.grants: dict[tuple[str, str], list[list[object]]] = {}
         self.members: dict[str, list[str]] = {}
+        # object_id -> created_by (owner email), answering the owner SELECT.
+        self.owners: dict[str, str] = {}
 
     def fqn(self, table: str) -> str:
         return table
@@ -48,6 +50,10 @@ class _FakeOltp:
         return None
 
     def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[object]]:
+        if "created_by" in sql:
+            m = re.search(r"= '([^']*)'", sql)
+            owner = self.owners.get(m.group(1) if m else "")
+            return [[owner]] if owner else []
         if "dq_data_product_members" in sql:
             m = re.search(r"binding_id = '([^']*)'", sql)
             binding_id = m.group(1) if m else ""
@@ -141,6 +147,61 @@ def test_revoked_users_group_grant_confers_nothing(svc, fake):
     fake.add_grant("registry_rule", "r1", USERS_GROUP_PRINCIPAL_ID, "", principal_type="group")
     eff = svc.effective_privileges("registry_rule", "r1", principal_ids={"u1"})
     assert eff == set()
+
+
+# ---------------------------------------------------------------------------
+# Owner/creator default (implicit ALL_PRIVILEGES, display parity — B2-127)
+# ---------------------------------------------------------------------------
+
+
+def test_list_effective_grants_surfaces_owner_default(svc, fake):
+    fake.owners["r1"] = "creator@x.com"
+    eff = svc.list_effective_grants("registry_rule", "r1")
+    owner_rows = [g for g in eff if g.is_default and g.principal_id == "creator@x.com"]
+    assert len(owner_rows) == 1
+    owner = owner_rows[0]
+    assert owner.principal_type == "user"
+    assert owner.principal_name == "creator@x.com"
+    assert owner.privileges == {Privilege.ALL_PRIVILEGES}
+    assert owner.inherit is False
+    # The users-group default is still surfaced alongside the owner default.
+    assert any(g.is_default and g.principal_id == USERS_GROUP_PRINCIPAL_ID for g in eff)
+
+
+def test_owner_default_absent_when_owner_unknown(svc, fake):
+    # No owner configured -> get_object_owner returns None -> no owner row.
+    eff = svc.list_effective_grants("registry_rule", "r1")
+    assert [g for g in eff if g.principal_type == "user" and g.is_default] == []
+
+
+def test_owner_default_suppressed_when_explicit_grant_by_id(svc, fake):
+    # An explicit stored grant keyed by the owner email is authoritative.
+    fake.owners["r1"] = "creator@x.com"
+    fake.add_grant("registry_rule", "r1", "creator@x.com", "MODIFY", principal_name="creator@x.com")
+    eff = svc.list_effective_grants("registry_rule", "r1")
+    assert [g for g in eff if g.is_default and g.principal_id == "creator@x.com"] == []
+    explicit = [g for g in eff if g.principal_id == "creator@x.com" and not g.is_default]
+    assert len(explicit) == 1
+    assert explicit[0].privileges == {Privilege.MODIFY}
+
+
+def test_owner_default_suppressed_when_explicit_grant_matches_by_name(svc, fake):
+    # Owner granted explicitly via a SCIM-id principal that carries the owner
+    # email as its display name -> still suppress the synthetic owner row.
+    fake.owners["b1"] = "creator@x.com"
+    fake.add_grant("monitored_table", "b1", "scim-123", "MODIFY", principal_name="creator@x.com")
+    eff = svc.list_effective_grants("monitored_table", "b1")
+    assert [g for g in eff if g.is_default and g.principal_id == "creator@x.com"] == []
+
+
+def test_owner_default_does_not_change_effective_privileges(svc, fake):
+    # Display parity only: a non-owner caller's enforced privileges are
+    # unaffected by the synthetic owner row.
+    fake.owners["r1"] = "creator@x.com"
+    eff = svc.effective_privileges(
+        "registry_rule", "r1", principal_ids={"u1"}, owner_email="creator@x.com", principal_email="other@x.com"
+    )
+    assert Privilege.MODIFY not in eff
 
 
 def test_author_cannot_modify_without_grant(svc):

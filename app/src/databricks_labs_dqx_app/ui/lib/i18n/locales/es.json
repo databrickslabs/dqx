@@ -2217,6 +2217,8 @@
     "allUsers": "Todos los usuarios del área de trabajo",
     "defaultNote": "(predeterminado)",
     "defaultGrantHint": "De forma predeterminada, el grupo de usuarios del área de trabajo puede ver y aplicar este objeto. Restríngelo o revócalo para limitar el acceso.",
+    "ownerNote": "(propietario)",
+    "ownerGrantHint": "El creador es propietario de este objeto y tiene acceso total de forma predeterminada. Se concede automáticamente y no se puede cambiar aquí.",
     "addPermission": "Agregar permiso",
     "grantPermission": "Conceder permiso",
     "editPermission": "Editar permiso",

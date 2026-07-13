@@ -6,7 +6,9 @@ import {
   PRIV_SELECT,
   grantsEmptyColSpan,
   hasSavedObject,
+  initialGrantInherit,
   isAllPrivileges,
+  isOwnerDefaultGrant,
   isUsersGroupGrant,
   privilegeTagLabel,
 } from "./permissions-utils";
@@ -48,19 +50,54 @@ describe("isAllPrivileges", () => {
 describe("isUsersGroupGrant", () => {
   test("true for the literal 'users' principal id", () => {
     expect(isUsersGroupGrant({ principal_id: "users" })).toBe(true);
+    expect(isUsersGroupGrant({ principal_id: "users", is_default: true })).toBe(true);
   });
 
-  test("true when is_default is set, regardless of principal id", () => {
-    expect(isUsersGroupGrant({ principal_id: "some-other-principal", is_default: true })).toBe(true);
+  test("false for the owner default (is_default but not the users group)", () => {
+    // The owner/creator default is also is_default but keys on the owner
+    // email — it must NOT be classified as the users group.
+    expect(isUsersGroupGrant({ principal_id: "creator@x.com", is_default: true })).toBe(false);
   });
 
   test("false for a regular principal with no default flag", () => {
     expect(isUsersGroupGrant({ principal_id: "alice", is_default: false })).toBe(false);
     expect(isUsersGroupGrant({ principal_id: "alice" })).toBe(false);
   });
+});
 
-  test("false when is_default is explicitly null", () => {
-    expect(isUsersGroupGrant({ principal_id: "alice", is_default: null })).toBe(false);
+describe("isOwnerDefaultGrant", () => {
+  test("true for an is_default row keyed on a non-users principal (the owner)", () => {
+    expect(isOwnerDefaultGrant({ principal_id: "creator@x.com", is_default: true })).toBe(true);
+  });
+
+  test("false for the users-group default", () => {
+    expect(isOwnerDefaultGrant({ principal_id: "users", is_default: true })).toBe(false);
+  });
+
+  test("false for a regular (non-default) grant", () => {
+    expect(isOwnerDefaultGrant({ principal_id: "creator@x.com", is_default: false })).toBe(false);
+    expect(isOwnerDefaultGrant({ principal_id: "creator@x.com" })).toBe(false);
+    expect(isOwnerDefaultGrant({ principal_id: "creator@x.com", is_default: null })).toBe(false);
+  });
+});
+
+describe("initialGrantInherit", () => {
+  test("new grant seeds from the admin default (on)", () => {
+    expect(initialGrantInherit(null, true)).toBe(true);
+  });
+
+  test("new grant seeds from the admin default (off)", () => {
+    expect(initialGrantInherit(null, false)).toBe(false);
+  });
+
+  test("editing keeps the grant's stored inherit value over the admin default", () => {
+    expect(initialGrantInherit({ inherit: false }, true)).toBe(false);
+    expect(initialGrantInherit({ inherit: true }, false)).toBe(true);
+  });
+
+  test("editing falls back to the admin default when inherit is null/undefined", () => {
+    expect(initialGrantInherit({ inherit: null }, true)).toBe(true);
+    expect(initialGrantInherit({}, true)).toBe(true);
   });
 });
 

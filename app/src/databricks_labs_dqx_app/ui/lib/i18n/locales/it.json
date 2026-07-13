@@ -2217,6 +2217,8 @@
     "allUsers": "Tutti gli utenti del workspace",
     "defaultNote": "(predefinito)",
     "defaultGrantHint": "Per impostazione predefinita, il gruppo utenti del workspace può visualizzare e applicare questo oggetto. Restringi o revoca per limitare l'accesso.",
+    "ownerNote": "(proprietario)",
+    "ownerGrantHint": "Il creatore è proprietario di questo oggetto e ha accesso completo per impostazione predefinita. Viene concesso automaticamente e non è modificabile qui.",
     "addPermission": "Aggiungi autorizzazione",
     "grantPermission": "Concedi autorizzazione",
     "editPermission": "Modifica autorizzazione",

@@ -158,12 +158,27 @@ class PermissionsService:
         (SELECT + APPLY) is prepended so the UI renders it like any grant. Once
         a users-group grant is materialized (narrowed/revoked), that stored row
         shows instead. The users-group grant is per-object and never inherited.
+
+        The object creator is surfaced the same way: a synthetic ``is_default``
+        row granting ``ALL_PRIVILEGES`` to the owner's email is prepended when
+        the owner is known and has no explicit stored grant — display parity for
+        the owner-equivalent privileges the creator already holds at enforcement
+        time. If an explicit grant for the owner exists, that stored row is
+        authoritative and the synthetic owner row is suppressed.
         """
         direct = self.list_grants(object_type, object_id)
         result = list(direct)
         direct_principals = {g.principal_id for g in direct}
         if USERS_GROUP_PRINCIPAL_ID not in direct_principals:
             result.insert(0, self._default_users_group_grant(object_type, object_id))
+        # Synthetic owner/creator default — display parity with the users-group
+        # default. The creator holds ALL PRIVILEGES at enforcement time (see
+        # ``effective_privileges``), so surface it as an auto-generated,
+        # non-materialized row. Suppress it when an explicit grant already
+        # targets the owner (that stored row is authoritative — don't double-list).
+        owner_email = self.get_object_owner(object_type, object_id)
+        if owner_email and not self._owner_has_explicit_grant(owner_email, direct):
+            result.insert(0, self._default_owner_grant(object_type, object_id, owner_email))
         for parent_type, parent_id in self._parent_refs(object_type, object_id):
             for g in self.list_grants(parent_type.value, parent_id):
                 if not g.inherit:
@@ -220,6 +235,46 @@ class PermissionsService:
             grantor=None,
             is_default=True,
         )
+
+    @staticmethod
+    def _default_owner_grant(object_type: str, object_id: str, owner_email: str) -> ObjectGrant:
+        """Build the synthetic (implicit) owner/creator full-privilege grant for display.
+
+        Parallels :meth:`_default_users_group_grant`: the object creator is
+        owner-equivalent and holds ``ALL_PRIVILEGES`` at enforcement time (see
+        :meth:`effective_privileges`), which is otherwise invisible in the
+        Permissions tab. Surface it as an auto-generated, non-materialized
+        (``is_default``) row keyed on the owner's email. Display-only — never
+        stored, never inherited; enforcement is unchanged.
+        """
+        return ObjectGrant(
+            object_type=object_type,
+            object_id=object_id,
+            principal_id=owner_email,
+            principal_type=PrincipalType.USER.value,
+            principal_name=owner_email,
+            privileges={Privilege.ALL_PRIVILEGES},
+            inherit=False,
+            grantor=None,
+            is_default=True,
+        )
+
+    @staticmethod
+    def _owner_has_explicit_grant(owner_email: str, direct: list[ObjectGrant]) -> bool:
+        """True when a stored grant already targets the owner (by id or name).
+
+        A stored grant may key the owner by SCIM id or carry the owner's email
+        as its principal id/name; match either (case-insensitively) so the
+        synthetic owner row is suppressed whenever an authoritative stored grant
+        for the owner already exists.
+        """
+        target = owner_email.strip().lower()
+        for grant in direct:
+            if (grant.principal_id or "").strip().lower() == target:
+                return True
+            if (grant.principal_name or "").strip().lower() == target:
+                return True
+        return False
 
     def _parent_refs(self, object_type: str, object_id: str) -> list[tuple[ObjectType, str]]:
         """Resolve the parent objects a child inherits grants from.
