@@ -170,9 +170,8 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
-    // Steward-first (B2-92): fewest checks first surfaces the thinnest
-    // coverage — the tables most exposed to unguarded data.
-    defaultSortDir: "asc",
+    // Most checks first (B2-92): the best-covered tables lead.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (r) => <span className="tabular-nums">{r.check_count ?? 0}</span>,
   },
@@ -182,9 +181,8 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
-    // Steward-first (B2-92): fewest applied rules first — least-protected
-    // tables surface as coverage gaps.
-    defaultSortDir: "asc",
+    // Most applied rules first (B2-92): the best-covered tables lead.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (r) => <span className="tabular-nums">{r.applied_rule_count ?? 0}</span>,
   },
@@ -198,10 +196,9 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 140,
     sortable: true,
-    // Steward-first (B2-92): lowest score first (worst data), and never-scored
-    // tables (no published run) pin to the BOTTOM — quality you don't have
-    // isn't a low score to act on.
-    defaultSortDir: "asc",
+    // Highest score first (B2-92): the best-performing tables lead;
+    // never-scored tables (no published run) sort last.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (r) => <ScoreBarCell score={r.score} />,
   },
@@ -213,7 +210,7 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
-    // Most-approved-version first (B2-92); never-approved (v0) pins last.
+    // Latest version first (B2-92); never-approved (v0) sorts last.
     defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (r) => <VersionCell version={r.table.version ?? 0} />,
@@ -224,11 +221,8 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 130,
     sortable: true,
-    // Steward-first (B2-92): stalest run first (oldest → newest), and
-    // NEVER-run tables pin to the TOP — a table with zero quality signal is
-    // the biggest blind spot, ahead of a merely-stale-but-run one.
-    defaultSortDir: "asc",
-    nullsFirst: true,
+    // Most recent run first (B2-92); never-run tables sort last.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (r) => <RelativeTimeCell iso={r.table.last_run_at} />,
   },
@@ -247,9 +241,7 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 180,
     sortable: true,
-    // Steward-first (B2-92): un-stewarded tables (ownership gap) surface at
-    // the top, then A→Z through the named stewards.
-    nullsFirst: true,
+    // A→Z through the named stewards (B2-92); un-stewarded tables sort last.
     renderHeader: (label) => label,
     renderCell: (r) => <TruncatedCell text={r.table.steward || "—"} className="text-muted-foreground" />,
   },
@@ -287,13 +279,14 @@ const DEFAULT_ORDER: MonitoredTablesSortKey[] = [
   "status",
 ];
 
-/** Lifecycle-status sort rank (B2-92): lower = more attention-needing, so a
- *  first-click ASC sort surfaces the steward's action queue first. */
+/** Lifecycle-status sort rank (B2-92): a first-click ASC sort leads with the
+ *  live/approved tables, then work in progress (pending approval, draft),
+ *  with rejected and retired (deprecated) sinking to the bottom. */
 const STATUS_RANK: Record<string, number> = {
-  pending_approval: 0,
-  rejected: 1,
+  approved: 0,
+  pending_approval: 1,
   draft: 2,
-  approved: 3,
+  rejected: 3,
   deprecated: 4,
 };
 

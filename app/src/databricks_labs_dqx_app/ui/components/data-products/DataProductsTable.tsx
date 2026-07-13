@@ -195,9 +195,7 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: false,
     defaultWidth: 280,
     sortable: true,
-    // Steward-first (B2-92): undocumented products (no description) surface
-    // first as a metadata gap, then A→Z.
-    nullsFirst: true,
+    // A→Z (B2-92); undocumented products (no description) sort last.
     renderHeader: (label) => label,
     renderCell: (p) =>
       p.description ? (
@@ -221,7 +219,7 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
-    // Most-approved-version first (B2-92); never-approved (v0) pins last.
+    // Latest version first (B2-92); never-approved (v0) sorts last.
     defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (p) => <VersionCell version={p.version ?? 0} />,
@@ -232,9 +230,7 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 180,
     sortable: true,
-    // Steward-first (B2-92): un-stewarded products (ownership gap) surface at
-    // the top, then A→Z through the named stewards.
-    nullsFirst: true,
+    // A→Z through the named stewards (B2-92); un-stewarded products sort last.
     renderHeader: (label) => label,
     renderCell: (p) =>
       p.steward ? <TruncatedCell text={p.steward} /> : <span className="text-muted-foreground">—</span>,
@@ -245,9 +241,8 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 150,
     sortable: true,
-    // Steward-first (B2-92): fewest tables first surfaces thin/incomplete
-    // products (including empty ones) that still need building out.
-    defaultSortDir: "asc",
+    // Most tables first (B2-92): the largest, most-built-out products lead.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (p) => <TablesCell product={p} />,
   },
@@ -257,9 +252,8 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
-    // Steward-first (B2-92): fewest rules first — least-protected products
-    // surface as coverage gaps.
-    defaultSortDir: "asc",
+    // Most rules first (B2-92): the best-covered products lead.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (p) => <span className="tabular-nums">{sumMembers(p, (r) => r)}</span>,
   },
@@ -269,9 +263,8 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
-    // Steward-first (B2-92): fewest checks first surfaces the thinnest
-    // coverage across a product's tables.
-    defaultSortDir: "asc",
+    // Most checks first (B2-92): the best-covered products lead.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (p) => <span className="tabular-nums">{sumMembers(p, (_r, c) => c)}</span>,
   },
@@ -285,9 +278,9 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 140,
     sortable: true,
-    // Steward-first (B2-92): lowest score first (worst data); never-scored
-    // products pin to the BOTTOM — no published run yet is not a low score.
-    defaultSortDir: "asc",
+    // Highest score first (B2-92): the best-performing products lead;
+    // never-scored products (no published run) sort last.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (p) => <ScoreBarCell score={p.score} />,
   },
@@ -297,10 +290,8 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 120,
     sortable: true,
-    // Steward-first (B2-92): stalest run first (oldest → newest); NEVER-run
-    // products pin to the TOP as the biggest coverage blind spot.
-    defaultSortDir: "asc",
-    nullsFirst: true,
+    // Most recent run first (B2-92); never-run products sort last.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (p) => <RelativeTimeCell iso={p.last_run_at} />,
   },
@@ -310,25 +301,24 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: false,
     defaultWidth: 110,
     sortable: true,
-    // Steward-first (B2-92): on-demand (unscheduled) products first — no
-    // automated monitoring is a gap worth noticing, ahead of the scheduled
-    // ones.
-    defaultSortDir: "asc",
+    // Scheduled (actively-monitored) products first (B2-92); on-demand ones
+    // sort after them.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (p) => <ScheduleCell product={p} />,
   },
 };
 
-/** Review-status sort rank (B2-92): lower = more attention-needing, so a
- *  first-click ASC sort surfaces the steward's action queue — awaiting
- *  approval, then approved-with-unpublished-edits, then rejected/rework and
- *  drafts — before the settled (approved) products. */
+/** Review-status sort rank (B2-92): a first-click ASC sort leads with the
+ *  live/approved products, then approved-with-unpublished-edits and work in
+ *  progress (pending approval, draft), with rejected products sinking to the
+ *  bottom. */
 const STATUS_RANK: Record<string, number> = {
-  pending_approval: 0,
+  approved: 0,
   modified: 1,
-  rejected: 2,
+  pending_approval: 2,
   draft: 3,
-  approved: 4,
+  rejected: 4,
 };
 
 /** Returns the sortable value for a given column + row — shared between

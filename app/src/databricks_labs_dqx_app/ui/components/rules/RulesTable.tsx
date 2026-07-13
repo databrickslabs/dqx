@@ -173,9 +173,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 320,
     sortable: true,
-    // Steward-first (B2-92): surface UNDOCUMENTED rules first — a missing
-    // description is a metadata gap worth closing, so nulls sort to the top.
-    nullsFirst: true,
+    // B2-92: plain A→Z; rules with no description sort last.
     headClassName: "max-w-xs",
     renderHeader: (label) => label,
     renderCell: (r) => {
@@ -217,9 +215,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
-    // Most-revised rules first (B2-92): a high approved-version count flags a
-    // rule that has churned a lot and may warrant a look; never-approved (v0)
-    // rows sink to the bottom as nulls.
+    // Latest version first (B2-92); never-approved (v0) rows sort last.
     defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (r) =>
@@ -237,9 +233,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 180,
     sortable: true,
-    // Steward-first (B2-92): un-stewarded rules are an ownership gap — surface
-    // them at the top, then A→Z through the named stewards.
-    nullsFirst: true,
+    // A→Z through the named stewards (B2-92); un-stewarded rules sort last.
     renderHeader: (label) => label,
     renderCell: (r) => <TruncatedCell text={r.steward || "—"} className="text-muted-foreground" />,
   },
@@ -258,6 +252,8 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 140,
     sortable: true,
+    // Most recently updated first (B2-92); rows with no timestamp sort last.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (r) => <RelativeTimeCell iso={r.updated_at} />,
   },
@@ -276,9 +272,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultVisible: false,
     defaultWidth: 130,
     sortable: true,
-    // Steward-first (B2-92): uncategorized rules (no dimension) surface first
-    // as a taxonomy gap, then A→Z through the assigned dimensions.
-    nullsFirst: true,
+    // A→Z through the assigned dimensions (B2-92); uncategorized rules sort last.
     renderHeader: (label) => label,
     renderCell: (r, ctx) => {
       const dimension = getTag(r, RESERVED_DIMENSION_KEY);
@@ -329,21 +323,23 @@ const DEFAULT_ORDER: ColumnKey[] = [
   "actions",
 ];
 
-/** Lifecycle-status sort rank (B2-92): lower = more attention-needing, so a
- *  first-click ASC sort surfaces the steward's action queue — awaiting
- *  approval, then rejected/rework, then drafts — before the settled
- *  (approved) and retired (deprecated) rules. */
+/** Lifecycle-status sort rank (B2-92): a first-click ASC sort leads with the
+ *  live/approved rules, then work in progress (pending approval, draft),
+ *  with rejected and retired (deprecated) rules sinking to the bottom.
+ *  Unset/unknown statuses sort after all known ones (and nulls last). */
 const STATUS_RANK: Record<string, number> = {
-  pending_approval: 0,
-  rejected: 1,
+  approved: 0,
+  pending_approval: 1,
   draft: 2,
-  approved: 3,
+  rejected: 3,
   deprecated: 4,
 };
 
-/** Severity sort rank (B2-92): lower = more severe, so a first-click ASC sort
- *  surfaces the highest-priority rules (Critical → Low). Unset severity is
- *  returned as `null` by the getter and pinned last. */
+/** Severity sort rank (B2-92): a first-click ASC sort leads with the
+ *  highest-priority rules (Critical → Low), matching the app's established
+ *  severity display order (see `orderSeverityValuesForDisplay`, which surfaces
+ *  most-severe-first in filters and dropdowns). Unset severity is returned as
+ *  `null` by the getter and pinned last. */
 const SEVERITY_RANK: Record<string, number> = {
   critical: 0,
   high: 1,
