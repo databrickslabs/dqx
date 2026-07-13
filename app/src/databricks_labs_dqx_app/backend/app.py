@@ -10,7 +10,21 @@ from fastapi import FastAPI
 
 from ._scheduler_registry import get_scheduler, set_scheduler
 from .config import conf
-from .dependencies import get_sp_ws, set_oltp_executor
+from .dependencies import (
+    get_app_settings_service,
+    get_binding_run_service,
+    get_data_product_service,
+    get_job_service,
+    get_materializer,
+    get_monitored_table_service,
+    get_monitored_table_version_service,
+    get_registry_service,
+    get_rules_catalog_service,
+    get_run_set_service,
+    get_sp_ws,
+    get_view_service,
+    set_oltp_executor,
+)
 from .logger import logger
 from .migrations import MigrationRunner
 
@@ -25,9 +39,14 @@ from .migrations import MigrationRunner
 from .migrations.postgres import PgMigrationRunner
 from .routes import api_router
 from .services.app_settings_service import AppSettingsService
+from .services.binding_run_service import BindingRunService
+from .services.data_product_service import DataProductService
+from .services.registry_service import RegistryService
+from .services.rule_embeddings import RuleEmbeddingsService
 from .services.scheduler_service import SchedulerService
+from .services.vector_store import VectorStoreProvisioner
 from .services.view_service import mark_tmp_schema_ready
-from .sql_executor import SqlExecutor
+from .sql_executor import OltpExecutorProtocol, SqlExecutor
 from .utils import add_not_found_handler
 
 _SCHEDULER_LOCK_PATH = Path("/tmp/.dqx_scheduler.lock")  # noqa: S108
@@ -198,6 +217,99 @@ async def _update_job_wheels(sp_ws: WorkspaceClient, job_id: str, wheel_paths: l
     logger.info("Updated job %s environment with wheels: %s", job_id, wheel_paths)
 
 
+async def _build_scheduler_data_product_service(
+    sp_ws: WorkspaceClient,
+    sp_sql: SqlExecutor,
+    oltp: OltpExecutorProtocol,
+) -> tuple[DataProductService, BindingRunService]:
+    """Wire the scheduler's product-tick + table-tick collaborators (Task 5 / P21 item 14).
+
+    Mirrors the FastAPI dependency chain in ``dependencies.py``
+    (``get_data_product_service`` and its transitive collaborators) but
+    calls the factories directly with explicit arguments — there is no
+    per-request/OBO context at startup. ``get_view_service`` normally
+    splits view-creation credentials (OBO) from schema-DDL credentials
+    (SP); here both legs are pinned to the SP executor, matching how the
+    existing scope-config scheduler path already creates its own views
+    with SP credentials (``SchedulerService._create_view``/
+    ``_create_view_from_sql``) rather than a calling user's OBO token.
+    """
+    monitored_tables = await get_monitored_table_service(sql=oltp, profiling_sql=sp_sql)
+    registry = await get_registry_service(sql=oltp)
+    app_settings = await get_app_settings_service(sql=oltp)
+    rules_catalog = await get_rules_catalog_service(sql=oltp)
+    materializer = await get_materializer(
+        sql=oltp, registry=registry, monitored_tables=monitored_tables, app_settings=app_settings
+    )
+    version_service = await get_monitored_table_version_service(
+        sql=oltp, monitored_tables=monitored_tables, rules_catalog=rules_catalog
+    )
+    view_service = await get_view_service(sql=sp_sql, sp_sql=sp_sql)
+    job_service = await get_job_service(sp_ws=sp_ws, sql=sp_sql)
+    run_set_service = await get_run_set_service(sql=oltp, validation_sql=sp_sql)
+    binding_run_service = await get_binding_run_service(
+        monitored_tables=monitored_tables,
+        version_service=version_service,
+        materializer=materializer,
+        view_service=view_service,
+        job_service=job_service,
+        run_set_service=run_set_service,
+        settings_service=app_settings,
+        sp_sql=sp_sql,
+    )
+    data_product_service = await get_data_product_service(
+        sql=oltp,
+        monitored_tables=monitored_tables,
+        run_set_service=run_set_service,
+        binding_run_service=binding_run_service,
+        version_service=version_service,
+        app_settings=app_settings,
+    )
+    return data_product_service, binding_run_service
+
+
+def _maybe_start_vector_store_provisioning(
+    app: FastAPI,
+    *,
+    sp_ws: WorkspaceClient,
+    sp_sql: SqlExecutor,
+    pg_executor: OltpExecutorProtocol | None,
+) -> None:
+    """Fire-and-forget kick-off of Vector Search endpoint/index provisioning.
+
+    Best-effort, non-blocking (Rules Registry Phase 7F; auto-derived settings
+    since Phase 8B). ``ensure_vector_store`` itself never raises, but it's
+    additionally fired via ``create_task`` (not awaited) so a slow or
+    unreachable Vector Search control plane can never delay startup. Gated on
+    the AI kill-switch (not just "settings configured", since embedding/VS
+    names now always resolve to an auto-derived default) so a fresh deploy
+    with AI left off never creates Vector Search infrastructure nobody asked
+    for. The suggester keeps reporting ``available=False`` until the index
+    reports ONLINE. The task is stashed on ``app.state`` (not just a local
+    variable) so it isn't garbage-collected mid-flight — same rationale as
+    ``CacheFactory.set_fire_and_forget``.
+
+    *pg_executor* is typed as ``OltpExecutorProtocol`` (rather than the
+    concrete ``PgExecutor``) so this module never needs to import ``psycopg``
+    at load time — the same rationale as ``SchedulerService.__init__``'s
+    ``oltp_sql`` parameter.
+    """
+    try:
+        oltp_for_vs = pg_executor if pg_executor is not None else sp_sql
+        vs_app_settings = AppSettingsService(sql=oltp_for_vs)
+        if vs_app_settings.get_ai_enabled():
+            vs_embeddings = RuleEmbeddingsService(sql=oltp_for_vs, sp_ws=sp_ws, app_settings=vs_app_settings)
+            vs_registry = RegistryService(sql=oltp_for_vs)
+            vs_provisioner = VectorStoreProvisioner(
+                sp_ws=sp_ws, app_settings=vs_app_settings, embeddings=vs_embeddings, registry=vs_registry
+            )
+            app.state.vector_store_startup_task = asyncio.create_task(vs_provisioner.ensure_vector_store())
+        else:
+            logger.debug("AI features disabled; skipping Vector Search auto-provisioning at startup")
+    except Exception as e:
+        logger.warning("Could not kick off Vector Search auto-provisioning: %s", e, exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"Starting app with configuration:\n{conf.model_dump_json(indent=2)}")
@@ -229,7 +341,7 @@ async def lifespan(app: FastAPI):
     # raise, let the Databricks Apps platform restart the container,
     # and surface the underlying problem via restart-loop alerting.
     # The opt-out is intentional and explicit (unset
-    # ``DQX_LAKEBASE_INSTANCE_NAME``); a flap is not an opt-out.
+    # ``DQX_LAKEBASE_ENDPOINT``); a flap is not an opt-out.
     # The legitimate Delta-only path runs in the ``else`` branch below.
     # ------------------------------------------------------------------
     pg_executor = None
@@ -248,7 +360,7 @@ async def lifespan(app: FastAPI):
             pg_executor = await asyncio.to_thread(
                 build_pg_executor,
                 sp_ws,
-                instance_name=conf.lakebase_instance_name,
+                endpoint=conf.lakebase_endpoint,
                 database=conf.lakebase_database_name,
                 schema=conf.lakebase_schema_name,
                 token_refresh_minutes=conf.lakebase_token_refresh_minutes,
@@ -266,8 +378,8 @@ async def lifespan(app: FastAPI):
                 logger.info("Lakebase schema is up to date")
             set_oltp_executor(pg_executor)
             logger.info(
-                "Lakebase OLTP routing enabled (instance=%s, database=%s, schema=%s)",
-                conf.lakebase_instance_name,
+                "Lakebase OLTP routing enabled (endpoint=%s, database=%s, schema=%s)",
+                conf.lakebase_endpoint,
                 conf.lakebase_database_name,
                 conf.lakebase_schema_name,
             )
@@ -290,21 +402,21 @@ async def lifespan(app: FastAPI):
                     logger.warning("Error closing Lakebase pool during init failure", exc_info=True)
             set_oltp_executor(None)
             logger.exception(
-                "Lakebase initialisation failed (instance=%s, database=%s, schema=%s). "
+                "Lakebase initialisation failed (endpoint=%s, database=%s, schema=%s). "
                 "Refusing to start — silent fallback to Delta would split OLTP writes across "
                 "two physical stores and orphan prior Lakebase data on every flap. "
-                "Common causes: the database_instance is not provisioned, the app SP lacks "
-                "CAN_CONNECT_AND_CREATE on the bound database, OAuth token issuance is failing, "
+                "Common causes: the project branch/endpoint is not provisioned, the app SP "
+                "lacks a Postgres role on the branch, OAuth token issuance is failing, "
                 "or the Lakebase endpoint is transiently unreachable. Fix the underlying issue "
                 "and the platform will restart this container automatically. To intentionally "
-                "run on Delta only, unset DQX_LAKEBASE_INSTANCE_NAME.",
-                conf.lakebase_instance_name,
+                "run on Delta only, unset DQX_LAKEBASE_ENDPOINT.",
+                conf.lakebase_endpoint,
                 conf.lakebase_database_name,
                 conf.lakebase_schema_name,
             )
             raise
     else:
-        logger.info("Lakebase not configured (DQX_LAKEBASE_INSTANCE_NAME is empty). OLTP tables will live on Delta.")
+        logger.info("Lakebase not configured (DQX_LAKEBASE_ENDPOINT is empty). OLTP tables will live on Delta.")
         set_oltp_executor(None)
 
     # Delta migrations always run, but the OLTP fallback DDL is
@@ -326,9 +438,33 @@ async def lifespan(app: FastAPI):
     # so the feature degrades gracefully until an admin saves the list.
     try:
         oltp_for_seed = pg_executor if pg_executor is not None else sp_sql
-        AppSettingsService(sql=oltp_for_seed).seed_run_review_statuses_if_absent()
+        settings_for_seed = AppSettingsService(sql=oltp_for_seed)
+        settings_for_seed.seed_run_review_statuses_if_absent()
     except Exception as seed_e:
         logger.warning("Could not seed default run_review_statuses: %s", seed_e, exc_info=True)
+
+    # Seed the reserved dimension/severity label-definition keys (Rules
+    # Registry Phase 1 — dimensions & severity are TAGS in the existing
+    # ``label_definitions`` catalog, not new tables). Idempotent and
+    # best-effort for the same reason as run-review-statuses above.
+    try:
+        oltp_for_label_seed = pg_executor if pg_executor is not None else sp_sql
+        AppSettingsService(sql=oltp_for_label_seed).seed_reserved_label_definitions_if_absent()
+    except Exception as seed_e:
+        logger.warning("Could not seed reserved label definitions: %s", seed_e, exc_info=True)
+
+    # NOTE: the Rules Registry deliberately starts EMPTY. We used to seed every
+    # built-in DQX check function as a pre-published registry rule at startup,
+    # but that cluttered a fresh install with ~78 auto-provisioned rules the
+    # user never asked for. The registry now begins empty and is populated only
+    # by rules authors create (or import) themselves. The seeding helper
+    # ``builtin_rules_seed.seed_builtin_rules_if_absent`` is retained for a
+    # potential future opt-in admin action, but is not invoked on startup.
+    #
+    # Clearing any built-in rules a previous version of the app already
+    # auto-seeded is a manual, one-off developer cleanup action
+    # (``RegistryService.delete_builtin_rules()``) — not a routine migration
+    # step, so it is intentionally not invoked here on every startup.
 
     try:
         tmp_cat = conf.catalog.replace("`", "")
@@ -350,8 +486,7 @@ async def lifespan(app: FastAPI):
 
     if not (conf.wheels_volume and conf.job_id):
         msg = (
-            "DQX_WHEELS_VOLUME or DQX_JOB_ID is not set — profiler, dry-run, "
-            "and scheduler features will be unavailable"
+            "DQX_WHEELS_VOLUME or DQX_JOB_ID is not set — profiler, dry-run, and scheduler features will be unavailable"
         )
         if conf.require_task_runner:
             # Production-style deploy (bundle sets DQX_REQUIRE_TASK_RUNNER=1):
@@ -387,6 +522,25 @@ async def lifespan(app: FastAPI):
         logger.info("Scheduler lease held by another worker — skipping")
     else:
         try:
+            oltp_for_scheduler = pg_executor if pg_executor is not None else sp_sql
+            try:
+                data_product_service, binding_run_service = await _build_scheduler_data_product_service(
+                    sp_ws, sp_sql, oltp_for_scheduler
+                )
+            except Exception as dp_e:
+                # Best-effort: the scope-config scheduling path must still
+                # start even if the Data Products / monitored-table
+                # collaborator chain can't be wired (e.g. a table from an
+                # unapplied migration). The scheduler simply skips product
+                # and table ticks in that case — see
+                # ``SchedulerService._tick_products`` /
+                # ``_tick_monitored_tables``.
+                logger.warning(
+                    "Could not wire scheduler product/table tick collaborators: %s", dp_e, exc_info=True
+                )
+                data_product_service = None
+                binding_run_service = None
+
             _scheduler = SchedulerService(
                 ws=sp_ws,
                 warehouse_id=os.environ.get("DATABRICKS_WAREHOUSE_ID")
@@ -397,6 +551,8 @@ async def lifespan(app: FastAPI):
                 tmp_schema=conf.tmp_schema_name,
                 job_id=conf.job_id,
                 oltp_sql=pg_executor,
+                data_product_service=data_product_service,
+                binding_run_service=binding_run_service,
             )
             set_scheduler(_scheduler)
             _scheduler.start()
@@ -407,6 +563,8 @@ async def lifespan(app: FastAPI):
             )
         except Exception as e:
             logger.warning("Could not start scheduler: %s", e, exc_info=True)
+
+    _maybe_start_vector_store_provisioning(app, sp_ws=sp_ws, sp_sql=sp_sql, pg_executor=pg_executor)
 
     yield
 

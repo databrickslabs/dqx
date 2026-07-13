@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   Check,
   ChevronDown,
@@ -27,9 +34,10 @@ import type { LabelDefinition } from "@/lib/api-custom";
 // LabelsEditor — author-side key/value editor
 //
 // Two operating modes:
-//   1. Constrained — when ``definitions`` is provided & non-empty. Users pick
-//      keys and values from admin-curated dropdowns. A "Custom label" escape
-//      hatch is always available for free-form entries.
+//   1. Constrained — when ``definitions`` is provided & non-empty. The
+//      "+ Add label" popover lets users search admin-curated keys or type a
+//      free-form custom key (mirroring the value popover's search + custom
+//      entry pattern), then pick/type a value the same way.
 //   2. Free-form — fallback two-text-input UI when no definitions exist.
 //
 // Boolean labels (a definition with no values) commit ``"true"`` on save so
@@ -92,6 +100,18 @@ export function LabelsEditor({
   const [open, setOpen] = useState(defaultOpen);
   const [rows, setRows] = useState<Row[]>(() => recordToRows(value));
 
+  // `defaultOpen` is often computed from data that loads asynchronously
+  // (e.g. an existing rule's tags, hydrated after this component's first
+  // render). `useState(defaultOpen)` only seeds the initial value, so if
+  // the caller re-renders with `defaultOpen` flipping from false to true
+  // once the data arrives, the disclosure would otherwise stay collapsed
+  // forever even though there's now content to show. Auto-expand the one
+  // time that happens; never force it back closed once the user has
+  // interacted with it.
+  useEffect(() => {
+    if (defaultOpen) setOpen(true);
+  }, [defaultOpen]);
+
   const definitionsMap = useMemo(() => {
     const m = new Map<string, LabelDefinition>();
     for (const d of definitions ?? []) m.set(d.key, d);
@@ -130,7 +150,7 @@ export function LabelsEditor({
 
   const editor = (
     <div className="space-y-2">
-      {rows.length > 0 && (
+      {rows.length > 0 ? (
         <div className="space-y-1.5">
           {rows.map((r) => (
             <LabelRow
@@ -144,43 +164,36 @@ export function LabelsEditor({
             />
           ))}
         </div>
+      ) : (
+        <p className="text-xs text-muted-foreground italic">
+          {t("labelsEditor.noTagsApplied")}
+        </p>
       )}
-      <div className="flex items-center gap-1">
-        {constrained ? (
-          <KeyPickerButton
-            definitions={definitions ?? []}
-            usedKeys={usedKeys}
-            onPick={addDefinedRow}
-            disabled={disabled}
-          />
-        ) : (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs gap-1"
-            onClick={addCustomRow}
-            disabled={disabled}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {t("labelsEditor.addLabel")}
-          </Button>
-        )}
-        {constrained && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs gap-1 text-muted-foreground"
-            onClick={addCustomRow}
-            disabled={disabled}
-            title={t("labelsEditor.customLabelTooltip")}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {t("labelsEditor.customLabel")}
-          </Button>
-        )}
-      </div>
+      {!disabled && (
+        <div className="flex items-center gap-1">
+          {constrained ? (
+            <KeyPickerButton
+              definitions={definitions ?? []}
+              usedKeys={usedKeys}
+              onPick={addDefinedRow}
+              onPickCustom={(key) =>
+                commit([...rows, { id: crypto.randomUUID(), key, value: "" }])
+              }
+            />
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs gap-1"
+              onClick={addCustomRow}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("labelsEditor.addLabel")}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 
@@ -192,7 +205,6 @@ export function LabelsEditor({
         type="button"
         className="flex w-full items-center gap-2 text-left"
         onClick={() => setOpen((v) => !v)}
-        disabled={disabled}
       >
         {open ? (
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
@@ -207,7 +219,17 @@ export function LabelsEditor({
           </Badge>
         )}
       </button>
-      {open && editor}
+      {/* Animated expand/collapse, symmetric both directions — same
+          grid-template-rows technique used by RuleConfigCard/RulesByColumn's
+          collapsibles elsewhere in the app. */}
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows] duration-200 ease-out",
+          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+        )}
+      >
+        <div className="overflow-hidden">{editor}</div>
+      </div>
     </div>
   );
 }
@@ -251,7 +273,7 @@ function LabelRow({
           value={row.key}
           onChange={(e) => onChange({ key: e.target.value })}
           disabled={disabled}
-          className="h-7 text-xs flex-1 min-w-0"
+          className="h-7 text-xs w-28 shrink-0"
         />
       )}
       <span className="text-muted-foreground text-xs">=</span>
@@ -268,7 +290,7 @@ function LabelRow({
           value={row.value}
           onChange={(e) => onChange({ value: e.target.value })}
           disabled={disabled}
-          className="h-7 text-xs flex-1 min-w-0"
+          className="h-7 text-xs flex-1 min-w-0 max-w-40"
         />
       )}
       <Button
@@ -286,24 +308,137 @@ function LabelRow({
   );
 }
 
-// ─── KeyPickerButton ────────────────────────────────────────────────────────
+// ─── SearchPickerPopover — shared shell for the "search + pick + custom" ────
+// popover pattern used by both the add-label key picker and the value picker.
+// A trigger opens a popover containing a search input, a scrollable option
+// list, and an optional "or enter a custom …" free-text section.
+
+interface SearchPickerPopoverProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  trigger: ReactNode;
+  searchPlaceholder: string;
+  query: string;
+  onQueryChange: (query: string) => void;
+  widthClassName?: string;
+  listMaxHeightClassName?: string;
+  children: ReactNode;
+  footer?: ReactNode;
+}
+
+function SearchPickerPopover({
+  open,
+  onOpenChange,
+  trigger,
+  searchPlaceholder,
+  query,
+  onQueryChange,
+  widthClassName = "w-64",
+  listMaxHeightClassName = "max-h-56",
+  children,
+  footer,
+}: SearchPickerPopoverProps) {
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      <PopoverContent align="start" className={cn(widthClassName, "p-2")}>
+        <div className="space-y-2">
+          {/* `shouldFilter={false}` — each consumer (key/value picker) keeps
+              its own substring-match filtering (`filtered` below), so cmdk's
+              fuzzy scoring doesn't reorder results. */}
+          <Command shouldFilter={false}>
+            <CommandInput placeholder={searchPlaceholder} value={query} onValueChange={onQueryChange} className="h-8 text-xs" />
+            <CommandList className={cn(listMaxHeightClassName, "space-y-0.5")}>{children}</CommandList>
+          </Command>
+          {footer}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ─── CustomEntrySection — "or enter a custom …" + [Set] free-text escape ────
+// hatch shared by the key popover (custom label key) and the value popover
+// (custom label value).
+
+interface CustomEntrySectionProps {
+  label: string;
+  placeholder: string;
+  submitLabel: string;
+  value: string;
+  onValueChange: (value: string) => void;
+  onSubmit: () => void;
+  note?: ReactNode;
+}
+
+function CustomEntrySection({
+  label,
+  placeholder,
+  submitLabel,
+  value,
+  onValueChange,
+  onSubmit,
+  note,
+}: CustomEntrySectionProps) {
+  return (
+    <div className="border-t pt-2 space-y-1.5">
+      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">
+        {label}
+      </p>
+      <div className="flex gap-1">
+        <Input
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onValueChange(e.target.value)}
+          // Item 6: pressing Enter here previously did nothing (no submit
+          // handler, no surrounding <form>) — commit the custom key/value the
+          // same way clicking the Set button does, rather than leaving the
+          // user to reach for the mouse.
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && value.trim()) {
+              e.preventDefault();
+              onSubmit();
+            }
+          }}
+          className="h-7 text-xs"
+        />
+        <Button
+          type="button"
+          size="sm"
+          className="h-7 px-2 text-xs"
+          disabled={!value.trim()}
+          onClick={onSubmit}
+        >
+          {submitLabel}
+        </Button>
+      </div>
+      {note}
+    </div>
+  );
+}
+
+// ─── KeyPickerButton — unified "+ Add label" trigger ────────────────────────
+// Opens the shared search-picker popover to either pick an existing
+// admin-catalog key or type a free-text custom key, replacing the previous
+// pair of separate "+ Add label" / "+ Custom label" buttons.
 
 interface KeyPickerButtonProps {
   definitions: LabelDefinition[];
   usedKeys: Set<string>;
   onPick: (key: string) => void;
-  disabled?: boolean;
+  onPickCustom: (key: string) => void;
 }
 
 function KeyPickerButton({
   definitions,
   usedKeys,
   onPick,
-  disabled,
+  onPickCustom,
 }: KeyPickerButtonProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [customDraft, setCustomDraft] = useState("");
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -315,77 +450,79 @@ function KeyPickerButton({
     );
   }, [definitions, query]);
 
+  const reset = () => {
+    setOpen(false);
+    setQuery("");
+    setCustomDraft("");
+  };
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 text-xs gap-1"
-          disabled={disabled || definitions.length === 0}
-        >
+    <SearchPickerPopover
+      open={open}
+      onOpenChange={setOpen}
+      trigger={
+        <Button type="button" variant="ghost" size="sm" className="h-7 text-xs gap-1">
           <Plus className="h-3.5 w-3.5" />
           {t("labelsEditor.addLabel")}
           <ChevronDown className="h-3 w-3 opacity-60" />
         </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 p-2">
-        <div className="space-y-2">
-          <Input
-            placeholder={t("labelsEditor.searchKeys")}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="h-7 text-xs"
-            autoFocus
-          />
-          <div className="max-h-64 overflow-y-auto space-y-0.5">
-            {filtered.length === 0 && (
-              <p className="text-xs text-muted-foreground italic px-2 py-3 text-center">
-                {t("labelsEditor.noMatchingKeys")}
+      }
+      searchPlaceholder={t("labelsEditor.searchKeys")}
+      query={query}
+      onQueryChange={setQuery}
+      widthClassName="w-72"
+      listMaxHeightClassName="max-h-64"
+      footer={
+        <CustomEntrySection
+          label={t("labelsEditor.orCustomKey")}
+          placeholder={t("labelsEditor.customKeyPlaceholder")}
+          submitLabel={t("labelsEditor.set")}
+          value={customDraft}
+          onValueChange={setCustomDraft}
+          onSubmit={() => {
+            onPickCustom(customDraft.trim());
+            reset();
+          }}
+        />
+      }
+    >
+      <CommandEmpty>
+        <span className="text-xs text-muted-foreground italic">{t("labelsEditor.noMatchingKeys")}</span>
+      </CommandEmpty>
+      {filtered.map((d) => {
+        const used = usedKeys.has(d.key);
+        return (
+          <CommandItem
+            key={d.key}
+            value={d.key}
+            onSelect={() => {
+              onPick(d.key);
+              reset();
+            }}
+            className={cn("flex-col items-stretch gap-0.5 rounded px-2 py-1.5 text-xs", used && "opacity-60")}
+          >
+            <div className="flex items-center gap-2 w-full">
+              <Tag className="h-3 w-3 opacity-60" />
+              <span className="font-medium">{d.key}</span>
+              {used && (
+                <span className="text-[10px] text-muted-foreground">{t("labelsEditor.inUse")}</span>
+              )}
+              <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
+                {d.values.length === 0
+                  ? t("labelsEditor.boolean")
+                  : t("labelsEditor.valueCount", { count: d.values.length })}
+                {d.allow_custom_values ? t("labelsEditor.plusCustom") : ""}
+              </span>
+            </div>
+            {d.description && (
+              <p className="mt-0.5 ml-5 text-[11px] text-muted-foreground line-clamp-2">
+                {d.description}
               </p>
             )}
-            {filtered.map((d) => {
-              const used = usedKeys.has(d.key);
-              return (
-                <button
-                  key={d.key}
-                  type="button"
-                  onClick={() => {
-                    onPick(d.key);
-                    setOpen(false);
-                    setQuery("");
-                  }}
-                  className={cn(
-                    "w-full text-left rounded px-2 py-1.5 text-xs hover:bg-muted",
-                    used && "opacity-60",
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    <Tag className="h-3 w-3 opacity-60" />
-                    <span className="font-medium">{d.key}</span>
-                    {used && (
-                      <span className="text-[10px] text-muted-foreground">{t("labelsEditor.inUse")}</span>
-                    )}
-                    <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
-                      {d.values.length === 0
-                        ? t("labelsEditor.boolean")
-                        : t("labelsEditor.valueCount", { count: d.values.length })}
-                      {d.allow_custom_values ? t("labelsEditor.plusCustom") : ""}
-                    </span>
-                  </div>
-                  {d.description && (
-                    <p className="mt-0.5 ml-5 text-[11px] text-muted-foreground line-clamp-2">
-                      {d.description}
-                    </p>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </PopoverContent>
-    </Popover>
+          </CommandItem>
+        );
+      })}
+    </SearchPickerPopover>
   );
 }
 
@@ -422,14 +559,14 @@ function ValuePickerButton({
       <button
         type="button"
         className={cn(
-          "h-7 text-xs flex-1 min-w-0 rounded border px-2 inline-flex items-center justify-between gap-2 hover:bg-muted",
+          "h-7 text-xs font-normal flex-1 min-w-0 max-w-40 rounded border px-2 inline-flex items-center justify-between gap-2 hover:bg-muted",
           disabled && "opacity-50 cursor-not-allowed",
         )}
         onClick={() => onChange(isTrue ? "false" : "true")}
         disabled={disabled}
         title={t("labelsEditor.clickToToggle")}
       >
-        <span className="truncate font-mono">{value || "true"}</span>
+        <span className="truncate">{value || "true"}</span>
         <span className="text-[10px] text-muted-foreground">{t("labelsEditor.clickToToggle")}</span>
       </button>
     );
@@ -437,14 +574,31 @@ function ValuePickerButton({
 
   const isCustomValue = value && !definition.values.includes(value);
 
+  const reset = () => {
+    setOpen(false);
+    setQuery("");
+    setCustomDraft("");
+  };
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
+    <SearchPickerPopover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        // Pre-fill the custom draft with the existing custom value when
+        // reopening, but keep it as the single source of truth from here on
+        // so the Set button's disabled state always matches what onSubmit
+        // will actually send.
+        if (next) {
+          setCustomDraft(isCustomValue ? value : "");
+        }
+      }}
+      trigger={
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="h-7 text-xs flex-1 min-w-0 justify-between font-normal"
+          className="h-7 text-xs flex-1 min-w-0 max-w-40 justify-between font-normal"
           disabled={disabled}
         >
           <span className="truncate">
@@ -454,83 +608,56 @@ function ValuePickerButton({
           </span>
           <ChevronDown className="h-3 w-3 shrink-0 opacity-60" />
         </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-64 p-2">
-        <div className="space-y-2">
-          <Input
-            placeholder={t("labelsEditor.searchValues")}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="h-7 text-xs"
-            autoFocus
-          />
-          <div className="max-h-56 overflow-y-auto space-y-0.5">
-            {filtered.map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => {
-                  onChange(v);
-                  setOpen(false);
-                  setQuery("");
-                }}
-                className={cn(
-                  "w-full text-left rounded px-2 py-1 text-xs hover:bg-muted flex items-center gap-2",
-                  v === value && "bg-accent/50 font-medium",
-                )}
-              >
-                <Check
-                  className={cn(
-                    "h-3.5 w-3.5",
-                    v === value ? "opacity-100 text-green-500" : "opacity-0",
-                  )}
-                />
-                <span className="truncate font-mono">{v}</span>
-              </button>
-            ))}
-            {filtered.length === 0 && (
-              <p className="text-xs text-muted-foreground italic px-2 py-2 text-center">
-                {t("labelsEditor.noMatchingValues")}
-              </p>
-            )}
-          </div>
-          {definition.allow_custom_values && (
-            <div className="border-t pt-2 space-y-1.5">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">
-                {t("labelsEditor.orCustomValue")}
-              </p>
-              <div className="flex gap-1">
-                <Input
-                  placeholder={t("labelsEditor.customPlaceholder")}
-                  value={isCustomValue && !customDraft ? value : customDraft}
-                  onChange={(e) => setCustomDraft(e.target.value)}
-                  className="h-7 text-xs"
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  className="h-7 px-2 text-xs"
-                  disabled={!customDraft.trim()}
-                  onClick={() => {
-                    onChange(customDraft.trim());
-                    setCustomDraft("");
-                    setOpen(false);
-                    setQuery("");
-                  }}
-                >
-                  {t("labelsEditor.set")}
-                </Button>
-              </div>
-              {isCustomValue && (
+      }
+      searchPlaceholder={t("labelsEditor.searchValues")}
+      query={query}
+      onQueryChange={setQuery}
+      footer={
+        definition.allow_custom_values && (
+          <CustomEntrySection
+            label={t("labelsEditor.orCustomValue")}
+            placeholder={t("labelsEditor.customPlaceholder")}
+            submitLabel={t("labelsEditor.set")}
+            value={customDraft}
+            onValueChange={setCustomDraft}
+            onSubmit={() => {
+              onChange(customDraft.trim());
+              reset();
+            }}
+            note={
+              isCustomValue && (
                 <p className="text-[10px] text-muted-foreground italic">
                   {t("labelsEditor.currentNotInCatalog", { value })}
                 </p>
-              )}
-            </div>
-          )}
-        </div>
-      </PopoverContent>
-    </Popover>
+              )
+            }
+          />
+        )
+      }
+    >
+      {filtered.map((v) => (
+        <CommandItem
+          key={v}
+          value={v}
+          onSelect={() => {
+            onChange(v);
+            reset();
+          }}
+          className={cn("rounded px-2 py-1 text-xs", v === value && "bg-accent/50 font-medium")}
+        >
+          <Check
+            className={cn(
+              "h-3.5 w-3.5",
+              v === value ? "opacity-100 text-green-500" : "opacity-0",
+            )}
+          />
+          <span className="truncate font-mono">{v}</span>
+        </CommandItem>
+      ))}
+      <CommandEmpty>
+        <span className="text-xs text-muted-foreground italic">{t("labelsEditor.noMatchingValues")}</span>
+      </CommandEmpty>
+    </SearchPickerPopover>
   );
 }
 

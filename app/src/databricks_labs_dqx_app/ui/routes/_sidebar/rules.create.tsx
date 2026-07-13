@@ -2,6 +2,7 @@ import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { usePermissions } from "@/hooks/use-permissions";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
+import { FadeIn } from "@/components/anim/FadeIn";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Sparkles,
@@ -57,35 +58,37 @@ function CreateRulesLanding() {
   ] as const;
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-2">
-        <PageBreadcrumb items={[]} page={t("rulesCreate.breadcrumb")} />
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">{t("rulesCreate.title")}</h1>
-          <p className="text-muted-foreground">
-            {t("rulesCreate.subtitle")}
-          </p>
+    <FadeIn>
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <PageBreadcrumb items={[]} page={t("rulesCreate.breadcrumb")} />
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">{t("rulesCreate.title")}</h1>
+            <p className="text-muted-foreground">
+              {t("rulesCreate.subtitle")}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          {OPTIONS.map(({ to, icon: Icon, title, description }) => (
+            <Link key={to} to={to} search={{ from: "create" }} className="block group">
+              <Card className="h-full transition-colors hover:border-primary/50 hover:bg-muted/30">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Icon className="h-4 w-4 text-primary" />
+                    {title}
+                    <ArrowRight className="h-3.5 w-3.5 ml-auto opacity-0 -translate-x-1 transition-all group-hover:opacity-60 group-hover:translate-x-0" />
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <CardDescription>{description}</CardDescription>
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
         </div>
       </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        {OPTIONS.map(({ to, icon: Icon, title, description }) => (
-          <Link key={to} to={to} search={{ from: "create" }} className="block group">
-            <Card className="h-full transition-colors hover:border-primary/50 hover:bg-muted/30">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Icon className="h-4 w-4 text-primary" />
-                  {title}
-                  <ArrowRight className="h-3.5 w-3.5 ml-auto opacity-0 -translate-x-1 transition-all group-hover:opacity-60 group-hover:translate-x-0" />
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <CardDescription>{description}</CardDescription>
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
-      </div>
-    </div>
+    </FadeIn>
   );
 }

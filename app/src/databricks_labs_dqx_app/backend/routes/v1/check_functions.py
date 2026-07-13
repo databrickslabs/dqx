@@ -129,6 +129,69 @@ _CATEGORIES: dict[str, str] = {
 }
 
 
+# Column-argument SLOT FAMILY per check function (item 10 — typed slots).
+#
+# DQX check functions are almost entirely DUCK-TYPED at runtime: a column
+# parameter is annotated ``str | Column`` and the PySpark expression it builds
+# either works against the column's runtime type or errors at execution. There
+# is no per-argument type metadata in DQX itself — so this map is the app's
+# own reading of each check's *semantics*, used only to (a) lock a native
+# rule's slot family in the authoring UI and (b) narrow the apply-time column
+# picker to columns that can actually satisfy the check.
+#
+# Only checks whose column argument(s) are UNAMBIGUOUSLY of one family are
+# listed; everything else stays ``"any"`` (the honest classification for the
+# many polymorphic comparison/null/list checks that accept numeric OR temporal
+# OR string columns — e.g. ``is_in_range``, ``is_not_less_than``,
+# ``is_not_null`` — where restricting to one family would wrongly exclude the
+# others at apply time). A function's every column-kind parameter shares its
+# entry (e.g. ``is_older_than_col2_for_n_days``'s ``column1`` AND ``column2``
+# are both temporal).
+_COLUMN_FAMILIES: dict[str, str] = {
+    # Text — string columns validated by pattern/format/parse semantics.
+    "regex_match": "text",
+    "is_valid_ipv4_address": "text",
+    "is_valid_ipv6_address": "text",
+    "is_ipv4_address_in_cidr": "text",
+    "is_ipv6_address_in_cidr": "text",
+    "is_valid_email": "text",
+    "is_valid_json": "text",
+    "has_json_keys": "text",
+    "has_valid_json_schema": "text",
+    # ``is_valid_date`` / ``is_valid_timestamp`` parse a STRING column against a
+    # format — the column being validated is text, not an already-typed
+    # date/timestamp (which would validate trivially).
+    "is_valid_date": "text",
+    "is_valid_timestamp": "text",
+    # Temporal — the column must be a date/timestamp for the comparison to
+    # date-arithmetic against now()/another instant to be meaningful.
+    "is_older_than_n_days": "temporal",
+    "is_older_than_col2_for_n_days": "temporal",
+    "is_not_in_future": "temporal",
+    "is_not_in_near_future": "temporal",
+    "is_data_fresh": "temporal",
+    "is_data_fresh_per_time_window": "temporal",
+    # Numeric — statistical outlier detection is only defined over numbers.
+    "has_no_outliers": "numeric",
+    "has_no_aggr_outliers": "numeric",
+    # Array — the only built-in check that genuinely takes an ARRAY column
+    # (``F.size(col)``). No other non-geo built-in requires an array argument
+    # (``is_in_list`` takes a scalar column + a Python list VALUE, not an array
+    # column), so ARRAY is added to the family set solely for this check.
+    "is_not_null_and_not_empty_array": "array",
+}
+
+
+def _family_for_column_param(fn_name: str) -> str:
+    """Slot family a native check implies for its column argument(s).
+
+    Returns ``"any"`` for every function not explicitly typed in
+    :data:`_COLUMN_FAMILIES` — DQX checks are duck-typed, so absent a clear
+    single-family reading we leave the slot unconstrained.
+    """
+    return _COLUMN_FAMILIES.get(fn_name, "any")
+
+
 def _category_for(name: str) -> str:
     """Look up the UX bucket; geo-prefixed checks are folded under one bucket."""
     if name in _CATEGORIES:
@@ -276,14 +339,19 @@ def _ensure_optional_modules_loaded() -> None:
         _load_optional_check_module(module_path)
 
 
-def _build_param(param: inspect.Parameter) -> CheckFunctionParam:
+def _build_param(param: inspect.Parameter, fn_name: str) -> CheckFunctionParam:
     annotation = param.annotation
+    kind = _classify_param_kind(param.name, annotation)
+    # Family is only meaningful for column-kind parameters (the slot the
+    # apply-time picker binds to a real column); everything else is None.
+    family = _family_for_column_param(fn_name) if kind in ("column", "columns") else None
     return CheckFunctionParam(
         name=param.name,
-        kind=_classify_param_kind(param.name, annotation),
+        kind=kind,
         required=param.default is inspect.Parameter.empty,
         default=_serialize_default(param.default),
         annotation="" if annotation is inspect.Parameter.empty else str(annotation),
+        family=family,
     )
 
 
@@ -324,7 +392,7 @@ def _introspect_check_functions() -> tuple[CheckFunctionDef, ...]:
             # rendered as a picker — see ``_HIDDEN_PARAMS``.
             if param_name in _HIDDEN_PARAMS:
                 continue
-            params.append(_build_param(param))
+            params.append(_build_param(param, name))
         out.append(
             CheckFunctionDef(
                 name=name,

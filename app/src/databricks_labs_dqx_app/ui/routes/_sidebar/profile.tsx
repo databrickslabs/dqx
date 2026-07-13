@@ -5,6 +5,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { useCurrentUserSuspense } from "@/lib/api";
 import selector from "@/lib/selector";
+import { FadeIn } from "@/components/anim/FadeIn";
 import LanguageSelector from "@/components/layout/LanguageSelector";
 import {
   Card,
@@ -56,6 +57,7 @@ function ProfileContent() {
   };
 
   return (
+    <FadeIn>
     <div className="space-y-4">
       <PageBreadcrumb page={t("profile.breadcrumb")} />
       {/* Header Card */}
@@ -287,6 +289,7 @@ function ProfileContent() {
         )}
       </div>
     </div>
+    </FadeIn>
   );
 }
 

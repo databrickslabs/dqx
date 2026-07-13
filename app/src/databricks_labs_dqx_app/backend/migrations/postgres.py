@@ -110,15 +110,28 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  updated_by    TEXT"
             ");"
             # ----------------------------------------------------------
-            # dq_quality_rules — active rule catalog.
+            # dq_quality_rules — active rule catalog. ``registry_rule_id``/
+            # ``registry_version``/``applied_rule_id`` are provenance
+            # columns (Phase 3A, see docs/superpowers/specs/2026-07-02-
+            # rules-registry-design.md §3.1): when a row was materialized
+            # from a Rules Registry application, they point back at the
+            # source ``dq_rules`` row, the published version substituted,
+            # and the ``dq_applied_rules`` link — all NULL for rules
+            # authored directly against a table (unchanged legacy path).
+            # ``source='registry'`` marks a materialized row (Phase 3C
+            # ``Materializer``); the runner ignores ``source`` entirely so
+            # this is purely provenance for the UI/audit trail.
             # ----------------------------------------------------------
             f"CREATE TABLE IF NOT EXISTS {_S}.dq_quality_rules ("
-            "  rule_id    TEXT PRIMARY KEY,"
-            "  table_fqn  TEXT NOT NULL,"
-            '  "check"    JSONB NOT NULL,'
-            "  version    INTEGER NOT NULL,"
-            "  status     TEXT NOT NULL,"
-            "  source     TEXT NOT NULL,"
+            "  rule_id           TEXT PRIMARY KEY,"
+            "  table_fqn         TEXT NOT NULL,"
+            '  "check"           JSONB NOT NULL,'
+            "  version           INTEGER NOT NULL,"
+            "  status            TEXT NOT NULL,"
+            "  source            TEXT NOT NULL,"
+            "  registry_rule_id  TEXT,"
+            "  registry_version  INTEGER,"
+            "  applied_rule_id   TEXT,"
             "  created_by TEXT,"
             "  created_at TIMESTAMPTZ,"
             "  updated_by TEXT,"
@@ -126,7 +139,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  CONSTRAINT chk_dq_quality_rules_status "
             "    CHECK (status IN ('draft','pending_approval','approved','rejected')),"
             "  CONSTRAINT chk_dq_quality_rules_source "
-            "    CHECK (source IN ('ui','sql','profiler','import','ai'))"
+            "    CHECK (source IN ('ui','sql','profiler','import','ai','registry'))"
             ");"
             # Two read-paths dominate: by table_fqn (rules-list page) and
             # by status filter (review queue). One composite index covers
@@ -228,6 +241,155 @@ PG_MIGRATIONS: list[PgMigration] = [
             ");"
             f"CREATE INDEX IF NOT EXISTS idx_dq_schedule_configs_history_schedule_changed_at "
             f"  ON {_S}.dq_schedule_configs_history (schedule_name, changed_at DESC);"
+            # ----------------------------------------------------------
+            # dq_rules — Rules Registry: table-agnostic, versioned rule
+            # templates (the authoring/governance layer). Descriptive
+            # metadata (name, description, dimension, severity) is NOT
+            # a column — it lives as reserved TAG keys inside
+            # ``user_metadata`` (see ``label_definitions``/Phase 1),
+            # same as arbitrary free-text tags. ``rule_id`` is a
+            # hex-string id generated in Python (``uuid4().hex[:16]``,
+            # matching ``dq_quality_rules.rule_id`` / ``dq_comments.comment_id``)
+            # stored as TEXT rather than the native ``UUID`` type, so all
+            # entity ids share one representation across the schema.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_rules ("
+            "  rule_id       TEXT PRIMARY KEY,"
+            "  mode          TEXT NOT NULL,"
+            "  status        TEXT NOT NULL,"
+            "  version       INTEGER NOT NULL DEFAULT 0,"
+            "  polarity      TEXT,"
+            "  author_kind   TEXT,"
+            "  definition    JSONB NOT NULL,"
+            "  user_metadata JSONB,"
+            "  fingerprint   TEXT,"
+            "  steward       TEXT,"
+            "  is_builtin    BOOLEAN NOT NULL DEFAULT FALSE,"
+            "  source        TEXT,"
+            "  created_by    TEXT,"
+            "  created_at    TIMESTAMPTZ,"
+            "  updated_by    TEXT,"
+            "  updated_at    TIMESTAMPTZ,"
+            "  CONSTRAINT chk_dq_rules_mode "
+            "    CHECK (mode IN ('dqx_native','lowcode','sql')),"
+            "  CONSTRAINT chk_dq_rules_status "
+            "    CHECK (status IN ('draft','pending_approval','approved','rejected','deprecated')),"
+            "  CONSTRAINT chk_dq_rules_polarity "
+            "    CHECK (polarity IS NULL OR polarity IN ('pass','fail'))"
+            ");"
+            # Three read paths dominate: the registry list filtered by
+            # status (review queue), fingerprint dedup lookups on
+            # create/update, and per-steward filtering.
+            f"CREATE INDEX IF NOT EXISTS idx_dq_rules_status ON {_S}.dq_rules (status);"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_rules_fingerprint ON {_S}.dq_rules (fingerprint);"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_rules_steward ON {_S}.dq_rules (steward);"
+            # ----------------------------------------------------------
+            # dq_rule_versions — frozen snapshot written on every publish
+            # of a ``dq_rules`` row (pinnable artifact + audit trail).
+            # ``user_metadata`` here is a full frozen copy of the tags at
+            # publish time, including the reserved dimension/severity keys.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_rule_versions ("
+            "  id            BIGSERIAL PRIMARY KEY,"
+            "  rule_id       TEXT NOT NULL,"
+            "  version       INTEGER NOT NULL,"
+            # ``mode`` is frozen at publish time alongside ``definition`` so an
+            # in-place mode switch on the still-editable approved rule cannot
+            # corrupt how the served snapshot renders (nullable only for legacy
+            # rows written before v7 added the column).
+            "  mode          TEXT,"
+            "  definition    JSONB NOT NULL,"
+            "  polarity      TEXT,"
+            "  user_metadata JSONB,"
+            "  created_by    TEXT,"
+            "  created_at    TIMESTAMPTZ,"
+            "  CONSTRAINT uq_dq_rule_versions_rule_version UNIQUE (rule_id, version)"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_rule_versions_rule_id ON {_S}.dq_rule_versions (rule_id);"
+            # ----------------------------------------------------------
+            # dq_rules_history — append-only audit trail for the
+            # registry rule lifecycle (create/update/status transitions/
+            # delete), mirroring ``dq_quality_rules_history``'s shape.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_rules_history ("
+            "  history_id    BIGSERIAL PRIMARY KEY,"
+            "  rule_id       TEXT,"
+            "  definition    JSONB,"
+            "  version       INTEGER,"
+            "  action        TEXT NOT NULL,"
+            "  prev_status   TEXT,"
+            "  new_status    TEXT,"
+            "  changed_by    TEXT,"
+            "  changed_at    TIMESTAMPTZ"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_rules_history_rule_changed_at "
+            f"  ON {_S}.dq_rules_history (rule_id, changed_at DESC);"
+            # ----------------------------------------------------------
+            # dq_monitored_tables — Layer 2: thin binding recording that a
+            # table is under active governance (see design spec §3.1/§7).
+            # Profiling data itself lives in the existing
+            # ``dq_profiling_results`` Delta table; this row just tracks
+            # the steward + submit-for-review lifecycle (draft ->
+            # pending_approval -> approved/rejected) of the binding.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_monitored_tables ("
+            "  binding_id       TEXT PRIMARY KEY,"
+            "  table_fqn        TEXT NOT NULL,"
+            "  steward          TEXT,"
+            "  status           TEXT NOT NULL,"
+            # Optional per-table schedule (P21 item 14): a 5-field POSIX cron +
+            # IANA timezone. When set AND the binding is approved, the in-app
+            # scheduler fires ``BindingRunService.run_binding(source='approved',
+            # trigger='scheduled')`` on the cron cadence — mirroring the
+            # ``dq_data_products`` schedule columns.
+            "  schedule_cron    TEXT,"
+            "  schedule_tz      TEXT,"
+            "  last_profiled_at TIMESTAMPTZ,"
+            "  created_by       TEXT,"
+            "  created_at       TIMESTAMPTZ,"
+            "  updated_by       TEXT,"
+            "  updated_at       TIMESTAMPTZ,"
+            "  CONSTRAINT uq_dq_monitored_tables_table_fqn UNIQUE (table_fqn),"
+            "  CONSTRAINT chk_dq_monitored_tables_status "
+            "    CHECK (status IN ('draft','pending_approval','approved','rejected'))"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_monitored_tables_status "
+            f"  ON {_S}.dq_monitored_tables (status);"
+            # ----------------------------------------------------------
+            # dq_applied_rules — the LIVE LINK between a published
+            # registry rule and a monitored table's column mapping.
+            # ``pinned_version`` NULL means "follow latest published"
+            # (auto-upgrade); a non-NULL value freezes the applied rule to
+            # that ``dq_rule_versions`` snapshot. ``mapping_hash`` is a
+            # deterministic hash of ``column_mapping`` (see
+            # ``registry_models.compute_mapping_hash``) so the same rule
+            # can be applied to the same table with two *different*
+            # column mappings (e.g. checking two different columns with
+            # the same rule) without violating uniqueness, while an exact
+            # duplicate application is rejected. ``binding_id``/``rule_id``
+            # are informal references to ``dq_monitored_tables``/
+            # ``dq_rules`` (service-enforced, no FK constraint — matching
+            # ``dq_rule_versions.rule_id``'s existing convention in this
+            # baseline).
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_applied_rules ("
+            "  id                 TEXT PRIMARY KEY,"
+            "  binding_id         TEXT NOT NULL,"
+            "  rule_id            TEXT NOT NULL,"
+            "  pinned_version     INTEGER,"
+            "  severity_override  TEXT,"
+            "  column_mapping     JSONB,"
+            "  user_metadata      JSONB,"
+            "  mapping_hash       TEXT NOT NULL,"
+            "  created_by         TEXT,"
+            "  created_at         TIMESTAMPTZ,"
+            "  CONSTRAINT uq_dq_applied_rules_binding_rule_mapping "
+            "    UNIQUE (binding_id, rule_id, mapping_hash)"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_applied_rules_binding_id "
+            f"  ON {_S}.dq_applied_rules (binding_id);"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_applied_rules_rule_id "
+            f"  ON {_S}.dq_applied_rules (rule_id);"
         ),
     ),
     PgMigration(
@@ -300,6 +462,355 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"  ON {_S}.dq_role_mappings_history (role, group_name, changed_at DESC);"
             f"CREATE INDEX IF NOT EXISTS idx_dq_role_mappings_history_changed_at "
             f"  ON {_S}.dq_role_mappings_history (changed_at DESC);"
+        ),
+    ),
+    PgMigration(
+        version=4,
+        description="Rule embeddings corpus (dq_rule_embeddings) — Rules Registry Phase 4B",
+        sql=(
+            # ----------------------------------------------------------
+            # dq_rule_embeddings — one row per published registry rule,
+            # holding the normalized text blob (see
+            # ``services.rule_embeddings.build_rule_embed_text``) and its
+            # embedding vector. Populated best-effort on rule publish
+            # (``routes.v1.registry_rules.approve_registry_rule``) and by
+            # the ``RuleEmbeddingsService.backfill`` helper. Entirely
+            # optional infrastructure: the table always exists, but stays
+            # empty on any deploy with no ``embedding_endpoint_name``
+            # configured (see ``AppSettingsService`` Phase 4B/4C settings).
+            #
+            # ``embedding`` is stored as a JSON-encoded array of floats in
+            # a portable TEXT column (not a native vector/array type) so
+            # the same DDL/read path works unchanged on the Delta OLTP
+            # fallback. The Databricks Vector Search index itself is the
+            # actual ANN store the mapping suggester queries at runtime
+            # (see ``services.rule_retriever.VectorSearchRetriever``) —
+            # this table is the source-of-truth corpus a Vector Search
+            # "Delta Sync" index would sync from, or that a backfill job
+            # can re-embed from without re-deriving ``embed_text``.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_rule_embeddings ("
+            "  rule_id      TEXT PRIMARY KEY,"
+            "  rule_version INTEGER,"
+            "  embed_text   TEXT,"
+            "  embedding    TEXT,"
+            "  model        TEXT,"
+            "  updated_at   TIMESTAMPTZ"
+            ");"
+        ),
+    ),
+    PgMigration(
+        version=5,
+        description="Converge dq_monitored_tables status to the 4-state review set (draft/pending_approval/approved/rejected)",
+        sql=(
+            # ----------------------------------------------------------
+            # Monitored-table status lifecycle converge (P16-H).
+            #
+            # The v1 baseline above already declares the 4-state CHECK
+            # set, so this migration is a NO-OP on fresh installs. It
+            # exists purely to converge databases already deployed with
+            # the ORIGINAL 2-state constraint (``('draft','published')``)
+            # — the v1 baseline is skipped on those DBs because v1 is
+            # already recorded in ``dq_migrations``, so editing v1 in
+            # place could never reach them. Appending a new version is
+            # the only way the runner re-visits an already-migrated DB.
+            #
+            # Order matters and is safe inside the single transaction the
+            # runner wraps every migration in: drop the old constraint
+            # first (so the legacy value can be rewritten), rewrite any
+            # legacy ``published`` binding to ``approved`` (its lifecycle
+            # equivalent — a published table's checks were live), then
+            # re-add the constraint with the final 4-state set. On a
+            # fresh install this drops+re-adds an identical constraint and
+            # rewrites zero rows.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  DROP CONSTRAINT IF EXISTS chk_dq_monitored_tables_status;"
+            f"UPDATE {_S}.dq_monitored_tables SET status = 'approved' WHERE status = 'published';"
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  ADD CONSTRAINT chk_dq_monitored_tables_status "
+            "    CHECK (status IN ('draft','pending_approval','approved','rejected'));"
+        ),
+    ),
+    PgMigration(
+        version=6,
+        description=(
+            "Data Products: versioned monitored-table snapshots, product groupings, and run "
+            "sets (docs/superpowers/plans/2026-07-07-data-products.md Task 1)"
+        ),
+        sql=(
+            # ----------------------------------------------------------
+            # dq_monitored_tables.version — bumped on table approval (see
+            # design spec §3.1/§4.1); 0 means "never approved" and gates
+            # certain execution paths (e.g. "follow latest approved" runs
+            # require version > 0). ``IF NOT EXISTS`` is native Postgres
+            # syntax (unlike Delta) so a re-run of this migration against
+            # an already-converged DB is a true no-op.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;"
+            # ----------------------------------------------------------
+            # dq_monitored_table_versions — frozen approved rule-set
+            # snapshot per binding version (design spec §3.2).
+            # ``checks_json`` is the exact shape the runner consumes
+            # (same as ``get_approved_checks_for_table`` output);
+            # ``state_json`` is display-only metadata (applied-rule
+            # registry ids/versions/pins/severities/mappings at freeze
+            # time). ``refrozen_at`` is set when vN's content is
+            # rewritten in place without a version bump (auto-upgrade or
+            # a per-rule approval/rejection affecting this binding).
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_monitored_table_versions ("
+            "  id           TEXT PRIMARY KEY,"
+            "  binding_id   TEXT NOT NULL,"
+            "  version      INTEGER NOT NULL,"
+            "  checks_json  JSONB NOT NULL,"
+            "  state_json   JSONB,"
+            "  created_by   TEXT,"
+            "  created_at   TIMESTAMPTZ,"
+            "  refrozen_at  TIMESTAMPTZ,"
+            "  CONSTRAINT uq_dq_monitored_table_versions_binding_version "
+            "    UNIQUE (binding_id, version)"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_monitored_table_versions_binding_id "
+            f"  ON {_S}.dq_monitored_table_versions (binding_id);"
+            # ----------------------------------------------------------
+            # dq_data_products — the grouping GUID (design spec §3.3). No
+            # approver gate: members are already approval-gated via their
+            # own binding lifecycle. ``version`` is bumped ONLY on
+            # Publish; member/metadata edits flip published->draft
+            # ("Modified since publish" display state) without touching
+            # it.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_data_products ("
+            "  product_id     TEXT PRIMARY KEY,"
+            "  name           TEXT NOT NULL,"
+            "  description    TEXT,"
+            "  steward        TEXT,"
+            "  schedule_cron  TEXT,"
+            "  schedule_tz    TEXT,"
+            "  status         TEXT NOT NULL,"
+            "  version        INTEGER NOT NULL DEFAULT 0,"
+            "  created_by     TEXT,"
+            "  created_at     TIMESTAMPTZ,"
+            "  updated_by     TEXT,"
+            "  updated_at     TIMESTAMPTZ,"
+            "  CONSTRAINT uq_dq_data_products_name UNIQUE (name),"
+            "  CONSTRAINT chk_dq_data_products_status "
+            "    CHECK (status IN ('draft','pending_approval','approved','rejected'))"
+            ");"
+            # ----------------------------------------------------------
+            # dq_data_product_members — table membership within a
+            # product (design spec §3.4). ``pinned_version`` NULL means
+            # "follow latest approved"; a concrete version REALLY
+            # executes that frozen ``dq_monitored_table_versions``
+            # snapshot (a deliberate upgrade over dqlake's display-only
+            # pin). ``binding_id`` references ``dq_monitored_tables``
+            # (service-enforced, no FK — matching every other
+            # cross-table reference in this schema).
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_data_product_members ("
+            "  id              TEXT PRIMARY KEY,"
+            "  product_id      TEXT NOT NULL,"
+            "  binding_id      TEXT NOT NULL,"
+            "  pinned_version  INTEGER,"
+            "  CONSTRAINT uq_dq_data_product_members_product_binding "
+            "    UNIQUE (product_id, binding_id)"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_data_product_members_product_id "
+            f"  ON {_S}.dq_data_product_members (product_id);"
+            # ----------------------------------------------------------
+            # dq_run_sets / dq_run_set_members — every run submission
+            # (product, single table, scheduled product) mints a run set
+            # (design spec §3.5). ``product_id``/``product_version`` are
+            # nullable — null for single-table runs. ``"trigger"`` is
+            # quoted throughout (both the CREATE and its CHECK) because
+            # it is a reserved SQL keyword, matching this schema's
+            # existing convention of quoting ``"check"`` on
+            # ``dq_quality_rules``. ``binding_version`` on
+            # ``dq_run_set_members`` is nullable — null for draft-source
+            # runs where no frozen snapshot was used.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_run_sets ("
+            "  run_set_id       TEXT PRIMARY KEY,"
+            "  product_id       TEXT,"
+            "  product_version  INTEGER,"
+            "  source           TEXT NOT NULL,"
+            '  "trigger"        TEXT NOT NULL,'
+            "  created_by       TEXT,"
+            "  created_at       TIMESTAMPTZ,"
+            "  CONSTRAINT chk_dq_run_sets_source CHECK (source IN ('approved','draft')),"
+            "  CONSTRAINT chk_dq_run_sets_trigger "
+            "    CHECK (\"trigger\" IN ('manual','scheduled'))"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_run_sets_product_id "
+            f"  ON {_S}.dq_run_sets (product_id);"
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_run_set_members ("
+            "  id                TEXT PRIMARY KEY,"
+            "  run_set_id        TEXT NOT NULL,"
+            "  run_id            TEXT NOT NULL,"
+            "  binding_id        TEXT NOT NULL,"
+            "  binding_version   INTEGER"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_run_set_members_run_set_id "
+            f"  ON {_S}.dq_run_set_members (run_set_id);"
+        ),
+    ),
+    PgMigration(
+        version=7,
+        description="Freeze mode on dq_rule_versions (add column + backfill from the live rule's mode)",
+        sql=(
+            # ----------------------------------------------------------
+            # dq_rule_versions.mode — freeze the authoring mode into each
+            # publish snapshot (P20 major fix). The v1 baseline above now
+            # declares this column, so this is a NO-OP on fresh installs;
+            # it exists purely to converge databases already deployed
+            # WITHOUT the column (v1 is already recorded in dq_migrations
+            # there, so editing v1 in place could never reach them).
+            # ``IF NOT EXISTS`` is native Postgres syntax, so a re-run
+            # against an already-converged DB is a true no-op. The backfill
+            # copies each snapshot's mode from its live ``dq_rules`` row —
+            # a served vN was authored in the rule's current mode, so this
+            # reconstructs the correct frozen value for pre-existing rows.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_rule_versions ADD COLUMN IF NOT EXISTS mode TEXT;"
+            f"UPDATE {_S}.dq_rule_versions v SET mode = r.mode "
+            f"  FROM {_S}.dq_rules r WHERE v.rule_id = r.rule_id AND v.mode IS NULL;"
+        ),
+    ),
+    PgMigration(
+        version=8,
+        description="Converge dq_data_products status to the 4-state review set (draft/pending_approval/approved/rejected)",
+        sql=(
+            # ----------------------------------------------------------
+            # Data-products status lifecycle converge (P21-D). The v6
+            # baseline above declares ``chk_dq_data_products_status`` as
+            # the 4-state CHECK set, but it was edited IN PLACE from the
+            # ORIGINAL 2-state constraint (``('draft','published')``)
+            # shipped when v6 first went out — exactly the class of bug
+            # v5 (above) fixed for ``dq_monitored_tables``. A DB already
+            # migrated to v6 never re-runs it (the runner skips versions
+            # recorded in ``dq_migrations``), so it is stuck on the
+            # 2-state constraint with any ``published`` rows still at
+            # that legacy value — submit/approve then 500s on the CHECK
+            # violation, and the scheduler (which now filters on
+            # ``status='approved'``) silently stops seeing them.
+            # Appending a new version is the only way to reach those DBs.
+            #
+            # Order matters and is safe inside the single transaction the
+            # runner wraps every migration in: drop the old constraint
+            # first (so the legacy value can be rewritten), rewrite any
+            # legacy ``published`` value to ``approved`` (its lifecycle
+            # equivalent — a published product's members were live), then
+            # re-add the constraint with the final 4-state set. On a
+            # fresh install (already at the 4-state set) this drops and
+            # re-adds an identical constraint and rewrites zero rows.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_data_products "
+            "  DROP CONSTRAINT IF EXISTS chk_dq_data_products_status;"
+            f"UPDATE {_S}.dq_data_products SET status = 'approved' WHERE status = 'published';"
+            f"ALTER TABLE {_S}.dq_data_products "
+            "  ADD CONSTRAINT chk_dq_data_products_status "
+            "    CHECK (status IN ('draft','pending_approval','approved','rejected'));"
+        ),
+    ),
+    PgMigration(
+        version=9,
+        description="Monitored tables become schedulable: add schedule_cron/schedule_tz (P21 item 14)",
+        sql=(
+            # ----------------------------------------------------------
+            # Monitored-table schedule columns (P21 item 14). The v1
+            # baseline above now declares both columns, so this is a
+            # NO-OP on fresh installs. It exists purely to converge
+            # databases already deployed WITHOUT them (v1 is already
+            # recorded in ``dq_migrations`` there, so editing v1 in place
+            # could never reach them — the same edit-in-place trap that
+            # v5 and v8 above had to correct after the fact). ``IF NOT
+            # EXISTS`` is native Postgres syntax, so a re-run against an
+            # already-converged DB is a true no-op.
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_monitored_tables ADD COLUMN IF NOT EXISTS schedule_cron TEXT;"
+            f"ALTER TABLE {_S}.dq_monitored_tables ADD COLUMN IF NOT EXISTS schedule_tz TEXT;"
+        ),
+    ),
+    PgMigration(
+        version=10,
+        description=(
+            "UC-style object permissions: per-object grants to workspace principals "
+            "(dq_object_grants + dq_object_grants_history) — P22-D item 10"
+        ),
+        sql=(
+            # ----------------------------------------------------------
+            # dq_object_grants — one row per (object, principal) holding
+            # the set of app-level privileges that principal has on that
+            # securable object, mirroring Unity Catalog's grants model.
+            #
+            # ``object_type`` is one of the three securables the Rules
+            # Registry exposes; ``object_id`` is the corresponding entity
+            # id (``dq_rules.rule_id`` / ``dq_monitored_tables.binding_id``
+            # / ``dq_data_products.product_id``). No FK constraint — this
+            # matches every other cross-table reference in this schema
+            # (service-enforced), and lets a grant be written before the
+            # object is fully committed without ordering hazards.
+            #
+            # ``principal_id`` is the workspace SCIM id of a user/group
+            # (from the principal picker) OR the sentinel ``'__all__'``
+            # for the all-principals baseline grant. ``privileges`` is a
+            # comma-joined, normalized privilege set (``SELECT``,
+            # ``MODIFY``, ``APPLY``, or the single token ``ALL_PRIVILEGES``
+            # which expands at check-time — UC semantics: the stored form
+            # is ``ALL PRIVILEGES``, not its components). Stored as TEXT
+            # (not JSONB/array) so the identical DDL/read path works on the
+            # Delta OLTP fallback.
+            #
+            # ``inherit`` (default FALSE) is the per-grant inheritance
+            # toggle: when TRUE, the grant flows down the object hierarchy
+            # (data_product -> member monitored_table -> that table's
+            # applied-rule scope). Resolution walks parents at check-time
+            # (see PermissionsService.effective_privileges).
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_object_grants ("
+            "  grant_id       TEXT PRIMARY KEY,"
+            "  object_type    TEXT NOT NULL,"
+            "  object_id      TEXT NOT NULL,"
+            "  principal_id   TEXT NOT NULL,"
+            "  principal_type TEXT NOT NULL,"
+            "  principal_name TEXT,"
+            "  privileges     TEXT NOT NULL,"
+            "  inherit        BOOLEAN NOT NULL DEFAULT FALSE,"
+            "  grantor        TEXT,"
+            "  created_at     TIMESTAMPTZ,"
+            "  updated_at     TIMESTAMPTZ,"
+            "  CONSTRAINT uq_dq_object_grants_object_principal "
+            "    UNIQUE (object_type, object_id, principal_id),"
+            "  CONSTRAINT chk_dq_object_grants_object_type "
+            "    CHECK (object_type IN ('registry_rule','monitored_table','data_product')),"
+            "  CONSTRAINT chk_dq_object_grants_principal_type "
+            "    CHECK (principal_type IN ('user','group','all'))"
+            ");"
+            # The dominant read path is "all grants for this object"
+            # (Permissions tab load + every enforcement check), so a
+            # composite index on (object_type, object_id) covers it.
+            f"CREATE INDEX IF NOT EXISTS idx_dq_object_grants_object "
+            f"  ON {_S}.dq_object_grants (object_type, object_id);"
+            # ----------------------------------------------------------
+            # dq_object_grants_history — append-only audit trail for grant
+            # changes (mirrors dq_role_mappings_history's shape/rationale).
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_object_grants_history ("
+            "  history_id     BIGSERIAL PRIMARY KEY,"
+            "  object_type    TEXT NOT NULL,"
+            "  object_id      TEXT NOT NULL,"
+            "  principal_id   TEXT NOT NULL,"
+            "  principal_name TEXT,"
+            "  privileges     TEXT,"
+            "  inherit        BOOLEAN,"
+            "  action         TEXT NOT NULL,"
+            "  changed_by     TEXT,"
+            "  changed_at     TIMESTAMPTZ"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_object_grants_history_object_changed_at "
+            f"  ON {_S}.dq_object_grants_history (object_type, object_id, changed_at DESC);"
         ),
     ),
 ]

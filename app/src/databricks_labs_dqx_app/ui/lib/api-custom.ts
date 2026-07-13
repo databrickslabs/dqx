@@ -66,6 +66,11 @@ export interface DryRunSubmitOutCustom {
   run_id: string;
   job_run_id: number;
   view_fqn: string;
+  /** Source table FQN this run was submitted for — added so callers can
+   *  associate each submitted run with its table by value instead of by
+   *  request-array position (batch submission skips tables that fail
+   *  validation, which shifts index-based lookups out of alignment). */
+  table_fqn?: string | null;
 }
 
 export interface BatchRunFromCatalogOut {
@@ -856,6 +861,18 @@ export interface LabelDefinition {
   description?: string | null;
   values: string[];
   allow_custom_values: boolean;
+  /** Optional value → "#RRGGBB" color map for badge rendering. */
+  value_colors?: Record<string, string> | null;
+  /** Optional value → short description map (e.g. per-dimension explanations). */
+  value_descriptions?: Record<string, string> | null;
+  /**
+   * True for reserved, pre-seeded keys (e.g. the Rules Registry
+   * ``dimension``/``severity`` tags). Such keys cannot be deleted or
+   * renamed via `saveLabelDefinitions`, though their values, colors, and
+   * description may still be freely edited. Authoritative from the
+   * server — a client cannot grant/strip this flag via the save payload.
+   */
+  is_builtin?: boolean;
 }
 
 export interface LabelDefinitionsOut {
@@ -1002,6 +1019,43 @@ export const useSaveRetentionSettings = <
     mutationFn: ({ data }: { data: RetentionSettingsIn }) => saveRetentionSettings(data, axiosOptions),
     ...mutationOptions,
   });
+};
+
+// ---------------------------------------------------------------------------
+// Workspace host — used to build deep links into the Databricks workspace UI
+// (e.g. Unity Catalog explorer pages). Accessible to all authenticated users;
+// the linked pages enforce the caller's own permissions on arrival.
+// ---------------------------------------------------------------------------
+
+export interface WorkspaceHostOut {
+  workspace_host: string;
+}
+
+export const getWorkspaceHost = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<WorkspaceHostOut>> =>
+  axios.default.get("/api/v1/config/workspace-host", options);
+
+export const getWorkspaceHostQueryKey = () => ["workspace-host"] as const;
+
+export const useWorkspaceHost = <
+  TData = Awaited<ReturnType<typeof getWorkspaceHost>>["data"],
+  TError = AxiosError<unknown>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkspaceHost>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+): UseQueryResult<TData, TError> => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+  return useQuery({
+    queryKey: queryOptions?.queryKey ?? getWorkspaceHostQueryKey(),
+    queryFn: () => getWorkspaceHost(axiosOptions),
+    select: ((resp: Awaited<ReturnType<typeof getWorkspaceHost>>) => resp.data) as never,
+    // The host is fixed for the lifetime of the app container — cache hard.
+    staleTime: Infinity,
+    ...queryOptions,
+  }) as UseQueryResult<TData, TError>;
 };
 
 // ---------------------------------------------------------------------------

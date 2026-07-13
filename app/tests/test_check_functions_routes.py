@@ -31,6 +31,7 @@ from databricks_labs_dqx_app.backend.routes.v1.check_functions import (
     _HIDDEN_FROM_SINGLE_TABLE,
     _category_for,
     _classify_param_kind,
+    _family_for_column_param,
     _first_doc_line,
     _introspect_check_functions,
     _serialize_default,
@@ -103,6 +104,51 @@ class TestClassifyParamKind:
 
     def test_unannotated_param_falls_back_to_string(self) -> None:
         assert _classify_param_kind("opaque", inspect.Parameter.empty) == "string"
+
+
+# ---------------------------------------------------------------------------
+# _family_for_column_param — item 10 typed slot families
+# ---------------------------------------------------------------------------
+
+
+class TestFamilyForColumnParam:
+    """The app's own semantic reading of each check's column family."""
+
+    @pytest.mark.parametrize(
+        ("fn_name", "expected"),
+        [
+            ("regex_match", "text"),
+            ("is_valid_date", "text"),
+            ("is_valid_timestamp", "text"),
+            ("is_valid_ipv4_address", "text"),
+            ("has_valid_json_schema", "text"),
+            ("is_older_than_n_days", "temporal"),
+            ("is_older_than_col2_for_n_days", "temporal"),
+            ("is_not_in_future", "temporal"),
+            ("is_data_fresh", "temporal"),
+            ("has_no_outliers", "numeric"),
+            ("is_not_null_and_not_empty_array", "array"),
+        ],
+    )
+    def test_typed_checks_imply_their_family(self, fn_name: str, expected: str) -> None:
+        assert _family_for_column_param(fn_name) == expected
+
+    @pytest.mark.parametrize(
+        "fn_name",
+        [
+            "is_not_null",
+            "is_in_range",
+            "is_not_less_than",
+            "is_in_list",
+            "foreign_key",
+            "is_unique",
+            "some_unknown_future_check",
+        ],
+    )
+    def test_polymorphic_or_unknown_checks_stay_any(self, fn_name: str) -> None:
+        """Polymorphic comparison/null/list checks (and unknown ones) must not
+        be over-restricted — they stay ``any`` so apply-time picking is open."""
+        assert _family_for_column_param(fn_name) == "any"
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +326,28 @@ class TestIntrospectCheckFunctions:
         # widget with the string ``"true"`` as its default.
         assert params_by_name["nulls_distinct"].kind == "boolean"
         assert params_by_name["nulls_distinct"].default == "true"
+
+    def test_column_param_carries_implied_family(self) -> None:
+        """A typed check's column slot advertises its family; a non-column
+        parameter carries no family (None)."""
+        fn = self._by_name("regex_match")
+        params_by_name = {p.name: p for p in fn.params}
+        assert params_by_name["column"].family == "text"
+        # ``regex`` is a plain string PARAMETER, not a column slot.
+        assert params_by_name["regex"].family is None
+
+    def test_temporal_check_types_all_its_column_slots(self) -> None:
+        fn = self._by_name("is_older_than_col2_for_n_days")
+        col_families = {p.name: p.family for p in fn.params if p.kind == "column"}
+        assert col_families == {"column1": "temporal", "column2": "temporal"}
+
+    def test_array_check_types_its_column_slot(self) -> None:
+        fn = self._by_name("is_not_null_and_not_empty_array")
+        assert fn.params[0].family == "array"
+
+    def test_polymorphic_check_column_stays_any(self) -> None:
+        fn = self._by_name("is_not_null")
+        assert fn.params[0].family == "any"
 
     def test_internal_row_filter_param_is_hidden(self) -> None:
         """``row_filter`` is auto-injected by the engine — surfacing it in

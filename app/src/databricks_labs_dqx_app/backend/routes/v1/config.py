@@ -1,15 +1,24 @@
+import asyncio
 import json
 import os
 import re
+import threading
 from typing import Annotated
 
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors.base import DatabricksError
 from fastapi import APIRouter, Depends, HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
 from databricks_labs_dqx_app.backend.config import conf
-from databricks_labs_dqx_app.backend.dependencies import get_app_settings_service, require_role
+from databricks_labs_dqx_app.backend.dependencies import (
+    get_app_settings_service,
+    get_sp_ws,
+    get_vector_store_provisioner,
+    require_role,
+)
 from databricks_labs_dqx_app.backend.logger import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from databricks_labs_dqx_app.backend.models import (
     ConfigIn,
@@ -18,6 +27,7 @@ from databricks_labs_dqx_app.backend.models import (
     RunConfigOut,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.vector_store import VectorStoreProvisioner
 
 # Everyone except VIEWER. Used to gate the embedded-dashboard GET: the
 # Lakeview iframe is published with ``embed_credentials: true``
@@ -45,6 +55,16 @@ _LABEL_DEFS_SETTING_KEY = "label_definitions"
 # Keys must be safe for YAML round-tripping and stable as DataFrame columns:
 # letters, digits, underscore, leading with a letter.
 _LABEL_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+# Per-value badge colors: strict 6-digit hex so the UI can trust the value
+# without re-validating (e.g. drop straight into a CSS custom property).
+_HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+# Reserved keys whose value set is fixed and admin-curated rather than
+# author-extensible: rule authors can never add a value the admin hasn't
+# already defined. Enforced server-side (independent of client payload)
+# so an old client — or a stale/tampered request — can't smuggle
+# ``allow_custom_values: true`` back onto these two keys.
+_NO_CUSTOM_VALUE_BUILTIN_KEYS = frozenset({"dimension", "severity"})
 
 
 class TimezoneOut(BaseModel):
@@ -65,12 +85,40 @@ class LabelDefinition(BaseModel):
     The reserved key ``weight`` plays a special role: its values populate the
     weight selector in the labels editor on rule authoring pages. Weight is
     stored entirely in ``user_metadata`` (no separate native ``weight`` field).
+
+    ``value_colors`` optionally maps a subset (or all) of ``values`` to a
+    ``#RRGGBB`` hex color for badge rendering; unmapped values fall back to a
+    UI default. ``value_descriptions`` optionally maps a subset (or all) of
+    ``values`` to a short human-readable explanation, shown as help text next
+    to each value in the admin editor and as a tooltip wherever the value is
+    picked (e.g. the ``dimension`` key's per-dimension descriptions). Both
+    maps are pruned to keys present in ``values`` on save.
+
+    ``is_builtin`` flags a reserved, pre-seeded key (e.g. the Rules Registry
+    ``dimension``/``severity`` tags) — such keys cannot be deleted or renamed
+    via :func:`save_label_definitions`, though their values, colors, and
+    descriptions may still be edited. The ``dimension``/``severity`` keys
+    additionally can never have ``allow_custom_values=True``: their value set
+    is fixed and admin-curated, not something rule authors extend inline.
     """
 
     key: str
     description: str | None = ""
     values: list[str] = Field(default_factory=list)
     allow_custom_values: bool = False
+    value_colors: dict[str, str] | None = None
+    value_descriptions: dict[str, str] | None = None
+    is_builtin: bool = False
+
+    @field_validator("value_colors")
+    @classmethod
+    def _validate_value_colors(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        for label_value, color in value.items():
+            if not _HEX_COLOR_RE.match(color):
+                raise ValueError(f"Invalid color {color!r} for value {label_value!r}; expected '#RRGGBB' hex format.")
+        return value
 
 
 class LabelDefinitionsOut(BaseModel):
@@ -274,7 +322,7 @@ def _validate_retention_days(value: int, *, field: str) -> int:
     if value < _RETENTION_DAYS_MIN:
         raise HTTPException(
             status_code=400,
-            detail=(f"{field} must be at least {_RETENTION_DAYS_MIN} days " "to protect against accidental data loss."),
+            detail=(f"{field} must be at least {_RETENTION_DAYS_MIN} days to protect against accidental data loss."),
         )
     if value > _RETENTION_DAYS_MAX:
         raise HTTPException(
@@ -365,7 +413,13 @@ def _load_label_definitions(svc: AppSettingsService) -> list[LabelDefinition]:
         if not isinstance(item, dict):
             continue
         try:
-            out.append(LabelDefinition.model_validate(item))
+            definition = LabelDefinition.model_validate(item)
+            if definition.key in _NO_CUSTOM_VALUE_BUILTIN_KEYS and definition.allow_custom_values:
+                # Defense-in-depth: coerce even rows persisted before this
+                # invariant existed (or written directly to the settings
+                # table) rather than trusting every historical write path.
+                definition = definition.model_copy(update={"allow_custom_values": False})
+            out.append(definition)
         except Exception as e:
             # Per-item resilience: settings stored before the v1 label-
             # definition schema may carry legacy keys or extra fields
@@ -413,7 +467,20 @@ def save_label_definitions(
 
     Validates each key against ``_LABEL_KEY_RE``, rejects duplicates, trims
     descriptions, and dedupes the value list per definition.
+
+    Reserved keys (``is_builtin=True`` in the currently-persisted catalog —
+    e.g. the Rules Registry ``dimension``/``severity`` tags) cannot be
+    deleted or renamed: the incoming payload must still contain an entry
+    with the same key. Their values, colors, and description may still be
+    freely edited. ``is_builtin`` itself is authoritative from the stored
+    state, not the client payload — a caller can't strip the flag off a
+    reserved key by omitting/flipping it in the request. ``dimension`` and
+    ``severity`` additionally always save with ``allow_custom_values=False``
+    regardless of what the client sends — their value set is fixed/admin-
+    curated, never author-extensible.
     """
+    existing_builtin_keys = {d.key for d in _load_label_definitions(svc) if d.is_builtin}
+
     seen_keys: set[str] = set()
     cleaned: list[LabelDefinition] = []
     for d in body.definitions:
@@ -440,13 +507,32 @@ def save_label_definitions(
                 continue
             seen_values.add(sv)
             cleaned_values.append(sv)
+
+        cleaned_colors = {v: c for v, c in (d.value_colors or {}).items() if v in seen_values} or None
+        cleaned_descriptions = {
+            v: desc.strip() for v, desc in (d.value_descriptions or {}).items() if v in seen_values and (desc or "").strip()
+        } or None
+
         cleaned.append(
             LabelDefinition(
                 key=key,
                 description=(d.description or "").strip(),
                 values=cleaned_values,
-                allow_custom_values=bool(d.allow_custom_values),
+                allow_custom_values=False if key in _NO_CUSTOM_VALUE_BUILTIN_KEYS else bool(d.allow_custom_values),
+                value_colors=cleaned_colors,
+                value_descriptions=cleaned_descriptions,
+                # Authoritative from the previously-persisted state, never
+                # from the client payload — a caller cannot grant or strip
+                # ``is_builtin`` protection via the request body.
+                is_builtin=key in existing_builtin_keys,
             )
+        )
+
+    missing_reserved = existing_builtin_keys - seen_keys
+    if missing_reserved:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Cannot delete or rename reserved label key(s): {', '.join(sorted(missing_reserved))}."),
         )
 
     svc.save_setting(_LABEL_DEFS_SETTING_KEY, json.dumps([d.model_dump() for d in cleaned]), user_email=email)
@@ -612,6 +698,34 @@ def _workspace_host() -> str:
     if host and not host.startswith(("http://", "https://")):
         host = f"https://{host}"
     return host.rstrip("/")
+
+
+class WorkspaceHostOut(BaseModel):
+    """Workspace host for building deep links into the Databricks workspace UI."""
+
+    workspace_host: str = Field(
+        default="",
+        description=(
+            "Workspace host (e.g. 'https://e2-...cloud.databricks.com') used to build "
+            "links into the workspace UI, such as Unity Catalog explorer pages. "
+            "Empty string when unset (local dev)."
+        ),
+    )
+
+
+@router.get(
+    "/workspace-host",
+    response_model=WorkspaceHostOut,
+    operation_id="getWorkspaceHost",
+)
+def get_workspace_host() -> WorkspaceHostOut:
+    """Return the workspace host (accessible by all authenticated users).
+
+    Unlike the embedded-dashboard config, the host alone grants no data
+    access — links built from it (e.g. Unity Catalog explorer) still
+    enforce the caller's own workspace/UC permissions on arrival.
+    """
+    return WorkspaceHostOut(workspace_host=_workspace_host())
 
 
 @router.get(
@@ -841,3 +955,305 @@ def save_run_review_statuses(
         raise HTTPException(status_code=400, detail=str(e))
     logger.info("Saved %d run review status(es)", len(saved))
     return _statuses_to_out(saved)
+
+
+# ----------------------------------------------------------------------
+# AI Gateway settings — Rules Registry Phase 4A. Kill-switch, serving
+# endpoint name, and per-user hourly rate limit for AIGateway
+# (services/ai_gateway.py). ADMIN only: this is infrastructure config, not
+# an authoring-time preference. A full "AI settings card" UI is Phase 4.5
+# — these endpoints are the read/write surface it will consume.
+# ----------------------------------------------------------------------
+
+
+class AiSettingsOut(BaseModel):
+    """Effective AI Gateway + Vector Search settings.
+
+    ``embedding_endpoint_name``/``vs_endpoint_name``/``vs_index_name``
+    (Rules Registry Phase 4B/4C) are auto-derived since Phase 8B — the
+    admin UI no longer exposes them as separate inputs. They always
+    resolve to a usable value (see ``AppSettingsService.EMBEDDING_ENDPOINT_NAME_DEFAULT``
+    and ``_default_vs_endpoint_name``/``_default_vs_index_name``) so the
+    rule-mapping suggester's vector store works from the AI enable
+    toggle + serving endpoint alone. Still independently settable via
+    this API for backwards compatibility/testing.
+    """
+
+    ai_enabled: bool
+    ai_endpoint_name: str
+    ai_endpoint_name_default: str = AppSettingsService.AI_ENDPOINT_NAME_DEFAULT
+    ai_rate_limit_per_user_per_hour: int
+    ai_rate_limit_default: int = AppSettingsService.AI_RATE_LIMIT_DEFAULT
+    embedding_endpoint_name: str = ""
+    vs_endpoint_name: str = ""
+    vs_index_name: str = ""
+
+
+class AiSettingsIn(BaseModel):
+    """Update payload — omitted fields are left unchanged."""
+
+    ai_enabled: bool | None = None
+    ai_endpoint_name: str | None = None
+    ai_rate_limit_per_user_per_hour: int | None = None
+    embedding_endpoint_name: str | None = None
+    vs_endpoint_name: str | None = None
+    vs_index_name: str | None = None
+
+
+def _fire_and_forget_ensure_vector_store(provisioner: VectorStoreProvisioner) -> None:
+    """Kick off Vector Search auto-provisioning on a background thread.
+
+    ``VectorStoreProvisioner.ensure_vector_store`` is an async, best-effort,
+    never-raising coroutine (see ``services/vector_store.py``) that submits
+    the Vector Search endpoint/index creation calls and returns immediately
+    — creation itself finishes asynchronously on the Databricks control
+    plane. The app startup lifespan can attach it to the running event loop
+    via ``asyncio.create_task``, but this route runs synchronously with no
+    event loop of its own, so we run the coroutine to completion on a
+    dedicated daemon thread via ``asyncio.run`` instead.
+
+    This must never block the admin's "save AI settings" request or
+    propagate an error back to the caller: any failure here — including one
+    that somehow escapes ``ensure_vector_store``'s own swallow-and-log
+    behaviour — is logged and dropped.
+    """
+
+    def _run() -> None:
+        try:
+            asyncio.run(provisioner.ensure_vector_store())
+        except Exception:
+            logger.warning("Background Vector Search auto-provisioning failed (non-fatal)", exc_info=True)
+
+    threading.Thread(target=_run, name="ensure-vector-store-on-save", daemon=True).start()
+
+
+def _ai_settings_out(svc: AppSettingsService) -> AiSettingsOut:
+    return AiSettingsOut(
+        ai_enabled=svc.get_ai_enabled(),
+        ai_endpoint_name=svc.get_ai_endpoint_name(),
+        ai_rate_limit_per_user_per_hour=svc.get_ai_rate_limit_per_user_per_hour(),
+        embedding_endpoint_name=svc.get_embedding_endpoint_name(),
+        vs_endpoint_name=svc.get_vs_endpoint_name(),
+        vs_index_name=svc.get_vs_index_name(),
+    )
+
+
+@router.get(
+    "/ai-settings",
+    response_model=AiSettingsOut,
+    operation_id="getAiSettings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def get_ai_settings(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> AiSettingsOut:
+    """Return the current AI Gateway + Vector Search settings (admin only)."""
+    return _ai_settings_out(svc)
+
+
+@router.put(
+    "/ai-settings",
+    response_model=AiSettingsOut,
+    operation_id="saveAiSettings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_ai_settings(
+    body: AiSettingsIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    provisioner: Annotated[VectorStoreProvisioner, Depends(get_vector_store_provisioner)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> AiSettingsOut:
+    """Update one or more AI Gateway / Vector Search settings (admin only)."""
+    fields = (
+        body.ai_enabled,
+        body.ai_endpoint_name,
+        body.ai_rate_limit_per_user_per_hour,
+        body.embedding_endpoint_name,
+        body.vs_endpoint_name,
+        body.vs_index_name,
+    )
+    if all(field is None for field in fields):
+        raise HTTPException(status_code=400, detail="At least one AI/Vector Search setting must be provided.")
+
+    if body.ai_enabled is not None:
+        svc.save_ai_enabled(body.ai_enabled, user_email=email)
+    if body.ai_endpoint_name is not None:
+        svc.save_ai_endpoint_name(body.ai_endpoint_name, user_email=email)
+    if body.ai_rate_limit_per_user_per_hour is not None:
+        if body.ai_rate_limit_per_user_per_hour < 0:
+            raise HTTPException(status_code=400, detail="ai_rate_limit_per_user_per_hour must be >= 0.")
+        svc.save_ai_rate_limit_per_user_per_hour(body.ai_rate_limit_per_user_per_hour, user_email=email)
+    if body.embedding_endpoint_name is not None:
+        svc.save_embedding_endpoint_name(body.embedding_endpoint_name, user_email=email)
+    if body.vs_endpoint_name is not None:
+        svc.save_vs_endpoint_name(body.vs_endpoint_name, user_email=email)
+    if body.vs_index_name is not None:
+        svc.save_vs_index_name(body.vs_index_name, user_email=email)
+
+    logger.info("Saved AI Gateway / Vector Search settings (by=%s)", email)
+
+    # Best-effort, non-blocking Vector Search auto-provisioning: whenever a
+    # save leaves AI enabled (whether this call just flipped the switch on
+    # or merely updated an endpoint/rate-limit while it was already on),
+    # give the endpoint/index creation a kick so admins don't also have to
+    # remember to hit the dedicated ``POST /ensure-vector-store`` endpoint.
+    # No-op (inside the provisioner) when embedding/VS settings aren't
+    # fully configured; never raises; never blocks this response.
+    if svc.get_ai_enabled():
+        _fire_and_forget_ensure_vector_store(provisioner)
+
+    return _ai_settings_out(svc)
+
+
+# ----------------------------------------------------------------------
+# Serving endpoints — Rules Registry Phase 7F. Backs the AI settings
+# dropdown so admins pick ``ai_endpoint_name``/``embedding_endpoint_name``
+# from the workspace's actual serving endpoints instead of typing a raw
+# string. Read-only, best-effort: any SDK failure (permissions, transient
+# outage) degrades to an empty list rather than a 500 so the settings page
+# still renders and free-text fallback remains possible.
+# ----------------------------------------------------------------------
+
+
+class ServingEndpointsOut(BaseModel):
+    names: list[str]
+
+
+@router.get(
+    "/serving-endpoints",
+    response_model=ServingEndpointsOut,
+    operation_id="listServingEndpoints",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+async def list_serving_endpoints(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> ServingEndpointsOut:
+    """Return the workspace's serving endpoint names, or ``[]`` on any SDK failure."""
+    try:
+        endpoints = await asyncio.to_thread(lambda: list(sp_ws.serving_endpoints.list()))
+    except DatabricksError:
+        logger.warning("Failed to list serving endpoints", exc_info=True)
+        return ServingEndpointsOut(names=[])
+    names = sorted({endpoint.name for endpoint in endpoints if endpoint.name})
+    return ServingEndpointsOut(names=names)
+
+
+# ----------------------------------------------------------------------
+# Rules Registry governance settings (P21-G). Two distinct admin knobs
+# that both shape "what happens as registry rules evolve", but at
+# different moments — surfaced together here so the UI can present them
+# side by side without conflating them:
+#
+#   * ``auto_upgrade_without_approval`` — governs RE-APPROVAL of an
+#     EXISTING following (unpinned) application when its rule is
+#     re-published with a materially different rendered check: silently
+#     re-approve (True) vs. fall back to ``pending_approval`` for
+#     per-table re-review (False, default).
+#   * ``default_auto_upgrade`` — governs the PIN CHOSEN AT ATTACH TIME
+#     for a brand-new rule application / data-product member that
+#     doesn't request an explicit pin: follow latest (True, default) vs.
+#     freeze to the current version (False). Existing applications are
+#     never affected by a later change to this setting — see
+#     ``AppSettingsService.resolve_pinned_version_for_new_attachment``.
+#
+# Both read at VIEWER+ (stewards should be able to see the effective
+# governance policy) and write at ADMIN-only, matching the AI Gateway
+# settings pattern above.
+# ----------------------------------------------------------------------
+
+
+class RulesRegistrySettingsOut(BaseModel):
+    """Effective Rules Registry governance settings."""
+
+    auto_upgrade_without_approval: bool = Field(
+        description="Re-approval behaviour: silently re-approve a following application's "
+        "re-rendered check (True) vs. send it back to pending_approval (False, default)."
+    )
+    default_auto_upgrade: bool = Field(
+        description="Attach-time default pin for new applications/members: follow latest "
+        "(True, default) vs. pin to the current version (False)."
+    )
+
+
+class RulesRegistrySettingsIn(BaseModel):
+    """Update payload — omitted fields are left unchanged."""
+
+    auto_upgrade_without_approval: bool | None = None
+    default_auto_upgrade: bool | None = None
+
+
+def _rules_registry_settings_out(svc: AppSettingsService) -> RulesRegistrySettingsOut:
+    return RulesRegistrySettingsOut(
+        auto_upgrade_without_approval=svc.get_auto_upgrade_without_approval(),
+        default_auto_upgrade=svc.get_default_auto_upgrade(),
+    )
+
+
+@router.get(
+    "/rules-registry-settings",
+    response_model=RulesRegistrySettingsOut,
+    operation_id="getRulesRegistrySettings",
+)
+def get_rules_registry_settings(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> RulesRegistrySettingsOut:
+    """Return the current Rules Registry governance settings.
+
+    Available to any authenticated user — stewards benefit from seeing
+    the effective governance policy even though only admins can change it.
+    """
+    return _rules_registry_settings_out(svc)
+
+
+@router.put(
+    "/rules-registry-settings",
+    response_model=RulesRegistrySettingsOut,
+    operation_id="saveRulesRegistrySettings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_rules_registry_settings(
+    body: RulesRegistrySettingsIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> RulesRegistrySettingsOut:
+    """Update one or both Rules Registry governance settings (admin only)."""
+    if body.auto_upgrade_without_approval is None and body.default_auto_upgrade is None:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one of auto_upgrade_without_approval or default_auto_upgrade must be provided.",
+        )
+    if body.auto_upgrade_without_approval is not None:
+        svc.save_auto_upgrade_without_approval(body.auto_upgrade_without_approval, user_email=email)
+    if body.default_auto_upgrade is not None:
+        svc.save_default_auto_upgrade(body.default_auto_upgrade, user_email=email)
+    logger.info("Saved Rules Registry governance settings (by=%s)", email)
+    return _rules_registry_settings_out(svc)
+
+
+# ----------------------------------------------------------------------
+# Vector Search auto-provisioning trigger — Rules Registry Phase 7F. A
+# dedicated endpoint (rather than folding this into ``save_ai_settings``)
+# so provisioning can be retried independently of a settings save, and so
+# the settings route's synchronous, dependency-light signature stays
+# unchanged for its existing tests. Always returns 204 — provisioning is
+# async on the Databricks side and ``ensure_vector_store`` never raises;
+# admins check actual readiness via the rule-mapping suggester's
+# ``available``/``reason`` fields, not this call's response.
+# ----------------------------------------------------------------------
+
+
+@router.post(
+    "/ensure-vector-store",
+    operation_id="ensureVectorStore",
+    status_code=204,
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+async def ensure_vector_store_route(
+    provisioner: Annotated[VectorStoreProvisioner, Depends(get_vector_store_provisioner)],
+) -> None:
+    """Best-effort kick off Vector Search endpoint/index creation (admin-triggered).
+
+    No-op when embedding/Vector Search settings aren't fully configured.
+    Never raises — see :meth:`VectorStoreProvisioner.ensure_vector_store`.
+    """
+    await provisioner.ensure_vector_store()

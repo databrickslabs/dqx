@@ -136,7 +136,197 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html,
+  body {
+    /* Belt-and-braces against page-level horizontal scroll: wide content
+       (data tables, filter rows) must scroll inside its own
+       `overflow-x-auto` container — see SidebarLayout.tsx — but a flex
+       child without `min-w-0` can still force the whole page to shift
+       sideways. This guarantees the body itself never becomes the
+       horizontal scroll surface even if a descendant regresses. */
+    overflow-x: hidden;
+  }
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Themed scrollbars. Browser defaults (esp. dark mode) render a stark
+     white/grey bar that clashes with the app surface — every scrollable
+     region (rules table, dialogs, code blocks) picks these up. Both the
+     Firefox (`scrollbar-*`) and WebKit (`::-webkit-scrollbar-*`) APIs are
+     covered so Chrome/Edge/Safari and Firefox all match.
+
+     The track stays transparent so it blends into whatever surface is
+     scrolling, and the thumb uses `--border` (a muted token that already
+     adapts to the theme), darkening on hover for a hint of interactivity. */
+  * {
+    scrollbar-color: var(--border) transparent;
+    scrollbar-width: thin;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 9999px;
+    /* Inset border carves the thumb away from the track so it looks like
+       a floating pill rather than a flush bar. */
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--muted-foreground);
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+/* ---------------------------------------------------------------------
+ * Always-visible dropdown scrollbar
+ *
+ * The catalog/schema/table pickers in the "Monitor table(s)" and
+ * "Apply rules" dialogs can list hundreds of rows. The default themed
+ * scrollbar is deliberately faint (`--border` thumb, thin), which — for
+ * a list that IS scrollable — read as "there's nothing more here / this
+ * is stuck" to users (repeated report). This class gives that specific
+ * list a permanently reserved, higher-contrast scrollbar so the scroll
+ * affordance is unmistakable, and `overscroll-behavior: contain` keeps a
+ * trackpad flick inside the list instead of chaining to the dialog/page
+ * once it hits an edge. Applied to the picker's single scroll container
+ * only (see MultiSelectPopover) so the rest of the app keeps the subtle
+ * default. */
+.dq-scroll-visible {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--muted-foreground) var(--muted);
+  overscroll-behavior: contain;
+}
+.dq-scroll-visible::-webkit-scrollbar {
+  width: 12px;
+}
+.dq-scroll-visible::-webkit-scrollbar-track {
+  background: var(--muted);
+  border-radius: 9999px;
+}
+.dq-scroll-visible::-webkit-scrollbar-thumb {
+  background-color: var(--muted-foreground);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.dq-scroll-visible::-webkit-scrollbar-thumb:hover {
+  background-color: var(--foreground);
+  background-clip: padding-box;
+}
+
+/* ---------------------------------------------------------------------
+ * AI styling helpers
+ *
+ * Shared violet → fuchsia → pink gradient treatment for AI-driven surfaces
+ * (rule generation, profiler suggestions, etc). Constants live in
+ * `lib/ai-style.ts`; these are the CSS-only pieces that file references
+ * (`.ai-text-shine`) or that plain Tailwind utility classes can't express
+ * (the mouse-following glow). Not wired into any feature yet — later
+ * Phase 7 tasks consume these.
+ * ------------------------------------------------------------------- */
+
+/* AI banner — radial glow that follows the mouse. The element sets
+   --ai-mx and --ai-my (in px) via React onMouseMove. */
+.ai-glow-mouse {
+  position: relative;
+  overflow: hidden;
+  --ai-mx: 50%;
+  --ai-my: 50%;
+}
+
+.ai-glow-mouse::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    300px circle at var(--ai-mx) var(--ai-my),
+    rgba(217, 70, 239, 0.28),
+    rgba(217, 70, 239, 0.1) 35%,
+    transparent 65%
+  );
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+  /* Light mode: `multiply` darkens the light banner so the fuchsia glow
+     is visible. `screen` (used in dark mode) only lightens, so it would
+     vanish against a light background. */
+  mix-blend-mode: multiply;
+}
+
+/* Dark mode: keep the original `screen` blend so the glow lightens the
+   dark banner. The brighter alpha above (0.28/0.10) reads the same here. */
+.dark .ai-glow-mouse::before {
+  background: radial-gradient(
+    300px circle at var(--ai-mx) var(--ai-my),
+    rgba(217, 70, 239, 0.22),
+    rgba(217, 70, 239, 0.08) 35%,
+    transparent 65%
+  );
+  mix-blend-mode: screen;
+}
+
+.ai-glow-mouse:hover::before {
+  opacity: 1;
+}
+
+/* Keep direct children above the glow so content isn't tinted by it. */
+.ai-glow-mouse > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* AI suggestion card entrance — a subtle rise + fade used by the AI Rule
+   Suggestions dialog cards (staggered via inline animation-delay). Ported
+   from dqlake's `dq-suggestion-in`. */
+@keyframes dq-suggestion-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Forward (left → right) shine — applied to a span/element. A bright
+   fuchsia stripe travels across the foreground-coloured text and loops
+   seamlessly thanks to a repeating gradient with a 200%-wide period. */
+@keyframes ai-text-shine-fwd {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+
+.ai-text-shine {
+  background-image: linear-gradient(
+    90deg,
+    var(--foreground) 0%,
+    var(--foreground) 35%,
+    #d946ef 50%,
+    var(--foreground) 65%,
+    var(--foreground) 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: repeat;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: ai-text-shine-fwd 4s linear infinite;
 }

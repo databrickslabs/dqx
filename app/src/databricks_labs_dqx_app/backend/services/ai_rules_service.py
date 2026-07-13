@@ -5,16 +5,20 @@ import logging
 import re
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypedDict
 
 import yaml
 from databricks.sdk import WorkspaceClient
 from databricks_langchain import ChatDatabricks  # type: ignore[import-untyped]
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.llm.llm_core import _filter_unsafe_sql_rules
 from databricks.labs.dqx.llm.llm_utils import get_required_check_functions_definitions
+from databricks.labs.dqx.utils import is_sql_query_safe
 
 from databricks_labs_dqx_app.backend.config import conf
+from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
 
 logger = logging.getLogger(__name__)
 
@@ -38,20 +42,128 @@ Guidelines:
 Available check functions:
 {available_functions}"""
 
+# Two-pass rule proposal prompt: the caller tries "dqx_native" first (a single
+# named check function + arguments), falling back to "sql" (a predicate SQL
+# expression) only if no dqx_native check fits the description. Both modes
+# share the same response shape so `AiRulesService._validate_and_repair_proposal`
+# can validate either uniformly.
+_RULE_PROPOSAL_SYSTEM_TEMPLATE = """\
+You are a data quality rule design assistant for the DQX Rules Registry. Given a business \
+description of a data quality requirement (and optional table schema/sample data), propose \
+ONE reusable rule in "{mode}" mode.
+
+Return ONLY a JSON object with these fields:
+  - "name": a short human-readable rule name (max 80 chars)
+  - "description": a one-sentence description of what the rule checks
+  - "dimension": one of Validity, Completeness, Accuracy, Consistency, Uniqueness, Timeliness
+  - "severity": one of Low, Medium, High, Critical
+  - "polarity": "pass" or "fail" (use "pass" for dqx_native; for sql, "pass" means the SQL \
+predicate must be true for a row to pass)
+  - "definition": {definition_shape}
+
+Guidelines:
+- Use double quotes for all JSON keys and string values.
+- Do not include any prose outside the JSON object.
+
+Available check functions:
+{available_functions}"""
+
+_DQX_NATIVE_DEFINITION_SHAPE = '{"function": "<check function name>", "arguments": {...}}'
+_SQL_DEFINITION_SHAPE = '{"sql_query": "<a SELECT-only predicate expression, no DML/DDL>"}'
+
+_FIELD_SUGGESTION_SYSTEM_TEMPLATE = """\
+You are helping a data steward fill in one field of a data quality rule definition. Given the \
+rule's context, suggest a concise value for the field "{field}".
+
+Return ONLY a JSON object: {{"value": "<suggested value>"}}"""
+
+# --- SQL predicate authoring assistants (write / improve / explain) -------------
+# Ported from dqlake's AiAssistMenu backend (backend/routers/ai.py). Predicates are
+# DQX SQL boolean expressions authored in the Rules Registry SQL editor: reusable
+# columns are referenced as {{slot}} placeholders (a registry rule is table-agnostic),
+# and polarity is a separate PASS/FAIL switch. The returned predicate is always
+# re-validated with `is_sql_query_safe` server-side (AGENTS.md 11-SEC) before it can
+# reach the editor — never trust the model's SQL blindly.
+_WRITE_SQL_SYSTEM_TEMPLATE = """\
+You produce data-quality rule predicates for the DQX Rules Registry. Respond with ONLY a JSON \
+object: {{"predicate": "<sql boolean expression>", "polarity": "pass"|"fail"}}.
+
+Set "polarity" to "pass" if the predicate is TRUE when the row is VALID (the common case — \
+users typically describe what a good row looks like). Set it to "fail" only when the user \
+explicitly describes a failure condition (e.g. "flag rows where amount is negative" — the \
+predicate then describes the failing rows). When in doubt, choose "pass".
+
+Column reference rules:
+- Reference every column as a {{{{slot}}}} placeholder — never a bare column identifier. A \
+registry rule is table-agnostic, so columns are always placeholders.
+- Prefer the provided declared slot names as-is when they fit.
+
+Safety rules:
+- The predicate must be a single boolean SQL expression only — no SELECT, no semicolons, no \
+trailing punctuation, and no DDL/DML (DROP/DELETE/INSERT/UPDATE/CREATE/ALTER/TRUNCATE/MERGE/GRANT/REVOKE)."""
+
+_IMPROVE_SQL_SYSTEM_TEMPLATE = """\
+You refine a DQX SQL boolean predicate per the user's instruction. Respond with ONLY a JSON \
+object: {{"predicate": "<sql boolean expression>", "polarity": "pass"|"fail"}}.
+
+Keep every column reference as a {{{{slot}}}} placeholder; keep declared slot names unchanged. \
+Set "polarity" to "pass" when a TRUE predicate means the row is VALID (the common case), or \
+"fail" only when the user explicitly describes a failure condition; when in doubt choose "pass".
+
+Safety rules:
+- The predicate must be a single boolean SQL expression only — no SELECT, no semicolons, no \
+trailing punctuation, and no DDL/DML."""
+
+_EXPLAIN_SQL_SYSTEM_TEMPLATE = """\
+Explain a DQX SQL boolean predicate for a data steward in plain language. Aim for one sentence; \
+two at the absolute most. Declarative voice, plain language, no apologies, no preamble \
+("This rule…"), no markdown, no quotes. Describe what the predicate is checking — not how the \
+SQL is written. Treat {{{{slot}}}} placeholders as column names.
+
+Return ONLY a JSON object: {{"explanation": "<plain-language explanation>"}}"""
+
+
+class SqlPredicateResult(TypedDict):
+    """An AI-written SQL predicate plus an optional inferred PASS/FAIL polarity."""
+
+    predicate: str
+    polarity: str | None
+
+
+_VALID_DIMENSIONS = frozenset({"Validity", "Completeness", "Accuracy", "Consistency", "Uniqueness", "Timeliness"})
+_VALID_SEVERITIES = frozenset({"Low", "Medium", "High", "Critical"})
+_VALID_POLARITIES = frozenset({"pass", "fail"})
+
 
 class AiRulesService:
-    """Generates DQX rules using ChatDatabricks with the OBO WorkspaceClient.
+    """Generates DQX rules using either the legacy ChatDatabricks leg or the AIGateway.
 
-    The few-shot prompt and available-functions list are built once (ClassVar) and
-    reused across requests. Only the schema lookup and LLM call are per-request.
+    Two request families live here, both entirely OBO-authenticated:
+
+    - **Legacy / contract leg** (:meth:`generate`, :meth:`generate_from_schema_info`):
+      ChatDatabricks-based generation used by the data-contract importer's natural-language
+      quality-expectation path; predates the AIGateway. Uses the OBO WorkspaceClient for both
+      the UC schema lookup and the model call itself, so the LLM invocation runs as the
+      calling user, not the app's service principal. Left otherwise unchanged — it's a
+      synchronous call chain consumed by
+      :class:`~databricks_labs_dqx_app.backend.services.contract_rules_service.ContractRulesService`.
+    - **AIGateway-backed purpose calls** (:meth:`generate_checks_via_gateway`,
+      :meth:`generate_rule`, :meth:`suggest_field`): route through :class:`AIGateway` (itself
+      OBO-authenticated — see ``services/ai_gateway.py``) for the kill-switch, per-user rate
+      limit, and audit log described in the Rules Registry design spec §8.
+      ``generate_checks_via_gateway`` is the reworked backing for the
+      ``aiAssistedChecksGeneration`` route.
+
+    The few-shot prompt and available-functions list are built once (ClassVar) and reused
+    across requests. Only the schema lookup and LLM call are per-request.
     """
 
     _few_shot_messages: ClassVar[list[BaseMessage] | None] = None
     _available_functions: ClassVar[str | None] = None
 
-    def __init__(self, obo_ws: WorkspaceClient, sp_ws: WorkspaceClient) -> None:
-        self._obo_ws = obo_ws  # user identity — UC table access
-        self._sp_ws = sp_ws  # service principal — Foundation Model serving scope
+    def __init__(self, obo_ws: WorkspaceClient, gateway: AIGateway) -> None:
+        self._obo_ws = obo_ws  # user identity — UC table access + legacy ChatDatabricks leg
+        self._gateway = gateway  # AIGateway-backed purpose calls (also OBO under the hood)
 
     # ------------------------------------------------------------------
     # Class-level prompt construction (once per process)
@@ -123,7 +235,7 @@ class AiRulesService:
         return candidates
 
     # ------------------------------------------------------------------
-    # Public API
+    # Legacy / contract leg — unchanged ChatDatabricks-based generation.
     # ------------------------------------------------------------------
 
     def generate(self, user_input: str, table_fqn: str | None = None) -> list[dict[str, Any]]:
@@ -148,7 +260,10 @@ class AiRulesService:
         and few-shot context as :meth:`generate` — DQX's own contract text-rule
         path needs ``dspy`` + a SparkSession, which the stateless app container
         doesn't have, so we route contract text rules through this LLM leg
-        instead and tag the results with ``rule_type: text_llm`` upstream.
+        instead and tag the results with ``rule_type: text_llm`` upstream. The
+        model call itself runs with the caller's OBO WorkspaceClient (never the
+        app's service principal), so it is subject to the calling user's own
+        UC permissions on the configured serving endpoint.
 
         Args:
             user_input: Natural language description of the quality expectation.
@@ -167,8 +282,331 @@ class AiRulesService:
         # expensive inference without truncating legitimate responses.
         llm = ChatDatabricks(
             endpoint=conf.llm_endpoint,
-            workspace_client=self._sp_ws,
+            workspace_client=self._obo_ws,
             max_tokens=conf.llm_max_tokens,
         )
         response = llm.invoke(messages)
         return self._parse_response(str(response.content))
+
+    # ------------------------------------------------------------------
+    # AIGateway-backed purpose calls (Phase 4A)
+    # ------------------------------------------------------------------
+
+    async def generate_checks_via_gateway(
+        self,
+        user_input: str,
+        user_email: str,
+        table_fqn: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Gateway-routed replacement for the legacy ``/ai/generate-checks`` path.
+
+        Reworked per the Rules Registry design spec §8: ``aiAssistedChecksGeneration`` now
+        goes through :class:`AIGateway` (kill-switch, per-user rate limit, audit) instead of
+        calling ChatDatabricks directly. Any unsafe ``sql_query`` rule in the model's output
+        is dropped via :func:`_filter_unsafe_sql_rules` before the checks are returned.
+
+        Raises:
+            AIUnavailableError: AI is disabled or unconfigured.
+            AIRateLimitExceededError: caller is over their hourly quota.
+        """
+        schema_info = self._get_schema_info(table_fqn) if table_fqn else ""
+        system = _SYSTEM_TEMPLATE.format(available_functions=self._get_available_functions())
+        messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+        for message in self._get_few_shot_messages():
+            role = "assistant" if isinstance(message, AIMessage) else "user"
+            messages.append({"role": role, "content": str(message.content)})
+        messages.append({"role": "user", "content": f"schema_info: {schema_info}\nbusiness_description: {user_input}"})
+
+        content = await self._gateway.query(
+            user_email=user_email,
+            purpose="generate_checks",
+            messages=messages,
+            max_tokens=conf.llm_max_tokens,
+        )
+        checks = self._parse_response(content)
+        return _filter_unsafe_sql_rules(checks)
+
+    async def generate_rule(
+        self,
+        description: str,
+        user_email: str,
+        table_fqn: str | None = None,
+        columns: list[str] | None = None,
+        sample_rows: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Generate a full registry-rule proposal, two-pass (dqx_native, then sql fallback).
+
+        The result is always DQX-validated (and unsafe SQL rejected) before being returned —
+        never an invalid or unsafe rule. Returns a dict shaped like::
+
+            {"name", "description", "mode", "dimension", "severity", "polarity",
+             "definition", "author_kind"}
+
+        Raises:
+            AIUnavailableError: AI is disabled or unconfigured.
+            AIRateLimitExceededError: caller is over their hourly quota.
+            ValueError: no candidate mode produced a valid, safe rule.
+        """
+        schema_info = self._get_schema_info(table_fqn) if table_fqn else ""
+        context = self._build_rule_context(description, schema_info, columns, sample_rows)
+
+        for mode, shape in (("dqx_native", _DQX_NATIVE_DEFINITION_SHAPE), ("sql", _SQL_DEFINITION_SHAPE)):
+            proposal = await self._generate_rule_candidate(mode, shape, context, user_email)
+            if proposal is None:
+                continue
+            validated = self._validate_and_repair_proposal(proposal)
+            if validated is not None:
+                validated["author_kind"] = "ai_generated"
+                return validated
+
+        raise ValueError("AI could not generate a valid, safe rule for this description.")
+
+    async def _generate_rule_candidate(
+        self,
+        mode: str,
+        definition_shape: str,
+        context: str,
+        user_email: str,
+    ) -> dict[str, Any] | None:
+        system = _RULE_PROPOSAL_SYSTEM_TEMPLATE.format(
+            mode=mode,
+            definition_shape=definition_shape,
+            available_functions=self._get_available_functions(),
+        )
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": context},
+        ]
+        content = await self._gateway.query(
+            user_email=user_email,
+            purpose=f"generate_rule:{mode}",
+            messages=messages,
+            max_tokens=conf.llm_max_tokens,
+        )
+        try:
+            return AIGateway.parse_json_object(content)
+        except AIResponseParseError:
+            logger.warning("AI rule proposal (mode=%s) returned unparsable JSON", mode)
+            return None
+
+    @staticmethod
+    def _build_rule_context(
+        description: str,
+        schema_info: str,
+        columns: list[str] | None,
+        sample_rows: list[dict[str, Any]] | None,
+    ) -> str:
+        parts = [f"business_description: {description}"]
+        if schema_info:
+            parts.append(f"schema_info: {schema_info}")
+        if columns:
+            parts.append(f"columns: {json.dumps(columns)}")
+        if sample_rows:
+            # Bounded: never forward more than a handful of sample rows to the model
+            # (OWASP LLM04/LLM06 — bound the prompt, avoid echoing large data samples).
+            parts.append(f"sample_rows: {json.dumps(sample_rows[:5])}")
+        return "\n".join(parts)
+
+    def _validate_and_repair_proposal(self, proposal: dict[str, Any]) -> dict[str, Any] | None:
+        """DQX-native validation of a generated rule proposal.
+
+        Never returns an invalid or unsafe rule: the ``dqx_native`` candidate is validated
+        through :meth:`DQEngine.validate_checks`; the ``sql`` candidate's query must pass
+        :func:`is_sql_query_safe`. Returns ``None`` (never raises) on any failure so the
+        caller can fall through to the next candidate mode.
+        """
+        mode = proposal.get("mode") or proposal.get("_mode")
+        definition = proposal.get("definition")
+        if not isinstance(definition, dict):
+            return None
+
+        if "function" in definition:
+            mode = "dqx_native"
+        elif "sql_query" in definition:
+            mode = "sql"
+
+        if mode == "dqx_native":
+            function = definition.get("function")
+            arguments = definition.get("arguments", {})
+            if not isinstance(function, str) or not function or not isinstance(arguments, dict):
+                return None
+            check = {"criticality": "error", "check": {"function": function, "arguments": arguments}}
+            validation = DQEngine.validate_checks([check])
+            if validation.has_errors:
+                logger.warning("AI-generated dqx_native rule failed validation: %s", validation.errors)
+                return None
+        elif mode == "sql":
+            sql_query = definition.get("sql_query")
+            if not isinstance(sql_query, str) or not sql_query.strip():
+                return None
+            if not is_sql_query_safe(sql_query):
+                logger.warning("AI-generated sql rule dropped: unsafe SQL query")
+                return None
+        else:
+            return None
+
+        return {
+            "name": self._clean_str(proposal.get("name")) or "AI-generated rule",
+            "description": self._clean_str(proposal.get("description")) or "",
+            "mode": mode,
+            "dimension": self._clean_choice(proposal.get("dimension"), _VALID_DIMENSIONS),
+            "severity": self._clean_choice(proposal.get("severity"), _VALID_SEVERITIES),
+            "polarity": self._clean_choice(proposal.get("polarity"), _VALID_POLARITIES) or "pass",
+            "definition": definition,
+        }
+
+    @staticmethod
+    def _clean_str(value: Any) -> str | None:
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    @staticmethod
+    def _clean_choice(value: Any, allowed: frozenset[str]) -> str | None:
+        return value if isinstance(value, str) and value in allowed else None
+
+    async def suggest_field(self, field: str, context: str, user_email: str) -> str:
+        """Suggest a value for a single rule field (e.g. name/description/dimension/severity).
+
+        Raises:
+            AIUnavailableError: AI is disabled or unconfigured.
+            AIRateLimitExceededError: caller is over their hourly quota.
+            AIResponseParseError: the model's response did not contain a usable suggestion.
+        """
+        system = _FIELD_SUGGESTION_SYSTEM_TEMPLATE.format(field=field)
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": context},
+        ]
+        content = await self._gateway.query(
+            user_email=user_email,
+            purpose=f"suggest_field:{field}",
+            messages=messages,
+            max_tokens=2048,
+        )
+        parsed = AIGateway.parse_json_object(content)
+        value = parsed.get("value")
+        if not isinstance(value, str) or not value.strip():
+            raise AIResponseParseError(f"AI did not return a usable suggestion for field '{field}'.")
+        return value.strip()
+
+    # ------------------------------------------------------------------
+    # SQL predicate authoring assistants (write / improve / explain)
+    # ------------------------------------------------------------------
+
+    async def write_sql(
+        self,
+        description: str,
+        user_email: str,
+        columns: list[str] | None = None,
+        table_fqn: str | None = None,
+    ) -> SqlPredicateResult:
+        """Write a SQL predicate for a rule from a natural-language description.
+
+        Returns ``{"predicate": <str>, "polarity": "pass"|"fail"|None}``. The predicate is
+        always re-validated with :func:`is_sql_query_safe` before being returned.
+
+        Raises:
+            AIUnavailableError: AI is disabled or unconfigured.
+            AIRateLimitExceededError: caller is over their hourly quota.
+            AIResponseParseError: the model's response was not parsable JSON.
+            ValueError: the model returned no predicate, or an unsafe one.
+        """
+        schema_info = self._get_schema_info(table_fqn) if table_fqn else ""
+        context = self._build_sql_context(description, schema_info, columns)
+        content = await self._gateway.query(
+            user_email=user_email,
+            purpose="write_sql",
+            messages=[
+                {"role": "system", "content": _WRITE_SQL_SYSTEM_TEMPLATE},
+                {"role": "user", "content": context},
+            ],
+            max_tokens=conf.llm_max_tokens,
+        )
+        return self._parse_sql_predicate(content)
+
+    async def improve_sql(
+        self,
+        predicate: str,
+        instruction: str,
+        user_email: str,
+        columns: list[str] | None = None,
+    ) -> SqlPredicateResult:
+        """Refine an existing SQL predicate per a free-text instruction.
+
+        Returns ``{"predicate": <str>, "polarity": "pass"|"fail"|None}``. The refined
+        predicate is always re-validated with :func:`is_sql_query_safe` before being returned.
+
+        Raises:
+            AIUnavailableError: AI is disabled or unconfigured.
+            AIRateLimitExceededError: caller is over their hourly quota.
+            AIResponseParseError: the model's response was not parsable JSON.
+            ValueError: the model returned no predicate, or an unsafe one.
+        """
+        parts = [f"current_predicate: {predicate}", f"instruction: {instruction}"]
+        if columns:
+            parts.append(f"declared_columns: {json.dumps(columns)}")
+        content = await self._gateway.query(
+            user_email=user_email,
+            purpose="improve_sql",
+            messages=[
+                {"role": "system", "content": _IMPROVE_SQL_SYSTEM_TEMPLATE},
+                {"role": "user", "content": "\n".join(parts)},
+            ],
+            max_tokens=conf.llm_max_tokens,
+        )
+        return self._parse_sql_predicate(content)
+
+    async def explain_sql(self, predicate: str, user_email: str) -> str:
+        """Explain a SQL predicate in plain language.
+
+        The predicate is treated as untrusted data (never executed); only its meaning is
+        described. Returns a short plain-language string.
+
+        Raises:
+            AIUnavailableError: AI is disabled or unconfigured.
+            AIRateLimitExceededError: caller is over their hourly quota.
+            AIResponseParseError: the model returned no usable explanation.
+        """
+        content = await self._gateway.query(
+            user_email=user_email,
+            purpose="explain_sql",
+            messages=[
+                {"role": "system", "content": _EXPLAIN_SQL_SYSTEM_TEMPLATE},
+                {"role": "user", "content": predicate},
+            ],
+            max_tokens=2048,
+        )
+        parsed = AIGateway.parse_json_object(content)
+        explanation = parsed.get("explanation")
+        if not isinstance(explanation, str) or not explanation.strip():
+            raise AIResponseParseError("AI did not return a usable explanation for this predicate.")
+        return explanation.strip()
+
+    @staticmethod
+    def _build_sql_context(description: str, schema_info: str, columns: list[str] | None) -> str:
+        parts = [f"description: {description}"]
+        if columns:
+            parts.append(f"declared_columns: {json.dumps(columns)}")
+        if schema_info:
+            parts.append(f"schema_info: {schema_info}")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _parse_sql_predicate(content: str) -> SqlPredicateResult:
+        """Parse and safety-validate a model-written SQL predicate response.
+
+        Raises:
+            AIResponseParseError: the response was not parsable JSON.
+            ValueError: no predicate was returned, or the predicate failed
+                :func:`is_sql_query_safe` (AGENTS.md 11-SEC — never surface unsafe AI SQL).
+        """
+        parsed = AIGateway.parse_json_object(content)
+        predicate = parsed.get("predicate")
+        if not isinstance(predicate, str) or not predicate.strip():
+            raise ValueError("AI did not return a SQL predicate.")
+        predicate = predicate.strip()
+        if not is_sql_query_safe(predicate):
+            logger.warning("AI-written SQL predicate rejected: unsafe SQL")
+            raise ValueError("AI produced an unsafe SQL predicate. Try rephrasing your request.")
+        polarity = parsed.get("polarity")
+        clean_polarity = polarity if isinstance(polarity, str) and polarity in _VALID_POLARITIES else None
+        return {"predicate": predicate, "polarity": clean_polarity}

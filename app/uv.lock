@@ -942,10 +942,11 @@ wheels = [
 
 [[package]]
 name = "databricks-labs-dqx"
-source = { editable = "../" }
+source = { directory = "../" }
 dependencies = [
     { name = "databricks-labs-blueprint" },
     { name = "databricks-sdk" },
+    { name = "pydantic" },
     { name = "pyyaml" },
     { name = "sqlalchemy" },
 ]
@@ -975,6 +976,7 @@ requires-dist = [
     { name = "mlflow", extras = ["databricks"], marker = "extra == 'anomaly'", specifier = ">=2.19.1,<3.0" },
     { name = "numpy", marker = "extra == 'pii'", specifier = ">=1.20,<2.0" },
     { name = "presidio-analyzer", marker = "extra == 'pii'", specifier = "~=2.2.359" },
+    { name = "pydantic", specifier = ">=2.8.2,<3" },
     { name = "pyyaml", specifier = "~=6.0.3" },
     { name = "scikit-learn", marker = "extra == 'anomaly'", specifier = ">=1.0,<2.0" },
     { name = "shap", marker = "extra == 'anomaly'", specifier = ">=0.42.0,<0.50" },
@@ -1049,6 +1051,7 @@ yq = [{ name = "yq", specifier = "~=3.4.3" }]
 
 [[package]]
 name = "databricks-labs-dqx-app"
+version = "0.15.0"
 source = { editable = "." }
 dependencies = [
     { name = "databricks-labs-dqx", extra = ["datacontract", "llm"] },
@@ -1076,8 +1079,8 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "databricks-labs-dqx", extras = ["datacontract", "llm"], editable = "../" },
-    { name = "databricks-sdk", specifier = "~=0.73" },
+    { name = "databricks-labs-dqx", extras = ["llm", "datacontract"], directory = "../" },
+    { name = "databricks-sdk", specifier = "~=0.120" },
     { name = "databricks-sql-connector", extras = ["pyarrow"], specifier = "==4.2.5" },
     { name = "fastapi", specifier = "~=0.119" },
     { name = "openpyxl", specifier = ">=3.1" },
@@ -1119,16 +1122,17 @@ wheels = [
 
 [[package]]
 name = "databricks-sdk"
-version = "0.116.0"
+version = "0.120.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "google-auth" },
     { name = "protobuf" },
     { name = "requests" },
+    { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/89/f9/a11b6e932f82bfb567ceab8314021894a8831c827b67810f20fbfe03771e/databricks_sdk-0.116.0.tar.gz", hash = "sha256:0bce6f2aa4a0385651b727711624161c610bba090007d5bd9451adb770cb5ffc", upload-time = "2026-06-10T06:14:46.049Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5e/49/d6c19f037d8543831fbcfdac48c62bd741b25bca2fd36e9d03aa21e6b9e8/databricks_sdk-0.120.0.tar.gz", hash = "sha256:12c41492e5d6e7105cb06e6d1a0f1bdf11b76b0630f3a7da85aa8db4fe91dee8", upload-time = "2026-07-02T14:55:50.343Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/41/97/52a397e06a6be924598e47f1ff682799af0a7461eabdecce3cdcc5015c37/databricks_sdk-0.116.0-py3-none-any.whl", hash = "sha256:136c0b889c59dafd4e5336768dc0a5717e2a672701a9f3d87cc8440f104c9073", upload-time = "2026-06-10T06:14:44.421Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/54/83fae982cdf334cb06919ada810ca98c5012f23d1e36c4574a01c0bb963e/databricks_sdk-0.120.0-py3-none-any.whl", hash = "sha256:2d8e19444df30f714123b330fb616d7775f96631f6e36b4dd252adb4f2e010e2", upload-time = "2026-07-02T14:55:48.546Z" },
 ]
 
 [[package]]

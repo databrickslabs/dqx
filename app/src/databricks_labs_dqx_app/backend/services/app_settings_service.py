@@ -1,9 +1,11 @@
 import json
 import logging
+import re
 
 from databricks.labs.dqx.config import WorkspaceConfig
 from pydantic import TypeAdapter, ValidationError
 
+from databricks_labs_dqx_app.backend.config import conf
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 
 logger = logging.getLogger(__name__)
@@ -199,6 +201,126 @@ class AppSettingsService:
         except (TypeError, ValueError):
             logger.warning("Setting %s is not parseable as int (%r); ignoring", key, raw)
             return None
+
+    # ------------------------------------------------------------------
+    # Rules Registry — auto-upgrade-without-approval (design spec §5).
+    #
+    # Governs re-materialization behaviour when a FOLLOWING (i.e.
+    # ``pinned_version IS NULL``) applied rule's registry rule is
+    # republished and the newly rendered check differs from what's
+    # currently stored:
+    #   * ``False`` (default = "Behaviour B"): the materialized row is
+    #     pushed back to ``pending_approval`` for per-table re-review.
+    #   * ``True`` ("Behaviour A"): the materialized row silently
+    #     re-approves — central registry approval is treated as
+    #     sufficient. Pinned applications are never affected either way.
+    # ------------------------------------------------------------------
+
+    _AUTO_UPGRADE_WITHOUT_APPROVAL_KEY = "auto_upgrade_without_approval"
+
+    def get_auto_upgrade_without_approval(self) -> bool:
+        """Return the configured auto-upgrade behaviour; defaults to ``False`` (Behaviour B) when unset."""
+        raw = self.get_setting(self._AUTO_UPGRADE_WITHOUT_APPROVAL_KEY)
+        return raw is not None and raw.strip().lower() == "true"
+
+    def save_auto_upgrade_without_approval(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the auto-upgrade-without-approval setting. Returns the saved value."""
+        self.save_setting(
+            self._AUTO_UPGRADE_WITHOUT_APPROVAL_KEY, "true" if enabled else "false", user_email=user_email
+        )
+        return enabled
+
+    # ------------------------------------------------------------------
+    # Object permissions — default per-grant inheritance (P22-D item 10).
+    #
+    # Governs the DEFAULT state of the per-grant "inherit to child objects"
+    # toggle in the Permissions tab. Defaults to ``False`` (each new grant is
+    # scoped to just its object unless the granter opts in). An admin can flip
+    # this to ``True`` so new grants inherit down the hierarchy by default —
+    # convenient for teams that manage access at the table-space level.
+    # ------------------------------------------------------------------
+
+    _PERMISSIONS_DEFAULT_INHERIT_KEY = "permissions_default_inherit"
+
+    def get_permissions_default_inherit(self) -> bool:
+        """Return the admin default for the per-grant inheritance toggle (default ``False``)."""
+        raw = self.get_setting(self._PERMISSIONS_DEFAULT_INHERIT_KEY)
+        return raw is not None and raw.strip().lower() == "true"
+
+    def save_permissions_default_inherit(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the default per-grant inheritance setting. Returns the saved value."""
+        self.save_setting(
+            self._PERMISSIONS_DEFAULT_INHERIT_KEY, "true" if enabled else "false", user_email=user_email
+        )
+        return enabled
+
+    # ------------------------------------------------------------------
+    # Rules Registry — default-auto-upgrade (P21-G). Distinct from
+    # ``auto_upgrade_without_approval`` above:
+    #   * ``auto_upgrade_without_approval`` governs RE-APPROVAL — whether a
+    #     re-rendered check on an EXISTING following (``pinned_version IS
+    #     NULL``) application silently re-approves or falls back to
+    #     ``pending_approval``.
+    #   * ``default_auto_upgrade`` (this setting) governs the PIN CHOSEN AT
+    #     ATTACH TIME for a brand-new rule application / data-product
+    #     member, when the caller does not explicitly request a pin:
+    #       - ``True`` (default): the new attachment follows latest
+    #         (``pinned_version = None``), matching today's behaviour.
+    #       - ``False``: the new attachment is pinned to the rule's (or
+    #         binding's) CURRENT version at attach time, so it only moves
+    #         forward when a steward explicitly re-pins/unpins it.
+    #     This mirrors dqlake's ``default_auto_upgrade`` app-setting
+    #     (``backend/routers/bindings.py:_resolve_pinned_version``).
+    #     It is applied ONLY when a NEW row is inserted — never on an
+    #     update of an existing application/member, where an explicit
+    #     ``pinned_version=None`` from the caller already means "the
+    #     steward explicitly chose to follow latest / clear the pin" and
+    #     must be honoured as-is. See
+    #     :meth:`resolve_pinned_version_for_new_attachment` and its call
+    #     sites in ``ApplyRulesService.apply_rule`` / ``DataProductService.add_member``.
+    # ------------------------------------------------------------------
+
+    _DEFAULT_AUTO_UPGRADE_KEY = "default_auto_upgrade"
+
+    def get_default_auto_upgrade(self) -> bool:
+        """Return whether new attachments default to following latest; defaults to ``True`` when unset."""
+        raw = self.get_setting(self._DEFAULT_AUTO_UPGRADE_KEY)
+        if raw is None:
+            return True
+        return raw.strip().lower() == "true"
+
+    def save_default_auto_upgrade(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the default-auto-upgrade setting. Returns the saved value."""
+        self.save_setting(self._DEFAULT_AUTO_UPGRADE_KEY, "true" if enabled else "false", user_email=user_email)
+        return enabled
+
+    def resolve_pinned_version_for_new_attachment(
+        self, explicit_pinned_version: int | None, current_version: int
+    ) -> int | None:
+        """Resolve the pin to store for a BRAND-NEW rule application / data-product member.
+
+        Call this ONLY from the insert path of a new attachment — never
+        when updating an existing row (see the module-level comment on
+        ``default_auto_upgrade`` above for why this is attach-time-only).
+
+        Args:
+            explicit_pinned_version: The pin the caller explicitly requested,
+                or ``None`` if the caller left it unspecified (the common
+                case — most attach flows have no pin control at all).
+            current_version: The rule's (or binding's) current published/
+                approved version, used as the pin when ``default_auto_upgrade``
+                is off.
+
+        Returns:
+            ``explicit_pinned_version`` unchanged if the caller specified one;
+            otherwise ``None`` (follow latest) when ``default_auto_upgrade`` is
+            on, or ``current_version`` when it's off.
+        """
+        if explicit_pinned_version is not None:
+            return explicit_pinned_version
+        if self.get_default_auto_upgrade():
+            return None
+        return current_version
 
     # ------------------------------------------------------------------
     # Embedded dashboard — Insights page renders a Databricks AI/BI
@@ -419,6 +541,352 @@ class AppSettingsService:
             user_email=user_email,
         )
         logger.info("Saved %d run review status(es) (by=%s)", len(entries), user_email or "system")
+
+    # ------------------------------------------------------------------
+    # Reserved label definitions — Rules Registry Phase 1. Dimensions &
+    # severity are TAGS, not new tables: they are pre-built entries in the
+    # same ``label_definitions`` JSON blob (see ``routes.v1.config``),
+    # flagged ``is_builtin`` so the save endpoint can refuse to delete or
+    # rename them. Seeded once at startup (mirrors
+    # ``seed_run_review_statuses_if_absent`` above); the read path
+    # (``routes.v1.config.get_label_definitions``) stays side-effect free.
+    #
+    # Kept as raw dicts (not the ``LabelDefinition`` pydantic model) to
+    # avoid a services -> routes import — ``routes.v1.config`` already
+    # imports ``AppSettingsService``, so importing back would cycle.
+    # ------------------------------------------------------------------
+
+    _LABEL_DEFINITIONS_KEY = "label_definitions"
+
+    _RESERVED_LABEL_DEFINITION_SEEDS: list[dict] = [
+        {
+            "key": "dimension",
+            "description": "Data quality dimension the rule measures.",
+            "values": ["Validity", "Completeness", "Accuracy", "Consistency", "Uniqueness", "Timeliness"],
+            # Fixed, admin-curated catalog — rule authors pick from this list,
+            # they don't extend it inline. Enforced server-side regardless of
+            # this seed value; see ``_NO_CUSTOM_VALUE_BUILTIN_KEYS`` in
+            # ``routes.v1.config``.
+            "allow_custom_values": False,
+            "is_builtin": True,
+            "value_colors": {
+                "Validity": "#2563EB",
+                "Completeness": "#16A34A",
+                "Accuracy": "#D97706",
+                "Consistency": "#7C3AED",
+                "Uniqueness": "#0891B2",
+                "Timeliness": "#DB2777",
+            },
+            # One-line explanations lifted from the DQ dimension glossary so
+            # authors get the same definitions wherever the value is shown
+            # (admin editor, label picker tooltip).
+            "value_descriptions": {
+                "Validity": "Whether values match the expected format or rules.",
+                "Completeness": "Whether all required values are present (no missing data).",
+                "Accuracy": "Whether values reflect the real-world truth they represent.",
+                "Consistency": "Whether values agree across systems, tables, or time.",
+                "Uniqueness": "Whether records that should be unique actually are.",
+                "Timeliness": "Whether data is available within the expected time window.",
+            },
+        },
+        {
+            "key": "severity",
+            "description": "Rule severity, independent of DQX criticality (warn/error).",
+            "values": ["Low", "Medium", "High", "Critical"],
+            "allow_custom_values": False,
+            "is_builtin": True,
+            "value_colors": {
+                "Low": "#16A34A",
+                "Medium": "#D97706",
+                "High": "#EA580C",
+                "Critical": "#DC2626",
+            },
+        },
+    ]
+
+    def seed_reserved_label_definitions_if_absent(self, *, user_email: str | None = None) -> bool:
+        """Ensure the reserved ``dimension``/``severity`` label keys exist.
+
+        Idempotent and non-destructive: reads the current
+        ``label_definitions`` list, adds only the reserved seed entries
+        whose ``key`` is not already present, and leaves every existing
+        entry (admin-edited or not) untouched. Returns ``True`` iff a
+        write happened.
+        """
+        raw = self.get_setting(self._LABEL_DEFINITIONS_KEY)
+        existing: list[dict] = []
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    existing = [item for item in parsed if isinstance(item, dict)]
+                else:
+                    logger.warning("label_definitions setting is not a list; seeding onto an empty list")
+            except (TypeError, json.JSONDecodeError):
+                logger.warning("label_definitions setting is not valid JSON; seeding onto an empty list")
+
+        existing_keys = {item.get("key") for item in existing}
+        missing = [seed for seed in self._RESERVED_LABEL_DEFINITION_SEEDS if seed["key"] not in existing_keys]
+        if not missing:
+            return False
+
+        updated = existing + [json.loads(json.dumps(seed)) for seed in missing]
+        self.save_setting(self._LABEL_DEFINITIONS_KEY, json.dumps(updated), user_email=user_email)
+        logger.info("Seeded reserved label definition(s): %s", [s["key"] for s in missing])
+        return True
+
+    # ------------------------------------------------------------------
+    # AI Gateway settings — Rules Registry Phase 4A. Kill-switch, serving
+    # endpoint name, and per-user hourly rate limit for AIGateway
+    # (services/ai_gateway.py). Defaults keep AI OFF and unconfigured until
+    # an admin explicitly turns it on, so a deploy with no AI infra behaves
+    # exactly like today: every AI route returns a clean 503, never a 500.
+    # ------------------------------------------------------------------
+
+    _AI_ENABLED_KEY = "ai_enabled"
+    _AI_ENDPOINT_NAME_KEY = "ai_endpoint_name"
+    _AI_RATE_LIMIT_KEY = "ai_rate_limit_per_user_per_hour"
+
+    AI_RATE_LIMIT_DEFAULT = 30
+
+    # Seeded default AI serving endpoint — a reasonable out-of-the-box
+    # selection for the admin dropdown (Rules Registry Phase 7F). AI stays
+    # OFF by default regardless (``ai_enabled`` defaults to ``False``); this
+    # only changes what shows up pre-selected once an admin turns it on. An
+    # admin who explicitly saves an empty value gets that empty value back
+    # (see the ``raw is None`` check below) rather than being forced back to
+    # the default on every read.
+    AI_ENDPOINT_NAME_DEFAULT = "databricks-gpt-5-5"
+
+    def get_ai_enabled(self) -> bool:
+        """Return whether the AI kill-switch is on; defaults to ``False`` (off) when unset."""
+        raw = self.get_setting(self._AI_ENABLED_KEY)
+        return raw is not None and raw.strip().lower() == "true"
+
+    def save_ai_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the AI kill-switch setting. Returns the saved value."""
+        self.save_setting(self._AI_ENABLED_KEY, "true" if enabled else "false", user_email=user_email)
+        return enabled
+
+    def get_ai_endpoint_name(self) -> str:
+        """Return the configured AI serving endpoint name.
+
+        Defaults to :data:`AI_ENDPOINT_NAME_DEFAULT` when the setting has
+        never been saved (no row). An admin who explicitly saves an empty
+        value gets ``""`` back, not the default — the row exists, it's just
+        empty.
+        """
+        raw = self.get_setting(self._AI_ENDPOINT_NAME_KEY)
+        if raw is None:
+            return self.AI_ENDPOINT_NAME_DEFAULT
+        return raw.strip()
+
+    def save_ai_endpoint_name(self, endpoint_name: str, *, user_email: str | None = None) -> str:
+        """Persist the AI serving endpoint name. Returns the cleaned (trimmed) value."""
+        cleaned = (endpoint_name or "").strip()
+        self.save_setting(self._AI_ENDPOINT_NAME_KEY, cleaned, user_email=user_email)
+        return cleaned
+
+    def get_ai_rate_limit_per_user_per_hour(self) -> int:
+        """Return the configured per-user hourly AI call cap; defaults to :data:`AI_RATE_LIMIT_DEFAULT`."""
+        value = self._get_int_setting(self._AI_RATE_LIMIT_KEY)
+        return value if value is not None else self.AI_RATE_LIMIT_DEFAULT
+
+    def save_ai_rate_limit_per_user_per_hour(self, limit: int, *, user_email: str | None = None) -> int:
+        """Persist the per-user hourly AI call cap. Returns the saved value."""
+        self.save_setting(self._AI_RATE_LIMIT_KEY, str(int(limit)), user_email=user_email)
+        return int(limit)
+
+    # ------------------------------------------------------------------
+    # Vector Search / embeddings settings — Rules Registry Phase 4B/4C,
+    # auto-derived since Phase 8B. The admin UI only exposes the AI
+    # enable toggle + serving-endpoint dropdown; the rule-mapping
+    # suggester's vector store is fully auto-provisioned from that alone
+    # — these three settings are no longer surfaced as admin inputs.
+    #
+    #   * ``embedding_endpoint_name`` — Databricks serving endpoint that
+    #     turns rule/query text into an embedding vector
+    #     (``services/rule_embeddings.py``). Defaults to
+    #     :data:`EMBEDDING_ENDPOINT_NAME_DEFAULT`, a Foundation Model API
+    #     embedding endpoint available out-of-the-box in most workspaces.
+    #   * ``vs_endpoint_name`` / ``vs_index_name`` — the Databricks Vector
+    #     Search endpoint + index that stores rule embeddings for
+    #     nearest-neighbour retrieval. Auto-derived from this app's own
+    #     catalog/schema (see :meth:`_default_vs_endpoint_name` /
+    #     :meth:`_default_vs_index_name`) so multiple ``dqx_studio``
+    #     deployments on the same metastore never collide.
+    #
+    # The setter methods are kept (and the settings remain independently
+    # overridable via direct API calls) purely for backwards
+    # compatibility/testing — nothing in the UI writes to them anymore.
+    # ``VectorStoreProvisioner.ensure_vector_store`` / the suggester
+    # degrade gracefully (best-effort, never raise) if the auto-created
+    # infra isn't ready yet — see ``services/vector_store.py``.
+    # ------------------------------------------------------------------
+
+    _EMBEDDING_ENDPOINT_NAME_KEY = "embedding_endpoint_name"
+    _VS_ENDPOINT_NAME_KEY = "vs_endpoint_name"
+    _VS_INDEX_NAME_KEY = "vs_index_name"
+
+    # A widely-available Foundation Model API embedding endpoint — a
+    # reasonable out-of-the-box default so the rule-mapping suggester
+    # works the moment an admin flips "Enable AI" on, without a separate
+    # embedding-endpoint field to fill in.
+    EMBEDDING_ENDPOINT_NAME_DEFAULT = "databricks-gte-large-en"
+
+    # Fixed prefix/suffix for the auto-derived Vector Search endpoint and
+    # index names (see ``_default_vs_endpoint_name``/``_default_vs_index_name``).
+    _VS_ENDPOINT_NAME_PREFIX = "dqx_studio_rule_suggester"
+    _VS_INDEX_NAME_SUFFIX = "dq_rule_embeddings_index"
+
+    def get_embedding_endpoint_name(self) -> str:
+        """Return the embedding serving endpoint name.
+
+        Defaults to :data:`EMBEDDING_ENDPOINT_NAME_DEFAULT` when the
+        setting is unset — either no row at all, or a row holding an
+        empty/whitespace-only value. Vector Search cannot provision
+        without a real embedding endpoint, so an empty stored value is
+        treated as "unset" and falls back to the default rather than
+        silently disabling provisioning.
+        """
+        raw = self.get_setting(self._EMBEDDING_ENDPOINT_NAME_KEY)
+        if raw is None or not raw.strip():
+            return self.EMBEDDING_ENDPOINT_NAME_DEFAULT
+        return raw.strip()
+
+    def save_embedding_endpoint_name(self, endpoint_name: str, *, user_email: str | None = None) -> str:
+        """Persist the embedding serving endpoint name. Returns the cleaned (trimmed) value."""
+        cleaned = (endpoint_name or "").strip()
+        self.save_setting(self._EMBEDDING_ENDPOINT_NAME_KEY, cleaned, user_email=user_email)
+        return cleaned
+
+    def _default_vs_endpoint_name(self) -> str:
+        """Auto-derive a Vector Search endpoint name scoped to this app's catalog."""
+        safe_catalog = re.sub(r"[^A-Za-z0-9_]", "_", conf.catalog)
+        return f"{self._VS_ENDPOINT_NAME_PREFIX}_{safe_catalog}"
+
+    def get_vs_endpoint_name(self) -> str:
+        """Return the Vector Search endpoint name.
+
+        Defaults to an auto-derived, catalog-scoped name (see
+        :meth:`_default_vs_endpoint_name`) when the setting is unset —
+        either no row at all, or a row holding an empty/whitespace-only
+        value (an empty stored value would otherwise silently disable
+        Vector Search provisioning).
+        """
+        raw = self.get_setting(self._VS_ENDPOINT_NAME_KEY)
+        if raw is None or not raw.strip():
+            return self._default_vs_endpoint_name()
+        return raw.strip()
+
+    def save_vs_endpoint_name(self, endpoint_name: str, *, user_email: str | None = None) -> str:
+        """Persist the Vector Search endpoint name. Returns the cleaned (trimmed) value."""
+        cleaned = (endpoint_name or "").strip()
+        self.save_setting(self._VS_ENDPOINT_NAME_KEY, cleaned, user_email=user_email)
+        return cleaned
+
+    def _default_vs_index_name(self) -> str:
+        """Auto-derive a fully-qualified (UC three-level) Vector Search index name."""
+        return f"{conf.catalog}.{conf.schema_name}.{self._VS_INDEX_NAME_SUFFIX}"
+
+    def get_vs_index_name(self) -> str:
+        """Return the fully-qualified Vector Search index name.
+
+        Defaults to an auto-derived name under this app's own UC
+        catalog/schema (see :meth:`_default_vs_index_name`) when the
+        setting is unset — either no row at all, or a row holding an
+        empty/whitespace-only value (an empty stored value would
+        otherwise silently disable Vector Search provisioning).
+        """
+        raw = self.get_setting(self._VS_INDEX_NAME_KEY)
+        if raw is None or not raw.strip():
+            return self._default_vs_index_name()
+        return raw.strip()
+
+    def save_vs_index_name(self, index_name: str, *, user_email: str | None = None) -> str:
+        """Persist the Vector Search index name. Returns the cleaned (trimmed) value."""
+        cleaned = (index_name or "").strip()
+        self.save_setting(self._VS_INDEX_NAME_KEY, cleaned, user_email=user_email)
+        return cleaned
+
+    # ------------------------------------------------------------------
+    # Compute settings (P22-B) — the SQL warehouse used for app-side
+    # ad-hoc SQL (View Data preview, discovery-style reads) and the jobs
+    # compute used for the task-runner submission path. Both mirror
+    # dqlake's Settings "jobs" section.
+    #
+    #   * ``sql_warehouse_id`` — a bare warehouse id. When unset (no row,
+    #     or an empty value) callers fall back to the bundle-bound
+    #     ``DATABRICKS_WAREHOUSE_ID`` env var, i.e. today's behaviour.
+    #     :meth:`get_sql_warehouse_id` returns ``None`` in that case so
+    #     the resolver (:func:`resolve_warehouse_id`) can apply the env
+    #     fallback in one place.
+    #   * ``jobs_compute_v1`` — a small JSON object describing the compute
+    #     the task-runner job should use. ``{"kind": "serverless"}``
+    #     (default) or ``{"kind": "existing_cluster", "cluster_id": "..."}``.
+    #     Persisted + surfaced now; the submission-side wiring is a
+    #     documented follow-up because ``job_service.py`` is frozen (see the
+    #     route docstring in ``routes/v1/compute.py``).
+    # ------------------------------------------------------------------
+
+    _SQL_WAREHOUSE_ID_KEY = "sql_warehouse_id"
+    _JOBS_COMPUTE_KEY = "jobs_compute_v1"
+
+    JOBS_COMPUTE_SERVERLESS = "serverless"
+    JOBS_COMPUTE_EXISTING_CLUSTER = "existing_cluster"
+
+    def get_sql_warehouse_id(self) -> str | None:
+        """Return the configured SQL warehouse id, or ``None`` when unset.
+
+        ``None`` means "no admin override" — the caller should fall back
+        to the ``DATABRICKS_WAREHOUSE_ID`` env var. An empty/whitespace
+        stored value is treated the same as unset.
+        """
+        raw = self.get_setting(self._SQL_WAREHOUSE_ID_KEY)
+        if raw is None or not raw.strip():
+            return None
+        return raw.strip()
+
+    def save_sql_warehouse_id(self, warehouse_id: str, *, user_email: str | None = None) -> str:
+        """Persist the SQL warehouse id (trimmed). An empty value clears the override."""
+        cleaned = (warehouse_id or "").strip()
+        self.save_setting(self._SQL_WAREHOUSE_ID_KEY, cleaned, user_email=user_email)
+        return cleaned
+
+    def get_jobs_compute(self) -> dict:
+        """Return the configured jobs-compute selection.
+
+        Defaults to ``{"kind": "serverless"}`` when unset or malformed so
+        callers always get a well-formed object. An ``existing_cluster``
+        selection carries a non-empty ``cluster_id``; anything else
+        collapses back to serverless.
+        """
+        raw = self.get_setting(self._JOBS_COMPUTE_KEY)
+        if not raw:
+            return {"kind": self.JOBS_COMPUTE_SERVERLESS}
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("jobs_compute_v1 setting is not valid JSON; defaulting to serverless")
+            return {"kind": self.JOBS_COMPUTE_SERVERLESS}
+        if not isinstance(parsed, dict):
+            return {"kind": self.JOBS_COMPUTE_SERVERLESS}
+        return self._normalise_jobs_compute(parsed)
+
+    def save_jobs_compute(self, compute: dict, *, user_email: str | None = None) -> dict:
+        """Persist the jobs-compute selection. Returns the normalised value."""
+        normalised = self._normalise_jobs_compute(compute if isinstance(compute, dict) else {})
+        self.save_setting(self._JOBS_COMPUTE_KEY, json.dumps(normalised), user_email=user_email)
+        return normalised
+
+    @classmethod
+    def _normalise_jobs_compute(cls, compute: dict) -> dict:
+        kind = compute.get("kind")
+        if kind == cls.JOBS_COMPUTE_EXISTING_CLUSTER:
+            cluster_id = compute.get("cluster_id")
+            if isinstance(cluster_id, str) and cluster_id.strip():
+                return {"kind": cls.JOBS_COMPUTE_EXISTING_CLUSTER, "cluster_id": cluster_id.strip()}
+        return {"kind": cls.JOBS_COMPUTE_SERVERLESS}
 
     @staticmethod
     def _normalise_status_entry(item: dict) -> dict:

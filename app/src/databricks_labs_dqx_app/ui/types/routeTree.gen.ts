@@ -20,8 +20,14 @@ import { Route as SidebarInsightsRouteImport } from './../routes/_sidebar/insigh
 import { Route as SidebarHomeRouteImport } from './../routes/_sidebar/home'
 import { Route as SidebarDiscoveryRouteImport } from './../routes/_sidebar/discovery'
 import { Route as SidebarConfigRouteImport } from './../routes/_sidebar/config'
+import { Route as SidebarTableSpacesIndexRouteImport } from './../routes/_sidebar/table-spaces.index'
 import { Route as SidebarRunsIndexRouteImport } from './../routes/_sidebar/runs.index'
 import { Route as SidebarRulesIndexRouteImport } from './../routes/_sidebar/rules.index'
+import { Route as SidebarRegistryRulesIndexRouteImport } from './../routes/_sidebar/registry-rules.index'
+import { Route as SidebarMonitoredTablesIndexRouteImport } from './../routes/_sidebar/monitored-tables.index'
+import { Route as SidebarDataProductsIndexRouteImport } from './../routes/_sidebar/data-products.index'
+import { Route as SidebarTableSpacesNewRouteImport } from './../routes/_sidebar/table-spaces.new'
+import { Route as SidebarTableSpacesProductIdRouteImport } from './../routes/_sidebar/table-spaces.$productId'
 import { Route as SidebarRunsRunNameRouteImport } from './../routes/_sidebar/runs.$runName'
 import { Route as SidebarRulesSingleTableRouteImport } from './../routes/_sidebar/rules.single-table'
 import { Route as SidebarRulesImportRouteImport } from './../routes/_sidebar/rules.import'
@@ -31,6 +37,12 @@ import { Route as SidebarRulesCreateSqlRouteImport } from './../routes/_sidebar/
 import { Route as SidebarRulesCreateReusableRouteImport } from './../routes/_sidebar/rules.create-reusable'
 import { Route as SidebarRulesCreateRouteImport } from './../routes/_sidebar/rules.create'
 import { Route as SidebarRulesActiveRouteImport } from './../routes/_sidebar/rules.active'
+import { Route as SidebarRegistryRulesNewRouteImport } from './../routes/_sidebar/registry-rules.new'
+import { Route as SidebarRegistryRulesRuleIdRouteImport } from './../routes/_sidebar/registry-rules.$ruleId'
+import { Route as SidebarMonitoredTablesNewRouteImport } from './../routes/_sidebar/monitored-tables.new'
+import { Route as SidebarMonitoredTablesBindingIdRouteImport } from './../routes/_sidebar/monitored-tables.$bindingId'
+import { Route as SidebarDataProductsNewRouteImport } from './../routes/_sidebar/data-products.new'
+import { Route as SidebarDataProductsProductIdRouteImport } from './../routes/_sidebar/data-products.$productId'
 
 const SidebarRouteRoute = SidebarRouteRouteImport.update({
   id: '/_sidebar',
@@ -86,6 +98,11 @@ const SidebarConfigRoute = SidebarConfigRouteImport.update({
   path: '/config',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
+const SidebarTableSpacesIndexRoute = SidebarTableSpacesIndexRouteImport.update({
+  id: '/table-spaces/',
+  path: '/table-spaces/',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
 const SidebarRunsIndexRoute = SidebarRunsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -96,6 +113,35 @@ const SidebarRulesIndexRoute = SidebarRulesIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SidebarRulesRoute,
 } as any)
+const SidebarRegistryRulesIndexRoute =
+  SidebarRegistryRulesIndexRouteImport.update({
+    id: '/registry-rules/',
+    path: '/registry-rules/',
+    getParentRoute: () => SidebarRouteRoute,
+  } as any)
+const SidebarMonitoredTablesIndexRoute =
+  SidebarMonitoredTablesIndexRouteImport.update({
+    id: '/monitored-tables/',
+    path: '/monitored-tables/',
+    getParentRoute: () => SidebarRouteRoute,
+  } as any)
+const SidebarDataProductsIndexRoute =
+  SidebarDataProductsIndexRouteImport.update({
+    id: '/data-products/',
+    path: '/data-products/',
+    getParentRoute: () => SidebarRouteRoute,
+  } as any)
+const SidebarTableSpacesNewRoute = SidebarTableSpacesNewRouteImport.update({
+  id: '/table-spaces/new',
+  path: '/table-spaces/new',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
+const SidebarTableSpacesProductIdRoute =
+  SidebarTableSpacesProductIdRouteImport.update({
+    id: '/table-spaces/$productId',
+    path: '/table-spaces/$productId',
+    getParentRoute: () => SidebarRouteRoute,
+  } as any)
 const SidebarRunsRunNameRoute = SidebarRunsRunNameRouteImport.update({
   id: '/$runName',
   path: '/$runName',
@@ -143,6 +189,40 @@ const SidebarRulesActiveRoute = SidebarRulesActiveRouteImport.update({
   path: '/active',
   getParentRoute: () => SidebarRulesRoute,
 } as any)
+const SidebarRegistryRulesNewRoute = SidebarRegistryRulesNewRouteImport.update({
+  id: '/registry-rules/new',
+  path: '/registry-rules/new',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
+const SidebarRegistryRulesRuleIdRoute =
+  SidebarRegistryRulesRuleIdRouteImport.update({
+    id: '/registry-rules/$ruleId',
+    path: '/registry-rules/$ruleId',
+    getParentRoute: () => SidebarRouteRoute,
+  } as any)
+const SidebarMonitoredTablesNewRoute =
+  SidebarMonitoredTablesNewRouteImport.update({
+    id: '/monitored-tables/new',
+    path: '/monitored-tables/new',
+    getParentRoute: () => SidebarRouteRoute,
+  } as any)
+const SidebarMonitoredTablesBindingIdRoute =
+  SidebarMonitoredTablesBindingIdRouteImport.update({
+    id: '/monitored-tables/$bindingId',
+    path: '/monitored-tables/$bindingId',
+    getParentRoute: () => SidebarRouteRoute,
+  } as any)
+const SidebarDataProductsNewRoute = SidebarDataProductsNewRouteImport.update({
+  id: '/data-products/new',
+  path: '/data-products/new',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
+const SidebarDataProductsProductIdRoute =
+  SidebarDataProductsProductIdRouteImport.update({
+    id: '/data-products/$productId',
+    path: '/data-products/$productId',
+    getParentRoute: () => SidebarRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -155,6 +235,12 @@ export interface FileRoutesByFullPath {
   '/rules': typeof SidebarRulesRouteWithChildren
   '/runs': typeof SidebarRunsRouteWithChildren
   '/runs-history': typeof SidebarRunsHistoryRoute
+  '/data-products/$productId': typeof SidebarDataProductsProductIdRoute
+  '/data-products/new': typeof SidebarDataProductsNewRoute
+  '/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
+  '/monitored-tables/new': typeof SidebarMonitoredTablesNewRoute
+  '/registry-rules/$ruleId': typeof SidebarRegistryRulesRuleIdRoute
+  '/registry-rules/new': typeof SidebarRegistryRulesNewRoute
   '/rules/active': typeof SidebarRulesActiveRoute
   '/rules/create': typeof SidebarRulesCreateRoute
   '/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
@@ -164,8 +250,14 @@ export interface FileRoutesByFullPath {
   '/rules/import': typeof SidebarRulesImportRoute
   '/rules/single-table': typeof SidebarRulesSingleTableRoute
   '/runs/$runName': typeof SidebarRunsRunNameRoute
+  '/table-spaces/$productId': typeof SidebarTableSpacesProductIdRoute
+  '/table-spaces/new': typeof SidebarTableSpacesNewRoute
+  '/data-products/': typeof SidebarDataProductsIndexRoute
+  '/monitored-tables/': typeof SidebarMonitoredTablesIndexRoute
+  '/registry-rules/': typeof SidebarRegistryRulesIndexRoute
   '/rules/': typeof SidebarRulesIndexRoute
   '/runs/': typeof SidebarRunsIndexRoute
+  '/table-spaces/': typeof SidebarTableSpacesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -176,6 +268,12 @@ export interface FileRoutesByTo {
   '/profile': typeof SidebarProfileRoute
   '/profiler': typeof SidebarProfilerRoute
   '/runs-history': typeof SidebarRunsHistoryRoute
+  '/data-products/$productId': typeof SidebarDataProductsProductIdRoute
+  '/data-products/new': typeof SidebarDataProductsNewRoute
+  '/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
+  '/monitored-tables/new': typeof SidebarMonitoredTablesNewRoute
+  '/registry-rules/$ruleId': typeof SidebarRegistryRulesRuleIdRoute
+  '/registry-rules/new': typeof SidebarRegistryRulesNewRoute
   '/rules/active': typeof SidebarRulesActiveRoute
   '/rules/create': typeof SidebarRulesCreateRoute
   '/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
@@ -185,8 +283,14 @@ export interface FileRoutesByTo {
   '/rules/import': typeof SidebarRulesImportRoute
   '/rules/single-table': typeof SidebarRulesSingleTableRoute
   '/runs/$runName': typeof SidebarRunsRunNameRoute
+  '/table-spaces/$productId': typeof SidebarTableSpacesProductIdRoute
+  '/table-spaces/new': typeof SidebarTableSpacesNewRoute
+  '/data-products': typeof SidebarDataProductsIndexRoute
+  '/monitored-tables': typeof SidebarMonitoredTablesIndexRoute
+  '/registry-rules': typeof SidebarRegistryRulesIndexRoute
   '/rules': typeof SidebarRulesIndexRoute
   '/runs': typeof SidebarRunsIndexRoute
+  '/table-spaces': typeof SidebarTableSpacesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -201,6 +305,12 @@ export interface FileRoutesById {
   '/_sidebar/rules': typeof SidebarRulesRouteWithChildren
   '/_sidebar/runs': typeof SidebarRunsRouteWithChildren
   '/_sidebar/runs-history': typeof SidebarRunsHistoryRoute
+  '/_sidebar/data-products/$productId': typeof SidebarDataProductsProductIdRoute
+  '/_sidebar/data-products/new': typeof SidebarDataProductsNewRoute
+  '/_sidebar/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
+  '/_sidebar/monitored-tables/new': typeof SidebarMonitoredTablesNewRoute
+  '/_sidebar/registry-rules/$ruleId': typeof SidebarRegistryRulesRuleIdRoute
+  '/_sidebar/registry-rules/new': typeof SidebarRegistryRulesNewRoute
   '/_sidebar/rules/active': typeof SidebarRulesActiveRoute
   '/_sidebar/rules/create': typeof SidebarRulesCreateRoute
   '/_sidebar/rules/create-reusable': typeof SidebarRulesCreateReusableRoute
@@ -210,8 +320,14 @@ export interface FileRoutesById {
   '/_sidebar/rules/import': typeof SidebarRulesImportRoute
   '/_sidebar/rules/single-table': typeof SidebarRulesSingleTableRoute
   '/_sidebar/runs/$runName': typeof SidebarRunsRunNameRoute
+  '/_sidebar/table-spaces/$productId': typeof SidebarTableSpacesProductIdRoute
+  '/_sidebar/table-spaces/new': typeof SidebarTableSpacesNewRoute
+  '/_sidebar/data-products/': typeof SidebarDataProductsIndexRoute
+  '/_sidebar/monitored-tables/': typeof SidebarMonitoredTablesIndexRoute
+  '/_sidebar/registry-rules/': typeof SidebarRegistryRulesIndexRoute
   '/_sidebar/rules/': typeof SidebarRulesIndexRoute
   '/_sidebar/runs/': typeof SidebarRunsIndexRoute
+  '/_sidebar/table-spaces/': typeof SidebarTableSpacesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -226,6 +342,12 @@ export interface FileRouteTypes {
     | '/rules'
     | '/runs'
     | '/runs-history'
+    | '/data-products/$productId'
+    | '/data-products/new'
+    | '/monitored-tables/$bindingId'
+    | '/monitored-tables/new'
+    | '/registry-rules/$ruleId'
+    | '/registry-rules/new'
     | '/rules/active'
     | '/rules/create'
     | '/rules/create-reusable'
@@ -235,8 +357,14 @@ export interface FileRouteTypes {
     | '/rules/import'
     | '/rules/single-table'
     | '/runs/$runName'
+    | '/table-spaces/$productId'
+    | '/table-spaces/new'
+    | '/data-products/'
+    | '/monitored-tables/'
+    | '/registry-rules/'
     | '/rules/'
     | '/runs/'
+    | '/table-spaces/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -247,6 +375,12 @@ export interface FileRouteTypes {
     | '/profile'
     | '/profiler'
     | '/runs-history'
+    | '/data-products/$productId'
+    | '/data-products/new'
+    | '/monitored-tables/$bindingId'
+    | '/monitored-tables/new'
+    | '/registry-rules/$ruleId'
+    | '/registry-rules/new'
     | '/rules/active'
     | '/rules/create'
     | '/rules/create-reusable'
@@ -256,8 +390,14 @@ export interface FileRouteTypes {
     | '/rules/import'
     | '/rules/single-table'
     | '/runs/$runName'
+    | '/table-spaces/$productId'
+    | '/table-spaces/new'
+    | '/data-products'
+    | '/monitored-tables'
+    | '/registry-rules'
     | '/rules'
     | '/runs'
+    | '/table-spaces'
   id:
     | '__root__'
     | '/'
@@ -271,6 +411,12 @@ export interface FileRouteTypes {
     | '/_sidebar/rules'
     | '/_sidebar/runs'
     | '/_sidebar/runs-history'
+    | '/_sidebar/data-products/$productId'
+    | '/_sidebar/data-products/new'
+    | '/_sidebar/monitored-tables/$bindingId'
+    | '/_sidebar/monitored-tables/new'
+    | '/_sidebar/registry-rules/$ruleId'
+    | '/_sidebar/registry-rules/new'
     | '/_sidebar/rules/active'
     | '/_sidebar/rules/create'
     | '/_sidebar/rules/create-reusable'
@@ -280,8 +426,14 @@ export interface FileRouteTypes {
     | '/_sidebar/rules/import'
     | '/_sidebar/rules/single-table'
     | '/_sidebar/runs/$runName'
+    | '/_sidebar/table-spaces/$productId'
+    | '/_sidebar/table-spaces/new'
+    | '/_sidebar/data-products/'
+    | '/_sidebar/monitored-tables/'
+    | '/_sidebar/registry-rules/'
     | '/_sidebar/rules/'
     | '/_sidebar/runs/'
+    | '/_sidebar/table-spaces/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -368,6 +520,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SidebarConfigRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
+    '/_sidebar/table-spaces/': {
+      id: '/_sidebar/table-spaces/'
+      path: '/table-spaces'
+      fullPath: '/table-spaces/'
+      preLoaderRoute: typeof SidebarTableSpacesIndexRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
     '/_sidebar/runs/': {
       id: '/_sidebar/runs/'
       path: '/'
@@ -381,6 +540,41 @@ declare module '@tanstack/react-router' {
       fullPath: '/rules/'
       preLoaderRoute: typeof SidebarRulesIndexRouteImport
       parentRoute: typeof SidebarRulesRoute
+    }
+    '/_sidebar/registry-rules/': {
+      id: '/_sidebar/registry-rules/'
+      path: '/registry-rules'
+      fullPath: '/registry-rules/'
+      preLoaderRoute: typeof SidebarRegistryRulesIndexRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/monitored-tables/': {
+      id: '/_sidebar/monitored-tables/'
+      path: '/monitored-tables'
+      fullPath: '/monitored-tables/'
+      preLoaderRoute: typeof SidebarMonitoredTablesIndexRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/data-products/': {
+      id: '/_sidebar/data-products/'
+      path: '/data-products'
+      fullPath: '/data-products/'
+      preLoaderRoute: typeof SidebarDataProductsIndexRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/table-spaces/new': {
+      id: '/_sidebar/table-spaces/new'
+      path: '/table-spaces/new'
+      fullPath: '/table-spaces/new'
+      preLoaderRoute: typeof SidebarTableSpacesNewRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/table-spaces/$productId': {
+      id: '/_sidebar/table-spaces/$productId'
+      path: '/table-spaces/$productId'
+      fullPath: '/table-spaces/$productId'
+      preLoaderRoute: typeof SidebarTableSpacesProductIdRouteImport
+      parentRoute: typeof SidebarRouteRoute
     }
     '/_sidebar/runs/$runName': {
       id: '/_sidebar/runs/$runName'
@@ -445,6 +639,48 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SidebarRulesActiveRouteImport
       parentRoute: typeof SidebarRulesRoute
     }
+    '/_sidebar/registry-rules/new': {
+      id: '/_sidebar/registry-rules/new'
+      path: '/registry-rules/new'
+      fullPath: '/registry-rules/new'
+      preLoaderRoute: typeof SidebarRegistryRulesNewRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/registry-rules/$ruleId': {
+      id: '/_sidebar/registry-rules/$ruleId'
+      path: '/registry-rules/$ruleId'
+      fullPath: '/registry-rules/$ruleId'
+      preLoaderRoute: typeof SidebarRegistryRulesRuleIdRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/monitored-tables/new': {
+      id: '/_sidebar/monitored-tables/new'
+      path: '/monitored-tables/new'
+      fullPath: '/monitored-tables/new'
+      preLoaderRoute: typeof SidebarMonitoredTablesNewRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/monitored-tables/$bindingId': {
+      id: '/_sidebar/monitored-tables/$bindingId'
+      path: '/monitored-tables/$bindingId'
+      fullPath: '/monitored-tables/$bindingId'
+      preLoaderRoute: typeof SidebarMonitoredTablesBindingIdRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/data-products/new': {
+      id: '/_sidebar/data-products/new'
+      path: '/data-products/new'
+      fullPath: '/data-products/new'
+      preLoaderRoute: typeof SidebarDataProductsNewRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/data-products/$productId': {
+      id: '/_sidebar/data-products/$productId'
+      path: '/data-products/$productId'
+      fullPath: '/data-products/$productId'
+      preLoaderRoute: typeof SidebarDataProductsProductIdRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
   }
 }
 
@@ -500,6 +736,18 @@ interface SidebarRouteRouteChildren {
   SidebarRulesRoute: typeof SidebarRulesRouteWithChildren
   SidebarRunsRoute: typeof SidebarRunsRouteWithChildren
   SidebarRunsHistoryRoute: typeof SidebarRunsHistoryRoute
+  SidebarDataProductsProductIdRoute: typeof SidebarDataProductsProductIdRoute
+  SidebarDataProductsNewRoute: typeof SidebarDataProductsNewRoute
+  SidebarMonitoredTablesBindingIdRoute: typeof SidebarMonitoredTablesBindingIdRoute
+  SidebarMonitoredTablesNewRoute: typeof SidebarMonitoredTablesNewRoute
+  SidebarRegistryRulesRuleIdRoute: typeof SidebarRegistryRulesRuleIdRoute
+  SidebarRegistryRulesNewRoute: typeof SidebarRegistryRulesNewRoute
+  SidebarTableSpacesProductIdRoute: typeof SidebarTableSpacesProductIdRoute
+  SidebarTableSpacesNewRoute: typeof SidebarTableSpacesNewRoute
+  SidebarDataProductsIndexRoute: typeof SidebarDataProductsIndexRoute
+  SidebarMonitoredTablesIndexRoute: typeof SidebarMonitoredTablesIndexRoute
+  SidebarRegistryRulesIndexRoute: typeof SidebarRegistryRulesIndexRoute
+  SidebarTableSpacesIndexRoute: typeof SidebarTableSpacesIndexRoute
 }
 
 const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
@@ -512,6 +760,18 @@ const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
   SidebarRulesRoute: SidebarRulesRouteWithChildren,
   SidebarRunsRoute: SidebarRunsRouteWithChildren,
   SidebarRunsHistoryRoute: SidebarRunsHistoryRoute,
+  SidebarDataProductsProductIdRoute: SidebarDataProductsProductIdRoute,
+  SidebarDataProductsNewRoute: SidebarDataProductsNewRoute,
+  SidebarMonitoredTablesBindingIdRoute: SidebarMonitoredTablesBindingIdRoute,
+  SidebarMonitoredTablesNewRoute: SidebarMonitoredTablesNewRoute,
+  SidebarRegistryRulesRuleIdRoute: SidebarRegistryRulesRuleIdRoute,
+  SidebarRegistryRulesNewRoute: SidebarRegistryRulesNewRoute,
+  SidebarTableSpacesProductIdRoute: SidebarTableSpacesProductIdRoute,
+  SidebarTableSpacesNewRoute: SidebarTableSpacesNewRoute,
+  SidebarDataProductsIndexRoute: SidebarDataProductsIndexRoute,
+  SidebarMonitoredTablesIndexRoute: SidebarMonitoredTablesIndexRoute,
+  SidebarRegistryRulesIndexRoute: SidebarRegistryRulesIndexRoute,
+  SidebarTableSpacesIndexRoute: SidebarTableSpacesIndexRoute,
 }
 
 const SidebarRouteRouteWithChildren = SidebarRouteRoute._addFileChildren(

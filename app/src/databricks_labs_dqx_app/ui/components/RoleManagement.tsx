@@ -10,12 +10,18 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   Select,
   SelectContent,
@@ -42,7 +48,6 @@ import {
   AlertCircle,
   ChevronsUpDown,
   Check,
-  Search,
   Loader2,
   Info,
 } from "lucide-react";
@@ -172,68 +177,60 @@ function GroupCombobox({
         className="p-0 w-[--radix-popover-trigger-width] min-w-[280px]"
         align="start"
       >
-        <div className="flex items-center gap-2 border-b px-3 py-2">
-          <Search className="h-4 w-4 text-muted-foreground shrink-0" />
-          <Input
-            ref={inputRef}
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder={t("roleManagement.groupSearchPlaceholder")}
-            className="border-0 shadow-none focus-visible:ring-0 px-0 h-8"
-          />
-          {isFetching && !isLoading ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
-          ) : null}
-        </div>
-        <div className="max-h-64 overflow-y-auto py-1">
-          {isLoading ? (
-            <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-              {t("roleManagement.loading")}
-            </div>
-          ) : error ? (
-            <div className="px-3 py-6 text-center text-sm text-destructive">
-              {t("roleManagement.failedLoadGroups")}
-            </div>
-          ) : groups.length === 0 ? (
-            <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-              {debouncedSearch
-                ? t("roleManagement.noGroupsMatch")
-                : t("roleManagement.noGroupsFound")}
-            </div>
-          ) : (
-            <>
-              {groups.map((group) => {
-                const name = group.display_name;
-                const selected = name === value;
-                return (
-                  <button
-                    key={`${group.id ?? name}`}
-                    type="button"
-                    onClick={() => handleSelect(name)}
-                    className={cn(
-                      "w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left",
-                      "hover:bg-accent hover:text-accent-foreground",
-                      "focus:bg-accent focus:text-accent-foreground focus:outline-none",
-                    )}
-                  >
-                    <Check
-                      className={cn(
-                        "h-4 w-4 shrink-0",
-                        selected ? "opacity-100" : "opacity-0",
-                      )}
-                    />
-                    <span className="truncate">{name}</span>
-                  </button>
-                );
-              })}
-              {reachedLimit ? (
-                <div className="px-3 py-2 text-xs text-muted-foreground border-t mt-1">
-                  {t("roleManagement.showingFirst", { count: GROUP_SEARCH_LIMIT })}
-                </div>
-              ) : null}
-            </>
-          )}
-        </div>
+        {/* `shouldFilter={false}` — matches resolve server-side (SCIM
+            `filter=displayName co "..."`, debounced), so cmdk must not
+            additionally fuzzy-filter the already-scoped result set against
+            the latest keystroke. */}
+        <Command shouldFilter={false}>
+          <div className="relative">
+            <CommandInput
+              ref={inputRef}
+              value={searchInput}
+              onValueChange={setSearchInput}
+              placeholder={t("roleManagement.groupSearchPlaceholder")}
+              className="h-8"
+            />
+            {isFetching && !isLoading ? (
+              <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
+            ) : null}
+          </div>
+          <CommandList className="max-h-64">
+            {isLoading ? (
+              <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                {t("roleManagement.loading")}
+              </div>
+            ) : error ? (
+              <div className="px-3 py-6 text-center text-sm text-destructive">
+                {t("roleManagement.failedLoadGroups")}
+              </div>
+            ) : (
+              <>
+                <CommandEmpty>
+                  <span className="text-sm text-muted-foreground">
+                    {debouncedSearch
+                      ? t("roleManagement.noGroupsMatch")
+                      : t("roleManagement.noGroupsFound")}
+                  </span>
+                </CommandEmpty>
+                {groups.map((group) => {
+                  const name = group.display_name;
+                  const selected = name === value;
+                  return (
+                    <CommandItem key={`${group.id ?? name}`} value={`${group.id ?? name}`} onSelect={() => handleSelect(name)}>
+                      <Check className={cn("h-4 w-4 shrink-0", selected ? "opacity-100" : "opacity-0")} />
+                      <span className="truncate">{name}</span>
+                    </CommandItem>
+                  );
+                })}
+                {reachedLimit ? (
+                  <div className="px-3 py-2 text-xs text-muted-foreground border-t mt-1">
+                    {t("roleManagement.showingFirst", { count: GROUP_SEARCH_LIMIT })}
+                  </div>
+                ) : null}
+              </>
+            )}
+          </CommandList>
+        </Command>
       </PopoverContent>
     </Popover>
   );

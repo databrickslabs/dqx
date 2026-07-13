@@ -1,0 +1,1252 @@
+"""Tests for the Phase 3C materializer — the SAFETY-CRITICAL boundary
+between the Rules Registry and the unchanged runner.
+
+Two layers are exercised:
+
+* ``render_check`` (pure function) — the exact ``dq_quality_rules.check``
+  shape produced for one applied-rule mapping group. The **critical test**
+  (``TestRenderCheckMatchesHandAuthoredShape``) asserts this is
+  function/arguments/criticality-identical to what
+  ``RulesCatalogService.save`` would store for the equivalent hand-authored
+  check, so the runner (which only ever reads ``check.function`` /
+  ``check.arguments`` / top-level ``criticality``) treats them identically.
+* ``Materializer.materialize_binding`` — orchestration: idempotent upsert,
+  pin vs follow-latest resolution, severity-override -> criticality,
+  auto-upgrade Behaviour A/B, and cleanup of stale/orphaned rows.
+"""
+
+from __future__ import annotations
+
+import json
+from unittest.mock import create_autospec
+
+import pytest
+
+from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+from databricks_labs_dqx_app.backend.registry_models import (
+    AppliedRule,
+    MonitoredTable,
+    RegistryRule,
+    RuleDefinition,
+    RuleVersion,
+)
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer, render_check
+from databricks_labs_dqx_app.backend.services.monitored_table_service import (
+    AppliedRuleSummary,
+    MonitoredTableDetail,
+    MonitoredTableService,
+)
+from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
+
+
+# ---------------------------------------------------------------------------
+# render_check — pure function, shape parity
+# ---------------------------------------------------------------------------
+
+
+def _is_not_null_definition(slot_name: str = "column") -> RuleDefinition:
+    return RuleDefinition.model_validate(
+        {
+            "body": {"function": "is_not_null", "arguments": {slot_name: f"{{{{{slot_name}}}}}"}},
+            "slots": [{"name": slot_name, "family": "any", "position": 0, "cardinality": "one"}],
+            "parameters": [],
+        }
+    )
+
+
+class TestRenderCheckMatchesHandAuthoredShape:
+    """The CRITICAL TEST: materialized shape must equal a hand-authored check's shape."""
+
+    def test_dqx_native_is_not_null_matches_hand_authored_check(self, sql_executor_mock):
+        # -- side A: materialize an applied is_not_null rule on customer_id --
+        version = RuleVersion(
+            rule_id="r1",
+            version=1,
+            definition=_is_not_null_definition(),
+            polarity=None,
+            user_metadata={"name": "Not Null Check", "dimension": "Completeness", "severity": "High"},
+        )
+        materialized_check, is_tableless = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="High",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert is_tableless is False
+
+        # -- side B: what a human would hand-author + RulesCatalogService.save() --
+        sql_executor_mock.dialect = "delta"
+        sql_executor_mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
+        sql_executor_mock.q.side_effect = lambda i: f"`{i}`"
+        sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
+        sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
+        sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+        sql_executor_mock.query.return_value = []
+        catalog = RulesCatalogService(sql=sql_executor_mock)
+        hand_authored_check = {
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "customer_id"}},
+        }
+        catalog.save("cat.schema.customers", [hand_authored_check], "alice@x")
+        inserted_sql = sql_executor_mock.execute.call_args_list[0].args[0]
+        # Pull the JSON literal that RulesCatalogService actually persisted
+        # for the hand-authored check out of the INSERT statement.
+        start = inserted_sql.index("parse_json('") + len("parse_json('")
+        end = inserted_sql.index("')", start)
+        stored_hand_authored = json.loads(inserted_sql[start:end])
+
+        # The runner only ever reads these three things off a
+        # dq_quality_rules row: function, arguments, and top-level
+        # criticality. They must match exactly between the registry-
+        # materialized row and the equivalent hand-authored one.
+        assert materialized_check["check"]["function"] == stored_hand_authored["check"]["function"] == "is_not_null"
+        assert materialized_check["check"]["arguments"] == stored_hand_authored["check"]["arguments"] == {
+            "column": "customer_id"
+        }
+        assert materialized_check["criticality"] == stored_hand_authored["criticality"] == "error"
+
+        # The materialized row additionally carries registry provenance +
+        # reserved tags in user_metadata (§9) — the hand-authored one does
+        # not, and that's fine; the runner aggregates whatever is there.
+        assert materialized_check["user_metadata"]["dimension"] == "Completeness"
+        assert materialized_check["user_metadata"]["severity"] == "High"
+        assert materialized_check["user_metadata"]["registry_rule_id"] == "r1"
+        assert materialized_check["user_metadata"]["registry_version"] == "1"
+        assert materialized_check["user_metadata"]["applied_rule_id"] == "ar1"
+        assert materialized_check["name"] == "Not Null Check"
+
+    def test_missing_slot_mapping_raises(self):
+        version = RuleVersion(rule_id="r1", version=1, definition=_is_not_null_definition(), user_metadata={})
+        with pytest.raises(ValueError, match="column"):
+            render_check(
+                mode="dqx_native",
+                version=version,
+                group={},
+                effective_severity="Medium",
+                per_application_tags={},
+                registry_rule_id="r1",
+                registry_version=1,
+                applied_rule_id="ar1",
+            )
+
+    def test_dqx_native_arbitrary_slot_name_keys_argument_by_param_name(self):
+        """Author-renamed slot ('user_email' != function param 'column') must still key
+
+        the rendered argument by the DQX function's real parameter name — only the
+        placeholder VALUE is substituted with the mapped column.
+        """
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_not_null", "arguments": {"column": "{{user_email}}"}},
+                "slots": [{"name": "user_email", "family": "text", "position": 0, "cardinality": "one"}],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"user_email": "email_col"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert check["check"]["arguments"] == {"column": "email_col"}
+
+    def test_dqx_native_arbitrary_slot_name_many_cardinality_becomes_list(self):
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_unique", "arguments": {"columns": "{{cols}}"}},
+                "slots": [{"name": "cols", "family": "any", "position": 0, "cardinality": "many"}],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"cols": "a, b, c"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert check["check"]["arguments"] == {"columns": ["a", "b", "c"]}
+
+    def test_dqx_native_multi_slot_list_argument_substitutes_each_placeholder(self):
+        """New multi-column authoring style (fixes #6): instead of ONE
+        ``cardinality: "many"`` slot bound to a comma-joined value, the
+        author declares MULTIPLE named ``cardinality: "one"`` slots that
+        share the same ``arg_key`` — the frozen argument VALUE is then a
+        Python LIST of ``{{slot}}`` placeholders (one per slot), rather
+        than a single placeholder string. ``_substitute_arguments``/
+        ``_substitute_value`` already recurse into list values generically,
+        so each element is substituted independently by its own slot's
+        mapped column — no separate list-handling branch was needed.
+        """
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {
+                    "function": "foreign_key",
+                    "arguments": {"columns": ["{{column_1}}", "{{column_2}}"]},
+                },
+                "slots": [
+                    {"name": "column_1", "family": "any", "position": 0, "cardinality": "one", "arg_key": "columns"},
+                    {"name": "column_2", "family": "any", "position": 1, "cardinality": "one", "arg_key": "columns"},
+                ],
+                "parameters": [
+                    {"name": "ref_columns", "type": "ref_column", "value": ["id", "region"]},
+                    {"name": "ref_table", "type": "ref_table", "value": "catalog.schema.customers"},
+                ],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, is_tableless = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column_1": "colA", "column_2": "colB"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert is_tableless is False
+        assert check["check"]["arguments"]["columns"] == ["colA", "colB"]
+        assert check["check"]["arguments"]["ref_columns"] == ["id", "region"]
+
+    def test_dqx_native_single_slot_list_argument_stays_a_list(self):
+        """A list-typed argument with only ONE declared slot (the initial,
+        not-yet-expanded state of the new multi-slot group) still renders
+        as a one-element LIST, not a bare scalar — ``foreign_key.columns``
+        always expects a list regardless of how many columns the author
+        has added so far.
+        """
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "foreign_key", "arguments": {"columns": ["{{column_1}}"]}},
+                "slots": [
+                    {"name": "column_1", "family": "any", "position": 0, "cardinality": "one", "arg_key": "columns"},
+                ],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column_1": "colA"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert check["check"]["arguments"]["columns"] == ["colA"]
+
+    def test_missing_slot_mapping_raises_arbitrary_slot_name(self):
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_not_null", "arguments": {"column": "{{user_email}}"}},
+                "slots": [{"name": "user_email", "family": "text", "position": 0, "cardinality": "one"}],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        with pytest.raises(ValueError, match="user_email"):
+            render_check(
+                mode="dqx_native",
+                version=version,
+                group={},
+                effective_severity="Medium",
+                per_application_tags={},
+                registry_rule_id="r1",
+                registry_version=1,
+                applied_rule_id="ar1",
+            )
+
+    def test_severity_maps_to_criticality(self):
+        version = RuleVersion(rule_id="r1", version=1, definition=_is_not_null_definition(), user_metadata={})
+        for severity, expected in (("Low", "warn"), ("Medium", "warn"), ("High", "error"), ("Critical", "error")):
+            check, _ = render_check(
+                mode="dqx_native",
+                version=version,
+                group={"column": "id"},
+                effective_severity=severity,
+                per_application_tags={},
+                registry_rule_id="r1",
+                registry_version=1,
+                applied_rule_id="ar1",
+            )
+            assert check["criticality"] == expected
+
+
+class TestRenderCheckMessageExpr:
+    """Phase 7C-a: optional custom failure message (mirrors ``DQRule.message_expr``)."""
+
+    def test_message_expr_present_when_error_message_set(self):
+        definition = _is_not_null_definition()
+        definition.error_message = "'Column ' || {{column}} || ' failed'"
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert check["message_expr"] == "'Column ' || {{column}} || ' failed'"
+
+    def test_message_expr_absent_when_error_message_none(self):
+        version = RuleVersion(rule_id="r1", version=1, definition=_is_not_null_definition(), user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert "message_expr" not in check
+
+    def test_message_expr_absent_when_error_message_empty_string(self):
+        definition = _is_not_null_definition()
+        definition.error_message = ""
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert "message_expr" not in check
+
+
+class TestRenderCheckNativeNegate:
+    """Item 11 — a native check's PASS/FAIL polarity injects ``negate``."""
+
+    def _regex_definition(self) -> RuleDefinition:
+        return RuleDefinition.model_validate(
+            {
+                "body": {"function": "regex_match", "arguments": {"column": "{{column}}"}},
+                "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one"}],
+                "parameters": [{"name": "regex", "type": "string", "value": "^[0-9]+$"}],
+            }
+        )
+
+    def test_pass_polarity_injects_negate_false(self):
+        version = RuleVersion(
+            rule_id="r1", version=1, definition=self._regex_definition(), polarity="pass", user_metadata={}
+        )
+        check, is_tableless = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "code"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert is_tableless is False
+        assert check["check"]["function"] == "regex_match"
+        assert check["check"]["arguments"]["negate"] is False
+        assert check["check"]["arguments"]["regex"] == "^[0-9]+$"
+
+    def test_fail_polarity_injects_negate_true(self):
+        version = RuleVersion(
+            rule_id="r1", version=1, definition=self._regex_definition(), polarity="fail", user_metadata={}
+        )
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "code"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert check["check"]["arguments"]["negate"] is True
+
+    def test_no_polarity_leaves_negate_absent(self):
+        """A native check WITHOUT negate support (polarity None) never gets a
+        spurious ``negate`` key — the runner would reject it as an unknown arg."""
+        version = RuleVersion(
+            rule_id="r1", version=1, definition=_is_not_null_definition(), polarity=None, user_metadata={}
+        )
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert "negate" not in check["check"]["arguments"]
+
+
+class TestRenderCheckSqlMode:
+    def _sql_definition(self, body: dict, slot_name: str = "column") -> RuleDefinition:
+        return RuleDefinition.model_validate(
+            {
+                "body": body,
+                "slots": [{"name": slot_name, "family": "any", "position": 0, "cardinality": "one"}],
+                "parameters": [],
+            }
+        )
+
+    def test_pass_polarity_does_not_negate(self):
+        definition = self._sql_definition({"predicate": "{{column}} IS NOT NULL"})
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, is_tableless = render_check(
+            mode="sql",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert is_tableless is False
+        assert check["check"]["function"] == "sql_expression"
+        assert check["check"]["arguments"]["expression"] == "customer_id IS NOT NULL"
+        assert check["check"]["arguments"]["negate"] is False
+
+    def test_fail_polarity_negates(self):
+        definition = self._sql_definition({"predicate": "{{column}} IS NULL"})
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="fail", user_metadata={})
+        check, _ = render_check(
+            mode="sql",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert check["check"]["arguments"]["negate"] is True
+
+    def test_dataset_sql_query_without_slots_is_tableless(self):
+        definition = RuleDefinition.model_validate(
+            {"body": {"sql_query": "SELECT COUNT(*) > 100 AS condition FROM t"}, "slots": [], "parameters": []}
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="fail", user_metadata={})
+        check, is_tableless = render_check(
+            mode="sql",
+            version=version,
+            group={},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert is_tableless is True
+        assert check["check"]["function"] == "sql_query"
+
+    def test_unsafe_sql_raises(self):
+        definition = self._sql_definition({"predicate": "1=1; DROP TABLE {{column}}"})
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        with pytest.raises(UnsafeSqlQueryError):
+            render_check(
+                mode="sql",
+                version=version,
+                group={"column": "t"},
+                effective_severity="Medium",
+                per_application_tags={},
+                registry_rule_id="r1",
+                registry_version=1,
+                applied_rule_id="ar1",
+            )
+
+
+class TestRenderCheckLowcodeMode:
+    """Low-code rules flow through the SAME sql-mode materialization path.
+
+    The Low-Code builder compiles its structured AST into either a simple
+    ``predicate`` (no joins/group-by) or a full ``sql_query`` + ``merge_columns``
+    (joins/group-by), stored in ``body`` alongside the re-editable
+    ``lowcode_ast``. ``render_check`` treats mode ``lowcode`` exactly like
+    ``sql`` — these tests pin the AST -> SQL -> materialized-check byte shape.
+    """
+
+    def _lowcode_definition(self, body: dict, slot_name: str = "column") -> RuleDefinition:
+        return RuleDefinition.model_validate(
+            {
+                "body": body,
+                "slots": [{"name": slot_name, "family": "any", "position": 0, "cardinality": "one"}],
+                "parameters": [],
+            }
+        )
+
+    def test_simple_predicate_renders_as_sql_expression(self):
+        # Simple row stack: body carries the compiled predicate (the pass
+        # condition) plus the re-editable AST; renders like an sql-mode rule.
+        body = {
+            "lowcode_ast": {
+                "rows": [{"kind": "row", "combinator": None, "column_ref": "column", "operator": "is not null", "value": None}],
+                "joins": [],
+            },
+            "predicate": "{{column}} IS NOT NULL",
+        }
+        definition = self._lowcode_definition(body)
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, is_tableless = render_check(
+            mode="lowcode",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert is_tableless is False
+        assert check["check"]["function"] == "sql_expression"
+        assert check["check"]["arguments"]["expression"] == "customer_id IS NOT NULL"
+        assert check["check"]["arguments"]["negate"] is False
+        assert "merge_columns" not in check["check"]["arguments"]
+
+    def test_fail_polarity_negates_lowcode_predicate(self):
+        body = {"lowcode_ast": {"rows": [], "joins": []}, "predicate": "{{column}} IS NOT NULL"}
+        definition = self._lowcode_definition(body)
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="fail", user_metadata={})
+        check, _ = render_check(
+            mode="lowcode",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert check["check"]["arguments"]["negate"] is True
+
+    def test_group_by_renders_sql_query_with_substituted_merge_columns(self):
+        # Advanced (group-by): body carries a full sql_query referencing
+        # {{input_view}} plus merge_columns as {{slot}} refs — both the query
+        # and each merge column get the slot substituted with the real column.
+        body = {
+            "lowcode_ast": {"rows": [], "joins": []},
+            "group_by": "{{column}}",
+            "sql_query": "SELECT {{column}}, (NOT (COUNT(*) > 1)) AS condition FROM {{input_view}} GROUP BY {{column}}",
+            "merge_columns": ["{{column}}"],
+        }
+        definition = self._lowcode_definition(body)
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, is_tableless = render_check(
+            mode="lowcode",
+            version=version,
+            group={"column": "region"},
+            effective_severity="High",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        args = check["check"]["arguments"]
+        assert check["check"]["function"] == "sql_query"
+        # {{input_view}} is NOT a declared slot — it survives substitution and
+        # is resolved by DQX's sql_query check at run time.
+        assert args["query"] == "SELECT region, (NOT (COUNT(*) > 1)) AS condition FROM {{input_view}} GROUP BY region"
+        assert args["merge_columns"] == ["region"]
+        assert is_tableless is False
+
+    def test_joins_only_renders_row_level_sql_query_with_join_key_merge_columns(self):
+        # A joins-only rule (no group-by) must run ROW-LEVEL: the compiler emits
+        # merge_columns = the input-side join keys so DQX joins the per-row
+        # result back onto the monitored table. Without merge_columns DQX would
+        # route it to the dataset-level "must return exactly one row" path and
+        # fail at run time for every such rule.
+        body = {
+            "lowcode_ast": {
+                "rows": [
+                    {"kind": "row", "combinator": None, "column_ref": "column", "operator": "is not null", "value": None}
+                ],
+                "joins": [
+                    {"join_type": "LEFT", "target_table": "c.s.dim", "keys": [{"joined_column": "id", "column_ref": "column"}]}
+                ],
+            },
+            "sql_query": (
+                "SELECT {{column}}, (NOT ({{column}} IS NOT NULL)) AS condition "
+                "FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{column}}"
+            ),
+            "merge_columns": ["{{column}}"],
+        }
+        definition = self._lowcode_definition(body)
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, is_tableless = render_check(
+            mode="lowcode",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        args = check["check"]["arguments"]
+        assert check["check"]["function"] == "sql_query"
+        assert args["merge_columns"] == ["customer_id"]
+        assert "c.s.dim.id = customer_id" in args["query"]
+        assert is_tableless is False
+
+    def test_expression_group_by_renders_sql_query_with_substituted_merge_columns(self):
+        # Advanced group-by with an expression grouping key: the compiler splits
+        # the group-by at top-level commas only, so the COALESCE's inner comma
+        # is NOT shredded into invalid merge-column fragments. Each token — plain
+        # slot ref AND expression — has its slots substituted by render_check.
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {
+                    "lowcode_ast": {"rows": [], "joins": []},
+                    "group_by": "{{region}}, COALESCE({{country}}, 'XX')",
+                    "sql_query": (
+                        "SELECT {{region}}, COALESCE({{country}}, 'XX'), (NOT (COUNT(*) > 1)) AS condition "
+                        "FROM {{input_view}} GROUP BY {{region}}, COALESCE({{country}}, 'XX')"
+                    ),
+                    "merge_columns": ["{{region}}", "COALESCE({{country}}, 'XX')"],
+                },
+                "slots": [
+                    {"name": "region", "family": "text", "position": 0, "cardinality": "one"},
+                    {"name": "country", "family": "text", "position": 1, "cardinality": "one"},
+                ],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, _ = render_check(
+            mode="lowcode",
+            version=version,
+            group={"region": "sales_region", "country": "country_code"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        args = check["check"]["arguments"]
+        assert check["check"]["function"] == "sql_query"
+        assert args["merge_columns"] == ["sales_region", "COALESCE(country_code, 'XX')"]
+        assert args["query"] == (
+            "SELECT sales_region, COALESCE(country_code, 'XX'), (NOT (COUNT(*) > 1)) AS condition "
+            "FROM {{input_view}} GROUP BY sales_region, COALESCE(country_code, 'XX')"
+        )
+
+    def test_unsafe_compiled_sql_query_raises(self):
+        body = {
+            "lowcode_ast": {"rows": [], "joins": []},
+            "sql_query": "SELECT 1 AS condition FROM {{input_view}}; DROP TABLE {{column}}",
+        }
+        definition = self._lowcode_definition(body)
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        with pytest.raises(UnsafeSqlQueryError):
+            render_check(
+                mode="lowcode",
+                version=version,
+                group={"column": "t"},
+                effective_severity="Medium",
+                per_application_tags={},
+                registry_rule_id="r1",
+                registry_version=1,
+                applied_rule_id="ar1",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Materializer.materialize_binding — orchestration
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sql(sql_executor_mock):
+    sql_executor_mock.dialect = "delta"
+    sql_executor_mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
+    sql_executor_mock.q.side_effect = lambda i: f"`{i}`"
+    sql_executor_mock.json_literal_expr.side_effect = lambda j: f"parse_json('{j}')"
+    sql_executor_mock.select_json_text.side_effect = lambda c: f"to_json({c})"
+    sql_executor_mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+    sql_executor_mock.query.return_value = []
+    return sql_executor_mock
+
+
+@pytest.fixture
+def registry():
+    return create_autospec(RegistryService, instance=True)
+
+
+@pytest.fixture
+def monitored_tables():
+    return create_autospec(MonitoredTableService, instance=True)
+
+
+@pytest.fixture
+def app_settings():
+    mock = create_autospec(AppSettingsService, instance=True)
+    mock.get_auto_upgrade_without_approval.return_value = False
+    return mock
+
+
+@pytest.fixture
+def materializer(sql, registry, monitored_tables, app_settings):
+    return Materializer(sql=sql, registry=registry, monitored_tables=monitored_tables, app_settings=app_settings)
+
+
+def _detail(applied: AppliedRule, table_fqn: str = "cat.schema.customers") -> MonitoredTableDetail:
+    table = MonitoredTable(binding_id="b1", table_fqn=table_fqn, status="draft")
+    return MonitoredTableDetail(table=table, applied_rules=[AppliedRuleSummary(applied_rule=applied)])
+
+
+def _published_rule(rule_id: str = "r1", version: int = 1) -> RegistryRule:
+    return RegistryRule(
+        rule_id=rule_id,
+        mode="dqx_native",
+        status="approved",
+        version=version,
+        definition=_is_not_null_definition(),
+        user_metadata={"name": "Not Null Check", "severity": "High"},
+    )
+
+
+def _version_snapshot(rule_id: str = "r1", version: int = 1, severity: str = "High") -> RuleVersion:
+    return RuleVersion(
+        rule_id=rule_id,
+        version=version,
+        definition=_is_not_null_definition(),
+        user_metadata={"name": "Not Null Check", "severity": severity},
+    )
+
+
+class TestMaterializeBindingBasics:
+    def test_raises_for_missing_binding(self, materializer, monitored_tables):
+        monitored_tables.get.return_value = None
+        with pytest.raises(MaterializationError):
+            materializer.materialize_binding("missing")
+
+    def test_writes_new_row_as_draft(self, materializer, sql, registry, monitored_tables):
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+        sql.query.return_value = []  # no existing materialized row, no orphans
+
+        written = materializer.materialize_binding("b1")
+        assert written == ["ar1-0"]
+        insert_sql = sql.execute.call_args_list[0].args[0]
+        assert "INSERT INTO dqx_test.dqx_app_test.dq_quality_rules" in insert_sql
+        assert "'draft'" in insert_sql
+        assert "'ar1-0'" in insert_sql
+        assert "'registry'" in insert_sql
+
+    def test_uses_pinned_version_when_set(self, materializer, sql, registry, monitored_tables):
+        applied = AppliedRule(
+            id="ar1",
+            binding_id="b1",
+            rule_id="r1",
+            pinned_version=2,
+            column_mapping=[{"column": "customer_id"}],
+            mapping_hash="h",
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule(version=5)  # latest published is v5
+        registry.get_version.return_value = _version_snapshot(version=2)
+        sql.query.return_value = []
+
+        materializer.materialize_binding("b1")
+        registry.get_version.assert_called_once_with("r1", 2)
+
+    def test_follows_latest_when_unpinned(self, materializer, sql, registry, monitored_tables):
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule(version=5)
+        registry.get_version.return_value = _version_snapshot(version=5)
+        sql.query.return_value = []
+
+        materializer.materialize_binding("b1")
+        registry.get_version.assert_called_once_with("r1", 5)
+
+    def test_severity_override_changes_criticality(self, materializer, sql, registry, monitored_tables):
+        applied = AppliedRule(
+            id="ar1",
+            binding_id="b1",
+            rule_id="r1",
+            severity_override="Low",
+            column_mapping=[{"column": "customer_id"}],
+            mapping_hash="h",
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()  # rule's own tag is High
+        registry.get_version.return_value = _version_snapshot(severity="High")
+        sql.query.return_value = []
+
+        materializer.materialize_binding("b1")
+        insert_sql = sql.execute.call_args_list[0].args[0]
+        stored = _extract_json_literal(insert_sql)
+        assert stored["criticality"] == "warn"  # Low overrides the rule's High tag
+        assert stored["user_metadata"]["severity"] == "Low"
+
+
+class TestMaterializeBindingIdempotency:
+    def test_rerun_with_unchanged_content_updates_without_status_change(self, materializer, sql, registry, monitored_tables):
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+
+        check, _ = render_check(
+            mode="dqx_native",
+            version=_version_snapshot(),
+            group={"column": "customer_id"},
+            effective_severity="High",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        existing_check_json = json.dumps(check, sort_keys=True)
+
+        def fake_query(sql_text: str):
+            if "SELECT status" in sql_text:
+                return [["approved", existing_check_json]]
+            return []
+
+        sql.query.side_effect = fake_query
+        materializer.materialize_binding("b1")
+
+        update_calls = [c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE")]
+        assert len(update_calls) == 1
+        assert "status = 'approved'" in update_calls[0]
+        insert_calls = [c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("INSERT")]
+        assert not insert_calls
+
+    def test_rerun_does_not_duplicate_rows(self, materializer, sql, registry, monitored_tables):
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+
+        def fake_query(sql_text: str):
+            if "SELECT status" in sql_text:
+                return [["draft", "{}"]]
+            return []
+
+        sql.query.side_effect = fake_query
+        first = materializer.materialize_binding("b1")
+        second = materializer.materialize_binding("b1")
+        assert first == second == ["ar1-0"]
+
+
+class TestAutoUpgradeBehaviour:
+    def test_behaviour_b_resets_approved_to_pending_when_content_changes(
+        self, materializer, sql, registry, monitored_tables, app_settings
+    ):
+        app_settings.get_auto_upgrade_without_approval.return_value = False
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule(version=2)  # republished
+        registry.get_version.return_value = _version_snapshot(version=2, severity="Critical")  # content differs
+
+        def fake_query(sql_text: str):
+            if "SELECT status" in sql_text:
+                return [["approved", json.dumps({"different": "content"})]]
+            return []
+
+        sql.query.side_effect = fake_query
+        materializer.materialize_binding("b1")
+        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert "status = 'pending_approval'" in update_sql
+
+    def test_behaviour_a_keeps_approved_when_content_changes(
+        self, materializer, sql, registry, monitored_tables, app_settings
+    ):
+        app_settings.get_auto_upgrade_without_approval.return_value = True
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule(version=2)
+        registry.get_version.return_value = _version_snapshot(version=2, severity="Critical")
+
+        def fake_query(sql_text: str):
+            if "SELECT status" in sql_text:
+                return [["approved", json.dumps({"different": "content"})]]
+            return []
+
+        sql.query.side_effect = fake_query
+        materializer.materialize_binding("b1")
+        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert "status = 'approved'" in update_sql
+
+    def test_pinned_row_content_change_always_goes_to_pending_approval(
+        self, materializer, sql, registry, monitored_tables, app_settings
+    ):
+        app_settings.get_auto_upgrade_without_approval.return_value = True  # even with auto-upgrade ON
+        applied = AppliedRule(
+            id="ar1",
+            binding_id="b1",
+            rule_id="r1",
+            pinned_version=1,
+            severity_override="Critical",  # direct edit changes content
+            column_mapping=[{"column": "customer_id"}],
+            mapping_hash="h",
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule(version=1)
+        registry.get_version.return_value = _version_snapshot(version=1, severity="High")
+
+        def fake_query(sql_text: str):
+            if "SELECT status" in sql_text:
+                return [["approved", json.dumps({"different": "content"})]]
+            return []
+
+        sql.query.side_effect = fake_query
+        materializer.materialize_binding("b1")
+        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert "status = 'pending_approval'" in update_sql
+
+
+class TestCleanup:
+    def test_shrinking_mapping_deletes_stale_group_row(self, materializer, sql, registry, monitored_tables):
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+
+        def fake_query(sql_text: str):
+            if "SELECT status" in sql_text:
+                return []  # ar1-0 is new
+            if "SELECT rule_id FROM" in sql_text and "applied_rule_id = " in sql_text:
+                return [["ar1-1"]]  # a stale second group from a previous, wider mapping
+            return []
+
+        sql.query.side_effect = fake_query
+        materializer.materialize_binding("b1")
+        delete_calls = [c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("DELETE")]
+        assert any("'ar1-1'" in c for c in delete_calls)
+
+    def test_removed_application_orphan_is_deleted(self, materializer, sql, registry, monitored_tables):
+        # binding now has NO applied rules at all (the application was
+        # removed directly from dq_applied_rules), but a stale
+        # dq_quality_rules row from it still exists.
+        table = MonitoredTable(binding_id="b1", table_fqn="cat.schema.customers", status="draft")
+        monitored_tables.get.return_value = MonitoredTableDetail(table=table, applied_rules=[])
+
+        materializer.materialize_binding("b1")
+        # No applied rules -> no orphan cleanup query needed (nothing to scope to).
+        sql.execute.assert_not_called()
+
+
+class TestRematerializeForRule:
+    """``rematerialize_for_rule`` — the "publish -> propagate to followers" entry
+    point (design spec §5). Wired into ``approve_registry_rule`` so publishing a
+    new registry-rule version re-materializes every FOLLOWING (unpinned)
+    application; PINNED applications are excluded from the query entirely and
+    only ever change via a direct edit (see ``TestAutoUpgradeBehaviour``).
+    """
+
+    def test_queries_only_following_unpinned_applications(self, materializer, sql, monitored_tables, registry):
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule(version=2)
+        registry.get_version.return_value = _version_snapshot(version=2)
+
+        def fake_query(sql_text: str):
+            if "dq_applied_rules" in sql_text:
+                return [["b1"]]
+            return []
+
+        sql.query.side_effect = fake_query
+        result = materializer.rematerialize_for_rule("r1")
+
+        assert result == ["b1"]
+        applied_rules_query = next(c.args[0] for c in sql.query.call_args_list if "dq_applied_rules" in c.args[0])
+        assert "pinned_version IS NULL" in applied_rules_query
+        assert "'r1'" in applied_rules_query
+        monitored_tables.get.assert_called_once_with("b1")
+
+    def test_rematerializes_every_distinct_binding(self, materializer, sql, monitored_tables, registry):
+        registry.get_rule.return_value = _published_rule(version=2)
+        registry.get_version.return_value = _version_snapshot(version=2)
+
+        def get_detail(binding_id: str):
+            applied = AppliedRule(
+                id=f"ar-{binding_id}",
+                binding_id=binding_id,
+                rule_id="r1",
+                column_mapping=[{"column": "customer_id"}],
+                mapping_hash="h",
+            )
+            return _detail(applied, table_fqn=f"cat.schema.{binding_id}")
+
+        monitored_tables.get.side_effect = get_detail
+
+        def fake_query(sql_text: str):
+            if "dq_applied_rules" in sql_text:
+                return [["b1"], ["b2"]]
+            return []
+
+        sql.query.side_effect = fake_query
+        result = materializer.rematerialize_for_rule("r1")
+
+        assert result == ["b1", "b2"]
+        assert monitored_tables.get.call_args_list == [(("b1",),), (("b2",),)]
+
+    def test_skips_binding_that_no_longer_exists(self, materializer, sql, monitored_tables):
+        monitored_tables.get.return_value = None  # binding was deleted after publish
+
+        def fake_query(sql_text: str):
+            if "dq_applied_rules" in sql_text:
+                return [["gone"]]
+            return []
+
+        sql.query.side_effect = fake_query
+        result = materializer.rematerialize_for_rule("r1")
+
+        # The binding_id is still reported (caller-visible), but nothing raises.
+        assert result == ["gone"]
+
+    def test_no_following_applications_is_a_noop(self, materializer, sql, monitored_tables):
+        sql.query.return_value = []
+        result = materializer.rematerialize_for_rule("r1")
+        assert result == []
+        monitored_tables.get.assert_not_called()
+
+    def test_respects_auto_upgrade_behaviour_b_via_materialize_binding(
+        self, materializer, sql, registry, monitored_tables, app_settings
+    ):
+        """Re-materializing through the publish path still honours Behaviour B
+        (auto-upgrade OFF): a previously-approved following row whose content
+        changed is pushed back to pending_approval, same as a direct
+        ``materialize_binding`` call."""
+        app_settings.get_auto_upgrade_without_approval.return_value = False
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule(version=2)
+        registry.get_version.return_value = _version_snapshot(version=2, severity="Critical")
+
+        def fake_query(sql_text: str):
+            if "dq_applied_rules" in sql_text:
+                return [["b1"]]
+            if "SELECT status" in sql_text:
+                return [["approved", json.dumps({"different": "content"})]]
+            return []
+
+        sql.query.side_effect = fake_query
+        materializer.rematerialize_for_rule("r1")
+
+        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert "status = 'pending_approval'" in update_sql
+
+
+class TestRenderCheckNativeCrossTable:
+    """Phase 7C-a: confirm DQX Native cross-table rules materialize correctly.
+
+    ``foreign_key`` is a dataset-level check with reference-table arguments
+    (``ref_table``/``ref_columns``) that are NOT column slots on the
+    monitored table — they are frozen ``RuleParameter`` values on the
+    registry rule's definition (see ``registry_seed_map.py``:
+    ``ref_table``/``ref_columns`` kinds map to the ``ref_table``/``ref_column``
+    ``ParamType``s). This asserts a ``dqx_native`` ``foreign_key`` rule
+    materializes with those ref-table args intact, alongside its own
+    column slot substitution — no materializer change was needed for this;
+    ``render_check``'s existing ``dqx_native`` branch already fills in both
+    slots and non-``None`` parameters generically regardless of function
+    name (see ``_substitute_arguments``).
+    """
+
+    def test_foreign_key_native_rule_materializes_with_ref_table_args(self):
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {
+                    "function": "foreign_key",
+                    "arguments": {"columns": "{{columns}}"},
+                },
+                "slots": [{"name": "columns", "family": "any", "position": 0, "cardinality": "many"}],
+                "parameters": [
+                    {"name": "ref_columns", "type": "ref_column", "value": ["id"]},
+                    {"name": "ref_table", "type": "ref_table", "value": "catalog.schema.customers"},
+                ],
+            }
+        )
+        version = RuleVersion(
+            rule_id="r1",
+            version=1,
+            definition=definition,
+            user_metadata={"name": "Orders FK", "severity": "High"},
+        )
+        check, is_tableless = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"columns": "customer_id"},
+            effective_severity="High",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+
+        # foreign_key is per-table (it validates the monitored table's own
+        # rows against a reference table), not the tableless __sql_check__
+        # convention reserved for genuinely table-less cross-table SQL.
+        assert is_tableless is False
+        assert check["check"]["function"] == "foreign_key"
+        assert check["check"]["arguments"]["columns"] == ["customer_id"]
+        assert check["check"]["arguments"]["ref_columns"] == ["id"]
+        assert check["check"]["arguments"]["ref_table"] == "catalog.schema.customers"
+        assert check["criticality"] == "error"
+
+
+def _extract_json_literal(sql_text: str) -> dict:
+    start = sql_text.index("parse_json('") + len("parse_json('")
+    end = sql_text.index("')", start)
+    return json.loads(sql_text[start:end])
+
+
+class TestRenderBindingChecks:
+    """``render_binding_checks`` — the read-only draft-run source (design spec §4.1).
+
+    Renders the binding's CURRENT persisted applied-rules state through the
+    SAME path materialization uses, but writes NOTHING to
+    ``dq_quality_rules``. For an approved binding with no pending edits the
+    render equals the materialized output.
+    """
+
+    def test_render_equals_materialized_check_and_writes_nothing(
+        self, materializer, sql, registry, monitored_tables
+    ):
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+
+        checks = materializer.render_binding_checks("b1")
+
+        # Byte-identical to what render_check (hence materialization) produces.
+        expected, _ = render_check(
+            mode="dqx_native",
+            version=_version_snapshot(),
+            group={"column": "customer_id"},
+            effective_severity="High",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+        )
+        assert checks == [expected]
+        # Read-only: no INSERT/UPDATE/DELETE against dq_quality_rules.
+        sql.execute.assert_not_called()
+
+    def test_renders_every_mapping_group_across_applied_rules(
+        self, materializer, sql, registry, monitored_tables
+    ):
+        applied = AppliedRule(
+            id="ar1",
+            binding_id="b1",
+            rule_id="r1",
+            column_mapping=[{"column": "a"}, {"column": "b"}],
+            mapping_hash="h",
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+
+        checks = materializer.render_binding_checks("b1")
+        assert [c["check"]["arguments"]["column"] for c in checks] == ["a", "b"]
+        sql.execute.assert_not_called()
+
+    def test_raises_for_missing_binding(self, materializer, monitored_tables):
+        monitored_tables.get.return_value = None
+        with pytest.raises(MaterializationError):
+            materializer.render_binding_checks("missing")
+
+    def test_unresolvable_applied_rule_contributes_nothing(
+        self, materializer, sql, registry, monitored_tables
+    ):
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = None  # registry rule vanished
+        assert materializer.render_binding_checks("b1") == []
+        sql.execute.assert_not_called()
+
+    def test_render_uses_frozen_snapshot_mode_not_live_mode(
+        self, materializer, registry, monitored_tables
+    ):
+        """A follower still serving vN renders vN's FROZEN mode, even after the
+        live approved rule's mode was switched in place (P20 major fix): the
+        frozen native snapshot must render as a native check, not be
+        reinterpreted under the live rule's now-``sql`` mode."""
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "amount"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        live = _published_rule()
+        live.mode = "sql"  # edited in place, unpublished — must NOT drive rendering of vN
+        registry.get_rule.return_value = live
+        registry.get_version.return_value = RuleVersion(
+            rule_id="r1",
+            version=1,
+            mode="dqx_native",
+            definition=_is_not_null_definition(),
+            user_metadata={"name": "Not Null Check", "severity": "High"},
+        )
+        checks = materializer.render_binding_checks("b1")
+        assert checks[0]["check"]["function"] == "is_not_null"
+
+    def test_render_falls_back_to_live_mode_for_legacy_null_snapshot(
+        self, materializer, registry, monitored_tables
+    ):
+        """A legacy snapshot written before mode was frozen (``mode=None``)
+        falls back to the live rule's mode so it still renders."""
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "amount"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()  # live mode dqx_native
+        registry.get_version.return_value = _version_snapshot()  # mode defaults to None
+        checks = materializer.render_binding_checks("b1")
+        assert checks[0]["check"]["function"] == "is_not_null"

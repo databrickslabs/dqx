@@ -4,6 +4,38 @@ from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from pydantic import BaseModel, Field
 
 from .. import __version__
+from .registry_models import AuthorKind as RegistryAuthorKind
+from .registry_models import Polarity as RegistryPolarity
+from .registry_models import RegistryRule as RegistryRuleDomain
+from .registry_models import RuleDefinition as RegistryRuleDefinition
+from .registry_models import RuleMode as RegistryRuleMode
+from .registry_models import RuleStatus as RegistryRuleStatus
+from .registry_models import RuleVersion as RegistryRuleVersionDomain
+from .registry_models import RuleDisplayStatus as RegistryRuleStatusDisplay
+from .registry_models import registry_display_status
+from .registry_models import AppliedRule as AppliedRuleDomain
+from .registry_models import ColumnMappingGroup
+from .registry_models import MonitoredTable as MonitoredTableDomain
+from .registry_models import MonitoredTableStatus as MonitoredTableStatusDomain
+from .registry_models import MonitoredTableVersion as MonitoredTableVersionDomain
+from .registry_models import RunSetSource as RegistryRunSetSource
+from .registry_models import RunSetTrigger as RegistryRunSetTrigger
+from .registry_models import DataProductStatus as RegistryDataProductStatus
+from .services.data_product_service import (
+    DataProductDetail,
+    DataProductMemberDetail,
+    DataProductRunResult,
+    DataProductRunSubmission,
+)
+from .services.data_product_service import display_status as data_product_display_status
+from .services.monitored_table_service import (
+    AppliedRuleSummary,
+    BulkRegisterResult,
+    LatestProfile,
+    MonitoredTableDetail,
+    MonitoredTableSummary,
+)
+from .services.rule_suggester import RuleSuggestion, SuggestRulesResult
 
 
 class VersionOut(BaseModel):
@@ -54,6 +86,99 @@ class GenerateChecksOut(BaseModel):
     yaml_output: str = Field(description="Generated checks in YAML format")
     checks: list[dict[str, Any]] = Field(description="Generated checks as a list of dictionaries")
     validation_errors: list[str] = Field(default_factory=list, description="Validation errors if any")
+
+
+class AiGenerateRuleIn(BaseModel):
+    """Request body for AI-generating a full Rules Registry rule proposal."""
+
+    description: str = Field(
+        max_length=4000,
+        description="Natural language description of the data quality requirement",
+    )
+    table_fqn: str | None = Field(default=None, description="Optional fully qualified table name for schema context")
+    columns: list[str] | None = Field(default=None, max_length=200, description="Optional candidate column names")
+    sample_rows: list[dict[str, Any]] | None = Field(
+        default=None,
+        max_length=20,
+        description="Optional sample rows for context; only the first 5 are forwarded to the model",
+    )
+
+
+class AiGenerateRuleOut(BaseModel):
+    """A validated, AI-generated Rules Registry rule proposal, ready to prefill the create form."""
+
+    name: str
+    description: str
+    mode: str = Field(description="dqx_native | sql")
+    dimension: str | None = None
+    severity: str | None = None
+    polarity: str | None = None
+    definition: dict[str, Any] = Field(description="Mode-specific body: {function, arguments} or {sql_query}")
+    author_kind: str = Field(default="ai_generated")
+
+
+class AiSuggestFieldIn(BaseModel):
+    """Request body for an AI per-field suggestion (name/description/dimension/severity)."""
+
+    field: str = Field(description="Field being suggested, e.g. 'name', 'description', 'dimension', 'severity'")
+    context: str = Field(max_length=4000, description="Rule context (description + any known fields) as free text")
+
+
+class AiSuggestFieldOut(BaseModel):
+    """A single suggested value for one rule field."""
+
+    value: str
+
+
+class AiWriteSqlIn(BaseModel):
+    """Request body for AI-writing a SQL predicate for a rule from a natural-language description."""
+
+    description: str = Field(
+        min_length=1,
+        max_length=2000,
+        description="Natural language description of what the SQL predicate should check",
+    )
+    columns: list[str] | None = Field(
+        default=None,
+        max_length=200,
+        description="Declared reusable slot names ({{slot}}) the predicate may reference",
+    )
+    table_fqn: str | None = Field(default=None, description="Optional fully qualified table name for schema context")
+
+
+class AiImproveSqlIn(BaseModel):
+    """Request body for AI-improving an existing SQL predicate per a free-text instruction."""
+
+    predicate: str = Field(min_length=1, max_length=4000, description="The current SQL boolean predicate to refine")
+    instruction: str = Field(
+        min_length=1,
+        max_length=500,
+        description="How the predicate should be refined (e.g. 'tighten the null handling')",
+    )
+    columns: list[str] | None = Field(
+        default=None,
+        max_length=200,
+        description="Declared reusable slot names ({{slot}}) the predicate may reference",
+    )
+
+
+class AiSqlOut(BaseModel):
+    """An AI-written or -improved SQL predicate, validated safe before it leaves the server."""
+
+    predicate: str = Field(description="The SQL boolean predicate, referencing slots as {{slot}} placeholders")
+    polarity: str | None = Field(default=None, description="pass | fail — whether a TRUE predicate is a pass or fail")
+
+
+class AiExplainSqlIn(BaseModel):
+    """Request body for an AI plain-language explanation of a SQL predicate."""
+
+    predicate: str = Field(min_length=1, max_length=4000, description="The SQL boolean predicate to explain")
+
+
+class AiExplainSqlOut(BaseModel):
+    """A short, plain-language explanation of what a SQL predicate checks."""
+
+    explanation: str
 
 
 class GenerateRulesFromContractIn(BaseModel):
@@ -215,6 +340,473 @@ class SetStatusIn(BaseModel):
     )
 
 
+class CreateRegistryRuleIn(BaseModel):
+    """Request body for creating a new draft Rules Registry rule."""
+
+    mode: RegistryRuleMode = Field(description="Authoring type: dqx_native | lowcode | sql")
+    definition: RegistryRuleDefinition = Field(description="Mode-specific body plus typed slots/parameters")
+    polarity: RegistryPolarity | None = Field(default=None, description="pass|fail — meaningful for lowcode/sql only")
+    author_kind: RegistryAuthorKind = Field(default="human", description="human | ai_generated | ai_assisted")
+    user_metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Reserved tag keys (name/description/dimension/severity) + free-text tags",
+    )
+    steward: str | None = Field(default=None, description="Owning steward's email/username")
+
+
+class UpdateRegistryRuleIn(BaseModel):
+    """Request body for updating a draft Rules Registry rule. Only draft rules are editable."""
+
+    mode: RegistryRuleMode | None = None
+    definition: RegistryRuleDefinition | None = None
+    polarity: RegistryPolarity | None = None
+    user_metadata: dict[str, Any] | None = None
+    steward: str | None = None
+    author_kind: RegistryAuthorKind | None = Field(
+        default=None,
+        description=(
+            "Re-stamp AI provenance during an edit-in-place session (e.g. a human accepts an "
+            "AI-suggested field on an otherwise human-authored draft). Omit to leave unchanged."
+        ),
+    )
+
+
+class RegistryRuleOut(BaseModel):
+    """A ``dq_rules`` row as returned to the frontend."""
+
+    rule_id: str
+    mode: RegistryRuleMode
+    status: RegistryRuleStatus
+    version: int
+    polarity: RegistryPolarity | None = None
+    author_kind: RegistryAuthorKind | None = None
+    definition: RegistryRuleDefinition
+    user_metadata: dict[str, Any] = Field(default_factory=dict)
+    fingerprint: str | None = None
+    steward: str | None = None
+    is_builtin: bool = False
+    source: str | None = None
+    created_by: str | None = None
+    created_at: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+    modified_since_publish: bool = Field(
+        default=False,
+        description=(
+            "True when this approved (or in-review revision of an) already-published rule carries "
+            "unpublished live edits — its definition/tags differ from the current published snapshot "
+            "('Modified since vN'). Only meaningful on the list / detail read paths."
+        ),
+    )
+    display_status: RegistryRuleStatusDisplay = Field(
+        description="UI-facing status: raw status, or 'modified' for an edited approved rule."
+    )
+
+    @classmethod
+    def from_domain(cls, rule: RegistryRuleDomain) -> "RegistryRuleOut":
+        return cls(
+            rule_id=rule.rule_id,
+            mode=rule.mode,
+            status=rule.status,
+            version=rule.version,
+            polarity=rule.polarity,
+            author_kind=rule.author_kind,
+            definition=rule.definition,
+            user_metadata=rule.user_metadata,
+            fingerprint=rule.fingerprint,
+            steward=rule.steward,
+            is_builtin=rule.is_builtin,
+            source=rule.source,
+            created_by=rule.created_by,
+            created_at=rule.created_at.isoformat() if rule.created_at else None,
+            updated_by=rule.updated_by,
+            updated_at=rule.updated_at.isoformat() if rule.updated_at else None,
+            modified_since_publish=rule.modified_since_publish,
+            display_status=registry_display_status(rule.status, rule.version, rule.modified_since_publish),
+        )
+
+
+class RegistryRuleVersionOut(BaseModel):
+    """A frozen ``dq_rule_versions`` snapshot as returned to the frontend."""
+
+    rule_id: str
+    version: int
+    definition: RegistryRuleDefinition
+    polarity: RegistryPolarity | None = None
+    user_metadata: dict[str, Any] = Field(default_factory=dict)
+    created_by: str | None = None
+    created_at: str | None = None
+
+    @classmethod
+    def from_domain(cls, version: RegistryRuleVersionDomain) -> "RegistryRuleVersionOut":
+        return cls(
+            rule_id=version.rule_id,
+            version=version.version,
+            definition=version.definition,
+            polarity=version.polarity,
+            user_metadata=version.user_metadata,
+            created_by=version.created_by,
+            created_at=version.created_at.isoformat() if version.created_at else None,
+        )
+
+
+class CreateRegistryRuleOut(BaseModel):
+    """Response for a successful create — includes a non-blocking dedup warning, if any."""
+
+    rule: RegistryRuleOut
+    dedup_warning: str | None = Field(
+        default=None, description="Non-blocking warning when a published rule shares this fingerprint"
+    )
+
+
+class RegistryRuleDetailOut(BaseModel):
+    """A registry rule plus its current published snapshot (None if never published)."""
+
+    rule: RegistryRuleOut
+    current_version: RegistryRuleVersionOut | None = None
+
+
+class RegisterMonitoredTableIn(BaseModel):
+    """Request body for registering a table under Rules Registry governance."""
+
+    table_fqn: str = Field(description="Fully qualified table name (catalog.schema.table)")
+    steward: str | None = Field(default=None, description="Owning steward's email/username")
+
+
+class UpdateMonitoredTableScheduleIn(BaseModel):
+    """Request body for setting/clearing a monitored table's run schedule (P21 item 14).
+
+    ``schedule_cron=None`` clears the schedule. When a cron is present the caller
+    should supply ``schedule_tz`` (defaults to UTC service-side when omitted).
+    """
+
+    schedule_cron: str | None = Field(default=None, description="5-field POSIX cron; None clears the schedule")
+    schedule_tz: str | None = Field(default=None, description="IANA zone the cron is evaluated in; None = UTC")
+
+
+class BulkRegisterMonitoredTablesIn(BaseModel):
+    """Request body for bulk-registering many tables under Rules Registry governance."""
+
+    table_fqns: list[str] = Field(description="Fully qualified table names (catalog.schema.table) to register")
+    steward: str | None = Field(default=None, description="Owning steward's email/username applied to all")
+
+
+class BulkRegisterMonitoredTablesOut(BaseModel):
+    """Response for ``bulkRegisterMonitoredTables`` — a partitioned summary of the batch."""
+
+    registered: list[str] = Field(default_factory=list, description="Newly registered table FQNs")
+    skipped_existing: list[str] = Field(
+        default_factory=list, description="Table FQNs already monitored — left untouched"
+    )
+    invalid: list[str] = Field(default_factory=list, description="Table FQNs that failed FQN validation")
+
+    @classmethod
+    def from_domain(cls, result: BulkRegisterResult) -> "BulkRegisterMonitoredTablesOut":
+        return cls(registered=result.registered, skipped_existing=result.skipped_existing, invalid=result.invalid)
+
+
+class AppliedRuleOut(BaseModel):
+    """A ``dq_applied_rules`` row, denormalized with its registry rule's descriptive tags."""
+
+    id: str | None = None
+    binding_id: str
+    rule_id: str
+    pinned_version: int | None = None
+    severity_override: str | None = None
+    column_mapping: list[dict[str, str]] = Field(default_factory=list)
+    user_metadata: dict[str, Any] = Field(default_factory=dict)
+    mapping_hash: str | None = None
+    created_by: str | None = None
+    created_at: str | None = None
+    rule_name: str | None = None
+    rule_dimension: str | None = None
+    rule_severity: str | None = None
+
+    @classmethod
+    def from_summary(cls, summary: AppliedRuleSummary) -> "AppliedRuleOut":
+        applied_rule = summary.applied_rule
+        return cls(
+            id=applied_rule.id,
+            binding_id=applied_rule.binding_id,
+            rule_id=applied_rule.rule_id,
+            pinned_version=applied_rule.pinned_version,
+            severity_override=applied_rule.severity_override,
+            column_mapping=applied_rule.column_mapping,
+            user_metadata=applied_rule.user_metadata,
+            mapping_hash=applied_rule.mapping_hash,
+            created_by=applied_rule.created_by,
+            created_at=applied_rule.created_at.isoformat() if applied_rule.created_at else None,
+            rule_name=summary.rule_name,
+            rule_dimension=summary.rule_dimension,
+            rule_severity=summary.rule_severity,
+        )
+
+    @classmethod
+    def from_domain(cls, applied: AppliedRuleDomain) -> "AppliedRuleOut":
+        """Build from a bare ``AppliedRule`` (no joined registry tags) — the shape
+        returned directly by ``ApplyRulesService`` (apply/pin/severity-override),
+        as opposed to :meth:`from_summary`'s ``MonitoredTableService``-joined shape.
+        """
+        return cls(
+            id=applied.id,
+            binding_id=applied.binding_id,
+            rule_id=applied.rule_id,
+            pinned_version=applied.pinned_version,
+            severity_override=applied.severity_override,
+            column_mapping=applied.column_mapping,
+            user_metadata=applied.user_metadata,
+            mapping_hash=applied.mapping_hash,
+            created_by=applied.created_by,
+            created_at=applied.created_at.isoformat() if applied.created_at else None,
+        )
+
+
+class ApplyRuleIn(BaseModel):
+    """Request body for applying a published registry rule to a monitored table."""
+
+    rule_id: str = Field(description="The published (approved) dq_rules row to apply")
+    column_mapping: list[ColumnMappingGroup] = Field(
+        description="One slot-name -> column-name mapping group per materialized check; "
+        "every group's keys must exactly match the rule's slot names. May be an empty list "
+        "to stage the application with no mapping yet (nothing is materialized until a "
+        "follow-up call supplies a fully-covering group)."
+    )
+    pinned_version: int | None = Field(
+        default=None, description="None = follow latest published version; a number freezes to that snapshot"
+    )
+    severity_override: str | None = Field(
+        default=None, description="Overrides the rule's tagged severity for this application only"
+    )
+    tags: dict[str, Any] = Field(default_factory=dict, description="Per-application free-text tags")
+
+
+class DesiredAppliedRuleIn(BaseModel):
+    """One entry in the full desired set of applications for ``saveAppliedRules``."""
+
+    rule_id: str = Field(description="The published (approved) dq_rules row to apply")
+    column_mapping: list[ColumnMappingGroup] = Field(
+        default_factory=list,
+        description="One slot-name -> column-name mapping group per materialized check; may be "
+        "empty to stage the application with no mapping yet.",
+    )
+    pinned_version: int | None = Field(
+        default=None, description="None = follow latest published version; a number freezes to that snapshot"
+    )
+    severity_override: str | None = Field(
+        default=None, description="Overrides the rule's tagged severity for this application only"
+    )
+    tags: dict[str, Any] = Field(default_factory=dict, description="Per-application free-text tags")
+
+
+class SaveAppliedRulesIn(BaseModel):
+    """Request body for ``saveAppliedRules`` — the FULL desired set of applications for a binding.
+
+    Anything currently applied to the binding that isn't (re)supplied here is
+    removed; see ``ApplyRulesService.save_applied_rules`` for reconcile semantics.
+    """
+
+    applications: list[DesiredAppliedRuleIn] = Field(default_factory=list)
+
+
+class SetAppliedRulePinIn(BaseModel):
+    """Request body for pinning/unpinning an applied rule's version."""
+
+    pinned_version: int | None = Field(default=None, description="None clears the pin (follow latest published)")
+
+
+class SetAppliedRuleSeverityOverrideIn(BaseModel):
+    """Request body for setting/clearing an applied rule's severity override."""
+
+    severity: str | None = Field(default=None, description="None clears the override")
+
+
+class MonitoredTableOut(BaseModel):
+    """A ``dq_monitored_tables`` row as returned to the frontend."""
+
+    binding_id: str
+    table_fqn: str
+    steward: str | None = None
+    status: MonitoredTableStatusDomain
+    version: int = Field(default=0, description="0 = never approved; bumped on each table approval")
+    schedule_cron: str | None = Field(default=None, description="5-field POSIX cron; None = not scheduled")
+    schedule_tz: str | None = Field(default=None, description="IANA zone the cron runs in; None = UTC")
+    last_profiled_at: str | None = None
+    created_by: str | None = None
+    created_at: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+
+    @classmethod
+    def from_domain(cls, table: MonitoredTableDomain) -> "MonitoredTableOut":
+        return cls(
+            binding_id=table.binding_id,
+            table_fqn=table.table_fqn,
+            steward=table.steward,
+            status=table.status,
+            version=table.version,
+            schedule_cron=table.schedule_cron,
+            schedule_tz=table.schedule_tz,
+            last_profiled_at=table.last_profiled_at.isoformat() if table.last_profiled_at else None,
+            created_by=table.created_by,
+            created_at=table.created_at.isoformat() if table.created_at else None,
+            updated_by=table.updated_by,
+            updated_at=table.updated_at.isoformat() if table.updated_at else None,
+        )
+
+
+class MonitoredTableReviewOut(BaseModel):
+    """Response for the submit/approve/reject monitored-table lifecycle routes.
+
+    ``table`` carries the binding with its new roll-up status; ``affected_check_count``
+    is how many materialized ``dq_quality_rules`` rows changed status in this
+    transition (submitted, approved, or rejected respectively).
+    """
+
+    table: MonitoredTableOut
+    affected_check_count: int = 0
+    new_version: int | None = Field(
+        default=None,
+        description="On approve: the newly frozen monitored-table version. None for submit/reject.",
+    )
+
+
+class MonitoredTableVersionOut(BaseModel):
+    """A ``dq_monitored_table_versions`` row (metadata only; ``checks_json`` omitted).
+
+    Backs ``listMonitoredTableVersions`` — the frozen-checks payload is
+    resolved separately at run time, so this listing carries only the audit
+    + display metadata (``state_json``) the version picker needs.
+    """
+
+    id: str | None = None
+    binding_id: str
+    version: int
+    state_json: dict[str, Any] = Field(default_factory=dict)
+    created_by: str | None = None
+    created_at: str | None = None
+    refrozen_at: str | None = None
+
+    @classmethod
+    def from_domain(cls, version: "MonitoredTableVersionDomain") -> "MonitoredTableVersionOut":
+        return cls(
+            id=version.id,
+            binding_id=version.binding_id,
+            version=version.version,
+            state_json=version.state_json,
+            created_by=version.created_by,
+            created_at=version.created_at.isoformat() if version.created_at else None,
+            refrozen_at=version.refrozen_at.isoformat() if version.refrozen_at else None,
+        )
+
+
+class MonitoredTableSummaryOut(BaseModel):
+    """A monitored table plus lightweight list-view counters, for ``listMonitoredTables``."""
+
+    table: MonitoredTableOut
+    applied_rule_count: int = 0
+    check_count: int = 0
+
+    @classmethod
+    def from_domain(cls, summary: MonitoredTableSummary) -> "MonitoredTableSummaryOut":
+        return cls(
+            table=MonitoredTableOut.from_domain(summary.table),
+            applied_rule_count=summary.applied_rule_count,
+            check_count=summary.check_count,
+        )
+
+
+class MonitoredTableDetailOut(BaseModel):
+    """A monitored table plus its applied rules, for ``getMonitoredTable``."""
+
+    table: MonitoredTableOut
+    applied_rules: list[AppliedRuleOut] = Field(default_factory=list)
+
+    @classmethod
+    def from_domain(cls, detail: MonitoredTableDetail) -> "MonitoredTableDetailOut":
+        return cls(
+            table=MonitoredTableOut.from_domain(detail.table),
+            applied_rules=[AppliedRuleOut.from_summary(s) for s in detail.applied_rules],
+        )
+
+
+class MonitoredTableProfileOut(BaseModel):
+    """A read-only projection of the latest ``dq_profiling_results`` row for a monitored table."""
+
+    run_id: str
+    source_table_fqn: str
+    status: str | None = None
+    rows_profiled: int | None = None
+    columns_profiled: int | None = None
+    duration_seconds: float | None = None
+    summary: dict[str, Any] = Field(default_factory=dict)
+    generated_rules: list[dict[str, Any]] = Field(default_factory=list)
+    profiled_at: str | None = None
+
+    @classmethod
+    def from_domain(cls, profile: LatestProfile) -> "MonitoredTableProfileOut":
+        return cls(
+            run_id=profile.run_id,
+            source_table_fqn=profile.source_table_fqn,
+            status=profile.status,
+            rows_profiled=profile.rows_profiled,
+            columns_profiled=profile.columns_profiled,
+            duration_seconds=profile.duration_seconds,
+            summary=profile.summary,
+            generated_rules=profile.generated_rules,
+            profiled_at=profile.profiled_at,
+        )
+
+
+class BackfillRuleEmbeddingsOut(BaseModel):
+    """Result of a manual re-embed pass over every published registry rule (Rules Registry Phase 4B)."""
+
+    total_published: int
+    embedded: int
+
+
+class SuggestedRuleMappingOut(BaseModel):
+    """One validated, complete slot->column mapping suggestion (Rules Registry Phase 4C)."""
+
+    rule_id: str
+    rule_name: str | None = None
+    dimension: str | None = None
+    severity: str | None = None
+    column_mapping: ColumnMappingGroup
+    explanation: str = ""
+
+    @classmethod
+    def from_domain(cls, suggestion: RuleSuggestion) -> "SuggestedRuleMappingOut":
+        return cls(
+            rule_id=suggestion.rule_id,
+            rule_name=suggestion.rule_name,
+            dimension=suggestion.dimension,
+            severity=suggestion.severity,
+            column_mapping=suggestion.column_mapping,
+            explanation=suggestion.explanation,
+        )
+
+
+class SuggestRulesOut(BaseModel):
+    """Response of ``POST /monitored-tables/{binding_id}/suggest-rules``.
+
+    ``available=False`` (with a human-readable ``reason``) covers every
+    degraded path — Vector Search/embedding/AI not configured, retrieval or
+    judge failure — and is always returned with HTTP 200, never a 500.
+    """
+
+    available: bool
+    suggestions: list[SuggestedRuleMappingOut] = Field(default_factory=list)
+    reason: str = ""
+
+    @classmethod
+    def from_domain(cls, result: SuggestRulesResult) -> "SuggestRulesOut":
+        return cls(
+            available=result.available,
+            reason=result.reason,
+            suggestions=[SuggestedRuleMappingOut.from_domain(s) for s in result.suggestions],
+        )
+
+
 class DryRunIn(BaseModel):
     table_fqn: str = Field(description="Fully qualified table name to run checks against")
     checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
@@ -226,6 +818,14 @@ class DryRunSubmitOut(BaseModel):
     run_id: str
     job_run_id: int
     view_fqn: str = Field(description="Temporary view FQN for cleanup tracking")
+    # Optional because the single-table submit endpoint's caller already
+    # knows which table it asked for. The batch endpoint always populates
+    # this so callers can associate each submitted run with its source
+    # table by value instead of by list position — batch submission skips
+    # tables that fail validation, which shifts `submitted` out of index
+    # alignment with the request's `table_fqns` (see runs.tsx regression
+    # this field fixes).
+    table_fqn: str | None = Field(default=None, description="Source table FQN this run was submitted for")
 
 
 class DryRunOut(BaseModel):
@@ -391,6 +991,237 @@ class ValidationRunSummaryOut(BaseModel):
     review_status_is_default: bool = False
     review_status_updated_by: str | None = None
     review_status_updated_at: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Data Products Task 3 — run sets + monitored-table run endpoint
+# ---------------------------------------------------------------------------
+
+
+class RunMonitoredTableIn(BaseModel):
+    """Body of ``POST /monitored-tables/{binding_id}/run`` (``runMonitoredTable``)."""
+
+    source: RegistryRunSetSource = Field(description="'approved' resolves a frozen snapshot; 'draft' renders live state")
+    version: int | None = Field(
+        default=None,
+        description="Pin to a specific approved snapshot version. Ignored when source='draft'.",
+    )
+    sample_size: int = Field(default=1000, le=10_000, description="Number of rows to sample")
+
+
+class RunMonitoredTableOut(BaseModel):
+    """Response of ``POST /monitored-tables/{binding_id}/run``."""
+
+    run_set_id: str
+    run_id: str
+    job_run_id: int
+    view_fqn: str
+
+
+class RunSetMemberDetailOut(BaseModel):
+    """A single member row inside ``GET /run-sets/{run_set_id}`` (``getRunSet``)."""
+
+    run_id: str
+    binding_id: str
+    table_fqn: str | None = None
+    binding_version: int | None = Field(default=None, description="None for draft-source members")
+    status: str | None = None
+    total_rows: int | None = None
+    valid_rows: int | None = None
+    invalid_rows: int | None = None
+    error_rows: int | None = None
+    warning_rows: int | None = None
+
+
+class RunSetSummaryOut(BaseModel):
+    """A ``dq_run_sets`` row + aggregated status, as returned by ``listRunSets``."""
+
+    run_set_id: str
+    product_id: str | None = None
+    product_version: int | None = None
+    source: RegistryRunSetSource
+    trigger: RegistryRunSetTrigger
+    created_by: str | None = None
+    created_at: str | None = None
+    member_count: int
+    status: str = Field(description="Aggregated across members: running > failed > canceled > success")
+
+
+class RunSetDetailOut(BaseModel):
+    """Response of ``GET /run-sets/{run_set_id}`` (``getRunSet``)."""
+
+    run_set_id: str
+    product_id: str | None = None
+    product_version: int | None = None
+    source: RegistryRunSetSource
+    trigger: RegistryRunSetTrigger
+    created_by: str | None = None
+    created_at: str | None = None
+    status: str = Field(description="Aggregated across members: running > failed > canceled > success")
+    members: list[RunSetMemberDetailOut] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Data Products Task 4 — products CRUD, publish, member management, run fan-out
+# ---------------------------------------------------------------------------
+
+
+class CreateDataProductIn(BaseModel):
+    """Body of ``POST /data-products`` (``createDataProduct``)."""
+
+    name: str
+    description: str | None = None
+    steward: str | None = Field(default=None, description="Defaults to the creator's email when omitted")
+
+
+class UpdateDataProductIn(BaseModel):
+    """Body of ``PATCH /data-products/{id}`` (``updateDataProduct``).
+
+    Every field is optional; the route uses ``model_dump(exclude_unset=True)``
+    so an omitted field is left untouched while an explicit ``null`` (e.g.
+    clearing the schedule) is honored. ANY successful PATCH flips the space
+    back to ``draft`` without bumping ``version`` (P21 item 30).
+    """
+
+    name: str | None = None
+    description: str | None = None
+    steward: str | None = None
+    schedule_cron: str | None = None
+    schedule_tz: str | None = None
+
+
+class AddDataProductMemberIn(BaseModel):
+    """Body of ``POST /data-products/{id}/members`` (``addDataProductMember``).
+
+    Upserts by ``binding_id`` — calling again for a binding already a member
+    updates its pin in place rather than duplicating a row.
+    """
+
+    binding_id: str
+    pinned_version: int | None = Field(default=None, description="None = follow latest approved")
+
+
+class RunDataProductIn(BaseModel):
+    """Body of ``POST /data-products/{id}/run`` (``runDataProduct``)."""
+
+    source: RegistryRunSetSource = Field(
+        description="'approved' resolves pinned/latest frozen snapshots; 'draft' renders every member's live state"
+    )
+
+
+class DataProductMemberOut(BaseModel):
+    """A ``dq_data_product_members`` row joined with its binding's live state."""
+
+    id: str
+    binding_id: str
+    table_fqn: str
+    binding_status: str
+    binding_version: int
+    pinned_version: int | None = Field(default=None, description="None = follow latest approved")
+    rules_count: int
+    checks_count: int
+    runnable: bool = Field(description="binding status == 'approved' AND binding_version > 0")
+
+    @classmethod
+    def from_domain(cls, member: DataProductMemberDetail) -> "DataProductMemberOut":
+        return cls(
+            id=member.id,
+            binding_id=member.binding_id,
+            table_fqn=member.table_fqn,
+            binding_status=member.binding_status,
+            binding_version=member.binding_version,
+            pinned_version=member.pinned_version,
+            rules_count=member.rules_count,
+            checks_count=member.checks_count,
+            runnable=member.runnable,
+        )
+
+
+class DataProductOut(BaseModel):
+    """A ``dq_data_products`` row plus resolved members and list-view counters."""
+
+    product_id: str
+    name: str
+    description: str | None = None
+    steward: str | None = None
+    schedule_cron: str | None = None
+    schedule_tz: str | None = None
+    status: RegistryDataProductStatus
+    version: int
+    display_status: str = Field(
+        description="'approved' | 'pending_approval' | 'rejected' | 'modified' | 'draft' — review lifecycle display"
+    )
+    members: list[DataProductMemberOut] = Field(default_factory=list)
+    member_count: int = 0
+    runnable_count: int = 0
+    last_run_at: str | None = None
+    created_by: str | None = None
+    created_at: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+
+    @classmethod
+    def from_domain(cls, detail: DataProductDetail) -> "DataProductOut":
+        product = detail.product
+        return cls(
+            product_id=product.product_id,
+            name=product.name,
+            description=product.description,
+            steward=product.steward,
+            schedule_cron=product.schedule_cron,
+            schedule_tz=product.schedule_tz,
+            status=product.status,
+            version=product.version,
+            display_status=data_product_display_status(product),
+            members=[DataProductMemberOut.from_domain(m) for m in detail.members],
+            member_count=detail.member_count,
+            runnable_count=detail.runnable_count,
+            last_run_at=detail.last_run_at.isoformat() if detail.last_run_at else None,
+            created_by=product.created_by,
+            created_at=product.created_at.isoformat() if product.created_at else None,
+            updated_by=product.updated_by,
+            updated_at=product.updated_at.isoformat() if product.updated_at else None,
+        )
+
+
+class DataProductRunSubmissionOut(BaseModel):
+    """One successfully submitted member run inside ``runDataProduct``'s response."""
+
+    binding_id: str
+    table_fqn: str
+    run_id: str
+    job_run_id: int
+    view_fqn: str
+    binding_version: int | None = Field(default=None, description="None for draft-source submissions")
+
+    @classmethod
+    def from_domain(cls, submission: DataProductRunSubmission) -> "DataProductRunSubmissionOut":
+        return cls(
+            binding_id=submission.binding_id,
+            table_fqn=submission.table_fqn,
+            run_id=submission.run_id,
+            job_run_id=submission.job_run_id,
+            view_fqn=submission.view_fqn,
+            binding_version=submission.binding_version,
+        )
+
+
+class RunDataProductOut(BaseModel):
+    """Response of ``POST /data-products/{id}/run``."""
+
+    run_set_id: str
+    submitted: list[DataProductRunSubmissionOut] = Field(default_factory=list)
+    skipped: list[str] = Field(
+        default_factory=list, description="'{table_fqn}: {reason}' entries for members that were skipped or failed"
+    )
+
+    @classmethod
+    def from_domain(cls, result: DataProductRunResult) -> "RunDataProductOut":
+        return cls(
+            run_set_id=result.run_set_id,
+            submitted=[DataProductRunSubmissionOut.from_domain(s) for s in result.submitted],
+            skipped=result.skipped,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -651,7 +1482,7 @@ class CheckFunctionParam(BaseModel):
 
     name: str = Field(description="Parameter name as defined on the DQX function")
     kind: str = Field(
-        description=("UI input kind: 'column', 'columns', 'boolean', 'number', " "'list', or 'string'."),
+        description=("UI input kind: 'column', 'columns', 'boolean', 'number', 'list', or 'string'."),
     )
     required: bool = Field(description="True iff the parameter has no default")
     default: str | None = Field(
@@ -661,6 +1492,15 @@ class CheckFunctionParam(BaseModel):
     annotation: str = Field(
         default="",
         description="Verbatim Python type annotation (best-effort string repr)",
+    )
+    family: str | None = Field(
+        default=None,
+        description=(
+            "For a column-kind parameter ('column' / 'columns'), the slot family the "
+            "check's semantics imply ('numeric', 'text', 'temporal', 'boolean', 'array', "
+            "or 'any'). A specific (non-'any') family is locked in the authoring UI and "
+            "narrows the apply-time column picker. None for non-column parameters."
+        ),
     )
 
 
@@ -683,3 +1523,80 @@ class CheckFunctionsOut(BaseModel):
     """Response wrapper for ``GET /api/v1/check-functions``."""
 
     functions: list[CheckFunctionDef] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Object permissions (UC-style grants) — P22-D item 10
+# ---------------------------------------------------------------------------
+
+
+class PrincipalSearchOut(BaseModel):
+    """A workspace principal (user or group) returned by the principal picker."""
+
+    kind: str = Field(description="'user' or 'group'")
+    workspace_principal_id: str = Field(description="Workspace SCIM id of the principal")
+    display_name: str = Field(description="Human-readable name for display")
+    secondary: str | None = Field(default=None, description="Secondary label (username or member count)")
+
+
+class ObjectGrantOut(BaseModel):
+    """One principal's grant on a securable object (direct, inherited, or the users-group default)."""
+
+    principal_id: str = Field(description="Workspace SCIM id; 'users' for the workspace users group")
+    principal_type: str = Field(description="'user' or 'group'")
+    principal_name: str | None = Field(default=None, description="Human-readable principal name")
+    privileges: list[str] = Field(default_factory=list, description="Granted privileges (SELECT/MODIFY/APPLY or ALL_PRIVILEGES)")
+    inherit: bool = Field(default=False, description="Whether this grant flows down to child objects")
+    grantor: str | None = Field(default=None, description="Who granted this")
+    updated_at: str | None = Field(default=None, description="When the grant was last set (ISO8601)")
+    inherited: bool = Field(default=False, description="True when surfaced from a parent object via inheritance")
+    inherited_from_type: str | None = Field(default=None, description="Parent object type an inherited grant came from")
+    inherited_from_id: str | None = Field(default=None, description="Parent object id an inherited grant came from")
+    is_default: bool = Field(
+        default=False,
+        description="True on the synthetic users-group default row (implicit SELECT+APPLY, not yet materialized)",
+    )
+
+
+class ObjectGrantsOut(BaseModel):
+    """Response for the Permissions tab: grants (incl. the users-group default) + caller capability."""
+
+    object_type: str = Field(description="Securable object type")
+    object_id: str = Field(description="Securable object id")
+    grants: list[ObjectGrantOut] = Field(default_factory=list)
+    can_manage: bool = Field(default=False, description="Whether the caller may add/remove grants on this object")
+    default_inherit: bool = Field(default=False, description="Admin default for the per-grant inheritance toggle on new grants")
+
+
+class SetObjectGrantIn(BaseModel):
+    """Create-or-replace one principal's grant on a securable object."""
+
+    principal_id: str = Field(description="Workspace SCIM id; 'users' for the workspace users group")
+    principal_type: str = Field(description="'user' or 'group'")
+    principal_name: str | None = Field(default=None, description="Human-readable principal name")
+    privileges: list[str] = Field(default_factory=list, description="Privileges to grant (empty removes the grant, or revokes the users-group default)")
+    inherit: bool = Field(default=False, description="Whether the grant flows down to child objects")
+
+
+class EffectivePermissionsOut(BaseModel):
+    """The caller's effective privileges on a single object (drives UI gating)."""
+
+    object_type: str
+    object_id: str
+    privileges: list[str] = Field(default_factory=list)
+    can_modify: bool = Field(default=False)
+    can_apply: bool = Field(default=False)
+    can_manage_grants: bool = Field(default=False)
+    is_owner: bool = Field(default=False)
+
+
+class PermissionsDefaultInheritOut(BaseModel):
+    """Admin setting: default state of the per-grant inheritance toggle."""
+
+    enabled: bool = Field(description="When true, new grants default to inheriting down the hierarchy")
+
+
+class SetPermissionsDefaultInheritIn(BaseModel):
+    """Request body for updating the default-inheritance admin setting."""
+
+    enabled: bool

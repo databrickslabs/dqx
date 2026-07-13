@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, CheckCircle2, Circle, Clock, Globe, LayoutDashboard, Loader2, Search, Tags, Plus, Trash2, X, ExternalLink, RotateCcw, ShieldCheck } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Circle, Clock, Cpu, Database, Globe, KeyRound, LayoutDashboard, Loader2, Lock, Search, Tags, Plus, Trash2, X, ExternalLink, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,7 +29,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import {
   useTimezone,
   useSaveTimezone,
@@ -50,6 +50,39 @@ import {
   type RetentionSettingsOut,
   type RunReviewStatusOption,
 } from "@/lib/api-custom";
+import {
+  useGetAiSettings,
+  useSaveAiSettings,
+  getGetAiSettingsQueryKey,
+  useListServingEndpoints,
+  useEnsureVectorStore,
+  useGetRulesRegistrySettings,
+  useSaveRulesRegistrySettings,
+  getGetRulesRegistrySettingsQueryKey,
+  useGetComputeSettings,
+  useSaveComputeSettings,
+  getGetComputeSettingsQueryKey,
+  useGetPermissionsDefaultInherit,
+  useSetPermissionsDefaultInherit,
+  getGetPermissionsDefaultInheritQueryKey,
+  useListComputeWarehouses,
+  useListComputeClusters,
+  useGetWarehouseAccess,
+  getGetWarehouseAccessQueryKey,
+  useGrantWarehouseAccess,
+  type AiSettingsIn,
+  type RulesRegistrySettingsIn,
+  type ComputeSettingsIn,
+  type JobsComputeModel,
+} from "@/lib/api";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { AxiosError } from "axios";
 import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
@@ -62,7 +95,15 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ChevronDown, Check } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { AI_BUTTON_BG, AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
 
 export const Route = createFileRoute("/_sidebar/config")({
   component: () => <ConfigPage />,
@@ -245,10 +286,42 @@ function TimezoneSettings() {
 
 const LABEL_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
 const RESERVED_WEIGHT_KEY = "weight";
+const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+const RESERVED_SEVERITY_KEY = "severity";
+
+/** Red asterisk marking a required field — pair with a label, no annotation needed for optional fields. */
+function RequiredAsterisk() {
+  return (
+    <span className="text-destructive" aria-hidden="true">
+      *
+    </span>
+  );
+}
+
+/** Small padlock affordance explaining why a reserved field is locked, on hover/focus. */
+function LockedFieldHint({ text }: { text: string }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="inline-flex items-center justify-center text-muted-foreground hover:text-foreground cursor-help"
+            aria-label={text}
+            tabIndex={0}
+          >
+            <Lock className="h-3 w-3" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs text-xs">
+          <p>{text}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
 
 interface DraftDefinition extends LabelDefinition {
   draftId: string;
-  newValueDraft: string;
 }
 
 function defToDraft(d: LabelDefinition): DraftDefinition {
@@ -258,16 +331,31 @@ function defToDraft(d: LabelDefinition): DraftDefinition {
     description: d.description ?? "",
     values: [...d.values],
     allow_custom_values: !!d.allow_custom_values,
-    newValueDraft: "",
+    value_colors: d.value_colors ? { ...d.value_colors } : null,
+    value_descriptions: d.value_descriptions ? { ...d.value_descriptions } : null,
+    is_builtin: !!d.is_builtin,
   };
 }
 
 function draftToDef(d: DraftDefinition): LabelDefinition {
+  const values = d.values.map((v) => v.trim()).filter(Boolean);
+  const valueSet = new Set(values);
+  const colors: Record<string, string> = {};
+  for (const [value, color] of Object.entries(d.value_colors ?? {})) {
+    if (valueSet.has(value) && HEX_COLOR_RE.test(color)) colors[value] = color;
+  }
+  const descriptions: Record<string, string> = {};
+  for (const [value, desc] of Object.entries(d.value_descriptions ?? {})) {
+    if (valueSet.has(value) && desc.trim()) descriptions[value] = desc;
+  }
   return {
     key: d.key.trim(),
     description: (d.description ?? "").trim(),
-    values: d.values.map((v) => v.trim()).filter(Boolean),
+    values,
     allow_custom_values: d.allow_custom_values,
+    value_colors: Object.keys(colors).length > 0 ? colors : null,
+    value_descriptions: Object.keys(descriptions).length > 0 ? descriptions : null,
+    is_builtin: !!d.is_builtin,
   };
 }
 
@@ -320,39 +408,20 @@ function LabelDefinitionsSettings() {
   const removeDraft = (draftId: string) =>
     setDrafts((prev) => prev.filter((d) => d.draftId !== draftId));
 
-  const addDraft = (initialKey?: string) =>
+  const addDraft = () =>
     setDrafts((prev) => [
       ...prev,
       {
         draftId: crypto.randomUUID(),
-        key: initialKey ?? "",
+        key: "",
         description: "",
         values: [],
         allow_custom_values: false,
-        newValueDraft: "",
+        value_colors: null,
+        value_descriptions: null,
+        is_builtin: false,
       },
     ]);
-
-  const addValue = (draftId: string) => {
-    const target = drafts.find((d) => d.draftId === draftId);
-    if (!target) return;
-    const v = target.newValueDraft.trim();
-    if (!v) return;
-    if (target.values.includes(v)) {
-      updateDraft(draftId, { newValueDraft: "" });
-      return;
-    }
-    updateDraft(draftId, {
-      values: [...target.values, v],
-      newValueDraft: "",
-    });
-  };
-
-  const removeValue = (draftId: string, value: string) => {
-    const target = drafts.find((d) => d.draftId === draftId);
-    if (!target) return;
-    updateDraft(draftId, { values: target.values.filter((v) => v !== value) });
-  };
 
   const handleSave = () => {
     if (validation.length > 0) {
@@ -384,8 +453,6 @@ function LabelDefinitionsSettings() {
     setDrafts((data?.definitions ?? []).map(defToDraft));
   };
 
-  const hasWeightKey = drafts.some((d) => d.key.trim() === RESERVED_WEIGHT_KEY);
-
   if (isLoading) {
     return <Skeleton className="h-40 w-full" />;
   }
@@ -410,8 +477,6 @@ function LabelDefinitionsSettings() {
             draft={d}
             onChange={(patch) => updateDraft(d.draftId, patch)}
             onRemove={() => removeDraft(d.draftId)}
-            onAddValue={() => addValue(d.draftId)}
-            onRemoveValue={(v) => removeValue(d.draftId, v)}
           />
         ))}
         <div className="flex flex-wrap items-center gap-2">
@@ -419,18 +484,6 @@ function LabelDefinitionsSettings() {
             <Plus className="h-3.5 w-3.5" />
             {t("config.addLabelDefinition")}
           </Button>
-          {!hasWeightKey && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => addDraft(RESERVED_WEIGHT_KEY)}
-              className="gap-1.5 text-xs text-muted-foreground"
-              title={t("config.addWeightTooltip")}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              {t("config.addWeightDefinition")}
-            </Button>
-          )}
         </div>
         {validation.length > 0 && (
           <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
@@ -459,11 +512,6 @@ function LabelDefinitionsSettings() {
           >
             {t("config.reset")}
           </Button>
-          {!isDirty && (data?.definitions?.length ?? 0) > 0 && (
-            <span className="text-xs text-muted-foreground">
-              {t("config.definitionsActive", { count: data?.definitions?.length ?? 0 })}
-            </span>
-          )}
         </div>
       </CardContent>
     </Card>
@@ -474,69 +522,346 @@ interface DefinitionEditorCardProps {
   draft: DraftDefinition;
   onChange: (patch: Partial<DraftDefinition>) => void;
   onRemove: () => void;
-  onAddValue: () => void;
-  onRemoveValue: (value: string) => void;
 }
 
-function DefinitionEditorCard({
+/**
+ * Color dot that opens a small popover (native color input + hex field) on
+ * click — replaces the old always-visible color box so the collapsed value
+ * row stays compact and the picker only appears when needed.
+ */
+function ValueColorEditor({
+  value,
+  color,
+  onSetColor,
+}: {
+  value: string;
+  color: string | undefined;
+  onSetColor: (color: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [hexText, setHexText] = useState(color ?? "");
+
+  useEffect(() => {
+    setHexText(color ?? "");
+  }, [color]);
+
+  const commitHex = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      onSetColor(null);
+      return;
+    }
+    const normalised = trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+    if (HEX_COLOR_RE.test(normalised)) {
+      onSetColor(normalised);
+    } else {
+      // Invalid input — revert the text box rather than persisting garbage.
+      setHexText(color ?? "");
+    }
+  };
+
+  const swatchColor = color && HEX_COLOR_RE.test(color) ? color : undefined;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => e.stopPropagation()}
+          aria-label={t("config.valueColorAria", { value })}
+          title={t("config.valueColorTitle", { value })}
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 rounded-full border cursor-pointer transition-transform hover:scale-125",
+            !swatchColor && "border-dashed",
+          )}
+          style={{ backgroundColor: swatchColor ?? "transparent" }}
+        />
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-48 p-2"
+        align="start"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2">
+          <input
+            type="color"
+            aria-label={t("config.valueColorAria", { value })}
+            value={swatchColor ?? "#94a3b8"}
+            onChange={(e) => onSetColor(e.target.value)}
+            className="h-7 w-8 cursor-pointer rounded border p-0"
+          />
+          <Input
+            value={hexText}
+            onChange={(e) => setHexText(e.target.value)}
+            onBlur={(e) => commitHex(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitHex(e.currentTarget.value);
+              }
+            }}
+            placeholder={t("config.valueColorPlaceholder")}
+            className="h-7 flex-1 text-xs font-mono"
+          />
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function nextAutoValueName(existing: string[]): string {
+  const taken = new Set(existing);
+  let i = 1;
+  while (taken.has(`value_${i}`)) i++;
+  return `value_${i}`;
+}
+
+/**
+ * Row-based allowed-values editor, modeled on dqlake's ColumnsUsedPanel:
+ * each value is a collapsed row (color dot + name + optional description
+ * preview) that expands on click into name/color/description inputs.
+ * Replaces the old "type a value + press Enter" text box.
+ */
+function AllowedValuesEditor({
   draft,
   onChange,
-  onRemove,
-  onAddValue,
-  onRemoveValue,
-}: DefinitionEditorCardProps) {
+}: {
+  draft: DraftDefinition;
+  onChange: (patch: Partial<DraftDefinition>) => void;
+}) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (expanded === null) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (rootRef.current?.contains(target)) return;
+      if (target.closest("[data-radix-popper-content-wrapper]")) return;
+      setExpanded(null);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [expanded]);
+
+  const values = draft.values;
+  const colors = draft.value_colors ?? {};
+  const descriptions = draft.value_descriptions ?? {};
+
+  // Severity values are stored/seeded lowest-first (Low..Critical) so they
+  // read as an ascending scale when authored, but every display surface
+  // wants highest-first — see `orderSeverityValuesForDisplay` in
+  // RegistryRuleBadges.tsx, which this mirrors for the admin editor. Only
+  // the *display* order flips; `patchValue`/`removeAt` below still index
+  // into the underlying `values` array by its stored position.
+  const isSeverity = draft.key.trim() === RESERVED_SEVERITY_KEY;
+  const displayIndices = isSeverity
+    ? values.map((_, i) => i).reverse()
+    : values.map((_, i) => i);
+
+  const patchValue = (i: number, patch: { name?: string; color?: string | null; description?: string }) => {
+    const current = values[i];
+    if (current === undefined) return;
+    let nextValues = values;
+    let nextColors = colors;
+    let nextDescriptions = descriptions;
+
+    if (patch.name !== undefined && patch.name !== current) {
+      nextValues = values.map((v, idx) => (idx === i ? patch.name! : v));
+      if (colors[current] !== undefined) {
+        nextColors = { ...colors };
+        nextColors[patch.name] = nextColors[current];
+        delete nextColors[current];
+      }
+      if (descriptions[current] !== undefined) {
+        nextDescriptions = { ...descriptions };
+        nextDescriptions[patch.name] = nextDescriptions[current];
+        delete nextDescriptions[current];
+      }
+    }
+    const targetKey = patch.name ?? current;
+
+    if (patch.color !== undefined) {
+      nextColors = { ...nextColors };
+      if (patch.color) nextColors[targetKey] = patch.color;
+      else delete nextColors[targetKey];
+    }
+    if (patch.description !== undefined) {
+      nextDescriptions = { ...nextDescriptions };
+      if (patch.description.trim()) nextDescriptions[targetKey] = patch.description;
+      else delete nextDescriptions[targetKey];
+    }
+
+    onChange({
+      values: nextValues,
+      value_colors: Object.keys(nextColors).length > 0 ? nextColors : null,
+      value_descriptions: Object.keys(nextDescriptions).length > 0 ? nextDescriptions : null,
+    });
+  };
+
+  const removeAt = (i: number) => {
+    const current = values[i];
+    const nextColors = { ...colors };
+    delete nextColors[current];
+    const nextDescriptions = { ...descriptions };
+    delete nextDescriptions[current];
+    onChange({
+      values: values.filter((_, idx) => idx !== i),
+      value_colors: Object.keys(nextColors).length > 0 ? nextColors : null,
+      value_descriptions: Object.keys(nextDescriptions).length > 0 ? nextDescriptions : null,
+    });
+    if (expanded === i) setExpanded(null);
+  };
+
+  const addValue = () => {
+    const name = nextAutoValueName(values);
+    onChange({ values: [...values, name] });
+    setExpanded(values.length);
+  };
+
+  return (
+    <div ref={rootRef} className="space-y-1.5">
+      {values.length === 0 && (
+        <p className="text-[11px] italic text-muted-foreground py-1">{t("config.noValuesHint")}</p>
+      )}
+      {displayIndices.map((i) => {
+        const v = values[i];
+        const isOpen = expanded === i;
+        const color = colors[v];
+        const description = descriptions[v] ?? "";
+        return (
+          <div
+            key={i}
+            className={cn(
+              "rounded-md border bg-muted/30 cursor-pointer transition-colors",
+              isOpen && "bg-background border-primary/40",
+            )}
+            onClick={() => setExpanded(isOpen ? null : i)}
+          >
+            <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 px-2.5 py-1.5">
+              <ValueColorEditor value={v} color={color} onSetColor={(c) => patchValue(i, { color: c })} />
+              <span className="flex items-baseline gap-2 min-w-0">
+                <span className="font-mono text-xs shrink-0">{v}</span>
+                {description && !isOpen && (
+                  <span className="truncate text-[11px] text-muted-foreground">{description}</span>
+                )}
+              </span>
+              <button
+                type="button"
+                aria-label={t("config.removeValueAria", { value: v })}
+                className="text-muted-foreground hover:text-destructive transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeAt(i);
+                }}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <AnimatePresence initial={false}>
+              {isOpen && (
+                <motion.div
+                  key="expanded"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.18, ease: "easeInOut" }}
+                  className="overflow-hidden"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="space-y-2 border-t px-2.5 pb-2.5 pt-2">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">
+                        {t("config.valueLabel")} <RequiredAsterisk />
+                      </Label>
+                      <Input
+                        value={v}
+                        onChange={(e) => patchValue(i, { name: e.target.value })}
+                        className="h-7 w-40 text-xs font-mono"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">{t("config.descriptionLabel")}</Label>
+                      <Textarea
+                        value={description}
+                        onChange={(e) => patchValue(i, { description: e.target.value })}
+                        placeholder={t("config.valueDescriptionPlaceholder")}
+                        className="max-w-xs text-xs min-h-[28px] py-1 resize-none"
+                        rows={1}
+                      />
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        );
+      })}
+      <Button type="button" variant="outline" size="sm" onClick={addValue} className="h-7 gap-1.5 text-xs">
+        <Plus className="h-3.5 w-3.5" />
+        {t("config.addValue")}
+      </Button>
+    </div>
+  );
+}
+
+function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCardProps) {
   const { t } = useTranslation();
   const keyValid = !draft.key || LABEL_KEY_RE.test(draft.key.trim());
   const isWeight = draft.key.trim() === RESERVED_WEIGHT_KEY;
+  const isBuiltin = !!draft.is_builtin;
+  const isLocked = isWeight || isBuiltin;
   return (
-    <div className={cn("rounded-md border p-3 space-y-3", isWeight ? "bg-blue-50/30 border-blue-200/60" : "bg-muted/20")}>
-      <div className="flex items-start gap-3">
-        <div className="grid grid-cols-[180px_1fr] gap-3 flex-1 items-start">
-          <div className="space-y-1">
-            <Label className="text-xs flex items-center gap-1.5">
-              {t("config.key")}
-              {isWeight && (
-                <Badge variant="secondary" className="h-4 px-1 text-[10px] font-normal">
-                  {t("config.reserved")}
-                </Badge>
-              )}
-            </Label>
-            <Input
-              value={draft.key}
-              onChange={(e) => onChange({ key: e.target.value })}
-              placeholder={t("config.keyPlaceholder")}
-              className={cn("h-8 text-xs font-mono", !keyValid && "border-destructive")}
-            />
-            {!keyValid && (
-              <p className="text-[10px] text-destructive">
-                {t("config.keyHint")}
-              </p>
+    <div className="rounded-md border bg-muted/30 p-3 space-y-3">
+      {/* Key + description + delete sit in one 3-column grid (rather than a
+          nested grid plus a flex sibling) so `items-end` aligns the delete
+          button with the bottom of the input/textarea row instead of the
+          top of the labels above them — keeps the bin icon inline with the
+          row it acts on instead of floating above it. */}
+      <div className="grid grid-cols-[180px_1fr_auto] gap-3 items-end">
+        <div className="space-y-1">
+          <Label className="text-xs flex items-center gap-1.5">
+            {t("config.key")}
+            {!isLocked && <RequiredAsterisk />}
+            {isLocked && (
+              <LockedFieldHint text={isWeight ? t("config.weightHint") : t("config.builtinKeyLockedTooltip")} />
             )}
-            {isWeight && (
-              <p className="text-[10px] text-blue-700">
-                {t("config.weightHint")}
-              </p>
-            )}
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">
-              {t("config.descriptionLabel")} <span className="text-muted-foreground">{t("config.optional")}</span>
-            </Label>
-            <Textarea
-              value={draft.description ?? ""}
-              onChange={(e) => onChange({ description: e.target.value })}
-              placeholder={isWeight ? t("config.weightDescriptionPlaceholder") : t("config.descriptionPlaceholder")}
-              className="text-xs min-h-[32px] py-1.5"
-              rows={1}
-            />
-          </div>
+          </Label>
+          <Input
+            value={draft.key}
+            onChange={(e) => onChange({ key: e.target.value })}
+            placeholder={t("config.keyPlaceholder")}
+            disabled={isBuiltin}
+            className={cn("h-8 w-40 text-xs font-mono", !keyValid && "border-destructive")}
+          />
+          {!keyValid && (
+            <p className="text-[10px] text-destructive">
+              {t("config.keyHint")}
+            </p>
+          )}
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">{t("config.descriptionLabel")}</Label>
+          <Textarea
+            value={draft.description ?? ""}
+            onChange={(e) => onChange({ description: e.target.value })}
+            placeholder={isWeight ? t("config.weightDescriptionPlaceholder") : t("config.descriptionPlaceholder")}
+            disabled={isLocked}
+            className="max-w-xs text-xs min-h-[32px] py-1.5 resize-none"
+            rows={1}
+          />
         </div>
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
+          className="h-8 w-8 shrink-0 text-destructive hover:text-destructive disabled:opacity-30"
           onClick={onRemove}
+          disabled={isBuiltin}
+          title={isBuiltin ? t("config.builtinCannotDelete") : undefined}
           aria-label={t("config.removeDefinition")}
         >
           <Trash2 className="h-3.5 w-3.5" />
@@ -544,70 +869,27 @@ function DefinitionEditorCard({
       </div>
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
-          <Label className="text-xs">
-            {t("config.allowedValues")}{" "}
-            <span className="text-muted-foreground">
-              {t("config.allowedValuesHint")}
-            </span>
-          </Label>
-          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+          <Label className="text-xs">{t("config.allowedValues")}</Label>
+          {/* Reserved keys (dimension/severity) always disallow custom
+              values server-side (see `_NO_CUSTOM_VALUE_BUILTIN_KEYS` in
+              routes.v1.config) — the checkbox stays visible so that's
+              legible at a glance, just disabled/unchecked rather than
+              hidden entirely. */}
+          <label
+            className={cn(
+              "flex items-center gap-1.5 text-xs",
+              isBuiltin ? "text-muted-foreground" : "cursor-pointer",
+            )}
+          >
             <Checkbox
-              checked={draft.allow_custom_values}
+              checked={isBuiltin ? false : draft.allow_custom_values}
               onCheckedChange={(c) => onChange({ allow_custom_values: c === true })}
+              disabled={isBuiltin}
             />
             <span>{t("config.allowCustomValues")}</span>
           </label>
         </div>
-        {draft.values.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {draft.values.map((v) => (
-              <Badge
-                key={v}
-                variant="secondary"
-                className="h-6 gap-1 pl-2 pr-1 text-xs font-normal"
-              >
-                <span className="font-mono">{v}</span>
-                <button
-                  type="button"
-                  className="ml-0.5 rounded-full hover:bg-foreground/10 p-0.5"
-                  onClick={() => onRemoveValue(v)}
-                  aria-label={t("config.removeValueAria", { value: v })}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </Badge>
-            ))}
-          </div>
-        ) : (
-          <p className="text-[11px] italic text-muted-foreground">
-            {t("config.noValuesHint")}
-          </p>
-        )}
-        <div className="flex items-center gap-1.5">
-          <Input
-            value={draft.newValueDraft}
-            onChange={(e) => onChange({ newValueDraft: e.target.value })}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                onAddValue();
-              }
-            }}
-            placeholder={isWeight ? t("config.weightValuePlaceholder") : t("config.addValuePlaceholder")}
-            className="h-7 text-xs flex-1 font-mono"
-          />
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs gap-1"
-            disabled={!draft.newValueDraft.trim()}
-            onClick={onAddValue}
-          >
-            <Plus className="h-3 w-3" />
-            {t("common.add")}
-          </Button>
-        </div>
+        <AllowedValuesEditor draft={draft} onChange={onChange} />
       </div>
     </div>
   );
@@ -1455,6 +1737,585 @@ function RunReviewStatusesSettings() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AI settings (Rules Registry Phase 4.5, trimmed to essentials in 8B) — the
+// kill-switch + serving endpoint for AIGateway (Build-with-AI / per-field
+// suggest). ADMIN only — every AI affordance elsewhere in the app degrades
+// to hidden/disabled while these are unset (see hooks/use-ai-availability.ts).
+//
+// The rule-mapping suggester's Vector Search settings (embedding endpoint,
+// VS endpoint/index) are no longer surfaced here — they auto-derive from
+// this toggle + endpoint alone (see ``AppSettingsService`` on the backend),
+// so the suggester is always-on whenever AI is enabled, no extra fields to
+// fill in.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Sentinel for "no endpoint selected" — Radix Select rejects an empty-string
+// item value.
+const NO_ENDPOINT_VALUE = "__none__";
+
+/**
+ * Serving-endpoint dropdown for the AI endpoint field. Always includes the
+ * currently-configured value as an option even if it's missing from the
+ * fetched workspace list (e.g. typed before this dropdown existed, or the
+ * endpoint was since deleted) so saving doesn't silently blank out an
+ * existing setting.
+ */
+function ServingEndpointSelect({
+  value,
+  onChange,
+  endpoints,
+  disabled,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  endpoints: string[];
+  disabled?: boolean;
+}) {
+  const { t } = useTranslation();
+  const options = useMemo(() => {
+    const set = new Set(endpoints);
+    if (value) set.add(value);
+    return Array.from(set).sort();
+  }, [endpoints, value]);
+
+  const selectValue = value || NO_ENDPOINT_VALUE;
+
+  return (
+    <Select
+      value={selectValue}
+      onValueChange={(v) => onChange(v === NO_ENDPOINT_VALUE ? "" : v)}
+      disabled={disabled}
+    >
+      <SelectTrigger className="h-8 text-xs font-mono w-full">
+        <SelectValue placeholder={t("config.aiSettingsSelectEndpointPlaceholder")} />
+      </SelectTrigger>
+      <SelectContent>
+        {options.length === 0 && (
+          <SelectLabel className="font-normal">{t("config.aiSettingsNoEndpointsFound")}</SelectLabel>
+        )}
+        {options.map((name) => {
+          const isCustom = !endpoints.includes(name);
+          return (
+            <SelectItem key={name} value={name} className="text-xs font-mono">
+              {isCustom ? t("config.aiSettingsCustomEndpointOption", { value: name }) : name}
+            </SelectItem>
+          );
+        })}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function AiSettingsCard() {
+  const { t } = useTranslation();
+  const { data: settingsResp, isLoading } = useGetAiSettings();
+  const data = settingsResp?.data;
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveAiSettings();
+  const ensureVectorStoreMutation = useEnsureVectorStore();
+  const { data: role } = useCurrentUserRoleSuspense();
+  const isAdmin = role?.data?.role === "admin";
+  const { data: servingEndpointsResp } = useListServingEndpoints();
+  const servingEndpoints = useMemo(() => servingEndpointsResp?.data.names ?? [], [servingEndpointsResp]);
+
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiEndpoint, setAiEndpoint] = useState("");
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (data && !hydrated) {
+      setAiEnabled(data.ai_enabled);
+      setAiEndpoint(data.ai_endpoint_name);
+      setHydrated(true);
+    }
+  }, [data, hydrated]);
+
+  const isDirty = useMemo(() => {
+    if (!data) return false;
+    return aiEnabled !== data.ai_enabled || aiEndpoint.trim() !== data.ai_endpoint_name;
+  }, [data, aiEnabled, aiEndpoint]);
+
+  const handleSave = () => {
+    const payload: AiSettingsIn = {
+      ai_enabled: aiEnabled,
+      ai_endpoint_name: aiEndpoint.trim(),
+    };
+    saveMutation.mutate(
+      { data: payload },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetAiSettingsQueryKey() });
+          toast.success(t("config.aiSettingsSaved"));
+          // Fire-and-forget: kick off Vector Search endpoint/index creation
+          // now that AI is enabled — the embedding/VS names auto-derive
+          // server-side, so the only gate is the enable toggle. Provisioning
+          // is async and can take minutes, so this call is never awaited by
+          // the UI — the suggester reports readiness separately once the
+          // index comes online. Silently ignore failures; this is
+          // best-effort.
+          if (aiEnabled) {
+            ensureVectorStoreMutation.mutate(undefined, { onError: () => {} });
+          }
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.aiSettingsSaveFailed"));
+        },
+      },
+    );
+  };
+
+  const handleReset = () => {
+    if (!data) return;
+    setAiEnabled(data.ai_enabled);
+    setAiEndpoint(data.ai_endpoint_name);
+  };
+
+  if (isLoading || !data) {
+    return <Skeleton className="h-40 w-full" />;
+  }
+
+  return (
+    <Card className="border-fuchsia-500/30 dark:border-fuchsia-400/30">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Sparkles className={cn("h-5 w-5", AI_ICON_COLOR)} />
+          <span className={cn("font-bold", AI_TEXT_GRADIENT)}>{t("config.aiSettingsTitle")}</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">{t("config.aiSettingsDescription")}</p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="ai-settings-enabled" className="text-sm">{t("config.aiSettingsEnabledLabel")}</Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.aiSettingsEnabledHint")}</p>
+          </div>
+          <Switch
+            id="ai-settings-enabled"
+            checked={aiEnabled}
+            onCheckedChange={setAiEnabled}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        <div className="space-y-1">
+          <Label className="text-[11px] text-muted-foreground">{t("config.aiSettingsEndpointLabel")}</Label>
+          <ServingEndpointSelect
+            value={aiEndpoint}
+            onChange={setAiEndpoint}
+            endpoints={servingEndpoints}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!isAdmin || !isDirty || saveMutation.isPending}
+            className={AI_BUTTON_BG}
+          >
+            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+            {t("config.aiSettingsSaveButton")}
+          </Button>
+          {isDirty && (
+            <Button size="sm" variant="ghost" onClick={handleReset} disabled={!isAdmin || saveMutation.isPending} className="gap-1.5">
+              <RotateCcw className="h-3.5 w-3.5" />
+              {t("common.reset")}
+            </Button>
+          )}
+          {!isAdmin && <span className="text-xs text-muted-foreground">{t("config.aiSettingsAdminOnlyHint")}</span>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rules Registry governance — two distinct admin knobs bundled behind one
+// read/write surface (P21-G): ``defaultAutoUpgrade`` governs the pin chosen
+// at ATTACH TIME for a brand-new rule application / data-product member;
+// ``autoUpgradeWithoutApproval`` governs RE-APPROVAL of an EXISTING
+// following application when its rule is re-published. Kept side by side so
+// stewards don't conflate "when does a table start following a rule" with
+// "what happens once it's already following it".
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RulesRegistrySettingsCard() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useGetRulesRegistrySettings();
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveRulesRegistrySettings();
+  const { isAdmin } = usePermissions();
+
+  const settings = data?.data;
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  const save = (payload: RulesRegistrySettingsIn) => {
+    saveMutation.mutate(
+      { data: payload },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetRulesRegistrySettingsQueryKey() });
+          toast.success(t("config.rulesRegistrySettingsSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.rulesRegistrySettingsFailedSave"));
+        },
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5" />
+          {t("config.rulesRegistrySettingsTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.rulesRegistrySettingsDescription")}
+        </p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="default-auto-upgrade" className="text-sm">
+              {t("config.defaultAutoUpgradeLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.defaultAutoUpgradeHint")}</p>
+          </div>
+          <Switch
+            id="default-auto-upgrade"
+            checked={settings.default_auto_upgrade}
+            onCheckedChange={(checked) => save({ default_auto_upgrade: checked })}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="auto-upgrade-without-approval" className="text-sm">
+              {t("config.autoUpgradeWithoutApprovalLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.autoUpgradeWithoutApprovalHint")}</p>
+          </div>
+          <Switch
+            id="auto-upgrade-without-approval"
+            checked={settings.auto_upgrade_without_approval}
+            onCheckedChange={(checked) => save({ auto_upgrade_without_approval: checked })}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.rulesRegistrySettingsAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Permissions — admin default for the per-grant inheritance toggle. When on,
+// a new grant on a table space defaults to flowing down to its member tables.
+// Individual grants can still override this per-grant in the Permissions tab.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function PermissionsSettingsCard() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useGetPermissionsDefaultInherit({ query: { select: (d) => d.data } });
+  const queryClient = useQueryClient();
+  const saveMutation = useSetPermissionsDefaultInherit();
+  const { isAdmin } = usePermissions();
+
+  if (isLoading || !data) return <Skeleton className="h-40 w-full" />;
+
+  const save = (enabled: boolean) => {
+    saveMutation.mutate(
+      { data: { enabled } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetPermissionsDefaultInheritQueryKey() });
+          toast.success(t("config.permissionsDefaultInheritSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.permissionsDefaultInheritFailedSave"));
+        },
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <KeyRound className="h-5 w-5" />
+          {t("config.permissionsDefaultInheritTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.permissionsDefaultInheritHelp")}
+        </p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="permissions-default-inherit" className="text-sm">
+              {t("config.permissionsDefaultInheritLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.permissionsDefaultInheritHint")}</p>
+          </div>
+          <Switch
+            id="permissions-default-inherit"
+            checked={data.enabled}
+            onCheckedChange={(checked) => save(checked)}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.permissionsDefaultInheritAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ComputeSettingsCard() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { data: settingsResp, isLoading } = useGetComputeSettings();
+  const settings = settingsResp?.data;
+  const { data: role } = useCurrentUserRoleSuspense();
+  const isAdmin = role?.data?.role === "admin";
+
+  const saveMutation = useSaveComputeSettings();
+  const grantMutation = useGrantWarehouseAccess();
+  const { data: warehousesResp } = useListComputeWarehouses();
+  const warehouses = useMemo(() => warehousesResp?.data ?? [], [warehousesResp]);
+  const { data: clustersResp } = useListComputeClusters();
+  const clusters = useMemo(() => clustersResp?.data ?? [], [clustersResp]);
+
+  const [warehouseId, setWarehouseId] = useState("");
+  const [jobsKind, setJobsKind] = useState<JobsComputeModel["kind"]>("serverless");
+  const [clusterId, setClusterId] = useState("");
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    if (settings && !hydrated) {
+      setWarehouseId(settings.sql_warehouse_id ?? "");
+      setJobsKind(settings.jobs_compute?.kind ?? "serverless");
+      setClusterId(settings.jobs_compute?.cluster_id ?? "");
+      setHydrated(true);
+    }
+  }, [settings, hydrated]);
+
+  // The warehouse whose SP access we check: the picked one, else the effective
+  // (env-fallback) warehouse. Re-runs whenever the pick changes.
+  const checkWarehouseId = warehouseId || settings?.effective_warehouse_id || "";
+  const { data: accessResp } = useGetWarehouseAccess(
+    { warehouse_id: checkWarehouseId },
+    { query: { enabled: !!checkWarehouseId } },
+  );
+  const access = accessResp?.data;
+
+  const isDirty = useMemo(() => {
+    if (!settings) return false;
+    return (
+      warehouseId !== (settings.sql_warehouse_id ?? "") ||
+      jobsKind !== (settings.jobs_compute?.kind ?? "serverless") ||
+      (jobsKind === "existing_cluster" && clusterId !== (settings.jobs_compute?.cluster_id ?? ""))
+    );
+  }, [settings, warehouseId, jobsKind, clusterId]);
+
+  const handleSave = () => {
+    const jobs_compute: JobsComputeModel =
+      jobsKind === "existing_cluster"
+        ? { kind: "existing_cluster", cluster_id: clusterId || null }
+        : { kind: "serverless", cluster_id: null };
+    const payload: ComputeSettingsIn = { sql_warehouse_id: warehouseId, jobs_compute };
+    saveMutation.mutate(
+      { data: payload },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetComputeSettingsQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetWarehouseAccessQueryKey({ warehouse_id: checkWarehouseId }) });
+          toast.success(t("config.computeSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.computeSaveFailed"));
+        },
+      },
+    );
+  };
+
+  const handleGrant = () => {
+    if (!checkWarehouseId) return;
+    grantMutation.mutate(
+      { data: { warehouse_id: checkWarehouseId } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetWarehouseAccessQueryKey({ warehouse_id: checkWarehouseId }) });
+          toast.success(t("config.computeGrantSucceeded"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.computeGrantFailed"));
+        },
+      },
+    );
+  };
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Cpu className="h-4 w-4" />
+          {t("config.computeTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <p className="text-xs text-muted-foreground leading-relaxed">{t("config.computeDescription")}</p>
+
+        {/* SQL warehouse */}
+        <div className="space-y-1.5">
+          <Label className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+            <Database className="h-3.5 w-3.5" />
+            {t("config.computeWarehouseLabel")}
+          </Label>
+          <Select
+            value={warehouseId || NO_WAREHOUSE_VALUE}
+            onValueChange={(v) => setWarehouseId(v === NO_WAREHOUSE_VALUE ? "" : v)}
+            disabled={!isAdmin || saveMutation.isPending}
+          >
+            <SelectTrigger className="h-8 text-xs font-mono w-full">
+              <SelectValue placeholder={t("config.computeWarehousePlaceholder")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_WAREHOUSE_VALUE} className="text-xs">
+                {t("config.computeWarehouseDefault")}
+              </SelectItem>
+              {warehouses.length === 0 && (
+                <SelectLabel className="font-normal">{t("config.computeNoWarehouses")}</SelectLabel>
+              )}
+              {warehouses.map((w) => (
+                <SelectItem key={w.id} value={w.id} className="text-xs font-mono">
+                  {w.name}
+                  {w.serverless ? " · serverless" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* SP access warning */}
+        {access?.status === "missing" && checkWarehouseId && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+            <div className="space-y-1.5">
+              <p>{t("config.computeSpAccessMissing")}</p>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-block">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleGrant}
+                        disabled={!isAdmin || grantMutation.isPending}
+                        className="gap-1.5 h-7 text-xs border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900"
+                      >
+                        {grantMutation.isPending ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                        )}
+                        {t("config.computeGrantButton")}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {!isAdmin && <TooltipContent>{t("config.computeGrantAdminOnly")}</TooltipContent>}
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+          </div>
+        )}
+
+        {/* Jobs compute */}
+        <div className="space-y-1.5">
+          <Label className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+            <Cpu className="h-3.5 w-3.5" />
+            {t("config.computeJobsLabel")}
+          </Label>
+          <Select
+            value={jobsKind}
+            onValueChange={(v) => setJobsKind(v as JobsComputeModel["kind"])}
+            disabled={!isAdmin || saveMutation.isPending}
+          >
+            <SelectTrigger className="h-8 text-xs w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="serverless" className="text-xs">
+                {t("config.computeJobsServerless")}
+              </SelectItem>
+              <SelectItem value="existing_cluster" className="text-xs">
+                {t("config.computeJobsCluster")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          {jobsKind === "existing_cluster" && (
+            <>
+              <Select
+                value={clusterId || NO_CLUSTER_VALUE}
+                onValueChange={(v) => setClusterId(v === NO_CLUSTER_VALUE ? "" : v)}
+                disabled={!isAdmin || saveMutation.isPending}
+              >
+                <SelectTrigger className="h-8 text-xs font-mono w-full mt-1.5">
+                  <SelectValue placeholder={t("config.computeClusterPlaceholder")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {clusters.length === 0 && (
+                    <SelectLabel className="font-normal">{t("config.computeNoClusters")}</SelectLabel>
+                  )}
+                  {clusters.map((c) => (
+                    <SelectItem key={c.cluster_id} value={c.cluster_id} className="text-xs font-mono">
+                      {c.cluster_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground leading-relaxed pt-1">
+                {t("config.computeJobsClusterNote")}
+              </p>
+            </>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
+          <Button size="sm" onClick={handleSave} disabled={!isAdmin || !isDirty || saveMutation.isPending}>
+            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+            {t("config.computeSaveButton")}
+          </Button>
+          {!isAdmin && <span className="text-xs text-muted-foreground">{t("config.computeAdminOnlyHint")}</span>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+const NO_WAREHOUSE_VALUE = "__default__";
+const NO_CLUSTER_VALUE = "__none__";
+
 function ConfigPage() {
   const { t } = useTranslation();
   const { isAdmin } = usePermissions();
@@ -1488,42 +2349,70 @@ function ConfigPage() {
         {({ reset }) => (
           <div className="space-y-6 pb-8">
             <FadeIn delay={0.05}>
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <TimezoneSettings />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.1}>
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <LabelDefinitionsSettings />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.15}>
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <RunReviewStatusesSettings />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>
+            <FadeIn delay={0.17}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <AiSettingsCard />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.18}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <RulesRegistrySettingsCard />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.185}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <PermissionsSettingsCard />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
+            <FadeIn delay={0.19}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
+                <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+                  <ComputeSettingsCard />
+                </Suspense>
+              </ErrorBoundary>
+            </FadeIn>
             <FadeIn delay={0.2}>
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <EmbeddedDashboardSettings />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.25}>
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                   <RetentionSettings />
                 </Suspense>
               </ErrorBoundary>
             </FadeIn>
             <FadeIn delay={0.3}>
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+              <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
                 <RoleManagement />
               </ErrorBoundary>
             </FadeIn>

@@ -20,16 +20,33 @@ from .config import AppConfig, conf, get_sql_warehouse_path
 from .logger import logger
 from .migrations import MigrationRunner
 from .runtime import rt
+from .services.ai_gateway import AIGateway
 from .services.ai_rules_service import AiRulesService
 from .services.app_settings_service import AppSettingsService
 from .services.contract_rules_service import ContractRulesService
 from .services.discovery import DiscoveryService
 from .services.job_service import JobService
 from .services.role_service import RoleService
+from .services.permissions_service import PermissionsService
+from .services.registry_service import RegistryService
+from .services.monitored_table_service import MonitoredTableService
+from .services.apply_rules_service import ApplyRulesService
+from .services.materializer import Materializer
+from .services.monitored_table_versions import MonitoredTableVersionService
+from .services.run_sets import RunSetService
+from .services.binding_run_service import BindingRunService
+from .services.data_product_service import DataProductService
+from .services.rule_embeddings import RuleEmbeddingsService
+from .services.rule_retriever import CosineRuleRetriever, RuleRetriever
+from .services.rule_suggester import RuleSuggester
 from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
+from .services.compute_service import ComputeService, resolve_warehouse_id
+from .services.rule_test_service import RuleTestService
+from .services.table_data_service import TableDataService
 from .services.review_status_service import ReviewStatusService
 from .services.schedule_config_service import ScheduleConfigService
+from .services.vector_store import VectorStoreProvisioner
 from .services.view_service import ViewService
 from .sql_executor import OltpExecutorProtocol, SqlExecutor
 
@@ -220,16 +237,41 @@ async def get_role_service(
     return RoleService(sql=sql)
 
 
+async def get_permissions_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> PermissionsService:
+    """Create a PermissionsService (object-grant CRUD + enforcement)."""
+    return PermissionsService(sql=sql, app_settings=app_settings)
+
+
+async def get_ai_gateway(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> AIGateway:
+    """Create an AIGateway using the caller's OBO credentials.
+
+    Every AIGateway call (kill-switch, rate limit, audit — see services/ai_gateway.py) runs
+    as the calling user via their OBO token, so the serving-endpoint call is subject to the
+    user's own UC permissions on the endpoint, not the app's service principal's. Role checks
+    (``require_role``) at the route layer remain the app-level gate on top of that; the SP
+    itself no longer needs (and should not be granted) query access to AI serving endpoints.
+    """
+    return AIGateway(user_ws=obo_ws, app_settings=app_settings)
+
+
 async def get_ai_rules_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    gateway: Annotated[AIGateway, Depends(get_ai_gateway)],
 ) -> AiRulesService:
-    """Create an AiRulesService with split authentication.
+    """Create an AiRulesService, entirely OBO-authenticated.
 
-    Schema lookups use the OBO client (user's UC permissions).
-    LLM calls use the SP client (service principal has the serving scope OBO tokens lack).
+    Schema lookups and both LLM legs (the legacy ChatDatabricks path used by the contract
+    importer, and the AIGateway-backed purpose calls — generate_rule/suggest_field/
+    generate_checks_via_gateway) run as the calling user, so every model invocation and UC
+    read triggered by an AI-assisted request is subject to that user's own permissions.
     """
-    return AiRulesService(obo_ws=obo_ws, sp_ws=sp_ws)
+    return AiRulesService(obo_ws=obo_ws, gateway=gateway)
 
 
 async def get_contract_rules_service(
@@ -255,6 +297,97 @@ async def get_rules_catalog_service(
     return RulesCatalogService(sql=sql)
 
 
+async def get_registry_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+) -> RegistryService:
+    """Create a RegistryService routed at the OLTP executor."""
+    return RegistryService(sql=sql)
+
+
+async def get_monitored_table_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    profiling_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> MonitoredTableService:
+    """Create a MonitoredTableService.
+
+    The OLTP tables (``dq_monitored_tables``/``dq_applied_rules``) are routed
+    at the OLTP executor (Lakebase or Delta fallback); the profiling READ
+    path always targets the Delta ``dq_profiling_results`` table via the SP
+    SQL executor, since that table is written by the profiler job
+    regardless of whether Lakebase is enabled.
+    """
+    return MonitoredTableService(sql=sql, profiling_sql=profiling_sql)
+
+
+async def get_apply_rules_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> ApplyRulesService:
+    """Create an ApplyRulesService routed at the OLTP executor."""
+    return ApplyRulesService(sql=sql, registry=registry, app_settings=app_settings)
+
+
+async def get_materializer(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> Materializer:
+    """Create a Materializer wired to the registry, monitored-table, and settings services."""
+    return Materializer(sql=sql, registry=registry, monitored_tables=monitored_tables, app_settings=app_settings)
+
+
+async def get_monitored_table_version_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+) -> MonitoredTableVersionService:
+    """Create a MonitoredTableVersionService routed at the OLTP executor.
+
+    Reads the binding's approved rows via ``RulesCatalogService`` and the
+    applied-rule linkage via ``MonitoredTableService`` to freeze/re-freeze
+    ``dq_monitored_table_versions`` snapshots.
+    """
+    return MonitoredTableVersionService(sql=sql, monitored_tables=monitored_tables, rules_catalog=rules_catalog)
+
+
+async def get_rule_embeddings_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> RuleEmbeddingsService:
+    """Create a RuleEmbeddingsService routed at the OLTP executor + SP credentials.
+
+    The SP client is used (not OBO) because embedding calls hit a serving
+    endpoint, mirroring the ``AIGateway`` split-auth rationale.
+    """
+    return RuleEmbeddingsService(sql=sql, sp_ws=sp_ws, app_settings=app_settings)
+
+
+async def get_rule_retriever(
+    embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
+) -> RuleRetriever:
+    """Create the production in-app cosine RuleRetriever (design spec §8 swappable seam).
+
+    Cosine-over-the-OLTP-corpus (mirroring dqlake) is the default: it has no
+    Vector Search index / provisioning-readiness dependency on the retrieval
+    path, so suggestions work as soon as rules are embedded. See
+    ``services.rule_retriever.CosineRuleRetriever``.
+    """
+    return CosineRuleRetriever(embeddings=embeddings)
+
+
+async def get_vector_store_provisioner(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+) -> VectorStoreProvisioner:
+    """Create the idempotent, best-effort Vector Search endpoint/index provisioner."""
+    return VectorStoreProvisioner(sp_ws=sp_ws, app_settings=app_settings, embeddings=embeddings, registry=registry)
+
+
 async def get_discovery_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> DiscoveryService:
@@ -262,6 +395,30 @@ async def get_discovery_service(
     me = await asyncio.to_thread(obo_ws.current_user.me)
     user_id = me.user_name or me.id or "unknown"
     return DiscoveryService(ws=obo_ws, user_id=user_id)
+
+
+async def get_rule_suggester(
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    retriever: Annotated[RuleRetriever, Depends(get_rule_retriever)],
+    ai_gateway: Annotated[AIGateway, Depends(get_ai_gateway)],
+    discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
+) -> RuleSuggester:
+    """Create a RuleSuggester wired to the registry/monitored-table/apply-rules services + AI gateway.
+
+    The OBO-scoped ``discovery`` service resolves the target table's live UC
+    columns (name/type/family/comment) for matching, so suggestions work even
+    for a table that has never been profiled in the app — mirroring dqlake.
+    """
+    return RuleSuggester(
+        monitored_tables=monitored_tables,
+        registry=registry,
+        apply_rules=apply_rules,
+        retriever=retriever,
+        ai_gateway=ai_gateway,
+        discovery=discovery,
+    )
 
 
 async def get_view_service(
@@ -282,6 +439,53 @@ async def get_comments_service(
 ) -> CommentsService:
     """Create a CommentsService routed at the OLTP executor."""
     return CommentsService(sql=sql)
+
+
+async def get_compute_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> ComputeService:
+    """Create a ComputeService (SP-scoped listing + warehouse access checks, P22-B)."""
+    return ComputeService(sp_ws=sp_ws, app_settings=app_settings)
+
+
+async def get_preview_sql_executor(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> SqlExecutor:
+    """OBO SqlExecutor for View Data ad-hoc reads, honouring the configured warehouse.
+
+    The admin-configured SQL warehouse (``dq_app_settings``) wins; otherwise we
+    fall back to the bundle-bound ``DATABRICKS_WAREHOUSE_ID`` env var (today's
+    behaviour). Runs as the caller so Unity Catalog permissions are enforced.
+    """
+    return SqlExecutor(
+        ws=obo_ws,
+        warehouse_id=resolve_warehouse_id(app_settings),
+        catalog=conf.catalog,
+        schema=conf.tmp_schema_name,
+    )
+
+
+async def get_table_data_service(
+    sql: Annotated[SqlExecutor, Depends(get_preview_sql_executor)],
+    gateway: Annotated[AIGateway, Depends(get_ai_gateway)],
+) -> TableDataService:
+    """Create a TableDataService for the monitored-table View Data tab (P22-B)."""
+    return TableDataService(sql=sql, ai_gateway=gateway)
+
+
+async def get_rule_test_service(
+    sql: Annotated[SqlExecutor, Depends(get_preview_sql_executor)],
+    gateway: Annotated[AIGateway, Depends(get_ai_gateway)],
+) -> RuleTestService:
+    """Create a RuleTestService for the Rules Registry Test tab (P22-E).
+
+    Shares the View Data OBO warehouse executor seam (``get_preview_sql_executor``
+    → configured warehouse, caller's UC perms) and the AI gateway used for
+    test-data generation.
+    """
+    return RuleTestService(sql=sql, ai_gateway=gateway)
 
 
 async def get_review_status_service(
@@ -325,6 +529,74 @@ async def get_job_service(
     Job submission and polling run as the app's service principal.
     """
     return JobService(ws=sp_ws, job_id=conf.job_id, sql=sql)
+
+
+async def get_run_set_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    validation_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> RunSetService:
+    """Create a RunSetService.
+
+    ``dq_run_sets``/``dq_run_set_members`` are routed at the OLTP executor;
+    ``dq_validation_runs`` (joined in Python for aggregated status) always
+    lives in Delta regardless of whether Lakebase is enabled.
+    """
+    return RunSetService(oltp_sql=sql, validation_sql=validation_sql)
+
+
+async def get_binding_run_service(
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    version_service: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    materializer: Annotated[Materializer, Depends(get_materializer)],
+    view_service: Annotated[ViewService, Depends(get_view_service)],
+    job_service: Annotated[JobService, Depends(get_job_service)],
+    run_set_service: Annotated[RunSetService, Depends(get_run_set_service)],
+    settings_service: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> BindingRunService:
+    """Create a BindingRunService wired to the existing dryrun submission path.
+
+    Copies the exact call sequence
+    ``routes/v1/dryrun.py:batch_run_from_catalog`` uses (view creation,
+    ``JobService.submit_run``, ``record_dryrun_started``) — see the module
+    docstring on ``services/binding_run_service.py``.
+    """
+    return BindingRunService(
+        monitored_tables=monitored_tables,
+        version_service=version_service,
+        materializer=materializer,
+        view_service=view_service,
+        job_service=job_service,
+        run_set_service=run_set_service,
+        settings_service=settings_service,
+        runs_table=sp_sql.fqn("dq_validation_runs"),
+    )
+
+
+async def get_data_product_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    run_set_service: Annotated[RunSetService, Depends(get_run_set_service)],
+    binding_run_service: Annotated[BindingRunService, Depends(get_binding_run_service)],
+    version_service: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> DataProductService:
+    """Create a DataProductService routed at the OLTP executor.
+
+    Reuses the monitored-table listing (for per-member rules/checks counts
+    and live status), the run-set service (for the shared run set + last-run
+    lookups), ``BindingRunService`` (for per-member run submission), and the
+    version service (so version-pinned members report their frozen snapshot's
+    counts rather than the binding's live counts).
+    """
+    return DataProductService(
+        sql=sql,
+        monitored_tables=monitored_tables,
+        run_set_service=run_set_service,
+        binding_run_service=binding_run_service,
+        version_service=version_service,
+        app_settings=app_settings,
+    )
 
 
 async def get_sql_connector(
@@ -401,6 +673,37 @@ def require_role(*roles: UserRole):
 
 
 CurrentUserRole = Annotated[UserRole, Depends(get_user_role)]
+
+
+async def get_current_principal_ids(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> frozenset[str]:
+    """Resolve the caller's principal identity set for object-grant matching.
+
+    Returns the caller's own SCIM id plus every group they belong to — by
+    both id (``ComplexValue.value``) and display name — so a grant to a
+    group (stored by SCIM id from the principal picker) matches regardless
+    of how the group was referenced. One ``me()`` call; degrades to an
+    empty set on failure (object grants then fall back to baseline + role
+    bypass, never a hard 5xx).
+    """
+    try:
+        me = await asyncio.to_thread(obo_ws.current_user.me)
+        ids: set[str] = set()
+        if me.id:
+            ids.add(me.id)
+        for g in me.groups or []:
+            if g.value:
+                ids.add(g.value)
+            if g.display:
+                ids.add(g.display)
+        return frozenset(ids)
+    except Exception as exc:
+        logger.warning(f"Principal-id resolution failed, falling back to empty set: {exc}", exc_info=True)
+        return frozenset()
+
+
+CurrentPrincipalIds = Annotated[frozenset[str], Depends(get_current_principal_ids)]
 
 
 # ---------------------------------------------------------------------------
@@ -487,15 +790,28 @@ __all__ = [
     "get_migration_runner",
     "get_app_settings_service",
     "get_role_service",
+    "get_ai_gateway",
     "get_ai_rules_service",
     "get_contract_rules_service",
     "get_rules_catalog_service",
+    "get_registry_service",
+    "get_monitored_table_service",
+    "get_apply_rules_service",
+    "get_materializer",
+    "get_monitored_table_version_service",
+    "get_run_set_service",
+    "get_binding_run_service",
+    "get_data_product_service",
     "get_discovery_service",
     "get_view_service",
     "get_job_service",
     "get_sql_connector",
     "get_user_role",
     "get_comments_service",
+    "get_compute_service",
+    "get_preview_sql_executor",
+    "get_table_data_service",
+    "get_rule_test_service",
     "get_review_status_service",
     "get_schedule_config_service",
     "require_role",

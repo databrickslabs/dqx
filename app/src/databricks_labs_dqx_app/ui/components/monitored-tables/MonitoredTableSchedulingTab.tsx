@@ -1,0 +1,90 @@
+/** Monitored Table Schedule tab (P21 item 14; back in the tab strip per P25
+ *  item 1, reverting P23 item 13's move into the header ⋮ menu). Reuses the
+ *  shared `ScheduleEditor` composition (empty-state → picker → remove) that
+ *  the Table Space Schedule tab uses, but persists on its own: schedule is
+ *  operational config orthogonal to the applied-rules draft/submit lifecycle,
+ *  so it has a dedicated Save button (PATCH `/monitored-tables/{id}/schedule`)
+ *  instead of riding the header's Save-as-draft. Only approved tables with a
+ *  schedule fire on the in-app scheduler — the footer note says so.
+ */
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { Loader2, Save } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ScheduleEditor } from "@/components/common/ScheduleEditor";
+import { useUpdateMonitoredTableSchedule, type MonitoredTableOut } from "@/lib/api";
+import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
+
+const DEFAULT_TZ = "UTC";
+
+function extractApiError(err: unknown, fallback: string): string {
+  const axErr = err as { response?: { data?: { detail?: string } } };
+  return axErr?.response?.data?.detail ?? fallback;
+}
+
+export function MonitoredTableSchedulingTab({
+  table,
+  canEdit,
+}: {
+  table: MonitoredTableOut;
+  canEdit: boolean;
+}) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const bindingId = table.binding_id;
+
+  // Local buffer, seeded from the persisted schedule. `null` cron = no schedule.
+  const [cron, setCron] = useState<string | null>(table.schedule_cron ?? null);
+  const [tz, setTz] = useState<string>(table.schedule_tz ?? DEFAULT_TZ);
+  const [cronInvalid, setCronInvalid] = useState(false);
+
+  const serverCron = table.schedule_cron ?? null;
+  const serverTz = table.schedule_tz ?? DEFAULT_TZ;
+  const dirty = cron !== serverCron || (cron !== null && tz !== serverTz);
+  const canSave = dirty && !cronInvalid;
+
+  const updateMut = useUpdateMonitoredTableSchedule({ mutation: { onError: () => {} } });
+
+  const handleSave = () => {
+    updateMut.mutate(
+      { bindingId, data: { schedule_cron: cron, schedule_tz: cron !== null ? tz : null } },
+      {
+        onSuccess: () => {
+          toast.success(t("monitoredTables.scheduleToastSaved"));
+          invalidateAfterMonitoredTableChange(queryClient, bindingId);
+        },
+        onError: (err) => {
+          toast.error(extractApiError(err, t("monitoredTables.scheduleToastSaveFailed")), { duration: 6000 });
+        },
+      },
+    );
+  };
+
+  return (
+    <div className="pt-4">
+      <ScheduleEditor
+        cron={cron}
+        timezone={tz}
+        canEdit={canEdit}
+        onChange={(nextCron, nextTz) => {
+          setCron(nextCron);
+          setTz(nextTz);
+        }}
+        onRemove={() => setCron(null)}
+        onValidityChange={(valid) => setCronInvalid(!valid)}
+        footerNote={t("monitoredTables.scheduleFooterNote")}
+        emptyText={t("monitoredTables.scheduleEmptyText")}
+        actions={
+          canEdit ? (
+            <Button size="sm" onClick={handleSave} disabled={!canSave || updateMut.isPending} className="gap-2">
+              {updateMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {t("monitoredTables.scheduleSaveButton")}
+            </Button>
+          ) : undefined
+        }
+      />
+    </div>
+  );
+}

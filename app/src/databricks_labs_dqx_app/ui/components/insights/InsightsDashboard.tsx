@@ -149,7 +149,7 @@ function InsightsContent() {
       <QueryErrorResetBoundary>
         {({ reset }) => (
           <FadeIn delay={0.05}>
-            <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
+            <ErrorBoundary onReset={reset} FallbackComponent={SectionError}>
               <Suspense fallback={<Skeleton className="h-[calc(100vh-220px)] w-full" />}>
                 <DashboardFrame />
               </Suspense>

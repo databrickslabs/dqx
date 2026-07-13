@@ -2,11 +2,11 @@
 
 ## Prerequisites
 
-- **Python 3.11+**
+- **Python 3.11+** (the deployed app runs on the Databricks Apps container's system Python)
 - **Node.js 18+** (provides `npm`) — install via `brew install node`, [nvm](https://github.com/nvm-sh/nvm), or [nodejs.org](https://nodejs.org/en/download) — and **yarn** classic v1 (`npm install -g yarn`, used for the committed `app/yarn.lock`; `bun.lock` / `package-lock.json` are gitignored)
 - **bun** — used by `make app-check` to run `tsc -b` (TypeScript incremental compile). Install via `curl -fsSL https://bun.sh/install | bash` or `brew install oven-sh/bun/bun`.
 - **uv** — Python package manager
-- **Databricks CLI** v0.268+ — install per the [official guide](https://docs.databricks.com/aws/en/dev-tools/cli/install) (the legacy `databricks-cli` PyPI package is unrelated and not supported). Verify with `databricks --version`.
+- **Databricks CLI** v1.4.0+ — install per the [official guide](https://docs.databricks.com/aws/en/dev-tools/cli/install) (the legacy `databricks-cli` PyPI package is unrelated and not supported). Verify with `databricks --version`. v1.4.0 is the minimum for `make app-deploy` because the bundle's `postgres_projects` / `postgres_roles` resources are only accepted by CLI ≥ 1.4.0.
 - Access to a Databricks workspace
 
 ## Command Reference
@@ -51,8 +51,8 @@ DQX_JOB_ID=<task-runner-job-id>             # required for profiler/dry-run
 DQX_WHEELS_VOLUME=/Volumes/dqx/dqx_studio/wheels  # UC volume path; auto-set by DABs in production
 DQX_ADMIN_GROUP=admins                      # workspace group granted bootstrap Admin access; AppConfig default is unset (no bootstrap admin locally) — set this to your test admin group
 
-# Lakebase (optional — leave DQX_LAKEBASE_INSTANCE_NAME empty to run OLTP tables on Delta locally)
-DQX_LAKEBASE_INSTANCE_NAME=                 # e.g. dqx-studio-lakebase; empty = Delta-only mode
+# Lakebase (optional — leave DQX_LAKEBASE_ENDPOINT empty to run OLTP tables on Delta locally)
+DQX_LAKEBASE_ENDPOINT=                      # e.g. projects/dqx-studio-db/branches/dqx/endpoints/primary; empty = Delta-only mode
 DQX_LAKEBASE_DATABASE_NAME=databricks_postgres  # logical Postgres DB; defaults to the always-present admin DB
 DQX_LAKEBASE_SCHEMA=dqx_studio              # Postgres schema (default: dqx_studio)
 DQX_LAKEBASE_POOL_MIN_SIZE=1                # psycopg connection pool floor
@@ -60,15 +60,15 @@ DQX_LAKEBASE_POOL_MAX_SIZE=10               # psycopg connection pool ceiling
 DQX_LAKEBASE_TOKEN_REFRESH_MINUTES=50       # OAuth token refresh cadence (token expires at 60)
 ```
 
-`DQX_JOB_ID`, `DQX_WHEELS_VOLUME`, `DQX_LAKEBASE_INSTANCE_NAME`, and `DQX_LAKEBASE_DATABASE_NAME` are injected automatically when deployed via DABs. For local dev, set them manually only if you want to exercise the corresponding feature locally:
+`DQX_JOB_ID`, `DQX_WHEELS_VOLUME`, `DQX_LAKEBASE_ENDPOINT`, and `DQX_LAKEBASE_DATABASE_NAME` are injected automatically when deployed via DABs. For local dev, set them manually only if you want to exercise the corresponding feature locally:
 
 | Want to test... | Set... |
 |---|---|
 | Profiler / dry-run | `DQX_JOB_ID` (and the wheel volume must exist) |
-| Lakebase OLTP path | `DQX_LAKEBASE_INSTANCE_NAME` (empty = falls back to Delta — fine for most local dev) |
+| Lakebase OLTP path | `DQX_LAKEBASE_ENDPOINT` (empty = falls back to Delta — fine for most local dev) |
 | Wheel sync | `DQX_WHEELS_VOLUME` |
 
-> **Lakebase locally:** The same OAuth token-refresh logic that runs in production also runs locally. The app authenticates as your CLI user (via `databricks-sdk` default auth chain), so your CLI principal must have `CAN_CONNECT_AND_CREATE` on the Lakebase database. Easiest path: run the bundle once against your dev workspace so the bundle's `database` resource binds the permissions, then point `DQX_LAKEBASE_INSTANCE_NAME` at the deployed instance.
+> **Lakebase locally:** The same OAuth token-refresh logic that runs in production also runs locally. The app authenticates as your CLI user (via `databricks-sdk` default auth chain), so your CLI principal must have a Postgres role on the project branch. Easiest path: run the bundle once against your dev workspace so the `postgres_roles` block provisions the role, then point `DQX_LAKEBASE_ENDPOINT` at the project's endpoint path (`projects/<project>/branches/<branch>/endpoints/primary`).
 
 ### Bring your own SQL warehouse, catalog, and Lakebase
 
@@ -78,9 +78,9 @@ Local dev **never provisions** anything — it always points at resources that a
 |---|---|---|
 | **SQL warehouse** | `DATABRICKS_WAREHOUSE_ID=<existing-id>` | Any warehouse you have `CAN_USE` on. Required for queries, profiling, and dry-runs. |
 | **Catalog** | `DQX_CATALOG=<existing-catalog>` (+ `DQX_SCHEMA`, `DQX_TMP_SCHEMA`) | The catalog and schemas must already exist; local dev does **not** create them. You need `USE CATALOG` + `USE SCHEMA` (+ `SELECT` to profile tables). |
-| **Lakebase** | `DQX_LAKEBASE_INSTANCE_NAME=<existing-instance>` | Point at an existing instance you can `CAN_CONNECT_AND_CREATE` on. **Leave it empty** to skip Lakebase and run OLTP tables on Delta — the simplest local setup. |
+| **Lakebase** | `DQX_LAKEBASE_ENDPOINT=<existing-endpoint-path>` | Point at an existing project endpoint you have a Postgres role on (`projects/<project>/branches/<branch>/endpoints/primary`). **Leave it empty** to skip Lakebase and run OLTP tables on Delta — the simplest local setup. |
 
-In production these are configurable per deploy target — the bundle can provision the warehouse and Lakebase for you, or you can bring existing ones, giving **6 warehouse × Lakebase combinations** (the catalog is always pre-existing). See [DEPLOYMENT.md → Deployment scenarios: warehouse and Lakebase combinations](DEPLOYMENT.md#deployment-scenarios-warehouse-and-lakebase-combinations). The fastest way to get a matching warehouse + catalog + Lakebase for local dev is to run `make app-deploy` once against a dev workspace, then copy the resulting IDs/names into `app/.env`.
+In production the bundle always provisions its own SQL warehouse and Lakebase project (the catalog is always pre-existing). The fastest way to get a matching warehouse + catalog + Lakebase for local dev is to run `make app-deploy` once against a dev workspace, then copy the resulting IDs/endpoint path into `app/.env`.
 
 ## 2. Install Dependencies
 

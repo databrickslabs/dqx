@@ -1,0 +1,14 @@
+# Copy to ``target.dev.yml`` (untracked) and fill in your values. databricks.yml
+# includes ``target.*.yml`` and .gitignore excludes it, so your workspace profile,
+# catalog, and service-principal id are never committed.
+targets:
+  dev:
+    default: true
+    workspace:
+      profile: <your-databricks-cli-profile>
+    variables:
+      catalog_name: <your-catalog>
+      # Application id of the service principal that runs the task-runner job.
+      dqx_service_principal_application_id: <your-service-principal-application-id>
+    presets:
+      trigger_pause_status: PAUSED
