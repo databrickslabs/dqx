@@ -270,6 +270,8 @@
     "computeJobsCluster": "All-purpose cluster",
     "computeClusterPlaceholder": "Select a cluster",
     "computeNoClusters": "No clusters available",
+    "computeClustersUnavailable": "Couldn't list clusters",
+    "computeSettingsLoadFailed": "Couldn't load compute settings.",
     "computeJobsClusterNote": "Saved for future use. Check jobs currently run on serverless.",
     "computeSaveButton": "Save compute settings",
     "computeAdminOnlyHint": "Only admins can change compute settings.",

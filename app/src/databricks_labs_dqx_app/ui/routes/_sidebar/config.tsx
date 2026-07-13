@@ -2197,7 +2197,7 @@ function GlobalResultsSettingsCard() {
 function ComputeSettingsCard() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data: settingsResp, isLoading } = useGetComputeSettings();
+  const { data: settingsResp, isLoading, isError: settingsError, refetch: refetchSettings } = useGetComputeSettings();
   const settings = settingsResp?.data;
   const { data: role } = useCurrentUserRoleSuspense();
   const isAdmin = role?.data?.role === "admin";
@@ -2206,7 +2206,12 @@ function ComputeSettingsCard() {
   const grantMutation = useGrantWarehouseAccess();
   const { data: warehousesResp } = useListComputeWarehouses();
   const warehouses = useMemo(() => warehousesResp?.data ?? [], [warehousesResp]);
-  const { data: clustersResp } = useListComputeClusters();
+  // The clusters list is best-effort: the backend swallows a missing-scope /
+  // permission error to `[]` (200), so a genuinely empty list and a
+  // permission-blocked list both surface here as `[]`. `clustersError` only
+  // trips on a hard transport error (network / 500). Either way we degrade to a
+  // subtle inline note in the picker — never a hard section failure.
+  const { data: clustersResp, isError: clustersError } = useListComputeClusters();
   const clusters = useMemo(() => clustersResp?.data ?? [], [clustersResp]);
 
   const [warehouseId, setWarehouseId] = useState("");
@@ -2279,7 +2284,34 @@ function ComputeSettingsCard() {
     );
   };
 
-  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+  if (isLoading) return <Skeleton className="h-40 w-full" />;
+
+  // Only the compute *settings* fetch is load-bearing for this card. If it
+  // fails we degrade to a soft, in-card notice with a retry rather than an
+  // infinite skeleton (which reads as the whole section "failing to load").
+  // The warehouse / cluster lists are best-effort and handled inline below.
+  if (settingsError || !settings) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Cpu className="h-4 w-4" />
+            {t("config.computeTitle")}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col items-start gap-2">
+            <p className="text-sm text-muted-foreground flex items-center gap-1.5">
+              <AlertCircle className="h-4 w-4" /> {t("config.computeSettingsLoadFailed")}
+            </p>
+            <Button variant="outline" size="sm" onClick={() => refetchSettings()}>
+              {t("common.retry")}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -2391,7 +2423,9 @@ function ComputeSettingsCard() {
                 </SelectTrigger>
                 <SelectContent>
                   {clusters.length === 0 && (
-                    <SelectLabel className="font-normal">{t("config.computeNoClusters")}</SelectLabel>
+                    <SelectLabel className="font-normal">
+                      {clustersError ? t("config.computeClustersUnavailable") : t("config.computeNoClusters")}
+                    </SelectLabel>
                   )}
                   {clusters.map((c) => (
                     <SelectItem key={c.cluster_id} value={c.cluster_id} className="text-xs font-mono">

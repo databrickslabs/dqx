@@ -155,6 +155,12 @@ resources:
         # its SP fallback regardless — harmless once OBO works, and it
         # protects workspaces whose OAuth integration strips scopes.
         - dashboards.genie
+        # The admin Configuration → Compute section lists all-purpose clusters
+        # on-behalf-of the signed-in admin (ComputeService.list_clusters via
+        # get_obo_ws). Without this scope the OBO token can't call the Clusters
+        # API and ws.clusters.list() raises PermissionDenied ("required scopes:
+        # clusters"); the service degrades to [] but the picker can't populate.
+        - clusters
 
       resources:
         # Binding the bundle-managed warehouse to the app grants the app SP CAN_USE.

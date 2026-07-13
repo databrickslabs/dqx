@@ -270,6 +270,8 @@
     "computeJobsCluster": "Cluster de uso geral",
     "computeClusterPlaceholder": "Selecione um cluster",
     "computeNoClusters": "Nenhum cluster disponível",
+    "computeClustersUnavailable": "Não foi possível listar os clusters",
+    "computeSettingsLoadFailed": "Não foi possível carregar as configurações de computação.",
     "computeJobsClusterNote": "Salvo para uso futuro. Os jobs de verificação são executados atualmente em serverless.",
     "computeSaveButton": "Salvar configurações de computação",
     "computeAdminOnlyHint": "Apenas administradores podem alterar as configurações de computação.",

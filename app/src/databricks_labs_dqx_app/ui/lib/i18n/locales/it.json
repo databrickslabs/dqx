@@ -270,6 +270,8 @@
     "computeJobsCluster": "Cluster generico",
     "computeClusterPlaceholder": "Seleziona un cluster",
     "computeNoClusters": "Nessun cluster disponibile",
+    "computeClustersUnavailable": "Impossibile elencare i cluster",
+    "computeSettingsLoadFailed": "Impossibile caricare le impostazioni di calcolo.",
     "computeJobsClusterNote": "Salvato per uso futuro. I job di controllo vengono attualmente eseguiti su serverless.",
     "computeSaveButton": "Salva impostazioni di calcolo",
     "computeAdminOnlyHint": "Solo gli amministratori possono modificare le impostazioni di calcolo.",

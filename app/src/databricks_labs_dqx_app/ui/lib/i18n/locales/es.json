@@ -270,6 +270,8 @@
     "computeJobsCluster": "Clúster de uso general",
     "computeClusterPlaceholder": "Selecciona un clúster",
     "computeNoClusters": "No hay clústeres disponibles",
+    "computeClustersUnavailable": "No se pudieron listar los clústeres",
+    "computeSettingsLoadFailed": "No se pudieron cargar los ajustes de cómputo.",
     "computeJobsClusterNote": "Guardado para uso futuro. Los trabajos de comprobación se ejecutan actualmente sin servidor.",
     "computeSaveButton": "Guardar configuración de cómputo",
     "computeAdminOnlyHint": "Solo los administradores pueden cambiar la configuración de cómputo.",
