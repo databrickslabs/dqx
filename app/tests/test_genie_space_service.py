@@ -491,6 +491,61 @@ def test_diagnose_surfaces_the_run_instants_being_compared() -> None:
         assert "AS prev_run_ts" in joined
 
 
+def test_diagnose_surfaces_rule_to_column_mapping_changes() -> None:
+    # B2-90: a rule mapped to more columns runs more checks and can lower the
+    # score with no per-check failure-rate spike. The decomposition must
+    # expose the rule's full mapped-column SET across both runs (unioned over
+    # its check rows, so a for_each_column fan-out is visible) plus the
+    # added/removed columns and the column/check counts, so Genie can name
+    # the structural change instead of misreading it as generic "more data".
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    joined = "".join(by_q["What is driving my changes in score over time?"]["sql"])
+    # The full mapped-column set is unioned across the rule's check rows.
+    assert "array_distinct(flatten(collect_list(`columns`))) AS col_set" in joined
+    assert "COUNT(DISTINCT `check_name`) AS check_count" in joined
+    # The concrete composition surfaces as output columns.
+    for col in (
+        "AS curr_columns",
+        "AS prev_columns",
+        "AS added_columns",
+        "AS removed_columns",
+        "AS curr_column_count",
+        "AS prev_column_count",
+        "AS curr_check_count",
+        "AS prev_check_count",
+    ):
+        assert col in joined, col
+    # added/removed are a set difference over the two mapped-column sets.
+    assert "array_except(c.col_set, p.col_set)" in joined
+    assert "array_except(p.col_set, c.col_set)" in joined
+
+
+def test_diagnose_definition_change_keys_off_the_mapped_column_set() -> None:
+    # The 'rule definition changed' reason must fire when the mapped-column
+    # SET moved (array_except non-empty in either direction) — the raw
+    # c.cols <> p.cols compare missed a for_each_column expansion because each
+    # check maps a single column and MAX(to_json(columns)) never reflected the
+    # set growing. Both runs must still carry attribution (the NULL guard).
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    joined = "".join(by_q["What is driving my changes in score over time?"]["sql"])
+    assert "c.cols IS NOT NULL AND p.cols IS NOT NULL" in joined
+    assert "size(array_except(c.col_set, p.col_set)) > 0" in joined
+    assert "size(array_except(p.col_set, c.col_set)) > 0" in joined
+    # The fragile raw-json compare is gone.
+    assert "c.cols <> p.cols" not in joined
+
+
+def test_text_instructions_name_added_removed_columns_for_definition_changes() -> None:
+    # B2-90 prose half: when the contributor is a definition change, the
+    # answer must name the columns added/removed and the mapped-column count
+    # move, and explain that applying a rule to more columns runs more checks
+    # and can lower the score without a failure-rate spike.
+    joined = "".join(gs.TEXT_INSTRUCTIONS)
+    assert "added_columns / removed_columns" in joined
+    assert "prev_column_count to curr_column_count" in joined
+    assert "applying a rule to more columns runs more checks" in joined
+
+
 def test_text_instructions_change_answers_name_the_run_instant() -> None:
     # The prose half of the P7.2 rider: every change explanation anchors to
     # WHEN — the run date/time of the two runs compared — citing the

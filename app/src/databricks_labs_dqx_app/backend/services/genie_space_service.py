@@ -206,7 +206,12 @@ TEXT_INSTRUCTIONS = [
         "at a steady rate). The curated decomposition already categorizes every rule this way — "
         "reuse it for any change or why question, organize the prose by category, and when "
         "contributors span several dimensions or severities, say which dimension or severity "
-        "moved most. If no prior run differs, say the score has been stable over the available "
+        "moved most. For a rule definitions changed contributor, be concrete about the structural "
+        "change: name the specific columns added and removed (added_columns / removed_columns) and "
+        "state how the mapped-column count moved (prev_column_count to curr_column_count), because "
+        "applying a rule to more columns runs more checks and can lower the score even when each "
+        "check's own failure rate is unchanged — this, not a spike in failures, is often why the "
+        "score fell. If no prior run differs, say the score has been stable over the available "
         "history.\n"
     ),
     (
@@ -508,6 +513,15 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  SELECT COALESCE(`registry_rule_id`, `check_name`) AS rule_key,\n"
         "         MAX(`check_name`) AS rule_name, MAX(`dimension`) AS dim,\n"
         "         MAX(`severity`) AS sev, MAX(to_json(`columns`)) AS cols,\n"
+        # col_set is the FULL DISTINCT mapped-column set this rule ran
+        # against, unioned across all its check rows. A rule applied to
+        # more columns (e.g. a for_each_column expansion, which fans out
+        # into one check per column sharing the registry_rule_id) grows
+        # this set — the structural change the raw MAX(to_json) above
+        # cannot see. check_count is the number of distinct checks the
+        # rule contributed, which tracks the column fan-out.
+        "         array_distinct(flatten(collect_list(`columns`))) AS col_set,\n"
+        "         COUNT(DISTINCT `check_name`) AS check_count,\n"
         "         SUM(`error_count` + `warning_count`) AS failed_tests,\n"
         "         SUM(`input_row_count`) AS total_tests\n"
         f"  FROM {v} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
@@ -518,6 +532,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  SELECT COALESCE(`registry_rule_id`, `check_name`) AS rule_key,\n"
         "         MAX(`check_name`) AS rule_name, MAX(`dimension`) AS dim,\n"
         "         MAX(`severity`) AS sev, MAX(to_json(`columns`)) AS cols,\n"
+        "         array_distinct(flatten(collect_list(`columns`))) AS col_set,\n"
+        "         COUNT(DISTINCT `check_name`) AS check_count,\n"
         "         SUM(`error_count` + `warning_count`) AS failed_tests,\n"
         "         SUM(`input_row_count`) AS total_tests\n"
         f"  FROM {v} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
@@ -539,9 +555,32 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "       TRY_DIVIDE(c.failed_tests, c.total_tests) AS curr_fail_rate,\n"
         "       COALESCE(p.total_tests, 0) AS prev_total_tests,\n"
         "       COALESCE(c.total_tests, 0) AS curr_total_tests,\n"
+        # Structural composition of the rule across the two runs, so Genie
+        # can explain a 'rule definition changed' contributor concretely —
+        # naming the columns added/removed and how the mapped-column count
+        # moved — instead of just reporting that the definition changed.
+        # array_except(a, b) is NULL when a side is NULL (a pure add/remove),
+        # which is fine: curr_columns / prev_columns already carry the full
+        # sets for those cases.
+        "       to_json(c.col_set) AS curr_columns,\n"
+        "       to_json(p.col_set) AS prev_columns,\n"
+        "       to_json(array_except(c.col_set, p.col_set)) AS added_columns,\n"
+        "       to_json(array_except(p.col_set, c.col_set)) AS removed_columns,\n"
+        "       COALESCE(size(c.col_set), 0) AS curr_column_count,\n"
+        "       COALESCE(size(p.col_set), 0) AS prev_column_count,\n"
+        "       COALESCE(c.check_count, 0) AS curr_check_count,\n"
+        "       COALESCE(p.check_count, 0) AS prev_check_count,\n"
         "       CASE WHEN p.rule_key IS NULL THEN 'rule added'\n"
         "            WHEN c.rule_key IS NULL THEN 'rule removed'\n"
-        "            WHEN c.cols IS NOT NULL AND p.cols IS NOT NULL AND c.cols <> p.cols\n"
+        # Definition change = the DISTINCT mapped-column SET moved (columns
+        # added and/or removed), which the raw c.cols <> p.cols comparison
+        # missed for for_each_column rules (each check maps one column, so
+        # MAX(to_json) never reflected the set growing). Both runs must
+        # carry attribution (c.cols / p.cols non-NULL) so a legacy NULL
+        # never reads as a definition change.
+        "            WHEN c.cols IS NOT NULL AND p.cols IS NOT NULL\n"
+        "                 AND (size(array_except(c.col_set, p.col_set)) > 0\n"
+        "                      OR size(array_except(p.col_set, c.col_set)) > 0)\n"
         "                 THEN 'rule definition changed'\n"
         "            WHEN ABS(COALESCE(TRY_DIVIDE(c.failed_tests, c.total_tests), 0)\n"
         "                     - COALESCE(TRY_DIVIDE(p.failed_tests, p.total_tests), 0)) > 0.0001\n"
@@ -785,8 +824,12 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
                 "a rename even when a numeric reason outranks it. Narrate the categories and "
                 "magnitudes it hands you, name the run date/time the change appeared from "
                 "curr_run_ts and prev_run_ts, and use the dimension/severity columns to say "
-                "which dimension or severity moved most. Reuse for any 'why did quality change / "
-                "biggest factor' question."
+                "which dimension or severity moved most. For a 'rule definition changed' row, the "
+                "added_columns / removed_columns / curr_column_count / prev_column_count columns "
+                "say exactly which columns the rule gained or lost — a rule applied to more "
+                "columns runs more checks (curr_check_count vs prev_check_count) and can drop the "
+                "score without any per-check failure-rate spike. Reuse for any 'why did quality "
+                "change / biggest factor' question."
             ],
         },
         {
