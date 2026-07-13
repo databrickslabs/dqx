@@ -188,6 +188,16 @@ class AppConfig(BaseSettings):
 conf = AppConfig()
 
 
+# Maximum number of sample table rows fed into an AI/LLM prompt (e.g. the AI
+# rule generator's optional sample-row context). Mirrors the 500-row sample the
+# "ask a question about this data" path already uses
+# (services.table_data_service.TableDataService.PREVIEW_LIMIT), so every place
+# that samples table data for an AI/LLM question caps at the same 500 rows.
+# Still a hard, finite bound (OWASP LLM04/LLM06): it limits prompt size and the
+# volume of raw data echoed into a model call.
+AI_SAMPLE_ROW_LIMIT = 500
+
+
 def get_sql_warehouse_path() -> str:
     wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID")
     if not wh_id:

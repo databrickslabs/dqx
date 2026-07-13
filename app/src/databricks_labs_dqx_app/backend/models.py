@@ -4,6 +4,7 @@ from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from pydantic import BaseModel, Field
 
 from .. import __version__
+from .config import AI_SAMPLE_ROW_LIMIT
 from .registry_models import AuthorKind as RegistryAuthorKind
 from .registry_models import Polarity as RegistryPolarity
 from .registry_models import RegistryRule as RegistryRuleDomain
@@ -108,8 +109,8 @@ class AiGenerateRuleIn(BaseModel):
     columns: list[str] | None = Field(default=None, max_length=200, description="Optional candidate column names")
     sample_rows: list[dict[str, Any]] | None = Field(
         default=None,
-        max_length=20,
-        description="Optional sample rows for context; only the first 5 are forwarded to the model",
+        max_length=AI_SAMPLE_ROW_LIMIT,
+        description="Optional sample rows for context; up to AI_SAMPLE_ROW_LIMIT (500) are forwarded to the model",
     )
 
 

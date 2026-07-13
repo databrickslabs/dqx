@@ -17,7 +17,7 @@ from databricks.labs.dqx.llm.llm_core import _filter_unsafe_sql_rules
 from databricks.labs.dqx.llm.llm_utils import get_required_check_functions_definitions
 from databricks.labs.dqx.utils import is_sql_query_safe
 
-from databricks_labs_dqx_app.backend.config import conf
+from databricks_labs_dqx_app.backend.config import AI_SAMPLE_ROW_LIMIT, conf
 from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
 
 logger = logging.getLogger(__name__)
@@ -430,9 +430,12 @@ class AiRulesService:
         if columns:
             parts.append(f"columns: {json.dumps(columns)}")
         if sample_rows:
-            # Bounded: never forward more than a handful of sample rows to the model
-            # (OWASP LLM04/LLM06 — bound the prompt, avoid echoing large data samples).
-            parts.append(f"sample_rows: {json.dumps(sample_rows[:5])}")
+            # Bounded to AI_SAMPLE_ROW_LIMIT (500) — the same sample cap the
+            # "ask a question about this data" path uses — so every AI/LLM
+            # sample-data path is consistent. Still a hard, finite bound
+            # (OWASP LLM04/LLM06): it caps prompt size and the volume of raw
+            # data echoed into a model call.
+            parts.append(f"sample_rows: {json.dumps(sample_rows[:AI_SAMPLE_ROW_LIMIT])}")
         return "\n".join(parts)
 
     def _validate_and_repair_proposal(self, proposal: dict[str, Any]) -> dict[str, Any] | None:

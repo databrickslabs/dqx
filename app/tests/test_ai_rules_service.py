@@ -235,13 +235,15 @@ class TestGenerateRule:
         )
         gateway = _gateway_returning(proposal)
         service = _service(gateway)
-        sample_rows = [{"id": i} for i in range(20)]
+        # More than the AI sample cap (500) — the service must forward at most
+        # the first AI_SAMPLE_ROW_LIMIT rows, dropping the overflow.
+        sample_rows = [{"id": i} for i in range(600)]
 
         await service.generate_rule(description="d", user_email="a@x", sample_rows=sample_rows)
 
         sent_context = gateway.query.call_args.kwargs["messages"][-1]["content"]
-        assert json.dumps([{"id": 4}]) in sent_context or '"id": 4' in sent_context
-        assert '"id": 5' not in sent_context
+        assert '"id": 499' in sent_context
+        assert '"id": 500' not in sent_context
 
 
 class TestDeriveNativeSlots:
