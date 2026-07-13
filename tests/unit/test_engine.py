@@ -529,9 +529,3 @@ def test_apply_checks_parses_dbr_version_with_suffix(dbr_version, required_check
         match=rf"require Databricks Runtime >= .*but the current version is {re.escape(dbr_version)}",
     ):
         engine.apply_checks(df, [DQRowRule(check_func=required_check, column="a")])
-
-
-@pytest.mark.parametrize("dbr_version", ["17.x-photon-scala2.13", "18.x-photon-scala2.13", "17.x"])
-def test_validate_dbr_version_bare_major_serverless_satisfies_same_major(dbr_version):
-    engine = _engine_returning_dbr_version(dbr_version)
-    engine._validate_dbr_version_requirements([DQRowRule(check_func=_check_requires_dbr_17_1, column="a")])

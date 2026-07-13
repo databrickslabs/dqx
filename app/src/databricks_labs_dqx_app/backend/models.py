@@ -134,20 +134,6 @@ class GenerateRulesFromContractOut(BaseModel):
     )
 
 
-class RuleCatalogEntryOut(BaseModel):
-    table_fqn: str
-    display_name: str = ""
-    checks: list[dict[str, Any]]
-    version: int
-    status: str
-    source: str = "ui"
-    rule_id: str | None = None
-    created_by: str | None = None
-    created_at: str | None = None
-    updated_by: str | None = None
-    updated_at: str | None = None
-
-
 class RuleSource(Enum):
     """Source (e.g. 'ui', 'profiler') where the rule was created."""
 
@@ -161,6 +147,20 @@ class RuleSource(Enum):
     def sql_in_list(cls) -> str:
         """Renders the members as a SQL-safe list for 'IN' expressions."""
         return ", ".join(f"'{member.value}'" for member in cls)
+
+
+class RuleCatalogEntryOut(BaseModel):
+    table_fqn: str
+    display_name: str = ""
+    checks: list[dict[str, Any]]
+    version: int
+    status: str
+    source: RuleSource = RuleSource.ui
+    rule_id: str | None = None
+    created_by: str | None = None
+    created_at: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
 
 
 class RuleStatus(Enum):
@@ -180,14 +180,18 @@ class RuleStatus(Enum):
 class SaveRulesIn(BaseModel):
     table_fqn: str = Field(description="Fully qualified table name (catalog.schema.table)")
     checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
-    source: RuleSource = Field(default=RuleSource.ui, description="Origin of the rules: ui, imported, or ai")
+    source: RuleSource = Field(
+        default=RuleSource.ui, description="Origin of the rules: ui, sql, profiler, import, or ai"
+    )
     rule_id: str | None = Field(default=None, description="If set, update existing rule instead of creating")
 
 
 class BatchSaveRulesIn(BaseModel):
     table_fqns: list[str] = Field(description="Fully qualified table names to apply the checks to")
     checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
-    source: RuleSource = Field(default=RuleSource.ui, description="Origin of the rules: ui, imported, or ai")
+    source: RuleSource = Field(
+        default=RuleSource.ui, description="Origin of the rules: ui, sql, profiler, import, or ai"
+    )
 
 
 class BatchSaveRulesOut(BaseModel):

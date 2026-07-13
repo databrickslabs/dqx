@@ -133,7 +133,7 @@ export interface BatchSaveRulesIn {
   table_fqns: string[];
   /** List of check metadata dictionaries */
   checks: BatchSaveRulesInChecksItem[];
-  /** Origin of the rules: ui, imported, or ai */
+  /** Origin of the rules: ui, sql, profiler, import, or ai */
   source?: RuleSource;
 }
 
@@ -981,7 +981,7 @@ export interface RuleCatalogEntryOut {
   checks: RuleCatalogEntryOutChecksItem[];
   version: number;
   status: string;
-  source?: string;
+  source?: RuleSource;
   rule_id?: RuleCatalogEntryOutRuleId;
   created_by?: RuleCatalogEntryOutCreatedBy;
   created_at?: RuleCatalogEntryOutCreatedAt;
@@ -1114,7 +1114,7 @@ export interface SaveRulesIn {
   table_fqn: string;
   /** List of check metadata dictionaries */
   checks: SaveRulesInChecksItem[];
-  /** Origin of the rules: ui, imported, or ai */
+  /** Origin of the rules: ui, sql, profiler, import, or ai */
   source?: RuleSource;
   /** If set, update existing rule instead of creating */
   rule_id?: SaveRulesInRuleId;

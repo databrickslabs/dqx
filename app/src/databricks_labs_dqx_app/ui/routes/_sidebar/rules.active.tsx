@@ -400,7 +400,7 @@ function ActiveRulesPage() {
                   <SelectItem value="all">{t("rulesActive.allSources")}</SelectItem>
                   {sources.map((src) => (
                     <SelectItem key={src} value={src}>
-                      {src === "imported" ? t("rulesActive.imported") : src === "ai" ? t("rulesActive.ai") : t("rulesActive.ui")}
+                      {src === "import" ? t("rulesActive.import") : src === "ai" ? t("rulesActive.ai") : t("rulesActive.ui")}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -639,7 +639,7 @@ function ByTableView({ groups, expandedTables, onToggle, onNavigate, canDelete, 
                                     : "border-emerald-500 text-emerald-600"
                               }`}
                             >
-                              {rule.source === "import" ? t("rulesActive.imported") : rule.source === "ai" ? t("rulesActive.ai") : t("rulesActive.ui")}
+                              {rule.source === "import" ? t("rulesActive.import") : rule.source === "ai" ? t("rulesActive.ai") : t("rulesActive.ui")}
                             </Badge>
                           </td>
                           <td className="p-2 px-4 text-xs text-muted-foreground">{formatUser(rule.created_by)}</td>
