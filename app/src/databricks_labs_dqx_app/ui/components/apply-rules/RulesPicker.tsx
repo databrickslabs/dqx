@@ -60,12 +60,21 @@ type ColumnKey =
   | "updated"
   | "mode";
 
+interface RenderCtx {
+  labelDefinitions: LabelColorDefinition[];
+  /** Rule ids already applied to the target table — rendered checked +
+   *  disabled with an inline "already applied" badge (B2-115). */
+  appliedIds: Set<string>;
+  /** Translated "Already applied" badge label. */
+  appliedLabel: string;
+}
+
 interface ColumnDef extends ColumnLayoutDef {
   labelKey: string;
   sortable: boolean;
   headClassName?: string;
   renderHeader(label: string): React.ReactNode;
-  renderCell(r: RegistryRuleOut, ctx: { labelDefinitions: LabelColorDefinition[] }): React.ReactNode;
+  renderCell(r: RegistryRuleOut, ctx: RenderCtx): React.ReactNode;
   sortValue(r: RegistryRuleOut): string | number;
 }
 
@@ -115,7 +124,19 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultWidth: 240,
     sortable: true,
     renderHeader: (label) => label,
-    renderCell: (r) => <TruncatedCell text={getTag(r, RESERVED_NAME_KEY) || r.rule_id} className="font-medium text-sm" />,
+    renderCell: (r, ctx) => {
+      const applied = ctx.appliedIds.has(r.rule_id);
+      return (
+        <span className="flex items-center gap-1.5 min-w-0">
+          <TruncatedCell text={getTag(r, RESERVED_NAME_KEY) || r.rule_id} className="font-medium text-sm" />
+          {applied && (
+            <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              {ctx.appliedLabel}
+            </span>
+          )}
+        </span>
+      );
+    },
     sortValue: (r) => (getTag(r, RESERVED_NAME_KEY) || r.rule_id).toLowerCase(),
   },
   description: {
@@ -262,6 +283,10 @@ export interface RulesPickerProps {
   labelDefinitions: LabelColorDefinition[];
   /** Currently checked rule ids. */
   selectedIds: Set<string>;
+  /** Rule ids already applied to the target table. These rows render
+   *  checked + disabled (can't be toggled or re-picked) with an inline
+   *  "Already applied" badge (B2-115). */
+  appliedIds?: Set<string>;
   /** Fired when a row's checkbox (or the row itself) is toggled. */
   onToggle: (rule: RegistryRuleOut) => void;
   /** The published-rules query is still loading (no data yet). Shown as a
@@ -276,9 +301,14 @@ export interface RulesPickerProps {
   onRetry?: () => void;
 }
 
-export function RulesPicker({ rules, labelDefinitions, selectedIds, onToggle, isLoading, isError, onRetry }: RulesPickerProps) {
+export function RulesPicker({ rules, labelDefinitions, selectedIds, appliedIds, onToggle, isLoading, isError, onRetry }: RulesPickerProps) {
   const { t } = useTranslation();
-  const ctx = useMemo(() => ({ labelDefinitions }), [labelDefinitions]);
+  const applied = useMemo(() => appliedIds ?? new Set<string>(), [appliedIds]);
+  const appliedLabel = t("monitoredTables.ruleAlreadyApplied");
+  const ctx = useMemo<RenderCtx>(
+    () => ({ labelDefinitions, appliedIds: applied, appliedLabel }),
+    [labelDefinitions, applied, appliedLabel],
+  );
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [sortKey, setSortKey] = useState<ColumnKey | null>(null);
@@ -432,17 +462,31 @@ export function RulesPicker({ rules, labelDefinitions, selectedIds, onToggle, is
           <TableBody>
             {pageRows.map((r) => {
               const name = getTag(r, RESERVED_NAME_KEY) || r.rule_id;
-              const checked = selectedIds.has(r.rule_id);
+              const isApplied = applied.has(r.rule_id);
+              // Already-applied rules render checked + disabled so they can't
+              // be re-picked (B2-115); the checkbox reflects that visually.
+              const checked = isApplied || selectedIds.has(r.rule_id);
+              const rowLabel = isApplied
+                ? `${t("monitoredTables.selectRuleLabel", { name })} — ${appliedLabel}`
+                : t("monitoredTables.selectRuleLabel", { name });
               return (
                 <TableRow
                   key={r.rule_id}
-                  className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => onToggle(r)}
-                  aria-label={t("monitoredTables.selectRuleLabel", { name })}
+                  className={cn(
+                    isApplied ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-muted/50",
+                  )}
+                  onClick={isApplied ? undefined : () => onToggle(r)}
+                  aria-label={rowLabel}
+                  aria-disabled={isApplied || undefined}
                   data-state={checked ? "selected" : undefined}
                 >
                   <TableCell className="w-9 px-2" onClick={(e) => e.stopPropagation()}>
-                    <Checkbox checked={checked} onCheckedChange={() => onToggle(r)} aria-label={t("monitoredTables.selectRuleLabel", { name })} />
+                    <Checkbox
+                      checked={checked}
+                      disabled={isApplied}
+                      onCheckedChange={() => onToggle(r)}
+                      aria-label={rowLabel}
+                    />
                   </TableCell>
                   {visibleKeys.map((k) => {
                     const width = colWidths[k] ?? COLUMNS[k].defaultWidth;

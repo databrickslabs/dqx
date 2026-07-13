@@ -1841,6 +1841,7 @@
     "rulesPickerRuleCount_one": "{{count}} regola",
     "rulesPickerRuleCount_other": "{{count}} regole",
     "selectRuleLabel": "Seleziona {{name}}",
+    "ruleAlreadyApplied": "Già applicata",
     "previousPageLabel": "Pagina precedente",
     "nextPageLabel": "Pagina successiva",
     "createRuleInlineHint": "Seleziona una regola esistente oppure <link>creane una nuova</link>.",

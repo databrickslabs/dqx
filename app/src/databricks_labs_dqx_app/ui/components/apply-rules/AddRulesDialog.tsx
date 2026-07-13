@@ -37,6 +37,10 @@ interface AddRulesDialogProps {
   bindingId: string;
   publishedRules: RegistryRuleOut[];
   labelDefinitions: LabelDefinition[];
+  /** Rule ids already applied to (staged on) this table. They render
+   *  checked + disabled in the picker so they can't be re-picked, and are
+   *  excluded from the add payload even if somehow selected (B2-115). */
+  appliedRuleIds?: Set<string>;
   /** Fired synchronously with the rule ids just staged — the caller appends
    *  a new local row per rule (via `onAdd`) and switches to the by-rule
    *  lens, auto-expanding those cards. */
@@ -66,6 +70,7 @@ export function AddRulesDialog({
   bindingId,
   publishedRules,
   labelDefinitions,
+  appliedRuleIds,
   onApplied,
   onAdd,
   initialColumn = null,
@@ -76,9 +81,14 @@ export function AddRulesDialog({
   const { t } = useTranslation();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  const applied = appliedRuleIds ?? new Set<string>();
+
   const reset = () => setSelectedIds(new Set());
 
   const toggleRule = (rule: RegistryRuleOut) => {
+    // Already-applied rules are locked (checked + disabled) — never toggle
+    // them into the new-selection set (B2-115).
+    if (applied.has(rule.rule_id)) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(rule.rule_id)) next.delete(rule.rule_id);
@@ -92,7 +102,9 @@ export function AddRulesDialog({
     onOpenChange(next);
   };
 
-  const selectedRules = publishedRules.filter((r) => selectedIds.has(r.rule_id));
+  // Exclude already-applied rules defensively — they can never enter
+  // `selectedIds` via the UI, but guarding here keeps the add payload clean.
+  const selectedRules = publishedRules.filter((r) => selectedIds.has(r.rule_id) && !applied.has(r.rule_id));
 
   const handleAdd = () => {
     if (selectedRules.length === 0) return;
@@ -146,6 +158,7 @@ export function AddRulesDialog({
             rules={publishedRules}
             labelDefinitions={labelDefinitions}
             selectedIds={selectedIds}
+            appliedIds={applied}
             onToggle={toggleRule}
             isLoading={rulesLoading}
             isError={rulesError}

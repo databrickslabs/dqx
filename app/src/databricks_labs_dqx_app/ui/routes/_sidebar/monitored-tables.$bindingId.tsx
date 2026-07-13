@@ -1815,6 +1815,10 @@ function ApplyRulesTab({
   const ruleGroups = useMemo(() => groupAppliedRulesByRuleId(stagedRows), [stagedRows]);
   const mergedRules = useMemo(() => ruleGroups.map(mergeRuleRowGroup), [ruleGroups]);
 
+  // Rule ids already staged on this table — the AddRulesDialog picker renders
+  // these checked + disabled so they can't be applied twice (B2-115).
+  const appliedRuleIds = useMemo(() => new Set(stagedRows.map((r) => r.rule_id)), [stagedRows]);
+
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
   const severityValues = useMemo(
@@ -2264,6 +2268,7 @@ function ApplyRulesTab({
         bindingId={bindingId}
         publishedRules={publishedRules}
         labelDefinitions={labelDefinitions}
+        appliedRuleIds={appliedRuleIds}
         onAdd={stageNewRows}
         onApplied={() => {}}
         initialColumn={addColumnContext}
