@@ -1,4 +1,5 @@
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useReducedMotion } from "motion/react";
 import type { LucideIcon } from "lucide-react";
 import { ArrowDown, ArrowUp, Boxes, HelpCircle, LineChart, Library, Loader2, Minus, Table2 } from "lucide-react";
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
@@ -42,23 +43,44 @@ import { countUpValue, deltaDirection, deltaPoints, formatCount, formatScorePerc
  *   the same signal.
  */
 
-/** Animate a number from 0 → target on mount (easeOutCubic) via rAF. Returns
- *  the current value to render; powers the "At a Glance" count-up. */
-function useCountUp(target: number, durationMs = 800): number {
-  const [v, setV] = useState(0);
+/**
+ * The "At a Glance" count-up is an *entrance* animation: it should play once
+ * per app session, not every time the section (re)mounts. Kept at module scope
+ * so the flag survives the Suspense fallback→content swap, React StrictMode's
+ * dev remount, and any query re-settle/refetch remount — none of which should
+ * replay the entrance. Reduced-motion is handled separately in `useCountUp`.
+ */
+let entranceHasPlayed = false;
+
+/** Animate a number from 0 → `target` (easeOutCubic) via rAF, powering the
+ *  "At a Glance" count-up. `animate` gates the whole effect: when false (the
+ *  entrance already played, or a later mount) the final value shows instantly.
+ *  Re-runs when `target` changes so it always lands exactly on the real value —
+ *  a refetch returning the same value leaves `target` unchanged and does not
+ *  restart. `startDelayMs` staggers each card. Honours prefers-reduced-motion
+ *  (final value, no ticking), mirroring `ScoreBox`'s count-up. */
+function useCountUp(target: number, animate: boolean, durationMs = 800, startDelayMs = 0): number {
+  const reduce = useReducedMotion();
+  const [v, setV] = useState(target);
   useEffect(() => {
+    if (reduce || !animate) {
+      setV(target);
+      return;
+    }
     let raf = 0;
     let startTs = 0;
     const tick = (now: number) => {
       if (!startTs) startTs = now;
-      const t = Math.min(1, (now - startTs) / durationMs);
+      const elapsed = now - startTs - startDelayMs;
+      const t = Math.min(1, Math.max(0, elapsed / durationMs));
       setV(countUpValue(target, t));
-      if (t < 1) raf = requestAnimationFrame(tick);
+      if (elapsed < durationMs) raf = requestAnimationFrame(tick);
     };
+    setV(0);
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [target, durationMs]);
-  return v;
+  }, [target, durationMs, startDelayMs, reduce, animate]);
+  return reduce || !animate ? target : v;
 }
 
 /** The four stat cards, in display order. Static chrome (label + icon) so the
@@ -108,7 +130,14 @@ function DeltaIndicator({ delta }: { delta: number }) {
  *  label, and a lucide icon. The emphasised card (`inverted`) is a solid
  *  black-on-light / white-on-dark card (`bg-foreground text-background`).
  *  `delta` (when given) renders the up/down/flat change badge next to the
- *  value. */
+ *  value.
+ *
+ *  The card chrome is always rendered at rest (no per-card fade/slide-in): the
+ *  loading and loaded states show the *same* solid cards, so the Suspense
+ *  fallback→content swap is seamless (only the number swaps spinner→value).
+ *  The entrance animation is the number count-up alone — see `useCountUp` —
+ *  which avoids the previous "solid skeleton cards → invisible → fade back in"
+ *  flash that read as the section loading twice (B2-89). */
 function StatCard({
   label,
   value,
@@ -116,8 +145,6 @@ function StatCard({
   inverted = false,
   loading = false,
   delta,
-  entered = true,
-  enterDelayMs = 0,
   infoText,
 }: {
   label: string;
@@ -126,21 +153,12 @@ function StatCard({
   inverted?: boolean;
   loading?: boolean;
   delta?: number | null;
-  entered?: boolean;
-  enterDelayMs?: number;
   /** When set, renders a small "?" tooltip next to the label. */
   infoText?: string;
 }) {
   const { t } = useTranslation();
   return (
-    <Card
-      className={cn(
-        "transition-all duration-500 ease-out",
-        entered ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2",
-        inverted && "bg-foreground text-background",
-      )}
-      style={{ transitionDelay: `${enterDelayMs}ms` }}
-    >
+    <Card className={cn(inverted && "bg-foreground text-background")}>
       <CardContent className="relative p-5">
         {/* B2-1: the "?" explainer is pinned to the card's top-right corner
             (rather than sitting inline after the label) so a long label +
@@ -213,14 +231,21 @@ function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) 
   // only shown when the global Results surface is actually enabled.
   const globalResultsEnabled = useGlobalResultsEnabled();
 
-  // "At a Glance" entrance: staggered card fade/slide-in + a count-up of each
-  // number, so the data points animate in when the page loads/refreshes.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  const tablesA = useCountUp(monitored_table_count ?? 0);
-  const rulesA = useCountUp(rule_count ?? 0);
-  const spacesA = useCountUp(table_space_count ?? 0);
-  const scoreA = useCountUp(score == null ? 0 : score * 100);
+  // "At a Glance" entrance: a staggered count-up of each number that runs
+  // EXACTLY ONCE, when the real stats first arrive. `shouldAnimate` is frozen
+  // at first render from the module-scoped `entranceHasPlayed` flag, so the
+  // entrance does not replay on the skeleton→data swap, a background refetch /
+  // re-settle remount, or React StrictMode's dev remount; those later mounts
+  // render the final values instantly. The card chrome no longer fades in (see
+  // `StatCard`), so there is no skeleton→content opacity flash.
+  const shouldAnimate = useRef(!entranceHasPlayed).current;
+  useEffect(() => {
+    entranceHasPlayed = true;
+  }, []);
+  const rulesA = useCountUp(rule_count ?? 0, shouldAnimate, 800, 0);
+  const tablesA = useCountUp(monitored_table_count ?? 0, shouldAnimate, 800, 70);
+  const spacesA = useCountUp(table_space_count ?? 0, shouldAnimate, 800, 140);
+  const scoreA = useCountUp(score == null ? 0 : score * 100, shouldAnimate, 800, 210);
 
   const valueFor: Record<string, string> = {
     tables: formatCount(tablesA),
@@ -234,7 +259,7 @@ function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) 
       <section className="space-y-3">
         <h2 className={sectionLabelClass}>{t("home.atAGlance")}</h2>
         <CardGrid>
-          {CARDS.map((c, i) => (
+          {CARDS.map((c) => (
             <StatCard
               key={c.key}
               label={t(c.labelKey)}
@@ -243,8 +268,6 @@ function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) 
               inverted={c.inverted}
               delta={c.key === "score" ? score_delta : undefined}
               infoText={c.key === "score" && globalResultsEnabled ? t("home.stats.scoreInfo") : undefined}
-              entered={mounted}
-              enterDelayMs={i * 70}
             />
           ))}
         </CardGrid>
