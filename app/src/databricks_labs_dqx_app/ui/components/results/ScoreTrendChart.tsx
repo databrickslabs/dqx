@@ -851,7 +851,17 @@ export function ScoreTrendChart({
       const rect = plotRect();
       if (!rect) return;
       e.preventDefault();
-      const factor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
+      // Gentle, device-normalised zoom. deltaY arrives in px (deltaMode 0),
+      // lines (1) or pages (2) — normalise to px, then clamp so a trackpad's
+      // rapid high-magnitude events don't compound into a big jump. The factor
+      // is exponential in the (small) normalised delta, so each notch nudges
+      // the window a few percent and in/out are symmetric.
+      const LINE_PX = 16;
+      const PAGE_PX = rect.height || 400;
+      const px =
+        e.deltaMode === 1 ? e.deltaY * LINE_PX : e.deltaMode === 2 ? e.deltaY * PAGE_PX : e.deltaY;
+      const clamped = Math.max(-50, Math.min(50, px));
+      const factor = Math.exp(clamped * 0.0015);
       const rMinX = rect.left + PAD_X;
       const rMaxX = rect.right - PAD_X;
       const fracX = rMaxX > rMinX ? clamp01((e.clientX - rMinX) / (rMaxX - rMinX)) : 0.5;
@@ -1230,6 +1240,23 @@ export function ScoreTrendChart({
                 // colour ALWAYS (not just the hover/active dot) so the value
                 // reads at a glance without hovering.
                 if (isOverallScore) {
+                  // Data-space clip for the custom dots: a point whose ts/value
+                  // falls outside the live zoom window must NOT paint, otherwise
+                  // recharts (with allowDataOverflow) places its dot at the plot
+                  // edge — the "phantom point" seen mid zoom-in. The Area path is
+                  // clipped by recharts; these hand-rolled dots are not, so we
+                  // gate them here against the current domains (percent mode).
+                  const xdom = zoomDomain ?? [xLo, xHi];
+                  const ydom = yZoomDomain ?? [0, 100];
+                  const dotOutside = (
+                    v: number | null,
+                    payload?: Record<string, unknown>,
+                  ): boolean => {
+                    const ts = typeof payload?.ts === "number" ? payload.ts : null;
+                    if (ts != null && (ts < xdom[0] || ts > xdom[1])) return true;
+                    if (v != null && (v < ydom[0] || v > ydom[1])) return true;
+                    return false;
+                  };
                   const scoreDot = (props: {
                     cx?: number;
                     cy?: number;
@@ -1248,6 +1275,7 @@ export function ScoreTrendChart({
                         : typeof payload?.[name] === "number"
                           ? (payload[name] as number)
                           : null;
+                    if (dotOutside(v, payload)) return <g key={`${cx}-${cy}`} />;
                     // pivot scales pass_rate to 0–100; scoreColor wants 0–1.
                     const fill = v == null ? scoreColor(null) : scoreColor(v / 100);
                     return (
@@ -1279,11 +1307,16 @@ export function ScoreTrendChart({
                         : typeof payload?.[name] === "number"
                           ? (payload[name] as number)
                           : null;
+                    if (dotOutside(v, payload)) return <g key={`a-${cx}-${cy}`} />;
                     const fill = v == null ? scoreColor(null) : scoreColor(v / 100);
                     return (
                       <circle key={`a-${cx}-${cy}`} cx={cx} cy={cy} r={5} fill={fill} stroke={fill} />
                     );
                   };
+                  // Animate the mount reveal only; never while zoomed/panned, so a
+                  // domain change applies INSTANTLY (no interpolated frame that
+                  // would sweep a dot across as a phantom).
+                  const animateArea = animate && !zoomed && !yZoomed;
                   return (
                     <Area
                       key={name}
@@ -1298,8 +1331,8 @@ export function ScoreTrendChart({
                       connectNulls
                       dot={scoreDot}
                       activeDot={scoreActiveDot}
-                      isAnimationActive={animate}
-                      animationDuration={animate ? 900 : 0}
+                      isAnimationActive={animateArea}
+                      animationDuration={animateArea ? 900 : 0}
                       animationEasing="ease-out"
                     />
                   );
