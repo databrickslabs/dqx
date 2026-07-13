@@ -29,12 +29,21 @@ _ADMIN = "admin@x.com"
 class _FakeExecutor:
     def __init__(self) -> None:
         self.executed: list[str] = []
+        self.upserted_keys: list[str] = []
 
     def fqn(self, table: str) -> str:
         return f"cat.sch.{table}"
 
     def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
         self.executed.append(sql)
+
+    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
+        # Settings read absent right after the clear, so the reset's default
+        # re-provisioning (seed-if-absent) writes the fresh-install seeds.
+        return []
+
+    def upsert(self, table: str, key_cols: dict, value_cols: dict, **_: object) -> None:
+        self.upserted_keys.append(str(key_cols.get("setting_key")))
 
 
 def _build_client(*, role: UserRole, service: DatabaseResetService | None = None) -> TestClient:
@@ -113,6 +122,10 @@ class TestSuccessfulReset:
         assert body["performed_by"] == _ADMIN
         assert set(body["cleared_tables"]) == set(ALL_APP_TABLE_NAMES)
         assert body["failed_tables"] == {}
+        # Fresh-install defaults were re-provisioned through the route so the
+        # app lands on a clean first-install state, not an empty one (B2-113).
+        assert "run_review_statuses_v1" in oltp.upserted_keys
+        assert "label_definitions" in oltp.upserted_keys
         # Admin role mappings preserved through the route.
         role_stmts = [s for s in oltp.executed if "cat.sch.dq_role_mappings " in s]
         assert role_stmts == ["DELETE FROM cat.sch.dq_role_mappings WHERE role <> 'admin'"]
