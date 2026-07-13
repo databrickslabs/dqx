@@ -501,12 +501,11 @@ export function GenieChatBody({
                   <p className="text-muted-foreground">{t("genie.unreachable")}</p>
                 ) : (
                   <>
-                    {/* Pull the header left by the bubble's px-3 inset (#97):
-                        the icon hangs into the padding gutter at the bubble
-                        edge so the "Ask Genie" label sits flush-left with the
-                        response prose/table below instead of indented past the
-                        icon. */}
-                    <p className="mb-1 -ml-3 flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {/* Header row: the Genie mark + label sit flush-left,
+                        aligned with the response prose/table/actions below it
+                        (B2-110 — the previous -ml-3 gutter offset left the
+                        "GENIE" row misaligned with the body). */}
+                    <p className="mb-1 flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                       <GenieIcon className="h-3 w-3 shrink-0" />
                       {t("genie.assistantName")}
                     </p>
