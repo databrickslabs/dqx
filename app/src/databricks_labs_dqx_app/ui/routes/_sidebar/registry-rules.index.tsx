@@ -61,7 +61,13 @@ import { cn } from "@/lib/utils";
 import { Pagination } from "@/components/Pagination";
 import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
-import { RulesTable, getRulesTableSortValue, type RulesTableSortKey } from "@/components/rules/RulesTable";
+import {
+  RulesTable,
+  getRulesTableSortValue,
+  getRulesTableSortConfig,
+  type RulesTableSortKey,
+} from "@/components/rules/RulesTable";
+import { compareSortValues } from "@/components/data-table/sort";
 import {
   RESERVED_NAME_KEY,
   RESERVED_DIMENSION_KEY,
@@ -210,13 +216,16 @@ function RegistryRulesPage() {
 
   const handleHeaderClick = useCallback(
     (key: RulesTableSortKey) => {
+      // First click uses the column's steward-first default direction (B2-92);
+      // repeat clicks toggle to the opposite direction, then clear.
+      const { dir } = getRulesTableSortConfig(key);
       if (sortKey !== key) {
         setSortKey(key);
-        setSortDir("asc");
+        setSortDir(dir);
         return;
       }
-      if (sortDir === "asc") {
-        setSortDir("desc");
+      if (sortDir === dir) {
+        setSortDir(dir === "asc" ? "desc" : "asc");
         return;
       }
       setSortKey(null);
@@ -226,14 +235,16 @@ function RegistryRulesPage() {
 
   const sortedRules = useMemo(() => {
     if (!sortKey) return rules;
+    const { nullsFirst } = getRulesTableSortConfig(sortKey);
     const copy = [...rules];
-    copy.sort((a, b) => {
-      const av = getRulesTableSortValue(sortKey, a);
-      const bv = getRulesTableSortValue(sortKey, b);
-      if (av < bv) return sortDir === "asc" ? -1 : 1;
-      if (av > bv) return sortDir === "asc" ? 1 : -1;
-      return 0;
-    });
+    copy.sort((a, b) =>
+      compareSortValues(
+        getRulesTableSortValue(sortKey, a),
+        getRulesTableSortValue(sortKey, b),
+        sortDir,
+        nullsFirst,
+      ),
+    );
     return copy;
   }, [rules, sortKey, sortDir]);
 

@@ -36,6 +36,7 @@ import {
   ModeBadge,
   type LabelColorDefinition,
 } from "@/components/RegistryRuleBadges";
+import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
 import type { RegistryRuleOut } from "@/lib/api";
 
 /** Column keys that carry a comparable value and can drive client sort. */
@@ -60,6 +61,13 @@ interface ColumnDef {
   defaultVisible: boolean;
   defaultWidth: number;
   sortable: boolean;
+  /** First-click sort direction for this column's header (B2-92). Defaults
+   *  to "asc" when omitted. */
+  defaultSortDir?: SortDirection;
+  /** When true, rows with a missing ("never") value for this column sort to
+   *  the TOP regardless of direction; omitted/false → they sort to the
+   *  bottom (B2-92). */
+  nullsFirst?: boolean;
   /** Icon-only columns stay locked to their natural width — no resize handle. */
   resizable?: boolean;
   headClassName?: string;
@@ -165,6 +173,9 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 320,
     sortable: true,
+    // Steward-first (B2-92): surface UNDOCUMENTED rules first — a missing
+    // description is a metadata gap worth closing, so nulls sort to the top.
+    nullsFirst: true,
     headClassName: "max-w-xs",
     renderHeader: (label) => label,
     renderCell: (r) => {
@@ -206,6 +217,10 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
+    // Most-revised rules first (B2-92): a high approved-version count flags a
+    // rule that has churned a lot and may warrant a look; never-approved (v0)
+    // rows sink to the bottom as nulls.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (r) =>
       r.version <= 0 ? (
@@ -222,6 +237,9 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 180,
     sortable: true,
+    // Steward-first (B2-92): un-stewarded rules are an ownership gap — surface
+    // them at the top, then A→Z through the named stewards.
+    nullsFirst: true,
     renderHeader: (label) => label,
     renderCell: (r) => <TruncatedCell text={r.steward || "—"} className="text-muted-foreground" />,
   },
@@ -258,6 +276,9 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultVisible: false,
     defaultWidth: 130,
     sortable: true,
+    // Steward-first (B2-92): uncategorized rules (no dimension) surface first
+    // as a taxonomy gap, then A→Z through the assigned dimensions.
+    nullsFirst: true,
     renderHeader: (label) => label,
     renderCell: (r, ctx) => {
       const dimension = getTag(r, RESERVED_DIMENSION_KEY);
@@ -308,34 +329,69 @@ const DEFAULT_ORDER: ColumnKey[] = [
   "actions",
 ];
 
+/** Lifecycle-status sort rank (B2-92): lower = more attention-needing, so a
+ *  first-click ASC sort surfaces the steward's action queue — awaiting
+ *  approval, then rejected/rework, then drafts — before the settled
+ *  (approved) and retired (deprecated) rules. */
+const STATUS_RANK: Record<string, number> = {
+  pending_approval: 0,
+  rejected: 1,
+  draft: 2,
+  approved: 3,
+  deprecated: 4,
+};
+
+/** Severity sort rank (B2-92): lower = more severe, so a first-click ASC sort
+ *  surfaces the highest-priority rules (Critical → Low). Unset severity is
+ *  returned as `null` by the getter and pinned last. */
+const SEVERITY_RANK: Record<string, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
+
 /** Returns the sortable value for a given column + rule, shared between
  *  this component's own click-to-sort handling and any caller that needs
- *  to pre-sort rows before pagination. */
-export function getRulesTableSortValue(key: RulesTableSortKey, r: RegistryRuleOut): string | number {
+ *  to pre-sort rows before pagination. `null` marks a missing/"never" value
+ *  that {@link compareSortValues} pins per the column's `nullsFirst` flag. */
+export function getRulesTableSortValue(key: RulesTableSortKey, r: RegistryRuleOut): SortValue {
   switch (key) {
     case "aiAuthorship":
-      return r.author_kind ?? "";
+      return r.author_kind || null;
     case "name":
       return (getTag(r, RESERVED_NAME_KEY) || r.rule_id).toLowerCase();
     case "description":
-      return getTag(r, RESERVED_DESCRIPTION_KEY).toLowerCase();
+      return getTag(r, RESERVED_DESCRIPTION_KEY).toLowerCase() || null;
     case "dimension":
-      return getTag(r, RESERVED_DIMENSION_KEY).toLowerCase();
-    case "severity":
-      return getTag(r, RESERVED_SEVERITY_KEY).toLowerCase();
+      return getTag(r, RESERVED_DIMENSION_KEY).toLowerCase() || null;
+    case "severity": {
+      const severity = getTag(r, RESERVED_SEVERITY_KEY).toLowerCase();
+      if (!severity) return null;
+      return SEVERITY_RANK[severity] ?? Object.keys(SEVERITY_RANK).length;
+    }
     case "status":
-      return r.status;
+      return STATUS_RANK[r.status] ?? Object.keys(STATUS_RANK).length;
     case "version":
-      return r.version;
+      return r.version > 0 ? r.version : null;
     case "steward":
-      return (r.steward ?? "").toLowerCase();
+      return (r.steward ?? "").toLowerCase() || null;
     case "createdBy":
-      return (r.created_by ?? "").toLowerCase();
+      return (r.created_by ?? "").toLowerCase() || null;
     case "updated":
-      return r.updated_at ?? "";
+      return r.updated_at || null;
     case "mode":
-      return r.mode;
+      return r.mode || null;
   }
+}
+
+/** Resolves a column's first-click direction + null placement (B2-92) from
+ *  its declarative `COLUMNS` config. Consumed by the overview route to seed
+ *  the sort direction on a fresh header click and to drive the null-aware
+ *  comparator. */
+export function getRulesTableSortConfig(key: RulesTableSortKey): SortColumnConfig {
+  const def = COLUMNS[key];
+  return { dir: def.defaultSortDir ?? "asc", nullsFirst: def.nullsFirst ?? false };
 }
 
 // Column visibility/order/width bookkeeping (persisted to localStorage,

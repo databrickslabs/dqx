@@ -16,12 +16,13 @@ import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
-import { ScoreBarCell, scoreSortValue } from "@/components/data-table/ScoreBarCell";
+import { ScoreBarCell } from "@/components/data-table/ScoreBarCell";
 import {
   STICKY_ACTIONS_HEAD_CLASS,
   STICKY_ACTIONS_CELL_CLASS,
   ACTIONS_COL_WIDTH,
 } from "@/components/data-table/sticky-actions";
+import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
 import type { MonitoredTableSummaryOut } from "@/lib/api";
 
 /** Column keys that carry a comparable value and can drive client sort. */
@@ -45,6 +46,12 @@ interface ColumnDef {
   defaultVisible: boolean;
   defaultWidth: number;
   sortable: boolean;
+  /** First-click sort direction (B2-92). Defaults to "asc" when omitted. */
+  defaultSortDir?: SortDirection;
+  /** When true, rows with a missing ("never") value sort to the TOP
+   *  regardless of direction; omitted/false → they sort to the bottom
+   *  (B2-92). */
+  nullsFirst?: boolean;
   resizable?: boolean;
   headClassName?: string;
   renderHeader(label: string): ReactNode;
@@ -163,6 +170,9 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
+    // Steward-first (B2-92): fewest checks first surfaces the thinnest
+    // coverage — the tables most exposed to unguarded data.
+    defaultSortDir: "asc",
     renderHeader: (label) => label,
     renderCell: (r) => <span className="tabular-nums">{r.check_count ?? 0}</span>,
   },
@@ -172,6 +182,9 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
+    // Steward-first (B2-92): fewest applied rules first — least-protected
+    // tables surface as coverage gaps.
+    defaultSortDir: "asc",
     renderHeader: (label) => label,
     renderCell: (r) => <span className="tabular-nums">{r.applied_rule_count ?? 0}</span>,
   },
@@ -185,6 +198,10 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 140,
     sortable: true,
+    // Steward-first (B2-92): lowest score first (worst data), and never-scored
+    // tables (no published run) pin to the BOTTOM — quality you don't have
+    // isn't a low score to act on.
+    defaultSortDir: "asc",
     renderHeader: (label) => label,
     renderCell: (r) => <ScoreBarCell score={r.score} />,
   },
@@ -196,6 +213,8 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
+    // Most-approved-version first (B2-92); never-approved (v0) pins last.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (r) => <VersionCell version={r.table.version ?? 0} />,
   },
@@ -205,6 +224,11 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 130,
     sortable: true,
+    // Steward-first (B2-92): stalest run first (oldest → newest), and
+    // NEVER-run tables pin to the TOP — a table with zero quality signal is
+    // the biggest blind spot, ahead of a merely-stale-but-run one.
+    defaultSortDir: "asc",
+    nullsFirst: true,
     renderHeader: (label) => label,
     renderCell: (r) => <RelativeTimeCell iso={r.table.last_run_at} />,
   },
@@ -223,6 +247,9 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 180,
     sortable: true,
+    // Steward-first (B2-92): un-stewarded tables (ownership gap) surface at
+    // the top, then A→Z through the named stewards.
+    nullsFirst: true,
     renderHeader: (label) => label,
     renderCell: (r) => <TruncatedCell text={r.table.steward || "—"} className="text-muted-foreground" />,
   },
@@ -260,39 +287,58 @@ const DEFAULT_ORDER: MonitoredTablesSortKey[] = [
   "status",
 ];
 
+/** Lifecycle-status sort rank (B2-92): lower = more attention-needing, so a
+ *  first-click ASC sort surfaces the steward's action queue first. */
+const STATUS_RANK: Record<string, number> = {
+  pending_approval: 0,
+  rejected: 1,
+  draft: 2,
+  approved: 3,
+  deprecated: 4,
+};
+
 /** Returns the sortable value for a given column + row, shared between this
- *  component's click-to-sort handling and any caller that pre-sorts rows. */
+ *  component's click-to-sort handling and any caller that pre-sorts rows.
+ *  `null` marks a missing/"never" value that {@link compareSortValues} pins
+ *  per the column's `nullsFirst` flag. */
 export function getMonitoredTablesSortValue(
   key: MonitoredTablesSortKey,
   r: MonitoredTableSummaryOut,
-): string | number {
+): SortValue {
   const fqn = splitFqn(r.table.table_fqn);
   switch (key) {
     case "catalog":
-      return fqn.catalog.toLowerCase();
+      return fqn.catalog.toLowerCase() || null;
     case "schema":
-      return fqn.schema.toLowerCase();
+      return fqn.schema.toLowerCase() || null;
     case "table":
-      return fqn.table.toLowerCase();
+      return fqn.table.toLowerCase() || null;
     case "description":
-      return "";
+      return null;
     case "checksCount":
       return r.check_count ?? 0;
     case "rulesCount":
       return r.applied_rule_count ?? 0;
     case "dqScore":
-      return scoreSortValue(r.score);
+      return r.score ?? null;
     case "version":
-      return r.table.version ?? 0;
+      return r.table.version && r.table.version > 0 ? r.table.version : null;
     case "lastRun":
-      return r.table.last_run_at ?? "";
+      return r.table.last_run_at || null;
     case "owner":
-      return (r.table.created_by ?? "").toLowerCase();
+      return (r.table.created_by ?? "").toLowerCase() || null;
     case "steward":
-      return (r.table.steward ?? "").toLowerCase();
+      return (r.table.steward ?? "").toLowerCase() || null;
     case "status":
-      return r.table.status;
+      return STATUS_RANK[r.table.status] ?? Object.keys(STATUS_RANK).length;
   }
+}
+
+/** Resolves a column's first-click direction + null placement (B2-92) from
+ *  its declarative `COLUMNS` config, for the overview route's sort handling. */
+export function getMonitoredTablesSortConfig(key: MonitoredTablesSortKey): SortColumnConfig {
+  const def = COLUMNS[key];
+  return { dir: def.defaultSortDir ?? "asc", nullsFirst: def.nullsFirst ?? false };
 }
 
 // v2: DQ Score went live (visible + sortable by default) — bumping the key

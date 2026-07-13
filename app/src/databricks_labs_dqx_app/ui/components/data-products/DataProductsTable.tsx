@@ -15,12 +15,13 @@ import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
-import { ScoreBarCell, scoreSortValue } from "@/components/data-table/ScoreBarCell";
+import { ScoreBarCell } from "@/components/data-table/ScoreBarCell";
 import {
   STICKY_ACTIONS_HEAD_CLASS,
   STICKY_ACTIONS_CELL_CLASS,
   ACTIONS_COL_WIDTH,
 } from "@/components/data-table/sticky-actions";
+import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
 import type { DataProductOut } from "@/lib/api";
 
 /** Column keys that carry a comparable value and can drive client sort.
@@ -46,6 +47,12 @@ interface ColumnDef {
   defaultVisible: boolean;
   defaultWidth: number;
   sortable: boolean;
+  /** First-click sort direction (B2-92). Defaults to "asc" when omitted. */
+  defaultSortDir?: SortDirection;
+  /** When true, rows with a missing ("never") value sort to the TOP
+   *  regardless of direction; omitted/false → they sort to the bottom
+   *  (B2-92). */
+  nullsFirst?: boolean;
   resizable?: boolean;
   headClassName?: string;
   renderHeader(label: string): ReactNode;
@@ -188,6 +195,9 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: false,
     defaultWidth: 280,
     sortable: true,
+    // Steward-first (B2-92): undocumented products (no description) surface
+    // first as a metadata gap, then A→Z.
+    nullsFirst: true,
     renderHeader: (label) => label,
     renderCell: (p) =>
       p.description ? (
@@ -211,6 +221,8 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
+    // Most-approved-version first (B2-92); never-approved (v0) pins last.
+    defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (p) => <VersionCell version={p.version ?? 0} />,
   },
@@ -220,6 +232,9 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 180,
     sortable: true,
+    // Steward-first (B2-92): un-stewarded products (ownership gap) surface at
+    // the top, then A→Z through the named stewards.
+    nullsFirst: true,
     renderHeader: (label) => label,
     renderCell: (p) =>
       p.steward ? <TruncatedCell text={p.steward} /> : <span className="text-muted-foreground">—</span>,
@@ -230,6 +245,9 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 150,
     sortable: true,
+    // Steward-first (B2-92): fewest tables first surfaces thin/incomplete
+    // products (including empty ones) that still need building out.
+    defaultSortDir: "asc",
     renderHeader: (label) => label,
     renderCell: (p) => <TablesCell product={p} />,
   },
@@ -239,6 +257,9 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
+    // Steward-first (B2-92): fewest rules first — least-protected products
+    // surface as coverage gaps.
+    defaultSortDir: "asc",
     renderHeader: (label) => label,
     renderCell: (p) => <span className="tabular-nums">{sumMembers(p, (r) => r)}</span>,
   },
@@ -248,6 +269,9 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 90,
     sortable: true,
+    // Steward-first (B2-92): fewest checks first surfaces the thinnest
+    // coverage across a product's tables.
+    defaultSortDir: "asc",
     renderHeader: (label) => label,
     renderCell: (p) => <span className="tabular-nums">{sumMembers(p, (_r, c) => c)}</span>,
   },
@@ -261,6 +285,9 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 140,
     sortable: true,
+    // Steward-first (B2-92): lowest score first (worst data); never-scored
+    // products pin to the BOTTOM — no published run yet is not a low score.
+    defaultSortDir: "asc",
     renderHeader: (label) => label,
     renderCell: (p) => <ScoreBarCell score={p.score} />,
   },
@@ -270,6 +297,10 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: true,
     defaultWidth: 120,
     sortable: true,
+    // Steward-first (B2-92): stalest run first (oldest → newest); NEVER-run
+    // products pin to the TOP as the biggest coverage blind spot.
+    defaultSortDir: "asc",
+    nullsFirst: true,
     renderHeader: (label) => label,
     renderCell: (p) => <RelativeTimeCell iso={p.last_run_at} />,
   },
@@ -279,26 +310,43 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     defaultVisible: false,
     defaultWidth: 110,
     sortable: true,
+    // Steward-first (B2-92): on-demand (unscheduled) products first — no
+    // automated monitoring is a gap worth noticing, ahead of the scheduled
+    // ones.
+    defaultSortDir: "asc",
     renderHeader: (label) => label,
     renderCell: (p) => <ScheduleCell product={p} />,
   },
 };
 
+/** Review-status sort rank (B2-92): lower = more attention-needing, so a
+ *  first-click ASC sort surfaces the steward's action queue — awaiting
+ *  approval, then approved-with-unpublished-edits, then rejected/rework and
+ *  drafts — before the settled (approved) products. */
+const STATUS_RANK: Record<string, number> = {
+  pending_approval: 0,
+  modified: 1,
+  rejected: 2,
+  draft: 3,
+  approved: 4,
+};
+
 /** Returns the sortable value for a given column + row — shared between
  *  this component's click-to-sort handling and any caller that needs to
- *  pre-sort rows. */
-export function getDataProductsSortValue(key: DataProductsSortKey, p: DataProductOut): string | number {
+ *  pre-sort rows. `null` marks a missing/"never" value that
+ *  {@link compareSortValues} pins per the column's `nullsFirst` flag. */
+export function getDataProductsSortValue(key: DataProductsSortKey, p: DataProductOut): SortValue {
   switch (key) {
     case "name":
-      return p.name.toLowerCase();
+      return p.name.toLowerCase() || null;
     case "description":
-      return (p.description ?? "").toLowerCase();
+      return (p.description ?? "").toLowerCase() || null;
     case "status":
-      return p.display_status ?? "";
+      return STATUS_RANK[p.display_status] ?? Object.keys(STATUS_RANK).length;
     case "version":
-      return p.version ?? 0;
+      return p.version && p.version > 0 ? p.version : null;
     case "steward":
-      return (p.steward ?? "").toLowerCase();
+      return (p.steward ?? "").toLowerCase() || null;
     case "tables":
       return p.member_count ?? 0;
     case "rules":
@@ -306,12 +354,19 @@ export function getDataProductsSortValue(key: DataProductsSortKey, p: DataProduc
     case "checks":
       return sumMembers(p, (_r, c) => c);
     case "dqScore":
-      return scoreSortValue(p.score);
+      return p.score ?? null;
     case "lastRun":
-      return p.last_run_at ? new Date(p.last_run_at).getTime() : -1;
+      return p.last_run_at ? new Date(p.last_run_at).getTime() : null;
     case "schedule":
       return p.schedule_cron ? 1 : 0;
   }
+}
+
+/** Resolves a column's first-click direction + null placement (B2-92) from
+ *  its declarative `COLUMNS` config, for the overview route's sort handling. */
+export function getDataProductsSortConfig(key: DataProductsSortKey): SortColumnConfig {
+  const def = COLUMNS[key];
+  return { dir: def.defaultSortDir ?? "asc", nullsFirst: def.nullsFirst ?? false };
 }
 
 const DEFAULT_ORDER: DataProductsSortKey[] = [

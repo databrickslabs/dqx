@@ -10,8 +10,10 @@ import { Pagination } from "@/components/Pagination";
 import {
   DataProductsTable,
   getDataProductsSortValue,
+  getDataProductsSortConfig,
   type DataProductsSortKey,
 } from "@/components/data-products/DataProductsTable";
+import { compareSortValues } from "@/components/data-table/sort";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -146,13 +148,16 @@ function DataProductsPage() {
 
   const handleHeaderClick = useCallback(
     (key: DataProductsSortKey) => {
+      // First click uses the column's steward-first default direction (B2-92);
+      // repeat clicks toggle to the opposite direction, then clear.
+      const { dir } = getDataProductsSortConfig(key);
       if (sortKey !== key) {
         setSortKey(key);
-        setSortDir("asc");
+        setSortDir(dir);
         return;
       }
-      if (sortDir === "asc") {
-        setSortDir("desc");
+      if (sortDir === dir) {
+        setSortDir(dir === "asc" ? "desc" : "asc");
         return;
       }
       setSortKey(null);
@@ -162,14 +167,16 @@ function DataProductsPage() {
 
   const sorted = useMemo(() => {
     if (!sortKey) return filtered;
+    const { nullsFirst } = getDataProductsSortConfig(sortKey);
     const copy = [...filtered];
-    copy.sort((a, b) => {
-      const av = getDataProductsSortValue(sortKey, a);
-      const bv = getDataProductsSortValue(sortKey, b);
-      if (av < bv) return sortDir === "asc" ? -1 : 1;
-      if (av > bv) return sortDir === "asc" ? 1 : -1;
-      return 0;
-    });
+    copy.sort((a, b) =>
+      compareSortValues(
+        getDataProductsSortValue(sortKey, a),
+        getDataProductsSortValue(sortKey, b),
+        sortDir,
+        nullsFirst,
+      ),
+    );
     return copy;
   }, [filtered, sortKey, sortDir]);
 

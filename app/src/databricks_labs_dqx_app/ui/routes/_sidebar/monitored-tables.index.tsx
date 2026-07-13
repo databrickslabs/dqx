@@ -10,8 +10,10 @@ import { Pagination } from "@/components/Pagination";
 import {
   MonitoredTablesTable,
   getMonitoredTablesSortValue,
+  getMonitoredTablesSortConfig,
   type MonitoredTablesSortKey,
 } from "@/components/monitored-tables/MonitoredTablesTable";
+import { compareSortValues } from "@/components/data-table/sort";
 import { AddMonitoredTableModal } from "@/components/monitored-tables/AddMonitoredTableModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -177,13 +179,16 @@ function MonitoredTablesPage() {
 
   const handleHeaderClick = useCallback(
     (key: MonitoredTablesSortKey) => {
+      // First click uses the column's steward-first default direction (B2-92);
+      // repeat clicks toggle to the opposite direction, then clear.
+      const { dir } = getMonitoredTablesSortConfig(key);
       if (sortKey !== key) {
         setSortKey(key);
-        setSortDir("asc");
+        setSortDir(dir);
         return;
       }
-      if (sortDir === "asc") {
-        setSortDir("desc");
+      if (sortDir === dir) {
+        setSortDir(dir === "asc" ? "desc" : "asc");
         return;
       }
       setSortKey(null);
@@ -193,14 +198,16 @@ function MonitoredTablesPage() {
 
   const sortedTables = useMemo(() => {
     if (!sortKey) return visibleTables;
+    const { nullsFirst } = getMonitoredTablesSortConfig(sortKey);
     const copy = [...visibleTables];
-    copy.sort((a, b) => {
-      const av = getMonitoredTablesSortValue(sortKey, a);
-      const bv = getMonitoredTablesSortValue(sortKey, b);
-      if (av < bv) return sortDir === "asc" ? -1 : 1;
-      if (av > bv) return sortDir === "asc" ? 1 : -1;
-      return 0;
-    });
+    copy.sort((a, b) =>
+      compareSortValues(
+        getMonitoredTablesSortValue(sortKey, a),
+        getMonitoredTablesSortValue(sortKey, b),
+        sortDir,
+        nullsFirst,
+      ),
+    );
     return copy;
   }, [visibleTables, sortKey, sortDir]);
 
