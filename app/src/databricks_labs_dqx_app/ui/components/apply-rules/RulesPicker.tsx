@@ -62,11 +62,6 @@ type ColumnKey =
 
 interface RenderCtx {
   labelDefinitions: LabelColorDefinition[];
-  /** Rule ids already applied to the target table — rendered checked +
-   *  disabled with an inline "already applied" badge (B2-115). */
-  appliedIds: Set<string>;
-  /** Translated "Already applied" badge label. */
-  appliedLabel: string;
 }
 
 interface ColumnDef extends ColumnLayoutDef {
@@ -124,19 +119,9 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultWidth: 240,
     sortable: true,
     renderHeader: (label) => label,
-    renderCell: (r, ctx) => {
-      const applied = ctx.appliedIds.has(r.rule_id);
-      return (
-        <span className="flex items-center gap-1.5 min-w-0">
-          <TruncatedCell text={getTag(r, RESERVED_NAME_KEY) || r.rule_id} className="font-medium text-sm" />
-          {applied && (
-            <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              {ctx.appliedLabel}
-            </span>
-          )}
-        </span>
-      );
-    },
+    renderCell: (r) => (
+      <TruncatedCell text={getTag(r, RESERVED_NAME_KEY) || r.rule_id} className="font-medium text-sm" />
+    ),
     sortValue: (r) => (getTag(r, RESERVED_NAME_KEY) || r.rule_id).toLowerCase(),
   },
   description: {
@@ -304,11 +289,10 @@ export interface RulesPickerProps {
 export function RulesPicker({ rules, labelDefinitions, selectedIds, appliedIds, onToggle, isLoading, isError, onRetry }: RulesPickerProps) {
   const { t } = useTranslation();
   const applied = useMemo(() => appliedIds ?? new Set<string>(), [appliedIds]);
+  // Kept for the row's screen-reader label only — the visible "already applied"
+  // badge was removed (B2-131); the disabled/checked row state conveys it visually.
   const appliedLabel = t("monitoredTables.ruleAlreadyApplied");
-  const ctx = useMemo<RenderCtx>(
-    () => ({ labelDefinitions, appliedIds: applied, appliedLabel }),
-    [labelDefinitions, applied, appliedLabel],
-  );
+  const ctx = useMemo<RenderCtx>(() => ({ labelDefinitions }), [labelDefinitions]);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [sortKey, setSortKey] = useState<ColumnKey | null>(null);
