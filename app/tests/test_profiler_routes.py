@@ -27,7 +27,11 @@ from databricks_labs_dqx_app.backend.models import (
     BatchProfileRunOut,
     ProfileRunOut,
 )
-from databricks_labs_dqx_app.backend.routes.v1.profiler import _classify_table_error, list_profile_runs
+from databricks_labs_dqx_app.backend.routes.v1.profiler import (
+    _classify_table_error,
+    _profile_run_type,
+    list_profile_runs,
+)
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 
 
@@ -264,6 +268,30 @@ class TestListProfileRunsTableFqnValidation:
         assert result == []
         job_svc.list_run_rows.assert_called_once()
         assert job_svc.list_run_rows.call_args.kwargs["source_table_fqn"] == "cat.sch.orders"
+
+    def test_run_type_derived_from_requesting_user(self, app_config: AppConfig) -> None:
+        """``dq_profiling_results`` has no ``run_type`` column, so the list route
+        derives it from the scheduler's ``requesting_user`` provenance — a
+        scheduler-launched run is "scheduled", an end-user run is "manual"."""
+        job_svc = create_autospec(JobService, instance=True)
+        job_svc.list_run_rows.return_value = [
+            {"run_id": "r1", "source_table_fqn": "cat.sch.t", "requesting_user": "scheduler:table:b1"},
+            {"run_id": "r2", "source_table_fqn": "cat.sch.t", "requesting_user": "alice@example.com"},
+        ]
+        result = list_profile_runs(job_svc, app_config)
+        assert [r.run_type for r in result] == ["scheduled", "manual"]
+
+
+class TestProfileRunTypeClassifier:
+    def test_scheduler_prefixed_user_is_scheduled(self) -> None:
+        assert _profile_run_type("scheduler:table:b1") == "scheduled"
+        assert _profile_run_type("scheduler:product:p1") == "scheduled"
+
+    def test_end_user_email_is_manual(self) -> None:
+        assert _profile_run_type("alice@example.com") == "manual"
+
+    def test_none_is_manual(self) -> None:
+        assert _profile_run_type(None) == "manual"
 
 
 # ---------------------------------------------------------------------------

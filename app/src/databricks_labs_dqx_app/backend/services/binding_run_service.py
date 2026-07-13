@@ -192,8 +192,9 @@ class BindingRunService:
         called ``dryrun`` — that is the frozen runner's task_type for
         every app-submitted check run, NOT a statement about the run
         being a preview. The authoritative draft/published signal is the
-        ``run_mode`` provenance tag stamped onto every check below (and
-        the runner reclassifies full-scan runs' ``run_type``). Approved
+        ``run_mode`` provenance tag stamped onto every check below; the
+        manual-vs-scheduled signal is the ``run_type`` derived from
+        *trigger* and threaded through the job config (see below). Approved
         runs submitted through this method are real monitoring runs and
         always run full-table.
 
@@ -242,6 +243,15 @@ class BindingRunService:
             sample_size = limit if limit is not None else DRAFT_RUN_SAMPLE_LIMIT_DEFAULT
 
         run_id = uuid4().hex[:16]
+        # Persisted ``run_type`` for the ``dq_validation_runs`` row — the
+        # Runs History "Manual"/"Scheduled" sub-label reads this. Derive it
+        # from the run-set trigger so a scheduler-fired binding run is
+        # recorded as ``scheduled`` while a UI-triggered run stays ``dryrun``
+        # (rendered as "Manual"). Threaded through the job config below so the
+        # runner stamps both the RUNNING placeholder and the terminal row with
+        # it — no longer inferred from the sample size, which cannot tell a
+        # manual full-table run from a scheduled one.
+        run_type = "scheduled" if trigger == "scheduled" else "dryrun"
         is_synthetic = table_fqn.startswith(_SQL_CHECK_PREFIX)
         sql_query: str | None = None
         if is_synthetic:
@@ -284,6 +294,7 @@ class BindingRunService:
                 "sample_size": sample_size,
                 "source_table_fqn": table_fqn,
                 "is_sql_check": sql_query is not None,
+                "run_type": run_type,
             }
             custom_metrics = self._settings_service.get_custom_metrics()
             if custom_metrics:
@@ -304,6 +315,7 @@ class BindingRunService:
                 source_table_fqn=table_fqn,
                 view_fqn=view_fqn,
                 sample_size=sample_size,
+                run_type=run_type,
                 job_run_id=job_run_id,
             )
         except Exception:

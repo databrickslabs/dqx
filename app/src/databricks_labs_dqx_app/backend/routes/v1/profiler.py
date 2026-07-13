@@ -44,6 +44,24 @@ _PROFILER_TABLE = "dq_profiling_results"
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
 
+# Prefix the scheduler stamps onto ``requesting_user`` for every run it
+# launches (see ``SchedulerService._submit_profile_run``:
+# ``f"scheduler:{schedule_name}"``). Manual profiler runs record the end
+# user's email instead, so this prefix is a reliable manual-vs-scheduled
+# discriminator.
+_SCHEDULER_USER_PREFIX = "scheduler:"
+
+
+def _profile_run_type(requesting_user: str | None) -> str:
+    """Classify a profiling run as ``scheduled`` vs ``manual`` for Runs History.
+
+    ``dq_profiling_results`` has no ``run_type`` column, so this is derived from
+    the ``requesting_user`` provenance the scheduler stamps rather than read
+    from the row. Persisting a real column would require a Delta migration on
+    ``dq_profiling_results`` — deliberately not added here.
+    """
+    return "scheduled" if (requesting_user or "").startswith(_SCHEDULER_USER_PREFIX) else "manual"
+
 
 def _refresh_run_timestamps_on_profile_success(
     monitored_tables: MonitoredTableService, source_table_fqn: str | None
@@ -149,6 +167,7 @@ def list_profile_runs(
                 columns_profiled=int(v) if (v := row.get("columns_profiled")) else None,
                 duration_seconds=float(v) if (v := row.get("duration_seconds")) else None,
                 requesting_user=row.get("requesting_user"),
+                run_type=_profile_run_type(row.get("requesting_user")),
                 canceled_by=row.get("canceled_by"),
                 updated_at=row.get("updated_at"),
                 created_at=row.get("created_at"),

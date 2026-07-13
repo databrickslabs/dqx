@@ -2202,6 +2202,8 @@ export type ProfileRunSummaryOutDurationSeconds = number | null;
 
 export type ProfileRunSummaryOutRequestingUser = string | null;
 
+export type ProfileRunSummaryOutRunType = string | null;
+
 export type ProfileRunSummaryOutCanceledBy = string | null;
 
 export type ProfileRunSummaryOutUpdatedAt = string | null;
@@ -2218,6 +2220,7 @@ export interface ProfileRunSummaryOut {
   columns_profiled?: ProfileRunSummaryOutColumnsProfiled;
   duration_seconds?: ProfileRunSummaryOutDurationSeconds;
   requesting_user?: ProfileRunSummaryOutRequestingUser;
+  run_type?: ProfileRunSummaryOutRunType;
   canceled_by?: ProfileRunSummaryOutCanceledBy;
   updated_at?: ProfileRunSummaryOutUpdatedAt;
   created_at?: ProfileRunSummaryOutCreatedAt;

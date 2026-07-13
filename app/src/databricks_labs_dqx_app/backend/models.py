@@ -1002,6 +1002,12 @@ class ProfileRunSummaryOut(BaseModel):
     columns_profiled: int | None = None
     duration_seconds: float | None = None
     requesting_user: str | None = None
+    # "scheduled" for scheduler-launched profiling runs, "manual" otherwise.
+    # Derived in the read path from ``requesting_user`` provenance because
+    # ``dq_profiling_results`` has no ``run_type`` column (a durable column
+    # would need a Delta migration). Drives the Runs History Manual/Scheduled
+    # sub-label, mirroring ``ValidationRunSummaryOut.run_type``.
+    run_type: str | None = None
     canceled_by: str | None = None
     updated_at: str | None = None
     created_at: str | None = None

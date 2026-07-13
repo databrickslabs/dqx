@@ -97,7 +97,9 @@ interface HistoryRun {
   requesting_user: string | null;
   created_at: string | null;
   updated_at: string | null;
-  /** validation only: 'dryrun' | 'scheduled'. */
+  /** manual/scheduled signal. Validation: 'dryrun' | 'scheduled' | 'preview'.
+   *  Profiling: 'manual' | 'scheduled' (derived server-side). Any non-'scheduled'
+   *  value renders as "Manual". */
   run_type: string | null;
   /** validation only: failure detail shown in the expansion. */
   error_message: string | null;
@@ -131,7 +133,7 @@ function profileToHistory(run: ProfileRunSummaryOut): HistoryRun {
     requesting_user: run.requesting_user ?? null,
     created_at: run.created_at ?? null,
     updated_at: run.updated_at ?? null,
-    run_type: null,
+    run_type: run.run_type ?? null,
     error_message: null,
     duration_seconds: run.duration_seconds ?? null,
     job_run_id: run.job_run_id ?? null,
@@ -932,11 +934,9 @@ function RunHistoryRow({
             <Badge variant={run.kind === "profiling" ? "secondary" : "outline"} className="text-[10px]">
               {run.kind === "profiling" ? t("runsHistory.typeProfiling") : t("runsHistory.typeValidation")}
             </Badge>
-            {run.kind === "validation" && (
-              <span className="text-[10px] text-muted-foreground">
-                {run.run_type === "scheduled" ? t("runsHistory.scheduled") : t("runsHistory.manual")}
-              </span>
-            )}
+            <span className="text-[10px] text-muted-foreground">
+              {run.run_type === "scheduled" ? t("runsHistory.scheduled") : t("runsHistory.manual")}
+            </span>
           </div>
         </TableCell>
         <TableCell>

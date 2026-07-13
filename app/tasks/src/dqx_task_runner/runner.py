@@ -413,7 +413,12 @@ def _run_dryrun(
     sample_size = config.get("sample_size", 1000)
     source_table_fqn = config.get("source_table_fqn", "")
     custom_metrics = _validate_custom_metrics(config.get("custom_metrics") or [])
-    run_type = "preview" if config.get("skip_history") else "dryrun"
+    # ``run_type`` distinguishes Manual (``dryrun``) from Scheduled
+    # (``scheduled``) in Runs History. It is threaded explicitly through the
+    # job config by the submitter (``BindingRunService.run_binding`` derives it
+    # from the run-set trigger); a preview run overrides everything. Manual
+    # UI/batch runs omit it and fall back to ``dryrun``.
+    run_type = "preview" if config.get("skip_history") else str(config.get("run_type") or "dryrun")
     result_table = f"{result_catalog}.{result_schema}.dq_validation_runs"
 
     start = time.time()
@@ -610,8 +615,6 @@ def _run_dryrun_sql_check(
         err_payload = [{"name": str(check_name), "message": "SQL check violation"}]
         sample_invalid = [{**row.asDict(recursive=True), "_errors": err_payload} for row in sample_rows]
 
-    if run_type == "dryrun" and sample_size == 0:
-        run_type = "scheduled"
     # SQL checks treat every violation as an error (no warning concept), so
     # ``error_rows == invalid_rows`` and ``warning_rows == 0``.
     result_row = spark.createDataFrame(
@@ -1062,6 +1065,7 @@ def _run_scheduled(
             requesting_user,
             result_catalog,
             result_schema,
+            run_type="scheduled",
             custom_metrics=custom_metrics,
             job_run_id=job_run_id,
         )

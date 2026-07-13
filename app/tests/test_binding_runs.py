@@ -217,8 +217,36 @@ class TestSubmission:
             source_table_fqn="cat.schema.tbl",
             view_fqn="dqx_studio_tmp.tmp_view_1",
             sample_size=0,
+            run_type="dryrun",
             job_run_id=555,
         )
+
+    def test_manual_trigger_persists_dryrun_run_type(self, service, monitored_tables, version_service, job_service):
+        """A UI-triggered run is recorded as ``dryrun`` (rendered "Manual")."""
+        monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
+        version_service.get_checks.return_value = _CHECKS
+
+        service.run_binding("b1", source="approved", version=2, user_email="alice@x", trigger="manual")
+
+        _, submit_kwargs = job_service.submit_run.call_args
+        assert submit_kwargs["config"]["run_type"] == "dryrun"
+        _, started_kwargs = job_service.record_dryrun_started.call_args
+        assert started_kwargs["run_type"] == "dryrun"
+
+    def test_scheduled_trigger_persists_scheduled_run_type(
+        self, service, monitored_tables, version_service, job_service
+    ):
+        """A scheduler-fired run threads ``run_type='scheduled'`` into the job
+        config and the RUNNING placeholder so Runs History shows "Scheduled"."""
+        monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
+        version_service.get_checks.return_value = _CHECKS
+
+        service.run_binding("b1", source="approved", version=2, user_email="scheduler", trigger="scheduled")
+
+        _, submit_kwargs = job_service.submit_run.call_args
+        assert submit_kwargs["config"]["run_type"] == "scheduled"
+        _, started_kwargs = job_service.record_dryrun_started.call_args
+        assert started_kwargs["run_type"] == "scheduled"
 
     def test_submit_failure_drops_the_temp_view(self, service, monitored_tables, version_service, job_service, view_service):
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
