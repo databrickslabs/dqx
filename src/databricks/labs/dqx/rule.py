@@ -234,7 +234,10 @@ class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleCol
     filter: str | None = None
     check_func_args: list[Any] = []
     check_func_kwargs: dict[str, Any] = {}
-    user_metadata: dict[str, str] | None = None
+    # Values are intentionally *Any*, not *str*: pre-migration dataclasses never enforced the type,
+    # so released checks carry non-string values (e.g. {"confidence": 0.95}). Table backends persist
+    # these faithfully, so narrowing to dict[str, str] would regress load of such checks.
+    user_metadata: dict[str, Any] | None = None
     message_expr: str | SparkColumn | None = None
 
     def __init__(self, **data: Any) -> None:
@@ -582,7 +585,9 @@ class DQForEachColRule(BaseModel, DQRuleTypeMixin):
     filter: str | None = None
     check_func_args: list[Any] = []
     check_func_kwargs: dict[str, Any] = {}
-    user_metadata: dict[str, str] | None = None
+    # See DQRule.user_metadata: kept permissive (dict[str, Any]) to preserve released behaviour
+    # of checks carrying non-string metadata values.
+    user_metadata: dict[str, Any] | None = None
     message_expr: str | SparkColumn | None = None
 
     def __init__(self, **data: Any) -> None:
