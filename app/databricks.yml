@@ -155,12 +155,12 @@ resources:
         # its SP fallback regardless — harmless once OBO works, and it
         # protects workspaces whose OAuth integration strips scopes.
         - dashboards.genie
-        # The admin Configuration → Compute section lists all-purpose clusters
-        # on-behalf-of the signed-in admin (ComputeService.list_clusters via
-        # get_obo_ws). Without this scope the OBO token can't call the Clusters
-        # API and ws.clusters.list() raises PermissionDenied ("required scopes:
-        # clusters"); the service degrades to [] but the picker can't populate.
-        - clusters
+        # NOTE: there is no valid Databricks Apps user-API scope for listing
+        # all-purpose clusters — the bundle API rejects `clusters` with a 400
+        # (INVALID_PARAMETER_VALUE), which failed the whole app-resource update.
+        # So the admin Compute section's cluster picker degrades to an empty
+        # list (ComputeService.list_clusters returns [] on the OBO
+        # PermissionDenied); do not re-add a `clusters` scope here (B2-105).
 
       resources:
         # Binding the bundle-managed warehouse to the app grants the app SP CAN_USE.
