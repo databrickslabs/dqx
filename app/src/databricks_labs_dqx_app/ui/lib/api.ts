@@ -96,7 +96,7 @@ export type AiGenerateRuleInColumns = string[] | null;
 export type AiGenerateRuleInSampleRowsAnyOfItem = { [key: string]: unknown };
 
 /**
- * Optional sample rows for context; only the first 5 are forwarded to the model
+ * Optional sample rows for context; up to AI_SAMPLE_ROW_LIMIT (500) are forwarded to the model
  */
 export type AiGenerateRuleInSampleRows = AiGenerateRuleInSampleRowsAnyOfItem[] | null;
 
@@ -113,7 +113,7 @@ export interface AiGenerateRuleIn {
   table_fqn?: AiGenerateRuleInTableFqn;
   /** Optional candidate column names */
   columns?: AiGenerateRuleInColumns;
-  /** Optional sample rows for context; only the first 5 are forwarded to the model */
+  /** Optional sample rows for context; up to AI_SAMPLE_ROW_LIMIT (500) are forwarded to the model */
   sample_rows?: AiGenerateRuleInSampleRows;
 }
 
@@ -341,6 +341,33 @@ export interface AppliedRuleOut {
   rule_name?: AppliedRuleOutRuleName;
   rule_dimension?: AppliedRuleOutRuleDimension;
   rule_severity?: AppliedRuleOutRuleSeverity;
+}
+
+/**
+ * Request body for applying a batch of profiler suggestions to a monitored table (B2-109).
+
+Each entry is the ``index`` of a suggestion from ``listProfilingSuggestions``.
+Applying is the ONLY path that resolves-or-creates + approves the underlying
+registry rules — selecting/showing suggestions creates nothing.
+ */
+export interface ApplyProfilingSuggestionsIn {
+  /**
+   * Indices of the profiler suggestions to apply (from listProfilingSuggestions).
+   * @minItems 1
+   */
+  indices: number[];
+}
+
+/**
+ * Result of a batch profiler-suggestion apply (B2-109).
+
+Reports partial success explicitly: ``applied`` holds the rules bound to the
+table and ``failed`` the per-index failures, so one unapplicable suggestion
+never aborts the rest.
+ */
+export interface ApplyProfilingSuggestionsOut {
+  applied?: AppliedRuleOut[];
+  failed?: ProfilingSuggestionApplyFailureOut[];
 }
 
 export type ApplyRuleInColumnMappingItem = {[key: string]: string};
@@ -2256,6 +2283,14 @@ export interface ProfilerConfig {
   llm_primary_key_detection?: boolean;
   max_null_ratio?: ProfilerConfigMaxNullRatio;
   max_empty_ratio?: ProfilerConfigMaxEmptyRatio;
+}
+
+/**
+ * One profiler suggestion that could not be applied during a batch apply.
+ */
+export interface ProfilingSuggestionApplyFailureOut {
+  index: number;
+  reason: string;
 }
 
 export type ProfilingSuggestionOutRuleName = string | null;
@@ -14883,33 +14918,36 @@ export function useListProfilingSuggestionsSuspense<TData = Awaited<ReturnType<t
 
 
 /**
- * Apply one profiler suggestion to the monitored table.
+ * Apply the selected profiler suggestions to the monitored table in one action.
 
 This is the ONLY path that resolves-or-creates + approves the underlying
-registry rule (via ``RegistryService.match_or_create_approved_rule`` —
-idempotent, validated, audited) before binding it to the table. Requires
-``APPLY`` on the monitored table (mirroring the ``applyRuleToTable`` gate)
-unless the caller is an admin/approver.
- * @summary Apply Profiling Suggestion
+registry rules (via ``RegistryService.match_or_create_approved_rule`` —
+idempotent, validated, audited) before binding them to the table. Selecting
+or listing suggestions creates nothing. Requires ``APPLY`` on the monitored
+table (mirroring the ``applyRuleToTable`` gate) unless the caller is an
+admin/approver. Partial failures are reported in the response body
+(``failed``) rather than aborting the whole request.
+ * @summary Apply Profiling Suggestions
  */
-export const applyProfilingSuggestion = (
+export const applyProfilingSuggestions = (
     bindingId: string,
-    index: number, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<AppliedRuleOut>> => {
+    applyProfilingSuggestionsIn: ApplyProfilingSuggestionsIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ApplyProfilingSuggestionsOut>> => {
     
     
     return axios.default.post(
-      `/api/v1/monitored-tables/${bindingId}/profile/suggestions/${index}/apply`,undefined,options
+      `/api/v1/monitored-tables/${bindingId}/profile/suggestions/apply`,
+      applyProfilingSuggestionsIn,options
     );
   }
 
 
 
-export const getApplyProfilingSuggestionMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyProfilingSuggestion>>, TError,{bindingId: string;index: number}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof applyProfilingSuggestion>>, TError,{bindingId: string;index: number}, TContext> => {
+export const getApplyProfilingSuggestionsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyProfilingSuggestions>>, TError,{bindingId: string;data: ApplyProfilingSuggestionsIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof applyProfilingSuggestions>>, TError,{bindingId: string;data: ApplyProfilingSuggestionsIn}, TContext> => {
 
-const mutationKey = ['applyProfilingSuggestion'];
+const mutationKey = ['applyProfilingSuggestions'];
 const {mutation: mutationOptions, axios: axiosOptions} = options ?
       options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
       options
@@ -14919,10 +14957,10 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applyProfilingSuggestion>>, {bindingId: string;index: number}> = (props) => {
-          const {bindingId,index} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applyProfilingSuggestions>>, {bindingId: string;data: ApplyProfilingSuggestionsIn}> = (props) => {
+          const {bindingId,data} = props ?? {};
 
-          return  applyProfilingSuggestion(bindingId,index,axiosOptions)
+          return  applyProfilingSuggestions(bindingId,data,axiosOptions)
         }
 
         
@@ -14930,23 +14968,23 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type ApplyProfilingSuggestionMutationResult = NonNullable<Awaited<ReturnType<typeof applyProfilingSuggestion>>>
-    
-    export type ApplyProfilingSuggestionMutationError = AxiosError<HTTPValidationError>
+    export type ApplyProfilingSuggestionsMutationResult = NonNullable<Awaited<ReturnType<typeof applyProfilingSuggestions>>>
+    export type ApplyProfilingSuggestionsMutationBody = ApplyProfilingSuggestionsIn
+    export type ApplyProfilingSuggestionsMutationError = AxiosError<HTTPValidationError>
 
     /**
- * @summary Apply Profiling Suggestion
+ * @summary Apply Profiling Suggestions
  */
-export const useApplyProfilingSuggestion = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyProfilingSuggestion>>, TError,{bindingId: string;index: number}, TContext>, axios?: AxiosRequestConfig}
+export const useApplyProfilingSuggestions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyProfilingSuggestions>>, TError,{bindingId: string;data: ApplyProfilingSuggestionsIn}, TContext>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof applyProfilingSuggestion>>,
+        Awaited<ReturnType<typeof applyProfilingSuggestions>>,
         TError,
-        {bindingId: string;index: number},
+        {bindingId: string;data: ApplyProfilingSuggestionsIn},
         TContext
       > => {
 
-      const mutationOptions = getApplyProfilingSuggestionMutationOptions(options);
+      const mutationOptions = getApplyProfilingSuggestionsMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

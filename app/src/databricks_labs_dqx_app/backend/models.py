@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     # Imported for typing only: a runtime import would form a cycle
     # (models -> profiling_suggestion_service -> profiling_rule_builder -> models,
     # whose ``CheckFunctionDef`` is defined far below this line).
-    from .services.profiling_suggestion_service import ProfilingSuggestion
+    from .services.profiling_suggestion_service import BatchApplyResult, ProfilingSuggestion
 
 
 class VersionOut(BaseModel):
@@ -917,6 +917,48 @@ class ProfilingSuggestionOut(BaseModel):
             dimension=suggestion.dimension,
             severity=suggestion.severity,
             column_mapping=suggestion.column_mapping,
+        )
+
+
+class ApplyProfilingSuggestionsIn(BaseModel):
+    """Request body for applying a batch of profiler suggestions to a monitored table (B2-109).
+
+    Each entry is the ``index`` of a suggestion from ``listProfilingSuggestions``.
+    Applying is the ONLY path that resolves-or-creates + approves the underlying
+    registry rules — selecting/showing suggestions creates nothing.
+    """
+
+    indices: list[int] = Field(
+        min_length=1,
+        description="Indices of the profiler suggestions to apply (from listProfilingSuggestions).",
+    )
+
+
+class ProfilingSuggestionApplyFailureOut(BaseModel):
+    """One profiler suggestion that could not be applied during a batch apply."""
+
+    index: int
+    reason: str
+
+
+class ApplyProfilingSuggestionsOut(BaseModel):
+    """Result of a batch profiler-suggestion apply (B2-109).
+
+    Reports partial success explicitly: ``applied`` holds the rules bound to the
+    table and ``failed`` the per-index failures, so one unapplicable suggestion
+    never aborts the rest.
+    """
+
+    applied: list[AppliedRuleOut] = Field(default_factory=list)
+    failed: list[ProfilingSuggestionApplyFailureOut] = Field(default_factory=list)
+
+    @classmethod
+    def from_domain(cls, result: "BatchApplyResult") -> "ApplyProfilingSuggestionsOut":
+        return cls(
+            applied=[AppliedRuleOut.from_domain(a) for a in result.applied],
+            failed=[
+                ProfilingSuggestionApplyFailureOut(index=f.index, reason=f.reason) for f in result.failed
+            ],
         )
 
 

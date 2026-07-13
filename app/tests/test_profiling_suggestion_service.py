@@ -33,6 +33,7 @@ from databricks_labs_dqx_app.backend.services.profiling_suggestion_service impor
     ProfilingSuggestionService,
     SuggestionNotApplicableError,
 )
+from databricks_labs_dqx_app.backend.services.apply_rules_service import RuleNotPublishedError
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 
 
@@ -205,3 +206,89 @@ class TestApplySuggestion:
         with pytest.raises(SuggestionNotApplicableError):
             svc.apply_suggestion("b1", 0, "user@x")
         apply_rules.apply_rule.assert_not_called()
+
+
+class TestApplySuggestions:
+    """Batch apply (B2-109): apply the selected set in one pass, robust to partial failure."""
+
+    def test_batch_creates_and_binds_selected_set(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile(
+            [_check("is_not_null", {"column": "amount"}), _check("is_not_null", {"column": "name"})]
+        )
+        registry.match_or_create_approved_rule.return_value = (_approved_rule("prof1"), True)
+        apply_rules.apply_rule.side_effect = [
+            AppliedRule(id="ar1", binding_id="b1", rule_id="prof1", column_mapping=[{"column": "amount"}]),
+            AppliedRule(id="ar2", binding_id="b1", rule_id="prof1", column_mapping=[{"column": "name"}]),
+        ]
+        svc = _service(monitored_tables, registry, apply_rules)
+
+        result = svc.apply_suggestions("b1", [0, 1], "user@x")
+
+        assert len(result.applied) == 2
+        assert result.failed == []
+        assert registry.match_or_create_approved_rule.call_count == 2
+        assert apply_rules.apply_rule.call_count == 2
+
+    def test_batch_dedupes_repeated_index(self, monitored_tables, registry, apply_rules):
+        # Idempotency: the same index selected twice never creates or binds twice.
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile([_check("is_not_null", {"column": "amount"})])
+        registry.match_or_create_approved_rule.return_value = (_approved_rule("prof1"), True)
+        apply_rules.apply_rule.return_value = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="prof1", column_mapping=[{"column": "amount"}]
+        )
+        svc = _service(monitored_tables, registry, apply_rules)
+
+        result = svc.apply_suggestions("b1", [0, 0], "user@x")
+
+        assert len(result.applied) == 1
+        registry.match_or_create_approved_rule.assert_called_once()
+        apply_rules.apply_rule.assert_called_once()
+
+    def test_batch_reports_partial_failure(self, monitored_tables, registry, apply_rules):
+        # A good suggestion applies; an out-of-range one is reported, not raised.
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile([_check("is_not_null", {"column": "amount"})])
+        registry.match_or_create_approved_rule.return_value = (_approved_rule("prof1"), True)
+        apply_rules.apply_rule.return_value = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="prof1", column_mapping=[{"column": "amount"}]
+        )
+        svc = _service(monitored_tables, registry, apply_rules)
+
+        result = svc.apply_suggestions("b1", [0, 9], "user@x")
+
+        assert len(result.applied) == 1
+        assert len(result.failed) == 1
+        assert result.failed[0].index == 9
+
+    def test_batch_non_approved_duplicate_reported_not_raised(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile([_check("is_not_null", {"column": "amount"})])
+        registry.match_or_create_approved_rule.return_value = (None, False)
+        svc = _service(monitored_tables, registry, apply_rules)
+
+        result = svc.apply_suggestions("b1", [0], "user@x")
+
+        assert result.applied == []
+        assert len(result.failed) == 1
+        apply_rules.apply_rule.assert_not_called()
+
+    def test_batch_reports_apply_rule_error(self, monitored_tables, registry, apply_rules):
+        # An apply-time failure (e.g. rule not published) is captured per-index.
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile([_check("is_not_null", {"column": "amount"})])
+        registry.match_or_create_approved_rule.return_value = (_approved_rule("prof1"), True)
+        apply_rules.apply_rule.side_effect = RuleNotPublishedError("not published")
+        svc = _service(monitored_tables, registry, apply_rules)
+
+        result = svc.apply_suggestions("b1", [0], "user@x")
+
+        assert result.applied == []
+        assert len(result.failed) == 1
+
+    def test_batch_unknown_binding_raises(self, monitored_tables, registry, apply_rules):
+        monitored_tables.get.return_value = None
+        svc = _service(monitored_tables, registry, apply_rules)
+        with pytest.raises(BindingNotFoundError):
+            svc.apply_suggestions("missing", [0], "user@x")

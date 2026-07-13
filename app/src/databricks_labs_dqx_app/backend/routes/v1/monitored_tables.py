@@ -53,6 +53,8 @@ from databricks_labs_dqx_app.backend.models import (
     MonitoredTableSummaryOut,
     MonitoredTableVersionChecksOut,
     MonitoredTableVersionOut,
+    ApplyProfilingSuggestionsIn,
+    ApplyProfilingSuggestionsOut,
     ProfilingSuggestionOut,
     RegisterMonitoredTableIn,
     RunMonitoredTableIn,
@@ -89,7 +91,6 @@ from databricks_labs_dqx_app.backend.services.monitored_table_versions import Mo
 from databricks_labs_dqx_app.backend.services.profiling_suggestion_service import (
     BindingNotFoundError as ProfilingBindingNotFoundError,
     ProfilingSuggestionService,
-    SuggestionNotApplicableError,
 )
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggester
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
@@ -1139,27 +1140,29 @@ def list_profiling_suggestions(
 
 
 @router.post(
-    "/{binding_id}/profile/suggestions/{index}/apply",
-    response_model=AppliedRuleOut,
-    operation_id="applyProfilingSuggestion",
+    "/{binding_id}/profile/suggestions/apply",
+    response_model=ApplyProfilingSuggestionsOut,
+    operation_id="applyProfilingSuggestions",
     dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
 )
-def apply_profiling_suggestion(
+def apply_profiling_suggestions(
     binding_id: str,
-    index: int,
+    body: ApplyProfilingSuggestionsIn,
     svc: Annotated[ProfilingSuggestionService, Depends(get_profiling_suggestion_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
-) -> AppliedRuleOut:
-    """Apply one profiler suggestion to the monitored table.
+) -> ApplyProfilingSuggestionsOut:
+    """Apply the selected profiler suggestions to the monitored table in one action.
 
     This is the ONLY path that resolves-or-creates + approves the underlying
-    registry rule (via ``RegistryService.match_or_create_approved_rule`` —
-    idempotent, validated, audited) before binding it to the table. Requires
-    ``APPLY`` on the monitored table (mirroring the ``applyRuleToTable`` gate)
-    unless the caller is an admin/approver.
+    registry rules (via ``RegistryService.match_or_create_approved_rule`` —
+    idempotent, validated, audited) before binding them to the table. Selecting
+    or listing suggestions creates nothing. Requires ``APPLY`` on the monitored
+    table (mirroring the ``applyRuleToTable`` gate) unless the caller is an
+    admin/approver. Partial failures are reported in the response body
+    (``failed``) rather than aborting the whole request.
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
@@ -1171,18 +1174,10 @@ def apply_profiling_suggestion(
         principal_email=user_email,
     )
     try:
-        applied = svc.apply_suggestion(binding_id, index, user_email)
-        return AppliedRuleOut.from_domain(applied)
+        result = svc.apply_suggestions(binding_id, body.indices, user_email)
+        return ApplyProfilingSuggestionsOut.from_domain(result)
     except ProfilingBindingNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except SuggestionNotApplicableError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    except MappingIncompleteError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    except RuleNotPublishedError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to apply profiling suggestion to monitored table {binding_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to apply profiling suggestion: {e}")
+        logger.error(f"Failed to apply profiling suggestions to monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to apply profiling suggestions: {e}")

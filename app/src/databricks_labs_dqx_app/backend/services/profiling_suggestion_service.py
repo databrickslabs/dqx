@@ -24,6 +24,7 @@ page, NOT folded into the AI "Suggest rules" dialog.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -36,7 +37,11 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_name,
     get_rule_severity,
 )
-from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
+from databricks_labs_dqx_app.backend.services.apply_rules_service import (
+    ApplyRulesService,
+    MappingIncompleteError,
+    RuleNotPublishedError,
+)
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 
@@ -76,6 +81,33 @@ class ProfilingSuggestion:
     dimension: str | None
     severity: str | None
     column_mapping: ColumnMappingGroup = field(default_factory=dict)
+
+
+@dataclass
+class SuggestionApplyFailure:
+    """One profiler suggestion that could not be applied during a batch apply.
+
+    ``index`` mirrors the source-check position (as returned by
+    :meth:`ProfilingSuggestionService.list_suggestions`); ``reason`` is a
+    human-readable, non-sensitive explanation safe to surface to the client.
+    """
+
+    index: int
+    reason: str
+
+
+@dataclass
+class BatchApplyResult:
+    """Outcome of :meth:`ProfilingSuggestionService.apply_suggestions`.
+
+    Partial success is expected and reported explicitly: ``applied`` holds the
+    successfully bound rules and ``failed`` the per-index failures, so the
+    caller can toast an accurate count without one bad suggestion aborting the
+    rest.
+    """
+
+    applied: list[AppliedRule] = field(default_factory=list)
+    failed: list[SuggestionApplyFailure] = field(default_factory=list)
 
 
 class ProfilingSuggestionService:
@@ -194,6 +226,65 @@ class ProfilingSuggestionService:
             raise BindingNotFoundError(f"Monitored table not found: {binding_id}")
         profile = self._monitored_tables.get_latest_profile(detail.table.table_fqn)
         generated = profile.generated_rules if profile is not None else []
+        return self._apply_at(binding_id, generated, index, user_email)
+
+    def apply_suggestions(self, binding_id: str, indices: list[int], user_email: str) -> BatchApplyResult:
+        """Apply every profiler suggestion in *indices* to the monitored table in one pass.
+
+        Resolves the binding + latest profile once, then applies each selected
+        suggestion through the same single-item path as :meth:`apply_suggestion`
+        (:meth:`RegistryService.match_or_create_approved_rule` — match an
+        existing approved rule by structural fingerprint, else create + approve
+        one, idempotent and audited — followed by
+        :meth:`ApplyRulesService.apply_rule`). Duplicate indices are collapsed so
+        a rule is never created or bound twice for the same selection.
+
+        Robust to partial failure: a suggestion that can't be applied (no longer
+        available, unmappable, or a same-fingerprint rule that isn't published)
+        is recorded in :attr:`BatchApplyResult.failed` and does not abort the
+        rest — creation stays idempotent, so re-running is safe.
+
+        Args:
+            binding_id: The monitored table binding to apply the suggestions to.
+            indices: Positions of the source checks in the latest profile's
+                ``generated_rules`` (as returned by :meth:`list_suggestions`).
+            user_email: The actor applying the suggestions — attributed as the
+                rule/application author and in the registry audit log.
+
+        Returns:
+            A :class:`BatchApplyResult` with the applied rules and per-index failures.
+
+        Raises:
+            BindingNotFoundError: *binding_id* does not exist.
+        """
+        detail = self._monitored_tables.get(binding_id)
+        if detail is None:
+            raise BindingNotFoundError(f"Monitored table not found: {binding_id}")
+        profile = self._monitored_tables.get_latest_profile(detail.table.table_fqn)
+        generated = profile.generated_rules if profile is not None else []
+
+        result = BatchApplyResult()
+        seen: set[int] = set()
+        for index in indices:
+            if index in seen:
+                continue
+            seen.add(index)
+            try:
+                result.applied.append(self._apply_at(binding_id, generated, index, user_email))
+            except (SuggestionNotApplicableError, MappingIncompleteError, RuleNotPublishedError, RuntimeError) as e:
+                result.failed.append(SuggestionApplyFailure(index=index, reason=str(e)))
+        return result
+
+    def _apply_at(
+        self, binding_id: str, generated: Sequence[object], index: int, user_email: str
+    ) -> AppliedRule:
+        """Resolve-or-create + approve the suggestion at *index* and bind it (shared apply path).
+
+        This is the single point that mints/approves a registry rule for the
+        profile-page suggestion flow (via
+        :meth:`RegistryService.match_or_create_approved_rule`) — used by both
+        :meth:`apply_suggestion` and :meth:`apply_suggestions`.
+        """
         if index < 0 or index >= len(generated):
             raise SuggestionNotApplicableError("Profiler suggestion is no longer available.")
 
