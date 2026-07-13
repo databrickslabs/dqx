@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useReducedMotion } from "motion/react";
 import type { LucideIcon } from "lucide-react";
 import { ArrowDown, ArrowUp, Boxes, HelpCircle, LineChart, Library, Loader2, Minus, Table2 } from "lucide-react";
@@ -43,27 +43,18 @@ import { countUpValue, deltaDirection, deltaPoints, formatCount, formatScorePerc
  *   the same signal.
  */
 
-/**
- * The "At a Glance" count-up is an *entrance* animation: it should play once
- * per app session, not every time the section (re)mounts. Kept at module scope
- * so the flag survives the Suspense fallback→content swap, React StrictMode's
- * dev remount, and any query re-settle/refetch remount — none of which should
- * replay the entrance. Reduced-motion is handled separately in `useCountUp`.
- */
-let entranceHasPlayed = false;
-
 /** Animate a number from 0 → `target` (easeOutCubic) via rAF, powering the
- *  "At a Glance" count-up. `animate` gates the whole effect: when false (the
- *  entrance already played, or a later mount) the final value shows instantly.
- *  Re-runs when `target` changes so it always lands exactly on the real value —
- *  a refetch returning the same value leaves `target` unchanged and does not
- *  restart. `startDelayMs` staggers each card. Honours prefers-reduced-motion
- *  (final value, no ticking), mirroring `ScoreBox`'s count-up. */
-function useCountUp(target: number, animate: boolean, durationMs = 800, startDelayMs = 0): number {
+ *  "At a Glance" count-up. The effect is keyed on `target`, so it runs once on
+ *  each mount (a fresh Home visit replays the entrance, matching the trend
+ *  chart's mount-reveal) and re-runs only when `target` genuinely changes — a
+ *  background refetch returning the SAME value leaves `target` unchanged and
+ *  does NOT restart the tween. `startDelayMs` staggers each card. Honours
+ *  prefers-reduced-motion (final value, no ticking), mirroring `ScoreBox`. */
+function useCountUp(target: number, durationMs = 800, startDelayMs = 0): number {
   const reduce = useReducedMotion();
   const [v, setV] = useState(target);
   useEffect(() => {
-    if (reduce || !animate) {
+    if (reduce) {
       setV(target);
       return;
     }
@@ -79,8 +70,8 @@ function useCountUp(target: number, animate: boolean, durationMs = 800, startDel
     setV(0);
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [target, durationMs, startDelayMs, reduce, animate]);
-  return reduce || !animate ? target : v;
+  }, [target, durationMs, startDelayMs, reduce]);
+  return reduce ? target : v;
 }
 
 /** The four stat cards, in display order. Static chrome (label + icon) so the
@@ -231,21 +222,16 @@ function HomeStatsContent({ sectionLabelClass }: { sectionLabelClass: string }) 
   // only shown when the global Results surface is actually enabled.
   const globalResultsEnabled = useGlobalResultsEnabled();
 
-  // "At a Glance" entrance: a staggered count-up of each number that runs
-  // EXACTLY ONCE, when the real stats first arrive. `shouldAnimate` is frozen
-  // at first render from the module-scoped `entranceHasPlayed` flag, so the
-  // entrance does not replay on the skeleton→data swap, a background refetch /
-  // re-settle remount, or React StrictMode's dev remount; those later mounts
-  // render the final values instantly. The card chrome no longer fades in (see
-  // `StatCard`), so there is no skeleton→content opacity flash.
-  const shouldAnimate = useRef(!entranceHasPlayed).current;
-  useEffect(() => {
-    entranceHasPlayed = true;
-  }, []);
-  const rulesA = useCountUp(rule_count ?? 0, shouldAnimate, 800, 0);
-  const tablesA = useCountUp(monitored_table_count ?? 0, shouldAnimate, 800, 70);
-  const spacesA = useCountUp(table_space_count ?? 0, shouldAnimate, 800, 140);
-  const scoreA = useCountUp(score == null ? 0 : score * 100, shouldAnimate, 800, 210);
+  // "At a Glance" entrance: a staggered count-up of each number that runs once
+  // per mount, so a fresh Home visit replays it (like the trend chart below).
+  // Because each count-up is keyed on its target value, the skeleton→data swap
+  // and a same-value background refetch within a visit don't restart the tween
+  // — only a genuine value change or a fresh mount animates. The card chrome no
+  // longer fades in (see `StatCard`), so there is no skeleton→content flash.
+  const rulesA = useCountUp(rule_count ?? 0, 800, 0);
+  const tablesA = useCountUp(monitored_table_count ?? 0, 800, 70);
+  const spacesA = useCountUp(table_space_count ?? 0, 800, 140);
+  const scoreA = useCountUp(score == null ? 0 : score * 100, 800, 210);
 
   const valueFor: Record<string, string> = {
     tables: formatCount(tablesA),
