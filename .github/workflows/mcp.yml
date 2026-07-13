@@ -7,14 +7,13 @@
 # acceptance action exactly like the other integration workflows.
 name: mcp
 
+# Runs on every PR (no `paths:` filter), like the anomaly and acceptance suites: the MCP server
+# exercises the DQX library end-to-end, so a change anywhere in the library, its packaging, or the
+# shared test/CI plumbing can break it. Running always also means the `mcp` Codecov flag is uploaded
+# for every commit, so those files never drop out of a report for want of a carryforward rule.
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    paths:
-      - "mcp-server/**"
-      - "src/databricks/labs/dqx/**" # the runner installs the in-repo DQX wheel
-      - "tests/integration_mcp/**"
-      - ".github/workflows/mcp.yml"
   merge_group:
     types: [checks_requested]
 
@@ -56,12 +55,12 @@ jobs:
       - name: Pre-build DQX wheel
         uses: ./.github/actions/prebuild-wheel
 
-      # No code-coverage upload here on purpose. Unlike the anomaly/integration suites — whose code
-      # runs *in the pytest process* (databricks-connect) so `coverage` can measure it — this suite
-      # drives the MCP server in the deployed Databricks App and the runner in a job, both *remote*.
-      # Nothing under coverage runs locally, so an upload would only report those modules at 0% and
-      # drag the PR's Codecov numbers down. This mirrors the sibling DQX Studio app (`make app-test`),
-      # which likewise runs its tests in CI without a Codecov upload.
+      # Coverage for this suite is collected REMOTELY, unlike the anomaly/integration suites whose
+      # code runs in the pytest process (databricks-connect): the server runs in a deployed
+      # Databricks App and the runner in a serverless job, so a test-only bootstrap wheel traces
+      # them there and ships the data back through a UC volume. The test downloads it before
+      # teardown; the steps after the test merge and upload it. See
+      # tests/integration_mcp/coverage_bootstrap/README.md.
 
       # Required for the DAB (Databricks Asset Bundle) deploy the MCP suite runs (ci_deploy.sh).
       # The CLI lands on PATH (via GITHUB_PATH) for the acceptance action's test subprocess.
@@ -82,3 +81,26 @@ jobs:
           # *deploying identity* (resolved via `databricks current-user me`), so run_as == the job's
           # creator and needs no servicePrincipal.user grant. A real deploy would instead pass a
           # dedicated least-privilege SP via DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID.
+          #
+          # Opts this deploy into coverage collection: ci_deploy.sh picks the dev-coverage bundle
+          # target and installs the bootstrap wheel into the app, and the conftest downloads the
+          # data files. "1" means "enabled, derive the directory" (<results_volume>/coverage).
+          DQX_MCP_COVERAGE_DIR: "1"
+
+      - name: Merge remote coverage and convert to XML
+        # The test downloaded the remote .coverage.* files into the repo root; combine must run from
+        # there, because a [paths] rule whose rewritten target does not exist on disk is silently
+        # skipped. `--keep` preserves the inputs so a bad merge stays debuggable, and `|| true` on
+        # combine keeps a legitimately skipped suite from failing the job for the wrong reason.
+        run: |
+          ls -la .coverage.* 2>/dev/null || echo "no remote coverage data files were downloaded"
+          uv run coverage combine --rcfile=tests/integration_mcp/.coveragerc --keep || true
+          uv run coverage xml --rcfile=tests/integration_mcp/.coveragerc -o coverage-combined.xml
+          uv run coverage report --rcfile=tests/integration_mcp/.coveragerc
+
+      - name: Publish test coverage
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
+        with:
+          use_oidc: true
+          files: coverage-combined.xml
+          flags: mcp

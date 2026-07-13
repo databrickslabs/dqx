@@ -18,9 +18,11 @@ import requests
 
 from tests.integration_mcp.conftest import (
     AI_QUERY_ENDPOINT,
+    CONTRACT_YAML,
     McpClient,
     _mcp_request,
     _tool_payload,
+    collect_remote_coverage,
     deploy_mcp_app,
     seed_demo_data,
     wait_until_ready,
@@ -128,6 +130,30 @@ def _assert_agent_discovers_tools(
     assert any(col in final_text.lower() for col in ("order_id", "customer_id", "status", "amount", "column"))
 
 
+def _assert_contract_sources(client: McpClient, contract_file: str) -> None:
+    """generate_rules_from_contract accepts a volume path OR inline text, and exactly one of them.
+
+    The inline path matters for agents that hold a contract in context rather than on a volume: the
+    server stages the text to the results volume before the runner reads it. The either/or errors are
+    part of the tool's contract, so an agent gets a clear message instead of a silent wrong answer.
+    """
+    inline = client.call("generate_rules_from_contract", {"contract_content": CONTRACT_YAML})
+    assert inline["count"] > 0, inline
+    assert client.call("validate_checks", {"checks": inline["rules"]})["valid"] is True
+
+    # Both sources, then neither: each must be rejected rather than guessed at. Tolerate either
+    # surfacing — the MCP error may raise in the client or come back as a non-successful payload.
+    ambiguous: list[dict] = [{"contract_file": contract_file, "contract_content": CONTRACT_YAML}, {}]
+    for arguments in ambiguous:
+        try:
+            result = client.call("generate_rules_from_contract", arguments)
+        except Exception:  # noqa: BLE001 — rejected via a raised MCP error, which is expected
+            continue
+        assert (
+            not result.get("rules") and result.get("status") != "completed"
+        ), f"ambiguous contract source accepted: {arguments.keys()} -> {result}"
+
+
 def _assert_persisting_tools(client: McpClient, table: str) -> None:
     """Exercise the tools that persist data — both write to the caller's private per-user schema.
 
@@ -198,10 +224,16 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         workflow = client.call("get_workflow")
         assert workflow.get("steps"), "get_workflow should describe the recommended steps"
 
-        # 3. list_available_checks — built-ins present.
+        # 3. list_available_checks — built-ins present, and the filter narrows the catalogue (an
+        #    agent relies on the filter to find a check without pulling all ~68 of them).
         listed = client.call("list_available_checks")
         assert listed["count"] > 0
         assert {"is_not_null", "is_in_range"} <= {c["name"] for c in listed["checks"]}
+        filtered = client.call("list_available_checks", {"filter": "range"})
+        assert 0 < filtered["count"] < listed["count"], filtered["count"]
+        assert all(
+            "range" in c["name"].lower() or "range" in (c.get("description") or "").lower() for c in filtered["checks"]
+        )
 
         # 4. validate_checks — accepts valid, rejects invalid.
         assert client.call("validate_checks", {"checks": EXPLICIT_CHECKS})["valid"] is True
@@ -210,10 +242,16 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         assert invalid["valid"] is False
         assert invalid["errors"], "an unknown check function should produce validation errors"
 
-        # 5. get_table_schema (direct SQL via OBO).
+        # 5. get_table_schema (direct SQL via OBO), then a table that does not exist — the SQL
+        #    failure must surface as an error, not an empty-but-successful schema.
         schema = client.call("get_table_schema", {"table_name": table})
         columns = {c["name"] for c in schema["columns"]}
         assert {"customer_id", "name", "email", "age", "country", "signup_date", "amount"} <= columns
+        try:
+            missing = client.call("get_table_schema", {"table_name": f"{data['schema']}.no_such_table"})
+            assert not missing.get("columns"), f"nonexistent table reported a schema: {missing}"
+        except Exception:  # noqa: BLE001 — a raised MCP error is the expected surfacing
+            pass
 
         # 6. profile_table (full scan) -> generate_rules; generated rules must validate.
         profile = client.call("profile_table", {"table_name": table, "options": {"sample_fraction": 1.0}})
@@ -222,10 +260,11 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         assert generated["count"] > 0
         assert client.call("validate_checks", {"checks": generated["rules"]})["valid"] is True
 
-        # 7. generate_rules_from_contract (reads the ODCS contract from the UC volume).
+        # 7. generate_rules_from_contract — both contract sources, and the either/or contract.
         from_contract = client.call("generate_rules_from_contract", {"contract_file": data["contract"]})
         assert from_contract["count"] > 0
         assert client.call("validate_checks", {"checks": from_contract["rules"]})["valid"] is True
+        _assert_contract_sources(client, data["contract"])
 
         # 8. run_checks — flags exactly the known-dirty rows.
         run = client.call("run_checks", {"table_name": table, "checks": EXPLICIT_CHECKS})
@@ -246,3 +285,7 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         # 11. Agent-in-the-loop — a real model must discover + invoke a tool (skip if unreachable).
         if _endpoint_reachable(host, get_token):
             _assert_agent_discovers_tools(host, get_token, get_app_token, app["url"], table)
+
+        # CI/test-only: stop the app so it flushes, then download remote coverage — BEFORE teardown
+        # destroys it (no-op unless DQX_MCP_COVERAGE_DIR is set — see collect_remote_coverage).
+        collect_remote_coverage(app["app_name"])

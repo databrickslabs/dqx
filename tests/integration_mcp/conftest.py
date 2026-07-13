@@ -30,7 +30,8 @@ from databricks.sdk import WorkspaceClient
 
 from tests.constants import TEST_CATALOG
 
-_MCP_SCRIPTS = Path(__file__).resolve().parents[2] / "mcp-server" / "scripts"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_MCP_SCRIPTS = _REPO_ROOT / "mcp-server" / "scripts"
 
 # Reuse the same Model Serving endpoint the anomaly AI-explanation tests use.
 AI_QUERY_ENDPOINT = os.environ.get("DQX_AI_QUERY_TEST_ENDPOINT", "databricks-claude-sonnet-4-5")
@@ -214,6 +215,9 @@ def deploy_mcp_app(host: str, get_token: Callable[[], str]) -> Iterator[dict[str
             # The SP the runner job actually runs as (the deploying identity when no override is set).
             # The seed grants it READ on the contract volume so generate_rules_from_contract can read it.
             "runner_service_principal": _emitted(result.stdout, "DQX_MCP_RUNNER_SERVICE_PRINCIPAL"),
+            # The deployed app's name — a coverage-enabled run stops it before teardown so its
+            # graceful shutdown flushes the final coverage data (see collect_remote_coverage).
+            "app_name": _emitted(result.stdout, "DQX_MCP_APP_NAME") or name_prefix,
         }
     finally:
         subprocess.run(["bash", str(_MCP_SCRIPTS / "ci_destroy.sh")], env=env(), check=False)
@@ -306,6 +310,63 @@ class McpClient:
             time.sleep(interval)
 
 
+def collect_remote_coverage(app_name: str) -> list[str]:
+    """CI/test-only: stop the app (forcing its final flush) and download all remote data files.
+
+    No-op unless DQX_MCP_COVERAGE_DIR is set. On a coverage-enabled deploy the app and every runner
+    job carry a test-only bootstrap wheel whose ``.pth`` traces from interpreter start and writes
+    ``.coverage.*`` files into ``<results_volume>/coverage`` (see
+    tests/integration_mcp/coverage_bootstrap). Stopping the app sends SIGTERM, so uvicorn drains and
+    the interpreter exits normally, running the bootstrap's atexit hook that saves + uploads the
+    app's complete data; a checkpoint thread bounds the loss if the platform's ~15s budget is
+    exceeded. Files land in the REPO ROOT, which is where ``coverage combine`` must run (a [paths]
+    rule whose rewritten target does not exist on disk is silently skipped). Best-effort
+    throughout: coverage collection must never fail the test run.
+    """
+    if not os.environ.get("DQX_MCP_COVERAGE_DIR"):
+        return []
+    ws = WorkspaceClient()
+    try:
+        ws.apps.stop_and_wait(app_name)
+        sys.stderr.write(f"coverage: app {app_name} stopped (final flush)\n")
+    except Exception as exc:  # noqa: BLE001 — best-effort: never fail the run over coverage
+        sys.stderr.write(f"coverage: app stop failed (non-fatal): {exc}\n")
+    downloaded: list[str] = []
+    try:
+        downloaded = _download_coverage_files(ws, _coverage_dir())
+    except Exception as exc:  # noqa: BLE001 — best-effort: never fail the run over coverage
+        sys.stderr.write(f"coverage download failed (non-fatal): {exc}\n")
+    sys.stderr.write(f"coverage files downloaded: {downloaded}\n")
+    return downloaded
+
+
+def _coverage_dir() -> str:
+    """UC-volume directory the remote data files are written to.
+
+    Mirrors the bootstrap's own derivation: ``<results_volume>/coverage``. DQX_MCP_COVERAGE_DIR may
+    name that directory directly (it is forwarded to the app/runner as an explicit override).
+    """
+    explicit = os.environ.get("DQX_MCP_COVERAGE_DIR", "").rstrip("/")
+    if explicit and explicit != "1":
+        return explicit
+    return f"/Volumes/{CATALOG}/dqx_mcp_tmp/mcp_results/coverage"
+
+
+def _download_coverage_files(ws: WorkspaceClient, coverage_dir: str) -> list[str]:
+    """Download every ``.coverage*`` data file from the UC volume dir into the repo root."""
+    downloaded: list[str] = []
+    for entry in ws.files.list_directory_contents(coverage_dir):
+        path = entry.path or ""
+        name = path.rsplit("/", 1)[-1]
+        if not path or not name.startswith(".coverage"):
+            continue
+        body = ws.files.download(path).contents
+        dest = _REPO_ROOT / name
+        dest.write_bytes(body.read() if body is not None else b"")
+        downloaded.append(str(dest))
+    return downloaded
+
+
 def wait_until_ready(client: McpClient, *, timeout: float = 180.0, interval: float = 5.0) -> None:
     """Poll tools/list until the freshly-deployed app is serving.
 
@@ -378,7 +439,9 @@ _CUSTOMERS_ROWS = """
  (NULL, 'Peggy',   'peggy@example.com',   39,  'US', DATE'2024-01-05', 180.00)
 """
 
-_CONTRACT_YAML = """\
+# Public so the test can also pass it as inline `contract_content` (the tool accepts either a
+# volume path or the contract text) without reaching into a private name.
+CONTRACT_YAML = """\
 kind: DataContract
 apiVersion: v3.0.2
 id: urn:datacontract:dqx_mcp_it:customers
@@ -424,7 +487,21 @@ def _resolve_warehouse_id(client: WorkspaceClient) -> str:
     env_wh = os.environ.get("DATABRICKS_WAREHOUSE_ID")
     if env_wh:
         return env_wh
-    warehouses = list(client.warehouses.list())
+    try:
+        warehouses = list(client.warehouses.list())
+    except Exception as exc:
+        # Self-diagnosing: surface WHICH identity/token shape the SDK actually used (claims only —
+        # never the raw token) so an auth failure here is attributable, not a mystery.
+        try:
+            claims = _decode_jwt_claims(_bearer_from(client.config))
+        except Exception as diag:  # noqa: BLE001 — diagnostics must not mask the original error
+            claims = {"diag_error": str(diag)}
+        sys.stderr.write(
+            f"seed: warehouses.list failed: {exc}\n"
+            f"seed: SDK auth_type={client.config.auth_type} host={client.config.host}\n"
+            f"seed: token RCA={claims}\n"
+        )
+        raise
     if not warehouses:
         pytest.skip("no SQL warehouse available to seed the demo dataset")
     running = [w for w in warehouses if w.state and w.state.value == "RUNNING"]
@@ -480,7 +557,7 @@ def seed_demo_data(app_sp: str, runner_sp: str = "") -> Iterator[dict[str, str]]
         run_sql(f"GRANT USE SCHEMA ON SCHEMA {fq_schema} TO `{runner_sp}`")
         run_sql(f"GRANT READ VOLUME ON VOLUME {fq_schema}.contracts TO `{runner_sp}`")
     contract_path = f"/Volumes/{CATALOG}/{schema}/contracts/customers_contract.yaml"
-    client.files.upload(contract_path, io.BytesIO(_CONTRACT_YAML.encode()), overwrite=True)
+    client.files.upload(contract_path, io.BytesIO(CONTRACT_YAML.encode()), overwrite=True)
 
     try:
         yield {

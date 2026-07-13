@@ -155,9 +155,53 @@ def publish_runner_wheel() -> str | None:
         return None
 
 
+def publish_extra_wheels() -> list[str]:
+    """Publish any additional local wheels the runner job installs from the volume. Never raises.
+
+    Only relevant to coverage-enabled test deploys: the `dev-coverage` target adds the test-only
+    coverage bootstrap wheel to the runner job's dependencies, and a job dependency must be an
+    absolute /Volumes path (there is no workspace.artifact_path to upload it for us). Production
+    deploys build no such wheel, so this is a no-op for them — the glob simply finds nothing.
+
+    Kept separate from publish_runner_wheel: that one is pinned by filename and refuses to publish on
+    drift, whereas these are auxiliary and matched by pattern. Failures are logged and swallowed, so a
+    missing extra wheel degrades coverage rather than breaking the app.
+    """
+    volume = _wheels_volume()
+    if not volume:
+        return []
+
+    roots: list[Path] = [Path.cwd(), Path.cwd() / ".build"]
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "requirements.txt").exists():
+            roots.extend([parent, parent / ".build"])
+            break
+
+    published: list[str] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for wheel in sorted(root.glob("dqx_mcp_coverage_bootstrap-*.whl")):
+            destination = f"{volume}/{wheel.name}"
+            try:
+                from databricks.sdk import WorkspaceClient
+
+                ws = WorkspaceClient()
+                with open(wheel, "rb") as handle:
+                    ws.files.upload(destination, handle, overwrite=True)
+                logger.info(f"Published auxiliary wheel to {destination}")
+                published.append(destination)
+            except Exception as exc:  # coverage instrumentation must never break the app
+                logger.warning(f"Could not publish {wheel.name} to {volume}: {exc}")
+        if published:
+            break
+    return published
+
+
 async def run_startup_tasks() -> None:
     """Run the app's startup work off the event loop. Never raises."""
     try:
         await asyncio.to_thread(publish_runner_wheel)
+        await asyncio.to_thread(publish_extra_wheels)
     except Exception as exc:  # belt and braces; publish_runner_wheel already guards
         logger.warning(f"Startup tasks failed (continuing): {exc}", exc_info=True)
