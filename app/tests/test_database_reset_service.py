@@ -14,6 +14,7 @@ These pin the destructive-scope guarantees that make the feature safe:
 from __future__ import annotations
 
 import re
+from unittest.mock import create_autospec
 
 import pytest
 
@@ -22,16 +23,27 @@ from databricks_labs_dqx_app.backend.migrations import (
     ANALYTICAL_TABLE_NAMES,
     OLTP_TABLE_NAMES,
 )
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.database_reset_service import DatabaseResetService
 
 _DELETE_RE = re.compile(r"^DELETE FROM cat\.sch\.([a-z_][a-z0-9_]*)")
 
 
 class _FakeExecutor:
-    """Records the SQL it is asked to execute; ``fqn`` is deterministic."""
+    """Records the SQL it is asked to execute; ``fqn`` is deterministic.
+
+    Also implements the ``query``/``upsert`` slice of ``OltpExecutorProtocol``
+    that :class:`AppSettingsService` uses, so the reset service's default
+    re-provisioning step (which seeds via an ``AppSettingsService`` built over
+    the OLTP executor) runs against this fake. ``query`` returns ``[]`` so the
+    ``dq_app_settings`` seeds read as absent (as they are right after a clear)
+    and get re-seeded; ``upsert`` records the keys written into
+    ``upserted_keys`` for assertions.
+    """
 
     def __init__(self, *, fail_on: set[str] | None = None) -> None:
         self.executed: list[str] = []
+        self.upserted_keys: list[str] = []
         self._fail_on = fail_on or set()
 
     def fqn(self, table: str) -> str:
@@ -42,6 +54,14 @@ class _FakeExecutor:
         m = _DELETE_RE.match(sql)
         if m and m.group(1) in self._fail_on:
             raise RuntimeError(f"boom on {m.group(1)}")
+
+    def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
+        # Settings are absent right after a clear — return nothing so the
+        # seed-if-absent routines fire.
+        return []
+
+    def upsert(self, table: str, key_cols: dict, value_cols: dict, **_: object) -> None:
+        self.upserted_keys.append(str(key_cols.get("setting_key")))
 
 
 def _targeted_tables(executed: list[str]) -> list[str]:
@@ -148,6 +168,75 @@ class TestBestEffort:
         assert "dq_metrics" not in result.cleared_tables
         # Every other table still cleared.
         assert set(result.cleared_tables) == set(ALL_APP_TABLE_NAMES) - {"dq_metrics"}
+
+
+class TestReprovisionDefaults:
+    """B2-113: a full reset must land on a fresh-install state, not an empty one.
+
+    The DELETE phase wipes ``dq_app_settings`` (including the seeded default
+    run review statuses and reserved dimension/severity label definitions);
+    the reset must RE-PROVISION those defaults using the same first-boot seed
+    routines so the app is immediately usable again.
+    """
+
+    def test_default_content_is_reseeded_after_clear(self):
+        # Real re-provisioning path: the service builds an AppSettingsService
+        # over the OLTP executor and re-runs the first-boot seed routines.
+        delta = _FakeExecutor()
+        oltp = _FakeExecutor()
+        result = DatabaseResetService(delta_sql=delta, oltp_sql=oltp).reset_all_data(performed_by="a@x")
+
+        # Both fresh-install defaults were re-seeded into dq_app_settings via
+        # the seed-if-absent routines (they read absent right after the clear).
+        assert "run_review_statuses_v1" in oltp.upserted_keys
+        assert "label_definitions" in oltp.upserted_keys
+        assert set(result.reprovisioned_defaults) == {"run_review_statuses", "label_definitions"}
+        assert not result.failed_tables
+
+    def test_reprovision_reuses_the_first_boot_seed_routines(self):
+        # Verify we invoke the SAME idempotent seed methods the app lifespan
+        # calls on first boot (rather than duplicating seed data), threading
+        # the acting admin through as updated_by.
+        app_settings = create_autospec(AppSettingsService, instance=True)
+        app_settings.seed_run_review_statuses_if_absent.return_value = True
+        app_settings.seed_reserved_label_definitions_if_absent.return_value = True
+
+        result = DatabaseResetService(
+            delta_sql=_FakeExecutor(), oltp_sql=_FakeExecutor(), app_settings=app_settings
+        ).reset_all_data(performed_by="admin@x.com")
+
+        app_settings.seed_run_review_statuses_if_absent.assert_called_once_with(user_email="admin@x.com")
+        app_settings.seed_reserved_label_definitions_if_absent.assert_called_once_with(user_email="admin@x.com")
+        assert set(result.reprovisioned_defaults) == {"run_review_statuses", "label_definitions"}
+
+    def test_a_failing_reseed_is_recorded_and_does_not_abort(self):
+        # Best-effort, mirroring the per-table clear contract: a re-seed error
+        # is surfaced under a ``seed:<name>`` key but never aborts the reset,
+        # and the other default still re-provisions.
+        app_settings = create_autospec(AppSettingsService, instance=True)
+        app_settings.seed_run_review_statuses_if_absent.side_effect = RuntimeError("boom")
+        app_settings.seed_reserved_label_definitions_if_absent.return_value = True
+
+        result = DatabaseResetService(
+            delta_sql=_FakeExecutor(), oltp_sql=_FakeExecutor(), app_settings=app_settings
+        ).reset_all_data(performed_by="a@x")
+
+        assert "seed:run_review_statuses" in result.failed_tables
+        assert "run_review_statuses" not in result.reprovisioned_defaults
+        assert result.reprovisioned_defaults == ["label_definitions"]
+        # The clear still succeeded for every table despite the re-seed error.
+        assert set(result.cleared_tables) == set(ALL_APP_TABLE_NAMES)
+
+    def test_migrations_and_admin_mappings_survive_a_full_reset(self):
+        # The two safety-scoping guarantees hold alongside re-provisioning:
+        # dq_migrations is never touched, and admin role mappings are kept.
+        delta = _FakeExecutor()
+        oltp = _FakeExecutor()
+        DatabaseResetService(delta_sql=delta, oltp_sql=oltp).reset_all_data(performed_by="a@x")
+
+        assert "dq_migrations" not in _targeted_tables(delta.executed + oltp.executed)
+        role_stmts = [s for s, t in zip(oltp.executed, _targeted_tables(oltp.executed)) if t == "dq_role_mappings"]
+        assert role_stmts == ["DELETE FROM cat.sch.dq_role_mappings WHERE role <> 'admin'"]
 
 
 class TestAudit:
