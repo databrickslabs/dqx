@@ -1146,6 +1146,12 @@ class ValidationRunSummaryOut(BaseModel):
     warning_rows: int | None = None
     created_at: str | None = None
     error_message: str | None = None
+    # Real wall-clock run duration in seconds, computed server-side from the
+    # RUNNING-placeholder → terminal-row span (see JobService.list_dryrun_rows).
+    # Mirrors ``ProfileRunSummaryOut.duration_seconds`` so the Runs History
+    # "Time" column matches the linked Databricks job. None when the run is
+    # still RUNNING or its true start can't be recovered (old runs).
+    duration_seconds: float | None = None
     # Databricks task-runner job run id (``dq_validation_runs.job_run_id``).
     # Combined with the workspace host + task-runner ``job_id`` (see
     # ``GET /config/workspace-host``) the UI builds a deep link to the run

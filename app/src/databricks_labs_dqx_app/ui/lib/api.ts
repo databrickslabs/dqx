@@ -3882,6 +3882,8 @@ export type ValidationRunSummaryOutCreatedAt = string | null;
 
 export type ValidationRunSummaryOutErrorMessage = string | null;
 
+export type ValidationRunSummaryOutDurationSeconds = number | null;
+
 export type ValidationRunSummaryOutJobRunId = number | null;
 
 export type ValidationRunSummaryOutChecksItem = { [key: string]: unknown };
@@ -3908,6 +3910,7 @@ export interface ValidationRunSummaryOut {
   warning_rows?: ValidationRunSummaryOutWarningRows;
   created_at?: ValidationRunSummaryOutCreatedAt;
   error_message?: ValidationRunSummaryOutErrorMessage;
+  duration_seconds?: ValidationRunSummaryOutDurationSeconds;
   job_run_id?: ValidationRunSummaryOutJobRunId;
   checks?: ValidationRunSummaryOutChecksItem[];
   review_status?: ValidationRunSummaryOutReviewStatus;
