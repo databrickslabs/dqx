@@ -30,6 +30,7 @@ import { useListRegistryRules, type RegistryRuleOut, type SuggestedRuleMappingOu
 import type { LabelDefinition } from "@/lib/api-custom";
 import { AI_BUTTON_BG, AI_GRADIENT_URL, AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
 import { SeverityBadge } from "@/components/RegistryRuleBadges";
+import { useDefaultAutoUpgrade } from "@/hooks/use-default-auto-upgrade";
 import { cn } from "@/lib/utils";
 import {
   RESERVED_DIMENSION_KEY,
@@ -93,6 +94,7 @@ export function AiSuggestionDialog({
   onApplied,
 }: AiSuggestionDialogProps) {
   const { t } = useTranslation();
+  const defaultAutoUpgrade = useDefaultAutoUpgrade();
   // Suggestions only carry `rule_id` — resolving it back to a full
   // `RegistryRuleOut` is what lets `newStagedRow` denormalize the rule's
   // name/dimension/severity tags onto the staged row the same way every
@@ -169,7 +171,7 @@ export function AiSuggestionDialog({
       .map((s) => {
         const rule = ruleById.get(s.rule_id);
         if (!rule) return null;
-        return newStagedRow(bindingId, rule, [s.column_mapping]);
+        return newStagedRow(bindingId, rule, [s.column_mapping], defaultAutoUpgrade);
       })
       .filter((row): row is NonNullable<typeof row> => row !== null);
     if (rows.length === 0) {

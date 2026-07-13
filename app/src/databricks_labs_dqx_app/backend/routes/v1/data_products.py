@@ -406,6 +406,10 @@ def submit_data_product(
         draft_run_gate.enforce(
             enabled=app_settings.get_require_draft_run_before_submit(),
             table_fqns=[m.table_fqn for m in gate_detail.members],
+            # B2-118: the product's ``updated_at`` is bumped on every membership
+            # / config edit (each flips the space back to ``draft``), so a member
+            # run must be newer than the last edit to count as a fresh test.
+            last_change_time=gate_detail.product.updated_at,
         )
         svc.submit(product_id, user_email)
         # Only the auto-approving modes (``disabled`` / ``auto_bypass``) consult

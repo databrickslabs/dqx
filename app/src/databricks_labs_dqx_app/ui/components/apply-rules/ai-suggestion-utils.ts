@@ -10,10 +10,32 @@
 
 import type { AppliedRuleOutColumnMappingItem, SuggestedRuleMappingOut } from "@/lib/api";
 
-/** Stable, order-independent key for one slot->column mapping group. */
+/** Normalize one slot key or column value for IDENTITY comparison only.
+ *
+ * The two sides of `filterAlreadyApplied` derive their mapping strings from
+ * different sources: an AI suggestion's column value comes from the live Unity
+ * Catalog schema the suggester read (`RuleSuggester._resolve_columns` ->
+ * `column.name`, original case), while a persisted applied rule's value is
+ * whatever was stored when it was bound — which for a profiler-applied rule can
+ * be a lower-cased column, and in general may differ in case or stray
+ * whitespace. UC column names are case-insensitive-unique, so `Email` and
+ * `email` are the SAME column; comparing the raw strings would leave the same
+ * logical (rule, column) uncompared and let the already-applied combo survive
+ * as a duplicate suggestion. Lower-casing + trimming both the slot key and the
+ * column value collapses those equivalent forms. Only the dedup key is
+ * normalized — display labels (`groupSuggestions` "by column") keep the raw
+ * value. */
+function normalizePart(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/** Stable, order-independent, case/whitespace-insensitive key for one
+ *  slot->column mapping group. Used as the single identity chokepoint by
+ *  `suggestionKey` and both sides of `filterAlreadyApplied`, so equivalent
+ *  mappings always compare equal regardless of which side produced them. */
 export function mappingSetKey(group: Record<string, string>): string {
   return Object.entries(group)
-    .map(([slot, column]) => `${slot}=${column}`)
+    .map(([slot, column]) => `${normalizePart(slot)}=${normalizePart(column)}`)
     .sort()
     .join(",");
 }
@@ -37,27 +59,41 @@ export interface AppliedRuleMappingLike {
 /**
  * Drop any suggestion whose (rule, slot->column set) is ALREADY applied in the
  * current editor state — including UNSAVED applies from this session. The
- * backend only excludes PERSISTED mappings, so without this a steward who
- * applies a few suggestions and re-runs Suggest would see the same (rule,
- * column) again. Suggestions with an empty mapping are never excluded here.
+ * backend only excludes PERSISTED mappings against the applied set at fetch
+ * time, so without this a steward who applies a few suggestions and re-opens
+ * the (prefetched, cached) Suggest dialog would see the same (rule, column)
+ * again.
+ *
+ * Column-less rules: a dataset-level rule applied with NO column binding is
+ * tracked by `rule_id`, so a re-suggested column-less rule dedups too (its
+ * mapping is empty, so there is no slot->column set to key on). A rule applied
+ * WITH a column does not populate the column-less set, so an empty-mapping
+ * suggestion of that same rule stays a genuinely-distinct suggestion.
  */
 export function filterAlreadyApplied<T extends SuggestedRuleMappingOut>(
   suggestions: T[],
   appliedRules: AppliedRuleMappingLike[],
 ): T[] {
   const appliedByRule = new Map<string, Set<string>>();
+  const appliedColumnLessRuleIds = new Set<string>();
   for (const rule of appliedRules) {
     const keys = appliedByRule.get(rule.rule_id) ?? new Set<string>();
+    let hadColumn = false;
     for (const group of rule.column_mapping ?? []) {
       const k = mappingSetKey(group);
-      if (k) keys.add(k);
+      if (k) {
+        keys.add(k);
+        hadColumn = true;
+      }
     }
     if (keys.size > 0) appliedByRule.set(rule.rule_id, keys);
+    if (!hadColumn) appliedColumnLessRuleIds.add(rule.rule_id);
   }
-  if (appliedByRule.size === 0) return suggestions;
+  if (appliedByRule.size === 0 && appliedColumnLessRuleIds.size === 0) return suggestions;
   return suggestions.filter((s) => {
     const key = mappingSetKey(s.column_mapping ?? {});
-    if (!key) return true; // empty mapping — never excluded here
+    // Column-less suggestion: dedup by rule_id against column-less applies only.
+    if (!key) return !appliedColumnLessRuleIds.has(s.rule_id);
     return !appliedByRule.get(s.rule_id)?.has(key);
   });
 }

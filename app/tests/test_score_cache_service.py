@@ -168,6 +168,8 @@ class TestRefreshProduct:
         assert _CACHE in stmt
         assert "m.product_id = 'p1'" in stmt
         assert "sc.score IS NOT NULL" in stmt
+        # Only APPROVED member tables feed the product aggregate.
+        assert "mt.status = 'approved'" in stmt
         values = _upsert_by_key(oltp)[("product", "p1")]
         assert values["score"] == 0.75
         assert values["failed_tests"] == 5
@@ -193,6 +195,17 @@ class TestRefreshGlobal:
         assert "score IS NOT NULL" in stmt
         values = _upsert_by_key(oltp)[("global", GLOBAL_SCOPE_KEY)]
         assert values["score"] == 0.9123
+
+    def test_only_approved_tables_feed_the_global_aggregate(self, svc, oltp, warehouse):
+        # The homepage overview chart is fed by this aggregate: a non-approved
+        # monitored table's cached score must never contribute. The aggregate
+        # JOINs the cache to dq_monitored_tables and restricts to status=approved.
+        oltp.query_dicts.return_value = [{"score": "0.8", "failed_tests": "2", "total_tests": "10"}]
+        svc.refresh_global()
+        stmt = oltp.query_dicts.call_args[0][0]
+        assert _MONITORED in stmt
+        assert "mt.table_fqn = sc.scope_key" in stmt
+        assert "mt.status = 'approved'" in stmt
 
 
 class TestRefreshAllForTables:

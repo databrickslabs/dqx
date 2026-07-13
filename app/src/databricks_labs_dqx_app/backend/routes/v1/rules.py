@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
@@ -41,6 +42,21 @@ _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTH
 _APPROVERS_ONLY = [UserRole.ADMIN, UserRole.RULE_APPROVER]
 
 _SQL_CHECK_PREFIX = "__sql_check__/"
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    """Parse an ISO timestamp string (as returned by the OLTP ``ts_text`` helper).
+
+    Returns ``None`` for an empty or unparsable value so the draft-run gate
+    degrades to its existence-only check rather than raising (B2-118).
+    """
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        logger.warning("Unparsable rule updated_at %r; treating as no last-change time", value)
+        return None
 
 
 def _refreeze_binding_for_rule(version_svc: MonitoredTableVersionService, rule_id: str) -> None:
@@ -402,6 +418,10 @@ def submit_for_approval(
         draft_run_gate.enforce(
             enabled=app_settings.get_require_draft_run_before_submit(),
             table_fqns=[gate_entry.table_fqn],
+            # B2-118: the materialized rule's ``updated_at`` (ISO text off the
+            # OLTP store) is its last-edit instant; a draft run must be newer to
+            # count as a fresh test. Unparsable / absent → existence-only.
+            last_change_time=_parse_iso(gate_entry.updated_at),
         )
         expected_version = body.expected_version if body else None
         entry = svc.set_status(rule_id, "pending_approval", user_email, expected_version)

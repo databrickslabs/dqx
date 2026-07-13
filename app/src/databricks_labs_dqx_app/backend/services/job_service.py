@@ -284,16 +284,38 @@ class JobService:
         - run_type is 'dryrun' (or NULL) AND the run has a RUNNING placeholder
           row (which is only written for Execute-tab / batch-from-catalog runs).
         Runs tagged 'preview' (new runner) are always excluded.
+
+        ``duration_seconds`` — the run's real wall-clock duration, computed
+        server-side so the Runs-History "Time" column matches the linked
+        Databricks job (B2-126). ``dq_validation_runs`` has no duration column;
+        instead each run keeps two rows: the app-written RUNNING placeholder
+        (``created_at`` stamped at job *submission*, so it spans cluster
+        startup) and the runner-appended terminal row (``updated_at`` = the
+        completion instant). The wall-clock span is therefore
+        ``MAX(COALESCE(updated_at, created_at)) - MIN(created_at)`` per run_id —
+        NOT ``MAX(created_at) - MIN(created_at)``, because the runner *back-dates*
+        the terminal row's ``created_at`` to ``completion - compute_duration``
+        (excluding startup) so a naive created-span would report only the
+        compute time (~28s) rather than the full job runtime (~1m17s). We emit
+        it only when a placeholder exists (``has_placeholder > 0``) and the span
+        is positive; otherwise it stays NULL so the UI shows a live tick (still
+        RUNNING) or an em dash (old runs whose true start can't be recovered)
+        rather than a misleading short value.
         """
         sql = (
-            f"SELECT {self._DRYRUN_COLS} "  # noqa: S608
+            f"SELECT {self._DRYRUN_COLS}, "  # noqa: S608
+            f"  CASE WHEN has_placeholder > 0 AND run_ended_at > run_started_at "
+            f"    THEN timestampdiff(SECOND, run_started_at, run_ended_at) "
+            f"    ELSE NULL END AS duration_seconds "
             f"FROM ("
             f"  SELECT *, "
             f"    ROW_NUMBER() OVER ("
             f"      PARTITION BY run_id "
             f"      ORDER BY CASE WHEN status = 'RUNNING' THEN 1 ELSE 0 END ASC, created_at DESC"
             f"    ) AS rn, "
-            f"    SUM(CASE WHEN status = 'RUNNING' THEN 1 ELSE 0 END) OVER (PARTITION BY run_id) AS has_placeholder "
+            f"    SUM(CASE WHEN status = 'RUNNING' THEN 1 ELSE 0 END) OVER (PARTITION BY run_id) AS has_placeholder, "
+            f"    MIN(created_at) OVER (PARTITION BY run_id) AS run_started_at, "
+            f"    MAX(COALESCE(updated_at, created_at)) OVER (PARTITION BY run_id) AS run_ended_at "
             f"  FROM {table}"
             f") WHERE rn = 1 "
             f"  AND COALESCE(run_type, 'dryrun') != 'preview' "

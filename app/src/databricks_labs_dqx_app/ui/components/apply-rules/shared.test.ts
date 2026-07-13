@@ -1,5 +1,39 @@
 import { describe, expect, test } from "bun:test";
-import { computeRunGating } from "./shared";
+import type { RegistryRuleOut } from "@/lib/api";
+import { computeRunGating, newStagedRow } from "./shared";
+
+// Minimal RegistryRuleOut for newStagedRow — only rule_id, version, and
+// user_metadata (reserved name/dimension/severity tags) are read.
+function fakeRule(version: number): RegistryRuleOut {
+  return {
+    rule_id: "r1",
+    version,
+    user_metadata: { name: "Not Null", dimension: "Completeness", severity: "High" },
+  } as unknown as RegistryRuleOut;
+}
+
+// B2-116: a freshly staged applied-rule row must reflect the admin
+// `default_auto_upgrade` setting — follow-latest when ON, pinned to the rule's
+// current version when OFF — instead of always seeding "Following latest".
+describe("newStagedRow pin seeding", () => {
+  test("default_auto_upgrade ON → follows latest (pinned_version null)", () => {
+    const row = newStagedRow("b1", fakeRule(3), [], true);
+    expect(row.pinned_version).toBeNull();
+  });
+
+  test("default_auto_upgrade OFF → pinned to the rule's current version", () => {
+    const row = newStagedRow("b1", fakeRule(3), [], false);
+    expect(row.pinned_version).toBe(3);
+  });
+
+  test("still denormalizes rule display tags and binding id", () => {
+    const row = newStagedRow("b1", fakeRule(2), [], false);
+    expect(row.binding_id).toBe("b1");
+    expect(row.rule_id).toBe("r1");
+    expect(row.rule_name).toBe("Not Null");
+    expect(row.rule_severity).toBe("High");
+  });
+});
 
 // P23-F fix: "Run now" executes the last-persisted (approved) snapshot and
 // must gate on the baseline count; "Run draft" executes the local staged

@@ -213,11 +213,6 @@ export function ProfileSuggestionsCard({ bindingId, canApply }: Props) {
                           <span className="block font-mono font-semibold truncate">
                             {cols || s.rule_name || s.function}
                           </span>
-                          {s.dimension && (
-                            <Badge variant="outline" className="text-[10px]">
-                              {s.dimension}
-                            </Badge>
-                          )}
                         </span>
                       </>
                     );

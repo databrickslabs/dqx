@@ -25,6 +25,10 @@ describe("mappingSetKey", () => {
   test("empty group yields empty key", () => {
     expect(mappingSetKey({})).toBe("");
   });
+  test("is case- and whitespace-insensitive (UC column names are case-insensitive-unique)", () => {
+    expect(mappingSetKey({ column: "Email" })).toBe(mappingSetKey({ column: " email " }));
+    expect(mappingSetKey({ Column: "EMAIL" })).toBe(mappingSetKey({ column: "email" }));
+  });
 });
 
 describe("suggestionKey", () => {
@@ -52,6 +56,23 @@ describe("filterAlreadyApplied", () => {
   });
   test("same column on a DIFFERENT rule is not excluded", () => {
     const suggestions = [sug({ rule_id: "r2", column_mapping: { column: "email" } })];
+    const applied = [{ rule_id: "r1", column_mapping: [{ column: "email" }] }];
+    expect(filterAlreadyApplied(suggestions, applied)).toHaveLength(1);
+  });
+  test("drops a suggestion whose column differs only by case from an applied rule", () => {
+    // The AI suggester reads original-case UC columns; a persisted (e.g.
+    // profiler-applied) mapping can carry a lower-cased value — same column.
+    const suggestions = [sug({ column_mapping: { column: "Email" } })];
+    const applied = [{ rule_id: "r1", column_mapping: [{ column: "email" }] }];
+    expect(filterAlreadyApplied(suggestions, applied)).toHaveLength(0);
+  });
+  test("dedups a column-less suggestion by rule_id when applied column-less", () => {
+    const suggestions = [sug({ column_mapping: {} })];
+    const applied = [{ rule_id: "r1", column_mapping: [] }];
+    expect(filterAlreadyApplied(suggestions, applied)).toHaveLength(0);
+  });
+  test("keeps a column-less suggestion when the rule is applied WITH a column (distinct)", () => {
+    const suggestions = [sug({ column_mapping: {} })];
     const applied = [{ rule_id: "r1", column_mapping: [{ column: "email" }] }];
     expect(filterAlreadyApplied(suggestions, applied)).toHaveLength(1);
   });

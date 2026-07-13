@@ -103,7 +103,10 @@ interface HistoryRun {
   run_type: string | null;
   /** validation only: failure detail shown in the expansion. */
   error_message: string | null;
-  /** profiling only: reported wall-clock duration in seconds. */
+  /** Reported wall-clock duration in seconds. Profiling carries it as a real
+   *  column; validation derives it server-side from the placeholder→terminal
+   *  span (both match the linked Databricks job). Null while RUNNING or when
+   *  the true start can't be recovered (old runs). */
   duration_seconds: number | null;
   job_run_id: number | null;
 }
@@ -119,7 +122,7 @@ function validationToHistory(run: ValidationRunSummaryOut): HistoryRun {
     updated_at: run.updated_at,
     run_type: run.run_type ?? "dryrun",
     error_message: run.error_message,
-    duration_seconds: null,
+    duration_seconds: run.duration_seconds ?? null,
     job_run_id: run.job_run_id ?? null,
   };
 }
@@ -192,32 +195,38 @@ function formatDuration(ms: number): string {
 }
 
 /** The value shown in the live "Time" column. RUNNING rows tick from
- *  ``created_at`` (driven by the 1s ``now`` clock); settled rows show a fixed
- *  duration — profiling runs report ``duration_seconds`` directly, validation
- *  runs derive it from ``created_at`` → ``updated_at``.
+ *  ``created_at`` (driven by the 1s ``now`` clock); settled runs show the
+ *  backend-reported wall-clock ``duration_seconds`` — both profiling and
+ *  validation now carry it (validation derives it server-side from the
+ *  RUNNING-placeholder → terminal-row span; see JobService.list_dryrun_rows),
+ *  so the value matches the linked Databricks job (B2-126).
  *
  *  Timestamps are parsed via ``parseServerTimestampMs`` so the zone-less
  *  ``CAST(ts AS STRING)`` values from the analytical tables are read as UTC
  *  (matching the warehouse clock) rather than browser-local.
  *
- *  Terminal validation runs are a special case: the task runner appends a
- *  *fresh* result row (``created_at`` = completion instant, ``updated_at``
- *  null), so no start→end pair survives on the deduplicated row and the
- *  duration can't be derived. When we watched the run tick to completion we
- *  fall back to ``frozenElapsedMs`` (the last live elapsed) instead of blanking
- *  the cell — see the ``lastElapsedRef`` note in ``RunHistoryContent``. A true
- *  fix needs the backend to persist the run duration (a backend field). */
+ *  When ``duration_seconds`` is absent we do NOT fall back to
+ *  ``created_at`` → ``updated_at`` for *validation* runs: the task runner
+ *  back-dates the terminal row's ``created_at`` to exclude cluster startup, so
+ *  that span understates the real runtime (the original bug). Instead we prefer
+ *  ``frozenElapsedMs`` (the last live elapsed, captured only if we watched the
+ *  run settle this session — see the ``lastElapsedRef`` note in
+ *  ``RunHistoryContent``) and otherwise blank the cell. Profiling keeps the
+ *  ``created_at`` → ``updated_at`` fallback for legacy rows without a duration
+ *  column. */
 function runElapsed(run: HistoryRun, now: number, frozenElapsedMs?: number): string {
   const startedMs = parseServerTimestampMs(run.created_at);
   if (run.status === "RUNNING") {
     return Number.isNaN(startedMs) ? "—" : formatDuration(now - startedMs);
   }
-  if (run.kind === "profiling" && run.duration_seconds != null) {
+  if (run.duration_seconds != null) {
     return formatDuration(run.duration_seconds * 1000);
   }
-  const endedMs = parseServerTimestampMs(run.updated_at);
-  if (!Number.isNaN(startedMs) && !Number.isNaN(endedMs) && endedMs >= startedMs) {
-    return formatDuration(endedMs - startedMs);
+  if (run.kind === "profiling") {
+    const endedMs = parseServerTimestampMs(run.updated_at);
+    if (!Number.isNaN(startedMs) && !Number.isNaN(endedMs) && endedMs >= startedMs) {
+      return formatDuration(endedMs - startedMs);
+    }
   }
   if (frozenElapsedMs != null && frozenElapsedMs >= 0) {
     return formatDuration(frozenElapsedMs);

@@ -35,7 +35,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, Boxes, CheckCircle2, Loader2, Play, Plus, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, LayoutGrid, Loader2, Play, Plus, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
 import {
   useListDataProducts,
   useApproveDataProduct,
@@ -450,13 +450,17 @@ function DataProductsPage() {
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center text-center">
-                {/* h-12 w-12 (48px), NOT h-10 w-10 (40px): lucide draws on a
-                    24px grid with 2px strokes, so 40px is a fractional 5/3
-                    scale — 3.33px strokes that land off the pixel grid and
-                    anti-alias into a soft, "blurry" glyph (P23 item 18).
-                    48px is an integer 2× (crisp 4px strokes), the same size
-                    the error empty-states already use. */}
-                <Boxes className="h-12 w-12 text-muted-foreground/30 mb-3" />
+                {/* LayoutGrid, not the Boxes brand mark: Boxes is built from
+                    dense isometric diagonals at fractional coordinates
+                    (2.97, 14.63, 4.42, 4.74, 2.85…) that can't align to the
+                    pixel grid, so at 48px / 30% opacity its strokes anti-alias
+                    into a soft, "blurry" glyph. The working empty states use
+                    axis-aligned glyphs on integer coords (monitored-tables
+                    Table2, registry-rules Library) which stay crisp — this is
+                    the four-rect LayoutGrid equivalent (P23 item 18). Boxes
+                    stays as the sidebar brand mark, where 24px / full opacity
+                    renders it fine. */}
+                <LayoutGrid className="h-12 w-12 text-muted-foreground/30 mb-3" />
                 <p className="text-sm text-muted-foreground">
                   {hasActiveFilters
                     ? t("dataProducts.emptyState")

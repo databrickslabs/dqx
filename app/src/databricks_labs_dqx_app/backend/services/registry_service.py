@@ -258,7 +258,7 @@ class RegistryService:
           duplicates it nor approves someone else's work, returning
           ``(None, False)`` so the caller drops that one suggestion;
         * otherwise a new ``dqx_native`` rule is created (``source="profiling"``,
-          ``author_kind="ai_generated"``, ``created_by=user_email`` — a
+          ``author_kind="ai_assisted"``, ``created_by=user_email`` — a
           structured, auditable attribution), pushed straight through
           submit -> approve, and returned.
 
@@ -297,7 +297,7 @@ class RegistryService:
             mode="dqx_native",
             definition=definition,
             user_email=user_email,
-            author_kind="ai_generated",
+            author_kind="ai_assisted",
             user_metadata=user_metadata,
             source="profiling",
         )

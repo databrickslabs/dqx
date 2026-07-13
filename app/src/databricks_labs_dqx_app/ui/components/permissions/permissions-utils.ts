@@ -9,8 +9,8 @@ export const PRIV_MODIFY = "MODIFY";
 export const PRIV_APPLY = "APPLY";
 export const PRIV_ALL = "ALL_PRIVILEGES";
 
-/** Minimal shape needed to detect the synthetic workspace-users-group row —
- *  decoupled from the generated `ObjectGrantOut` API type. */
+/** Minimal shape needed to detect the synthetic default rows (users-group and
+ *  owner/creator) — decoupled from the generated `ObjectGrantOut` API type. */
 export interface UsersGroupGrantLike {
   principal_id: string;
   is_default?: boolean | null;
@@ -21,8 +21,30 @@ export interface UsersGroupGrantLike {
 // users` appears in Unity Catalog grants.
 export const USERS_GROUP = "users";
 
+// The synthetic default rows are distinguished by principal, not just the
+// `is_default` flag: the users-group default keys on the `"users"` principal,
+// while the owner/creator default (also `is_default`) keys on the owner email.
 export function isUsersGroupGrant(grant: UsersGroupGrantLike): boolean {
-  return grant.principal_id === USERS_GROUP || (grant.is_default ?? false);
+  return grant.principal_id === USERS_GROUP;
+}
+
+/** The synthetic owner/creator default row: flagged `is_default` but keyed on
+ *  the owner's email rather than the workspace users group. Rendered read-only
+ *  with an "owner" label — the creator's implicit ALL PRIVILEGES surfaced for
+ *  display parity (enforcement grants it regardless). */
+export function isOwnerDefaultGrant(grant: UsersGroupGrantLike): boolean {
+  return (grant.is_default ?? false) && grant.principal_id !== USERS_GROUP;
+}
+
+/** Initial state of a new/edited grant's "inherit to child objects" toggle.
+ *  New grants seed from the admin `permissions_default_inherit` setting; an
+ *  existing grant keeps its stored value (falling back to the admin default). */
+export function initialGrantInherit(
+  editing: { inherit?: boolean | null } | null,
+  defaultInherit: boolean,
+): boolean {
+  if (editing) return editing.inherit ?? defaultInherit;
+  return defaultInherit;
 }
 
 export function isAllPrivileges(privileges: string[]): boolean {

@@ -183,6 +183,11 @@ export interface ValidationRunSummaryOut {
   warning_rows: number | null;
   created_at: string | null;
   error_message: string | null;
+  /** Real wall-clock run duration in seconds, computed server-side from the
+   *  RUNNING-placeholder → terminal-row span so it matches the linked
+   *  Databricks job. Null while RUNNING or when the true start is unrecoverable
+   *  (old runs). Mirrors ProfileRunSummaryOut.duration_seconds. */
+  duration_seconds?: number | null;
   /** Databricks task-runner job run id — combined with the workspace host +
    *  task-runner job id (from getWorkspaceHost) to build a deep link to the
    *  run page. Null for runs predating job-run tracking. */

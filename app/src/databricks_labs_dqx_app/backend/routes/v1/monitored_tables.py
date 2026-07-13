@@ -898,6 +898,10 @@ def submit_monitored_table(
         draft_run_gate.enforce(
             enabled=app_settings.get_require_draft_run_before_submit(),
             table_fqns=[gate_detail.table.table_fqn],
+            # B2-118: the binding's ``updated_at`` is bumped on every applied-
+            # rules save (see ApplyRulesService.save_applied_rules), so a run
+            # must be newer than the last edit to count as a fresh test.
+            last_change_time=gate_detail.table.updated_at,
         )
         materializer.materialize_binding(binding_id)
         # Recover rejected checks so an unchanged re-submit re-enters review

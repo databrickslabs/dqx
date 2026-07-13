@@ -3,7 +3,6 @@ import { fmtStat, typeGroup, type StatTypeGroup } from "@/lib/profile-format";
 
 interface Props {
   stats: Record<string, unknown>;
-  rowCount: number | null | undefined;
   sparkType: string | undefined;
 }
 
@@ -11,9 +10,8 @@ interface Props {
  * DQX's profiler summary_json keys (see DQProfiler._profile / _get_df_summary_as_dict):
  *   count, count_null, count_non_null, count_distinct, empty_count,
  *   mean, stddev, min, max, "25%", "50%", "75%".
- * "Most common values" has no DQX equivalent (the profiler doesn't compute
- * top-N value frequencies), so that section always renders the
- * "unavailable" fallback — the layout still matches the dqlake design.
+ * (DQX doesn't compute top-N value frequencies, so there is no "most common
+ * values" panel.)
  */
 
 const PERCENTILE_KEYS = new Set(["25%", "50%", "75%"]);
@@ -39,7 +37,7 @@ function orderKeys(group: StatTypeGroup, present: string[]): string[] {
   return [...ordered, ...extras];
 }
 
-export function ProfileColumnExpanded({ stats, rowCount, sparkType }: Props) {
+export function ProfileColumnExpanded({ stats, sparkType }: Props) {
   const { t } = useTranslation();
   const group = typeGroup(sparkType);
   const presentKeys = Object.keys(stats).filter((k) => !HIDDEN_KEYS.has(k) && stats[k] != null);
@@ -65,42 +63,30 @@ export function ProfileColumnExpanded({ stats, rowCount, sparkType }: Props) {
   const showPercentiles =
     group === "numeric" && Array.from(PERCENTILE_KEYS).some((k) => stats[k] != null);
 
-  void rowCount; // reserved for a future "Most common values" implementation
-
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-[1.4fr_1fr] gap-6 px-4 pt-3 pb-4 pl-12">
-      <div>
-        <h5 className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium mb-2">
-          {t("monitoredTables.profileStatisticsHeading")}
-        </h5>
-        <div className="grid grid-cols-4 gap-x-5 gap-y-2">
-          {ordered.map((key) => (
-            <div key={key}>
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                {LABELS[key] ?? key}
-              </div>
-              <div className="font-mono text-xs break-all">{fmtStat(stats[key])}</div>
+    <div className="px-4 pt-3 pb-4 pl-12">
+      <h5 className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium mb-2">
+        {t("monitoredTables.profileStatisticsHeading")}
+      </h5>
+      <div className="grid grid-cols-4 gap-x-5 gap-y-2">
+        {ordered.map((key) => (
+          <div key={key}>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              {LABELS[key] ?? key}
             </div>
-          ))}
-          {showPercentiles && (
-            <div>
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                {t("monitoredTables.profileStatPercentiles")}
-              </div>
-              <div className="font-mono text-xs">
-                {fmtStat(stats["25%"])} / {fmtStat(stats["50%"])} / {fmtStat(stats["75%"])}
-              </div>
+            <div className="font-mono text-xs break-all">{fmtStat(stats[key])}</div>
+          </div>
+        ))}
+        {showPercentiles && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              {t("monitoredTables.profileStatPercentiles")}
             </div>
-          )}
-        </div>
-      </div>
-      <div>
-        <h5 className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium mb-2">
-          {t("monitoredTables.profileMostCommonValuesHeading")}
-        </h5>
-        <p className="text-[11px] text-muted-foreground italic">
-          {t("monitoredTables.profileTopValuesUnavailable")}
-        </p>
+            <div className="font-mono text-xs">
+              {fmtStat(stats["25%"])} / {fmtStat(stats["50%"])} / {fmtStat(stats["75%"])}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

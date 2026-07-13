@@ -922,6 +922,7 @@ class TestMatchOrCreateApprovedRule:
         insert = next(
             c.args[0] for c in sql.execute.call_args_list if "INSERT INTO dqx_test.dqx_app_test.dq_rules " in c.args[0]
         )
-        # source='profiling' + author_kind='ai_generated' make the auto-created rule auditable.
+        # source='profiling' + author_kind='ai_assisted' ("Co-authored with AI")
+        # make the auto-created rule auditable.
         assert "'profiling'" in insert
-        assert "'ai_generated'" in insert
+        assert "'ai_assisted'" in insert

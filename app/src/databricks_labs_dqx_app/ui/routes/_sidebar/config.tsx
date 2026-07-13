@@ -2510,22 +2510,26 @@ function DangerZoneCard() {
     );
   };
 
+  // B2-121: dark mode dulls `--destructive` (a dark, muted red) so the Danger
+  // Zone barely reads. Brighten the red in dark mode only via Tailwind `dark:`
+  // red-palette variants (text→red-400, borders→red-500, button→solid red-600)
+  // — light mode keeps the shared destructive tokens untouched.
   return (
-    <Card className="border-destructive/50">
+    <Card className="border-destructive/50 dark:border-red-500/60">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-destructive">
+        <CardTitle className="flex items-center gap-2 text-destructive dark:text-red-400">
           <AlertTriangle className="h-5 w-5" />
           {t("config.resetDbTitle")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-4">
-          <p className="flex items-center gap-2 text-sm font-semibold text-destructive">
+        <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-4 dark:border-red-500/50 dark:bg-red-950/40">
+          <p className="flex items-center gap-2 text-sm font-semibold text-destructive dark:text-red-400">
             <AlertTriangle className="h-4 w-4 shrink-0" />
             {t("config.resetDbWarningHeading")}
           </p>
-          <p className="text-xs leading-relaxed text-muted-foreground">{t("config.resetDbWarningBody")}</p>
-          <p className="text-xs text-muted-foreground">{t("config.resetDbPreservedNote")}</p>
+          <p className="text-xs leading-relaxed text-muted-foreground dark:text-red-100/80">{t("config.resetDbWarningBody")}</p>
+          <p className="text-xs text-muted-foreground dark:text-red-100/70">{t("config.resetDbPreservedNote")}</p>
         </div>
         <div className="flex items-center gap-3">
           <Button
@@ -2536,7 +2540,7 @@ function DangerZoneCard() {
               setTyped("");
               setOpen(true);
             }}
-            className="gap-1.5"
+            className="gap-1.5 dark:bg-red-600 dark:hover:bg-red-500"
           >
             <Trash2 className="h-3.5 w-3.5" />
             {t("config.resetDbButton")}
@@ -2555,7 +2559,7 @@ function DangerZoneCard() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-destructive">
+            <DialogTitle className="flex items-center gap-2 text-destructive dark:text-red-400">
               <AlertTriangle className="h-5 w-5" />
               {t("config.resetDbDialogTitle")}
             </DialogTitle>
@@ -2581,7 +2585,7 @@ function DangerZoneCard() {
             <Button variant="ghost" size="sm" onClick={closeDialog} disabled={resetMutation.isPending}>
               {t("config.resetDbCancel")}
             </Button>
-            <Button variant="destructive" size="sm" onClick={handleConfirm} disabled={!canConfirm} className="gap-1.5">
+            <Button variant="destructive" size="sm" onClick={handleConfirm} disabled={!canConfirm} className="gap-1.5 dark:bg-red-600 dark:hover:bg-red-500">
               {resetMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {resetMutation.isPending ? t("config.resetDbInProgress") : t("config.resetDbConfirmButton")}
             </Button>
@@ -2739,7 +2743,7 @@ function ConfigPage() {
                         // every state (inactive/active, light/dark). tailwind-merge
                         // lets these override the trigger's default text tokens.
                         tab.id === "danger" &&
-                          "text-destructive dark:text-destructive data-[state=active]:text-destructive dark:data-[state=active]:text-destructive",
+                          "text-destructive dark:text-red-400 data-[state=active]:text-destructive dark:data-[state=active]:text-red-400",
                       )}
                     >
                       <Icon className="h-4 w-4 shrink-0" />

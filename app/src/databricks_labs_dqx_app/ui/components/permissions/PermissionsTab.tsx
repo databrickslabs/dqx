@@ -7,6 +7,8 @@
  *    principal's display name), when `showSteward` is set;
  *  - the workspace users-group default grant (SELECT + APPLY), rendered like
  *    any grant, muted, and editable by grant-managers (narrow or revoke it);
+ *  - the owner/creator default grant (ALL PRIVILEGES), rendered muted and
+ *    read-only — the creator's implicit privileges surfaced for display parity;
  *  - the direct + inherited grants, inherited rows shown muted and locked;
  *  - a "Grant permission" control (owners/admins/approvers only) that opens a
  *    dialog with a principal picker, privilege checkboxes, and (except for
@@ -23,7 +25,7 @@
  * The backend still accepts the `inherit` field for rules; this is a
  * UI-only omission.
  */
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -73,7 +75,9 @@ import {
   PRIV_APPLY,
   PRIV_ALL,
   isUsersGroupGrant,
+  isOwnerDefaultGrant,
   isAllPrivileges,
+  initialGrantInherit,
   privilegeTagLabel,
   grantsEmptyColSpan,
   hasSavedObject,
@@ -202,7 +206,12 @@ function GrantDialog({
   });
 
   // Seed the draft whenever the dialog opens (create vs edit an existing grant).
-  useEffect(() => {
+  // The draft state persists across opens, so a new-grant dialog would briefly
+  // paint the previous/stale toggle state before an effect could reset it.
+  // `useLayoutEffect` reseeds synchronously *before* paint, so the "inherit to
+  // child objects" toggle shows the admin `permissions_default_inherit` default
+  // the instant the dialog appears (B2-122) — no transient off-state flash.
+  useLayoutEffect(() => {
     if (!open) return;
     if (editing) {
       const privs = editing.privileges ?? [];
@@ -216,10 +225,16 @@ function GrantDialog({
         view: all || privs.includes(PRIV_SELECT),
         modify: all || privs.includes(PRIV_MODIFY),
         apply: all || privs.includes(PRIV_APPLY),
-        inherit: editing.inherit ?? defaultInherit,
+        inherit: initialGrantInherit(editing, defaultInherit),
       });
     } else {
-      setDraft({ principal: null, view: true, modify: false, apply: false, inherit: defaultInherit });
+      setDraft({
+        principal: null,
+        view: true,
+        modify: false,
+        apply: false,
+        inherit: initialGrantInherit(null, defaultInherit),
+      });
     }
   }, [open, editing, defaultInherit]);
 
@@ -486,15 +501,19 @@ export function PermissionsTab({
                       // grant, muted, labelled, and editable by grant-managers
                       // (edit it to narrow SELECT/APPLY or revoke entirely).
                       const usersGroup = isUsersGroupGrant(grant);
+                      // The owner/creator default is also muted and labelled but
+                      // read-only: the creator holds ALL PRIVILEGES implicitly at
+                      // enforcement time, so there's nothing to narrow here.
+                      const ownerDefault = isOwnerDefaultGrant(grant);
                       const isDefault = grant.is_default ?? false;
-                      const muted = inherited || usersGroup;
+                      const muted = inherited || usersGroup || ownerDefault;
                       const name = usersGroup
                         ? t("permissions.allUsers")
                         : (grant.principal_name ?? grant.principal_id);
                       return (
                         <TableRow
                           key={grant.principal_id}
-                          className={cn(inherited && "opacity-60", usersGroup && "bg-muted/30")}
+                          className={cn(inherited && "opacity-60", (usersGroup || ownerDefault) && "bg-muted/30")}
                         >
                           <TableCell>
                             <div className="flex items-center gap-2">
@@ -502,9 +521,15 @@ export function PermissionsTab({
                               {isDefault && (
                                 <>
                                   <span className="text-xs text-muted-foreground">
-                                    {t("permissions.defaultNote")}
+                                    {ownerDefault ? t("permissions.ownerNote") : t("permissions.defaultNote")}
                                   </span>
-                                  <HelpTooltip text={t("permissions.defaultGrantHint")} />
+                                  <HelpTooltip
+                                    text={
+                                      ownerDefault
+                                        ? t("permissions.ownerGrantHint")
+                                        : t("permissions.defaultGrantHint")
+                                    }
+                                  />
                                 </>
                               )}
                             </div>
@@ -532,7 +557,9 @@ export function PermissionsTab({
                           </TableCell>
                           {canManage && (
                             <TableCell className="text-right">
-                              {!inherited && (
+                              {/* The owner/creator default has no stored row and
+                                  is enforced regardless — render it read-only. */}
+                              {!inherited && !ownerDefault && (
                                 <div className="flex items-center justify-end gap-1">
                                   <Button
                                     variant="ghost"
