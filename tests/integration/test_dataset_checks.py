@@ -1643,7 +1643,7 @@ def test_validate_upstream_table_ref_df_name_match(spark: SparkSession):
             ["b", 2, None],
             ["c", 3, None],
         ],
-        f"{SCHEMA}, a_count_not_equal_to_upstream STRING",
+        f"{SCHEMA}, a_count_not_equal_to_upstream_limit STRING",
     )
 
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
@@ -1657,15 +1657,13 @@ def test_validate_upstream_table_ref_df_name_mismatch(spark: SparkSession):
     checks = [validate_upstream_table("a", ref_df_name="ref_df", aggr_type="count")]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
-    expected_message = (
-        "Count value 2 in column 'a' does not match Count value 3 in column 'a' of upstream DataFrame 'ref_df'"
-    )
+    expected_message = "Count value 2 in column 'a' is not equal to DataFrame 'ref_df' column 'a' limit: 3"
     expected = spark.createDataFrame(
         [
             ["a", 1, expected_message],
             ["b", 2, expected_message],
         ],
-        f"{SCHEMA}, a_count_not_equal_to_upstream STRING",
+        f"{SCHEMA}, a_count_not_equal_to_upstream_limit STRING",
     )
 
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
@@ -1692,14 +1690,14 @@ def test_validate_upstream_table_with_tolerance(spark: SparkSession):
     # _apply_checks selects only "a", "b", plus the condition column - "c" is not part of the output
     expected_within = spark.createDataFrame(
         [["a", 50, None], ["b", 50, None]],
-        "a: string, b: int, b_sum_not_equal_to_upstream: string",
+        "a: string, b: int, b_sum_not_equal_to_upstream_limit: string",
     )
     expected_outside_message = (
-        "Sum value 100 in column 'b' does not match Sum value 105 in column 'amount' of upstream DataFrame 'ref_df'"
+        "Sum value 100 in column 'b' is not equal to DataFrame 'ref_df' column 'amount' limit: 105"
     )
     expected_outside = spark.createDataFrame(
         [["a", 50, expected_outside_message], ["b", 50, expected_outside_message]],
-        "a: string, b: int, b_sum_not_equal_to_upstream: string",
+        "a: string, b: int, b_sum_not_equal_to_upstream_limit: string",
     )
 
     assertDataFrameEqual(actual_within, expected_within, checkRowOrder=False)
@@ -1728,7 +1726,7 @@ def test_validate_upstream_table_row_filters(spark: SparkSession):
             ["b", None, None],
             ["c", 3, None],
         ],
-        f"{SCHEMA}, a_count_not_equal_to_upstream STRING",
+        f"{SCHEMA}, a_count_not_equal_to_upstream_limit STRING",
     )
 
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
@@ -1761,7 +1759,7 @@ def test_validate_upstream_table_star_column_with_row_filter(spark: SparkSession
             ["d", None, None],
             ["e", 5, None],
         ],
-        f"{SCHEMA}, count_not_equal_to_upstream STRING",
+        f"{SCHEMA}, count_not_equal_to_upstream_limit STRING",
     )
 
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
@@ -1786,9 +1784,7 @@ def test_validate_upstream_table_star_column_with_row_filter_mismatch(spark: Spa
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
     # 3 filtered rows on the checked side vs 5 filtered rows on the reference side -> violation
-    expected_message = (
-        "Count value 3 in column '*' does not match Count value 5 in column '*' of upstream DataFrame 'ref_df'"
-    )
+    expected_message = "Count value 3 in column '*' is not equal to DataFrame 'ref_df' column '*' limit: 5"
     expected = spark.createDataFrame(
         [
             ["a", 1, expected_message],
@@ -1797,7 +1793,7 @@ def test_validate_upstream_table_star_column_with_row_filter_mismatch(spark: Spa
             ["d", None, expected_message],
             ["e", 5, expected_message],
         ],
-        f"{SCHEMA}, count_not_equal_to_upstream STRING",
+        f"{SCHEMA}, count_not_equal_to_upstream_limit STRING",
     )
 
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
@@ -1814,7 +1810,7 @@ def test_validate_upstream_table_ref_column_override(spark: SparkSession):
     # _apply_checks selects only "a", "b", plus the condition column - "c" is not part of the output
     expected = spark.createDataFrame(
         [["p", 7, None], ["q", 13, None]],
-        "a: string, b: int, b_sum_not_equal_to_upstream: string",
+        "a: string, b: int, b_sum_not_equal_to_upstream_limit: string",
     )
 
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
@@ -1831,13 +1827,11 @@ def test_validate_upstream_table_empty_upstream_sum_flags(spark: SparkSession):
     checks = [validate_upstream_table("b", ref_df_name="ref_df", aggr_type="sum")]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
-    # concat_ws skips the NULL upstream metric, leaving a double space where its value would appear
-    expected_message = (
-        "Sum value 3 in column 'b' does not match Sum value  in column 'b' of upstream DataFrame 'ref_df'"
-    )
+    # concat_ws skips the NULL upstream metric, leaving a trailing "limit: " with nothing after it
+    expected_message = "Sum value 3 in column 'b' is not equal to DataFrame 'ref_df' column 'b' limit: "
     expected = spark.createDataFrame(
         [["a", 1, expected_message], ["b", 2, expected_message]],
-        f"{SCHEMA}, b_sum_not_equal_to_upstream STRING",
+        f"{SCHEMA}, b_sum_not_equal_to_upstream_limit STRING",
     )
 
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
@@ -1852,12 +1846,10 @@ def test_validate_upstream_table_empty_upstream_count_flags(spark: SparkSession)
     checks = [validate_upstream_table("a", ref_df_name="ref_df", aggr_type="count")]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
-    expected_message = (
-        "Count value 2 in column 'a' does not match Count value 0 in column 'a' of upstream DataFrame 'ref_df'"
-    )
+    expected_message = "Count value 2 in column 'a' is not equal to DataFrame 'ref_df' column 'a' limit: 0"
     expected = spark.createDataFrame(
         [["a", 1, expected_message], ["b", 2, expected_message]],
-        f"{SCHEMA}, a_count_not_equal_to_upstream STRING",
+        f"{SCHEMA}, a_count_not_equal_to_upstream_limit STRING",
     )
 
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
@@ -1873,13 +1865,10 @@ def test_validate_upstream_table_count_distinct(spark: SparkSession):
     checks = [validate_upstream_table("b", ref_df_name="ref_df", ref_column="y", aggr_type="count_distinct")]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
-    expected_message = (
-        "Distinct count value 3 in column 'b' does not match Distinct count value 2 "
-        "in column 'y' of upstream DataFrame 'ref_df'"
-    )
+    expected_message = "Distinct count value 3 in column 'b' is not equal to DataFrame 'ref_df' column 'y' limit: 2"
     expected = spark.createDataFrame(
         [["a", 1, expected_message], ["b", 2, expected_message], ["c", 3, expected_message]],
-        f"{SCHEMA}, b_count_distinct_not_equal_to_upstream STRING",
+        f"{SCHEMA}, b_count_distinct_not_equal_to_upstream_limit STRING",
     )
 
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
@@ -1898,12 +1887,10 @@ def test_validate_upstream_table_with_ref_table(spark: SparkSession, make_schema
     condition, apply = validate_upstream_table("a", ref_table=ref_table, aggr_type="count")
     actual = apply(test_df, spark, {}).select("a", "b", condition)
 
-    expected_message = (
-        f"Count value 2 in column 'a' does not match Count value 3 in column 'a' of upstream table '{ref_table}'"
-    )
+    expected_message = f"Count value 2 in column 'a' is not equal to table '{ref_table}' column 'a' limit: 3"
     expected = spark.createDataFrame(
         [["a", 1, expected_message], ["b", 2, expected_message]],
-        f"{SCHEMA}, a_count_not_equal_to_upstream STRING",
+        f"{SCHEMA}, a_count_not_equal_to_upstream_limit STRING",
     )
 
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
