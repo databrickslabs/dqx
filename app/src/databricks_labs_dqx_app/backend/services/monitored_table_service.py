@@ -629,6 +629,35 @@ class MonitoredTableService:
             )
         return summaries
 
+    def list_applied_rules_many(self, binding_ids: list[str]) -> dict[str, list[AppliedRule]]:
+        """Applied rules for all *binding_ids* in ONE grouped query (no per-binding round-trip).
+
+        Unlike :meth:`_list_applied_rules`, this returns bare
+        :class:`AppliedRule` rows WITHOUT the per-rule descriptive-tag join
+        (name/dimension/severity): callers that only need the applications
+        themselves — e.g. the draft check-count render — must not pay one
+        ``dq_rules`` lookup per applied rule. Each binding's list preserves
+        ``created_at`` order to match :meth:`_list_applied_rules`; a binding
+        with no applied rows is simply absent from the result. An empty input
+        issues no query.
+        """
+        if not binding_ids:
+            return {}
+        distinct = sorted({b for b in binding_ids if b})
+        if not distinct:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(b)}'" for b in distinct)
+        sql = (
+            f"SELECT {self._applied_select_cols} FROM {self._applied_table} "  # noqa: S608
+            f"WHERE binding_id IN ({in_list}) ORDER BY binding_id, created_at"
+        )
+        rows = self._sql.query(sql)
+        grouped: dict[str, list[AppliedRule]] = {}
+        for row in rows:
+            applied = self._row_to_applied_rule(row)
+            grouped.setdefault(applied.binding_id, []).append(applied)
+        return grouped
+
     def _rule_tags(self, rule_id: str) -> tuple[str | None, str | None, str | None]:
         """Look up name/dimension/severity tags for *rule_id* from ``dq_rules``.
 

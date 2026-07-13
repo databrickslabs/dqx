@@ -651,6 +651,74 @@ class TestListAndGet:
         assert svc.get_rule_by_fingerprint("deadbeef") is None
 
 
+class TestGetRulesMany:
+    """``get_rules_many`` — batched ``get_rule`` for the list-view count path (B2-141)."""
+
+    def test_resolves_many_rules_in_one_query(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        r1 = RegistryRule(rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        r2 = RegistryRule(rule_id="r2", mode="dqx_native", status="draft", version=0, definition=_native_definition())
+        sql.query.return_value = [_row_for(r1), _row_for(r2)]
+        result = svc.get_rules_many(["r1", "r2", "r1"])  # duplicate collapses
+        assert set(result) == {"r1", "r2"}
+        assert result["r1"].rule_id == "r1"
+        # ONE query for all ids — not one per id.
+        assert sql.query.call_count == 1
+        called_sql = sql.query.call_args[0][0]
+        assert "rule_id IN (" in called_sql
+
+    def test_empty_input_issues_no_query(self, svc, sql):
+        assert svc.get_rules_many([]) == {}
+        sql.query.assert_not_called()
+
+    def test_missing_ids_absent_from_result(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        r1 = RegistryRule(rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        sql.query.return_value = [_row_for(r1)]
+        result = svc.get_rules_many(["r1", "gone"])
+        assert set(result) == {"r1"}
+
+    def test_parity_with_get_rule(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        r1 = RegistryRule(rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        sql.query.return_value = [_row_for(r1)]
+        single = svc.get_rule("r1")
+        sql.query.return_value = [_row_for(r1)]
+        batched = svc.get_rules_many(["r1"])["r1"]
+        assert batched.model_dump() == single.model_dump()
+
+
+class TestGetVersionsMany:
+    """``get_versions_many`` — batched ``get_version`` for the list-view count path (B2-141)."""
+
+    def test_resolves_many_pairs_in_one_query(self, svc, sql):
+        sql.query.return_value = [
+            _version_row("r1", 1, _native_definition(), {"name": "v1"}),
+            _version_row("r2", 3, _native_definition(), {"name": "v2"}),
+        ]
+        result = svc.get_versions_many([("r1", 1), ("r2", 3), ("r1", 1)])  # dup collapses
+        assert set(result) == {("r1", 1), ("r2", 3)}
+        assert result[("r1", 1)].version == 1
+        assert sql.query.call_count == 1
+        called_sql = sql.query.call_args[0][0]
+        assert " OR " in called_sql or "rule_id = " in called_sql
+
+    def test_empty_input_issues_no_query(self, svc, sql):
+        assert svc.get_versions_many([]) == {}
+        sql.query.assert_not_called()
+
+    def test_parity_with_get_version(self, svc, sql):
+        sql.query.return_value = [_version_row("r1", 1, _native_definition(), {"name": "v1"})]
+        single = svc.get_version("r1", 1)
+        sql.query.return_value = [_version_row("r1", 1, _native_definition(), {"name": "v1"})]
+        batched = svc.get_versions_many([("r1", 1)])[("r1", 1)]
+        assert single is not None
+        assert batched.model_dump() == single.model_dump()
+
+
 # ---------------------------------------------------------------------------
 # seed_builtin_rule (Phase 2C)
 # ---------------------------------------------------------------------------
