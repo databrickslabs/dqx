@@ -30,7 +30,7 @@ export type ScheduleKind = "profiling_only" | "dq_only" | "profiling_and_dq";
 
 export const DEFAULT_SCHEDULE_KIND: ScheduleKind = "dq_only";
 
-const SCHEDULE_KIND_ORDER: ScheduleKind[] = ["profiling_and_dq", "profiling_only", "dq_only"];
+const SCHEDULE_KIND_ORDER: ScheduleKind[] = ["profiling_only", "dq_only", "profiling_and_dq"];
 
 interface Props {
   /** Current cron (5-field) or null when there is no schedule. */
@@ -96,14 +96,6 @@ export function ScheduleEditor({
 
   return (
     <div className="space-y-6 max-w-xl">
-      <SchedulePicker
-        cron={cron ?? DEFAULT_CADENCE_CRON}
-        timezone={timezone}
-        onChange={onChange}
-        onValidityChange={onValidityChange}
-        canEdit={canEdit}
-      />
-
       <div className="space-y-2">
         <Label htmlFor="schedule-kind">{t("schedule.kindLabel")}</Label>
         <Select
@@ -122,8 +114,15 @@ export function ScheduleEditor({
             ))}
           </SelectContent>
         </Select>
-        <p className="text-xs text-muted-foreground">{t("schedule.kindHelp")}</p>
       </div>
+
+      <SchedulePicker
+        cron={cron ?? DEFAULT_CADENCE_CRON}
+        timezone={timezone}
+        onChange={onChange}
+        onValidityChange={onValidityChange}
+        canEdit={canEdit}
+      />
 
       <div className="flex flex-wrap items-center gap-2">
         {canEdit && (

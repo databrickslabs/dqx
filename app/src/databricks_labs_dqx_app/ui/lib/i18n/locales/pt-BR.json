@@ -1,7 +1,6 @@
 {
   "schedule": {
     "kindLabel": "O que esta programação executa",
-    "kindHelp": "Escolha se cada execução agendada faz o profiling dos dados, executa as verificações de qualidade de dados ou ambos.",
     "kindOption": {
       "profiling_and_dq": "Profiling + qualidade de dados",
       "profiling_only": "Somente profiling",
@@ -2029,7 +2028,7 @@
     "scheduleCronInvalid": "Essa expressão cron não é válida. Verifique o formato e tente novamente.",
     "scheduleEmptyText": "Este espaço de tabelas é executado somente sob demanda. Adicione um agendamento para executá-lo automaticamente.",
     "scheduleEveryLabel": "A cada",
-    "scheduleFooterNote": "As alterações de agendamento entram em vigor assim que você salvar — não é necessário publicar. Remover o agendamento interrompe as execuções automáticas; suas tabelas, o histórico e o Executar agora continuam disponíveis.",
+    "scheduleFooterNote": "As alterações de agendamento entram em vigor assim que você salvar",
     "scheduleHintDaily": "Executa diariamente às {{time}} ({{tz}})",
     "scheduleHintHourly": "Executa a cada hora no minuto {{minute}} ({{tz}})",
     "scheduleHintRaw": "Executa em: {{cron}} ({{tz}})",

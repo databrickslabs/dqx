@@ -1,7 +1,6 @@
 {
   "schedule": {
     "kindLabel": "What this schedule runs",
-    "kindHelp": "Choose whether each scheduled run profiles the data, runs data quality checks, or both.",
     "kindOption": {
       "profiling_and_dq": "Profiling + data quality",
       "profiling_only": "Profiling only",
@@ -2029,7 +2028,7 @@
     "scheduleCronInvalid": "This cron expression isn't valid. Check the format and try again.",
     "scheduleEmptyText": "This table space runs on demand only. Add a schedule to run it automatically.",
     "scheduleEveryLabel": "Every",
-    "scheduleFooterNote": "Schedule changes take effect as soon as you save — no publish needed. Removing the schedule stops automatic runs; your tables, history, and Run now stay available.",
+    "scheduleFooterNote": "Schedule changes take effect as soon as you save",
     "scheduleHintDaily": "Runs daily at {{time}} ({{tz}})",
     "scheduleHintHourly": "Runs hourly at minute {{minute}} ({{tz}})",
     "scheduleHintRaw": "Runs on: {{cron}} ({{tz}})",

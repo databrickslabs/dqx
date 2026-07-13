@@ -1,7 +1,6 @@
 {
   "schedule": {
     "kindLabel": "Qué ejecuta esta programación",
-    "kindHelp": "Elige si cada ejecución programada perfila los datos, ejecuta las comprobaciones de calidad de datos o ambas.",
     "kindOption": {
       "profiling_and_dq": "Perfilado + calidad de datos",
       "profiling_only": "Solo perfilado",
@@ -2029,7 +2028,7 @@
     "scheduleCronInvalid": "Esta expresión cron no es válida. Revisa el formato e inténtalo de nuevo.",
     "scheduleEmptyText": "Este espacio de tablas solo se ejecuta bajo demanda. Agrega una programación para ejecutarlo automáticamente.",
     "scheduleEveryLabel": "Cada",
-    "scheduleFooterNote": "Los cambios de programación se aplican en cuanto guardas — no es necesario publicar. Quitar la programación detiene las ejecuciones automáticas; tus tablas, el historial y Ejecutar ahora siguen disponibles.",
+    "scheduleFooterNote": "Los cambios de programación se aplican en cuanto guardas",
     "scheduleHintDaily": "Se ejecuta a diario a las {{time}} ({{tz}})",
     "scheduleHintHourly": "Se ejecuta cada hora en el minuto {{minute}} ({{tz}})",
     "scheduleHintRaw": "Se ejecuta en: {{cron}} ({{tz}})",

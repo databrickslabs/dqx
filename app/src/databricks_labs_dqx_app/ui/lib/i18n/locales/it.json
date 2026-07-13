@@ -1,7 +1,6 @@
 {
   "schedule": {
     "kindLabel": "Cosa esegue questa pianificazione",
-    "kindHelp": "Scegli se ogni esecuzione pianificata esegue il profiling dei dati, i controlli di qualità dei dati o entrambi.",
     "kindOption": {
       "profiling_and_dq": "Profiling + qualità dei dati",
       "profiling_only": "Solo profiling",
@@ -2029,7 +2028,7 @@
     "scheduleCronInvalid": "Questa espressione cron non è valida. Controlla il formato e riprova.",
     "scheduleEmptyText": "Questo spazio tabelle viene eseguito solo su richiesta. Aggiungi una pianificazione per eseguirlo automaticamente.",
     "scheduleEveryLabel": "Ogni",
-    "scheduleFooterNote": "Le modifiche alla pianificazione hanno effetto non appena salvi — senza bisogno di pubblicare. Rimuovere la pianificazione interrompe le esecuzioni automatiche; le tabelle, la cronologia ed Esegui ora restano disponibili.",
+    "scheduleFooterNote": "Le modifiche alla pianificazione hanno effetto non appena salvi",
     "scheduleHintDaily": "Viene eseguito ogni giorno alle {{time}} ({{tz}})",
     "scheduleHintHourly": "Viene eseguito ogni ora al minuto {{minute}} ({{tz}})",
     "scheduleHintRaw": "Viene eseguito: {{cron}} ({{tz}})",
