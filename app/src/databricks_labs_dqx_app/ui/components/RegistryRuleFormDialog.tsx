@@ -40,7 +40,6 @@ import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertCircle,
-  Braces,
   Check,
   ChevronDown,
   LineChart,
@@ -2048,24 +2047,12 @@ export function RegistryRuleFormDialog({
           it renders at the top of it rather than persistently across all
           tabs. */}
       <div className="space-y-2 pb-2">
-        <SectionHeader
-          action={
-            // "As JSON" is offered while creating a new rule (item 11) — a saved
-            // rule's detail page exposes the equivalent via its "…" menu instead.
-            !readOnly && !isEditing ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 gap-1.5 text-xs"
-                onClick={() => setJsonDialogOpen(true)}
-              >
-                <Braces className="h-3.5 w-3.5" />
-                {t("rulesRegistry.actionAsJson")}
-              </Button>
-            ) : undefined
-          }
-        >
+        {/* "As JSON" used to live here as a standalone button while creating a
+            new rule. It now lives in the ⋮ overflow menu at the top of both the
+            new-rule create page and the existing-rule detail page (B2-114),
+            driven via the controlled `jsonDialogOpen` prop — matching how the
+            detail page has always surfaced it. */}
+        <SectionHeader>
           {t("rulesRegistry.ruleTypeHeader")}
         </SectionHeader>
         <ModeSegmentedSwitch value={mode} onChange={requestModeChange} disabled={readOnly} />
