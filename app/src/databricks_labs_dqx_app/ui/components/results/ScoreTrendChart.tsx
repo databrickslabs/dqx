@@ -356,11 +356,22 @@ export function TrendTooltip({
   averageByDate,
   latestAverage,
   overallLabel,
+  points,
+  allSeries,
+  colorMap,
 }: {
   active?: boolean;
   payload?: TooltipPayloadEntry[];
   label?: string | number;
   mode: "percent" | "count";
+  /** Full pivoted rows + the series list, so a percent multi-series tooltip can
+   *  CONSOLIDATE every table/series present at the hovered instant (B2-103) from
+   *  the row itself rather than relying on recharts' per-hover payload. */
+  points?: Array<Record<string, string | number | null>>;
+  allSeries?: string[];
+  /** series name → colour (matches the plotted lines), for the consolidated
+   *  swatches. */
+  colorMap?: Record<string, string>;
   /** Count mode: series name → marker shape, so the tooltip icon matches the
    *  line's marker instead of a generic round dot. */
   seriesShapes?: Record<string, Marker>;
@@ -390,10 +401,30 @@ export function TrendTooltip({
     const i = COUNT_ORDER.indexOf(String(n ?? ""));
     return i === -1 ? COUNT_ORDER.length : i;
   };
+  // Percent multi-series (over-time by-table / by-dimension / by-severity):
+  // list EVERY series with a value at the hovered instant by reading the pivot
+  // ROW directly (recharts' payload can under-report to the single hovered
+  // line). Nulls are dropped so only tables/series actually present at that run
+  // show. Falls back to recharts payload for single-series or if the row is not
+  // found. Count mode keeps its payload-based canonical ordering.
+  const consolidatedItems = ((): TooltipPayloadEntry[] | null => {
+    if (mode !== "percent" || !points || !allSeries || allSeries.length <= 1) {
+      return null;
+    }
+    const row = points.find((p) => Number(p.ts) === Number(runKey));
+    if (!row) return null;
+    return allSeries
+      .map((name, i) => ({
+        name,
+        value: typeof row[name] === "number" ? (row[name] as number) : null,
+        color: colorMap?.[name] ?? CHART_FALLBACK[i % CHART_FALLBACK.length],
+      }))
+      .filter((it) => it.value != null);
+  })();
   const items =
     mode === "count"
       ? [...payload].sort((a, b) => orderIdx(a.name) - orderIdx(b.name))
-      : payload;
+      : (consolidatedItems ?? payload);
   return (
     <div
       className="rounded-md border bg-popover text-popover-foreground p-2 text-xs shadow-md"
@@ -1056,7 +1087,7 @@ export function ScoreTrendChart({
   // swatch) plus one chip per contributing table (its dull colour). Clicking a
   // chip toggles that element's visibility via the shared `hidden` set.
   const overallLegend = overallMode ? (
-    <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px]">
+    <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] select-none">
       {[overallLabel, ...series].map((name) => {
         const isOverall = name === overallLabel;
         const swatch = isOverall
@@ -1066,7 +1097,7 @@ export function ScoreTrendChart({
         return (
           <li
             key={name}
-            className={`flex cursor-pointer items-center gap-1.5 ${
+            className={`flex cursor-pointer select-none items-center gap-1.5 ${
               isHidden ? "opacity-40 line-through" : ""
             }`}
             onClick={() => toggleSeries(name)}
@@ -1241,52 +1272,46 @@ export function ScoreTrendChart({
                     averageByDate={overallMode ? averageByDate : undefined}
                     latestAverage={overallMode ? latestAverage : undefined}
                     overallLabel={overallLabel}
+                    points={points}
+                    allSeries={series}
+                    colorMap={colorMap}
                   />
                 )}
               />
               {mode === "count" && (
                 <Legend
-                  // Recharts' default legend orders by internal registration and
-                  // this version omits the `payload` prop, so render the legend
-                  // ourselves: sort the items into the canonical order, draw the
-                  // matching marker shape, grey hidden series, and toggle on click.
-                  content={(props) => {
-                    const order = ["Rules", "Checks", "Tests", "Rows"];
-                    const items = [
-                      ...((props.payload ?? []) as Array<{ value?: unknown }>),
-                    ].sort((a, b) => {
-                      const rank = (v: unknown) => {
-                        const i = order.indexOf(String(v ?? ""));
-                        return i === -1 ? order.length : i;
-                      };
-                      return rank(a.value) - rank(b.value);
-                    });
-                    return (
-                      <ul className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[11px]">
-                        {items.map((it) => {
-                          const name = String(it.value ?? "");
-                          const isHidden = hidden.has(name);
-                          return (
-                            <li
-                              key={name}
-                              className={`flex cursor-pointer items-center gap-1.5 ${
-                                isHidden ? "opacity-40 line-through" : ""
-                              }`}
-                              onClick={() => toggleSeries(name)}
-                            >
-                              <MarkerIcon
-                                shape={seriesShapes[name] ?? "circle"}
-                                fill={seriesColors[name] ?? COUNT_COLORS[0]}
-                              />
-                              <span style={{ color: seriesColors[name] }}>
-                                {name}
-                              </span>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    );
-                  }}
+                  // Render the legend from OUR `series` list (already in canonical
+                  // Rules→Checks→Tests→Rows order), NOT recharts' payload: a
+                  // hidden <Line> drops out of recharts' payload, which would make
+                  // the toggled-off item vanish and become impossible to click
+                  // back on. Iterating `series` keeps every item present, dims the
+                  // hidden ones, and lets the click toggle visibility both ways
+                  // (mirrors the per-table Average legend). select-none stops the
+                  // label text from highlighting when toggling.
+                  content={() => (
+                    <ul className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[11px] select-none">
+                      {series.map((name) => {
+                        const isHidden = hidden.has(name);
+                        return (
+                          <li
+                            key={name}
+                            className={`flex cursor-pointer select-none items-center gap-1.5 ${
+                              isHidden ? "opacity-40 line-through" : ""
+                            }`}
+                            onClick={() => toggleSeries(name)}
+                          >
+                            <MarkerIcon
+                              shape={seriesShapes[name] ?? "circle"}
+                              fill={seriesColors[name] ?? COUNT_COLORS[0]}
+                            />
+                            <span style={{ color: seriesColors[name] }}>
+                              {name}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                 />
               )}
               {series.map((name, idx) => {
