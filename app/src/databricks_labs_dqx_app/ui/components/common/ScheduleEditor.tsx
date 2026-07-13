@@ -28,7 +28,7 @@ const DEFAULT_TZ = "UTC";
  *  ``schedule_kind`` enum; default is "both". */
 export type ScheduleKind = "profiling_only" | "dq_only" | "profiling_and_dq";
 
-export const DEFAULT_SCHEDULE_KIND: ScheduleKind = "profiling_and_dq";
+export const DEFAULT_SCHEDULE_KIND: ScheduleKind = "dq_only";
 
 const SCHEDULE_KIND_ORDER: ScheduleKind[] = ["profiling_and_dq", "profiling_only", "dq_only"];
 

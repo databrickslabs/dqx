@@ -501,10 +501,10 @@ class TestCreate:
         insert_sql = sql.execute.call_args[0][0]
         assert f"INSERT INTO {_PRODUCTS}" in insert_sql
         assert "'Orders'" in insert_sql
-        # schedule_kind (B2-52) defaults to both and is persisted on create.
-        assert product.schedule_kind == "profiling_and_dq"
+        # schedule_kind (B2-52) defaults to dq_only and is persisted on create.
+        assert product.schedule_kind == "dq_only"
         assert "schedule_kind" in insert_sql
-        assert "'profiling_and_dq'" in insert_sql
+        assert "'dq_only'" in insert_sql
 
     def test_create_duplicate_name_raises(self, service, sql):
         sql.query.return_value = [["p-existing"]]

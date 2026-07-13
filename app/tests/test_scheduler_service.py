@@ -1195,20 +1195,20 @@ class TestTableScheduleKind:
         assert svc._ws.jobs.run_now.call_count == 1  # profiling submit
         assert mocks.oltp.upsert.call_args.kwargs["value_cols"]["status"] == "success"
 
-    def test_missing_kind_defaults_to_both(self, make_scheduler):
+    def test_missing_kind_defaults_to_dq_only(self, make_scheduler):
         svc, mocks, br_service = _make_table_scheduler(make_scheduler)
         _prep_profiling_scheduler(svc)
         mocks.oltp.query.return_value = [_tracker_row("table:b1", _DUE_TRACKER_AT)]
         br_service.run_binding.return_value = _binding_run_result()
 
-        # No schedule_kind key at all → normalized to profiling_and_dq.
+        # No schedule_kind key at all → normalized to dq_only (DQ runs, profiling does not).
         svc._tick_one_table(
             {"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "table_fqn": "c.s.t"},
             _DUE_NOW,
         )
 
         br_service.run_binding.assert_called_once()
-        assert svc._ws.jobs.run_now.call_count == 1
+        svc._ws.jobs.run_now.assert_not_called()
 
     def test_profiling_and_dq_partial_when_profiling_fails(self, make_scheduler):
         svc, mocks, br_service = _make_table_scheduler(make_scheduler)

@@ -605,11 +605,11 @@ class TestUpdateSchedule:
         update_sql = sql.execute.call_args[0][0]
         assert "schedule_kind = 'profiling_only'" in update_sql
 
-    def test_defaults_schedule_kind_to_both(self, svc, sql):
+    def test_defaults_schedule_kind_to_dq_only(self, svc, sql):
         sql.query.return_value = [_table_row(binding_id="b1", status="approved")]
         table = svc.update_schedule("b1", "0 6 * * *", "UTC", "alice@x")
-        assert table.schedule_kind == "profiling_and_dq"
-        assert "schedule_kind = 'profiling_and_dq'" in sql.execute.call_args[0][0]
+        assert table.schedule_kind == "dq_only"
+        assert "schedule_kind = 'dq_only'" in sql.execute.call_args[0][0]
 
     def test_raises_when_missing(self, svc, sql):
         sql.query.return_value = []

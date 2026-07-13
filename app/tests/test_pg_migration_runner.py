@@ -159,7 +159,7 @@ class TestPgMigrationsCatalogue:
     def test_v14_converges_schedule_kind_on_deployed_dbs(self):
         # Already-deployed DBs get schedule_kind via the v14 converge migration.
         v14 = next(m for m in PG_MIGRATIONS if m.version == 14)
-        assert "ADD COLUMN IF NOT EXISTS schedule_kind TEXT NOT NULL DEFAULT 'profiling_and_dq'" in v14.sql
+        assert "ADD COLUMN IF NOT EXISTS schedule_kind TEXT NOT NULL DEFAULT 'dq_only'" in v14.sql
         assert "dq_monitored_tables" in v14.sql
         assert "dq_data_products" in v14.sql
         assert "chk_dq_monitored_tables_schedule_kind" in v14.sql

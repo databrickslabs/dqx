@@ -55,7 +55,7 @@ _VALID_TRACKER_STATUSES = {"pending", "success", "partial_failure", "failed"}
 # ``schedule_kind`` column on ``dq_monitored_tables`` / ``dq_data_products``.
 # A missing/unknown value falls back to the default (both), matching the
 # column defaults and the model parsers, so a legacy NULL row still runs.
-_SCHEDULE_KIND_DEFAULT = "profiling_and_dq"
+_SCHEDULE_KIND_DEFAULT = "dq_only"
 _KINDS_WITH_DQ = frozenset({"dq_only", "profiling_and_dq"})
 _KINDS_WITH_PROFILING = frozenset({"profiling_only", "profiling_and_dq"})
 # Row cap sampled by a scheduler-launched profiling run — matches the profiler

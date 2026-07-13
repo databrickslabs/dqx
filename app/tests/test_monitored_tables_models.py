@@ -42,8 +42,8 @@ class TestMonitoredTable:
         assert table.steward is None
         assert table.created_by is None
         assert table.updated_at is None
-        # schedule_kind defaults to "both" (B2-52).
-        assert table.schedule_kind == "profiling_and_dq"
+        # schedule_kind defaults to "dq_only" (B2-52) — preserves prior DQ-only behavior.
+        assert table.schedule_kind == "dq_only"
 
     @pytest.mark.parametrize("kind", ["profiling_only", "dq_only", "profiling_and_dq"])
     def test_accepts_valid_schedule_kinds(self, MonitoredTable, kind):

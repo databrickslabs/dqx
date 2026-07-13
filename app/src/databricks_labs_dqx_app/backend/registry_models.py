@@ -197,10 +197,11 @@ class RuleVersion(BaseModel):
 MonitoredTableStatus = Literal["draft", "pending_approval", "approved", "rejected"]
 
 # What a scheduled run does (B2-52). Applies to both monitored tables and
-# Table Spaces: profile only, run DQ only, or both. Default ``profiling_and_dq``
-# mirrors the ``schedule_kind`` column default in both migration backends.
+# Table Spaces: profile only, run DQ only, or both. Default ``dq_only``
+# mirrors the ``schedule_kind`` column default in both migration backends
+# (preserves prior behavior — existing schedules stay DQ-only on upgrade).
 ScheduleKind = Literal["profiling_only", "dq_only", "profiling_and_dq"]
-SCHEDULE_KIND_DEFAULT: ScheduleKind = "profiling_and_dq"
+SCHEDULE_KIND_DEFAULT: ScheduleKind = "dq_only"
 
 # One mapping GROUP is ``{slot_name: column_name}`` — the slot→column binding
 # for exactly one materialized check. ``column_mapping`` on an applied rule is
