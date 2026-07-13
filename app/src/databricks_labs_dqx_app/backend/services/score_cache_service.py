@@ -59,6 +59,16 @@ SCOPE_GLOBAL = "global"
 # The single row key used for the global scope.
 GLOBAL_SCOPE_KEY = "global"
 
+# The ``dq_monitored_tables.status`` value (``MonitoredTableStatus`` literal)
+# a table must carry for its cached score to feed the derived product/global
+# aggregates. The homepage overview/score-trend chart is fed by the global
+# aggregate, so only FULL validation runs (already enforced per-table via the
+# ``run_mode = 'published'`` filter in :meth:`_query_latest_published_scores`)
+# against APPROVED monitored tables contribute to it — non-approved monitored
+# tables never move the homepage number/trend. See refresh_global /
+# refresh_product.
+MONITORED_STATUS_APPROVED = "approved"
+
 # How many ``dq_score_history`` rows are kept per scope. Every scored
 # upsert appends one trend point and count-trims to this cap, so the
 # table's growth is bounded by (scopes x cap) with no retention sweep.
@@ -206,6 +216,10 @@ class ScoreCacheService:
         total counters summed for the "X failed of Y tests" subtitle. A
         product whose members carry no cached scores still gets a row
         (NULL score) so ``computed_at`` records the recompute.
+
+        Only APPROVED member tables contribute (``mt.status = 'approved'``),
+        mirroring :meth:`refresh_global`: full validation runs against
+        approved tables are the only scores that feed derived aggregates.
         """
         e = escape_sql_string(product_id)
         stmt = (
@@ -215,17 +229,29 @@ class ScoreCacheService:
             f"JOIN {self._monitored_table} mt ON mt.binding_id = m.binding_id "
             f"JOIN {self._cache_table} sc "
             f"ON sc.scope_type = '{SCOPE_TABLE}' AND sc.scope_key = mt.table_fqn "
-            f"WHERE m.product_id = '{e}' AND sc.score IS NOT NULL"
+            f"WHERE m.product_id = '{e}' AND sc.score IS NOT NULL "
+            f"AND mt.status = '{MONITORED_STATUS_APPROVED}'"
         )
         self._upsert_aggregate(SCOPE_PRODUCT, product_id, self._oltp.query_dicts(stmt))
 
     def refresh_global(self) -> None:
-        """Recompute + upsert the single 'global' row from all cached table rows."""
+        """Recompute + upsert the single 'global' row from APPROVED tables' cached rows.
+
+        Feeds the homepage overview/score-trend chart. The cache rows are
+        JOINed to ``dq_monitored_tables`` on ``scope_key = table_fqn`` and
+        restricted to ``status = 'approved'`` so only full validation runs
+        (already PUBLISHED-only per-table — see
+        :meth:`_query_latest_published_scores`) against approved monitored
+        tables contribute to the global average + failed/total sums.
+        Non-approved monitored tables never move the homepage number/trend.
+        """
         stmt = (
-            f"SELECT AVG(score) AS score, SUM(failed_tests) AS failed_tests, "
-            f"SUM(total_tests) AS total_tests "
-            f"FROM {self._cache_table} "  # noqa: S608
-            f"WHERE scope_type = '{SCOPE_TABLE}' AND score IS NOT NULL"
+            f"SELECT AVG(sc.score) AS score, SUM(sc.failed_tests) AS failed_tests, "
+            f"SUM(sc.total_tests) AS total_tests "
+            f"FROM {self._cache_table} sc "  # noqa: S608
+            f"JOIN {self._monitored_table} mt ON mt.table_fqn = sc.scope_key "
+            f"WHERE sc.scope_type = '{SCOPE_TABLE}' AND sc.score IS NOT NULL "
+            f"AND mt.status = '{MONITORED_STATUS_APPROVED}'"
         )
         self._upsert_aggregate(SCOPE_GLOBAL, GLOBAL_SCOPE_KEY, self._oltp.query_dicts(stmt))
 
