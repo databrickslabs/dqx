@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, create_autospec
 import pytest
 
 from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
-from databricks_labs_dqx_app.backend.services.ai_rules_service import AiRulesService
+from databricks_labs_dqx_app.backend.services.ai_rules_service import AiRulesService, parse_rule_type_intent
 
 
 def _service(gateway: MagicMock) -> AiRulesService:
@@ -28,6 +28,14 @@ def _gateway_returning(*contents: str) -> MagicMock:
     gateway.query.side_effect = list(contents)
     gateway.parse_json_object.side_effect = AIGateway.parse_json_object
     return gateway
+
+
+# A parsable but UNUSABLE low-code response (empty rows -> compiles to nothing),
+# so the low-code pass (tried first, B2-132) falls through to dqx_native/sql.
+# Prepended to gateway scripts whose intent is to exercise a native/sql result.
+_LOWCODE_MISS = json.dumps(
+    {"name": "n", "description": "d", "lowcode_ast": {"rows": [], "joins": []}}
+)
 
 
 class TestGenerateChecksViaGateway:
@@ -95,7 +103,7 @@ class TestGenerateRule:
                 "definition": {"function": "is_not_null", "arguments": {"column": "id"}},
             }
         )
-        gateway = _gateway_returning(proposal)
+        gateway = _gateway_returning(_LOWCODE_MISS, proposal)
         service = _service(gateway)
 
         result = await service.generate_rule(description="id must not be null", user_email="a@x")
@@ -119,7 +127,7 @@ class TestGenerateRule:
                 "columns": [{"name": "id", "family": "numeric"}],
             }
         )
-        service = _service(_gateway_returning(proposal))
+        service = _service(_gateway_returning(_LOWCODE_MISS, proposal))
 
         result = await service.generate_rule(description="id must not be null", user_email="a@x")
 
@@ -137,7 +145,7 @@ class TestGenerateRule:
                 "definition": {"function": "is_valid_email", "arguments": {"column": "user_email"}},
             }
         )
-        service = _service(_gateway_returning(proposal))
+        service = _service(_gateway_returning(_LOWCODE_MISS, proposal))
 
         result = await service.generate_rule(description="email must be valid", user_email="a@x")
 
@@ -150,7 +158,7 @@ class TestGenerateRule:
         valid_sql = json.dumps(
             {"name": "sql", "description": "d", "definition": {"sql_query": "id IS NOT NULL"}}
         )
-        service = _service(_gateway_returning(invalid_dqx_native, valid_sql))
+        service = _service(_gateway_returning(_LOWCODE_MISS, invalid_dqx_native, valid_sql))
 
         result = await service.generate_rule(description="d", user_email="a@x")
 
@@ -165,7 +173,7 @@ class TestGenerateRule:
                 "definition": {"function": "is_not_null", "arguments": {"column": "id"}},
             }
         )
-        gateway = _gateway_returning(proposal)
+        gateway = _gateway_returning(_LOWCODE_MISS, proposal)
         service = _service(gateway)
 
         await service.generate_rule(description="d", user_email="a@x")
@@ -194,14 +202,15 @@ class TestGenerateRule:
                 "definition": {"sql_query": "id IS NOT NULL"},
             }
         )
-        gateway = _gateway_returning(invalid_dqx_native, valid_sql)
+        gateway = _gateway_returning(_LOWCODE_MISS, invalid_dqx_native, valid_sql)
         service = _service(gateway)
 
         result = await service.generate_rule(description="d", user_email="a@x")
 
         assert result["mode"] == "sql"
         assert result["definition"] == {"sql_query": "id IS NOT NULL"}
-        assert gateway.query.call_count == 2
+        # Three passes: lowcode (miss) -> dqx_native (invalid) -> sql (accepted).
+        assert gateway.query.call_count == 3
 
     async def test_unsafe_sql_candidate_is_rejected_and_generation_fails(self):
         invalid_dqx_native = json.dumps({"definition": {"function": "nope", "arguments": {}}})
@@ -212,18 +221,20 @@ class TestGenerateRule:
                 "definition": {"sql_query": "DROP TABLE foo; --"},
             }
         )
-        gateway = _gateway_returning(invalid_dqx_native, unsafe_sql)
+        gateway = _gateway_returning(_LOWCODE_MISS, invalid_dqx_native, unsafe_sql)
         service = _service(gateway)
 
         with pytest.raises(ValueError):
             await service.generate_rule(description="d", user_email="a@x")
 
-    async def test_both_candidates_unparsable_raises_value_error(self):
-        gateway = _gateway_returning("garbage one", "garbage two")
+    async def test_all_candidates_unparsable_raises_value_error(self):
+        gateway = _gateway_returning("garbage zero", "garbage one", "garbage two")
         service = _service(gateway)
 
         with pytest.raises(ValueError):
             await service.generate_rule(description="d", user_email="a@x")
+        # lowcode, dqx_native, sql — all three unparsable.
+        assert gateway.query.call_count == 3
 
     async def test_bounds_sample_rows_sent_to_the_model(self):
         proposal = json.dumps(
@@ -233,7 +244,7 @@ class TestGenerateRule:
                 "definition": {"function": "is_not_null", "arguments": {"column": "id"}},
             }
         )
-        gateway = _gateway_returning(proposal)
+        gateway = _gateway_returning(_LOWCODE_MISS, proposal)
         service = _service(gateway)
         # More than the AI sample cap (500) — the service must forward at most
         # the first AI_SAMPLE_ROW_LIMIT rows, dropping the overflow.
@@ -244,6 +255,255 @@ class TestGenerateRule:
         sent_context = gateway.query.call_args.kwargs["messages"][-1]["content"]
         assert '"id": 499' in sent_context
         assert '"id": 500' not in sent_context
+
+
+def _lowcode_proposal(**over: object) -> str:
+    base = {
+        "name": "Amount Positive",
+        "description": "amount must be positive",
+        "dimension": "Validity",
+        "severity": "Medium",
+        "polarity": "pass",
+        "columns": [{"name": "amount", "family": "numeric"}],
+        "group_by_columns": None,
+        "lowcode_ast": {
+            "rows": [{"kind": "row", "combinator": None, "column_ref": "amount", "operator": ">", "value": 0}],
+            "joins": [],
+        },
+    }
+    base.update(over)
+    return json.dumps(base)
+
+
+class TestGenerateRuleLowcode:
+    """Low-code-first ordering (B2-132): lowcode tried first, then dqx_native, then sql."""
+
+    async def test_valid_lowcode_proposal_is_returned_first(self):
+        gateway = _gateway_returning(_lowcode_proposal())
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="amount must be positive", user_email="a@x")
+
+        assert result["mode"] == "lowcode"
+        assert result["name"] == "Amount Positive"
+        assert result["polarity"] == "pass"
+        assert result["author_kind"] == "ai_generated"
+        # Compiled to the simple sql_expression predicate body + one declared slot.
+        assert result["definition"]["predicate"] == "{{amount}} > 0"
+        assert result["definition"]["lowcode_ast"]["rows"][0]["column_ref"] == "amount"
+        assert result["slots"] == [
+            {"name": "amount", "family": "numeric", "position": 0, "cardinality": "one", "arg_key": None}
+        ]
+        # Accepted on the first pass — no dqx_native/sql fallback needed.
+        assert gateway.query.call_count == 1
+        assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:lowcode"
+
+    async def test_group_by_lowcode_compiles_to_sql_query_body(self):
+        proposal = _lowcode_proposal(
+            columns=[{"name": "order_id", "family": "numeric"}, {"name": "customer_id", "family": "any"}],
+            group_by_columns="{{customer_id}}",
+            lowcode_ast={
+                "rows": [
+                    {
+                        "kind": "aggregated",
+                        "combinator": None,
+                        "aggregate": "count",
+                        "column_ref": "order_id",
+                        "operator": "<=",
+                        "value": 100,
+                    }
+                ],
+                "joins": [],
+            },
+        )
+        service = _service(_gateway_returning(proposal))
+
+        result = await service.generate_rule(description="no customer over 100 orders", user_email="a@x")
+
+        assert result["mode"] == "lowcode"
+        body = result["definition"]
+        assert "predicate" not in body
+        assert body["merge_columns"] == ["{{customer_id}}"]
+        assert body["sql_query"] == (
+            "SELECT {{customer_id}}, (NOT (COUNT({{order_id}}) <= 100)) AS condition "
+            "FROM {{input_view}} GROUP BY {{customer_id}}"
+        )
+        assert body["group_by"] == "{{customer_id}}"
+        # One slot per placeholder in the compiled body, families from the hint.
+        assert {s["name"]: s["family"] for s in result["slots"]} == {"order_id": "numeric", "customer_id": "any"}
+
+    async def test_unusable_lowcode_falls_through_to_dqx_native(self):
+        # Low-code AST has no compilable rows -> fall through to dqx_native.
+        native = json.dumps(
+            {"name": "n", "description": "d", "definition": {"function": "is_not_null", "arguments": {"column": "id"}}}
+        )
+        gateway = _gateway_returning(_LOWCODE_MISS, native)
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="id not null", user_email="a@x")
+
+        assert result["mode"] == "dqx_native"
+        assert gateway.query.call_count == 2
+
+    async def test_unsafe_compiled_lowcode_is_rejected_and_falls_through(self):
+        # A text value carrying a forbidden keyword compiles to unsafe SQL, so
+        # the low-code candidate is dropped and generation falls through.
+        unsafe_lowcode = _lowcode_proposal(
+            columns=[{"name": "note", "family": "text"}],
+            lowcode_ast={
+                "rows": [
+                    {
+                        "kind": "row",
+                        "combinator": None,
+                        "column_ref": "note",
+                        "operator": "contains",
+                        "value": "DROP TABLE users",
+                    }
+                ],
+                "joins": [],
+            },
+        )
+        native = json.dumps(
+            {"name": "n", "description": "d", "definition": {"function": "is_not_null", "arguments": {"column": "id"}}}
+        )
+        gateway = _gateway_returning(unsafe_lowcode, native)
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="d", user_email="a@x")
+
+        assert result["mode"] == "dqx_native"
+        assert gateway.query.call_count == 2
+
+    async def test_unparsable_lowcode_falls_through(self):
+        native = json.dumps(
+            {"name": "n", "description": "d", "definition": {"function": "is_not_null", "arguments": {"column": "id"}}}
+        )
+        gateway = _gateway_returning("not json", native)
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="d", user_email="a@x")
+
+        assert result["mode"] == "dqx_native"
+        assert gateway.query.call_count == 2
+
+
+class TestParseRuleTypeIntent:
+    """Pure intent parse (B2-140): explicit type -> that mode; else None."""
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "sql rule for negative amounts",
+            "Write a SQL check that flags null ids",
+            "give me a rule in SQL",
+            "a predicate using SQL",
+        ],
+    )
+    def test_explicit_sql(self, description: str):
+        assert parse_rule_type_intent(description) == "sql"
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "low-code rule for positive amounts",
+            "lowcode check please",
+            "make a low code rule",
+            "a lowcode rule that ensures amount > 0",
+        ],
+    )
+    def test_explicit_lowcode(self, description: str):
+        assert parse_rule_type_intent(description) == "lowcode"
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "dqx native rule for nulls",
+            "use a native check",
+            "a built-in function to validate emails",
+            "native function that checks not null",
+        ],
+    )
+    def test_explicit_native(self, description: str):
+        assert parse_rule_type_intent(description) == "dqx_native"
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "amount must be positive",
+            "the sql_query column should never be null",  # incidental 'sql' — not a type request
+            "ensure the native currency code is valid",  # 'native' not naming a rule kind
+            "",
+        ],
+    )
+    def test_no_explicit_type_returns_none(self, description: str):
+        assert parse_rule_type_intent(description) is None
+
+
+class TestGenerateRuleExplicitType:
+    """generate_rule honours an explicit rule-type request, bypassing the cascade (B2-140)."""
+
+    async def test_explicit_sql_goes_straight_to_sql(self):
+        valid_sql = json.dumps(
+            {"name": "sql", "description": "d", "definition": {"sql_query": "id IS NOT NULL"}}
+        )
+        gateway = _gateway_returning(valid_sql)
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="write a sql rule for null ids", user_email="a@x")
+
+        assert result["mode"] == "sql"
+        # Straight to SQL — no lowcode/native passes were tried.
+        assert gateway.query.call_count == 1
+        assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:sql"
+
+    async def test_explicit_lowcode_goes_straight_to_lowcode(self):
+        gateway = _gateway_returning(_lowcode_proposal())
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="a low-code rule for amount", user_email="a@x")
+
+        assert result["mode"] == "lowcode"
+        assert gateway.query.call_count == 1
+        assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:lowcode"
+
+    async def test_explicit_native_goes_straight_to_native(self):
+        native = json.dumps(
+            {"name": "n", "description": "d", "definition": {"function": "is_not_null", "arguments": {"column": "id"}}}
+        )
+        gateway = _gateway_returning(native)
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="use a built-in function for null id", user_email="a@x")
+
+        assert result["mode"] == "dqx_native"
+        assert gateway.query.call_count == 1
+        assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:dqx_native"
+
+    async def test_explicit_mode_failure_raises_without_falling_back(self):
+        # An explicit SQL request whose SQL candidate is unusable must FAIL —
+        # never silently substitute a lowcode/native rule (B2-140).
+        unusable_sql = json.dumps({"name": "bad", "description": "d", "definition": {"sql_query": "   "}})
+        gateway = _gateway_returning(unusable_sql)
+        service = _service(gateway)
+
+        with pytest.raises(ValueError):
+            await service.generate_rule(description="write a sql rule", user_email="a@x")
+        # Only the SQL pass ran — no fallback to other modes.
+        assert gateway.query.call_count == 1
+        assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:sql"
+
+    async def test_no_explicit_type_still_cascades(self):
+        # No type named -> unchanged lowcode -> dqx_native -> sql cascade.
+        native = json.dumps(
+            {"name": "n", "description": "d", "definition": {"function": "is_not_null", "arguments": {"column": "id"}}}
+        )
+        gateway = _gateway_returning(_LOWCODE_MISS, native)
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="id must not be null", user_email="a@x")
+
+        assert result["mode"] == "dqx_native"
+        assert gateway.query.call_count == 2
 
 
 class TestDeriveNativeSlots:

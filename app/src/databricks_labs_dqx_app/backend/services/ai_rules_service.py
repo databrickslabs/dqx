@@ -18,7 +18,15 @@ from databricks.labs.dqx.llm.llm_utils import get_required_check_functions_defin
 from databricks.labs.dqx.utils import is_sql_query_safe
 
 from databricks_labs_dqx_app.backend.config import AI_SAMPLE_ROW_LIMIT, conf
+from databricks_labs_dqx_app.backend.lowcode_compile import (
+    CompiledLowcodeBody,
+    compile_lowcode_body,
+    extract_slot_tokens,
+    lowcode_is_usable,
+    lowcode_prompt_vocab,
+)
 from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
+from databricks_labs_dqx_app.backend.sql_utils import strip_sql_line_comments
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +50,13 @@ Guidelines:
 Available check functions:
 {available_functions}"""
 
-# Two-pass rule proposal prompt: the caller tries "dqx_native" first (a single
-# named check function + arguments), falling back to "sql" (a predicate SQL
-# expression) only if no dqx_native check fits the description. Both modes
-# share the same response shape so `AiRulesService._validate_and_repair_proposal`
-# can validate either uniformly.
+# Three-pass rule proposal prompt (B2-132): the caller tries "lowcode" first
+# (a guided, most-editable visual AST — see the dedicated template below),
+# falling back to "dqx_native" (a single named check function + arguments) and
+# finally to "sql" (a predicate SQL expression). This template backs the
+# dqx_native and sql passes only — both share the same response shape so
+# `AiRulesService._validate_and_repair_proposal` can validate either uniformly.
+# The lowcode pass has its own richer template and validator.
 _RULE_PROPOSAL_SYSTEM_TEMPLATE = """\
 You are a data quality rule design assistant for the DQX Rules Registry. Given a business \
 description of a data quality requirement (and optional table schema/sample data), propose \
@@ -70,6 +80,46 @@ Available check functions:
 
 _DQX_NATIVE_DEFINITION_SHAPE = '{"function": "<check function name>", "arguments": {<arg name>: <value>, ...}}'
 _SQL_DEFINITION_SHAPE = '{"sql_query": "<a SELECT-only predicate expression, no DML/DDL>"}'
+
+# Low-code proposal prompt (B2-132). Ported from dqlake's `_GENERATE_LOWCODE_SYSTEM`
+# and adapted to DQX: the model emits a low-code AST (`rows` + `joins`) plus the
+# declared `columns`, an optional `group_by_columns`, and a PASS/FAIL polarity.
+# The backend compiles that AST to the same `body` payload the visual builder
+# stores (`lowcode_compile.compile_lowcode_body`) and safety-validates it, so a
+# lowcode proposal loads straight into the low-code editor. This is the FIRST
+# attempt: it has no SQL escape hatch, so the model puts its full effort into a
+# valid AST instead of bailing to a SQL string — if the AST can't represent the
+# check, `generate_rule` falls through to the dqx_native, then sql, passes.
+_LOWCODE_PROPOSAL_SYSTEM_TEMPLATE = """\
+You are a data quality rule design assistant for the DQX Rules Registry. Given a business \
+description of a data quality requirement (and optional table schema/sample data), propose \
+ONE reusable rule as a LOW-CODE rule expressed as a structured AST.
+
+Return ONLY a JSON object with these fields:
+  - "name": a short human-readable rule name (max 80 chars)
+  - "description": a one-sentence description of what the rule checks
+  - "dimension": one of Validity, Completeness, Accuracy, Consistency, Uniqueness, Timeliness
+  - "severity": one of Low, Medium, High, Critical
+  - "polarity": "pass" or "fail" — use "pass" when the AST rows describe the condition that is \
+TRUE for a VALID row (the common case); use "fail" only when the description explicitly names a \
+failure condition. When in doubt, choose "pass".
+  - "columns": a JSON array of {{"name": "<snake_case>", "family": \
+"numeric"|"text"|"temporal"|"boolean"|"any"}} objects — ONE per column the rule references
+  - "group_by_columns": a comma-separated string of {{{{column}}}} placeholders for group-level \
+rules, or null
+  - "lowcode_ast": {{"rows": [<row>...], "joins": []}} where each row is either \
+{{"kind": "row", "combinator": null|"AND"|"OR", "column_ref": "<column name>", \
+"operator": "<op>", "value": <value>}} or {{"kind": "aggregated", "combinator": null|"AND"|"OR", \
+"aggregate": "<agg>", "column_ref": "<column name>", "operator": "<op>", "value": <value>}}. \
+The first row's combinator is null; later rows use "AND" or "OR". The "kind" field is LITERALLY \
+"row" or "aggregated".
+
+Guidelines:
+- Use double quotes for all JSON keys and string values. Do not include any prose outside the JSON.
+- Every column_ref MUST also appear in "columns". Reference declared columns by name via column_ref.
+- Always produce a populated "lowcode_ast" with at least one usable row.
+
+{vocab}"""
 
 # Extra prompt fragments injected only for the dqx_native mode so the model
 # also names the VARIABLE COLUMN SLOTS the rule targets (item B2-32). A registry
@@ -144,6 +194,63 @@ class SqlPredicateResult(TypedDict):
 
     predicate: str
     polarity: str | None
+
+
+# Explicit rule-type intent (B2-140). When a user's natural-language prompt
+# clearly asks for a specific rule TYPE, generation goes straight to that
+# generator instead of the lowcode -> dqx_native -> sql cascade. The patterns
+# are deliberately CONSERVATIVE — they match a request that names the type as
+# the kind of RULE/CHECK being asked for, not an incidental mention (e.g. "sql
+# rule for X" bypasses; "flag rows where the sql column is null" does not). When
+# nothing matches, `parse_rule_type_intent` returns None and the full cascade
+# runs unchanged.
+_RULE_KIND = r"(?:rule|check|expression|predicate)"
+# One compiled (mode, pattern) list, tried in order; the first match wins. Each
+# pattern requires the type keyword to sit next to a rule/check noun so a bare
+# column or value mention can't trip it.
+_INTENT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "sql",
+        re.compile(rf"\bsql\s+{_RULE_KIND}\b|\b{_RULE_KIND}\s+(?:in|using|with|as)\s+sql\b", re.IGNORECASE),
+    ),
+    (
+        "lowcode",
+        re.compile(rf"\blow[\s-]?code\s+{_RULE_KIND}\b|\blow[\s-]?code\b(?=.*\b{_RULE_KIND}\b)", re.IGNORECASE),
+    ),
+    (
+        "dqx_native",
+        re.compile(
+            rf"\b(?:dqx[\s-]?)?native\s+{_RULE_KIND}\b"
+            rf"|\bbuilt[\s-]?in\s+(?:function|{_RULE_KIND})\b"
+            rf"|\bnative\s+(?:function|{_RULE_KIND})\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def parse_rule_type_intent(description: str) -> str | None:
+    """Detect an EXPLICIT rule-type request in a natural-language prompt (B2-140).
+
+    Returns the requested mode (``"sql"``, ``"lowcode"``, or ``"dqx_native"``)
+    when the description clearly asks for that specific type of rule, else
+    ``None`` so the caller runs the full lowcode -> dqx_native -> sql cascade.
+    Pure and case-insensitive; conservative by design — only a request that
+    names the type alongside a rule/check noun bypasses the cascade, so an
+    incidental keyword (a column called ``sql``, "native currency", …) does not.
+
+    Args:
+        description: The user's natural-language rule description.
+
+    Returns:
+        The explicitly requested mode, or None when none is clearly requested.
+    """
+    if not description:
+        return None
+    for mode, pattern in _INTENT_PATTERNS:
+        if pattern.search(description):
+            return mode
+    return None
 
 
 _VALID_DIMENSIONS = frozenset({"Validity", "Completeness", "Accuracy", "Consistency", "Uniqueness", "Timeliness"})
@@ -355,32 +462,92 @@ class AiRulesService:
         columns: list[str] | None = None,
         sample_rows: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Generate a full registry-rule proposal, two-pass (dqx_native, then sql fallback).
+        """Generate a full registry-rule proposal, three-pass: lowcode → dqx_native → sql (B2-132).
+
+        Mirrors dqlake's low-code-first "build with AI": the low-code mode is the guided,
+        most-editable authoring surface, so it is tried FIRST; the caller falls through to
+        ``dqx_native`` and then ``sql`` only when the current mode cannot express the check.
+
+        When the *description* EXPLICITLY asks for a specific rule type (B2-140) — e.g.
+        "write a SQL rule…", "low-code rule…", "use a built-in function…" —
+        :func:`parse_rule_type_intent` detects it and generation goes STRAIGHT to that one
+        generator, bypassing the cascade. If that explicitly-requested mode cannot produce a
+        valid, safe rule the call FAILS rather than silently switching modes: a user who asked
+        for a SQL rule and got a low-code rule would be wrong, so we prefer telling them over
+        substituting. Only when no type is clearly requested does the full cascade run.
 
         The result is always DQX-validated (and unsafe SQL rejected) before being returned —
         never an invalid or unsafe rule. Returns a dict shaped like::
 
             {"name", "description", "mode", "dimension", "severity", "polarity",
-             "definition", "author_kind"}
+             "definition", "slots", "author_kind"}
 
         Raises:
             AIUnavailableError: AI is disabled or unconfigured.
             AIRateLimitExceededError: caller is over their hourly quota.
-            ValueError: no candidate mode produced a valid, safe rule.
+            ValueError: no candidate mode produced a valid, safe rule (or the
+                explicitly-requested mode could not).
         """
         schema_info = self._get_schema_info(table_fqn) if table_fqn else ""
         context = self._build_rule_context(description, schema_info, columns, sample_rows)
 
-        for mode, shape in (("dqx_native", _DQX_NATIVE_DEFINITION_SHAPE), ("sql", _SQL_DEFINITION_SHAPE)):
-            proposal = await self._generate_rule_candidate(mode, shape, context, user_email)
-            if proposal is None:
-                continue
-            validated = self._validate_and_repair_proposal(proposal)
+        # B2-140 — honour an explicit rule-type request: run ONLY that generator
+        # and fail (never silently substitute) if it can't produce a valid rule.
+        requested_mode = parse_rule_type_intent(description)
+        if requested_mode is not None:
+            validated = await self._generate_in_mode(requested_mode, context, user_email)
+            if validated is not None:
+                validated["author_kind"] = "ai_generated"
+                return validated
+            raise ValueError(
+                f"AI could not generate a valid, safe {requested_mode} rule for this description."
+            )
+
+        # No explicit type — the low-code-first cascade (lowcode → dqx_native → sql).
+        for mode in ("lowcode", "dqx_native", "sql"):
+            validated = await self._generate_in_mode(mode, context, user_email)
             if validated is not None:
                 validated["author_kind"] = "ai_generated"
                 return validated
 
         raise ValueError("AI could not generate a valid, safe rule for this description.")
+
+    async def _generate_in_mode(self, mode: str, context: str, user_email: str) -> dict[str, Any] | None:
+        """Run ONE generation mode end-to-end (propose + validate); None on failure.
+
+        Dispatches to the low-code pass (compiled + safety-gated) or the shared
+        dqx_native/sql pass, returning the validated proposal or ``None`` so the
+        caller can fall through (cascade) or fail (explicit request). Never
+        returns an invalid or unsafe rule.
+        """
+        if mode == "lowcode":
+            raw = await self._generate_lowcode_candidate(context, user_email)
+            return self._validate_lowcode_proposal(raw) if raw is not None else None
+        shape = _DQX_NATIVE_DEFINITION_SHAPE if mode == "dqx_native" else _SQL_DEFINITION_SHAPE
+        proposal = await self._generate_rule_candidate(mode, shape, context, user_email)
+        return self._validate_and_repair_proposal(proposal) if proposal is not None else None
+
+    async def _generate_lowcode_candidate(self, context: str, user_email: str) -> dict[str, Any] | None:
+        """Run the low-code proposal pass and return the parsed JSON (or None on unparsable)."""
+        system = _LOWCODE_PROPOSAL_SYSTEM_TEMPLATE.format(vocab=lowcode_prompt_vocab())
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": context},
+        ]
+        content = await self._gateway.query(
+            user_email=user_email,
+            purpose="generate_rule:lowcode",
+            messages=messages,
+            max_tokens=conf.llm_max_tokens,
+            # Deterministic generation (B2-33); the gateway drops the explicit
+            # temperature and retries for reasoning endpoints that reject it.
+            temperature=0,
+        )
+        try:
+            return AIGateway.parse_json_object(content)
+        except AIResponseParseError:
+            logger.warning("AI rule proposal (mode=lowcode) returned unparsable JSON")
+            return None
 
     async def _generate_rule_candidate(
         self,
@@ -491,6 +658,123 @@ class AiRulesService:
             "definition": definition,
             "slots": slots,
         }
+
+    def _validate_lowcode_proposal(self, proposal: dict[str, Any]) -> dict[str, Any] | None:
+        """Validate + compile a low-code AI proposal into a stored rule definition (B2-132).
+
+        Never returns an invalid or unsafe rule: the proposal's ``lowcode_ast`` is compiled to
+        SQL via :func:`compile_lowcode_body` (the exact folding the visual builder uses on save),
+        and rejected — returning ``None`` so the caller falls through to ``dqx_native`` — when the
+        AST is not compilable (no usable rows) or the compiled predicate / ``sql_query`` fails
+        :func:`is_sql_query_safe`. The returned ``definition.body`` matches what
+        ``RegistryRuleFormDialog`` stores for a low-code rule (``lowcode_ast`` + optional
+        ``group_by`` + compiled ``predicate`` or ``sql_query`` + ``merge_columns``), and its
+        ``slots`` are derived from the ``{{slot}}`` placeholders in the compiled SQL so every
+        placeholder the materializer must substitute has a matching declared slot.
+        """
+        ast = proposal.get("lowcode_ast")
+        if not isinstance(ast, dict) or not isinstance(ast.get("rows"), list):
+            return None
+        ast.setdefault("joins", [])
+        if not isinstance(ast.get("joins"), list):
+            ast["joins"] = []
+        # Usability gate (dqlake's `_lowcode_rows_usable`): an AST that compiles
+        # to an empty predicate is not a real low-code rule.
+        if not lowcode_is_usable(ast):
+            logger.warning("AI-generated lowcode rule dropped: AST has no compilable rows")
+            return None
+
+        group_by = self._clean_str(proposal.get("group_by_columns")) or ""
+        compiled = compile_lowcode_body(ast, group_by)
+
+        # Safety-gate every compiled SQL fragment with the same check the
+        # RegistryService applies on create (`is_sql_query_safe`, comments
+        # stripped). Placeholders (`{{slot}}`, `{{input_view}}`) are tolerated
+        # by the safety scanner exactly as for a hand-written sql-mode body.
+        for candidate in (compiled.predicate, compiled.sql_query):
+            if candidate and not is_sql_query_safe(strip_sql_line_comments(candidate)):
+                logger.warning("AI-generated lowcode rule dropped: unsafe compiled SQL")
+                return None
+
+        body = self._build_lowcode_body(ast, group_by, compiled)
+        slots = self._derive_lowcode_slots(compiled, proposal.get("columns"))
+
+        return {
+            "name": self._clean_str(proposal.get("name")) or "AI-generated rule",
+            "description": self._clean_str(proposal.get("description")) or "",
+            "mode": "lowcode",
+            "dimension": self._clean_choice(proposal.get("dimension"), _VALID_DIMENSIONS),
+            "severity": self._clean_choice(proposal.get("severity"), _VALID_SEVERITIES),
+            "polarity": self._clean_choice(proposal.get("polarity"), _VALID_POLARITIES) or "pass",
+            "definition": body,
+            "slots": slots,
+        }
+
+    @staticmethod
+    def _build_lowcode_body(
+        ast: dict[str, Any],
+        group_by: str,
+        compiled: CompiledLowcodeBody,
+    ) -> dict[str, Any]:
+        """Assemble the stored ``definition.body`` for a low-code rule.
+
+        Byte-for-byte the shape ``RegistryRuleFormDialog.buildDefinition`` writes: the
+        re-editable ``lowcode_ast`` (so the visual builder rehydrates exactly), the raw
+        ``group_by`` string (only when present), and the compiled ``predicate`` OR
+        ``sql_query`` + ``merge_columns`` that actually materializes and runs.
+        """
+        body: dict[str, Any] = {"lowcode_ast": ast}
+        if group_by:
+            body["group_by"] = group_by
+        if compiled.predicate is not None:
+            body["predicate"] = compiled.predicate
+        if compiled.sql_query is not None:
+            body["sql_query"] = compiled.sql_query
+        if compiled.merge_columns is not None:
+            body["merge_columns"] = compiled.merge_columns
+        return body
+
+    @staticmethod
+    def _derive_lowcode_slots(compiled: CompiledLowcodeBody, ai_columns: object) -> list[dict[str, Any]]:
+        """Build RuleSlot-shaped dicts for a low-code proposal.
+
+        One slot per distinct ``{{slot}}`` placeholder in the compiled SQL (in first-appearance
+        order), so every placeholder the materializer substitutes has a matching declared slot —
+        the safe analogue of dqlake's column reconciliation applied to the compiled body. A
+        slot's ``family`` comes from the model's ``columns`` hint when it named the column
+        (normalised to the closed :data:`_VALID_SLOT_FAMILIES` vocabulary), else ``"any"``.
+        ``arg_key`` is ``None`` — low-code slots fill placeholders, not a function parameter.
+        """
+        family_hint: dict[str, str] = {}
+        if isinstance(ai_columns, list):
+            for col in ai_columns:
+                if not isinstance(col, dict):
+                    continue
+                name = col.get("name")
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                raw_family = col.get("family")
+                family = raw_family.lower() if isinstance(raw_family, str) else ""
+                family_hint[name.strip()] = family if family in _VALID_SLOT_FAMILIES else "any"
+
+        # merge_columns entries are already-wrapped placeholders / qualified refs;
+        # fold them in so a join-key / group-by slot that appears only there is
+        # still declared.
+        merge = compiled.merge_columns or []
+        tokens = extract_slot_tokens(compiled.predicate, compiled.sql_query, " ".join(str(c) for c in merge))
+
+        slots: list[dict[str, Any]] = []
+        for position, name in enumerate(tokens):
+            slots.append(
+                {
+                    "name": name,
+                    "family": family_hint.get(name, "any"),
+                    "position": position,
+                    "cardinality": "one",
+                    "arg_key": None,
+                }
+            )
+        return slots
 
     @staticmethod
     def _derive_native_slots(

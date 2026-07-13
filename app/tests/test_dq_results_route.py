@@ -1478,7 +1478,9 @@ class TestIncludeDrafts:
         sql_dispatch(sql_mock)
         assert client.get(url, params={"include_drafts": "true"}).status_code == 200
         for stmt in self._shaping_stmts(sql_mock):
-            assert "run_mode" not in stmt
+            # The run_mode FILTER is dropped; run_mode is still SELECTED (it
+            # feeds the trend draft flag, B2-136) — so assert on the predicate.
+            assert "run_mode = " not in stmt
 
     def test_legacy_untagged_rows_flow_through_unchanged(self, client, sql_mock):
         # Untagged-run resolution lives in the VIEW (COALESCE over the

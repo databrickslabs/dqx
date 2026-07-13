@@ -3,6 +3,7 @@ import {
   clampWindow,
   countSeriesColors,
   COUNT_COLORS,
+  DRAFT_KEY,
   fracFromChartY,
   isFullExtent,
   isScoreDotClipped,
@@ -60,6 +61,23 @@ describe("pivot", () => {
   it("keeps null pass rates as null (gap), not 0", () => {
     const { points } = pivot([{ run_date: "2026-06-10", pass_rate: null }]);
     expect(points[0]["Pass rate"]).toBeNull();
+  });
+
+  it("flags a draft point via DRAFT_KEY (B2-136)", () => {
+    const { points } = pivot([
+      { run_date: "2026-06-10", pass_rate: 0.9, is_draft: true },
+      { run_date: "2026-06-11", pass_rate: 0.8, is_draft: false },
+    ]);
+    expect(points[0][DRAFT_KEY]).toBe(1);
+    expect(points[1][DRAFT_KEY]).toBeUndefined();
+  });
+
+  it("marks a run_date row draft when ANY series at that instant is draft", () => {
+    const { points } = pivot([
+      { run_date: "2026-06-10", series: "A", pass_rate: 1, is_draft: false },
+      { run_date: "2026-06-10", series: "B", pass_rate: 0.5, is_draft: true },
+    ]);
+    expect(points[0][DRAFT_KEY]).toBe(1);
   });
 });
 

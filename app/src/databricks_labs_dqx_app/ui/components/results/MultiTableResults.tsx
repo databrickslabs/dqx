@@ -581,6 +581,7 @@ export function MultiTableResultsSection({
       run_date: String(p.run_date ?? ""),
       series: p.series ?? undefined,
       pass_rate: toNum(p.pass_rate),
+      is_draft: p.is_draft ?? false,
     }));
 
   // Entity average score (dqlake behaviour) = the latest point on the entity

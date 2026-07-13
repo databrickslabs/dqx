@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
@@ -45,8 +45,21 @@ from databricks_labs_dqx_app.backend.models import (
     TrendFailurePointOut,
     TrendPointOut,
 )
+from databricks_labs_dqx_app.backend.services.score_view_service import RUN_MODE_DRAFT
 
 VALID_AXES = ("all", "trend", "breakdown")
+
+
+def _rows_have_draft(rows: Iterable[CheckResultRow]) -> bool:
+    """True when ANY row came from a draft (non-published) run.
+
+    A trend point that pools multiple runs onto one instant is marked draft
+    if any contributing run was a draft — the conservative choice so a mixed
+    instant is never silently shown as fully published (B2-136). The shaping
+    view resolves untagged legacy runs to 'published', so only an explicit
+    ``run_mode == 'draft'`` counts.
+    """
+    return any(row.run_mode == RUN_MODE_DRAFT for row in rows)
 
 
 @dataclass(frozen=True)
@@ -68,6 +81,7 @@ class CheckResultRow:
     dimension: str | None = None
     columns: tuple[str, ...] = ()
     rule_id: str | None = None
+    run_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -130,6 +144,7 @@ def parse_check_rows(raw_rows: list[dict[str, str | None]]) -> list[CheckResultR
                 dimension=row.get("dimension"),
                 columns=_parse_columns_json(row.get("columns_json")),
                 rule_id=row.get("registry_rule_id"),
+                run_mode=row.get("run_mode"),
             )
         )
     return out
@@ -283,12 +298,21 @@ def _trend_asof(rows: list[CheckResultRow]) -> list[TrendPointOut]:
     """
     # instant -> table -> pooled accumulator.
     per_instant: dict[str | None, dict[str, _GroupAcc]] = defaultdict(lambda: defaultdict(_GroupAcc))
+    draft_instants: set[str | None] = set()
     for row in rows:
         per_instant[row.run_date][row.table_fqn].add(row)
+        if row.run_mode == RUN_MODE_DRAFT:
+            draft_instants.add(row.run_date)
     out: list[TrendPointOut] = []
     for run_date in sorted(per_instant, key=lambda d: d or ""):
         rates = [acc.pass_rate for acc in per_instant[run_date].values() if acc.pass_rate is not None]
-        out.append(TrendPointOut(run_date=run_date, pass_rate=sum(rates) / len(rates) if rates else None))
+        out.append(
+            TrendPointOut(
+                run_date=run_date,
+                pass_rate=sum(rates) / len(rates) if rates else None,
+                is_draft=run_date in draft_instants,
+            )
+        )
     return out
 
 
@@ -382,8 +406,12 @@ def _trend_grouped(
     """
     instant = instant_of or (lambda row: row.run_date)
     groups: dict[tuple[str | None, str | None], _GroupAcc] = defaultdict(_GroupAcc)
+    draft_groups: set[tuple[str | None, str | None]] = set()
     for row in rows:
-        groups[(instant(row), series_of(row))].add(row)
+        key = (instant(row), series_of(row))
+        groups[key].add(row)
+        if row.run_mode == RUN_MODE_DRAFT:
+            draft_groups.add(key)
     return [
         TrendPointOut(
             run_date=run_date,
@@ -391,6 +419,7 @@ def _trend_grouped(
             pass_rate=acc.pass_rate,
             rule_count=len(acc.rule_keys),
             total_tests=acc.total,
+            is_draft=(run_date, series) in draft_groups,
         )
         for (run_date, series), acc in sorted(groups.items(), key=lambda kv: (kv[0][0] or "", kv[0][1] or ""))
     ]

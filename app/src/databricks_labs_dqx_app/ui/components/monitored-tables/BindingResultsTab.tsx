@@ -612,11 +612,13 @@ function ResultsBody({
       run_date: String(p.run_date ?? ""),
       series: p.series ?? undefined,
       pass_rate: toNum(p.pass_rate),
+      is_draft: p.is_draft ?? false,
     }));
   const toTrend = (rows: EntityResultsOut["trend"]) =>
     (rows ?? []).map((tp) => ({
       run_date: String(tp.run_date ?? ""),
       pass_rate: toNum(tp.pass_rate),
+      is_draft: tp.is_draft ?? false,
     }));
 
   // B5/B6 count series. Series keys are the ENGLISH canonical names — the
