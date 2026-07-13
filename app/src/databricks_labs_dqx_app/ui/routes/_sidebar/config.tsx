@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, AlertTriangle, CheckCircle2, Circle, Clock, Cpu, Database, FlaskConical, Globe, KeyRound, LineChart, Loader2, Lock, Search, Tags, Plus, Trash2, X, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Circle, Clock, Cpu, Database, FlaskConical, Globe, KeyRound, LineChart, Loader2, Lock, Scale, Search, Tags, Plus, Trash2, X, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -2564,7 +2564,7 @@ function DangerZoneCard() {
 // The individual setting cards above are unchanged; this only regroups them.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type SettingsTabId = "general" | "ai" | "rules" | "entitlements" | "compute" | "data" | "danger";
+type SettingsTabId = "general" | "ai" | "governance" | "tags" | "entitlements" | "compute" | "danger";
 
 /** ErrorBoundary + Suspense wrapper shared by every setting card. */
 function SettingSection({ reset, children }: { reset: () => void; children: ReactNode }) {
@@ -2592,10 +2592,10 @@ function ConfigPage() {
     () => [
       { id: "general", label: t("config.tabGeneral"), icon: Globe },
       { id: "ai", label: t("config.tabAi"), icon: Sparkles },
-      { id: "rules", label: t("config.tabRules"), icon: Tags },
+      { id: "governance", label: t("config.tabGovernance"), icon: Scale },
+      { id: "tags", label: t("config.tabTags"), icon: Tags },
       { id: "entitlements", label: t("config.tabEntitlements"), icon: KeyRound },
       { id: "compute", label: t("config.tabCompute"), icon: Cpu },
-      { id: "data", label: t("config.tabData"), icon: Clock },
       { id: "danger", label: t("config.tabDanger"), icon: AlertTriangle },
     ],
     [t],
@@ -2609,15 +2609,15 @@ function ConfigPage() {
       { id: "reviewStatuses", tab: "general", title: t("config.reviewStatusesTitle"), keywords: t("config.kwReviewStatuses"), render: () => <RunReviewStatusesSettings /> },
       { id: "globalResults", tab: "general", title: t("config.globalResultsTitle"), keywords: t("config.kwGlobalResults"), render: () => <GlobalResultsSettingsCard /> },
       { id: "ai", tab: "ai", title: t("config.aiSettingsTitle"), keywords: t("config.kwAi"), render: () => <AiSettingsCard /> },
-      { id: "labels", tab: "rules", title: t("config.labelsTitle"), keywords: t("config.kwLabels"), render: () => <LabelDefinitionsSettings /> },
-      { id: "rulesRegistry", tab: "rules", title: t("config.rulesRegistrySettingsTitle"), keywords: t("config.kwRulesRegistry"), render: () => <RulesRegistrySettingsCard /> },
-      { id: "approvalsMode", tab: "rules", title: t("config.approvalsModeTitle"), keywords: t("config.kwApprovalsMode"), render: () => <ApprovalsModeCard /> },
-      { id: "requireDraftRun", tab: "rules", title: t("config.requireDraftRunTitle"), keywords: t("config.kwRequireDraftRun"), render: () => <RequireDraftRunSettingsCard /> },
+      { id: "labels", tab: "tags", title: t("config.labelsTitle"), keywords: t("config.kwLabels"), render: () => <LabelDefinitionsSettings /> },
+      { id: "rulesRegistry", tab: "governance", title: t("config.rulesRegistrySettingsTitle"), keywords: t("config.kwRulesRegistry"), render: () => <RulesRegistrySettingsCard /> },
+      { id: "approvalsMode", tab: "governance", title: t("config.approvalsModeTitle"), keywords: t("config.kwApprovalsMode"), render: () => <ApprovalsModeCard /> },
+      { id: "requireDraftRun", tab: "governance", title: t("config.requireDraftRunTitle"), keywords: t("config.kwRequireDraftRun"), render: () => <RequireDraftRunSettingsCard /> },
+      { id: "retention", tab: "governance", title: t("config.retentionTitle"), keywords: t("config.kwRetention"), render: () => <RetentionSettings /> },
       { id: "entitlements", tab: "entitlements", title: t("roleManagement.title"), keywords: t("config.kwEntitlements"), render: () => <RoleManagement /> },
       { id: "permissions", tab: "entitlements", title: t("config.permissionsDefaultInheritTitle"), keywords: t("config.kwPermissions"), render: () => <PermissionsSettingsCard /> },
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
       { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
-      { id: "retention", tab: "data", title: t("config.retentionTitle"), keywords: t("config.kwRetention"), render: () => <RetentionSettings /> },
       { id: "resetDatabase", tab: "danger", title: t("config.resetDbTitle"), keywords: t("config.kwDanger"), render: () => <DangerZoneCard /> },
     ],
     [t],
@@ -2696,7 +2696,18 @@ function ConfigPage() {
                 {tabs.map((tab) => {
                   const Icon = tab.icon;
                   return (
-                    <TabsTrigger key={tab.id} value={tab.id} className="gap-1.5">
+                    <TabsTrigger
+                      key={tab.id}
+                      value={tab.id}
+                      className={cn(
+                        "gap-1.5",
+                        // Danger Zone reads as destructive: label + icon stay red in
+                        // every state (inactive/active, light/dark). tailwind-merge
+                        // lets these override the trigger's default text tokens.
+                        tab.id === "danger" &&
+                          "text-destructive dark:text-destructive data-[state=active]:text-destructive dark:data-[state=active]:text-destructive",
+                      )}
+                    >
                       <Icon className="h-4 w-4 shrink-0" />
                       {tab.label}
                     </TabsTrigger>
