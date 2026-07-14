@@ -141,7 +141,9 @@ user catalogs — so the demo data lives where the SP already has them.
 predicates for cross-field consistency). Rule *logic* mirrors dqlake's proven,
 correctness-gated set (uniqueness uses the canonical aggregated shape, not
 count=count_distinct; foreign-key rules are **out** — the same known DQX limitation
-dqlake documented).
+dqlake documented). **Email validation is deliberately excluded** — no
+`is_valid_email` rule — because email validation is reserved for a separate
+user-led demo flow, not the seeded content.
 
 Names/descriptions are authored to the AI contract — short human-readable name
 (≤80 chars), one declarative sentence — with **minimal phrasing and no leading
@@ -168,9 +170,10 @@ e.g. "Is not null" with a raw docstring as its description.)
 ## 7. Tags (task #3)
 
 Datagen tags a few demo columns with governed tags that read naturally for
-e-commerce (e.g. `class.email_address` on `customers.email`, `class.name` on
-`customers.first_name`/`last_name`, `class.pii` where apt) — chosen from what
-`SHOW GOVERNED TAGS` returns in the sandbox (~375 available). 2–3 registry rules
+e-commerce (e.g. `class.name` on `customers.first_name`/`last_name`,
+`class.country` on `customers.country_code`, `class.pii` where apt) — chosen from
+what `SHOW GOVERNED TAGS` returns in the sandbox (~375 available). **No email tag
+is used** (email validation is out of scope — user-led flow). 2–3 registry rules
 declare matching `slot_tags` (`{slot: [class.*]}` via `set_slot_tags`). The demo
 ships with the `tag_auto_apply` toggle **OFF** by default so tag matches surface as
 **suggestions** on the Apply Rules screen (the safe, reversible showcase); the demo

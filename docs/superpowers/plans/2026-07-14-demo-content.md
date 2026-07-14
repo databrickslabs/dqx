@@ -257,14 +257,16 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("code", "text", arg_key="column"),),
     ),
     RuleSpec(
-        key="email_present",
-        name="Email is present and well-formed",
-        description="Email is a valid, non-empty address.",
-        dimension="Validity", severity="High", mode="dqx_native",
-        body={"function": "is_valid_email", "arguments": {"column": "{{email}}"}},
-        slots=(SlotSpec("email", "text", arg_key="column"),),
-        slot_tags={"email": ("class.email_address",)},   # tag showcase
+        key="name_present",
+        name="Name is present",
+        description="Customer name is not null or empty.",
+        dimension="Completeness", severity="Medium", mode="dqx_native",
+        body={"function": "is_not_null_and_not_empty", "arguments": {"column": "{{name}}"}},
+        slots=(SlotSpec("name", "text", arg_key="column"),),
+        slot_tags={"name": ("class.name",)},   # second tag showcase (non-email)
     ),
+    # NO email-validation rule. Email validation is reserved for a separate
+    # user-led demo flow and must NOT appear in the seeded manifest.
     RuleSpec(
         key="min_len",
         name="Tracking number is long enough",
@@ -373,16 +375,16 @@ def test_baseline_reset_covers_every_table():
 
 def test_set_column_tag_sql_escapes_and_quotes():
     from databricks_labs_dqx_app.backend.demo.manifest import ColumnTagSpec
-    sql = d.build_set_column_tag_sql(ColumnTagSpec("customers", "email", "class.email_address"), CAT, SCH)
+    sql = d.build_set_column_tag_sql(ColumnTagSpec("customers", "first_name", "class.name"), CAT, SCH)
     assert "ALTER TABLE" in sql and "ALTER COLUMN" in sql and "SET TAGS" in sql
-    assert "class.email_address" in sql
+    assert "class.name" in sql
 
 
 def test_set_column_tag_rejects_non_class_namespace():
     from databricks_labs_dqx_app.backend.demo.manifest import ColumnTagSpec
     import pytest
     with pytest.raises(ValueError):
-        d.build_set_column_tag_sql(ColumnTagSpec("customers", "email", "pii.email"), CAT, SCH)
+        d.build_set_column_tag_sql(ColumnTagSpec("customers", "first_name", "pii.name"), CAT, SCH)
 
 
 def test_identifiers_are_validated_no_injection():
@@ -1125,7 +1127,7 @@ Expected: `EXIT: 0` AND "Deployment complete!" AND "App started successfully". (
   - Homepage `/api/v1/home/stats`: `rule_count` ~15, `monitored_table_count` 5, `table_space_count` 2, non-null `score`, and a multi-point `score_trend` that moves (not flat).
   - Monitored tables show real failed records; drilldowns show per-dimension/severity breakdowns.
   - Data products (Customer 360, Fulfillment) show rollup scores + trends.
-  - Apply-Rules screen on a tagged table (e.g. customers) surfaces tag-matched rule SUGGESTIONS (tag_auto_apply OFF), matching a governed tag (e.g. `class.email_address`).
+  - Apply-Rules screen on a tagged table (e.g. customers) surfaces tag-matched rule SUGGESTIONS (tag_auto_apply OFF), matching a governed tag (e.g. `class.name` or `class.country` — NOT email; email validation is out of scope).
   - Trend spans ~9 points with the story shape (orders dip+recover; customers improving; shipments' new rule appears mid-history).
 
 - [ ] **Step 5: Report back to the user** with the deploy exit status, the seed outcome, and the verified homepage numbers. Do NOT merge or push — wait for the user's go-ahead. Visual QA is owed to the user (agents can't drive the authed browser).
