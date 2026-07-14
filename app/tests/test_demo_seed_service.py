@@ -149,3 +149,53 @@ def test_assert_no_misfire_passes_when_unique_count_inside_band():
 
     # inside the band and below the catastrophic rate — must not raise
     svc._assert_no_misfire("customers", "run1")
+
+
+def test_assert_no_misfire_logs_when_unique_check_name_missing(caplog):
+    # FIX 2: when a binding has the uniqueness rule applied but no check with the
+    # reserved unique-rule name appears in metrics, the band silently never
+    # fires. That skip must be observable (logged), not passing mutely — but it
+    # must NOT hard-fail (the catastrophic-rate gate still protects correctness).
+    svc, deps = _svc()
+    # products has the unique rule applied at week 0 (no lifecycle window), so a
+    # run with NO unique check in its metrics is a loggable silent skip.
+    deps["app_sql"].query_dicts.return_value = [
+        {"metric_name": "input_row_count", "metric_value": "5000"},
+        {
+            "metric_name": "check_metrics",
+            "metric_value": json.dumps([{"check_name": "some_other_check", "error_count": 5, "warning_count": 0}]),
+        },
+    ]
+    with caplog.at_level("WARNING", logger="databricks_labs_dqx_app.backend.demo.seed_service"):
+        svc._assert_no_misfire("products", "run1")  # must not raise
+    assert "uniqueness rule applied" in caplog.text
+    assert "band was skipped" in caplog.text
+
+
+def test_validation_gate_deletes_gate_runs_from_both_tables():
+    # FIX 1: the validation-gate runs execute at real "now" and are never
+    # re-dated, so they must be deleted from dq_metrics AND dq_validation_runs
+    # after the misfire assertions pass — otherwise a gate run can outrank the
+    # re-dated (past) weekly runs in the score cache's latest-run selection.
+    svc, deps = _svc()
+    deps["app_sql"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="gate-run")
+    # wait-for-run sees SUCCESS; misfire read sees an in-band unique count.
+    low, high = manifest.UNIQUE_EXPECT_ROWS
+    in_band = (low + high) // 2
+
+    def _query_dicts(sql, *_a, **_k):
+        if "metric_name" in sql:
+            return _metrics_rows(50_000, in_band)
+        return [{"status": "SUCCESS"}]
+
+    deps["app_sql"].query_dicts.side_effect = _query_dicts
+
+    binding_map = {"customers": "b-customers", "orders": "b-orders"}
+    svc._validation_gate(binding_map, "admin@example.com")
+
+    executed = [call.args[0] for call in deps["app_sql"].execute.call_args_list]
+    deletes = [sql for sql in executed if sql.startswith("DELETE FROM")]
+    # one DELETE per gate run against each of the two tables
+    assert any(s.startswith("DELETE FROM") and "dq_metrics" in s and "gate-run" in s for s in deletes)
+    assert any(s.startswith("DELETE FROM") and "dq_validation_runs" in s and "gate-run" in s for s in deletes)

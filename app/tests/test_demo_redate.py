@@ -19,21 +19,23 @@ def test_redate_metrics_targets_run_id_and_casts_timestamp():
     assert "run_id = 'abc123'" in sql
 
 
-def test_insert_history_backdates_both_timestamps():
-    sql = r.build_insert_history_sql(
-        H, "global", "global", score=0.91, failed_tests=12, total_tests=1000, target_iso="2026-05-01 09:30:00"
-    )
-    assert sql.startswith("INSERT INTO")
-    assert "0.91" in sql and "12" in sql and "1000" in sql
-    assert sql.count("CAST('2026-05-01 09:30:00' AS TIMESTAMP)") == 2  # run_time + computed_at
+def test_delete_metrics_targets_run_id():
+    sql = r.build_delete_metrics_sql(M, "abc123")
+    assert sql.startswith("DELETE FROM")
+    assert M in sql
+    assert "run_id = 'abc123'" in sql
 
 
-def test_insert_history_null_counts_render_null():
-    sql = r.build_insert_history_sql(
-        H, "table", "dqx.dqx_studio_demo.orders", score=0.5, failed_tests=None, total_tests=None,
-        target_iso="2026-05-01 09:30:00",
-    )
-    assert "NULL" in sql
+def test_delete_runs_targets_run_id():
+    sql = r.build_delete_runs_sql(RUNS, "abc123")
+    assert sql.startswith("DELETE FROM")
+    assert RUNS in sql
+    assert "run_id = 'abc123'" in sql
+
+
+def test_delete_run_id_is_escaped_against_injection():
+    sql = r.build_delete_metrics_sql(M, "a'b")
+    assert "'a''b'" in sql  # ANSI doubled-quote escaping
 
 
 def test_run_id_is_escaped_against_injection():

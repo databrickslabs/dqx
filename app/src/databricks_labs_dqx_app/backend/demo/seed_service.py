@@ -37,6 +37,7 @@ re-date) is behind that branch and exercised in the sandbox deploy.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -63,7 +64,6 @@ from databricks_labs_dqx_app.backend.registry_models import (
     set_reserved_tag,
     set_slot_tags,
 )
-from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import _transition_binding_checks
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService, DesiredAppliedRule
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
@@ -197,10 +197,14 @@ class DemoSeedService:
 
             trend_points = 0
             if weeks > 0:
+                # Capture a single "now" so the validation gate's cleanup and the
+                # final week's shared instant use one consistent wall-clock, with
+                # no drift between the gate run and the final-week re-date.
+                now = datetime.now(timezone.utc)
                 self._set_status("running", "validate", "Running validation gate", user_email)
                 self._validation_gate(binding_map, user_email)
                 self._set_status("running", "trend", f"Building {weeks}-week quality trend", user_email)
-                trend_points = self._build_weekly_trend(binding_map, product_ids, weeks, user_email)
+                trend_points = self._build_weekly_trend(binding_map, product_ids, weeks, user_email, now)
             else:
                 # Build-only: still refresh caches so the app shows a truthful
                 # (current) score for the freshly governed tables.
@@ -329,6 +333,11 @@ class DemoSeedService:
         so the audit trail is identical to a hand-approval and the binding is
         genuinely approved — not reliant on any approvals-mode auto-publish.
         """
+        # Imported lazily: ``routes.v1`` imports this module (via ``admin.py``),
+        # so a module-level import here forms a circular import when this module
+        # is loaded first.
+        from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import _transition_binding_checks
+
         self._materializer.materialize_binding(binding_id)
         _transition_binding_checks(
             self._monitored_tables,
@@ -373,13 +382,33 @@ class DemoSeedService:
     # ------------------------------------------------------------------
 
     def _validation_gate(self, binding_map: dict[str, str], user_email: str) -> None:
-        """Reset to baseline, run every binding once, and hard-fail a catastrophic misfire."""
+        """Reset to baseline, run every binding once, hard-fail a misfire, then discard the gate runs.
+
+        The gate runs execute at real wall-clock "now" and are ``published``,
+        but are throwaway — they exist only to check the seeded fail rates. They
+        are NEVER re-dated, so if left in place a gate run's ``run_time`` would
+        beat every re-dated (past) weekly run in the score cache's
+        latest-published-run selection, showing a stale headline score. Once the
+        misfire assertions pass, delete each gate run's rows from ``dq_metrics``
+        and ``dq_validation_runs`` so the weekly-loop runs alone define the trend.
+        """
         for stmt in datagen.build_baseline_reset_sql(self._catalog, self._schema):
             self._demo_sql.execute(stmt)
+        gate_run_ids: list[str] = []
         for table, binding_id in binding_map.items():
             run = self._binding_run.run_binding(binding_id, "approved", None, user_email)
             self._wait_for_run(run.run_id)
             self._assert_no_misfire(table, run.run_id)
+            gate_run_ids.append(run.run_id)
+        for run_id in gate_run_ids:
+            self._delete_run(run_id)
+
+    def _delete_run(self, run_id: str) -> None:
+        """Delete a throwaway run's ``dq_metrics`` and ``dq_validation_runs`` rows."""
+        metrics_fqn = self._app_sql.fqn("dq_metrics")
+        runs_fqn = self._app_sql.fqn("dq_validation_runs")
+        self._app_sql.execute(redate.build_delete_metrics_sql(metrics_fqn, run_id))
+        self._app_sql.execute(redate.build_delete_runs_sql(runs_fqn, run_id))
 
     def _assert_no_misfire(self, table: str, run_id: str) -> None:
         """Raise when a run's check misfired — catastrophic rate, or a uniqueness band breach.
@@ -399,6 +428,7 @@ class DemoSeedService:
             return
         unique_check_name = manifest.RULES_BY_KEY["unique"].name
         low, high = UNIQUE_EXPECT_ROWS
+        unique_check_seen = False
         for check_name, failed in failures.items():
             rate = failed / input_rows
             if rate >= _MISFIRE_RATE:
@@ -406,12 +436,40 @@ class DemoSeedService:
                     f"Validation gate: check '{self._sanitize(check_name)}' on table "
                     f"'{self._sanitize(table)}' failed {rate:.3f} of rows — likely a mis-bound rule."
                 )
-            if check_name == unique_check_name and not (low <= failed <= high):
-                raise RuntimeError(
-                    f"Validation gate: uniqueness check '{self._sanitize(check_name)}' on table "
-                    f"'{self._sanitize(table)}' failed {failed} rows, outside the expected "
-                    f"band [{low}, {high}] — likely a mis-bound uniqueness rule."
-                )
+            if check_name == unique_check_name:
+                unique_check_seen = True
+                if not (low <= failed <= high):
+                    raise RuntimeError(
+                        f"Validation gate: uniqueness check '{self._sanitize(check_name)}' on table "
+                        f"'{self._sanitize(table)}' failed {failed} rows, outside the expected "
+                        f"band [{low}, {high}] — likely a mis-bound uniqueness rule."
+                    )
+        # The uniqueness band gate matches by check_name == the unique rule's
+        # reserved name. If the binding has the unique rule applied at gate time
+        # yet no metrics check carries that name (e.g. metrics fell back to
+        # rule_id), the band silently never fires. The catastrophic-rate gate
+        # still guards correctness, so don't hard-fail — but make the skip
+        # observable rather than passing mutely.
+        if not unique_check_seen and self._unique_rule_active_at_gate(table):
+            logger.warning(
+                f"Validation gate: table '{self._sanitize(table)}' has the uniqueness rule applied "
+                f"but no check named '{self._sanitize(unique_check_name)}' appeared in its metrics "
+                f"— the uniqueness band was skipped."
+            )
+
+    @staticmethod
+    def _unique_rule_active_at_gate(table: str) -> bool:
+        """Whether *table*'s manifest binding has the ``unique`` rule applied at gate time.
+
+        The validation gate runs against the week-0 binding state, so a binding
+        counts as having the uniqueness rule when it is in its week-0 active
+        mapping. Used only to decide whether a missing uniqueness check is a
+        loggable skip.
+        """
+        for binding in manifest.BINDINGS:
+            if binding.table == table:
+                return "unique" in active_mapping(binding, 0)
+        return False
 
     def _read_run_check_failures(self, run_id: str) -> tuple[int, dict[str, int]]:
         """Return ``(input_rows, {check_name: failed_rows})`` for a run from ``dq_metrics``."""
@@ -434,8 +492,6 @@ class DemoSeedService:
     @staticmethod
     def _parse_check_failures(check_metrics_json: str) -> dict[str, int]:
         """Sum error + warning counts per check from a ``check_metrics`` JSON array."""
-        import json
-
         try:
             parsed = json.loads(check_metrics_json)
         except (ValueError, TypeError):
@@ -464,6 +520,7 @@ class DemoSeedService:
         product_ids: list[str],
         weeks: int,
         user_email: str,
+        now: datetime,
     ) -> int:
         """Generate a *weeks*-long trend from real runs, re-dated into the past.
 
@@ -473,8 +530,16 @@ class DemoSeedService:
         rows to the week's instant. Product and global scores are refreshed and
         re-dated once per week. Returns the number of score-history points
         re-dated (tables + products + global across all weeks).
+
+        Args:
+            binding_map: table name -> approved binding id.
+            product_ids: the approved data-product ids to refresh per week.
+            weeks: number of weeks of trend to generate.
+            user_email: the admin attributed on each run.
+            now: the single "now" instant captured before the validation gate;
+                the final week shares it so there is no drift between the gate
+                wall-clock and the final-week re-date.
         """
-        now = datetime.now(timezone.utc)
         binding_specs = {b.table: b for b in manifest.BINDINGS}
         rule_map = self._current_rule_ids()
         last_active: dict[str, tuple[str, ...]] = {}

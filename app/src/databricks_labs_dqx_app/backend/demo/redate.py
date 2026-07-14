@@ -1,9 +1,11 @@
-"""Pure SQL builders that re-date genuine engine-run rows.
+"""Pure SQL builders that re-date (or delete) genuine engine-run rows.
 
 These helpers fabricate a multi-week quality trend from real DQ runs by
 shifting each run's timestamps in Delta (*dq_metrics* / *dq_validation_runs*)
-and by inserting or adjusting back-dated rows in the OLTP *dq_score_history*
-table. Every value is engine-computed; only the timestamps are moved.
+and by adjusting back-dated rows in the OLTP *dq_score_history* table. Every
+value is engine-computed; only the timestamps are moved. A pair of delete
+builders drops the rows of throwaway runs (e.g. the validation gate's baseline
+runs) so they cannot win a "latest run" selection against the re-dated trend.
 
 All functions are pure: they take fully-qualified table names (already
 qualified by the caller) plus scalar values and return a SQL string. User- or
@@ -68,39 +70,36 @@ def build_redate_runs_sql(runs_fqn: str, run_id: str, target_iso: str) -> str:
     )
 
 
-def build_insert_history_sql(
-    history_fqn: str,
-    scope_type: str,
-    scope_key: str,
-    *,
-    score: float,
-    failed_tests: int | None,
-    total_tests: int | None,
-    target_iso: str,
-) -> str:
-    """Build SQL to insert a back-dated *dq_score_history* row.
+def build_delete_metrics_sql(metrics_fqn: str, run_id: str) -> str:
+    """Build SQL to delete a run's *dq_metrics* rows.
+
+    Used to discard a throwaway run (e.g. a validation-gate baseline run) so it
+    cannot win a "latest published run" selection against the re-dated trend.
 
     Args:
-        history_fqn: Fully-qualified *dq_score_history* table name.
-        scope_type: Scope type, one of ``"table"``, ``"product"`` or ``"global"``.
-        scope_key: Scope key identifying the trend series.
-        score: The engine-computed quality score.
-        failed_tests: Number of failed tests, or None to render ``NULL``.
-        total_tests: Number of total tests, or None to render ``NULL``.
-        target_iso: Target timestamp literal body (*YYYY-MM-DD HH:MM:SS*).
+        metrics_fqn: Fully-qualified *dq_metrics* table name.
+        run_id: The run identifier whose rows to delete.
 
     Returns:
-        An ``INSERT INTO`` statement with both *run_time* and *computed_at*
-        back-dated to *target_iso*.
+        A ``DELETE`` statement targeting the matched run.
     """
-    failed = str(int(failed_tests)) if failed_tests is not None else "NULL"
-    total = str(int(total_tests)) if total_tests is not None else "NULL"
-    return (
-        f"INSERT INTO {history_fqn} "
-        f"(scope_type, scope_key, score, failed_tests, total_tests, run_time, computed_at) VALUES "
-        f"('{escape_sql_string(scope_type)}', '{escape_sql_string(scope_key)}', {float(score)}, "
-        f"{failed}, {total}, {_ts(target_iso)}, {_ts(target_iso)})"
-    )
+    return f"DELETE FROM {metrics_fqn} WHERE run_id = '{escape_sql_string(run_id)}'"
+
+
+def build_delete_runs_sql(runs_fqn: str, run_id: str) -> str:
+    """Build SQL to delete a run's *dq_validation_runs* row.
+
+    Used to discard a throwaway run (e.g. a validation-gate baseline run) so it
+    cannot win a "latest published run" selection against the re-dated trend.
+
+    Args:
+        runs_fqn: Fully-qualified *dq_validation_runs* table name.
+        run_id: The run identifier whose row to delete.
+
+    Returns:
+        A ``DELETE`` statement targeting the matched run.
+    """
+    return f"DELETE FROM {runs_fqn} WHERE run_id = '{escape_sql_string(run_id)}'"
 
 
 def build_redate_latest_history_sql(history_fqn: str, scope_type: str, scope_key: str, target_iso: str) -> str:
