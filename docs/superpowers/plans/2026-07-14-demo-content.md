@@ -682,6 +682,7 @@ git commit -S -m "$(printf 'Add settings-backed demo job status store\n\nCo-auth
 - **Validation gate:** run `datagen.build_baseline_reset_sql`; `binding_run.run_binding(binding_id, "approved", None, user_email)` per binding; wait terminal (poll `dq_validation_runs.status` via `app_sql.query_dicts` by `run_id` until `SUCCESS`/`FAILED`, generous timeout); read per-check `failed_tests` from `dq_metrics` and compare to `EXPECT` — hard-fail (raise) a rate>0.985 where a low rate was expected, or a `unique` count outside `UNIQUE_EXPECT_ROWS`.
 - **Weekly loop (weeks):** for `wi` in range: apply lifecycle add/retire (re-`save_applied_rules` + re-approve only the changed bindings, using `active_mapping(binding, wi)`); run `datagen.build_mutation_sql(table, wi, weeks, …)`; `binding_run.run_binding(...)` per binding; wait terminal; compute weekly instant (irregular spacing like dqlake `GAP_DAYS`/`HOURS`; final week = one shared recent instant); for each binding: re-date `dq_metrics` + `dq_validation_runs` (`app_sql.execute(redate.build_redate_*_sql(...))`), call `score_cache.refresh_for_tables([fqn])` (engine-computed score), then `app_sql`/`oltp` re-date the just-appended `dq_score_history` row via `redate.build_redate_latest_history_sql`. After all bindings for the week: `score_cache.refresh_product(pid)` + `score_cache.refresh_global()`, then re-date those appended product/global history rows to the same instant.
 - **Finish:** `score_cache.refresh_all_for_tables([...])` for a truthful "now"; write `succeeded` status.
+- **APPROVALS (must-hold invariant):** the app has approvals enabled. The seeder must NOT depend on any approvals-mode auto-publish (that only fires on the HTTP submit route). Every object must be driven to `approved` by the seeder's own explicit calls: rules via `match_or_create_approved_rule` (lands `status="approved"`, `version==1`); bindings via materialize→pending→approve→`freeze_new_version` (lands `status="approved"`, `version>=1`); products via `submit`→`approve`. This is load-bearing: `run_binding(source="approved")` raises `NeverApprovedError` on a version-0 binding, so a missed approval fails the validation gate immediately. After building each object type, log/assert the resulting status is approved before proceeding.
 - **Timestamps:** `datetime.now(timezone.utc)` is fine here (this is a service, not a Workflow script).
 - **Status:** wrap the whole `run` in try/except; on exception write `failed` status (message = sanitized `str(e)`, newlines stripped) and re-raise.
 
@@ -758,6 +759,19 @@ def test_run_marks_failed_status_and_reraises_on_error():
         svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
     last = deps["status"].set.call_args_list[-1].args[0]
     assert last.state == "failed"
+
+
+def test_run_approves_bindings_and_products_not_relying_on_auto_publish():
+    # The app has approvals enabled; the seeder must drive approval explicitly.
+    svc, deps = _svc()
+    deps["registry"].match_or_create_approved_rule.return_value = (MagicMock(rule_id="r1"), True)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+    # bindings materialized + frozen (approved), products submitted + approved
+    assert deps["materializer"].materialize_binding.called
+    assert deps["version_service"].freeze_new_version.called
+    assert deps["data_products"].approve.called
 ```
 
 > Implementer note: design `run(weeks=0)` to build rules/bindings/products + write terminal status but skip the weekly history loop, so the orchestration is unit-testable without a warehouse. The real 9-week path is exercised in the sandbox deploy (Task 9).
