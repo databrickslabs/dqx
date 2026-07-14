@@ -52,28 +52,78 @@ def _svc(**over):
     return DemoSeedService(**deps), deps
 
 
+def _use_create_path(deps, rule_id: str = "r1") -> None:
+    """Configure the registry mock so _build_rules takes the genuine create path.
+
+    ``find_approved_rule_for_definition`` returns None (no pre-existing approved
+    rule), so every manifest rule is created via ``create_rule -> submit ->
+    approve``. ``create_rule`` returns ``(rule, warning)`` and ``approve``
+    returns the published rule.
+    """
+    deps["registry"].find_approved_rule_for_definition.return_value = None
+    deps["registry"].create_rule.return_value = (MagicMock(rule_id=rule_id), None)
+    deps["registry"].submit.return_value = MagicMock(rule_id=rule_id)
+    deps["registry"].approve.return_value = MagicMock(rule_id=rule_id, version=2)
+
+
 def test_run_creates_all_rules_and_writes_terminal_status():
     svc, deps = _svc()
-    # registry returns a fake approved rule with an id for every create
-    rule = MagicMock()
-    rule.rule_id = "r1"
-    deps["registry"].match_or_create_approved_rule.return_value = (rule, True)
+    _use_create_path(deps)
     # make binding registration + run + score reads no-op-friendly
     deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
     deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
     # short-circuit the wait+validate+weekly loop via a 0-week run for the unit test
     svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
-    assert deps["registry"].match_or_create_approved_rule.call_count >= 10
+    # every manifest rule created + published via the genuine path
+    assert deps["registry"].create_rule.call_count == len(manifest.RULES)
+    assert deps["registry"].submit.call_count == len(manifest.RULES)
+    assert deps["registry"].approve.call_count == len(manifest.RULES)
+    # profiler-suggestion primitive is NOT used (it hardcodes dqx_native)
+    assert not deps["registry"].match_or_create_approved_rule.called
     # terminal status written
     assert deps["status"].set.called
     last = deps["status"].set.call_args_list[-1].args[0]
     assert last.state in {"succeeded", "failed"}
 
 
+def test_build_rules_uses_real_mode_and_polarity_per_spec():
+    # BUG D regression: SQL-mode rules must be created with mode="sql" and
+    # polarity="pass", NOT forced to dqx_native (which would materialize to
+    # function: '' and fail at runtime with "function '' is not defined").
+    svc, deps = _svc()
+    _use_create_path(deps)
+    svc._build_rules("admin@example.com")
+
+    by_mode: dict[str, str] = {}
+    for call in deps["registry"].create_rule.call_args_list:
+        mode = call.kwargs["mode"]
+        polarity = call.kwargs["polarity"]
+        author_kind = call.kwargs["author_kind"]
+        assert call.kwargs["source"] == "demo"
+        by_mode[mode] = author_kind
+        if mode == "sql":
+            assert polarity == "pass", "sql demo predicates describe a passing row"
+        else:
+            assert polarity is None, f"{mode} rules must not carry a polarity"
+    # both sql and dqx_native rules are present in the demo set
+    assert "sql" in by_mode
+    assert "dqx_native" in by_mode
+
+
+def test_build_rules_is_idempotent_when_rule_already_approved():
+    # An already-approved rule with the same fingerprint is reused, never re-created.
+    svc, deps = _svc()
+    deps["registry"].find_approved_rule_for_definition.return_value = MagicMock(rule_id="existing")
+    rule_map = svc._build_rules("admin@example.com")
+    assert not deps["registry"].create_rule.called
+    assert set(rule_map) == {spec.key for spec in manifest.RULES}
+    assert all(rid == "existing" for rid in rule_map.values())
+
+
 def test_wipe_first_calls_reset_service():
     reset = MagicMock()
     svc, deps = _svc(reset_service=reset)
-    deps["registry"].match_or_create_approved_rule.return_value = (MagicMock(rule_id="r1"), True)
+    _use_create_path(deps)
     deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
     svc.run(user_email="admin@example.com", wipe_first=True, weeks=0)
     reset.reset_all_data.assert_called_once()
@@ -109,7 +159,7 @@ def test_build_source_data_swallows_tag_assignment_errors():
     # ~1h seed — the failure is logged best-effort and seeding continues.
     svc, deps = _svc()
     deps["sp_ws"].entity_tag_assignments.create.side_effect = RuntimeError("no ASSIGN privilege")
-    deps["registry"].match_or_create_approved_rule.return_value = (MagicMock(rule_id="r1"), True)
+    _use_create_path(deps)
     deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
 
     # run(weeks=0) invokes _build_source_data; the raised error must be swallowed.
@@ -121,7 +171,8 @@ def test_build_source_data_swallows_tag_assignment_errors():
 
 def test_run_marks_failed_status_and_reraises_on_error():
     svc, deps = _svc()
-    deps["registry"].match_or_create_approved_rule.side_effect = RuntimeError("boom")
+    deps["registry"].find_approved_rule_for_definition.return_value = None
+    deps["registry"].create_rule.side_effect = RuntimeError("boom")
     with pytest.raises(RuntimeError):
         svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
     last = deps["status"].set.call_args_list[-1].args[0]
@@ -131,7 +182,7 @@ def test_run_marks_failed_status_and_reraises_on_error():
 def test_run_approves_bindings_and_products_not_relying_on_auto_publish():
     # The app has approvals enabled; the seeder must drive approval explicitly.
     svc, deps = _svc()
-    deps["registry"].match_or_create_approved_rule.return_value = (MagicMock(rule_id="r1"), True)
+    _use_create_path(deps)
     deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
     deps["data_products"].create.return_value = MagicMock(product_id="p1")
     svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
@@ -222,7 +273,7 @@ def test_weekly_trend_strips_polluting_now_history_but_keeps_cache_current():
     # so the current cache is truthful, and (b) issue a history cleanup that
     # deletes every history row appended after the shared "now" cutoff.
     svc, deps = _svc()
-    deps["registry"].match_or_create_approved_rule.return_value = (MagicMock(rule_id="r1"), True)
+    _use_create_path(deps)
     deps["registry"].find_approved_rule_for_definition.side_effect = lambda _d: MagicMock(rule_id="r1")
     deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
     deps["data_products"].create.return_value = MagicMock(product_id="p1")
@@ -254,6 +305,63 @@ def test_weekly_trend_strips_polluting_now_history_but_keeps_cache_current():
     # terminal status succeeded
     last = deps["status"].set.call_args_list[-1].args[0]
     assert last.state == "succeeded"
+
+
+def test_tighten_card_rule_bumps_version_via_edit_submit_approve():
+    # BUG E: the "tightened card validation" beat must produce a REAL registry
+    # rule version increment — an edit-in-place + re-approve of the card rule.
+    svc, deps = _svc()
+    approved = MagicMock(rule_id="card-rid", version=2)
+    deps["registry"].approve.return_value = approved
+
+    svc._tighten_card_rule({"card_format": "card-rid"}, "admin@example.com")
+
+    # genuine revision path: update the approved rule, submit, then approve (bumps version)
+    deps["registry"].update_draft.assert_called_once()
+    assert deps["registry"].update_draft.call_args.args[0] == "card-rid"
+    deps["registry"].submit.assert_called_once_with("card-rid", "admin@example.com")
+    deps["registry"].approve.assert_called_once_with("card-rid", "admin@example.com")
+    # the edit carries the tightened description (metadata-only, fingerprint-stable)
+    metadata = deps["registry"].update_draft.call_args.kwargs["user_metadata"]
+    assert manifest.CARD_RULE_TIGHTENED_DESCRIPTION in json.dumps(metadata)
+
+
+def test_tighten_card_rule_failure_does_not_abort_seed():
+    # BUG E: the version bump is best-effort — a failure is logged and swallowed.
+    svc, deps = _svc()
+    deps["registry"].update_draft.side_effect = RuntimeError("edit rejected")
+    # must not raise
+    svc._tighten_card_rule({"card_format": "card-rid"}, "admin@example.com")
+
+
+def test_weekly_trend_tightens_card_rule_at_tighten_week():
+    # BUG E: the weekly loop must invoke the card-rule version bump exactly at
+    # TIGHTEN_WEEK. Run enough weeks to cross it.
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["registry"].find_approved_rule_for_definition.side_effect = lambda _d: MagicMock(rule_id="card-rid")
+    deps["registry"].approve.return_value = MagicMock(rule_id="card-rid", version=2)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+    deps["app_sql"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+    deps["oltp"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+
+    low, high = manifest.UNIQUE_EXPECT_ROWS
+    in_band = (low + high) // 2
+
+    def _query_dicts(sql, *_a, **_k):
+        if "metric_name" in sql:
+            return _metrics_rows(50_000, in_band)
+        return [{"status": "SUCCESS"}]
+
+    deps["app_sql"].query_dicts.side_effect = _query_dicts
+
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=manifest.TIGHTEN_WEEK + 1)
+
+    # update_draft is only called by the tighten path (bindings use apply_rules)
+    assert deps["registry"].update_draft.called
+    assert deps["registry"].update_draft.call_args.args[0] == "card-rid"
 
 
 def test_validation_gate_deletes_gate_runs_from_both_tables():

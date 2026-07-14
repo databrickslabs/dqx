@@ -73,6 +73,23 @@ def test_data_products_reference_real_tables():
         assert set(dp.members) <= names
 
 
+def test_author_kind_spread_and_polarity_by_mode():
+    # BUG F: rules carry a realistic mix of provenance, and sql/lowcode rules
+    # (whose predicate describes a passing row) carry polarity, while dqx_native
+    # rules leave polarity None.
+    valid_kinds = {"human", "ai_generated", "ai_assisted"}
+    kinds = [r.author_kind for r in m.RULES]
+    assert set(kinds) == valid_kinds, "all three author_kind values must be represented"
+    for kind in valid_kinds:
+        assert kinds.count(kind) >= 3, f"author_kind {kind!r} under-represented ({kinds.count(kind)})"
+    for r in m.RULES:
+        assert r.author_kind in valid_kinds, f"{r.key}: bad author_kind {r.author_kind!r}"
+        if r.mode in {"sql", "lowcode"}:
+            assert r.polarity == "pass", f"{r.key}: sql/lowcode demo rule must be polarity 'pass'"
+        else:
+            assert r.polarity is None, f"{r.key}: dqx_native rule must have polarity None"
+
+
 def test_active_mapping_honours_lifecycle_windows():
     ship = next(b for b in m.BINDINGS if b.table == "shipments")
     # min_len is added at week 5 per the story

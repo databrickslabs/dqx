@@ -14,8 +14,10 @@ route). Every governed object is therefore driven to ``approved`` by this
 service's own explicit calls, replicating the exact per-object approval
 sequence a human hand-approval performs (so the audit trail is identical):
 
-* **Rules** — :meth:`RegistryService.match_or_create_approved_rule`, which
-  lands the rule at ``status="approved"``, ``version==1``.
+* **Rules** — the genuine ``RegistryService.create_rule -> submit -> approve``
+  publish path (respecting each rule's real mode/polarity/author_kind), which
+  lands the rule at ``status="approved"``, ``version==1``. An already-approved
+  rule with the same fingerprint is reused for idempotency.
 * **Bindings** — after :meth:`ApplyRulesService.save_applied_rules`, the same
   sequence the approve route runs: materialize the binding, transition its
   materialized checks ``draft -> pending_approval -> approved`` (reusing the
@@ -61,7 +63,10 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RESERVED_DIMENSION_KEY,
     RESERVED_NAME_KEY,
     RESERVED_SEVERITY_KEY,
+    AuthorKind,
+    Polarity,
     RuleDefinition,
+    RuleMode,
     RuleSlot,
     SlotFamily,
     set_reserved_tag,
@@ -296,21 +301,41 @@ class DemoSeedService:
     # ------------------------------------------------------------------
 
     def _build_rules(self, user_email: str) -> dict[str, str]:
-        """Match-or-create + approve every manifest rule; return ``rule_key -> rule_id``."""
+        """Create + submit + approve every manifest rule; return ``rule_key -> rule_id``.
+
+        Uses the genuine ``create_rule -> submit -> approve`` publish path so
+        each rule keeps its REAL mode, polarity and author_kind. (The former
+        :meth:`RegistryService.match_or_create_approved_rule` shortcut is the
+        profiler-suggestion primitive: it hardcodes ``mode="dqx_native"`` and
+        ``author_kind="ai_assisted"``, so a ``sql``-mode demo rule would be
+        stored as ``dqx_native`` and later materialize to ``function: ''`` — a
+        runtime "function '' is not defined" failure.)
+
+        Idempotent by structural fingerprint: an already-approved rule with the
+        same definition is reused rather than re-created (the seed re-runs, and
+        ``wipe_first`` resets, but this stays safe either way).
+        """
         rule_map: dict[str, str] = {}
         for spec in manifest.RULES:
             definition = self._definition_for(spec)
-            metadata = self._metadata_for(spec)
-            rule, created = self._registry.match_or_create_approved_rule(definition, metadata, user_email)
-            if rule is None:
-                # A same-fingerprint, non-approved rule authored elsewhere blocks
-                # auto-approval — extremely unlikely for demo content, but never
-                # silently proceed without an approved rule to bind.
-                raise RuntimeError(f"Could not obtain an approved rule for demo rule key '{spec.key}'")
-            if getattr(rule, "status", "approved") != "approved":
-                logger.warning("Demo rule '%s' resolved to status '%s' (expected approved)", spec.key, rule.status)
-            rule_map[spec.key] = rule.rule_id
-            logger.info("Demo rule '%s' -> %s (created=%s)", spec.key, rule.rule_id, created)
+            existing = self._registry.find_approved_rule_for_definition(definition)
+            if existing is not None:
+                rule_map[spec.key] = existing.rule_id
+                logger.info("Demo rule '%s' -> %s (reused approved)", spec.key, existing.rule_id)
+                continue
+            rule, _warning = self._registry.create_rule(
+                mode=cast(RuleMode, spec.mode),
+                definition=definition,
+                user_email=user_email,
+                polarity=cast(Polarity, spec.polarity) if spec.polarity is not None else None,
+                author_kind=cast(AuthorKind, spec.author_kind),
+                user_metadata=self._metadata_for(spec),
+                source="demo",
+            )
+            self._registry.submit(rule.rule_id, user_email)
+            approved = self._registry.approve(rule.rule_id, user_email)
+            rule_map[spec.key] = approved.rule_id
+            logger.info("Demo rule '%s' -> %s (created)", spec.key, approved.rule_id)
         return rule_map
 
     @staticmethod
@@ -361,9 +386,7 @@ class DemoSeedService:
                 raise
             return existing.table.binding_id
 
-    def _desired_rules(
-        self, binding: BindingSpec, rule_map: dict[str, str], week: int
-    ) -> list[DesiredAppliedRule]:
+    def _desired_rules(self, binding: BindingSpec, rule_map: dict[str, str], week: int) -> list[DesiredAppliedRule]:
         """Build the desired applied-rule set for a binding at *week* (one entry per rule key)."""
         desired: list[DesiredAppliedRule] = []
         for rule_key, groups in active_mapping(binding, week).items():
@@ -598,6 +621,9 @@ class DemoSeedService:
             instant = self._week_instant(now, week, weeks)
             target_iso = redate.iso(instant)
 
+            if week == manifest.TIGHTEN_WEEK:
+                self._tighten_card_rule(rule_map, user_email)
+
             for table, binding in binding_specs.items():
                 binding_id = binding_map.get(table)
                 if binding_id is None:
@@ -641,6 +667,38 @@ class DemoSeedService:
         self._score_cache.refresh_all_for_tables(sorted(self._table_fqns()))
         self._delete_history_after(redate.iso(now))
         return trend_points
+
+    def _tighten_card_rule(self, rule_map: dict[str, str], user_email: str) -> None:
+        """Edit + re-approve the card-validation rule to a new version at TIGHTEN_WEEK.
+
+        The "tightened card validation" story beat should be visible as a REAL
+        registry rule version increment, not only a data-mutation swing. This
+        runs the genuine revision path on the ``card_format`` rule — edit the
+        approved rule in place (:meth:`RegistryService.update_draft`), submit
+        the revision, then re-approve it (which bumps ``version`` N -> N+1 and
+        freezes a new ``dq_rule_versions`` snapshot).
+
+        The edit is metadata-only (a tightened description): the fingerprint
+        excludes descriptive tags, so the rule's fingerprint — and therefore
+        every binding's column materialization — is unchanged and stays valid.
+
+        Best-effort: a failure here is logged and swallowed so it can never
+        abort the ~1h seed, but under normal operation it succeeds.
+        """
+        rule_id = rule_map.get("card_format")
+        if rule_id is None:
+            logger.warning("Card rule not found in rule map; skipping the TIGHTEN_WEEK version bump")
+            return
+        spec = manifest.RULES_BY_KEY["card_format"]
+        try:
+            metadata = self._metadata_for(spec)
+            metadata = set_reserved_tag(metadata, RESERVED_DESCRIPTION_KEY, manifest.CARD_RULE_TIGHTENED_DESCRIPTION)
+            self._registry.update_draft(rule_id, user_email, user_metadata=metadata)
+            self._registry.submit(rule_id, user_email)
+            approved = self._registry.approve(rule_id, user_email)
+            logger.info("Tightened card rule %s -> v%s", rule_id, getattr(approved, "version", "?"))
+        except Exception as exc:  # noqa: BLE001 — version bump is best-effort, must not abort the seed
+            logger.warning("Skipped card-rule version bump on %s: %s", rule_id, self._sanitize(str(exc)))
 
     def _delete_history_after(self, cutoff_iso: str) -> None:
         """Delete ``dq_score_history`` rows appended after *cutoff_iso* (the polluting real-now appends)."""

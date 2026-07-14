@@ -22,6 +22,11 @@ SOURCE_CATALOG_ENV_DEFAULT = "dqx"
 SOURCE_SCHEMA = "dqx_studio_demo"
 WEEKS_DEFAULT = 9
 TIGHTEN_WEEK = 6
+# Description applied to the card-validation rule mid-history (at TIGHTEN_WEEK)
+# to drive a real rule edit + re-approve so the rule advances to a new published
+# version — the "tightened card validation" story beat. A metadata-only change
+# (fingerprint excludes descriptive tags), so every binding stays valid.
+CARD_RULE_TIGHTENED_DESCRIPTION = "Stored last four card digits are exactly four digits and never blank."
 # Uniqueness reports one failed row per row in a duplicated-key group, not one
 # per distinct duplicate key. ~1% of ids collapse onto earlier keys, so the
 # band is generous but far below the ~all-rows count a misfiring rule produces.
@@ -58,6 +63,13 @@ class RuleSpec:
         body: declarative check body with ``{{slot}}`` placeholders.
         slots: the slots the body declares.
         slot_tags: optional map of slot name -> governed ``class.*`` tags the slot suggests.
+        author_kind: rule provenance — one of ``human``, ``ai_generated`` or
+            ``ai_assisted``; spread across the set so the demo shows a realistic
+            mix of hand-authored and AI-originated rules.
+        polarity: for ``sql``/``lowcode`` rules only, whether the predicate
+            describes a passing (``pass``) or failing (``fail``) row. The demo's
+            SQL predicates all describe a VALID row, so they are ``pass``.
+            ``dqx_native`` rules leave this ``None``.
     """
 
     key: str
@@ -68,7 +80,9 @@ class RuleSpec:
     mode: str
     body: dict[str, object]
     slots: tuple[SlotSpec, ...]
+    author_kind: str
     slot_tags: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    polarity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -199,6 +213,7 @@ RULES: tuple[RuleSpec, ...] = (
         mode="dqx_native",
         body={"function": "is_not_null", "arguments": {"column": "{{value}}"}},
         slots=(SlotSpec("value", "any", arg_key="column"),),
+        author_kind="human",
     ),
     RuleSpec(
         key="nonneg",
@@ -209,6 +224,7 @@ RULES: tuple[RuleSpec, ...] = (
         mode="dqx_native",
         body={"function": "is_not_less_than", "arguments": {"column": "{{number}}", "limit": 0}},
         slots=(SlotSpec("number", "numeric", arg_key="column"),),
+        author_kind="human",
     ),
     RuleSpec(
         key="pct_range",
@@ -222,6 +238,7 @@ RULES: tuple[RuleSpec, ...] = (
             "arguments": {"column": "{{pct}}", "min_limit": 0, "max_limit": 100},
         },
         slots=(SlotSpec("pct", "numeric", arg_key="column"),),
+        author_kind="ai_assisted",
     ),
     RuleSpec(
         key="country_set",
@@ -238,6 +255,7 @@ RULES: tuple[RuleSpec, ...] = (
             },
         },
         slots=(SlotSpec("country", "text", arg_key="column"),),
+        author_kind="ai_generated",
         slot_tags={"country": ("class.location",)},
     ),
     RuleSpec(
@@ -249,6 +267,7 @@ RULES: tuple[RuleSpec, ...] = (
         mode="dqx_native",
         body={"function": "is_in_list", "arguments": {"column": "{{tier}}", "allowed": ["Free", "Pro", "Enterprise"]}},
         slots=(SlotSpec("tier", "text", arg_key="column"),),
+        author_kind="ai_generated",
     ),
     RuleSpec(
         key="status_set",
@@ -262,6 +281,7 @@ RULES: tuple[RuleSpec, ...] = (
             "arguments": {"column": "{{status}}", "allowed": ["placed", "shipped", "delivered", "cancelled"]},
         },
         slots=(SlotSpec("status", "text", arg_key="column"),),
+        author_kind="ai_assisted",
     ),
     RuleSpec(
         key="method_set",
@@ -275,6 +295,7 @@ RULES: tuple[RuleSpec, ...] = (
             "arguments": {"column": "{{method}}", "allowed": ["card", "paypal", "transfer"]},
         },
         slots=(SlotSpec("method", "text", arg_key="column"),),
+        author_kind="ai_generated",
     ),
     RuleSpec(
         key="category_set",
@@ -291,6 +312,7 @@ RULES: tuple[RuleSpec, ...] = (
             },
         },
         slots=(SlotSpec("category", "text", arg_key="column"),),
+        author_kind="ai_assisted",
     ),
     RuleSpec(
         key="not_future",
@@ -301,6 +323,7 @@ RULES: tuple[RuleSpec, ...] = (
         mode="dqx_native",
         body={"function": "is_not_in_future", "arguments": {"column": "{{ts}}"}},
         slots=(SlotSpec("ts", "temporal", arg_key="column"),),
+        author_kind="human",
     ),
     RuleSpec(
         key="unique",
@@ -311,6 +334,7 @@ RULES: tuple[RuleSpec, ...] = (
         mode="dqx_native",
         body={"function": "is_unique", "arguments": {"columns": ["{{key}}"]}},
         slots=(SlotSpec("key", "any", arg_key="columns"),),
+        author_kind="human",
     ),
     RuleSpec(
         key="card_format",
@@ -321,6 +345,7 @@ RULES: tuple[RuleSpec, ...] = (
         mode="dqx_native",
         body={"function": "regex_match", "arguments": {"column": "{{code}}", "regex": "^[0-9]{4}$"}},
         slots=(SlotSpec("code", "text", arg_key="column"),),
+        author_kind="ai_assisted",
         slot_tags={"code": ("class.credit_card",)},
     ),
     RuleSpec(
@@ -332,6 +357,8 @@ RULES: tuple[RuleSpec, ...] = (
         mode="sql",
         body={"predicate": "length({{text}}) >= 5"},
         slots=(SlotSpec("text", "text"),),
+        author_kind="human",
+        polarity="pass",
     ),
     RuleSpec(
         key="end_after_start",
@@ -342,6 +369,8 @@ RULES: tuple[RuleSpec, ...] = (
         mode="sql",
         body={"predicate": "{{end_ts}} >= {{start_ts}}"},
         slots=(SlotSpec("start_ts", "temporal"), SlotSpec("end_ts", "temporal")),
+        author_kind="ai_generated",
+        polarity="pass",
     ),
     RuleSpec(
         key="card_when_card",
@@ -352,6 +381,8 @@ RULES: tuple[RuleSpec, ...] = (
         mode="sql",
         body={"predicate": "{{method}} <> 'card' OR {{card_last4}} RLIKE '^[0-9]{4}$'"},
         slots=(SlotSpec("method", "text"), SlotSpec("card_last4", "text")),
+        author_kind="ai_generated",
+        polarity="pass",
     ),
     RuleSpec(
         key="amount_and_discount",
@@ -364,6 +395,8 @@ RULES: tuple[RuleSpec, ...] = (
             "predicate": "{{amount}} > 0 AND ({{discount_pct}} IS NULL OR {{discount_pct}} BETWEEN 0 AND 100)",
         },
         slots=(SlotSpec("amount", "numeric"), SlotSpec("discount_pct", "numeric")),
+        author_kind="ai_assisted",
+        polarity="pass",
     ),
 )
 
