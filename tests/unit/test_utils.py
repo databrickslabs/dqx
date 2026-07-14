@@ -280,9 +280,14 @@ def test_plain_predicate_safe_when_forbid_select():
     assert is_sql_query_safe("country = 'US' AND amount > 100", forbid_select=True)
 
 
-def test_safe_filter_expr_raises_on_select():
+def test_safe_filter_expr_allows_select():
+    # SELECT / subqueries are allowed in filters (trusted-operator feature)
+    assert safe_filter_expr("id IN (SELECT id FROM users)") is not None
+
+
+def test_safe_filter_expr_raises_on_destructive():
     with pytest.raises(UnsafeSqlQueryError):
-        safe_filter_expr("id IN (SELECT id FROM users)")
+        safe_filter_expr("id = 1 OR DROP TABLE users")
 
 
 def test_safe_json_load_dict():

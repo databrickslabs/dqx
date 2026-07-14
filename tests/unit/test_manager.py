@@ -59,8 +59,8 @@ def test_rule_manager_suppress_skipped_false_returns_struct_for_invalid_column()
     assert result.check_df is df_mock
 
 
-def test_rule_manager_raises_on_unsafe_filter():
-    """A check whose filter contains a forbidden statement (e.g. SELECT) is rejected
+def test_rule_manager_raises_on_destructive_filter():
+    """A check whose filter contains a destructive statement (e.g. DROP) is rejected
     end-to-end: process() raises UnsafeSqlQueryError via the wired safe_filter_expr guard."""
     df_mock = create_autospec(DataFrame)
     spark_mock = create_autospec(SparkSession)
@@ -68,7 +68,7 @@ def test_rule_manager_raises_on_unsafe_filter():
         check=DQRowRule(
             check_func=check_funcs.is_not_null,
             column="col1",
-            filter="id IN (SELECT id FROM users)",
+            filter="id = 1 OR DROP TABLE users",
         ),
         df=df_mock,
         spark=spark_mock,
@@ -102,8 +102,29 @@ def test_rule_manager_allows_safe_filter():
     assert manager.filter_condition is not None
 
 
-def test_rule_manager_raises_on_unsafe_filter_for_dataset_check():
-    """A dataset check's filter is pushed down to row_filter; an unsafe one is rejected
+def test_rule_manager_allows_select_filter():
+    """A filter with a SELECT subquery is allowed (referential filters are a valid feature)."""
+    df_mock = create_autospec(DataFrame)
+    spark_mock = create_autospec(SparkSession)
+    manager = DQRuleManager(
+        check=DQRowRule(
+            check_func=check_funcs.is_not_null,
+            column="email",
+            filter="customer_id IN (SELECT customer_id FROM main.ref.active_customers)",
+        ),
+        df=df_mock,
+        spark=spark_mock,
+        engine_user_metadata={},
+        run_time_overwrite=None,
+        run_id="test-run",
+        suppress_skipped=False,
+    )
+    # a SELECT/subquery filter must not raise — compiling filter_condition is enough to prove it
+    assert manager.filter_condition is not None
+
+
+def test_rule_manager_raises_on_destructive_filter_for_dataset_check():
+    """A dataset check's filter is pushed down to row_filter; a destructive one is rejected
     end-to-end through the check_funcs safe_filter_expr wiring."""
     df_mock = create_autospec(DataFrame)
     spark_mock = create_autospec(SparkSession)
@@ -111,7 +132,7 @@ def test_rule_manager_raises_on_unsafe_filter_for_dataset_check():
         check=DQDatasetRule(
             check_func=check_funcs.is_unique,
             columns=["col1"],
-            filter="id IN (SELECT id FROM users)",
+            filter="id = 1 OR DROP TABLE users",
         ),
         df=df_mock,
         spark=spark_mock,

@@ -434,8 +434,7 @@ def sql_expression(
             Security note: this parameter accepts arbitrary SQL and is evaluated as-is, so it may
             include subqueries and run with the permissions of the process executing the checks.
             Only use check definitions from trusted sources, especially in automated or multi-tenant
-            pipelines. Unlike *filter* and *row_filter*, SELECT is not blocked here because subqueries
-            can be legitimate in an SQL expression.
+            pipelines.
         msg: optional message of the *Column* type, automatically generated if None
         name: optional name of the resulting column, automatically generated if None
         negate: if the condition should be negated (true) or not. For example, "col is not null" will mark null
@@ -1253,7 +1252,7 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
                 f"but got type '{column_type.simpleString()}' instead."
             )
         filter_condition = safe_filter_expr(row_filter)
-        median, mad = _calculate_median_absolute_deviation(df, col_expr_str, row_filter)
+        median, mad = _calculate_median_absolute_deviation(df, col_expr_str, filter_condition)
         if median is not None and mad is not None:
             median = float(median)
             mad = float(mad)
@@ -3920,7 +3919,9 @@ def _validate_sql_query_params(query: str, merge_columns: list[str] | None) -> N
         raise InvalidParameterError("'merge_columns' entries must be non-empty strings.")
 
 
-def _calculate_median_absolute_deviation(df: DataFrame, column: str, filter_condition: str | None) -> tuple[Any, Any]:
+def _calculate_median_absolute_deviation(
+    df: DataFrame, column: str, filter_condition: Column | None
+) -> tuple[Any, Any]:
     """
     Calculate the Median Absolute Deviation (MAD) for a numeric column.
 
