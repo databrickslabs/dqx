@@ -26,28 +26,6 @@ def test_baseline_reset_covers_every_table():
         assert f"{CAT}.{SCH}.{t}" in joined
 
 
-def test_set_column_tag_sql_uses_backtick_governed_tag_form():
-    from databricks_labs_dqx_app.backend.demo.manifest import ColumnTagSpec
-    from databricks_labs_dqx_app.backend.sql_utils import quote_ident
-
-    sql = d.build_set_column_tag_sql(ColumnTagSpec("customers", "first_name", "class.name"), CAT, SCH)
-    assert "ALTER TABLE" in sql and "ALTER COLUMN" in sql and "SET TAGS" in sql
-    # A governed tag's dotted key is quoted as an IDENTIFIER (backticks), never a
-    # single-quoted string literal — the SQL parser rejects '.' inside a tag-key
-    # string. A bare governed tag carries no value, so no ``= ''`` is emitted.
-    assert f"SET TAGS ({quote_ident('class.name')})" in sql
-    assert "'class.name'" not in sql
-    assert "= ''" not in sql
-
-
-def test_set_column_tag_rejects_non_class_namespace():
-    from databricks_labs_dqx_app.backend.demo.manifest import ColumnTagSpec
-    import pytest
-
-    with pytest.raises(ValueError):
-        d.build_set_column_tag_sql(ColumnTagSpec("customers", "first_name", "pii.name"), CAT, SCH)
-
-
 def test_identifiers_are_validated_no_injection():
     import pytest
 
@@ -63,14 +41,3 @@ def test_build_column_comment_sql_quotes_column_identifier():
     # bare unquoted form must NOT appear between ALTER COLUMN and COMMENT
     import re
     assert not re.search(r"ALTER COLUMN\s+card_last4\s+COMMENT", sql)
-
-
-def test_build_set_column_tag_sql_quotes_column_identifier():
-    from databricks_labs_dqx_app.backend.demo.manifest import ColumnTagSpec
-    from databricks_labs_dqx_app.backend.sql_utils import quote_ident
-
-    sql = d.build_set_column_tag_sql(ColumnTagSpec("customers", "card_last4", "class.credit_card"), CAT, SCH)
-    assert quote_ident("card_last4") in sql
-    # bare unquoted form must NOT appear between ALTER COLUMN and SET TAGS
-    import re
-    assert not re.search(r"ALTER COLUMN\s+card_last4\s+SET TAGS", sql)

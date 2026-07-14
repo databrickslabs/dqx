@@ -864,6 +864,7 @@ async def get_demo_seed_service(
         demo_sql=demo_sql,
         app_sql=sp_sql,
         oltp=oltp,
+        sp_ws=sp_ws,
         registry=registry,
         monitored_tables=monitored_tables,
         apply_rules=apply_rules,

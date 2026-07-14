@@ -300,6 +300,7 @@ def main() -> int:
         demo_sql=demo_sql,
         app_sql=sp_sql,
         oltp=oltp,
+        sp_ws=ws,
         registry=registry,
         monitored_tables=monitored_tables,
         apply_rules=apply_rules,

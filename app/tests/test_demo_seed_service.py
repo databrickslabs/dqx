@@ -21,6 +21,7 @@ from databricks_labs_dqx_app.backend.services.registry_service import RegistrySe
 
 
 def _svc(**over):
+    from databricks.sdk import WorkspaceClient
     from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
     from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
     from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
@@ -35,6 +36,7 @@ def _svc(**over):
         demo_sql=create_autospec(SqlExecutor, instance=True),
         app_sql=create_autospec(SqlExecutor, instance=True),
         oltp=MagicMock(),
+        sp_ws=create_autospec(WorkspaceClient, instance=True),
         registry=create_autospec(RegistryService, instance=True),
         monitored_tables=create_autospec(MonitoredTableService, instance=True),
         apply_rules=create_autospec(ApplyRulesService, instance=True),
@@ -75,6 +77,46 @@ def test_wipe_first_calls_reset_service():
     deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
     svc.run(user_email="admin@example.com", wipe_first=True, weeks=0)
     reset.reset_all_data.assert_called_once()
+
+
+def test_build_source_data_assigns_governed_column_tags_via_sdk():
+    # Governed dotted-key tags (class.location, class.credit_card) can't be set
+    # via ALTER TABLE SQL — they must go through the Entity Tag Assignments API.
+    svc, deps = _svc()
+    svc._build_source_data()
+
+    create = deps["sp_ws"].entity_tag_assignments.create
+    assert create.call_count == len(manifest.COLUMN_TAGS)
+
+    from databricks.sdk.service.catalog import EntityTagAssignment
+
+    seen: dict[str, EntityTagAssignment] = {}
+    for call in create.call_args_list:
+        assignment = call.args[0] if call.args else call.kwargs["tag_assignment"]
+        assert isinstance(assignment, EntityTagAssignment)
+        assert assignment.entity_type == "columns"
+        seen[assignment.entity_name] = assignment
+
+    for tag in manifest.COLUMN_TAGS:
+        entity_name = f"dqx.{manifest.SOURCE_SCHEMA}.{tag.table}.{tag.column}"
+        assert entity_name in seen
+        assert seen[entity_name].tag_key == tag.tag  # the FULL dotted key
+        assert "." in seen[entity_name].tag_key
+
+
+def test_build_source_data_swallows_tag_assignment_errors():
+    # A missing ASSIGN privilege / undefined governed tag must NOT abort the
+    # ~1h seed — the failure is logged best-effort and seeding continues.
+    svc, deps = _svc()
+    deps["sp_ws"].entity_tag_assignments.create.side_effect = RuntimeError("no ASSIGN privilege")
+    deps["registry"].match_or_create_approved_rule.return_value = (MagicMock(rule_id="r1"), True)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+
+    # run(weeks=0) invokes _build_source_data; the raised error must be swallowed.
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    last = deps["status"].set.call_args_list[-1].args[0]
+    assert last.state == "succeeded"
 
 
 def test_run_marks_failed_status_and_reraises_on_error():

@@ -12,15 +12,18 @@ performs no I/O. A later orchestrator (seed_service) executes the strings via a
   statements that drive each column to a target weekly failure rate, realizing
   the 9-week quality story (customers improving, an orders incident, a payments
   tightening step, a shipments bump). Deterministic and idempotent.
-* **Governed column tags** — ``ALTER TABLE ... SET TAGS`` for the manifest's
-  ``class.*`` tags.
+
+Governed column tags are NOT emitted here: the manifest's ``class.*`` tags have
+dotted keys that no ``ALTER TABLE ... SET TAGS`` SQL grammar can assign, so the
+seeder assigns them through the Unity Catalog Entity Tag Assignments API
+instead (see :meth:`~.seed_service.DemoSeedService._assign_column_tag`).
 
 The table columns and row counts are taken from *manifest* so the generated
 data lines up exactly with the rule bindings.
 
 Security: every table fully-qualified name is validated with *validate_fqn* and
 the table is checked against the known set from *manifest* before it reaches
-SQL, and every string literal (comments, tag keys and values) is escaped with
+SQL, and every string literal (such as column comments) is escaped with
 *escape_sql_string*. Simple identifiers are emitted unquoted; exotic
 catalog/schema names are backtick-quoted via *quote_fqn*.
 """
@@ -28,7 +31,7 @@ catalog/schema names are backtick-quoted via *quote_fqn*.
 from __future__ import annotations
 
 from databricks_labs_dqx_app.backend.demo import manifest
-from databricks_labs_dqx_app.backend.demo.manifest import ColumnTagSpec, TIGHTEN_WEEK
+from databricks_labs_dqx_app.backend.demo.manifest import TIGHTEN_WEEK
 from databricks_labs_dqx_app.backend.sql_utils import (
     escape_sql_string,
     fqn_needs_quoting,
@@ -543,42 +546,3 @@ def build_baseline_reset_sql(catalog: str, schema: str) -> list[str]:
     for table in _ROWS:
         stmts.extend(build_mutation_sql(table, week=0, weeks=1, catalog=catalog, schema=schema))
     return stmts
-
-
-# --------------------------------------------------------------------------- #
-# Governed column tags.
-# --------------------------------------------------------------------------- #
-def build_set_column_tag_sql(tag: ColumnTagSpec, catalog: str, schema: str) -> str:
-    """Return the ``ALTER COLUMN ... SET TAGS`` statement for a governed tag.
-
-    The tag string is a ``class.*`` key, optionally ``key=value``; a bare key
-    gets an empty value. Both the key and the value are escaped as SQL string
-    literals.
-
-    Args:
-        tag: the column tag specification.
-        catalog: the catalog name.
-        schema: the schema name.
-
-    Returns:
-        The tag-assignment SQL.
-
-    Raises:
-        ValueError: if the tag key is not in the ``class.*`` namespace, or the
-            table/FQN is invalid.
-    """
-    if not tag.tag.startswith("class."):
-        raise ValueError(f"governed demo tags must be class.*: {tag.tag}")
-    _require_known_table(tag.table)
-    fqn = _fqn(catalog, schema, tag.table)
-    key, _, value = tag.tag.partition("=")
-    # Governed tags (from SHOW GOVERNED TAGS) have dotted keys (e.g.
-    # ``class.location``). A dotted key CANNOT be a single-quoted string literal
-    # — the SQL parser rejects the reserved ``.`` there — so it is quoted as an
-    # IDENTIFIER with backticks. A bare governed tag carries no value (its
-    # allowed-values set is what constrains it); only emit ``= 'value'`` when the
-    # spec explicitly pins one.
-    tag_ref = quote_ident(key)
-    if value:
-        tag_ref = f"{tag_ref} = '{escape_sql_string(value)}'"
-    return f"ALTER TABLE {fqn} ALTER COLUMN {quote_ident(tag.column)} SET TAGS ({tag_ref})"

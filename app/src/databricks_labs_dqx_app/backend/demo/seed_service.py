@@ -44,6 +44,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.catalog import EntityTagAssignment
+
 from databricks_labs_dqx_app.backend.demo import datagen, manifest, redate
 from databricks_labs_dqx_app.backend.demo.manifest import (
     BindingSpec,
@@ -120,6 +123,7 @@ class DemoSeedService:
         demo_sql: SqlExecutor,
         app_sql: SqlExecutor,
         oltp: OltpExecutorProtocol,
+        sp_ws: WorkspaceClient,
         registry: RegistryService,
         monitored_tables: MonitoredTableService,
         apply_rules: ApplyRulesService,
@@ -136,6 +140,7 @@ class DemoSeedService:
         self._demo_sql = demo_sql
         self._app_sql = app_sql
         self._oltp = oltp
+        self._sp_ws = sp_ws
         self._registry = registry
         self._monitored_tables = monitored_tables
         self._apply_rules = apply_rules
@@ -246,7 +251,7 @@ class DemoSeedService:
         # governed-tag name (a manifest constant, not user input) and continue.
         for tag in manifest.COLUMN_TAGS:
             try:
-                self._demo_sql.execute(datagen.build_set_column_tag_sql(tag, self._catalog, self._schema))
+                self._assign_column_tag(tag)
             except Exception as exc:  # noqa: BLE001 — tag assignment is best-effort
                 logger.warning(
                     "Skipped governed tag %s on %s.%s: %s",
@@ -255,6 +260,36 @@ class DemoSeedService:
                     tag.column,
                     self._sanitize(str(exc)),
                 )
+
+    def _assign_column_tag(self, tag: manifest.ColumnTagSpec) -> None:
+        """Assign one governed ``class.*`` column tag via the Entity Tag Assignments API.
+
+        Governed tags have dotted keys (e.g. ``class.location``) that NO
+        ``ALTER TABLE ... SET TAGS`` SQL can assign — the ``.`` is reserved in
+        the tag-key grammar. The Unity Catalog Entity Tag Assignments API is the
+        correct mechanism, so this calls
+        :meth:`sp_ws.entity_tag_assignments.create` with the full dotted key
+        against the fully-qualified column entity. Classification (``class.*``)
+        tags carry an empty value; their allowed-values set is what constrains
+        them.
+
+        Args:
+            tag: the governed column tag specification to assign.
+
+        Raises:
+            ValueError: if the tag key is not in the ``class.*`` namespace.
+        """
+        if not tag.tag.startswith("class."):
+            raise ValueError(f"governed demo tags must be class.*: {tag.tag}")
+        entity_name = f"{self._catalog}.{self._schema}.{tag.table}.{tag.column}"
+        self._sp_ws.entity_tag_assignments.create(
+            EntityTagAssignment(
+                entity_type="columns",
+                entity_name=entity_name,
+                tag_key=tag.tag,
+                tag_value="",
+            )
+        )
 
     # ------------------------------------------------------------------
     # Phase: rules
