@@ -757,18 +757,20 @@ class DemoSeedService:
             self._redate_history("global", "global", target_iso)
             trend_points += 1
 
-        # Final truthful "now" refresh so the app's cached scores are current.
-        # This refresh re-runs tables -> products -> global to update
-        # ``dq_score_cache``, but ScoreCacheService also APPENDS one
-        # ``dq_score_history`` row per scope at real-wall-clock ``now()`` — and
-        # those appends are never re-dated, so they would dump a cluster of
-        # stuck real-now points onto the back-dated weekly trend. Every genuine
-        # weekly point was already re-dated to at-or-before ``now`` (the final
-        # week shares ``now``; earlier weeks are in the past), so deleting every
-        # history row with ``computed_at`` strictly after ``now`` strips exactly
-        # the polluting appends while keeping the refreshed cache current.
+        # Final truthful refresh so the app's cached scores are current. This
+        # re-runs tables -> products -> global to update ``dq_score_cache``, but
+        # ScoreCacheService ALSO appends one ``dq_score_history`` row per scope at
+        # real wall-clock ``now()`` — and those appends are never re-dated, so
+        # they would leave stuck real-now points on the back-dated trend. Every
+        # genuine weekly point was already re-dated to at-or-before the final
+        # week's instant, so we snapshot a cutoff the instant BEFORE the refresh
+        # and delete every history row appended at/after it. Using a cutoff taken
+        # here (not the seed-start ``now``, which precedes this refresh by the
+        # whole run) guarantees the refresh's own appends are stripped regardless
+        # of how long the run took, while the re-dated weekly points survive.
+        cutoff = redate.iso(datetime.now(timezone.utc) - timedelta(seconds=1))
         self._score_cache.refresh_all_for_tables(sorted(self._table_fqns()))
-        self._delete_history_after(redate.iso(now))
+        self._delete_history_after(cutoff)
         return trend_points
 
     def _tighten_card_rule(self, rule_map: dict[str, str], user_email: str) -> None:
