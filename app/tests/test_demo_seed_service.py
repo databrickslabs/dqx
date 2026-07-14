@@ -241,22 +241,47 @@ def test_run_approves_bindings_and_products_not_relying_on_auto_publish():
     assert deps["data_products"].approve.called
 
 
-def test_current_rule_ids_returns_string_keyed_map_without_typeerror():
-    # FIX 1 regression: RuleSpec is a frozen dataclass with dict fields, so it
-    # is UNHASHABLE — the old code keyed the map by the RuleSpec object and
-    # raised TypeError at runtime. The map must be keyed by the stable
-    # RuleSpec.key string instead.
+def test_weekly_trend_uses_passed_rule_map_never_refingerprints():
+    # FIX 1 (root cause): the weekly trend must apply the SAME authoritative
+    # rule_map that _build_rules produced (and _build_bindings used) — it must
+    # NEVER re-resolve rule ids by structural fingerprint per week. Re-resolving
+    # could return a different/missing id than _build_rules created (e.g. after
+    # the card-rule version bump, or a fingerprint near-collision), rewriting a
+    # binding with an incomplete/mismatched rule set and dropping rules +
+    # desyncing the applied rule_id from the registry id the Results tab queries.
     svc, deps = _svc()
-    deps["registry"].find_approved_rule_for_definition.side_effect = lambda _definition: MagicMock(rule_id="rid")
+    authoritative = {spec.key: f"auth-{spec.key}" for spec in manifest.RULES}
+    deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+    deps["app_sql"].query_dicts.side_effect = lambda *_a, **_k: [{"status": "SUCCESS"}]
 
-    resolved = svc._current_rule_ids()
+    binding_map = {b.table: f"b-{b.table}" for b in manifest.BINDINGS}
+    svc._build_weekly_trend(binding_map, authoritative, ["p1"], 1, "admin@example.com", datetime.now(timezone.utc))
 
-    assert resolved  # every manifest rule resolved
-    assert all(isinstance(k, str) for k in resolved)
-    assert all(isinstance(v, str) for v in resolved.values())
-    # keys are the manifest rule keys, never RuleSpec objects
-    assert set(resolved) == {spec.key for spec in manifest.RULES}
-    assert isinstance(manifest.RULES[0].key, str)
+    # the trend NEVER re-derives rule ids by fingerprint
+    assert not deps["registry"].find_approved_rule_for_definition.called
+    # every applied rule id comes from the authoritative map
+    applied_ids: set[str] = set()
+    for call in deps["apply_rules"].save_applied_rules.call_args_list:
+        for desired in call.args[1]:
+            applied_ids.add(desired.rule_id)
+    assert applied_ids  # bindings were applied
+    assert applied_ids <= set(authoritative.values())
+
+
+def test_desired_rules_yields_all_five_orders_rules_from_authoritative_map():
+    # FIX 1: with the authoritative map, orders' week-0 active set materializes
+    # all five of its rules (each with a real rule_id) — no rule is dropped.
+    svc, _deps = _svc()
+    authoritative = {spec.key: f"auth-{spec.key}" for spec in manifest.RULES}
+    orders = next(b for b in manifest.BINDINGS if b.table == "orders")
+
+    desired = svc._desired_rules(orders, authoritative, week=0)
+
+    week0_keys = set(manifest.active_mapping(orders, 0))
+    assert len(desired) == len(week0_keys) == 5
+    assert all(d.rule_id.startswith("auth-") for d in desired)
 
 
 def _metrics_rows(input_rows: int, unique_failed: int):
@@ -489,7 +514,8 @@ def test_weekly_trend_submits_all_bindings_before_waiting_or_redating():
     deps["app_sql"].execute.side_effect = _redate
 
     binding_map = {"customers": "b-customers", "orders": "b-orders", "products": "b-products"}
-    svc._build_weekly_trend(binding_map, ["p1"], 1, "admin@example.com", datetime.now(timezone.utc))
+    rule_map = {spec.key: "r1" for spec in manifest.RULES}
+    svc._build_weekly_trend(binding_map, rule_map, ["p1"], 1, "admin@example.com", datetime.now(timezone.utc))
 
     submits = [i for i, e in enumerate(events) if e == "submit"]
     waits = [i for i, e in enumerate(events) if e == "wait"]
@@ -592,7 +618,8 @@ def test_weekly_trend_redates_history_for_every_scope_each_week():
 
     weeks = 2
     binding_map = {"customers": "b-customers", "orders": "b-orders", "products": "b-products"}
-    svc._build_weekly_trend(binding_map, ["p1"], weeks, "admin@example.com", datetime.now(timezone.utc))
+    rule_map = {spec.key: "r1" for spec in manifest.RULES}
+    svc._build_weekly_trend(binding_map, rule_map, ["p1"], weeks, "admin@example.com", datetime.now(timezone.utc))
 
     history_updates = [
         call.args[0]
@@ -605,6 +632,33 @@ def test_weekly_trend_redates_history_for_every_scope_each_week():
     assert len(table_redates) == len(binding_map) * weeks  # every table, every week
     assert len(product_redates) == 1 * weeks  # the one product, every week
     assert len(global_redates) == 1 * weeks  # global, every week
+
+
+def test_week_instant_is_irregular_monotonic_and_final_equals_now():
+    # FIX 3: the trend's calendar span must be irregular (varied gaps + hours)
+    # and widen well beyond a uniform 7-day cadence, oldest-first, with the final
+    # week landing exactly on the shared `now`. Deterministic (no randomness).
+    now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc)
+    weeks = manifest.WEEKS_DEFAULT
+    pts = [DemoSeedService._week_instant(now, w, weeks) for w in range(weeks)]
+
+    assert pts[-1] == now  # final week shares now
+    # strictly oldest-first (monotonic increasing) and all at or before now
+    assert all(pts[i] < pts[i + 1] for i in range(len(pts) - 1))
+    assert all(p <= now for p in pts)
+    # gaps between consecutive points are NOT all equal (irregular cadence)
+    gaps = {(pts[i + 1] - pts[i]).days for i in range(len(pts) - 1)}
+    assert len(gaps) > 1, "expected irregular day gaps, not a uniform cadence"
+    # the span is materially wider than a tidy weeks*7 uniform cadence would give
+    assert (now - pts[0]).days > weeks * 7
+
+
+def test_week_instant_is_deterministic():
+    # FIX 3: index into fixed lists — same inputs must yield the same instant.
+    now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc)
+    a = DemoSeedService._week_instant(now, 3, manifest.WEEKS_DEFAULT)
+    b = DemoSeedService._week_instant(now, 3, manifest.WEEKS_DEFAULT)
+    assert a == b
 
 
 def test_validation_gate_deletes_gate_runs_from_both_tables():

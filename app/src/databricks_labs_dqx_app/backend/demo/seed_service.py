@@ -226,7 +226,9 @@ class DemoSeedService:
                 self._set_status("running", "validate", "Running validation gate", user_email)
                 self._validation_gate(binding_map, user_email)
                 self._set_status("running", "trend", f"Building {weeks}-week quality trend", user_email)
-                trend_points = self._build_weekly_trend(binding_map, product_ids, weeks, user_email, now)
+                trend_points = self._build_weekly_trend(
+                    binding_map, rule_map, product_ids, weeks, user_email, now
+                )
             else:
                 # Build-only: still refresh caches so the app shows a truthful
                 # (current) score for the freshly governed tables.
@@ -657,6 +659,7 @@ class DemoSeedService:
     def _build_weekly_trend(
         self,
         binding_map: dict[str, str],
+        rule_map: dict[str, str],
         product_ids: list[str],
         weeks: int,
         user_email: str,
@@ -671,8 +674,22 @@ class DemoSeedService:
         re-dated once per week. Returns the number of score-history points
         re-dated (tables + products + global across all weeks).
 
+        The *authoritative* ``rule_map`` built by :meth:`_build_rules` (and used
+        by :meth:`_build_bindings`) is threaded in and used verbatim for every
+        weekly re-apply. It is NEVER re-derived by structural fingerprint here:
+        re-resolving each rule id per week could hand back a different or missing
+        id than :meth:`_build_rules` created (e.g. after ``_tighten_card_rule``
+        bumps ``card_format``'s version, or for a fingerprint near-collision), so
+        the weekly ``save_applied_rules`` would rewrite a binding with an
+        incomplete or mismatched rule set — dropping rules and desynchronising
+        the applied ``rule_id`` from the registry id the Results tab queries. Using
+        the one authoritative map keeps the SAME rule ids applied at week 0 and
+        every week after, so counts stay stable and Results stays unlocked.
+
         Args:
             binding_map: table name -> approved binding id.
+            rule_map: the authoritative rule_key -> rule_id map from
+                :meth:`_build_rules` (same map :meth:`_build_bindings` used).
             product_ids: the approved data-product ids to refresh per week.
             weeks: number of weeks of trend to generate.
             user_email: the admin attributed on each run.
@@ -681,7 +698,6 @@ class DemoSeedService:
                 wall-clock and the final-week re-date.
         """
         binding_specs = {b.table: b for b in manifest.BINDINGS}
-        rule_map = self._current_rule_ids()
         last_active: dict[str, tuple[str, ...]] = {}
         trend_points = 0
 
@@ -788,19 +804,6 @@ class DemoSeedService:
         history_fqn = self._oltp.fqn("dq_score_history")
         self._oltp.execute(redate.build_delete_history_after_sql(history_fqn, cutoff_iso))
 
-    def _current_rule_ids(self) -> dict[str, str]:
-        """Resolve each manifest rule spec to its approved registry rule id (by fingerprint).
-
-        Keyed by the stable ``RuleSpec.key`` string (not the :class:`RuleSpec`
-        object, which is unhashable — its frozen dataclass has ``dict`` fields).
-        """
-        resolved: dict[str, str] = {}
-        for spec in manifest.RULES:
-            existing = self._registry.find_approved_rule_for_definition(self._definition_for(spec))
-            if existing is not None:
-                resolved[spec.key] = existing.rule_id
-        return resolved
-
     def _week_mutations(self, week: int, weeks: int) -> list[str]:
         """Flatten every table's per-week mutation statements for *week*."""
         stmts: list[str] = []
@@ -822,12 +825,34 @@ class DemoSeedService:
 
     @staticmethod
     def _week_instant(now: datetime, week: int, weeks: int) -> datetime:
-        """Return the (irregularly spaced) instant for *week*; the final week shares *now*."""
+        """Return the (irregularly spaced) instant for *week*; the final week shares *now*.
+
+        Widens and varies the trend's calendar span so it reads like an organic
+        run history (a Mar->Jul spread) rather than a tidy uniform weekly cadence.
+        Deterministic: the gap between consecutive points and each point's
+        hour-of-day are read from fixed lists (dqlake's seed_demo cadence), never
+        randomised. Points are laid oldest-first from *now* going back: the final
+        week (``week == weeks - 1``) is exactly *now*, and each earlier week steps
+        further back by the cumulative gap. When *weeks* exceeds the fixed-list
+        length the lists wrap by modulo, so any week count stays deterministic.
+
+        Args:
+            now: the shared "now" instant; the final week resolves to it exactly.
+            week: the zero-based week index.
+            weeks: the total number of weeks in the trend.
+
+        Returns:
+            The instant for *week*, at or before *now*.
+        """
         if week >= weeks - 1:
             return now
-        days_back = (weeks - 1 - week) * 7
-        jitter_hours = ((week * 13 + 5) % 11) - 5
-        return now - timedelta(days=days_back, hours=jitter_hours)
+        # Irregular per-step day gaps and varied hours-of-day (fixed, deterministic).
+        gap_days = (11, 4, 9, 14, 6, 3, 12, 8, 5, 13, 7, 10)
+        hours = (9, 14, 11, 16, 8, 13, 10, 15, 12, 17, 7, 18)
+        # Sum the gaps between this week and the final (now) week so points are
+        # oldest-first and monotonically approach `now`.
+        days_back = sum(gap_days[(weeks - 2 - i) % len(gap_days)] for i in range(week, weeks - 1))
+        return now - timedelta(days=days_back, hours=hours[week % len(hours)])
 
     def _wait_for_run(self, run_id: str) -> str:
         """Poll ``dq_validation_runs`` until the run is terminal; return its final status.
