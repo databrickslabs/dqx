@@ -1051,6 +1051,40 @@ export interface DataProductRunSubmissionOut {
   binding_version?: DataProductRunSubmissionOutBindingVersion;
 }
 
+/**
+ * Current state of the long-running demo-content seed job.
+ */
+export interface DemoContentStatusOut {
+  state: string;
+  phase: string;
+  message: string;
+  started_at: string;
+  updated_at: string;
+}
+
+/**
+ * Request body for the admin "Deploy demo content" endpoint.
+
+Args:
+    wipe_first: When ``True``, the seed clears existing DQX Studio-managed
+        data before seeding so the demo lands on a clean slate.
+ */
+export interface DeployDemoContentIn {
+  wipe_first?: boolean;
+}
+
+/**
+ * Acknowledgement that a demo-content seed was launched.
+
+The seed runs for ~1h on a background daemon thread, so this returns
+immediately with the initial ``running`` state; progress is polled via the
+demo-content status endpoint.
+ */
+export interface DeployDemoContentOut {
+  status: string;
+  started_at: string;
+}
+
 export type DesiredAppliedRuleInColumnMappingItem = {[key: string]: string};
 
 /**
@@ -24378,3 +24412,218 @@ export const useResetDatabase = <TError = AxiosError<HTTPValidationError>,
 
       return useMutation(mutationOptions, queryClient);
     }
+    
+/**
+ * Launch the governed demo-content seed on a background thread (Admin only).
+
+The seed runs for ~1h, so this endpoint fires it on a named daemon thread
+and returns immediately with the initial ``running`` state. Progress is
+polled via ``GET /demo/status``. A 409 is returned when a seed is already
+in progress so two concurrent deploys can't race.
+
+The seed service owns its terminal status: it writes ``succeeded`` or
+``failed`` to the status store itself. The thread target only logs on an
+escaped failure — it does not overwrite the status.
+ * @summary Deploy Demo Content
+ */
+export const deployDemoContent = (
+    deployDemoContentIn: DeployDemoContentIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DeployDemoContentOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/admin/demo/deploy`,
+      deployDemoContentIn,options
+    );
+  }
+
+
+
+export const getDeployDemoContentMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deployDemoContent>>, TError,{data: DeployDemoContentIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof deployDemoContent>>, TError,{data: DeployDemoContentIn}, TContext> => {
+
+const mutationKey = ['deployDemoContent'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deployDemoContent>>, {data: DeployDemoContentIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  deployDemoContent(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeployDemoContentMutationResult = NonNullable<Awaited<ReturnType<typeof deployDemoContent>>>
+    export type DeployDemoContentMutationBody = DeployDemoContentIn
+    export type DeployDemoContentMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Deploy Demo Content
+ */
+export const useDeployDemoContent = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deployDemoContent>>, TError,{data: DeployDemoContentIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deployDemoContent>>,
+        TError,
+        {data: DeployDemoContentIn},
+        TContext
+      > => {
+
+      const mutationOptions = getDeployDemoContentMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Return the current state of the long-running demo-content seed (Admin only).
+ * @summary Demo Content Status
+ */
+export const demoContentStatus = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DemoContentStatusOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/admin/demo/status`,options
+    );
+  }
+
+
+
+
+export const getDemoContentStatusQueryKey = () => {
+    return [
+    `/api/v1/admin/demo/status`
+    ] as const;
+    }
+
+    
+export const getDemoContentStatusQueryOptions = <TData = Awaited<ReturnType<typeof demoContentStatus>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof demoContentStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getDemoContentStatusQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof demoContentStatus>>> = ({ signal }) => demoContentStatus({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof demoContentStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type DemoContentStatusQueryResult = NonNullable<Awaited<ReturnType<typeof demoContentStatus>>>
+export type DemoContentStatusQueryError = AxiosError<HTTPValidationError>
+
+
+export function useDemoContentStatus<TData = Awaited<ReturnType<typeof demoContentStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof demoContentStatus>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof demoContentStatus>>,
+          TError,
+          Awaited<ReturnType<typeof demoContentStatus>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useDemoContentStatus<TData = Awaited<ReturnType<typeof demoContentStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof demoContentStatus>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof demoContentStatus>>,
+          TError,
+          Awaited<ReturnType<typeof demoContentStatus>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useDemoContentStatus<TData = Awaited<ReturnType<typeof demoContentStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof demoContentStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Demo Content Status
+ */
+
+export function useDemoContentStatus<TData = Awaited<ReturnType<typeof demoContentStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof demoContentStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getDemoContentStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getDemoContentStatusSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof demoContentStatus>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof demoContentStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getDemoContentStatusQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof demoContentStatus>>> = ({ signal }) => demoContentStatus({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof demoContentStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type DemoContentStatusSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof demoContentStatus>>>
+export type DemoContentStatusSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useDemoContentStatusSuspense<TData = Awaited<ReturnType<typeof demoContentStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof demoContentStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useDemoContentStatusSuspense<TData = Awaited<ReturnType<typeof demoContentStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof demoContentStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useDemoContentStatusSuspense<TData = Awaited<ReturnType<typeof demoContentStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof demoContentStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Demo Content Status
+ */
+
+export function useDemoContentStatusSuspense<TData = Awaited<ReturnType<typeof demoContentStatus>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof demoContentStatus>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getDemoContentStatusSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
