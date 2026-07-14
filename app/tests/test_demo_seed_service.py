@@ -501,6 +501,112 @@ def test_weekly_trend_submits_all_bindings_before_waiting_or_redating():
     assert max(waits) < min(redates)
 
 
+def _runs_table_query_dicts(table_rows: list[dict[str, str]]):
+    """A query-aware ``dq_validation_runs`` mock over a simulated multi-row table.
+
+    The real table holds MORE THAN ONE row per run_id (an app-written RUNNING
+    placeholder plus a runner-appended terminal row). The seed's poll SQL filters
+    ``status IN (...)`` so the DB returns only the terminal row(s). This helper
+    replays that server-side filter over *table_rows* so the test proves the
+    production query is correct rather than hand-feeding a pre-filtered result.
+    """
+
+    def _query(sql: str, *_a, **_k):
+        rows = list(table_rows)
+        if "status IN (" in sql:
+            rows = [row for row in rows if f"'{row['status']}'" in sql.split("status IN (", 1)[1]]
+            return rows[:1] if "LIMIT 1" in sql else rows
+        return rows
+
+    return _query
+
+
+def test_wait_for_run_returns_terminal_when_both_rows_present_running_first():
+    # BUG 1 regression: dq_validation_runs holds TWO rows per run_id — an
+    # app-written RUNNING placeholder and a runner-appended terminal row. The old
+    # poll had NO status filter and read ``rows[0]`` of an unordered set, so it
+    # could latch onto the stale RUNNING placeholder even after SUCCESS was
+    # appended, causing a false timeout on a run that actually finished. The fixed
+    # poll asks directly for a terminal row and returns it promptly.
+    svc, deps = _svc()
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.side_effect = _runs_table_query_dicts([{"status": "RUNNING"}, {"status": "SUCCESS"}])
+    assert svc._wait_for_run("run1") == "SUCCESS"
+    assert deps["app_sql"].query_dicts.call_count == 1  # no extra polling / no timeout
+
+
+def test_wait_for_run_returns_terminal_when_terminal_row_first():
+    # Same regression, opposite physical row order: the terminal row precedes the
+    # RUNNING placeholder. Order must not matter.
+    svc, deps = _svc()
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.side_effect = _runs_table_query_dicts([{"status": "SUCCESS"}, {"status": "RUNNING"}])
+    assert svc._wait_for_run("run1") == "SUCCESS"
+
+
+def test_wait_for_run_keeps_polling_while_only_running_then_returns_terminal(monkeypatch):
+    # A still-only-RUNNING table (no terminal row yet) yields an empty terminal
+    # query -> keep polling; once the runner appends a terminal row alongside the
+    # placeholder, return it.
+    from databricks_labs_dqx_app.backend.demo import seed_service as ss
+
+    monkeypatch.setattr(ss, "_RUN_POLL_SECONDS", 0)  # module-level constant: no real sleep
+    svc, deps = _svc()
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    # The terminal-filtered poll returns nothing while only the RUNNING
+    # placeholder exists, then the terminal row once the runner appends it.
+    deps["app_sql"].query_dicts.side_effect = [
+        [],  # placeholder only — no terminal row yet
+        [],  # still running
+        [{"status": "SUCCESS"}],  # terminal row appears
+    ]
+    assert svc._wait_for_run("run1") == "SUCCESS"
+    assert deps["app_sql"].query_dicts.call_count == 3
+
+
+def test_wait_for_run_detects_failed_terminal_row_behind_placeholder():
+    # A FAILED/CANCELED terminal row must still be detected and returned even when
+    # a RUNNING placeholder is also present — the caller may need to know the run
+    # failed rather than seeing an indefinite RUNNING.
+    svc, deps = _svc()
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.side_effect = _runs_table_query_dicts([{"status": "RUNNING"}, {"status": "FAILED"}])
+    assert svc._wait_for_run("run1") == "FAILED"
+
+
+def test_weekly_trend_redates_history_for_every_scope_each_week():
+    # BUG 2 guard: each weekly refresh appends exactly ONE dq_score_history row
+    # per scope (table / product / global) at real now(); the per-week
+    # _redate_history must shift EACH appended row to that week's instant. Assert
+    # a history re-date UPDATE is issued for every scope, every week — so no
+    # scope's weekly point is left stranded at wall-clock now.
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["registry"].find_approved_rule_for_definition.side_effect = lambda _d: MagicMock(rule_id="r1")
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.side_effect = lambda *_a, **_k: [{"status": "SUCCESS"}]
+
+    weeks = 2
+    binding_map = {"customers": "b-customers", "orders": "b-orders", "products": "b-products"}
+    svc._build_weekly_trend(binding_map, ["p1"], weeks, "admin@example.com", datetime.now(timezone.utc))
+
+    history_updates = [
+        call.args[0]
+        for call in deps["oltp"].execute.call_args_list
+        if call.args and call.args[0].startswith("UPDATE") and "dq_score_history" in call.args[0]
+    ]
+    table_redates = [s for s in history_updates if "scope_type = 'table'" in s]
+    product_redates = [s for s in history_updates if "scope_type = 'product'" in s]
+    global_redates = [s for s in history_updates if "scope_type = 'global'" in s]
+    assert len(table_redates) == len(binding_map) * weeks  # every table, every week
+    assert len(product_redates) == 1 * weeks  # the one product, every week
+    assert len(global_redates) == 1 * weeks  # global, every week
+
+
 def test_validation_gate_deletes_gate_runs_from_both_tables():
     # FIX 1: the validation-gate runs execute at real "now" and are never
     # re-dated, so they must be deleted from dq_metrics AND dq_validation_runs

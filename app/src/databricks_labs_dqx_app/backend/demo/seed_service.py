@@ -100,8 +100,16 @@ logger = logging.getLogger(__name__)
 # or above it in the validation gate indicates a broken binding, not a story.
 _MISFIRE_RATE = 0.985
 # How long to wait for a submitted binding run to reach a terminal state.
-_RUN_TIMEOUT_SECONDS = 900
+# The weekly trend fans out one serverless Job per table, so up to a handful of
+# runs contend for cold-start capacity at once. A legitimate run can therefore
+# exceed 15 minutes under contention, so this is a generous 30-minute ceiling
+# (defense-in-depth): the real safeguard against false timeouts is that
+# :meth:`_wait_for_run` reads the terminal row across ALL rows for a run_id,
+# never latching onto a stale RUNNING placeholder.
+_RUN_TIMEOUT_SECONDS = 1800
 _RUN_POLL_SECONDS = 10
+# Terminal run states as written to ``dq_validation_runs.status`` by the runner.
+_TERMINAL_RUN_STATES = ("SUCCESS", "FAILED", "CANCELED")
 
 
 @dataclass
@@ -822,16 +830,31 @@ class DemoSeedService:
         return now - timedelta(days=days_back, hours=jitter_hours)
 
     def _wait_for_run(self, run_id: str) -> str:
-        """Poll ``dq_validation_runs`` until the run is terminal; return its final status."""
+        """Poll ``dq_validation_runs`` until the run is terminal; return its final status.
+
+        ``dq_validation_runs`` holds TWO rows per run_id: an app-written RUNNING
+        placeholder inserted at submit time, and a runner-appended terminal row
+        (``SUCCESS`` / ``FAILED`` / ``CANCELED``) once the Job finishes. The poll
+        therefore asks directly for a TERMINAL row for this run_id — scanning ALL
+        rows via a ``status IN (...)`` filter — rather than reading ``rows[0]`` of
+        an unordered result set. Reading ``rows[0]`` (as an earlier version did)
+        could latch onto the stale RUNNING placeholder even after the terminal
+        row existed, timing out a run that had actually completed.
+
+        A returned terminal row's status is returned (so a FAILED/CANCELED run is
+        surfaced to the caller); an empty result means still-running and the loop
+        keeps polling until the deadline.
+        """
         runs_fqn = self._app_sql.fqn("dq_validation_runs")
+        in_list = ", ".join(f"'{escape_sql_string(state)}'" for state in _TERMINAL_RUN_STATES)
         deadline = time.monotonic() + _RUN_TIMEOUT_SECONDS
         while True:
             rows = self._app_sql.query_dicts(
                 f"SELECT status FROM {runs_fqn} "  # noqa: S608
-                f"WHERE run_id = '{escape_sql_string(run_id)}'"
+                f"WHERE run_id = '{escape_sql_string(run_id)}' AND status IN ({in_list}) LIMIT 1"
             )
             status = rows[0].get("status") if rows else None
-            if status in ("SUCCESS", "FAILED", "CANCELED"):
+            if status in _TERMINAL_RUN_STATES:
                 return status or "FAILED"
             if time.monotonic() >= deadline:
                 raise RuntimeError(f"Timed out waiting for run {self._sanitize(run_id)} to finish")
