@@ -239,8 +239,22 @@ class DemoSeedService:
         self._demo_sql.execute(datagen.create_schema_sql(self._catalog, self._schema))
         for table in manifest.TABLES:
             self._demo_sql.execute(datagen.build_create_table_sql(table.name, self._catalog, self._schema))
+        # Governed column tags are a best-effort showcase, not core demo state.
+        # Assigning a governed tag needs the ASSIGN privilege on that tag AND a
+        # metastore that defines it; either can be absent in a given workspace.
+        # A tag that can't be applied must NOT abort the ~1h build — log the
+        # governed-tag name (a manifest constant, not user input) and continue.
         for tag in manifest.COLUMN_TAGS:
-            self._demo_sql.execute(datagen.build_set_column_tag_sql(tag, self._catalog, self._schema))
+            try:
+                self._demo_sql.execute(datagen.build_set_column_tag_sql(tag, self._catalog, self._schema))
+            except Exception as exc:  # noqa: BLE001 — tag assignment is best-effort
+                logger.warning(
+                    "Skipped governed tag %s on %s.%s: %s",
+                    tag.tag,
+                    tag.table,
+                    tag.column,
+                    self._sanitize(str(exc)),
+                )
 
     # ------------------------------------------------------------------
     # Phase: rules

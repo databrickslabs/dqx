@@ -572,7 +572,13 @@ def build_set_column_tag_sql(tag: ColumnTagSpec, catalog: str, schema: str) -> s
     _require_known_table(tag.table)
     fqn = _fqn(catalog, schema, tag.table)
     key, _, value = tag.tag.partition("=")
-    return (
-        f"ALTER TABLE {fqn} ALTER COLUMN {quote_ident(tag.column)} "
-        f"SET TAGS ('{escape_sql_string(key)}' = '{escape_sql_string(value)}')"
-    )
+    # Governed tags (from SHOW GOVERNED TAGS) have dotted keys (e.g.
+    # ``class.location``). A dotted key CANNOT be a single-quoted string literal
+    # — the SQL parser rejects the reserved ``.`` there — so it is quoted as an
+    # IDENTIFIER with backticks. A bare governed tag carries no value (its
+    # allowed-values set is what constrains it); only emit ``= 'value'`` when the
+    # spec explicitly pins one.
+    tag_ref = quote_ident(key)
+    if value:
+        tag_ref = f"{tag_ref} = '{escape_sql_string(value)}'"
+    return f"ALTER TABLE {fqn} ALTER COLUMN {quote_ident(tag.column)} SET TAGS ({tag_ref})"

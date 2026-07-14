@@ -238,7 +238,7 @@ RULES: tuple[RuleSpec, ...] = (
             },
         },
         slots=(SlotSpec("country", "text", arg_key="column"),),
-        slot_tags={"country": ("class.country",)},
+        slot_tags={"country": ("class.location",)},
     ),
     RuleSpec(
         key="tier_set",
@@ -321,7 +321,7 @@ RULES: tuple[RuleSpec, ...] = (
         mode="dqx_native",
         body={"function": "regex_match", "arguments": {"column": "{{code}}", "regex": "^[0-9]{4}$"}},
         slots=(SlotSpec("code", "text", arg_key="column"),),
-        slot_tags={"code": ("class.card_last_four",)},
+        slot_tags={"code": ("class.credit_card",)},
     ),
     RuleSpec(
         key="min_len",
@@ -462,14 +462,16 @@ DATA_PRODUCTS: tuple[DataProductSpec, ...] = (
 
 
 # --------------------------------------------------------------------------- #
-# Governed column tags — a class.* tag applied to a demo column. The tagged
-# columns line up with the rules' slot_tags (country_set -> class.country,
-# card_format -> class.card_last_four) so tag-driven rule suggestion has real
-# targets to match.
+# Governed column tags — a class.* tag applied to a demo column. Tag names are
+# REAL governed tags (from SHOW GOVERNED TAGS): class.location and
+# class.credit_card both exist in the standard PII governed-tag set. The tagged
+# columns line up with the rules' slot_tags (country_set -> class.location on
+# country_code; card_format -> class.credit_card on card_last4) so tag-driven
+# rule suggestion has real targets to match.
 # --------------------------------------------------------------------------- #
 COLUMN_TAGS: tuple[ColumnTagSpec, ...] = (
-    ColumnTagSpec(table="customers", column="country_code", tag="class.country"),
-    ColumnTagSpec(table="payments", column="card_last4", tag="class.card_last_four"),
+    ColumnTagSpec(table="customers", column="country_code", tag="class.location"),
+    ColumnTagSpec(table="payments", column="card_last4", tag="class.credit_card"),
 )
 
 
