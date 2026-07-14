@@ -75,6 +75,9 @@ import {
   useGetDraftRunSampleLimit,
   useSaveDraftRunSampleLimit,
   getGetDraftRunSampleLimitQueryKey,
+  useDeployDemoContent,
+  useDemoContentStatus,
+  getDemoContentStatusQueryKey,
   type AiSettingsIn,
   type RulesRegistrySettingsIn,
   type ComputeSettingsIn,
@@ -2612,6 +2615,131 @@ function DangerZoneCard() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Deploy demo content — the admin action that seeds this workspace with a
+// realistic sample DQX Studio deployment (sample tables, rules across every
+// quality dimension, weeks of run history). NON-destructive by default, but the
+// recommended path wipes existing Studio data first for a clean slate — so the
+// wipe-first checkbox defaults to checked. The seed runs ~1h on a background
+// thread; we poll the status endpoint (only while running) and surface a subtle
+// banner. The backend route is hard-gated to ADMIN; the UI gate is convenience.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DeployDemoCard() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { isAdmin } = usePermissions();
+  const [open, setOpen] = useState(false);
+  const [wipeFirst, setWipeFirst] = useState(true);
+  const deployMutation = useDeployDemoContent();
+
+  // Poll the status endpoint continuously while a seed is running, then stop.
+  const { data: statusResp } = useDemoContentStatus({
+    query: {
+      refetchInterval: (query) => (query.state.data?.data?.state === "running" ? 10000 : false),
+    },
+  });
+  const status = statusResp?.data;
+  const isRunning = status?.state === "running";
+
+  const closeDialog = () => {
+    setOpen(false);
+  };
+
+  const handleConfirm = () => {
+    if (deployMutation.isPending) return;
+    deployMutation.mutate(
+      { data: { wipe_first: wipeFirst } },
+      {
+        onSuccess: () => {
+          toast.success(t("config.demoStarted"));
+          closeDialog();
+          // Kick off polling immediately by refetching the status query.
+          queryClient.invalidateQueries({ queryKey: getDemoContentStatusQueryKey() });
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.demoFailed"));
+        },
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <FlaskConical className="h-5 w-5" />
+          {t("config.demoTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm leading-relaxed text-muted-foreground">{t("config.demoBody")}</p>
+        {isRunning && (
+          <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            <span>{t("config.demoRunningBanner", { phase: status?.phase ?? "" })}</span>
+          </div>
+        )}
+        <div className="flex items-center gap-3">
+          <Button
+            size="sm"
+            disabled={!isAdmin || isRunning}
+            onClick={() => {
+              setWipeFirst(true);
+              setOpen(true);
+            }}
+            className="gap-1.5"
+          >
+            {isRunning && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {isRunning ? t("config.demoInProgress") : t("config.demoButton")}
+          </Button>
+          {!isAdmin && <span className="text-xs text-muted-foreground">{t("config.demoAdminOnly")}</span>}
+        </div>
+      </CardContent>
+
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (deployMutation.isPending) return;
+          if (o) setOpen(true);
+          else closeDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FlaskConical className="h-5 w-5" />
+              {t("config.demoDialogTitle")}
+            </DialogTitle>
+            <DialogDescription>{t("config.demoWarning")}</DialogDescription>
+          </DialogHeader>
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="demo-wipe-first"
+              checked={wipeFirst}
+              onCheckedChange={(c) => setWipeFirst(c === true)}
+              disabled={deployMutation.isPending}
+            />
+            <Label htmlFor="demo-wipe-first" className="text-xs leading-relaxed">
+              {t("config.demoWipeLabel")}
+            </Label>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={closeDialog} disabled={deployMutation.isPending}>
+              {t("config.demoCancel")}
+            </Button>
+            <Button size="sm" onClick={handleConfirm} disabled={deployMutation.isPending} className="gap-1.5">
+              {deployMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {t("config.demoConfirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Settings page shell — dqlake-style tabs, one card per setting, plus a
 // client-side search that filters cards across every tab by title/keyword.
 // The individual setting cards above are unchanged; this only regroups them.
@@ -2671,6 +2799,7 @@ function ConfigPage() {
       { id: "permissions", tab: "entitlements", title: t("config.permissionsDefaultInheritTitle"), keywords: t("config.kwPermissions"), render: () => <PermissionsSettingsCard /> },
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
       { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
+      { id: "deployDemo", tab: "danger", title: t("config.demoTitle"), keywords: t("config.kwDemo"), render: () => <DeployDemoCard /> },
       { id: "resetDatabase", tab: "danger", title: t("config.resetDbTitle"), keywords: t("config.kwDanger"), render: () => <DangerZoneCard /> },
     ],
     [t],
