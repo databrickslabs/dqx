@@ -374,8 +374,17 @@ def _mut(fqn: str, col: str, pk: str, salt: int, rate: float, bad: str, good: st
 
 
 def _clamp(value: float) -> float:
-    """Clamp a fail level into the visible ``[0.005, 0.97]`` band."""
-    return max(0.005, min(0.97, value))
+    """Clamp a fail level into the visible ``[0.005, 0.90]`` band.
+
+    The 0.90 ceiling is deliberate: a per-column mutation rate is multiplied by
+    up to 1.25 before landing here, and the seeder's validation gate hard-fails
+    any check at or above ``_MISFIRE_RATE`` (0.985) as a mis-bound rule. Capping
+    the *legitimate* seeded failure at 0.90 keeps a "bad week" dramatic while
+    leaving clear headroom below the misfire threshold, so a genuinely
+    mis-bound rule (which flags ~100% of rows) is still the only thing that
+    trips the gate.
+    """
+    return max(0.005, min(0.90, value))
 
 
 def _jitter(week: int, salt: int, amp: float) -> float:
