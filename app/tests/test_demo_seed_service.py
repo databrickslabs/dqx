@@ -90,6 +90,9 @@ def test_build_rules_uses_real_mode_and_polarity_per_spec():
     # BUG D regression: SQL-mode rules must be created with mode="sql" and
     # polarity="pass", NOT forced to dqx_native (which would materialize to
     # function: '' and fail at runtime with "function '' is not defined").
+    # FEATURE H: lowcode rules likewise keep mode="lowcode" + polarity="pass"
+    # (their compiled predicate describes a passing row); dqx_native carries no
+    # polarity.
     svc, deps = _svc()
     _use_create_path(deps)
     svc._build_rules("admin@example.com")
@@ -101,13 +104,58 @@ def test_build_rules_uses_real_mode_and_polarity_per_spec():
         author_kind = call.kwargs["author_kind"]
         assert call.kwargs["source"] == "demo"
         by_mode[mode] = author_kind
-        if mode == "sql":
-            assert polarity == "pass", "sql demo predicates describe a passing row"
+        if mode in {"sql", "lowcode"}:
+            assert polarity == "pass", f"{mode} demo predicates describe a passing row"
         else:
             assert polarity is None, f"{mode} rules must not carry a polarity"
-    # both sql and dqx_native rules are present in the demo set
+    # all three modes are present in the demo set
     assert "sql" in by_mode
     assert "dqx_native" in by_mode
+    assert "lowcode" in by_mode
+
+
+def test_definition_for_moves_scalars_into_parameters():
+    # BUG G: a dqx_native rule's scalar check arguments must surface as typed
+    # RuleDefinition.parameters (the authoring UI reads scalars from there); the
+    # compiled body.arguments must hold ONLY {{slot}} column placeholders.
+    spec = manifest.RULES_BY_KEY["country_set"]  # is_in_list with an `allowed` scalar
+    definition = DemoSeedService._definition_for(spec)
+
+    param_names = {p.name for p in definition.parameters}
+    assert "allowed" in param_names, "the scalar `allowed` must be a RuleParameter"
+    allowed = next(p for p in definition.parameters if p.name == "allowed")
+    assert allowed.type == "list"
+    assert isinstance(allowed.value, list) and "US" in allowed.value
+    # body carries only the column placeholder, no scalar
+    assert definition.body["arguments"] == {"column": "{{country}}"}
+    assert "allowed" not in definition.body["arguments"]
+
+
+def test_definition_for_compiles_lowcode_body_with_predicate():
+    # FEATURE H: a lowcode spec carries only lowcode_ast in its manifest body;
+    # _definition_for must compile it into the stored body the materializer runs
+    # (predicate present, re-editable lowcode_ast preserved).
+    spec = manifest.RULES_BY_KEY["pct_range"]
+    assert spec.mode == "lowcode"
+    definition = DemoSeedService._definition_for(spec)
+
+    assert "lowcode_ast" in definition.body, "the re-editable AST must be preserved for the visual builder"
+    assert definition.body.get("predicate"), "a single-row lowcode rule compiles to a predicate"
+    assert "{{pct}}" in definition.body["predicate"], "predicate references the declared slot placeholder"
+    # low-code slots fill placeholders, not function args
+    assert all(s.arg_key is None for s in definition.slots)
+
+
+def test_definition_for_compiles_lowcode_uniqueness_to_group_by_query():
+    # The canonical uniqueness shape is an aggregated count = 1 with a group-by;
+    # it compiles to a sql_query + merge_columns, not a bare predicate.
+    spec = manifest.RULES_BY_KEY["unique"]
+    assert spec.mode == "lowcode"
+    definition = DemoSeedService._definition_for(spec)
+
+    assert definition.body.get("sql_query"), "grouped uniqueness compiles to a sql_query"
+    assert definition.body.get("merge_columns") == ["{{key}}"]
+    assert definition.body.get("group_by") == "{{key}}"
 
 
 def test_build_rules_is_idempotent_when_rule_already_approved():

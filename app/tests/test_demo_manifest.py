@@ -90,6 +90,67 @@ def test_author_kind_spread_and_polarity_by_mode():
             assert r.polarity is None, f"{r.key}: dqx_native rule must have polarity None"
 
 
+def test_all_three_rule_modes_are_represented():
+    # FEATURE H: the demo shows a believable spread across all three authoring
+    # modes — roughly a third each. Assert every mode appears (>=1 each) and,
+    # crucially, that low-code is present (it used to be entirely absent).
+    modes = [r.mode for r in m.RULES]
+    for mode in ("dqx_native", "lowcode", "sql"):
+        assert mode in modes, f"mode {mode!r} not represented in the demo rule set"
+    assert modes.count("lowcode") >= 3, "expected a real low-code presence (>=3 rules)"
+    assert modes.count("dqx_native") >= 3, "expected a real dqx_native presence (>=3 rules)"
+    assert modes.count("sql") >= 3, "expected a real sql presence (>=3 rules)"
+
+
+def test_dqx_native_scalars_live_in_parameters_not_body_arguments():
+    # BUG G: a dqx_native rule's body.arguments must hold ONLY {{slot}} column
+    # placeholders; every scalar (non-column) check argument must be declared as
+    # a typed ParamSpec in `parameters` so the authoring UI reads it from
+    # definition.parameters (baked-in scalars render blank and drop on re-save).
+    saw_a_parameterised_rule = False
+    for r in m.RULES:
+        if r.mode != "dqx_native":
+            continue
+        arguments = r.body.get("arguments", {})
+        assert isinstance(arguments, dict)
+        for arg_name, arg_value in arguments.items():
+            assert isinstance(arg_value, str) and arg_value.startswith("{{") and arg_value.endswith("}}"), (
+                f"{r.key}: body.arguments[{arg_name!r}] = {arg_value!r} is not a {{{{slot}}}} placeholder — "
+                "scalars must move to `parameters`"
+            )
+        # a scalar param is never also a body argument
+        arg_keys = set(arguments)
+        for param in r.parameters:
+            assert param.name not in arg_keys, f"{r.key}: scalar {param.name!r} must not appear in body.arguments"
+            assert param.type in {"number", "string", "list", "boolean", "regex", "ref_table", "ref_column"}
+            saw_a_parameterised_rule = True
+    assert saw_a_parameterised_rule, "expected at least one dqx_native rule with a scalar ParamSpec"
+
+
+def test_non_dqx_native_rules_declare_no_scalar_parameters():
+    # Scalars-as-parameters is a dqx_native concern; sql/lowcode rules carry
+    # their values inside the predicate / compiled AST, not `parameters`.
+    for r in m.RULES:
+        if r.mode != "dqx_native":
+            assert not r.parameters, f"{r.key}: {r.mode} rule must not declare ParamSpecs"
+
+
+def test_lowcode_rules_carry_a_reeditable_ast():
+    # A low-code rule stores the re-editable lowcode_ast (with a row whose
+    # column_ref names a declared slot) so the visual builder rehydrates it.
+    lowcode = [r for r in m.RULES if r.mode == "lowcode"]
+    assert lowcode, "expected at least one lowcode rule"
+    for r in lowcode:
+        ast = r.body.get("lowcode_ast")
+        assert isinstance(ast, dict) and ast.get("rows"), f"{r.key}: lowcode body needs a non-empty lowcode_ast.rows"
+        slot_names = {s.name for s in r.slots}
+        for row in ast["rows"]:
+            assert row["column_ref"] in slot_names, f"{r.key}: row column_ref {row['column_ref']!r} is not a slot"
+        # low-code slots fill {{placeholders}}, not function args
+        for s in r.slots:
+            assert s.arg_key is None, f"{r.key}: low-code slot {s.name!r} must have arg_key=None"
+
+
 def test_active_mapping_honours_lifecycle_windows():
     ship = next(b for b in m.BINDINGS if b.table == "shipments")
     # min_len is added at week 5 per the story

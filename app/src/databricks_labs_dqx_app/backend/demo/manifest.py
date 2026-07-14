@@ -7,11 +7,23 @@ tags, and a 9-week quality "story" (which rules are live in which week, plus
 baseline fail rates). It has no side effects and no I/O; later tasks (datagen,
 redate, seed orchestrator) consume these constants.
 
-Rule *logic* is stored as a *body* plus *slots*: *body* mirrors DQX's
-declarative check shape (``dqx_native`` -> ``{"function", "arguments"}`` with
-``{{slot}}`` placeholders; ``sql`` -> ``{"predicate"}``), and each *slot* names
-a placeholder a binding fills with a real column. A later task converts these
-to *RuleDefinition* objects.
+Rule *logic* is stored as a *body* plus *slots* plus *parameters*, and its
+shape depends on the rule's ``mode``:
+
+* ``dqx_native`` -> ``body`` is ``{"function", "arguments"}`` where
+  ``arguments`` holds ONLY ``{{slot}}`` column placeholders (keyed by the
+  check-function argument name). Every SCALAR (non-column) check argument
+  lives in ``parameters`` as a :class:`ParamSpec`, mirroring the app's
+  canonical dqx_native model (``body.arguments`` = column placeholders,
+  ``definition.parameters`` = typed scalar values the authoring UI reads).
+* ``sql`` -> ``body`` is ``{"predicate"}`` with ``{{slot}}`` placeholders.
+* ``lowcode`` -> ``body`` is ``{"lowcode_ast", ["group_by"]}``; the seed
+  orchestrator compiles the AST (via ``lowcode_compile.compile_lowcode_body``)
+  into the final stored ``predicate`` / ``sql_query`` / ``merge_columns``,
+  exactly as the AI "build with AI" path does.
+
+Each *slot* names a placeholder a binding fills with a real column. A later
+task converts these to *RuleDefinition* objects.
 """
 
 from __future__ import annotations
@@ -50,6 +62,27 @@ class SlotSpec:
 
 
 @dataclass(frozen=True)
+class ParamSpec:
+    """A scalar (non-column) argument a rule declares as a typed parameter.
+
+    Mirrors the app's :class:`~databricks_labs_dqx_app.backend.registry_models.RuleParameter`
+    (name, type, value). For a ``dqx_native`` rule every scalar check argument
+    (e.g. ``min_limit``, ``limit``, ``allowed``, ``regex``) is declared here —
+    NOT baked into ``body.arguments`` — so the authoring UI reads its value
+    from ``definition.parameters`` and a re-save preserves it.
+
+    Args:
+        name: parameter name as it appears in the check-function signature.
+        type: registry ``ParamType`` value (number|string|list|boolean|regex|ref_table|ref_column).
+        value: the concrete scalar value (JSON-shaped: str|float|int|bool|list[str]|None).
+    """
+
+    name: str
+    type: str
+    value: object
+
+
+@dataclass(frozen=True)
 class RuleSpec:
     """A reusable, parameterised data-quality rule.
 
@@ -60,16 +93,23 @@ class RuleSpec:
         dimension: one of the six DQ dimensions.
         severity: one of Low, Medium, High, Critical.
         mode: dqx_native | lowcode | sql.
-        body: declarative check body with ``{{slot}}`` placeholders.
+        body: mode-specific check body. ``dqx_native`` -> ``{"function",
+            "arguments"}`` where ``arguments`` holds ONLY ``{{slot}}`` column
+            placeholders (scalars live in *parameters*). ``sql`` ->
+            ``{"predicate"}``. ``lowcode`` -> ``{"lowcode_ast", ["group_by"]}``
+            the seed orchestrator compiles into the final stored body.
         slots: the slots the body declares.
+        parameters: scalar (non-column) check arguments, declared as typed
+            :class:`ParamSpec` entries. Non-empty only for ``dqx_native`` rules
+            whose check function takes scalar arguments.
         slot_tags: optional map of slot name -> governed ``class.*`` tags the slot suggests.
         author_kind: rule provenance — one of ``human``, ``ai_generated`` or
             ``ai_assisted``; spread across the set so the demo shows a realistic
             mix of hand-authored and AI-originated rules.
         polarity: for ``sql``/``lowcode`` rules only, whether the predicate
             describes a passing (``pass``) or failing (``fail``) row. The demo's
-            SQL predicates all describe a VALID row, so they are ``pass``.
-            ``dqx_native`` rules leave this ``None``.
+            SQL and low-code predicates all describe a VALID row, so they are
+            ``pass``. ``dqx_native`` rules leave this ``None``.
     """
 
     key: str
@@ -81,6 +121,7 @@ class RuleSpec:
     body: dict[str, object]
     slots: tuple[SlotSpec, ...]
     author_kind: str
+    parameters: tuple[ParamSpec, ...] = ()
     slot_tags: dict[str, tuple[str, ...]] = field(default_factory=dict)
     polarity: str | None = None
 
@@ -196,12 +237,24 @@ TABLES: tuple[TableSpec, ...] = (
 
 
 # --------------------------------------------------------------------------- #
-# Reusable rule set — minimal-phrasing names, DQX-shaped bodies.
+# Reusable rule set — minimal-phrasing names, DQX-shaped bodies, a genuine
+# spread across all three authoring modes (dqx_native, lowcode, sql).
 #
-# Bodies use real DQX check-function names and argument keys from
-# ``src/databricks/labs/dqx/check_funcs.py``. Note: DQX has no ``is_not_negative``
-# check; "amount is not negative" is expressed with the real ``is_not_less_than``
-# (limit 0).
+# * ``dqx_native`` bodies use real DQX check-function names and argument keys
+#   from ``src/databricks/labs/dqx/check_funcs.py``. ``arguments`` carries ONLY
+#   ``{{slot}}`` column placeholders; every scalar check argument is a typed
+#   ``ParamSpec`` in ``parameters`` (the app's canonical model — the authoring
+#   UI reads scalar values from ``definition.parameters``).
+# * ``lowcode`` bodies carry the re-editable ``lowcode_ast`` (+ optional
+#   ``group_by``); the seed orchestrator compiles it to the stored predicate /
+#   sql_query via ``lowcode_compile.compile_lowcode_body``. Low-code slots have
+#   ``arg_key=None`` — they fill ``{{placeholders}}``, not function arguments —
+#   and each row's ``column_ref`` matches a declared slot name.
+# * ``sql`` bodies carry a ``{{slot}}``-templated ``predicate``.
+#
+# Note: DQX has no ``is_not_negative`` check; "amount is not negative" is the
+# low-code row ``number >= 0`` (equivalent to the real ``is_not_less_than``
+# with limit 0).
 # --------------------------------------------------------------------------- #
 RULES: tuple[RuleSpec, ...] = (
     RuleSpec(
@@ -221,10 +274,18 @@ RULES: tuple[RuleSpec, ...] = (
         description="Numeric amount is zero or greater.",
         dimension="Accuracy",
         severity="Medium",
-        mode="dqx_native",
-        body={"function": "is_not_less_than", "arguments": {"column": "{{number}}", "limit": 0}},
-        slots=(SlotSpec("number", "numeric", arg_key="column"),),
+        mode="lowcode",
+        body={
+            "lowcode_ast": {
+                "rows": [
+                    {"kind": "row", "combinator": None, "column_ref": "number", "operator": ">=", "value": 0},
+                ],
+                "joins": [],
+            },
+        },
+        slots=(SlotSpec("number", "numeric"),),
         author_kind="human",
+        polarity="pass",
     ),
     RuleSpec(
         key="pct_range",
@@ -232,13 +293,18 @@ RULES: tuple[RuleSpec, ...] = (
         description="Discount percentage falls between 0 and 100 inclusive.",
         dimension="Accuracy",
         severity="Low",
-        mode="dqx_native",
+        mode="lowcode",
         body={
-            "function": "is_in_range",
-            "arguments": {"column": "{{pct}}", "min_limit": 0, "max_limit": 100},
+            "lowcode_ast": {
+                "rows": [
+                    {"kind": "row", "combinator": None, "column_ref": "pct", "operator": "between", "value": [0, 100]},
+                ],
+                "joins": [],
+            },
         },
-        slots=(SlotSpec("pct", "numeric", arg_key="column"),),
+        slots=(SlotSpec("pct", "numeric"),),
         author_kind="ai_assisted",
+        polarity="pass",
     ),
     RuleSpec(
         key="country_set",
@@ -247,14 +313,11 @@ RULES: tuple[RuleSpec, ...] = (
         dimension="Validity",
         severity="Medium",
         mode="dqx_native",
-        body={
-            "function": "is_in_list",
-            "arguments": {
-                "column": "{{country}}",
-                "allowed": ["US", "GB", "DE", "FR", "ES", "IT", "NL", "CA", "AU", "JP", "IN", "BR"],
-            },
-        },
+        body={"function": "is_in_list", "arguments": {"column": "{{country}}"}},
         slots=(SlotSpec("country", "text", arg_key="column"),),
+        parameters=(
+            ParamSpec("allowed", "list", ["US", "GB", "DE", "FR", "ES", "IT", "NL", "CA", "AU", "JP", "IN", "BR"]),
+        ),
         author_kind="ai_generated",
         slot_tags={"country": ("class.location",)},
     ),
@@ -265,8 +328,9 @@ RULES: tuple[RuleSpec, ...] = (
         dimension="Validity",
         severity="Low",
         mode="dqx_native",
-        body={"function": "is_in_list", "arguments": {"column": "{{tier}}", "allowed": ["Free", "Pro", "Enterprise"]}},
+        body={"function": "is_in_list", "arguments": {"column": "{{tier}}"}},
         slots=(SlotSpec("tier", "text", arg_key="column"),),
+        parameters=(ParamSpec("allowed", "list", ["Free", "Pro", "Enterprise"]),),
         author_kind="ai_generated",
     ),
     RuleSpec(
@@ -275,13 +339,24 @@ RULES: tuple[RuleSpec, ...] = (
         description="Order status is one of placed, shipped, delivered or cancelled.",
         dimension="Validity",
         severity="Medium",
-        mode="dqx_native",
+        mode="lowcode",
         body={
-            "function": "is_in_list",
-            "arguments": {"column": "{{status}}", "allowed": ["placed", "shipped", "delivered", "cancelled"]},
+            "lowcode_ast": {
+                "rows": [
+                    {
+                        "kind": "row",
+                        "combinator": None,
+                        "column_ref": "status",
+                        "operator": "in",
+                        "value": ["placed", "shipped", "delivered", "cancelled"],
+                    },
+                ],
+                "joins": [],
+            },
         },
-        slots=(SlotSpec("status", "text", arg_key="column"),),
+        slots=(SlotSpec("status", "text"),),
         author_kind="ai_assisted",
+        polarity="pass",
     ),
     RuleSpec(
         key="method_set",
@@ -290,11 +365,9 @@ RULES: tuple[RuleSpec, ...] = (
         dimension="Validity",
         severity="Medium",
         mode="dqx_native",
-        body={
-            "function": "is_in_list",
-            "arguments": {"column": "{{method}}", "allowed": ["card", "paypal", "transfer"]},
-        },
+        body={"function": "is_in_list", "arguments": {"column": "{{method}}"}},
         slots=(SlotSpec("method", "text", arg_key="column"),),
+        parameters=(ParamSpec("allowed", "list", ["card", "paypal", "transfer"]),),
         author_kind="ai_generated",
     ),
     RuleSpec(
@@ -303,16 +376,24 @@ RULES: tuple[RuleSpec, ...] = (
         description="Product category is one of Electronics, Apparel, Home, Grocery or Toys.",
         dimension="Validity",
         severity="Low",
-        mode="dqx_native",
+        mode="lowcode",
         body={
-            "function": "is_in_list",
-            "arguments": {
-                "column": "{{category}}",
-                "allowed": ["Electronics", "Apparel", "Home", "Grocery", "Toys"],
+            "lowcode_ast": {
+                "rows": [
+                    {
+                        "kind": "row",
+                        "combinator": None,
+                        "column_ref": "category",
+                        "operator": "in",
+                        "value": ["Electronics", "Apparel", "Home", "Grocery", "Toys"],
+                    },
+                ],
+                "joins": [],
             },
         },
-        slots=(SlotSpec("category", "text", arg_key="column"),),
+        slots=(SlotSpec("category", "text"),),
         author_kind="ai_assisted",
+        polarity="pass",
     ),
     RuleSpec(
         key="not_future",
@@ -331,10 +412,26 @@ RULES: tuple[RuleSpec, ...] = (
         description="Key value appears at most once in the table.",
         dimension="Uniqueness",
         severity="High",
-        mode="dqx_native",
-        body={"function": "is_unique", "arguments": {"columns": ["{{key}}"]}},
-        slots=(SlotSpec("key", "any", arg_key="columns"),),
+        mode="lowcode",
+        body={
+            "lowcode_ast": {
+                "rows": [
+                    {
+                        "kind": "aggregated",
+                        "combinator": None,
+                        "aggregate": "count",
+                        "column_ref": "key",
+                        "operator": "=",
+                        "value": 1,
+                    },
+                ],
+                "joins": [],
+            },
+            "group_by": "{{key}}",
+        },
+        slots=(SlotSpec("key", "any"),),
         author_kind="human",
+        polarity="pass",
     ),
     RuleSpec(
         key="card_format",
@@ -343,8 +440,9 @@ RULES: tuple[RuleSpec, ...] = (
         dimension="Validity",
         severity="Medium",
         mode="dqx_native",
-        body={"function": "regex_match", "arguments": {"column": "{{code}}", "regex": "^[0-9]{4}$"}},
+        body={"function": "regex_match", "arguments": {"column": "{{code}}"}},
         slots=(SlotSpec("code", "text", arg_key="column"),),
+        parameters=(ParamSpec("regex", "regex", "^[0-9]{4}$"),),
         author_kind="ai_assisted",
         slot_tags={"code": ("class.credit_card",)},
     ),

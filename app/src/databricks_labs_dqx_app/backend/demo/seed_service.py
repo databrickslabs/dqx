@@ -57,6 +57,7 @@ from databricks_labs_dqx_app.backend.demo.manifest import (
     WEEKS_DEFAULT,
     active_mapping,
 )
+from databricks_labs_dqx_app.backend.lowcode_compile import compile_lowcode_body
 from databricks_labs_dqx_app.backend.demo.status import DemoStatus, DemoStatusStore
 from databricks_labs_dqx_app.backend.registry_models import (
     RESERVED_DESCRIPTION_KEY,
@@ -64,9 +65,12 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RESERVED_NAME_KEY,
     RESERVED_SEVERITY_KEY,
     AuthorKind,
+    ParamType,
     Polarity,
     RuleDefinition,
     RuleMode,
+    RuleParameter,
+    RuleParamValue,
     RuleSlot,
     SlotFamily,
     set_reserved_tag,
@@ -345,12 +349,57 @@ class DemoSeedService:
 
     @staticmethod
     def _definition_for(spec: RuleSpec) -> RuleDefinition:
-        """Build a :class:`RuleDefinition` from a manifest :class:`RuleSpec`."""
+        """Build a :class:`RuleDefinition` from a manifest :class:`RuleSpec`.
+
+        Slots come straight from the spec. Scalar (non-column) arguments are
+        declared as typed :class:`RuleParameter` entries (so the authoring UI
+        reads them from ``definition.parameters``, not from ``body.arguments``).
+        A ``lowcode`` spec carries only the re-editable ``lowcode_ast`` (+
+        optional ``group_by``); its body is compiled here into the final stored
+        payload (``predicate`` / ``sql_query`` / ``merge_columns``) via
+        :func:`lowcode_compile.compile_lowcode_body`, exactly as the AI
+        "build with AI" path (``ai_rules_service._build_lowcode_body``) does.
+        """
         slots = [
-            RuleSlot(name=slot.name, family=cast(SlotFamily, slot.family), arg_key=slot.arg_key, position=index)
+            RuleSlot(
+                name=slot.name,
+                family=cast(SlotFamily, slot.family),
+                arg_key=slot.arg_key,
+                position=index,
+                cardinality="many" if slot.arg_key == "columns" else "one",
+            )
             for index, slot in enumerate(spec.slots)
         ]
-        return RuleDefinition(body=dict(spec.body), slots=slots)
+        parameters = [
+            RuleParameter(name=param.name, type=cast(ParamType, param.type), value=cast(RuleParamValue, param.value))
+            for param in spec.parameters
+        ]
+        body = DemoSeedService._compiled_body(spec) if spec.mode == "lowcode" else dict(spec.body)
+        return RuleDefinition(body=body, slots=slots, parameters=parameters)
+
+    @staticmethod
+    def _compiled_body(spec: RuleSpec) -> dict[str, Any]:
+        """Compile a ``lowcode`` spec's AST into the stored ``definition.body``.
+
+        Byte-for-byte the shape ``ai_rules_service._build_lowcode_body`` and
+        ``RegistryRuleFormDialog.buildDefinition`` write: the re-editable
+        ``lowcode_ast`` (so the visual builder rehydrates exactly), the raw
+        ``group_by`` string when present, and the compiled ``predicate`` OR
+        ``sql_query`` + ``merge_columns`` that actually materializes and runs.
+        """
+        ast = cast(dict[str, Any], spec.body.get("lowcode_ast", {}))
+        group_by = cast(str, spec.body.get("group_by", "") or "")
+        compiled = compile_lowcode_body(ast, group_by)
+        body: dict[str, Any] = {"lowcode_ast": ast}
+        if group_by:
+            body["group_by"] = group_by
+        if compiled.predicate is not None:
+            body["predicate"] = compiled.predicate
+        if compiled.sql_query is not None:
+            body["sql_query"] = compiled.sql_query
+        if compiled.merge_columns is not None:
+            body["merge_columns"] = compiled.merge_columns
+        return body
 
     @staticmethod
     def _metadata_for(spec: RuleSpec) -> dict[str, Any]:
