@@ -2062,7 +2062,7 @@ def has_no_aggr_outliers(
 
 
 @register_rule("dataset")
-def validate_upstream_table(
+def aggr_matches_upstream_dataset(
     column: str | Column,
     ref_table: str | None = None,
     ref_df_name: str | None = None,
@@ -2101,7 +2101,9 @@ def validate_upstream_table(
         abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the
             tolerance. This is applicable to numeric aggregates.
         rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance
-            are ignored. Useful if the aggregates vary in scale.
+            are ignored. Useful if the aggregates vary in scale. Because it compares two separately-computed 
+            aggregates, sum/avg over floating-point columns can differ across runs/clusters (non-associative 
+            summation) even for identical data. A small rel_tolerance value is recommended for these situations.
 
     Returns:
         A tuple of:
@@ -2116,7 +2118,7 @@ def validate_upstream_table(
             - if both *ref_df_name* and *ref_table* are provided.
             - if *abs_tolerance* or *rel_tolerance* is negative.
     """
-    if ref_df_name is not None and ref_table is not None:
+    if ref_df_name and ref_table:
         raise InvalidParameterError(
             "Both 'ref_df_name' and 'ref_table' were provided. Please provide only one to avoid ambiguity."
         )
