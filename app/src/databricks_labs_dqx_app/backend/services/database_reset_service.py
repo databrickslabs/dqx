@@ -105,6 +105,16 @@ class DatabaseResetService:
             testing; defaults to an :class:`AppSettingsService` over the SAME
             *oltp_sql* executor the deletes ran on, so the re-seeded rows land
             in exactly the ``dq_app_settings`` table that was just cleared.
+        genie_reprovision: Optional zero-arg callable that re-provisions the
+            Ask-Genie space (mirroring what the app lifespan does at startup).
+            The clear wipes ``dq_app_settings`` — including the stored
+            ``dq_genie_space_id`` / ``dq_genie_space_status`` — so without this
+            the UI sits on "Setting up Genie…" forever after a reset (the poll
+            only refires while status is ``provisioning``). Called best-effort
+            after the clear as one of the re-provision steps; ``None`` skips it
+            (e.g. no warehouse bound). Kept a plain callable rather than
+            injecting :class:`GenieSpaceService` so the reset service does not
+            take on Genie's own heavy dependency graph.
     """
 
     def __init__(
@@ -112,10 +122,12 @@ class DatabaseResetService:
         delta_sql: SqlExecutor,
         oltp_sql: OltpExecutorProtocol,
         app_settings: AppSettingsService | None = None,
+        genie_reprovision: Callable[[], object] | None = None,
     ) -> None:
         self._delta = delta_sql
         self._oltp = oltp_sql
         self._app_settings = app_settings or AppSettingsService(sql=oltp_sql)
+        self._genie_reprovision = genie_reprovision
 
     def reset_all_data(self, *, performed_by: str) -> DatabaseResetResult:
         """Clear every app-owned table, preserving admin role mappings.
@@ -223,6 +235,20 @@ class DatabaseResetService:
                 # re-seed failure is recorded and surfaced, never fatal.
                 failed[f"seed:{name}"] = str(exc)
                 logger.warning("Failed to re-provision default %s: %s", name, exc, exc_info=True)
+
+        # Re-provision the Ask-Genie space. The clear wiped the stored
+        # ``dq_genie_space_id`` / ``dq_genie_space_status`` from
+        # ``dq_app_settings``, and ``ensure_dq_genie_space`` is otherwise only
+        # called at app startup — so without this ANY reset (not just the demo
+        # wipe) leaves the UI stuck on "Setting up Genie…". Best-effort: a Genie
+        # provisioning failure must never fail the reset.
+        if self._genie_reprovision is not None:
+            try:
+                self._genie_reprovision()
+                reprovisioned.append("genie_space")
+            except Exception as exc:
+                failed["seed:genie_space"] = str(exc)
+                logger.warning("Failed to re-provision the Genie space: %s", exc, exc_info=True)
         return reprovisioned
 
     def _clear_table(

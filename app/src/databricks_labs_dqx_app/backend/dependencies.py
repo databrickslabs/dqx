@@ -252,14 +252,65 @@ async def get_role_service(
 async def get_database_reset_service(
     delta_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
     oltp_sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> DatabaseResetService:
     """Create a DatabaseResetService over the Delta + OLTP executors.
 
     Analytical tables clear through the Delta (SP) executor; OLTP tables
     through whichever executor owns them (Postgres when Lakebase is enabled,
     else the same Delta executor).
+
+    A best-effort Genie re-provision callable is threaded in: the reset wipes
+    ``dq_app_settings`` (which holds ``dq_genie_space_id`` /
+    ``dq_genie_space_status``), and ``ensure_dq_genie_space`` is otherwise only
+    called at app startup — so without re-provisioning here the UI sits on
+    "Setting up Genie…" after any reset. The callable mirrors the app-lifespan
+    wiring (SP identity, bound warehouse, configured catalog/schema); it is
+    ``None`` when no warehouse is bound so the reset simply skips the step.
     """
-    return DatabaseResetService(delta_sql=delta_sql, oltp_sql=oltp_sql)
+    return DatabaseResetService(
+        delta_sql=delta_sql,
+        oltp_sql=oltp_sql,
+        app_settings=app_settings,
+        genie_reprovision=_build_genie_reprovision(sp_ws, app_settings),
+    )
+
+
+def _build_genie_reprovision(
+    sp_ws: WorkspaceClient, app_settings: AppSettingsService
+) -> "Callable[[], object] | None":
+    """Build the zero-arg Genie re-provision callable, or None when unavailable.
+
+    Mirrors ``backend.app._ensure_genie_space``: requires a bound SQL warehouse
+    to attach a freshly-created space to, and resolves the SP's parent folder
+    (falling back to ``/Shared``). ``ensure_dq_genie_space`` is itself idempotent
+    and never raises out of its own body; the callable is invoked best-effort by
+    the reset service, which records (never re-raises) any failure.
+    """
+    warehouse_id = _get_warehouse_id()
+    if not warehouse_id:
+        return None
+
+    from .services.genie_space_service import ensure_dq_genie_space
+
+    def _reprovision() -> object:
+        try:
+            parent_path = f"/Users/{sp_ws.current_user.me().user_name}"
+        except Exception:
+            # Best-effort: the parent folder is cosmetic — fall back to a
+            # location every workspace has rather than skip provisioning.
+            parent_path = "/Shared"
+        return ensure_dq_genie_space(
+            settings=app_settings,
+            ws=sp_ws,
+            warehouse_id=warehouse_id,
+            parent_path=parent_path,
+            catalog=conf.catalog,
+            schema=conf.schema_name,
+        )
+
+    return _reprovision
 
 
 async def get_permissions_service(

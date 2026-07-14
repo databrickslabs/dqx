@@ -118,6 +118,9 @@ class TestSeedReservedLabelDefinitions:
         # Fixed, admin-curated catalog — never author-extensible.
         assert keys["dimension"]["allow_custom_values"] is False
         assert set(keys["severity"]["values"]) == {"Low", "Medium", "High", "Critical"}
+        # "Low" severity is grey (gray-500), not green — green wrongly read as a
+        # positive/healthy signal for what is still a flagged severity.
+        assert keys["severity"]["value_colors"]["Low"] == "#6B7280"
         assert keys["severity"]["value_criticality"] == {
             "Low": "warn",
             "Medium": "warn",

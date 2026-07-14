@@ -520,13 +520,19 @@ class DemoSeedService:
         """
         for stmt in datagen.build_baseline_reset_sql(self._catalog, self._schema):
             self._demo_sql.execute(stmt)
-        gate_run_ids: list[str] = []
+        # Fan out the gate runs: submit EVERY binding's run first (each
+        # ``run_binding`` only submits an async Job and returns immediately),
+        # then wait for all, then assert no misfire — so the tables' Jobs run
+        # concurrently rather than one at a time.
+        gate_runs: dict[str, str] = {}
         for table, binding_id in binding_map.items():
             run = self._binding_run.run_binding(binding_id, "approved", None, user_email)
-            self._wait_for_run(run.run_id)
-            self._assert_no_misfire(table, run.run_id)
-            gate_run_ids.append(run.run_id)
-        for run_id in gate_run_ids:
+            gate_runs[table] = run.run_id
+        for run_id in gate_runs.values():
+            self._wait_for_run(run_id)
+        for table, run_id in gate_runs.items():
+            self._assert_no_misfire(table, run_id)
+        for run_id in gate_runs.values():
             self._delete_run(run_id)
 
     def _delete_run(self, run_id: str) -> None:
@@ -692,10 +698,21 @@ class DemoSeedService:
             for stmt in self._week_mutations(week, weeks):
                 self._demo_sql.execute(stmt)
 
+            # Fan out the week's runs: ``run_binding`` only SUBMITS an async
+            # serverless Job (it returns the run_id immediately); the wait is
+            # what serializes. So submit EVERY binding's run first, collecting
+            # ``{table: run_id}``, then wait for all of them, then re-date +
+            # refresh each. This runs the tables' Jobs concurrently on
+            # Databricks instead of one table at a time (mirrors
+            # ``DataProductService.run``'s submit-all-then-collect fan-out).
+            week_runs: dict[str, str] = {}
             for table, binding_id in binding_map.items():
                 run = self._binding_run.run_binding(binding_id, "approved", None, user_email)
-                self._wait_for_run(run.run_id)
-                self._redate_run(run.run_id, target_iso)
+                week_runs[table] = run.run_id
+            for run_id in week_runs.values():
+                self._wait_for_run(run_id)
+            for table, run_id in week_runs.items():
+                self._redate_run(run_id, target_iso)
                 self._score_cache.refresh_for_tables([self._table_fqn(table)])
                 self._redate_history("table", self._table_fqn(table), target_iso)
                 trend_points += 1

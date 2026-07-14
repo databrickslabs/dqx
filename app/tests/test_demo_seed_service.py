@@ -10,6 +10,7 @@ the whole pipeline is exercisable without a live SQL warehouse.
 
 import json
 
+from datetime import datetime, timezone
 from unittest.mock import create_autospec, MagicMock
 
 import pytest
@@ -410,6 +411,94 @@ def test_weekly_trend_tightens_card_rule_at_tighten_week():
     # update_draft is only called by the tighten path (bindings use apply_rules)
     assert deps["registry"].update_draft.called
     assert deps["registry"].update_draft.call_args.args[0] == "card-rid"
+
+
+def test_validation_gate_submits_all_runs_before_waiting():
+    # FIX J (perf): run_binding only SUBMITS an async serverless Job (returns
+    # immediately); the wait is what serializes. The gate must submit EVERY
+    # binding's run first, THEN wait — so the tables' Jobs run concurrently on
+    # Databricks rather than one table at a time.
+    svc, deps = _svc()
+    deps["app_sql"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+    events: list[str] = []
+
+    def _run_binding(binding_id, *_a, **_k):
+        events.append(f"submit:{binding_id}")
+        return MagicMock(run_id=f"run-{binding_id}")
+
+    deps["binding_run"].run_binding.side_effect = _run_binding
+
+    low, high = manifest.UNIQUE_EXPECT_ROWS
+    in_band = (low + high) // 2
+
+    def _query_dicts(sql, *_a, **_k):
+        if "metric_name" in sql:
+            return _metrics_rows(50_000, in_band)
+        events.append("wait")
+        return [{"status": "SUCCESS"}]
+
+    deps["app_sql"].query_dicts.side_effect = _query_dicts
+
+    binding_map = {"customers": "b-customers", "orders": "b-orders", "products": "b-products"}
+    svc._validation_gate(binding_map, "admin@example.com")
+
+    submits = [i for i, e in enumerate(events) if e.startswith("submit:")]
+    waits = [i for i, e in enumerate(events) if e == "wait"]
+    # every binding was submitted (one per table)
+    assert len(submits) == len(binding_map)
+    # ALL submits happen before the FIRST wait — the fan-out invariant
+    assert max(submits) < min(waits)
+
+
+def test_weekly_trend_submits_all_bindings_before_waiting_or_redating():
+    # FIX J (perf): within a week the trend loop must submit every binding's run
+    # first, THEN wait for all, THEN re-date each — never submit/wait/redate one
+    # table at a time (which serializes the async Jobs).
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["registry"].find_approved_rule_for_definition.side_effect = lambda _d: MagicMock(rule_id="r1")
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    deps["app_sql"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+    deps["oltp"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+
+    events: list[str] = []
+
+    def _run_binding(binding_id, *_a, **_k):
+        events.append("submit")
+        return MagicMock(run_id="run1")
+
+    deps["binding_run"].run_binding.side_effect = _run_binding
+
+    low, high = manifest.UNIQUE_EXPECT_ROWS
+    in_band = (low + high) // 2
+
+    def _query_dicts(sql, *_a, **_k):
+        if "metric_name" in sql:
+            return _metrics_rows(50_000, in_band)
+        events.append("wait")
+        return [{"status": "SUCCESS"}]
+
+    deps["app_sql"].query_dicts.side_effect = _query_dicts
+
+    def _redate(sql, *_a, **_k):
+        # a re-date is an UPDATE on dq_validation_runs / dq_metrics
+        if sql.startswith("UPDATE") and "dq_validation_runs" in sql:
+            events.append("redate")
+
+    deps["app_sql"].execute.side_effect = _redate
+
+    binding_map = {"customers": "b-customers", "orders": "b-orders", "products": "b-products"}
+    svc._build_weekly_trend(binding_map, ["p1"], 1, "admin@example.com", datetime.now(timezone.utc))
+
+    submits = [i for i, e in enumerate(events) if e == "submit"]
+    waits = [i for i, e in enumerate(events) if e == "wait"]
+    redates = [i for i, e in enumerate(events) if e == "redate"]
+    assert len(submits) == len(binding_map)
+    # ALL submits precede the FIRST wait, and every wait precedes the FIRST
+    # re-date — the submit-all -> wait-all -> redate-all fan-out shape.
+    assert max(submits) < min(waits)
+    assert max(waits) < min(redates)
 
 
 def test_validation_gate_deletes_gate_runs_from_both_tables():

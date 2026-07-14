@@ -53,19 +53,34 @@ def build_redate_metrics_sql(metrics_fqn: str, run_id: str, target_iso: str) -> 
     return f"UPDATE {metrics_fqn} SET run_time = {_ts(target_iso)} WHERE run_id = '{escape_sql_string(run_id)}'"
 
 
-def build_redate_runs_sql(runs_fqn: str, run_id: str, target_iso: str) -> str:
+def build_redate_runs_sql(runs_fqn: str, run_id: str, target_iso: str, duration_seconds: int = 45) -> str:
     """Build SQL to re-date a *dq_validation_runs* run's *created_at* / *updated_at*.
+
+    The run's *created_at* (start) is set to *target_iso* and its *updated_at*
+    (end) is set to *target_iso* plus *duration_seconds*, preserving a realistic
+    positive span. The Runs History "Time" column reads
+    ``timestampdiff(SECOND, MIN(created_at), MAX(COALESCE(updated_at, created_at)))``
+    (see ``job_service.list_dryrun_rows``) and only emits a value when
+    ``run_ended_at > run_started_at``. Collapsing both timestamps to a single
+    instant would make that span zero, so the column shows a blank "–";
+    offsetting the end by a small realistic duration keeps it a believable value.
 
     Args:
         runs_fqn: Fully-qualified *dq_validation_runs* table name.
         run_id: The run identifier to match.
-        target_iso: Target timestamp literal body (*YYYY-MM-DD HH:MM:SS*).
+        target_iso: Target timestamp literal body (*YYYY-MM-DD HH:MM:SS*); the
+            run's start instant.
+        duration_seconds: The run's fabricated wall-clock duration in seconds
+            (a positive offset applied to *updated_at*). Must be positive so the
+            derived span is positive.
 
     Returns:
         An ``UPDATE`` statement targeting the matched run.
     """
+    start = _ts(target_iso)
+    end = f"{start} + INTERVAL {int(duration_seconds)} SECONDS"
     return (
-        f"UPDATE {runs_fqn} SET created_at = {_ts(target_iso)}, updated_at = {_ts(target_iso)} "
+        f"UPDATE {runs_fqn} SET created_at = {start}, updated_at = {end} "
         f"WHERE run_id = '{escape_sql_string(run_id)}'"
     )
 

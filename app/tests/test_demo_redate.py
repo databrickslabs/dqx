@@ -19,6 +19,31 @@ def test_redate_metrics_targets_run_id_and_casts_timestamp():
     assert "run_id = 'abc123'" in sql
 
 
+def test_redate_runs_preserves_positive_duration_span():
+    # FIX I: the Runs History "Time" column is derived as
+    # timestampdiff(SECOND, MIN(created_at), MAX(updated_at)); collapsing both to
+    # one instant makes it zero -> blank "–". The re-date must set updated_at to
+    # created_at + a positive duration so the span (and displayed Time) is real.
+    sql = r.build_redate_runs_sql(RUNS, "abc123", "2026-05-01 09:30:00", duration_seconds=45)
+    assert sql.startswith("UPDATE")
+    assert RUNS in sql
+    assert "created_at = CAST('2026-05-01 09:30:00' AS TIMESTAMP)" in sql
+    # end = start + duration, so run_ended_at > run_started_at (positive span)
+    assert "updated_at = CAST('2026-05-01 09:30:00' AS TIMESTAMP) + INTERVAL 45 SECONDS" in sql
+    assert "run_id = 'abc123'" in sql
+
+
+def test_redate_runs_default_duration_is_positive():
+    sql = r.build_redate_runs_sql(RUNS, "abc123", "2026-05-01 09:30:00")
+    # default duration keeps a believable, positive span rather than a zero one
+    assert "+ INTERVAL 45 SECONDS" in sql
+
+
+def test_redate_runs_run_id_is_escaped_against_injection():
+    sql = r.build_redate_runs_sql(RUNS, "a'b", "2026-05-01 09:30:00")
+    assert "'a''b'" in sql  # ANSI doubled-quote escaping
+
+
 def test_delete_metrics_targets_run_id():
     sql = r.build_delete_metrics_sql(M, "abc123")
     assert sql.startswith("DELETE FROM")

@@ -669,7 +669,7 @@ class AppSettingsService:
             "allow_custom_values": False,
             "is_builtin": True,
             "value_colors": {
-                "Low": "#16A34A",
+                "Low": "#6B7280",
                 "Medium": "#D97706",
                 "High": "#EA580C",
                 "Critical": "#DC2626",
