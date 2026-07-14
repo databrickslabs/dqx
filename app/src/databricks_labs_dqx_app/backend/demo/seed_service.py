@@ -47,6 +47,7 @@ from databricks_labs_dqx_app.backend.demo import datagen, manifest, redate
 from databricks_labs_dqx_app.backend.demo.manifest import (
     BindingSpec,
     RuleSpec,
+    UNIQUE_EXPECT_ROWS,
     WEEKS_DEFAULT,
     active_mapping,
 )
@@ -381,16 +382,35 @@ class DemoSeedService:
             self._assert_no_misfire(table, run.run_id)
 
     def _assert_no_misfire(self, table: str, run_id: str) -> None:
-        """Raise when a run's check failed nearly every row (a mis-bound rule)."""
+        """Raise when a run's check misfired — catastrophic rate, or a uniqueness band breach.
+
+        Two independent gates:
+
+        * **Catastrophic rate** — any check failing at or above
+          :data:`_MISFIRE_RATE` of rows is a mis-bound predicate.
+        * **Uniqueness band** — the ``unique`` rule's check must land inside
+          :data:`~.manifest.UNIQUE_EXPECT_ROWS`. A mis-bound uniqueness rule
+          (e.g. keyed on the wrong column) flags every row, so a failed-row
+          count outside the expected ``(low, high)`` band is a misfire even
+          when it stays below the catastrophic rate.
+        """
         input_rows, failures = self._read_run_check_failures(run_id)
         if input_rows <= 0:
             return
+        unique_check_name = manifest.RULES_BY_KEY["unique"].name
+        low, high = UNIQUE_EXPECT_ROWS
         for check_name, failed in failures.items():
             rate = failed / input_rows
             if rate >= _MISFIRE_RATE:
                 raise RuntimeError(
                     f"Validation gate: check '{self._sanitize(check_name)}' on table "
                     f"'{self._sanitize(table)}' failed {rate:.3f} of rows — likely a mis-bound rule."
+                )
+            if check_name == unique_check_name and not (low <= failed <= high):
+                raise RuntimeError(
+                    f"Validation gate: uniqueness check '{self._sanitize(check_name)}' on table "
+                    f"'{self._sanitize(table)}' failed {failed} rows, outside the expected "
+                    f"band [{low}, {high}] — likely a mis-bound uniqueness rule."
                 )
 
     def _read_run_check_failures(self, run_id: str) -> tuple[int, dict[str, int]]:
@@ -456,7 +476,7 @@ class DemoSeedService:
         """
         now = datetime.now(timezone.utc)
         binding_specs = {b.table: b for b in manifest.BINDINGS}
-        rule_map = {spec.key: rid for spec, rid in self._current_rule_ids().items()}
+        rule_map = self._current_rule_ids()
         last_active: dict[str, tuple[str, ...]] = {}
         trend_points = 0
 
@@ -498,13 +518,17 @@ class DemoSeedService:
         self._score_cache.refresh_all_for_tables(sorted(self._table_fqns()))
         return trend_points
 
-    def _current_rule_ids(self) -> dict[RuleSpec, str]:
-        """Resolve each manifest rule spec to its approved registry rule id (by fingerprint)."""
-        resolved: dict[RuleSpec, str] = {}
+    def _current_rule_ids(self) -> dict[str, str]:
+        """Resolve each manifest rule spec to its approved registry rule id (by fingerprint).
+
+        Keyed by the stable ``RuleSpec.key`` string (not the :class:`RuleSpec`
+        object, which is unhashable — its frozen dataclass has ``dict`` fields).
+        """
+        resolved: dict[str, str] = {}
         for spec in manifest.RULES:
             existing = self._registry.find_approved_rule_for_definition(self._definition_for(spec))
             if existing is not None:
-                resolved[spec] = existing.rule_id
+                resolved[spec.key] = existing.rule_id
         return resolved
 
     def _week_mutations(self, week: int, weeks: int) -> list[str]:

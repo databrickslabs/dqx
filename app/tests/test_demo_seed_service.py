@@ -8,10 +8,13 @@ status but skips the validation-gate real-run and the weekly history loop, so
 the whole pipeline is exercisable without a live SQL warehouse.
 """
 
+import json
+
 from unittest.mock import create_autospec, MagicMock
 
 import pytest
 
+from databricks_labs_dqx_app.backend.demo import manifest
 from databricks_labs_dqx_app.backend.demo.seed_service import DemoSeedService
 from databricks_labs_dqx_app.backend.demo.status import DemoStatusStore
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
@@ -94,3 +97,55 @@ def test_run_approves_bindings_and_products_not_relying_on_auto_publish():
     assert deps["materializer"].materialize_binding.called
     assert deps["version_service"].freeze_new_version.called
     assert deps["data_products"].approve.called
+
+
+def test_current_rule_ids_returns_string_keyed_map_without_typeerror():
+    # FIX 1 regression: RuleSpec is a frozen dataclass with dict fields, so it
+    # is UNHASHABLE — the old code keyed the map by the RuleSpec object and
+    # raised TypeError at runtime. The map must be keyed by the stable
+    # RuleSpec.key string instead.
+    svc, deps = _svc()
+    deps["registry"].find_approved_rule_for_definition.side_effect = lambda _definition: MagicMock(rule_id="rid")
+
+    resolved = svc._current_rule_ids()
+
+    assert resolved  # every manifest rule resolved
+    assert all(isinstance(k, str) for k in resolved)
+    assert all(isinstance(v, str) for v in resolved.values())
+    # keys are the manifest rule keys, never RuleSpec objects
+    assert set(resolved) == {spec.key for spec in manifest.RULES}
+    assert isinstance(manifest.RULES[0].key, str)
+
+
+def _metrics_rows(input_rows: int, unique_failed: int):
+    """dq_metrics rows for one run: input_row_count + a unique-check breakdown."""
+    check_metrics = json.dumps(
+        [{"check_name": manifest.RULES_BY_KEY["unique"].name, "error_count": unique_failed, "warning_count": 0}]
+    )
+    return [
+        {"metric_name": "input_row_count", "metric_value": str(input_rows)},
+        {"metric_name": "check_metrics", "metric_value": check_metrics},
+    ]
+
+
+def test_assert_no_misfire_raises_when_unique_count_outside_band():
+    # FIX 2: a unique check whose failed-row count is outside UNIQUE_EXPECT_ROWS
+    # is a misfire even below the catastrophic rate.
+    svc, deps = _svc()
+    _low, high = manifest.UNIQUE_EXPECT_ROWS
+    out_of_band = high + 1
+    input_rows = 50_000  # rate stays far below _MISFIRE_RATE
+    deps["app_sql"].query_dicts.return_value = _metrics_rows(input_rows, out_of_band)
+
+    with pytest.raises(RuntimeError, match="uniqueness"):
+        svc._assert_no_misfire("customers", "run1")
+
+
+def test_assert_no_misfire_passes_when_unique_count_inside_band():
+    svc, deps = _svc()
+    low, high = manifest.UNIQUE_EXPECT_ROWS
+    in_band = (low + high) // 2
+    deps["app_sql"].query_dicts.return_value = _metrics_rows(50_000, in_band)
+
+    # inside the band and below the catastrophic rate — must not raise
+    svc._assert_no_misfire("customers", "run1")
