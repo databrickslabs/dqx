@@ -324,17 +324,6 @@ RULES: tuple[RuleSpec, ...] = (
         slot_tags={"code": ("class.card_last_four",)},
     ),
     RuleSpec(
-        key="email_present",
-        name="Email is present and well-formed",
-        description="Email is a valid, non-empty address.",
-        dimension="Validity",
-        severity="High",
-        mode="dqx_native",
-        body={"function": "is_valid_email", "arguments": {"column": "{{email}}"}},
-        slots=(SlotSpec("email", "text", arg_key="column"),),
-        slot_tags={"email": ("class.email_address",)},
-    ),
-    RuleSpec(
         key="min_len",
         name="Tracking number is long enough",
         description="Tracking number is at least five characters.",
@@ -401,7 +390,6 @@ BINDINGS: tuple[BindingSpec, ...] = (
                 {"value": "phone"},
                 {"value": "is_active"},
             ),
-            "email_present": ({"email": "email"},),
             "country_set": ({"country": "country_code"},),
             "tier_set": ({"tier": "account_tier"},),
             "not_future": ({"ts": "created_at"},),
@@ -475,11 +463,11 @@ DATA_PRODUCTS: tuple[DataProductSpec, ...] = (
 
 # --------------------------------------------------------------------------- #
 # Governed column tags — a class.* tag applied to a demo column. The tagged
-# columns line up with the rules' slot_tags so tag-driven rule suggestion has
-# real targets to match.
+# columns line up with the rules' slot_tags (country_set -> class.country,
+# card_format -> class.card_last_four) so tag-driven rule suggestion has real
+# targets to match.
 # --------------------------------------------------------------------------- #
 COLUMN_TAGS: tuple[ColumnTagSpec, ...] = (
-    ColumnTagSpec(table="customers", column="email", tag="class.email_address"),
     ColumnTagSpec(table="customers", column="country_code", tag="class.country"),
     ColumnTagSpec(table="payments", column="card_last4", tag="class.card_last_four"),
 )

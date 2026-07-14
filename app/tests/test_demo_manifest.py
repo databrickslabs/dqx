@@ -37,11 +37,26 @@ def test_binding_mappings_reference_real_rules_and_fill_declared_slots():
 
 
 def test_slot_tags_are_class_namespaced_and_reference_real_slots():
+    rules_with_tags = 0
     for r in m.RULES:
+        if r.slot_tags:
+            rules_with_tags += 1
         for slot_name, tags in r.slot_tags.items():
             assert slot_name in {s.name for s in r.slots}, f"{r.key}: slot_tags names unknown slot {slot_name}"
             for tag in tags:
                 assert tag.startswith("class."), f"{r.key}: slot tag not class.*: {tag}"
+    # The tag showcase needs at least two rules demonstrating governed slot tags.
+    assert rules_with_tags >= 2, "expected >=2 rules with slot_tags for the tag showcase"
+
+
+def test_no_email_validation_rule_is_seeded():
+    # Email validation is reserved for a separate user-led demo flow.
+    for r in m.RULES:
+        assert r.body.get("function") != "is_valid_email", f"{r.key}: email validation must not be seeded"
+        for tags in r.slot_tags.values():
+            assert "class.email_address" not in tags, f"{r.key}: email tag must not be seeded"
+    for ct in m.COLUMN_TAGS:
+        assert ct.tag != "class.email_address", f"{ct.column}: email tag must not be seeded"
 
 
 def test_column_tags_target_real_columns():
