@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 if TYPE_CHECKING:
     from .common.connectors.sql import SQLConnector
+    from .demo.seed_service import DemoSeedService
 
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.sdk import WorkspaceClient
@@ -17,6 +18,8 @@ from .cache import app_cache
 from .common.authentication.sql import SQLAuthentication
 from .common.authorization import UserRole, get_user_email
 from .config import AppConfig, conf, get_sql_warehouse_path
+from .demo.manifest import SOURCE_SCHEMA as DEMO_SOURCE_SCHEMA
+from .demo.status import DemoStatusStore
 from .logger import logger
 from .migrations import MigrationRunner
 from .runtime import rt
@@ -797,6 +800,85 @@ async def get_data_product_service(
     )
 
 
+async def get_demo_status_store(
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> DemoStatusStore:
+    """Create the settings-backed store for the long-running demo-seed job status."""
+    return DemoStatusStore(app_settings)
+
+
+async def get_demo_seed_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    oltp: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    materializer: Annotated[Materializer, Depends(get_materializer)],
+    rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+    version_service: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    data_products: Annotated[DataProductService, Depends(get_data_product_service)],
+    score_cache: Annotated[ScoreCacheService, Depends(get_score_cache_service)],
+    job_service: Annotated[JobService, Depends(get_job_service)],
+    run_set_service: Annotated[RunSetService, Depends(get_run_set_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    status: Annotated[DemoStatusStore, Depends(get_demo_status_store)],
+    reset_service: Annotated[DatabaseResetService, Depends(get_database_reset_service)],
+) -> "DemoSeedService":
+    """Assemble the demo-seed orchestrator with an SP-only service graph.
+
+    The demo seed runs on a background daemon thread for ~1h with no request
+    context, so every collaborator must be service-principal-authenticated —
+    there is no user OBO token to fall back on. Two SP-only decisions are
+    load-bearing:
+
+    * ``demo_sql`` is a fresh :class:`SqlExecutor` bound to the demo source
+      schema (:data:`~backend.demo.manifest.SOURCE_SCHEMA`), where the seeded
+      e-commerce tables live, rather than the app's own ``dqx_studio`` schema.
+    * The :class:`BindingRunService` is built with a :class:`ViewService` whose
+      ``sql`` AND ``sp_sql`` slots are BOTH the SP executor — unlike the OBO
+      ``get_view_service`` used on request paths — so background runs create
+      their temp views with no user token.
+    """
+    from .demo.seed_service import DemoSeedService
+
+    warehouse_id = _get_warehouse_id()
+    demo_sql = SqlExecutor(
+        ws=sp_ws,
+        warehouse_id=warehouse_id,
+        catalog=conf.catalog,
+        schema=DEMO_SOURCE_SCHEMA,
+    )
+    sp_view = ViewService(sql=sp_sql, sp_sql=sp_sql)
+    binding_run = BindingRunService(
+        monitored_tables=monitored_tables,
+        version_service=version_service,
+        materializer=materializer,
+        view_service=sp_view,
+        job_service=job_service,
+        run_set_service=run_set_service,
+        settings_service=app_settings,
+        runs_table=sp_sql.fqn("dq_validation_runs"),
+    )
+    return DemoSeedService(
+        demo_sql=demo_sql,
+        app_sql=sp_sql,
+        oltp=oltp,
+        registry=registry,
+        monitored_tables=monitored_tables,
+        apply_rules=apply_rules,
+        materializer=materializer,
+        rules_catalog=rules_catalog,
+        version_service=version_service,
+        data_products=data_products,
+        binding_run=binding_run,
+        score_cache=score_cache,
+        status=status,
+        reset_service=reset_service,
+        catalog=conf.catalog,
+    )
+
+
 async def get_sql_connector(
     token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
 ) -> "SQLConnector":
@@ -1036,6 +1118,8 @@ __all__ = [
     "get_rule_test_service",
     "get_review_status_service",
     "get_schedule_config_service",
+    "get_demo_status_store",
+    "get_demo_seed_service",
     "require_role",
     "require_runner",
     "CurrentUserRole",
