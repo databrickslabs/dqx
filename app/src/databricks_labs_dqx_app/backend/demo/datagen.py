@@ -33,6 +33,7 @@ from databricks_labs_dqx_app.backend.sql_utils import (
     escape_sql_string,
     fqn_needs_quoting,
     quote_fqn,
+    quote_ident,
     validate_fqn,
 )
 
@@ -331,7 +332,7 @@ def build_column_comment_sql(table: str, column: str, comment: str, catalog: str
     """
     _require_known_table(table)
     fqn = _fqn(catalog, schema, table)
-    return f"ALTER TABLE {fqn} ALTER COLUMN {column} COMMENT '{escape_sql_string(comment)}'"
+    return f"ALTER TABLE {fqn} ALTER COLUMN {quote_ident(column)} COMMENT '{escape_sql_string(comment)}'"
 
 
 # --------------------------------------------------------------------------- #
@@ -572,6 +573,6 @@ def build_set_column_tag_sql(tag: ColumnTagSpec, catalog: str, schema: str) -> s
     fqn = _fqn(catalog, schema, tag.table)
     key, _, value = tag.tag.partition("=")
     return (
-        f"ALTER TABLE {fqn} ALTER COLUMN {tag.column} "
+        f"ALTER TABLE {fqn} ALTER COLUMN {quote_ident(tag.column)} "
         f"SET TAGS ('{escape_sql_string(key)}' = '{escape_sql_string(value)}')"
     )

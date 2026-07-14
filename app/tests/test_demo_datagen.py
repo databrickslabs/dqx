@@ -47,3 +47,24 @@ def test_identifiers_are_validated_no_injection():
 
     with pytest.raises(ValueError):
         d.build_create_table_sql("customers; DROP TABLE x", CAT, SCH)
+
+
+def test_build_column_comment_sql_quotes_column_identifier():
+    from databricks_labs_dqx_app.backend.sql_utils import quote_ident
+
+    sql = d.build_column_comment_sql("customers", "card_last4", "last 4 digits", CAT, SCH)
+    assert quote_ident("card_last4") in sql
+    # bare unquoted form must NOT appear between ALTER COLUMN and COMMENT
+    import re
+    assert not re.search(r"ALTER COLUMN\s+card_last4\s+COMMENT", sql)
+
+
+def test_build_set_column_tag_sql_quotes_column_identifier():
+    from databricks_labs_dqx_app.backend.demo.manifest import ColumnTagSpec
+    from databricks_labs_dqx_app.backend.sql_utils import quote_ident
+
+    sql = d.build_set_column_tag_sql(ColumnTagSpec("customers", "card_last4", "class.card_last_four"), CAT, SCH)
+    assert quote_ident("card_last4") in sql
+    # bare unquoted form must NOT appear between ALTER COLUMN and SET TAGS
+    import re
+    assert not re.search(r"ALTER COLUMN\s+card_last4\s+SET TAGS", sql)
