@@ -1,0 +1,96 @@
+"""Unit tests for the DemoSeedService orchestrator.
+
+All dependencies are mocked (``create_autospec`` / ``MagicMock``): these tests
+assert the orchestration wiring (rules created, bindings approved, products
+approved, terminal status written) rather than warehouse behaviour. The
+``weeks=0`` short-circuit builds every governed object and writes a terminal
+status but skips the validation-gate real-run and the weekly history loop, so
+the whole pipeline is exercisable without a live SQL warehouse.
+"""
+
+from unittest.mock import create_autospec, MagicMock
+
+import pytest
+
+from databricks_labs_dqx_app.backend.demo.seed_service import DemoSeedService
+from databricks_labs_dqx_app.backend.demo.status import DemoStatusStore
+from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+
+
+def _svc(**over):
+    from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+    from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
+    from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
+    from databricks_labs_dqx_app.backend.services.materializer import Materializer
+    from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
+    from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+    from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
+    from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
+    from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
+
+    deps = dict(
+        demo_sql=create_autospec(SqlExecutor, instance=True),
+        app_sql=create_autospec(SqlExecutor, instance=True),
+        oltp=MagicMock(),
+        registry=create_autospec(RegistryService, instance=True),
+        monitored_tables=create_autospec(MonitoredTableService, instance=True),
+        apply_rules=create_autospec(ApplyRulesService, instance=True),
+        materializer=create_autospec(Materializer, instance=True),
+        rules_catalog=create_autospec(RulesCatalogService, instance=True),
+        version_service=create_autospec(MonitoredTableVersionService, instance=True),
+        data_products=create_autospec(DataProductService, instance=True),
+        binding_run=create_autospec(BindingRunService, instance=True),
+        score_cache=create_autospec(ScoreCacheService, instance=True),
+        status=create_autospec(DemoStatusStore, instance=True),
+    )
+    deps.update(over)
+    return DemoSeedService(**deps), deps
+
+
+def test_run_creates_all_rules_and_writes_terminal_status():
+    svc, deps = _svc()
+    # registry returns a fake approved rule with an id for every create
+    rule = MagicMock()
+    rule.rule_id = "r1"
+    deps["registry"].match_or_create_approved_rule.return_value = (rule, True)
+    # make binding registration + run + score reads no-op-friendly
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+    # short-circuit the wait+validate+weekly loop via a 0-week run for the unit test
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+    assert deps["registry"].match_or_create_approved_rule.call_count >= 10
+    # terminal status written
+    assert deps["status"].set.called
+    last = deps["status"].set.call_args_list[-1].args[0]
+    assert last.state in {"succeeded", "failed"}
+
+
+def test_wipe_first_calls_reset_service():
+    reset = MagicMock()
+    svc, deps = _svc(reset_service=reset)
+    deps["registry"].match_or_create_approved_rule.return_value = (MagicMock(rule_id="r1"), True)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    svc.run(user_email="admin@example.com", wipe_first=True, weeks=0)
+    reset.reset_all_data.assert_called_once()
+
+
+def test_run_marks_failed_status_and_reraises_on_error():
+    svc, deps = _svc()
+    deps["registry"].match_or_create_approved_rule.side_effect = RuntimeError("boom")
+    with pytest.raises(RuntimeError):
+        svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+    last = deps["status"].set.call_args_list[-1].args[0]
+    assert last.state == "failed"
+
+
+def test_run_approves_bindings_and_products_not_relying_on_auto_publish():
+    # The app has approvals enabled; the seeder must drive approval explicitly.
+    svc, deps = _svc()
+    deps["registry"].match_or_create_approved_rule.return_value = (MagicMock(rule_id="r1"), True)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+    # bindings materialized + frozen (approved), products submitted + approved
+    assert deps["materializer"].materialize_binding.called
+    assert deps["version_service"].freeze_new_version.called
+    assert deps["data_products"].approve.called
