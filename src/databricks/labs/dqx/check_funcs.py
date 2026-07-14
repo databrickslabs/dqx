@@ -2101,8 +2101,8 @@ def aggr_matches_upstream_dataset(
         abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the
             tolerance. This is applicable to numeric aggregates.
         rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance
-            are ignored. Useful if the aggregates vary in scale. Because it compares two separately-computed 
-            aggregates, sum/avg over floating-point columns can differ across runs/clusters (non-associative 
+            are ignored. Useful if the aggregates vary in scale. Because it compares two separately-computed
+            aggregates, sum/avg over floating-point columns can differ across runs/clusters (non-associative
             summation) even for identical data. A small rel_tolerance value is recommended for these situations.
 
     Returns:
