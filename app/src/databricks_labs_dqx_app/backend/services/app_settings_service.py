@@ -917,6 +917,27 @@ class AppSettingsService:
         return cleaned
 
     # ------------------------------------------------------------------
+    # Tag auto-apply (apply-on-tag feature) — when ON, tag-mapped rules
+    # are eagerly auto-attached to tables that receive a matching UC tag,
+    # rather than only feeding them as suggestions for a steward to review.
+    # Defaults to ``False`` (suggestion-only) so a fresh deploy or an unset
+    # row never silently auto-applies rules; an admin must explicitly opt in.
+    # Only an explicit ``"true"`` reads as on; any other value reads as off.
+    # ------------------------------------------------------------------
+
+    _TAG_AUTO_APPLY_KEY = "tag_auto_apply"
+
+    def get_tag_auto_apply(self) -> bool:
+        """Whether tag-mapped rules eagerly auto-attach (True) vs. only feed suggestions (False, default)."""
+        raw = self.get_setting(self._TAG_AUTO_APPLY_KEY)
+        return raw is not None and raw.strip().lower() == "true"
+
+    def save_tag_auto_apply(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the tag-auto-apply setting. Returns the saved value."""
+        self.save_setting(self._TAG_AUTO_APPLY_KEY, "true" if enabled else "false", user_email=user_email)
+        return enabled
+
+    # ------------------------------------------------------------------
     # Compute settings (P22-B) — the SQL warehouse used for app-side
     # ad-hoc SQL (View Data preview, discovery-style reads) and the jobs
     # compute used for the task-runner submission path. Both mirror

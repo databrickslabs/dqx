@@ -953,6 +953,33 @@ PG_MIGRATIONS: list[PgMigration] = [
             "    CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'));"
         ),
     ),
+    PgMigration(
+        version=15,
+        description="Tag-auto suppressions (dq_tag_auto_suppressions): tombstone deliberate removals of "
+        "tag-auto-applied rows so reconcile doesn't re-add them",
+        sql=(
+            # ----------------------------------------------------------
+            # dq_tag_auto_suppressions — the "tombstone" that records a
+            # DELIBERATE removal of a tag-auto-applied row so the periodic
+            # reconcile sweep does NOT re-add it. Keyed by the same natural
+            # key as ``dq_applied_rules`` (binding_id/rule_id/mapping_hash)
+            # so a suppression maps 1:1 to the auto attachment it blocks.
+            # ``ApplyRulesService.remove_applied`` writes a row here when it
+            # removes an auto-origin application, and ``attach_auto_mapping``
+            # skips any key present here.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_tag_auto_suppressions ("
+            "  binding_id     TEXT NOT NULL,"
+            "  rule_id        TEXT NOT NULL,"
+            "  mapping_hash   TEXT NOT NULL,"
+            "  suppressed_by  TEXT,"
+            "  suppressed_at  TIMESTAMPTZ,"
+            "  CONSTRAINT pk_dq_tag_auto_suppressions PRIMARY KEY (binding_id, rule_id, mapping_hash)"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_tag_auto_suppressions_binding_id "
+            f"  ON {_S}.dq_tag_auto_suppressions (binding_id);"
+        ),
+    ),
 ]
 
 

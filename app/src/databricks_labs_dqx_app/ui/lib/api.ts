@@ -1527,6 +1527,23 @@ export interface GlobalResultsSettingsOut {
   global_results_enabled: boolean;
 }
 
+/**
+ * Governed tag description, if any
+ */
+export type GovernedTagOutDescription = string | null;
+
+export interface GovernedTagOut {
+  /** Governed tag key, or key=value */
+  tag: string;
+  /** Governed tag description, if any */
+  description?: GovernedTagOutDescription;
+}
+
+export interface GovernedTagsOut {
+  /** Governed tags visible to the caller */
+  tags?: GovernedTagOut[];
+}
+
 export interface GrantWarehouseAccessIn {
   warehouse_id: string;
 }
@@ -2931,12 +2948,15 @@ export type RulesRegistrySettingsInAutoUpgradeWithoutApproval = boolean | null;
 
 export type RulesRegistrySettingsInDefaultAutoUpgrade = boolean | null;
 
+export type RulesRegistrySettingsInTagAutoApply = boolean | null;
+
 /**
  * Update payload — omitted fields are left unchanged.
  */
 export interface RulesRegistrySettingsIn {
   auto_upgrade_without_approval?: RulesRegistrySettingsInAutoUpgradeWithoutApproval;
   default_auto_upgrade?: RulesRegistrySettingsInDefaultAutoUpgrade;
+  tag_auto_apply?: RulesRegistrySettingsInTagAutoApply;
 }
 
 /**
@@ -2947,6 +2967,8 @@ export interface RulesRegistrySettingsOut {
   auto_upgrade_without_approval: boolean;
   /** Attach-time default pin for new applications/members: follow latest (True, default) vs. pin to the current version (False). */
   default_auto_upgrade: boolean;
+  /** Tag-mapping apply behaviour: eagerly auto-attach tag-mapped rules across monitored tables (True) vs. only surface them as suggestions (False, default). */
+  tag_auto_apply: boolean;
 }
 
 export type RunConfigInputConfig = InputConfig | null;
@@ -3584,6 +3606,40 @@ export interface TableTagsOut {
   table_tags?: string[];
   /** Column name to list of tags mapping */
   column_tags?: TableTagsOutColumnTags;
+}
+
+export type TagRuleSuggestionOutRuleName = string | null;
+
+export type TagRuleSuggestionOutDimension = string | null;
+
+export type TagRuleSuggestionOutSeverity = string | null;
+
+export type TagRuleSuggestionOutColumnMapping = {[key: string]: string};
+
+/**
+ * One tag-matched, accept-to-attach rule suggestion for a monitored table (apply-on-tag).
+
+The OFF-path counterpart to auto-apply: surfaced on a table's Apply Rules
+screen when ``tag_auto_apply`` is off. ``column_mapping`` is the single
+representative slot->column group; ``explanation`` names the matched tags.
+ */
+export interface TagRuleSuggestionOut {
+  rule_id: string;
+  rule_name?: TagRuleSuggestionOutRuleName;
+  dimension?: TagRuleSuggestionOutDimension;
+  severity?: TagRuleSuggestionOutSeverity;
+  column_mapping: TagRuleSuggestionOutColumnMapping;
+  explanation?: string;
+}
+
+/**
+ * Response of ``GET /monitored-tables/{binding_id}/tag-suggestions``.
+
+Best-effort: on any read/service failure the route returns an empty list
+with HTTP 200, never a 500 (mirroring the suggest-rules contract).
+ */
+export interface TagSuggestionsOut {
+  suggestions?: TagRuleSuggestionOut[];
 }
 
 export type TestRowOutCells = {[key: string]: string | null};
@@ -7223,7 +7279,7 @@ export function useGetRulesRegistrySettingsSuspense<TData = Awaited<ReturnType<t
 
 
 /**
- * Update one or both Rules Registry governance settings (admin only).
+ * Update one or more Rules Registry governance settings (admin only).
  * @summary Save Rules Registry Settings
  */
 export const saveRulesRegistrySettings = (
@@ -10467,6 +10523,153 @@ export const useFilterTablesByColumns = <TError = AxiosError<HTTPValidationError
     }
     
 /**
+ * List distinct governed Unity Catalog tag keys/values visible to the caller.
+ * @summary List Governed Tags
+ */
+export const listGovernedTags = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<GovernedTagsOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/discovery/governed-tags`,options
+    );
+  }
+
+
+
+
+export const getListGovernedTagsQueryKey = () => {
+    return [
+    `/api/v1/discovery/governed-tags`
+    ] as const;
+    }
+
+    
+export const getListGovernedTagsQueryOptions = <TData = Awaited<ReturnType<typeof listGovernedTags>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGovernedTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListGovernedTagsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listGovernedTags>>> = ({ signal }) => listGovernedTags({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listGovernedTags>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListGovernedTagsQueryResult = NonNullable<Awaited<ReturnType<typeof listGovernedTags>>>
+export type ListGovernedTagsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListGovernedTags<TData = Awaited<ReturnType<typeof listGovernedTags>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGovernedTags>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listGovernedTags>>,
+          TError,
+          Awaited<ReturnType<typeof listGovernedTags>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListGovernedTags<TData = Awaited<ReturnType<typeof listGovernedTags>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGovernedTags>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listGovernedTags>>,
+          TError,
+          Awaited<ReturnType<typeof listGovernedTags>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListGovernedTags<TData = Awaited<ReturnType<typeof listGovernedTags>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGovernedTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Governed Tags
+ */
+
+export function useListGovernedTags<TData = Awaited<ReturnType<typeof listGovernedTags>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGovernedTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListGovernedTagsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListGovernedTagsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listGovernedTags>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listGovernedTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListGovernedTagsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listGovernedTags>>> = ({ signal }) => listGovernedTags({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listGovernedTags>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListGovernedTagsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listGovernedTags>>>
+export type ListGovernedTagsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListGovernedTagsSuspense<TData = Awaited<ReturnType<typeof listGovernedTags>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listGovernedTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListGovernedTagsSuspense<TData = Awaited<ReturnType<typeof listGovernedTags>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listGovernedTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListGovernedTagsSuspense<TData = Awaited<ReturnType<typeof listGovernedTags>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listGovernedTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Governed Tags
+ */
+
+export function useListGovernedTagsSuspense<TData = Awaited<ReturnType<typeof listGovernedTags>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listGovernedTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListGovernedTagsSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
  * Generate data quality checks from natural language using AI-assisted generation.
 
 Routed through :class:`~databricks_labs_dqx_app.backend.services.ai_gateway.AIGateway`
@@ -13247,6 +13450,12 @@ export const useRegisterMonitoredTable = <TError = AxiosError<HTTPValidationErro
     
 /**
  * Get a monitored table binding plus its applied rules (joined to rule name/dimension/severity tags).
+
+When tag-auto-apply is on, first runs a selective apply-on-tag rescan for
+this table (OBO, so it sees the caller's tags) so any newly-matching rules
+are attached and appear in the response immediately — rather than waiting for
+the periodic background sweep. Best-effort: a rescan failure never blocks the
+read, and it is a no-op when the toggle is off.
  * @summary Get Monitored Table
  */
 export const getMonitoredTable = (
@@ -14775,6 +14984,159 @@ export const useSuggestRulesForTable = <TError = AxiosError<HTTPValidationError>
       return useMutation(mutationOptions, queryClient);
     }
     
+/**
+ * List tag-matched published rules (with a representative column mapping) for a monitored table.
+
+The OFF-path counterpart to auto-apply: when ``tag_auto_apply`` is off,
+tag-matched rules surface here as accept-to-attach suggestions instead of
+auto-attaching. Best-effort — any read/service failure degrades to an empty
+list with HTTP 200; this route never raises for a missing match or an
+unreadable table (mirroring the suggest-rules contract).
+ * @summary List Tag Suggestions
+ */
+export const listTagSuggestions = (
+    bindingId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<TagSuggestionsOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitored-tables/${bindingId}/tag-suggestions`,options
+    );
+  }
+
+
+
+
+export const getListTagSuggestionsQueryKey = (bindingId?: string,) => {
+    return [
+    `/api/v1/monitored-tables/${bindingId}/tag-suggestions`
+    ] as const;
+    }
+
+    
+export const getListTagSuggestionsQueryOptions = <TData = Awaited<ReturnType<typeof listTagSuggestions>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTagSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListTagSuggestionsQueryKey(bindingId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listTagSuggestions>>> = ({ signal }) => listTagSuggestions(bindingId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(bindingId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listTagSuggestions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListTagSuggestionsQueryResult = NonNullable<Awaited<ReturnType<typeof listTagSuggestions>>>
+export type ListTagSuggestionsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListTagSuggestions<TData = Awaited<ReturnType<typeof listTagSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTagSuggestions>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listTagSuggestions>>,
+          TError,
+          Awaited<ReturnType<typeof listTagSuggestions>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListTagSuggestions<TData = Awaited<ReturnType<typeof listTagSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTagSuggestions>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listTagSuggestions>>,
+          TError,
+          Awaited<ReturnType<typeof listTagSuggestions>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListTagSuggestions<TData = Awaited<ReturnType<typeof listTagSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTagSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Tag Suggestions
+ */
+
+export function useListTagSuggestions<TData = Awaited<ReturnType<typeof listTagSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTagSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListTagSuggestionsQueryOptions(bindingId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListTagSuggestionsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listTagSuggestions>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listTagSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListTagSuggestionsQueryKey(bindingId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listTagSuggestions>>> = ({ signal }) => listTagSuggestions(bindingId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listTagSuggestions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListTagSuggestionsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listTagSuggestions>>>
+export type ListTagSuggestionsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListTagSuggestionsSuspense<TData = Awaited<ReturnType<typeof listTagSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listTagSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListTagSuggestionsSuspense<TData = Awaited<ReturnType<typeof listTagSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listTagSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListTagSuggestionsSuspense<TData = Awaited<ReturnType<typeof listTagSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listTagSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Tag Suggestions
+ */
+
+export function useListTagSuggestionsSuspense<TData = Awaited<ReturnType<typeof listTagSuggestions>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listTagSuggestions>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListTagSuggestionsSuspenseQueryOptions(bindingId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
 /**
  * List the DQX profiler's applicable rule suggestions for the Profile page.
 

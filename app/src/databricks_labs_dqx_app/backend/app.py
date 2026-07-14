@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from ._scheduler_registry import get_scheduler, set_scheduler
 from .config import conf
 from .dependencies import (
+    _build_column_reader,
     get_app_settings_service,
     get_binding_run_service,
     get_data_product_service,
@@ -39,6 +40,7 @@ from .migrations import MigrationRunner
 from .migrations.postgres import PgMigrationRunner
 from .routes import api_router
 from .services.app_settings_service import AppSettingsService
+from .services.apply_rules_service import ApplyRulesService
 from .services.binding_run_service import BindingRunService
 from .services.data_product_service import DataProductService
 from .services.entitlement_service import FAILING_ROWS_VIEW_NAME, EntitlementService
@@ -48,6 +50,7 @@ from .services.registry_service import RegistryService
 from .services.rule_embeddings import RuleEmbeddingsService
 from .services.scheduler_service import SchedulerService
 from .services.score_cache_service import ScoreCacheService
+from .services.tag_reconcile_service import TagReconcileService
 from .services.score_view_service import (
     ASOF_VIEW_NAME,
     ATTRIBUTION_VIEW_NAME,
@@ -733,10 +736,31 @@ async def lifespan(app: FastAPI):
             # Same OLTP executor as the other scheduler collaborators; the
             # dims themselves are SP-owned UC tables written via sp_sql.
             scheduler_monitored_tables = MonitoredTableService(sql=oltp_for_scheduler, profiling_sql=sp_sql)
+            scheduler_registry = RegistryService(sql=oltp_for_scheduler)
             metadata_dim_service = MetadataDimService(
                 sp_sql=sp_sql,
-                registry=RegistryService(sql=oltp_for_scheduler),
+                registry=scheduler_registry,
                 monitored_tables=scheduler_monitored_tables,
+            )
+
+            # Apply-on-tag reconcile sweep (Task 7): wired with the same
+            # SP-authed collaborators the scheduler already holds, mirroring
+            # dependencies.get_tag_reconcile_service. Reconcile runs without a
+            # user context, so every collaborator routes at the SP OLTP/Delta
+            # executors and the column reader uses the SP WorkspaceClient (column
+            # names/types) + the SP warehouse SqlExecutor (column tags via
+            # information_schema.column_tags).
+            # No materializer is wired — the reconcile attach loop only adds
+            # applied-rule rows (materialization stays approval-gated).
+            scheduler_app_settings = AppSettingsService(sql=oltp_for_scheduler)
+            scheduler_tag_reconcile = TagReconcileService(
+                registry=scheduler_registry,
+                monitored_tables=scheduler_monitored_tables,
+                apply_rules=ApplyRulesService(
+                    sql=oltp_for_scheduler, registry=scheduler_registry, app_settings=scheduler_app_settings
+                ),
+                app_settings=scheduler_app_settings,
+                read_columns=_build_column_reader(sp_ws, sp_sql),
             )
 
             _scheduler = SchedulerService(
@@ -763,6 +787,10 @@ async def lifespan(app: FastAPI):
                 # reconcile cadence so runs no browser observed still update the
                 # overview "Last run" without the list path hitting the warehouse.
                 monitored_table_service=scheduler_monitored_tables,
+                # Apply-on-tag reconcile sweep (Task 7): periodic safety-net
+                # pass that re-attaches tag-mapped rules across all monitored
+                # tables. A no-op when tag-auto-apply is off.
+                tag_reconcile_service=scheduler_tag_reconcile,
                 # Startup reconcile (P5.3): the scheduler's first refresh
                 # pass recomputes EVERY monitored table's cached score
                 # (then products + global), healing rows left stale/NULL

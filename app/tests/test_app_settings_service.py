@@ -373,3 +373,32 @@ class TestJobsComputeSetting:
         svc, _ = settings_service
 
         assert svc.save_jobs_compute({"kind": "bogus"}) == {"kind": "serverless"}
+
+
+class TestTagAutoApply:
+    """``tag_auto_apply`` (apply-on-tag) — eager auto-attach of tag-mapped rules; OFF by default."""
+
+    def test_defaults_to_false_when_unset(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []
+        assert svc.get_tag_auto_apply() is False
+
+    def test_explicit_true_reads_on(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["true"]]
+        assert svc.get_tag_auto_apply() is True
+
+    def test_non_true_value_reads_off(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["false"]]
+        assert svc.get_tag_auto_apply() is False
+
+    def test_save_and_round_trips(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        saved = svc.save_tag_auto_apply(True, user_email="admin@x")
+        assert saved is True
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["key_cols"] == {"setting_key": "tag_auto_apply"}
+        assert kwargs["value_cols"]["setting_value"] == "true"
+        sql_executor_mock.query.return_value = [["true"]]
+        assert svc.get_tag_auto_apply() is True

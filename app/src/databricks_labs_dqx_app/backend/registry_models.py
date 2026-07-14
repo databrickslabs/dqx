@@ -425,6 +425,13 @@ RESERVED_NAME_KEY = "name"
 RESERVED_DESCRIPTION_KEY = "description"
 RESERVED_DIMENSION_KEY = "dimension"
 RESERVED_SEVERITY_KEY = "severity"
+RESERVED_SLOT_TAGS_KEY = "slot_tags"
+
+# Applied-rule origin marker (in AppliedRule.user_metadata) distinguishing an
+# auto-created tag-mapping attachment from a hand-applied one. The tag-reconcile
+# engine only ever touches ``tag_auto`` rows; hand-applied rows stay unmarked.
+ORIGIN_KEY = "origin"
+ORIGIN_TAG_AUTO = "tag_auto"
 
 RESERVED_RULE_METADATA_KEYS: frozenset[str] = frozenset(
     {
@@ -432,6 +439,7 @@ RESERVED_RULE_METADATA_KEYS: frozenset[str] = frozenset(
         RESERVED_DESCRIPTION_KEY,
         RESERVED_DIMENSION_KEY,
         RESERVED_SEVERITY_KEY,
+        RESERVED_SLOT_TAGS_KEY,
     }
 )
 
@@ -468,6 +476,44 @@ def set_reserved_tag(user_metadata: dict[str, Any], key: str, value: str | None)
         updated[key] = value
     else:
         updated.pop(key, None)
+    return updated
+
+
+def get_slot_tags(user_metadata: dict[str, Any]) -> dict[str, list[str]]:
+    """Read the reserved ``slot_tags`` map from *user_metadata*.
+
+    Returns a ``{slot_name: [tag, ...]}`` dict; ``{}`` when absent or malformed.
+    Non-list slot values are dropped; non-string tags within a list are dropped.
+    """
+    raw = user_metadata.get(RESERVED_SLOT_TAGS_KEY)
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, list[str]] = {}
+    for slot_name, tags in raw.items():
+        if not isinstance(slot_name, str) or not isinstance(tags, list):
+            continue
+        out[slot_name] = [t for t in tags if isinstance(t, str) and t]
+    return out
+
+
+def set_slot_tags(user_metadata: dict[str, Any], mapping: dict[str, list[str]]) -> dict[str, Any]:
+    """Return a *new* ``user_metadata`` with ``slot_tags`` set to *mapping*.
+
+    Any governed tag key is accepted — there is no namespace restriction. Empty
+    and non-string tag entries are dropped. Slots left with an empty tag list are
+    dropped; when the resulting map is empty the key is removed entirely. Never
+    mutates *user_metadata* in place.
+    """
+    cleaned = {
+        slot: [t for t in tags if isinstance(t, str) and t]
+        for slot, tags in mapping.items()
+    }
+    cleaned = {slot: tags for slot, tags in cleaned.items() if tags}
+    updated = dict(user_metadata)
+    if cleaned:
+        updated[RESERVED_SLOT_TAGS_KEY] = cleaned
+    else:
+        updated.pop(RESERVED_SLOT_TAGS_KEY, None)
     return updated
 
 

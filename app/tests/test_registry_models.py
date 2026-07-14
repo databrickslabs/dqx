@@ -13,6 +13,15 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from databricks_labs_dqx_app.backend.registry_models import (
+    ORIGIN_KEY,
+    ORIGIN_TAG_AUTO,
+    RESERVED_RULE_METADATA_KEYS,
+    RESERVED_SLOT_TAGS_KEY,
+    get_slot_tags,
+    set_slot_tags,
+)
+
 
 # ---------------------------------------------------------------------------
 # RuleSlot
@@ -269,6 +278,7 @@ class TestReservedTagHelpers:
             "description",
             "dimension",
             "severity",
+            "slot_tags",
         }
 
     def test_getters_return_none_when_absent(self, module):
@@ -292,6 +302,60 @@ class TestReservedTagHelpers:
         result = module.set_reserved_tag(original, module.RESERVED_SEVERITY_KEY, "High")
         assert original == {"team": "checkout"}
         assert result == {"team": "checkout", "severity": "High"}
+
+
+# ---------------------------------------------------------------------------
+# Slot-tags helpers (apply-on-tag feature, Task 1)
+# ---------------------------------------------------------------------------
+
+
+def test_slot_tags_key_is_reserved():
+    assert RESERVED_SLOT_TAGS_KEY == "slot_tags"
+    assert RESERVED_SLOT_TAGS_KEY in RESERVED_RULE_METADATA_KEYS
+
+
+def test_origin_marker_constants():
+    assert ORIGIN_KEY == "origin"
+    assert ORIGIN_TAG_AUTO == "tag_auto"
+
+
+def test_get_slot_tags_absent_returns_empty():
+    assert get_slot_tags({}) == {}
+    assert get_slot_tags({"name": "x"}) == {}
+
+
+def test_get_slot_tags_reads_mapping():
+    um = {"slot_tags": {"column_1": ["class.pii", "class.name=given"]}}
+    assert get_slot_tags(um) == {"column_1": ["class.pii", "class.name=given"]}
+
+
+def test_get_slot_tags_drops_malformed():
+    um = {"slot_tags": {"a": ["class.x", 3, ""], "b": "notalist", "c": []}}
+    # non-string tags dropped, non-list values dropped, empty list preserved as []
+    assert get_slot_tags(um) == {"a": ["class.x"], "c": []}
+
+
+def test_set_slot_tags_roundtrip_and_immutability():
+    um = {"name": "keep"}
+    out = set_slot_tags(um, {"column_1": ["class.pii"]})
+    assert out["slot_tags"] == {"column_1": ["class.pii"]}
+    assert out["name"] == "keep"
+    assert "slot_tags" not in um  # original untouched
+
+
+def test_set_slot_tags_drops_empty_slots_and_key():
+    assert set_slot_tags({}, {"a": []}) == {}  # empty-list slot dropped -> mapping empty -> key removed
+    out = set_slot_tags({"slot_tags": {"a": ["class.x"]}}, {})
+    assert "slot_tags" not in out
+
+
+def test_set_slot_tags_keeps_all_governed_tags():
+    # Any governed tag key is stored — no namespace restriction. Empty/non-string
+    # entries are still dropped.
+    out = set_slot_tags({}, {"a": ["class.pii", "pii", "other=v", ""]})
+    assert out["slot_tags"] == {"a": ["class.pii", "pii", "other=v"]}
+    # Non-``class.`` tags are now kept.
+    assert set_slot_tags({}, {"a": ["pii", "other"]}) == {"slot_tags": {"a": ["pii", "other"]}}
 
 
 # ---------------------------------------------------------------------------

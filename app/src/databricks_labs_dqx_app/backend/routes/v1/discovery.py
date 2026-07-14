@@ -10,6 +10,8 @@ from databricks_labs_dqx_app.backend.models import (
     ColumnOut,
     FilterTablesByColumnsIn,
     FilterTablesByColumnsOut,
+    GovernedTagOut,
+    GovernedTagsOut,
     SchemaOut,
     TableOut,
     TableSchemaDdlOut,
@@ -219,3 +221,16 @@ async def filter_tables_by_columns(
 
     await asyncio.gather(*(check_one(fqn) for fqn in body.table_fqns))
     return FilterTablesByColumnsOut(matching=matching, not_matching=not_matching, errors=errors)
+
+
+@router.get("/governed-tags", response_model=GovernedTagsOut, operation_id="listGovernedTags")
+async def list_governed_tags(
+    discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
+) -> GovernedTagsOut:
+    """List distinct governed Unity Catalog tag keys/values visible to the caller."""
+    try:
+        result = await discovery.list_governed_tags_async()
+        return GovernedTagsOut(tags=[GovernedTagOut(tag=g.tag, description=g.description) for g in result])
+    except Exception as e:
+        logger.error(f"Failed to list governed tags: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list governed tags: {e}")

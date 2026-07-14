@@ -1901,6 +1901,21 @@ function RulesRegistrySettingsCard() {
           />
         </div>
 
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="tag-auto-apply" className="text-sm">
+              {t("config.tagAutoApplyLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.tagAutoApplyHint")}</p>
+          </div>
+          <Switch
+            id="tag-auto-apply"
+            checked={settings.tag_auto_apply}
+            onCheckedChange={(checked) => save({ tag_auto_apply: checked })}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
         {!isAdmin && (
           <span className="text-xs text-muted-foreground">{t("config.rulesRegistrySettingsAdminOnlyHint")}</span>
         )}

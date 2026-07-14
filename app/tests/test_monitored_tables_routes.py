@@ -35,6 +35,7 @@ from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     get_monitored_table_profile,
     list_monitored_table_versions,
     list_monitored_tables,
+    list_tag_suggestions,
     register_monitored_table,
     reject_monitored_table,
     remove_applied_rule,
@@ -60,6 +61,7 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import (
 )
 from databricks_labs_dqx_app.backend.services.materializer import MaterializationError
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggestion, SuggestRulesResult
+from databricks_labs_dqx_app.backend.services.tag_suggestion_service import TagRuleSuggestion
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     AppliedRuleSummary,
     BulkRegisterResult,
@@ -104,6 +106,17 @@ def _mock_discovery(owner: str | None = None) -> MagicMock:
     discovery = MagicMock()
     discovery.get_table_owner.return_value = owner
     return discovery
+
+
+def _tag_suggestions_mock() -> MagicMock:
+    """A TagSuggestionService mock whose apply_matches is a no-op (returns 0).
+
+    Keeps register/bulk tests focused on their core behaviour without
+    accidentally asserting on the auto-apply side-effect.
+    """
+    tag_suggestions = MagicMock()
+    tag_suggestions.apply_matches.return_value = 0
+    return tag_suggestions
 
 
 class TestListAndGet:
@@ -170,7 +183,8 @@ class TestListAndGet:
                 AppliedRuleSummary(applied_rule=applied, rule_name="Not Null", rule_dimension="Completeness")
             ],
         )
-        result = get_monitored_table("b1", svc=svc)
+        tag_suggestions = _tag_suggestions_mock()
+        result = get_monitored_table("b1", svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions)
         assert result.table.binding_id == "b1"
         assert len(result.applied_rules) == 1
         assert result.applied_rules[0].rule_name == "Not Null"
@@ -178,8 +192,9 @@ class TestListAndGet:
     def test_get_missing_binding_raises_404(self):
         svc = MagicMock()
         svc.get.return_value = None
+        tag_suggestions = _tag_suggestions_mock()
         with pytest.raises(HTTPException) as excinfo:
-            get_monitored_table("missing", svc=svc)
+            get_monitored_table("missing", svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions)
         assert excinfo.value.status_code == 404
 
 
@@ -189,7 +204,9 @@ class TestRegister:
         svc.register.return_value = _table()
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", steward="bob@x")
         discovery = _mock_discovery(owner="owner@x")
-        result = register_monitored_table(body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery)
+        result = register_monitored_table(
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery, tag_suggestions=_tag_suggestions_mock()
+        )
         assert result.table.table_fqn == "cat.schema.tbl"
         assert result.applied_rule_count == 0
         # An explicit steward wins — the UC owner lookup is skipped entirely.
@@ -201,7 +218,9 @@ class TestRegister:
         svc.register.return_value = _table()
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
         discovery = _mock_discovery(owner="owner@x")
-        register_monitored_table(body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery)
+        register_monitored_table(
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery, tag_suggestions=_tag_suggestions_mock()
+        )
         discovery.get_table_owner.assert_called_once_with("cat.schema.tbl")
         svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", steward="owner@x")
 
@@ -212,7 +231,9 @@ class TestRegister:
         svc.register.return_value = _table()
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
         discovery = _mock_discovery(owner=None)
-        register_monitored_table(body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery)
+        register_monitored_table(
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery, tag_suggestions=_tag_suggestions_mock()
+        )
         svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", steward=None)
 
     def test_register_duplicate_raises_409(self):
@@ -220,7 +241,9 @@ class TestRegister:
         svc.register.side_effect = DuplicateMonitoredTableError("Table already monitored")
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
         with pytest.raises(HTTPException) as excinfo:
-            register_monitored_table(body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery())
+            register_monitored_table(
+                body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery(), tag_suggestions=_tag_suggestions_mock()
+            )
         assert excinfo.value.status_code == 409
 
     def test_register_invalid_fqn_raises_400(self):
@@ -228,8 +251,33 @@ class TestRegister:
         svc.register.side_effect = ValueError("Invalid fully qualified name")
         body = RegisterMonitoredTableIn(table_fqn="bad-fqn")
         with pytest.raises(HTTPException) as excinfo:
-            register_monitored_table(body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery())
+            register_monitored_table(
+                body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery(), tag_suggestions=_tag_suggestions_mock()
+            )
         assert excinfo.value.status_code == 400
+
+    def test_register_triggers_apply_matches(self):
+        """Apply-on-tag: a successful register calls apply_matches on the new binding."""
+        svc = MagicMock()
+        svc.register.return_value = _table(binding_id="b1", table_fqn="cat.schema.tbl")
+        body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", steward="bob@x")
+        tag_suggestions = _tag_suggestions_mock()
+        register_monitored_table(
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery(), tag_suggestions=tag_suggestions
+        )
+        tag_suggestions.apply_matches.assert_called_once_with("b1", "alice@x")
+
+    def test_register_apply_matches_failure_is_non_fatal(self):
+        """A raising apply_matches must NOT turn a successful register into a 500."""
+        svc = MagicMock()
+        svc.register.return_value = _table(binding_id="b1", table_fqn="cat.schema.tbl")
+        body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", steward="bob@x")
+        tag_suggestions = MagicMock()
+        tag_suggestions.apply_matches.side_effect = RuntimeError("boom")
+        result = register_monitored_table(
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery(), tag_suggestions=tag_suggestions
+        )
+        assert result.table.table_fqn == "cat.schema.tbl"
 
 
 class TestBulkRegister:
@@ -240,11 +288,14 @@ class TestBulkRegister:
             skipped_existing=["cat.schema.existing"],
             invalid=["bad-fqn"],
         )
+        svc.get_by_table_fqn.return_value = None
         body = BulkRegisterMonitoredTablesIn(
             table_fqns=["cat.schema.a", "cat.schema.b", "cat.schema.existing", "bad-fqn"],
             steward="bob@x",
         )
-        result = bulk_register_monitored_tables(body=body, svc=svc, obo_ws=_mock_obo_ws())
+        result = bulk_register_monitored_tables(
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=_tag_suggestions_mock()
+        )
         assert result.registered == ["cat.schema.a", "cat.schema.b"]
         assert result.skipped_existing == ["cat.schema.existing"]
         assert result.invalid == ["bad-fqn"]
@@ -256,7 +307,9 @@ class TestBulkRegister:
         svc = MagicMock()
         svc.bulk_register.return_value = BulkRegisterResult()
         body = BulkRegisterMonitoredTablesIn(table_fqns=[])
-        result = bulk_register_monitored_tables(body=body, svc=svc, obo_ws=_mock_obo_ws())
+        result = bulk_register_monitored_tables(
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=_tag_suggestions_mock()
+        )
         assert result.registered == []
         assert result.skipped_existing == []
         assert result.invalid == []
@@ -266,8 +319,60 @@ class TestBulkRegister:
         svc.bulk_register.side_effect = RuntimeError("boom")
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.a"])
         with pytest.raises(HTTPException) as excinfo:
-            bulk_register_monitored_tables(body=body, svc=svc, obo_ws=_mock_obo_ws())
+            bulk_register_monitored_tables(
+                body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=_tag_suggestions_mock()
+            )
         assert excinfo.value.status_code == 500
+
+    def test_bulk_register_calls_apply_matches_for_each_new_binding(self):
+        """Apply-on-tag: apply_matches is called once per newly-registered FQN (via get_by_table_fqn)."""
+        svc = MagicMock()
+        svc.bulk_register.return_value = BulkRegisterResult(
+            registered=["cat.schema.t1", "cat.schema.t2"],
+            skipped_existing=["cat.schema.existing"],
+            invalid=[],
+        )
+        svc.get_by_table_fqn.side_effect = lambda fqn: MonitoredTableDetail(
+            table=_table(binding_id=f"bid-{fqn[-2:]}", table_fqn=fqn),
+            applied_rules=[],
+        )
+        tag_suggestions = _tag_suggestions_mock()
+        body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1", "cat.schema.t2", "cat.schema.existing"])
+        bulk_register_monitored_tables(body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions)
+        assert tag_suggestions.apply_matches.call_count == 2
+        tag_suggestions.apply_matches.assert_any_call("bid-t1", "alice@x")
+        tag_suggestions.apply_matches.assert_any_call("bid-t2", "alice@x")
+
+    def test_bulk_register_apply_matches_still_called_when_detail_returned(self):
+        """The loop always runs (self-gating in service); apply_matches is called for each binding."""
+        svc = MagicMock()
+        svc.bulk_register.return_value = BulkRegisterResult(
+            registered=["cat.schema.t1"], skipped_existing=[], invalid=[]
+        )
+        svc.get_by_table_fqn.return_value = MonitoredTableDetail(
+            table=_table(binding_id="b1", table_fqn="cat.schema.t1"),
+            applied_rules=[],
+        )
+        tag_suggestions = _tag_suggestions_mock()
+        body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1"])
+        bulk_register_monitored_tables(body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions)
+        tag_suggestions.apply_matches.assert_called_once_with("b1", "alice@x")
+
+    def test_bulk_register_apply_matches_failure_is_non_fatal(self):
+        """A raising apply_matches must NOT turn a successful bulk-register into a 500."""
+        svc = MagicMock()
+        svc.bulk_register.return_value = BulkRegisterResult(
+            registered=["cat.schema.t1"], skipped_existing=[], invalid=[]
+        )
+        svc.get_by_table_fqn.return_value = MonitoredTableDetail(
+            table=_table(binding_id="b1", table_fqn="cat.schema.t1"),
+            applied_rules=[],
+        )
+        tag_suggestions = MagicMock()
+        tag_suggestions.apply_matches.side_effect = RuntimeError("boom")
+        body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1"])
+        result = bulk_register_monitored_tables(body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions)
+        assert result.registered == ["cat.schema.t1"]
 
 
 class TestDelete:
@@ -308,9 +413,7 @@ class TestUpdateSchedule:
         )
         assert result.schedule_cron == "0 6 * * *"
         assert result.schedule_tz == "UTC"
-        svc.update_schedule.assert_called_once_with(
-            "b1", "0 6 * * *", "UTC", "alice@x", schedule_kind="dq_only"
-        )
+        svc.update_schedule.assert_called_once_with("b1", "0 6 * * *", "UTC", "alice@x", schedule_kind="dq_only")
 
     def test_clears_schedule(self):
         svc = MagicMock()
@@ -566,7 +669,7 @@ class TestRemoveAppliedRule:
             perms=MagicMock(),
         )
         assert result == {"status": "removed", "binding_id": "b1", "applied_rule_id": "ar1"}
-        svc.remove_applied.assert_called_once_with("ar1")
+        svc.remove_applied.assert_called_once_with("ar1", "alice@x")
 
     def test_remove_missing_raises_404(self):
         svc = MagicMock()
@@ -990,6 +1093,39 @@ class TestSuggestRulesForTable:
 
         assert result.available is False
         assert result.reason == "Vector Search is not configured."
+        assert result.suggestions == []
+
+
+class TestListTagSuggestions:
+    """``GET /monitored-tables/{binding_id}/tag-suggestions`` — thin adapter, never 500s."""
+
+    def test_returns_service_suggestions_mapped_to_response_model(self):
+        svc = MagicMock()
+        svc.suggest.return_value = [
+            TagRuleSuggestion(
+                rule_id="r1",
+                rule_name="No null email",
+                dimension="Completeness",
+                severity="High",
+                column_mapping={"c1": "email"},
+                explanation="Matched tag class.pii",
+            )
+        ]
+
+        result = list_tag_suggestions("b1", svc=svc)
+
+        assert len(result.suggestions) == 1
+        assert result.suggestions[0].rule_id == "r1"
+        assert result.suggestions[0].column_mapping == {"c1": "email"}
+        assert result.suggestions[0].explanation == "Matched tag class.pii"
+        svc.suggest.assert_called_once_with("b1")
+
+    def test_service_exception_returns_empty_list_not_500(self):
+        svc = MagicMock()
+        svc.suggest.side_effect = RuntimeError("boom")
+
+        result = list_tag_suggestions("b1", svc=svc)
+
         assert result.suggestions == []
 
 

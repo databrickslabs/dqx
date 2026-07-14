@@ -42,40 +42,11 @@ from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService,
 from databricks_labs_dqx_app.backend.services.monitored_table_service import LatestProfile, MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_retriever import RuleRetrievalUnavailableError, RuleRetriever
+from databricks_labs_dqx_app.backend.services.tag_mapping_service import family_for_type as _family_for_type
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_K = 8
-
-# Maps a Unity Catalog column type (leading token, upper-cased) to the slot
-# ``family`` vocabulary the registry uses (see ``registry_models.SlotFamily``:
-# numeric / text / temporal / boolean / array / any). Mirrors dqlake's family mapping
-# so the judge can align a slot's declared family with a column's real type.
-_TYPE_FAMILY: dict[str, str] = {
-    "TINYINT": "numeric",
-    "SMALLINT": "numeric",
-    "INT": "numeric",
-    "INTEGER": "numeric",
-    "BIGINT": "numeric",
-    "LONG": "numeric",
-    "FLOAT": "numeric",
-    "DOUBLE": "numeric",
-    "DECIMAL": "numeric",
-    "STRING": "text",
-    "VARCHAR": "text",
-    "CHAR": "text",
-    "DATE": "temporal",
-    "TIMESTAMP": "temporal",
-    "TIMESTAMP_NTZ": "temporal",
-    "BOOLEAN": "boolean",
-    "ARRAY": "array",
-}
-
-
-def _family_for_type(type_name: str) -> str:
-    """Classify a UC column ``type_name`` into a registry slot family."""
-    head = (type_name or "").upper().split("(")[0].split("<")[0].strip()
-    return _TYPE_FAMILY.get(head, "any")
 
 # Human-readable reasons for the genuine "available, but nothing to show"
 # outcomes. Kept as constants so the exact wording is asserted by tests and

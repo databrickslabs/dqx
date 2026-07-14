@@ -1108,6 +1108,27 @@ _V18_SCHEDULE_KIND = (
 )
 
 
+# dq_tag_auto_suppressions — the "tombstone" that records a DELIBERATE
+# removal of a tag-auto-applied row so the periodic reconcile sweep does
+# NOT re-add it. Keyed by the same natural key as ``dq_applied_rules``
+# (``binding_id``/``rule_id``/``mapping_hash``) so a suppression maps 1:1
+# to the auto attachment it blocks. ``ApplyRulesService.remove_applied``
+# writes a row here when it removes an auto-origin application, and
+# ``attach_auto_mapping`` skips any key present here. OLTP-shaped
+# (``oltp_fallback=True``) so it lives on Delta only when Lakebase is
+# disabled; the Postgres mirror is v15 in ``backend.migrations.postgres``.
+_V19_TAG_AUTO_SUPPRESSIONS = (
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_tag_auto_suppressions ("
+    "  binding_id STRING NOT NULL,"
+    "  rule_id STRING NOT NULL,"
+    "  mapping_hash STRING NOT NULL,"
+    "  suppressed_by STRING,"
+    "  suppressed_at TIMESTAMP,"
+    "  CONSTRAINT pk_dq_tag_auto_suppressions PRIMARY KEY (binding_id, rule_id, mapping_hash) RELY"
+    ") CLUSTER BY (binding_id)"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -1246,6 +1267,13 @@ MIGRATIONS: list[Migration] = [
         description="Schedulable scope: add schedule_kind to monitored tables + data products (B2-52) "
         "— used only when Lakebase is disabled",
         sql_template=_V18_SCHEDULE_KIND,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=19,
+        description="Tag-auto suppressions (dq_tag_auto_suppressions): tombstone deliberate removals of "
+        "tag-auto-applied rows so reconcile doesn't re-add them — used only when Lakebase is disabled",
+        sql_template=_V19_TAG_AUTO_SUPPRESSIONS,
         oltp_fallback=True,
     ),
 ]

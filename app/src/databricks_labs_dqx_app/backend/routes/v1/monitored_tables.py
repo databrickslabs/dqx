@@ -31,6 +31,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_profiling_suggestion_service,
     get_rule_suggester,
     get_rules_catalog_service,
+    get_tag_suggestion_service,
     require_role,
     require_runner,
 )
@@ -64,6 +65,7 @@ from databricks_labs_dqx_app.backend.models import (
     SetAppliedRulePinIn,
     SetAppliedRuleSeverityOverrideIn,
     SuggestRulesOut,
+    TagSuggestionsOut,
 )
 from databricks_labs_dqx_app.backend.registry_models import MonitoredTable
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
@@ -93,6 +95,7 @@ from databricks_labs_dqx_app.backend.services.profiling_suggestion_service impor
     ProfilingSuggestionService,
 )
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggester
+from databricks_labs_dqx_app.backend.services.tag_suggestion_service import TagSuggestionService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 
 router = APIRouter()
@@ -203,12 +206,30 @@ def _apply_snapshot_check_counts(
 def get_monitored_table(
     binding_id: str,
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    tag_suggestions: Annotated[TagSuggestionService, Depends(get_tag_suggestion_service)],
 ) -> MonitoredTableDetailOut:
-    """Get a monitored table binding plus its applied rules (joined to rule name/dimension/severity tags)."""
+    """Get a monitored table binding plus its applied rules (joined to rule name/dimension/severity tags).
+
+    When tag-auto-apply is on, first runs a selective apply-on-tag rescan for
+    this table (OBO, so it sees the caller's tags) so any newly-matching rules
+    are attached and appear in the response immediately — rather than waiting for
+    the periodic background sweep. Best-effort: a rescan failure never blocks the
+    read, and it is a no-op when the toggle is off.
+    """
     try:
         detail = svc.get(binding_id)
         if detail is None:
             raise HTTPException(status_code=404, detail=f"Monitored table not found: {binding_id}")
+        try:
+            attached = tag_suggestions.apply_matches(binding_id, _current_user_email(obo_ws))
+        except Exception:
+            logger.warning("Tag auto-apply rescan on open failed (non-fatal)", exc_info=True)
+            attached = 0
+        # Re-read only when the rescan actually attached rows, so the response
+        # includes them; otherwise reuse the detail we already loaded.
+        if attached:
+            detail = svc.get(binding_id) or detail
         return MonitoredTableDetailOut.from_domain(detail)
     except HTTPException:
         raise
@@ -233,6 +254,7 @@ def register_monitored_table(
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
+    tag_suggestions: Annotated[TagSuggestionService, Depends(get_tag_suggestion_service)],
 ) -> MonitoredTableSummaryOut:
     """Register a table under Rules Registry governance (status ``draft``).
 
@@ -245,6 +267,16 @@ def register_monitored_table(
         user_email = _current_user_email(obo_ws)
         steward = body.steward or discovery.get_table_owner(body.table_fqn)
         table = svc.register(body.table_fqn, user_email, steward=steward)
+        # Apply-on-tag: after a successful register, auto-attach every published
+        # tag-mapped rule this table now matches — via TagSuggestionService, which
+        # reads the table's tags OBO (as the caller) so it sees tags the app
+        # service principal cannot. ``apply_matches`` is a no-op when the
+        # tag_auto_apply toggle is off, and is best-effort here so it can never
+        # turn a successful register into a 500.
+        try:
+            tag_suggestions.apply_matches(table.binding_id, user_email)
+        except Exception:
+            logger.warning("Tag auto-apply after register failed (non-fatal)", exc_info=True)
         return MonitoredTableSummaryOut.from_domain(MonitoredTableSummary(table=table, applied_rule_count=0))
     except DuplicateMonitoredTableError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -265,6 +297,7 @@ def bulk_register_monitored_tables(
     body: BulkRegisterMonitoredTablesIn,
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    tag_suggestions: Annotated[TagSuggestionService, Depends(get_tag_suggestion_service)],
 ) -> BulkRegisterMonitoredTablesOut:
     """Register many tables under Rules Registry governance in one call.
 
@@ -282,6 +315,21 @@ def bulk_register_monitored_tables(
     try:
         user_email = _current_user_email(obo_ws)
         result = svc.bulk_register(body.table_fqns, user_email, steward=body.steward)
+        # Apply-on-tag: auto-attach matches for only the NEWLY-registered tables
+        # (never skipped_existing/invalid). ``BulkRegisterResult.registered`` is a
+        # list of table FQNs (no binding_id), so resolve each binding via
+        # ``get_by_table_fqn``, then ``apply_matches`` (OBO, no-op when the toggle
+        # is off — so a disabled feature still does N cheap lookups here; matches
+        # the previous behaviour and the onboarding path is not latency-critical).
+        # Best-effort per table; guarded so it can never turn a successful
+        # bulk-register into a 500.
+        for fqn in result.registered:
+            try:
+                detail = svc.get_by_table_fqn(fqn)
+                if detail is not None:
+                    tag_suggestions.apply_matches(detail.table.binding_id, user_email)
+            except Exception:
+                logger.warning("Tag auto-apply after bulk-register failed (non-fatal)", exc_info=True)
         return BulkRegisterMonitoredTablesOut.from_domain(result)
     except Exception as e:
         logger.error(f"Failed to bulk-register monitored tables: {e}", exc_info=True)
@@ -677,7 +725,7 @@ def remove_applied_rule(
         principal_email=_current_user_email(obo_ws),
     )
     try:
-        svc.remove_applied(applied_rule_id)
+        svc.remove_applied(applied_rule_id, _current_user_email(obo_ws))
         return {"status": "removed", "binding_id": binding_id, "applied_rule_id": applied_rule_id}
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -1124,6 +1172,37 @@ async def suggest_rules_for_table(
     user_email = _current_user_email(obo_ws)
     result = await svc.suggest(binding_id, user_email)
     return SuggestRulesOut.from_domain(result)
+
+
+# ------------------------------------------------------------------
+# Tag-based rule suggestions (apply-on-tag — OFF path, Task 10b)
+# ------------------------------------------------------------------
+
+
+@router.get(
+    "/{binding_id}/tag-suggestions",
+    response_model=TagSuggestionsOut,
+    operation_id="listTagSuggestions",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def list_tag_suggestions(
+    binding_id: str,
+    svc: Annotated[TagSuggestionService, Depends(get_tag_suggestion_service)],
+) -> TagSuggestionsOut:
+    """List tag-matched published rules (with a representative column mapping) for a monitored table.
+
+    The OFF-path counterpart to auto-apply: when ``tag_auto_apply`` is off,
+    tag-matched rules surface here as accept-to-attach suggestions instead of
+    auto-attaching. Best-effort — any read/service failure degrades to an empty
+    list with HTTP 200; this route never raises for a missing match or an
+    unreadable table (mirroring the suggest-rules contract).
+    """
+    try:
+        suggestions = svc.suggest(binding_id)
+    except Exception:
+        logger.warning(f"Failed to list tag suggestions for monitored table {binding_id}", exc_info=True)
+        return TagSuggestionsOut()
+    return TagSuggestionsOut.from_domain(suggestions)
 
 
 # ------------------------------------------------------------------

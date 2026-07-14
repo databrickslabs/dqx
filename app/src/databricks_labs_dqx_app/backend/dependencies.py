@@ -51,6 +51,9 @@ from .services.rule_test_service import RuleTestService
 from .services.table_data_service import TableDataService
 from .services.review_status_service import ReviewStatusService
 from .services.schedule_config_service import ScheduleConfigService
+from .services.tag_mapping_service import ColumnInfo
+from .services.tag_reconcile_service import TagReconcileService
+from .services.tag_suggestion_service import TagSuggestionService
 from .services.vector_store import VectorStoreProvisioner
 from .services.view_service import ViewService
 from .sql_executor import OltpExecutorProtocol, SqlExecutor
@@ -371,6 +374,107 @@ async def get_monitored_table_version_service(
     return MonitoredTableVersionService(sql=sql, monitored_tables=monitored_tables, rules_catalog=rules_catalog)
 
 
+def _build_column_reader(
+    ws: WorkspaceClient,
+    sql: SqlExecutor,
+) -> Callable[[str], list[ColumnInfo]]:
+    """Build the column reader the tag-reconcile / tag-suggestion services consume.
+
+    Reads each column's NAME and TYPE from ``ws.tables.get`` (the resolver's
+    family filter needs ``type_name``) and each column's TAGS from
+    ``<catalog>.information_schema.column_tags`` via *sql* — the reliable source
+    for column governed tags (see :func:`read_column_tags`). A missing/failed
+    ``tables.get`` degrades to ``[]`` for that table so one unreadable table
+    never aborts a sweep; a tag-read failure degrades to no tags (columns still
+    returned with their types). Never raises.
+
+    Generic over the ``(ws, sql)`` auth pair: the reconcile path passes the SP
+    client + SP warehouse executor; the suggestions path passes the OBO client +
+    OBO warehouse executor so it respects the calling user's Unity Catalog
+    permissions.
+    """
+    from .services.discovery import read_column_tags
+
+    def read_columns(table_fqn: str) -> list[ColumnInfo]:
+        try:
+            table_info = ws.tables.get(full_name=table_fqn)
+        except Exception:
+            logger.warning(f"Failed to read columns for {table_fqn}")
+            return []
+        tags_by_column = read_column_tags(sql, table_fqn)
+        columns: list[ColumnInfo] = []
+        for col in table_info.columns or []:
+            col_name = col.name or ""
+            columns.append(
+                ColumnInfo(
+                    name=col_name,
+                    type_name=(col.type_name.value if col.type_name else ""),
+                    tags=tags_by_column.get(col_name, []),
+                )
+            )
+        return columns
+
+    return read_columns
+
+
+async def get_tag_reconcile_service(
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> TagReconcileService:
+    """Create the apply-on-tag orchestrator wired to SP-authed collaborators.
+
+    Every collaborator routes at the SP OLTP/Delta executors (via the shared
+    providers) because reconcile runs without a user context; the column reader
+    uses the SP :class:`WorkspaceClient` for column names/types and the SP
+    warehouse :class:`SqlExecutor` to read column tags from
+    ``information_schema.column_tags``, for the same reason.
+    """
+    return TagReconcileService(
+        registry=registry,
+        monitored_tables=monitored_tables,
+        apply_rules=apply_rules,
+        app_settings=app_settings,
+        read_columns=_build_column_reader(sp_ws, sp_sql),
+    )
+
+
+async def get_tag_suggestion_service(
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
+) -> TagSuggestionService:
+    """Create the apply-on-tag tag-matcher (suggestions AND auto-apply).
+
+    User-facing, so the column reader is built over the OBO
+    :class:`WorkspaceClient` + OBO warehouse :class:`SqlExecutor` (via the same
+    generic ``_build_column_reader`` factory) — so tag matching respects the
+    calling user's Unity Catalog permissions. This is deliberate and
+    load-bearing: the app service principal has no grant on user catalogs, so an
+    SP-authed read of ``information_schema.column_tags`` returns nothing; running
+    the match OBO is what makes auto-apply work.
+
+    When ``tag_auto_apply`` is off the matches surface as suggestions
+    (:meth:`~TagSuggestionService.suggest`); when on they auto-attach
+    (:meth:`~TagSuggestionService.apply_matches`, from the register / open-table
+    hooks). The applied-row WRITE still goes through the SP OLTP executor (via
+    ``get_apply_rules_service``), which owns the app's schema.
+    """
+    return TagSuggestionService(
+        registry=registry,
+        monitored_tables=monitored_tables,
+        apply_rules=apply_rules,
+        app_settings=app_settings,
+        read_columns=_build_column_reader(obo_ws, obo_sql),
+    )
+
+
 async def get_rule_embeddings_service(
     sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
@@ -409,11 +513,19 @@ async def get_vector_store_provisioner(
 
 async def get_discovery_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
 ) -> DiscoveryService:
-    """Create a DiscoveryService using the OBO-authenticated WorkspaceClient."""
+    """Create a DiscoveryService using the OBO-authenticated WorkspaceClient.
+
+    Runs on-behalf-of the calling user so Unity Catalog browsing and governed
+    tag-policy discovery respect their Unity Catalog permissions. The OBO
+    :class:`SqlExecutor` is threaded in so ``get_table_tags`` can source column
+    tags from ``information_schema.column_tags`` (the reliable source) under the
+    caller's Unity Catalog permissions.
+    """
     me = await asyncio.to_thread(obo_ws.current_user.me)
     user_id = me.user_name or me.id or "unknown"
-    return DiscoveryService(ws=obo_ws, user_id=user_id)
+    return DiscoveryService(ws=obo_ws, user_id=user_id, sql=obo_sql)
 
 
 async def get_rule_suggester(

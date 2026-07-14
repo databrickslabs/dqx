@@ -27,8 +27,11 @@ from typing import Any
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_models import (
+    ORIGIN_KEY,
+    ORIGIN_TAG_AUTO,
     AppliedRule,
     ColumnMappingGroup,
+    RegistryRule,
     compute_mapping_hash,
     get_rule_dimension,
     get_rule_name,
@@ -36,7 +39,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
@@ -76,6 +79,7 @@ class ApplyRulesService:
         self._table = sql.fqn("dq_applied_rules")
         self._monitored_table = sql.fqn("dq_monitored_tables")
         self._quality_rules_table = sql.fqn("dq_quality_rules")
+        self._suppressions_table = sql.fqn("dq_tag_auto_suppressions")
         self._select_cols = self._build_select_cols()
 
     def _build_select_cols(self) -> str:
@@ -143,16 +147,7 @@ class ApplyRulesService:
                 match the rule's slot names. An empty *column_mapping* is
                 allowed — it stages the application with no mapping yet.
         """
-        self._require_binding_exists(binding_id)
-        rule = self._registry.get_rule(rule_id)
-        if rule is None:
-            raise RuntimeError(f"Registry rule not found: {rule_id}")
-        if rule.status != "approved":
-            raise RuleNotPublishedError(
-                f"Registry rule '{rule_id}' is not published (status='{rule.status}'); "
-                "only published rules can be applied to a monitored table."
-            )
-        self._validate_mapping_complete(column_mapping, rule.definition.slots)
+        rule = self._validate_applicable_rule(binding_id, rule_id, column_mapping)
 
         mapping_hash = compute_mapping_hash(column_mapping)
         existing = self._get_by_natural_key(binding_id, rule_id, mapping_hash)
@@ -187,6 +182,112 @@ class ApplyRulesService:
         self._insert(applied)
         logger.info("Applied registry rule %s to binding %s (applied_rule_id=%s)", rule_id, binding_id, applied.id)
         return applied
+
+    def attach_auto_mapping(
+        self,
+        binding_id: str,
+        rule_id: str,
+        column_mapping: list[ColumnMappingGroup],
+        user_email: str,
+    ) -> AppliedRule | None:
+        """Idempotently attach a TAG-AUTO mapping (apply-on-tag reconcile).
+
+        Add-only and origin-stamped: inserts a new row stamped
+        ``user_metadata[ORIGIN_KEY] = ORIGIN_TAG_AUTO`` when absent; when a row
+        already exists for the natural key ``(binding_id, rule_id, mapping_hash)``
+        it is LEFT UNTOUCHED and returned as-is — whether it is a prior auto row
+        (idempotent no-op, preserves its pin/severity) or a hand-applied row
+        (never clobbered).
+
+        Suppression skip: if the natural key carries a suppression tombstone in
+        ``dq_tag_auto_suppressions`` — recorded by :meth:`remove_applied` when a
+        steward DELIBERATELY removed a tag-auto row — this returns ``None`` and
+        inserts nothing. The sweep must not resurrect an auto mapping the user
+        removed on purpose.
+
+        This is deliberately NOT :meth:`apply_rule`: the reconcile loop must
+        never mutate an existing row. ``apply_rule`` treats an identical
+        ``mapping_hash`` as an UPDATE of the mutable fields (pin / severity /
+        tags), which would silently destroy a steward's hand-applied pin or
+        severity override and re-stamp their row as ``tag_auto`` — breaking the
+        spec's "hand-applied rows are never touched" invariant (§2/§3.3). It
+        would also make reconcile non-idempotent for its own rows (a pin set at
+        insert time would be reset to ``None`` on the next sweep).
+
+        Args:
+            binding_id: The monitored table binding this application belongs to.
+            rule_id: The registry rule being attached. Must be ``approved``.
+            column_mapping: One fully-covering mapping group (the reconcile loop
+                passes a single-element list); every group's keys must exactly
+                match the rule's slot names.
+            user_email: Attributed as ``created_by`` on a newly inserted row.
+
+        Returns:
+            The existing :class:`AppliedRule` (unchanged) when one already
+            matches the natural key, the newly inserted origin-stamped
+            :class:`AppliedRule` when the mapping is attached, or ``None`` when
+            the natural key is suppressed (deliberate prior removal).
+
+        Raises:
+            RuntimeError: *binding_id* or *rule_id* does not exist.
+            RuleNotPublishedError: *rule_id* is not currently ``approved``.
+            MappingIncompleteError: a provided group's keys don't exactly match
+                the rule's slot names.
+        """
+        rule = self._validate_applicable_rule(binding_id, rule_id, column_mapping)
+
+        mapping_hash = compute_mapping_hash(column_mapping)
+        if self._is_suppressed(binding_id, rule_id, mapping_hash):
+            # A steward deliberately removed this auto mapping; the sweep must
+            # not re-add it. See remove_applied's tombstone write.
+            logger.info(
+                "Skipped auto-attach of rule %s to binding %s: mapping is suppressed", rule_id, binding_id
+            )
+            return None
+        existing = self._get_by_natural_key(binding_id, rule_id, mapping_hash)
+        if existing is not None:
+            # Add-only: an existing row (auto or hand-applied) is never mutated.
+            return existing
+
+        resolved_pinned_version = self._app_settings.resolve_pinned_version_for_new_attachment(None, rule.version)
+        now = datetime.now(timezone.utc)
+        applied = AppliedRule(
+            id=uuid4().hex[:16],
+            binding_id=binding_id,
+            rule_id=rule_id,
+            pinned_version=resolved_pinned_version,
+            severity_override=None,
+            column_mapping=column_mapping,
+            user_metadata={ORIGIN_KEY: ORIGIN_TAG_AUTO},
+            mapping_hash=mapping_hash,
+            created_by=user_email,
+            created_at=now,
+        )
+        self._insert(applied)
+        logger.info(
+            "Auto-attached registry rule %s to binding %s (applied_rule_id=%s)", rule_id, binding_id, applied.id
+        )
+        return applied
+
+    def _validate_applicable_rule(
+        self, binding_id: str, rule_id: str, column_mapping: list[ColumnMappingGroup]
+    ) -> RegistryRule:
+        """Shared apply/attach validation: binding exists, rule published, mapping covers slots.
+
+        Returns the resolved :class:`RegistryRule` so the caller can read its
+        ``version``. Raises the same errors documented on :meth:`apply_rule`.
+        """
+        self._require_binding_exists(binding_id)
+        rule = self._registry.get_rule(rule_id)
+        if rule is None:
+            raise RuntimeError(f"Registry rule not found: {rule_id}")
+        if rule.status != "approved":
+            raise RuleNotPublishedError(
+                f"Registry rule '{rule_id}' is not published (status='{rule.status}'); "
+                "only published rules can be applied to a monitored table."
+            )
+        self._validate_mapping_complete(column_mapping, rule.definition.slots)
+        return rule
 
     @staticmethod
     def _validate_mapping_complete(column_mapping: list[ColumnMappingGroup], slots: list[Any]) -> None:
@@ -290,6 +391,50 @@ class ApplyRulesService:
         return self._row_to_applied_rule(rows[0])
 
     # ------------------------------------------------------------------
+    # Suppression tombstones (apply-on-tag: deliberate auto-removal record)
+    # ------------------------------------------------------------------
+
+    def _is_suppressed(self, binding_id: str, rule_id: str, mapping_hash: str) -> bool:
+        """Return whether ``(binding_id, rule_id, mapping_hash)`` has a suppression tombstone.
+
+        Best-effort existence check: a transient read failure logs a warning and
+        returns ``False`` so it never blocks a legitimate attach — the worst case
+        is one extra reconcile of an auto row, which the sweep would attach again
+        anyway.
+        """
+        e_binding = escape_sql_string(binding_id)
+        e_rule = escape_sql_string(rule_id)
+        e_hash = escape_sql_string(mapping_hash)
+        sql = (
+            f"SELECT 1 FROM {self._suppressions_table} "  # noqa: S608
+            f"WHERE binding_id = '{e_binding}' AND rule_id = '{e_rule}' AND mapping_hash = '{e_hash}'"
+        )
+        try:
+            rows = self._sql.query(sql)
+        except Exception:
+            logger.warning(
+                "Suppression lookup failed for rule %s on binding %s; treating as not suppressed",
+                rule_id,
+                binding_id,
+                exc_info=True,
+            )
+            return False
+        return bool(rows)
+
+    def _record_suppression(self, binding_id: str, rule_id: str, mapping_hash: str, user_email: str | None) -> None:
+        """Upsert a suppression tombstone for ``(binding_id, rule_id, mapping_hash)``.
+
+        Idempotent: re-removing an already-suppressed key just refreshes
+        ``suppressed_by`` / ``suppressed_at``.
+        """
+        self._sql.upsert(
+            self._suppressions_table,
+            key_cols={"binding_id": binding_id, "rule_id": rule_id, "mapping_hash": mapping_hash},
+            value_cols={"suppressed_by": user_email, "suppressed_at": RawSql("current_timestamp()")},
+        )
+        logger.info("Recorded tag-auto suppression for rule %s on binding %s", rule_id, binding_id)
+
+    # ------------------------------------------------------------------
     # Batch reconcile (staged editor — save/publish in one action)
     # ------------------------------------------------------------------
 
@@ -366,7 +511,7 @@ class ApplyRulesService:
         # superseded by a mapping change (hash mismatch for that rule_id).
         for existing in self.list_applied(binding_id):
             if existing.id is not None and desired_hashes.get(existing.rule_id) != existing.mapping_hash:
-                self.remove_applied(existing.id)
+                self.remove_applied(existing.id, user_email)
 
         results = [
             self.apply_rule(
@@ -465,8 +610,23 @@ class ApplyRulesService:
     # Remove
     # ------------------------------------------------------------------
 
-    def remove_applied(self, applied_rule_id: str) -> None:
+    def remove_applied(self, applied_rule_id: str, user_email: str | None = None) -> None:
         """Remove an applied rule and every ``dq_quality_rules`` row it materialized.
+
+        Suppression tombstone: when the removed row was TAG-AUTO applied
+        (``user_metadata[ORIGIN_KEY] == ORIGIN_TAG_AUTO``), this also records a
+        tombstone in ``dq_tag_auto_suppressions`` for its natural key so the
+        periodic reconcile sweep does NOT re-add it (:meth:`attach_auto_mapping`
+        skips suppressed keys). *user_email* is attributed as ``suppressed_by``
+        when known. A HAND-applied row (no auto origin) is removed WITHOUT a
+        tombstone — for v1 only auto-origin removals are suppressed, so a
+        hand-applied removal of a mapping a tag-match would also create is left
+        free to be re-suggested.
+
+        Args:
+            applied_rule_id: The applied-rule row to remove.
+            user_email: The acting remover, recorded as ``suppressed_by`` on a
+                tombstone when the removed row was tag-auto applied.
 
         Raises:
             RuntimeError: *applied_rule_id* does not exist.
@@ -477,6 +637,8 @@ class ApplyRulesService:
         e = escape_sql_string(applied_rule_id)
         self._sql.execute(f"DELETE FROM {self._quality_rules_table} WHERE applied_rule_id = '{e}'")
         self._sql.execute(f"DELETE FROM {self._table} WHERE id = '{e}'")
+        if existing.user_metadata.get(ORIGIN_KEY) == ORIGIN_TAG_AUTO and existing.mapping_hash:
+            self._record_suppression(existing.binding_id, existing.rule_id, existing.mapping_hash, user_email)
         logger.info(
             "Removed applied rule %s (binding=%s, rule=%s)", applied_rule_id, existing.binding_id, existing.rule_id
         )
