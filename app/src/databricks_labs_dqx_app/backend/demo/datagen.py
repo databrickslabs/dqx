@@ -409,14 +409,23 @@ def _fail_levels(week: int, weeks: int) -> dict[str, float]:
     frac = week / max(weeks - 1, 1)
     incident = max(0.0, 1 - abs(week - (weeks - 1) * 0.42) / 2.0)
     shump = max(0.0, 1 - abs(week - (weeks - 1) * 0.18) / 2.0)
+    # Fail levels are kept in a believable band: a credible deployment is mostly
+    # healthy with pockets of issues, not majority-broken. These are per-COLUMN
+    # target rates, and a completeness rule spans several columns, so the union a
+    # steward sees is higher than any single level — keeping the worst table's
+    # per-column peak near ~0.35 keeps table pass rates realistic (roughly
+    # 55-95%) AND keeps every legitimate rate far below the validation gate's
+    # 0.985 misfire threshold. The story beats (customers improving, an orders
+    # incident, a payments tightening step, chronically-weaker products, an early
+    # shipments bump) are preserved, just gentler.
     return {
-        "customers": _clamp(0.74 - 0.60 * frac + _jitter(week, 13, 0.13)),
-        "orders": _clamp(0.06 + 0.80 * incident + _jitter(week, 29, 0.12)),
+        "customers": _clamp(0.30 - 0.24 * frac + _jitter(week, 13, 0.05)),
+        "orders": _clamp(0.04 + 0.30 * incident + _jitter(week, 29, 0.05)),
         "payments": _clamp(
-            0.16 + 0.38 * frac + (0.14 if week >= TIGHTEN_WEEK else 0.0) + _jitter(week, 23, 0.12)
+            0.08 + 0.14 * frac + (0.08 if week >= TIGHTEN_WEEK else 0.0) + _jitter(week, 23, 0.05)
         ),
-        "products": _clamp(0.64 + _jitter(week, 19, 0.20)),
-        "shipments": _clamp(0.18 + 0.40 * shump + _jitter(week, 31, 0.16)),
+        "products": _clamp(0.28 + _jitter(week, 19, 0.08)),
+        "shipments": _clamp(0.10 + 0.18 * shump + _jitter(week, 31, 0.06)),
     }
 
 
