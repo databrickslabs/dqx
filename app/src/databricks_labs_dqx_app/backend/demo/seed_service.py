@@ -629,8 +629,23 @@ class DemoSeedService:
             trend_points += 1
 
         # Final truthful "now" refresh so the app's cached scores are current.
+        # This refresh re-runs tables -> products -> global to update
+        # ``dq_score_cache``, but ScoreCacheService also APPENDS one
+        # ``dq_score_history`` row per scope at real-wall-clock ``now()`` — and
+        # those appends are never re-dated, so they would dump a cluster of
+        # stuck real-now points onto the back-dated weekly trend. Every genuine
+        # weekly point was already re-dated to at-or-before ``now`` (the final
+        # week shares ``now``; earlier weeks are in the past), so deleting every
+        # history row with ``computed_at`` strictly after ``now`` strips exactly
+        # the polluting appends while keeping the refreshed cache current.
         self._score_cache.refresh_all_for_tables(sorted(self._table_fqns()))
+        self._delete_history_after(redate.iso(now))
         return trend_points
+
+    def _delete_history_after(self, cutoff_iso: str) -> None:
+        """Delete ``dq_score_history`` rows appended after *cutoff_iso* (the polluting real-now appends)."""
+        history_fqn = self._oltp.fqn("dq_score_history")
+        self._oltp.execute(redate.build_delete_history_after_sql(history_fqn, cutoff_iso))
 
     def _current_rule_ids(self) -> dict[str, str]:
         """Resolve each manifest rule spec to its approved registry rule id (by fingerprint).

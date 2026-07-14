@@ -41,3 +41,19 @@ def test_delete_run_id_is_escaped_against_injection():
 def test_run_id_is_escaped_against_injection():
     sql = r.build_redate_metrics_sql(M, "a'b", "2026-05-01 09:30:00")
     assert "'a''b'" in sql  # ANSI doubled-quote escaping
+
+
+def test_delete_history_after_targets_computed_at_cutoff():
+    sql = r.build_delete_history_after_sql(H, "2026-05-01 09:30:00")
+    assert sql.startswith("DELETE FROM")
+    assert H in sql
+    # deletes rows appended AFTER the cutoff (the un-re-dated real-now appends)
+    assert "computed_at > CAST('2026-05-01 09:30:00' AS TIMESTAMP)" in sql
+    # no run/scope filter — a plain computed_at cutoff over the whole table
+    assert "scope_type" not in sql
+    assert "run_id" not in sql
+
+
+def test_delete_history_after_cutoff_is_escaped_against_injection():
+    sql = r.build_delete_history_after_sql(H, "a'b")
+    assert "'a''b'" in sql  # ANSI doubled-quote escaping

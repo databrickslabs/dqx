@@ -214,6 +214,48 @@ def test_assert_no_misfire_logs_when_unique_check_name_missing(caplog):
     assert "band was skipped" in caplog.text
 
 
+def test_weekly_trend_strips_polluting_now_history_but_keeps_cache_current():
+    # BUG: the final "truthful now" refresh_all_for_tables updates dq_score_cache
+    # but ScoreCacheService ALSO appends one un-re-dated dq_score_history row per
+    # scope at real wall-clock now() — those clustered real-now points pollute the
+    # back-dated weekly trend. The seed must (a) still call refresh_all_for_tables
+    # so the current cache is truthful, and (b) issue a history cleanup that
+    # deletes every history row appended after the shared "now" cutoff.
+    svc, deps = _svc()
+    deps["registry"].match_or_create_approved_rule.return_value = (MagicMock(rule_id="r1"), True)
+    deps["registry"].find_approved_rule_for_definition.side_effect = lambda _d: MagicMock(rule_id="r1")
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+    deps["app_sql"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+    deps["oltp"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+
+    low, high = manifest.UNIQUE_EXPECT_ROWS
+    in_band = (low + high) // 2
+
+    def _query_dicts(sql, *_a, **_k):
+        if "metric_name" in sql:
+            return _metrics_rows(50_000, in_band)
+        return [{"status": "SUCCESS"}]
+
+    deps["app_sql"].query_dicts.side_effect = _query_dicts
+
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=1)
+
+    # (a) the current cache is still refreshed truthfully
+    assert deps["score_cache"].refresh_all_for_tables.called
+
+    # (b) a history cleanup deletes rows appended after the "now" cutoff, so no
+    # un-re-dated real-now history row survives to pollute the trend
+    executed = [call.args[0] for call in deps["oltp"].execute.call_args_list]
+    cleanup = [s for s in executed if s.startswith("DELETE FROM") and "dq_score_history" in s and "computed_at >" in s]
+    assert cleanup, "expected a dq_score_history post-cutoff cleanup DELETE"
+
+    # terminal status succeeded
+    last = deps["status"].set.call_args_list[-1].args[0]
+    assert last.state == "succeeded"
+
+
 def test_validation_gate_deletes_gate_runs_from_both_tables():
     # FIX 1: the validation-gate runs execute at real "now" and are never
     # re-dated, so they must be deleted from dq_metrics AND dq_validation_runs

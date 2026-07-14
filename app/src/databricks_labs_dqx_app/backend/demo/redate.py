@@ -125,3 +125,24 @@ def build_redate_latest_history_sql(history_fqn: str, scope_type: str, scope_key
         f"SELECT MAX(computed_at) FROM {history_fqn} "
         f"WHERE scope_type = '{e_type}' AND scope_key = '{e_key}')"
     )
+
+
+def build_delete_history_after_sql(history_fqn: str, cutoff_iso: str) -> str:
+    """Build SQL to delete every *dq_score_history* row appended after *cutoff_iso*.
+
+    Used after the final "truthful now" cache refresh: that refresh appends one
+    real-wall-clock (``computed_at = now()``) trend point per scope which is
+    never re-dated and would pollute the back-dated weekly trend. Every genuine
+    weekly point was already re-dated to at-or-before the cutoff, so a plain
+    ``computed_at > cutoff`` delete strips exactly the polluting appends across
+    all scopes in one statement — no run_id or scope filter needed.
+
+    Args:
+        history_fqn: Fully-qualified *dq_score_history* table name.
+        cutoff_iso: Cutoff timestamp literal body (*YYYY-MM-DD HH:MM:SS*); rows
+            with *computed_at* strictly greater than this are deleted.
+
+    Returns:
+        A ``DELETE`` statement removing rows newer than the cutoff.
+    """
+    return f"DELETE FROM {history_fqn} WHERE computed_at > {_ts(cutoff_iso)}"
