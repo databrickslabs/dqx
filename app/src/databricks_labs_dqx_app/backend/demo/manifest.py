@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 
 SOURCE_CATALOG_ENV_DEFAULT = "dqx"
 SOURCE_SCHEMA = "dqx_studio_demo"
-WEEKS_DEFAULT = 12
+WEEKS_DEFAULT = 9
 TIGHTEN_WEEK = 6
 # Description applied to the card-validation rule mid-history (at TIGHTEN_WEEK)
 # to drive a real rule edit + re-approve so the rule advances to a new published

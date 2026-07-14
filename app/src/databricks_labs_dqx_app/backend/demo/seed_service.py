@@ -110,6 +110,14 @@ _RUN_TIMEOUT_SECONDS = 1800
 _RUN_POLL_SECONDS = 10
 # Terminal run states as written to ``dq_validation_runs.status`` by the runner.
 _TERMINAL_RUN_STATES = ("SUCCESS", "FAILED", "CANCELED")
+# The runner appends the terminal ``dq_validation_runs`` row BEFORE it writes the
+# run's ``dq_metrics`` rows, so a run can be "terminal" (per :meth:`_wait_for_run`)
+# a beat before its metrics exist. Before re-dating ``dq_metrics`` we poll for
+# those rows so the re-date UPDATE never matches zero rows and strands a week at
+# wall-clock now. Bounded and short — the metrics write trails the terminal row
+# by seconds, not minutes.
+_METRICS_TIMEOUT_SECONDS = 120
+_METRICS_POLL_SECONDS = 5
 
 
 @dataclass
@@ -812,11 +820,53 @@ class DemoSeedService:
         return stmts
 
     def _redate_run(self, run_id: str, target_iso: str) -> None:
-        """Shift a run's ``dq_metrics`` and ``dq_validation_runs`` timestamps to *target_iso*."""
+        """Shift a run's ``dq_metrics`` and ``dq_validation_runs`` timestamps to *target_iso*.
+
+        The runner writes the terminal ``dq_validation_runs`` (SUCCESS) row
+        BEFORE it writes the run's ``dq_metrics`` rows (see the task runner:
+        ``result_row.writeTo(...).append()`` precedes ``_persist_observed_metrics``).
+        :meth:`_wait_for_run` polls only ``dq_validation_runs``, so it can return
+        the instant the terminal row lands — while the metrics rows for this
+        run_id do not yet exist. Re-dating ``dq_metrics`` at that moment would
+        match ZERO rows, leaving the week's metrics stuck at real wall-clock and
+        producing an isolated disconnected 'now' point in the Score-by-Severity
+        chart (the symptom this fixes). So before re-dating we WAIT for the
+        metrics rows to exist, and if they never appear we log a loud demo-layer
+        warning rather than silently skipping the re-date.
+        """
         metrics_fqn = self._app_sql.fqn("dq_metrics")
         runs_fqn = self._app_sql.fqn("dq_validation_runs")
+        if not self._wait_for_metrics(run_id):
+            logger.warning(
+                "Demo re-date: no dq_metrics rows for run %s after waiting %ss — its metrics "
+                "will not be back-dated and may show as a stray 'now' point in the trend.",
+                self._sanitize(run_id),
+                _METRICS_TIMEOUT_SECONDS,
+            )
         self._app_sql.execute(redate.build_redate_metrics_sql(metrics_fqn, run_id, target_iso))
         self._app_sql.execute(redate.build_redate_runs_sql(runs_fqn, run_id, target_iso))
+
+    def _wait_for_metrics(self, run_id: str) -> bool:
+        """Poll ``dq_metrics`` until at least one row exists for *run_id*; return whether it appeared.
+
+        Closes the write-order gap between the terminal ``dq_validation_runs``
+        row (which :meth:`_wait_for_run` gates on) and the later ``dq_metrics``
+        write, guaranteeing every week's run rows are present before the re-date
+        UPDATE runs. Returns ``True`` as soon as a row is seen, ``False`` if the
+        bounded deadline elapses first (the caller logs that loudly).
+        """
+        metrics_fqn = self._app_sql.fqn("dq_metrics")
+        deadline = time.monotonic() + _METRICS_TIMEOUT_SECONDS
+        while True:
+            rows = self._app_sql.query_dicts(
+                f"SELECT run_id FROM {metrics_fqn} "  # noqa: S608
+                f"WHERE run_id = '{escape_sql_string(run_id)}' LIMIT 1"
+            )
+            if rows:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(_METRICS_POLL_SECONDS)
 
     def _redate_history(self, scope_type: str, scope_key: str, target_iso: str) -> None:
         """Re-date the most recently appended ``dq_score_history`` row of a scope to *target_iso*."""
@@ -825,34 +875,40 @@ class DemoSeedService:
 
     @staticmethod
     def _week_instant(now: datetime, week: int, weeks: int) -> datetime:
-        """Return the (irregularly spaced) instant for *week*; the final week shares *now*.
+        """Return the (irregularly spaced) instant for *week*; the final week is ``now - 30min``.
 
-        Widens and varies the trend's calendar span so it reads like an organic
-        run history (a Mar->Jul spread) rather than a tidy uniform weekly cadence.
-        Deterministic: the gap between consecutive points and each point's
-        hour-of-day are read from fixed lists (dqlake's seed_demo cadence), never
-        randomised. Points are laid oldest-first from *now* going back: the final
-        week (``week == weeks - 1``) is exactly *now*, and each earlier week steps
-        further back by the cumulative gap. When *weeks* exceeds the fixed-list
-        length the lists wrap by modulo, so any week count stays deterministic.
+        Reproduces dqlake's ``seed_demo.py`` weekly cadence EXACTLY (the
+        ``GAP_DAYS`` / ``HOURS`` / ``week_ts`` block): irregular per-step day
+        gaps, a varied hour-of-day, and a per-week minute offset, laid oldest-
+        first from *now* going back. The final week (``week == weeks - 1``) is
+        dqlake's ``final_instant`` — ``now - 30 minutes`` — not exactly *now*, so
+        the newest point reads as a real recent run rather than a wall-clock
+        artifact. Deterministic: every component is read from fixed lists (wrapped
+        by modulo for any week count), never randomised.
+
+        The cumulative back-step for *week* is ``sum(GAP_DAYS[j] for j in
+        range(weeks - 1 - week))`` — the same ``days_ago`` dqlake builds by
+        accumulating gaps oldest-first — so the points monotonically approach
+        ``now``.
 
         Args:
-            now: the shared "now" instant; the final week resolves to it exactly.
+            now: the shared "now" instant; the final week resolves to ``now - 30min``.
             week: the zero-based week index.
             weeks: the total number of weeks in the trend.
 
         Returns:
-            The instant for *week*, at or before *now*.
+            The instant for *week*, strictly at or before *now*.
         """
-        if week >= weeks - 1:
-            return now
-        # Irregular per-step day gaps and varied hours-of-day (fixed, deterministic).
+        # dqlake's exact fixed cadence lists (seed_demo.py:1264-1265).
         gap_days = (11, 4, 9, 14, 6, 3, 12, 8, 5, 13, 7, 10)
-        hours = (9, 14, 11, 16, 8, 13, 10, 15, 12, 17, 7, 18)
-        # Sum the gaps between this week and the final (now) week so points are
-        # oldest-first and monotonically approach `now`.
-        days_back = sum(gap_days[(weeks - 2 - i) % len(gap_days)] for i in range(week, weeks - 1))
-        return now - timedelta(days=days_back, hours=hours[week % len(hours)])
+        hours = (9, 14, 6, 19, 11, 2, 16, 22, 8, 13, 4, 20)
+        if week >= weeks - 1:
+            # dqlake's final_instant: the newest run is a single recent instant.
+            return now - timedelta(minutes=30)
+        # days_ago[week] = sum of the gaps between this week and the final week,
+        # matching dqlake's oldest-first accumulation.
+        days_ago = sum(gap_days[j % len(gap_days)] for j in range(weeks - 1 - week))
+        return now - timedelta(days=days_ago, hours=hours[week % len(hours)], minutes=(week * 17) % 60)
 
     def _wait_for_run(self, run_id: str) -> str:
         """Poll ``dq_validation_runs`` until the run is terminal; return its final status.

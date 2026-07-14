@@ -15,7 +15,7 @@ from unittest.mock import create_autospec, MagicMock
 
 import pytest
 
-from databricks_labs_dqx_app.backend.demo import manifest
+from databricks_labs_dqx_app.backend.demo import manifest, redate
 from databricks_labs_dqx_app.backend.demo.seed_service import DemoSeedService
 from databricks_labs_dqx_app.backend.demo.status import DemoStatusStore
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
@@ -501,6 +501,10 @@ def test_weekly_trend_submits_all_bindings_before_waiting_or_redating():
     def _query_dicts(sql, *_a, **_k):
         if "metric_name" in sql:
             return _metrics_rows(50_000, in_band)
+        # The metrics-existence poll (FIX E) reads run_id from dq_metrics; it must
+        # see a present row so the re-date proceeds. It is NOT a run-status wait.
+        if "dq_metrics" in sql:
+            return [{"run_id": "run1"}]
         events.append("wait")
         return [{"status": "SUCCESS"}]
 
@@ -600,6 +604,164 @@ def test_wait_for_run_detects_failed_terminal_row_behind_placeholder():
     assert svc._wait_for_run("run1") == "FAILED"
 
 
+def test_redate_run_waits_for_metrics_rows_before_updating(monkeypatch):
+    # FIX E (root cause): the runner appends the terminal dq_validation_runs
+    # (SUCCESS) row BEFORE it writes the run's dq_metrics rows, and _wait_for_run
+    # gates only on dq_validation_runs. So _redate_run must first wait for the
+    # dq_metrics rows to EXIST for this run_id, otherwise its metrics UPDATE
+    # matches zero rows and the week is stranded at wall-clock now (the isolated
+    # 'now' point in the Score-by-Severity chart). Assert the existence poll runs
+    # and that both re-date UPDATEs are then issued.
+    from databricks_labs_dqx_app.backend.demo import seed_service as ss
+
+    monkeypatch.setattr(ss, "_METRICS_POLL_SECONDS", 0)  # no real sleep in the poll loop
+    svc, deps = _svc()
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    # metrics rows appear only on the second poll — the first sees none yet.
+    calls = {"n": 0}
+
+    def _query_dicts(sql, *_a, **_k):
+        assert "dq_metrics" in sql  # the existence poll targets dq_metrics
+        calls["n"] += 1
+        return [] if calls["n"] == 1 else [{"run_id": "run1"}]
+
+    deps["app_sql"].query_dicts.side_effect = _query_dicts
+
+    svc._redate_run("run1", "2026-05-01 09:30:00")
+
+    assert calls["n"] == 2  # polled until the metrics rows appeared
+    updates = [c.args[0] for c in deps["app_sql"].execute.call_args_list if c.args[0].startswith("UPDATE")]
+    assert any("dq_metrics" in s for s in updates)
+    assert any("dq_validation_runs" in s for s in updates)
+
+
+def test_redate_run_logs_loudly_when_metrics_never_appear(monkeypatch, caplog):
+    # FIX E: if the dq_metrics rows never materialise within the bounded window,
+    # the re-date must NOT be silently skipped — it must emit a loud demo-layer
+    # warning so a stranded week is never invisible. (The UPDATE still runs; it
+    # simply matches nothing, which the warning flags.)
+    from databricks_labs_dqx_app.backend.demo import seed_service as ss
+
+    monkeypatch.setattr(ss, "_METRICS_TIMEOUT_SECONDS", 0)  # deadline already passed
+    monkeypatch.setattr(ss, "_METRICS_POLL_SECONDS", 0)
+    svc, deps = _svc()
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.side_effect = lambda *_a, **_k: []  # metrics never appear
+
+    with caplog.at_level("WARNING", logger="databricks_labs_dqx_app.backend.demo.seed_service"):
+        svc._redate_run("run1", "2026-05-01 09:30:00")
+    assert "no dq_metrics rows for run" in caplog.text
+
+
+def test_weekly_trend_redates_every_run_id_once_per_binding_per_week():
+    # FIX E: every week's run for every binding must be re-dated exactly once, to
+    # THAT week's target instant — so no later week is left un-re-dated at real
+    # wall-clock. Give each binding a distinct run_id and assert _redate_run's
+    # metrics UPDATE fires once per (binding, week) with the week's target_iso.
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["registry"].find_approved_rule_for_definition.side_effect = lambda _d: MagicMock(rule_id="r1")
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+
+    run_seq = {"n": 0}
+
+    def _run_binding(*_a, **_k):
+        run_seq["n"] += 1
+        return MagicMock(run_id=f"run-{run_seq['n']}")
+
+    deps["binding_run"].run_binding.side_effect = _run_binding
+    # run-status poll + metrics-existence poll both return a present, terminal row.
+    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
+        [{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}]
+    )
+
+    weeks = 3
+    now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc)
+    binding_map = {"customers": "b-customers", "orders": "b-orders", "products": "b-products"}
+    rule_map = {spec.key: "r1" for spec in manifest.RULES}
+    svc._build_weekly_trend(binding_map, rule_map, ["p1"], weeks, "admin@example.com", now)
+
+    metrics_updates = [
+        c.args[0]
+        for c in deps["app_sql"].execute.call_args_list
+        if c.args[0].startswith("UPDATE") and "dq_metrics" in c.args[0]
+    ]
+    # one metrics re-date per (binding, week) — nothing left un-re-dated
+    assert len(metrics_updates) == len(binding_map) * weeks
+    # every week's target instant is represented in the re-dates
+    week_isos = {redate.iso(DemoSeedService._week_instant(now, w, weeks)) for w in range(weeks)}
+    for target_iso in week_isos:
+        assert any(target_iso in s for s in metrics_updates), f"week instant {target_iso} was never re-dated"
+
+
+def test_weekly_trend_tightens_card_rule_exactly_once_no_version_cluster():
+    # FIX D: the ONE deliberate rule-content evolution (the card-rule tighten) must
+    # fire exactly ONCE across the whole run — at TIGHTEN_WEEK — never every week,
+    # which is what produced the user-flagged "clustered version changes". Binding
+    # re-approvals (which bump binding versions) happen only when a binding's
+    # active rule-key set CHANGES (a lifecycle week), not every week.
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["registry"].find_approved_rule_for_definition.side_effect = lambda _d: MagicMock(rule_id="card-rid")
+    deps["registry"].approve.return_value = MagicMock(rule_id="card-rid", version=2)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
+        [{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}]
+    )
+
+    rule_map = {spec.key: "card-rid" for spec in manifest.RULES}
+    binding_map = {b.table: f"b-{b.table}" for b in manifest.BINDINGS}
+    weeks = manifest.WEEKS_DEFAULT  # spans TIGHTEN_WEEK
+    svc._build_weekly_trend(binding_map, rule_map, ["p1"], weeks, "admin@example.com", datetime.now(timezone.utc))
+
+    # the content edit (update_draft) fired exactly once — no per-week clustering
+    assert deps["registry"].update_draft.call_count == 1
+
+
+def test_weekly_trend_reapproves_bindings_only_on_lifecycle_change():
+    # FIX D: binding version bumps (each _approve_binding call) must happen only
+    # when a binding's active rule-key set CHANGES, not every week — otherwise
+    # every week would re-approve every binding and cluster binding versions.
+    # customers has three lifecycle transitions (tier_set@2, unique@3,
+    # not_future retired@6) plus its week-0 initial apply => 4 approvals over the
+    # full run, NOT one-per-week.
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["registry"].find_approved_rule_for_definition.side_effect = lambda _d: MagicMock(rule_id="r1")
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
+        [{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}]
+    )
+
+    applied_per_table: dict[str, int] = {}
+
+    def _save(binding_id, *_a, **_k):
+        applied_per_table[binding_id] = applied_per_table.get(binding_id, 0) + 1
+
+    deps["apply_rules"].save_applied_rules.side_effect = _save
+
+    rule_map = {spec.key: "r1" for spec in manifest.RULES}
+    binding_map = {b.table: f"b-{b.table}" for b in manifest.BINDINGS}
+    weeks = manifest.WEEKS_DEFAULT
+    svc._build_weekly_trend(binding_map, rule_map, ["p1"], weeks, "admin@example.com", datetime.now(timezone.utc))
+
+    # customers: week-0 apply + 3 lifecycle transitions (wk2, wk3, wk6) = 4, far
+    # fewer than one-per-week (which would be `weeks`).
+    assert applied_per_table["b-customers"] == 4
+    assert applied_per_table["b-customers"] < weeks
+
+
 def test_weekly_trend_redates_history_for_every_scope_each_week():
     # BUG 2 guard: each weekly refresh appends exactly ONE dq_score_history row
     # per scope (table / product / global) at real now(); the per-week
@@ -634,16 +796,21 @@ def test_weekly_trend_redates_history_for_every_scope_each_week():
     assert len(global_redates) == 1 * weeks  # global, every week
 
 
-def test_week_instant_is_irregular_monotonic_and_final_equals_now():
-    # FIX 3: the trend's calendar span must be irregular (varied gaps + hours)
-    # and widen well beyond a uniform 7-day cadence, oldest-first, with the final
-    # week landing exactly on the shared `now`. Deterministic (no randomness).
+def test_week_instant_matches_dqlake_cadence_irregular_monotonic_and_final_recent():
+    # FIX C: the trend's calendar span reproduces dqlake's exact seed_demo cadence
+    # (fixed GAP_DAYS / HOURS / minute-offset lists) — irregular gaps + varied
+    # hours, oldest-first, widening well beyond a uniform 7-day cadence, with the
+    # final week landing on dqlake's final_instant (now - 30 minutes), NOT exactly
+    # now. Deterministic (no randomness).
+    from datetime import timedelta
+
     now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc)
     weeks = manifest.WEEKS_DEFAULT
     pts = [DemoSeedService._week_instant(now, w, weeks) for w in range(weeks)]
 
-    assert pts[-1] == now  # final week shares now
-    # strictly oldest-first (monotonic increasing) and all at or before now
+    # final week is dqlake's final_instant: a single recent instant, now - 30min
+    assert pts[-1] == now - timedelta(minutes=30)
+    # strictly oldest-first (monotonic increasing) and all strictly before now
     assert all(pts[i] < pts[i + 1] for i in range(len(pts) - 1))
     assert all(p <= now for p in pts)
     # gaps between consecutive points are NOT all equal (irregular cadence)
@@ -651,6 +818,22 @@ def test_week_instant_is_irregular_monotonic_and_final_equals_now():
     assert len(gaps) > 1, "expected irregular day gaps, not a uniform cadence"
     # the span is materially wider than a tidy weeks*7 uniform cadence would give
     assert (now - pts[0]).days > weeks * 7
+
+    # Reproduces dqlake's seed_demo.py week_ts construction EXACTLY.
+    gap_days = (11, 4, 9, 14, 6, 3, 12, 8, 5, 13, 7, 10)
+    hours = (9, 14, 6, 19, 11, 2, 16, 22, 8, 13, 4, 20)
+    gaps_ref = [gap_days[i % len(gap_days)] for i in range(weeks - 1)]
+    days_ago = [0] * weeks
+    acc = 0
+    for i in range(weeks - 2, -1, -1):
+        acc += gaps_ref[weeks - 2 - i]
+        days_ago[i] = acc
+    expected = [
+        now - timedelta(days=days_ago[i], hours=hours[i % len(hours)], minutes=(i * 17) % 60)
+        for i in range(weeks)
+    ]
+    expected[weeks - 1] = now - timedelta(minutes=30)
+    assert pts == expected
 
 
 def test_week_instant_is_deterministic():

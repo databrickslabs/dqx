@@ -374,19 +374,21 @@ def _mut(fqn: str, col: str, pk: str, salt: int, rate: float, bad: str, good: st
 
 
 def _clamp(value: float) -> float:
-    """Clamp a fail level into the visible ``[0.005, 0.95]`` band.
+    """Clamp a fail level into the visible ``[0.005, 0.97]`` band.
 
-    The 0.95 ceiling is deliberate: a per-column mutation rate is multiplied by
+    The 0.97 ceiling is dqlake's (see the reference seed_demo.py ``mutate_week``
+    inner ``cl``). It is deliberate: a per-column mutation rate is multiplied by
     up to 1.25 before landing here, and the seeder's validation gate hard-fails
     any check at or above ``_MISFIRE_RATE`` (0.985) as a mis-bound rule. Because
     every per-column ``_mutate_*`` statement re-applies ``_clamp`` after its
     ``f * mult`` factor, the highest rate any single column can ever reach is the
-    ceiling itself (0.95) — still clearly below the 0.985 gate. That headroom lets
-    the story restore dqlake's dramatic amplitudes (a real orders incident dip,
-    chronically-weak products) while a genuinely mis-bound rule (which flags
-    ~100% of rows) stays the only thing that trips the gate.
+    ceiling itself (0.97) — still below the 0.985 gate. The gate is per-check,
+    never a union across checks, so a 0.97 single-column rate is safe. That
+    headroom lets the story keep dqlake's dramatic amplitudes (a real orders
+    incident dip, chronically-weak products) while a genuinely mis-bound rule
+    (which flags ~100% of rows) stays the only thing that trips the gate.
     """
-    return max(0.005, min(0.95, value))
+    return max(0.005, min(0.97, value))
 
 
 def _jitter(week: int, salt: int, amp: float) -> float:
@@ -411,30 +413,31 @@ def _fail_levels(week: int, weeks: int) -> dict[str, float]:
     frac = week / max(weeks - 1, 1)
     incident = max(0.0, 1 - abs(week - (weeks - 1) * 0.42) / 2.0)
     shump = max(0.0, 1 - abs(week - (weeks - 1) * 0.18) / 2.0)
-    # Amplitudes are dqlake-faithful (see the reference seed_demo.py mutate_week)
-    # so the trend reads with real drama rather than a flat believable band: a
-    # genuine orders incident that dips hard mid-run and recovers, chronically-
-    # weaker products as the visibly-worst table, customers clearly improving, a
-    # payments decline with a tightening step at TIGHTEN_WEEK, and a variable
-    # early shipments bump.
+    # Amplitudes are dqlake-faithful — the EXACT per-table formulas from the
+    # reference seed_demo.py ``mutate_week`` — so the trend reads with real drama
+    # rather than a flat band: customers clearly improving (0.72 -> ~0.16), a
+    # genuine orders incident that dips hard mid-run and recovers, a payments
+    # decline with a tightening step at TIGHTEN_WEEK, chronically-weak products
+    # as the visibly-worst table (~0.59-0.81), and a variable early shipments
+    # bump. Jitter amplitudes are dqlake's (0.12-0.20).
     #
     # These are per-COLUMN target rates. Each ``_mutate_*`` column re-applies
     # ``_clamp`` after its ``f * mult`` factor (mult up to 1.25), so the highest
-    # rate any single column can reach is the 0.95 ceiling — clear of the
-    # validation gate's 0.985 misfire threshold. The base bands are chosen so
-    # even the ×1.25 columns land under the gate: orders peaks at 0.06+0.80=0.86
-    # (×1.15 status re-clamps to 0.95), products at 0.45 (×1.25 = 0.56),
-    # payments at 0.16+0.38+0.14=0.68 (×1.1 = 0.75). Customers stays gentle on
-    # purpose: its completeness rule spans five columns, so the steward-visible
-    # union across them must stay believable.
+    # rate any single column can reach is the 0.97 ceiling. The validation gate
+    # is PER-CHECK (never a union across checks) and its misfire threshold is
+    # 0.985, so a single column at 0.97 is safe. Verified empirically across all
+    # weeks 0..weeks-1 and the weeks=1 baseline-gate case: the max realized
+    # per-column rate (base_fail x column_multiplier, then _clamp) is 0.97, below
+    # the gate. dqlake customers wk0 = 0.72 x 1.25 (country_code) = 0.90 < 0.985;
+    # products wk0 = 0.615 x 1.25 (category) = 0.77 < 0.985.
     return {
-        "customers": _clamp(0.30 - 0.24 * frac + _jitter(week, 13, 0.05)),
-        "orders": _clamp(0.06 + 0.80 * incident + _jitter(week, 29, 0.06)),
+        "customers": _clamp(0.74 - 0.60 * frac + _jitter(week, 13, 0.13)),
+        "orders": _clamp(0.06 + 0.80 * incident + _jitter(week, 29, 0.12)),
         "payments": _clamp(
-            0.16 + 0.38 * frac + (0.14 if week >= TIGHTEN_WEEK else 0.0) + _jitter(week, 23, 0.05)
+            0.16 + 0.38 * frac + (0.14 if week >= TIGHTEN_WEEK else 0.0) + _jitter(week, 23, 0.12)
         ),
-        "products": _clamp(0.45 + _jitter(week, 19, 0.08)),
-        "shipments": _clamp(0.18 + 0.40 * shump + _jitter(week, 31, 0.06)),
+        "products": _clamp(0.64 + _jitter(week, 19, 0.20)),
+        "shipments": _clamp(0.18 + 0.40 * shump + _jitter(week, 31, 0.16)),
     }
 
 
