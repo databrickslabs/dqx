@@ -257,7 +257,12 @@ class DemoSeedService:
         for tag in manifest.COLUMN_TAGS:
             try:
                 self._assign_column_tag(tag)
-            except Exception as exc:  # noqa: BLE001 — tag assignment is best-effort
+            except Exception as exc:
+                # Broad except by design (see the BLE001 policy block in
+                # pyproject.toml): tag assignment is a best-effort showcase, so
+                # ANY failure — a missing ASSIGN privilege, an undefined tag, a
+                # transient API error — is logged and skipped rather than
+                # aborting the ~1h seed.
                 logger.warning(
                     "Skipped governed tag %s on %s.%s: %s",
                     tag.tag,
@@ -697,7 +702,11 @@ class DemoSeedService:
             self._registry.submit(rule_id, user_email)
             approved = self._registry.approve(rule_id, user_email)
             logger.info("Tightened card rule %s -> v%s", rule_id, getattr(approved, "version", "?"))
-        except Exception as exc:  # noqa: BLE001 — version bump is best-effort, must not abort the seed
+        except Exception as exc:
+            # Broad except by design (see the BLE001 policy block in
+            # pyproject.toml): the mid-history version bump is a best-effort
+            # story beat, so any failure is logged and skipped rather than
+            # aborting the seed's trend build.
             logger.warning("Skipped card-rule version bump on %s: %s", rule_id, self._sanitize(str(exc)))
 
     def _delete_history_after(self, cutoff_iso: str) -> None:
