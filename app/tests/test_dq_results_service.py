@@ -27,6 +27,7 @@ from databricks_labs_dqx_app.backend.models import TrendPointOut
 from databricks_labs_dqx_app.backend.services.dq_results_service import (
     CheckResultRow,
     ResultFacets,
+    _by_rule_rows,
     annotate_trend_versions,
     compute_entity_results,
     parse_check_rows,
@@ -61,7 +62,6 @@ def make_row(
         rule_id=rule_id,
         run_mode=run_mode,
     )
-
 
 
 def expand_asof(rows: list[CheckResultRow]) -> list[CheckResultRow]:
@@ -407,9 +407,7 @@ class TestVersionAccuracy:
         # them) and each run groups under what it RAN with.
         rows = [
             make_row("c1", failed=10, total=100, run_id="r1", run_date="d1", severity="Low", dimension="Validity"),
-            make_row(
-                "c1", failed=10, total=100, run_id="r2", run_date="d2", severity="Critical", dimension="Accuracy"
-            ),
+            make_row("c1", failed=10, total=100, run_id="r2", run_date="d2", severity="Critical", dimension="Accuracy"),
         ]
         out = compute_entity_results(rows, ResultFacets())
         assert {g.label for g in out.by_severity} == {"Low", "Critical"}
@@ -691,13 +689,9 @@ class TestAsOfAverageTrend:
 
     def test_facets_scope_the_carried_forward_rates(self):
         rows = [
-            make_row(
-                "c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Completeness"
-            ),
+            make_row("c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Completeness"),
             make_row("c2", failed=90, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Validity"),
-            make_row(
-                "c1", failed=50, total=100, run_id="b1", run_date=self.T2, fqn=self.B, dimension="Completeness"
-            ),
+            make_row("c1", failed=50, total=100, run_id="b1", run_date=self.T2, fqn=self.B, dimension="Completeness"),
         ]
         out = self._compute(rows, ResultFacets(dimensions=("Completeness",)))
         # A's carried-forward rate at t2 is its Completeness-only rate (0.9),
@@ -773,16 +767,10 @@ class TestAsOfGroupedTrends:
         # 1.0 — Validity dropped from the run); B runs at t2 only
         # (Completeness 0.5).
         return [
-            make_row(
-                "c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Completeness"
-            ),
+            make_row("c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Completeness"),
             make_row("c2", failed=0, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Validity"),
-            make_row(
-                "c1", failed=50, total=100, run_id="b1", run_date=self.T2, fqn=self.B, dimension="Completeness"
-            ),
-            make_row(
-                "c1", failed=0, total=100, run_id="a2", run_date=self.T3, fqn=self.A, dimension="Completeness"
-            ),
+            make_row("c1", failed=50, total=100, run_id="b1", run_date=self.T2, fqn=self.B, dimension="Completeness"),
+            make_row("c1", failed=0, total=100, run_id="a2", run_date=self.T3, fqn=self.A, dimension="Completeness"),
         ]
 
     def _compute(self, rows: list[CheckResultRow], facets: ResultFacets | None = None):
@@ -805,12 +793,8 @@ class TestAsOfGroupedTrends:
         # dqlake's grouped trend is SUM/SUM over the carried rows — with very
         # different test volumes the pooled rate diverges from the mean.
         rows = [
-            make_row(
-                "c1", failed=0, total=1000, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Completeness"
-            ),
-            make_row(
-                "c1", failed=5, total=10, run_id="b1", run_date=self.T1, fqn=self.B, dimension="Completeness"
-            ),
+            make_row("c1", failed=0, total=1000, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Completeness"),
+            make_row("c1", failed=5, total=10, run_id="b1", run_date=self.T1, fqn=self.B, dimension="Completeness"),
         ]
         out = self._compute(rows)
         point = next(p for p in out.trend_by_dimension if p.series == "Completeness")
@@ -882,12 +866,8 @@ class TestLatestRunBreakdowns:
 
     def _two_runs_each(self) -> list[CheckResultRow]:
         return [
-            make_row(
-                "c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Completeness"
-            ),
-            make_row(
-                "c1", failed=20, total=100, run_id="a2", run_date=self.T2, fqn=self.A, dimension="Completeness"
-            ),
+            make_row("c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Completeness"),
+            make_row("c1", failed=20, total=100, run_id="a2", run_date=self.T2, fqn=self.A, dimension="Completeness"),
             make_row("c2", failed=5, total=50, run_id="b1", run_date=self.T1, fqn=self.B, severity="High"),
             make_row("c2", failed=0, total=50, run_id="b2", run_date=self.T2, fqn=self.B, severity="High"),
         ]
@@ -925,12 +905,8 @@ class TestLatestRunBreakdowns:
         # facet excluding every row of a table's latest run leaves that table
         # empty — it never falls back to an older run that had the facet.
         rows = [
-            make_row(
-                "c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Validity"
-            ),
-            make_row(
-                "c1", failed=0, total=100, run_id="a2", run_date=self.T2, fqn=self.A, dimension="Completeness"
-            ),
+            make_row("c1", failed=10, total=100, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Validity"),
+            make_row("c1", failed=0, total=100, run_id="a2", run_date=self.T2, fqn=self.A, dimension="Completeness"),
         ]
         out = compute_entity_results(rows, ResultFacets(dimensions=("Validity",)), table_axis="by_table")
         assert out.by_table == []
@@ -1229,3 +1205,63 @@ class TestTrendDraftFlag:
         rows = [make_row(run_id="r1", run_date="2026-07-01 00:00:00", run_mode=None)]
         out = compute_entity_results(rows, ResultFacets())
         assert out.trend[0].is_draft is False
+
+
+class TestByRuleRowsRuleName:
+    def test_by_rule_labels_with_rule_name_not_suffixed_check_name(self):
+        # Two per-column checks of ONE rule: distinct suffixed check_names, same
+        # registry_rule_id, same underlying rule_name.
+        rows = [
+            CheckResultRow(
+                table_fqn="c.s.t",
+                run_id="r1",
+                run_date="2026-07-15",
+                check_name="Column is not null (a)",
+                failed=2,
+                total=100,
+                severity="High",
+                dimension="Completeness",
+                columns=("a",),
+                rule_id="rid1",
+                run_mode="published",
+                rule_name="Column is not null",
+            ),
+            CheckResultRow(
+                table_fqn="c.s.t",
+                run_id="r1",
+                run_date="2026-07-15",
+                check_name="Column is not null (b)",
+                failed=0,
+                total=100,
+                severity="High",
+                dimension="Completeness",
+                columns=("b",),
+                rule_id="rid1",
+                run_mode="published",
+                rule_name="Column is not null",
+            ),
+        ]
+        groups = _by_rule_rows(rows)
+        assert len(groups) == 1
+        assert groups[0].label == "Column is not null"
+        assert groups[0].rule_id == "rid1"
+
+    def test_by_rule_falls_back_to_check_name_when_rule_name_absent(self):
+        rows = [
+            CheckResultRow(
+                table_fqn="c.s.t",
+                run_id="r1",
+                run_date="2026-07-15",
+                check_name="a_is_null",
+                failed=1,
+                total=10,
+                severity=None,
+                dimension=None,
+                columns=("a",),
+                rule_id=None,
+                run_mode="published",
+                rule_name=None,
+            )
+        ]
+        groups = _by_rule_rows(rows)
+        assert groups[0].label == "a_is_null"

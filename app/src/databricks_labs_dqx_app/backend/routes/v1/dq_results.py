@@ -189,7 +189,7 @@ def _fetch_check_rows(
         f"check_name, error_count, warning_count, input_row_count, run_mode, "
         # As-of-run attribution baked into the view rows (frozen
         # checks_json payload — see score_view_service).
-        f"severity, dimension, registry_rule_id, to_json(columns) AS columns_json "
+        f"severity, dimension, registry_rule_id, rule_name, to_json(columns) AS columns_json "
         f"FROM {view} "  # noqa: S608
         f"{where}"
         f"ORDER BY run_time"
@@ -230,7 +230,7 @@ def _fetch_asof_check_rows(
     stmt = (
         f"SELECT input_location, run_id, CAST(as_of_time AS STRING) AS run_date, "
         f"check_name, error_count, warning_count, input_row_count, run_mode, "
-        f"severity, dimension, registry_rule_id, to_json(columns) AS columns_json "
+        f"severity, dimension, registry_rule_id, rule_name, to_json(columns) AS columns_json "
         f"FROM {view} "  # noqa: S608
         f"WHERE {' AND '.join(conds)} "
         f"ORDER BY as_of_time"
@@ -457,8 +457,7 @@ def _label_registry(app_settings: AppSettingsService, key: str) -> list[tuple[st
         colors = definition.get("value_colors")
         color_map = colors if isinstance(colors, dict) else {}
         return [
-            (str(value), str(color_map.get(value) or _DEFAULT_LABEL_COLOR), idx + 1)
-            for idx, value in enumerate(values)
+            (str(value), str(color_map.get(value) or _DEFAULT_LABEL_COLOR), idx + 1) for idx, value in enumerate(values)
         ]
     return []
 
