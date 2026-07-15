@@ -44,6 +44,9 @@ _BUILTIN_METRIC_NAMES = frozenset(
 # real violation count remains accurate in ``dq_metrics.error_row_count``.
 _SQL_QUARANTINE_MAX_ROWS = 100_000
 
+# Inline stub key when the app stages an oversized config on the wheels volume.
+_STAGED_CONFIG_KEY = "__staged__"
+
 # User-facing observer names written to ``dq_metrics.run_name``. The
 # internal ``run_type`` token (``dryrun`` / ``scheduled`` / ``preview``)
 # is still used everywhere else (API filters, ``dq_validation_runs``,
@@ -251,6 +254,32 @@ def _is_permission_denied(exc: Exception) -> bool:
     """
     text = str(exc).upper()
     return "PERMISSION_DENIED" in text or "DOES NOT HAVE MANAGE" in text
+
+
+def _read_staged_config(ws: WorkspaceClient, path: str) -> dict[str, Any]:
+    resp = ws.files.download(path)
+    if not resp.contents:
+        raise RuntimeError(f"Staged run config is empty at {path}")
+    parsed = json.loads(resp.contents.read().decode("utf-8"))
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"Staged run config at {path} is not a JSON object")
+    return parsed
+
+
+def _resolve_run_config(ws: WorkspaceClient, config_raw: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    staged = config_raw.get(_STAGED_CONFIG_KEY)
+    if isinstance(staged, str) and staged.strip():
+        path = staged.strip()
+        return _read_staged_config(ws, path), path
+    return config_raw, None
+
+
+def _delete_staged_config(ws: WorkspaceClient, path: str) -> None:
+    try:
+        ws.files.delete(path)
+        logger.info("Deleted staged run config at %s", path)
+    except Exception as exc:
+        logger.debug("Could not delete staged run config at %s: %s", path, exc)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -1265,12 +1294,13 @@ def _write_error(
 def main() -> None:
     args = _parse_args()
     _validate_run_id(args.run_id)
-    config = json.loads(args.config_json)
+    config_raw = json.loads(args.config_json)
+    ws = WorkspaceClient()
+    config, staged_config_path = _resolve_run_config(ws, config_raw)
     source_table_fqn = config.get("source_table_fqn", "")
     job_run_id = _parse_job_run_id(args.job_run_id)
 
     spark = SparkSession.builder.getOrCreate()
-    ws = WorkspaceClient()
 
     try:
         if args.task_type == "profile":
@@ -1330,6 +1360,8 @@ def main() -> None:
             logger.error("Failed to write error result: %s", write_exc, exc_info=True)
         sys.exit(1)
     finally:
+        if staged_config_path:
+            _delete_staged_config(ws, staged_config_path)
         # Best-effort belt-and-suspenders cleanup of the OBO-created temp view.
         #
         # The authoritative cleanup is the app's OBO ``drop_view`` (run as the

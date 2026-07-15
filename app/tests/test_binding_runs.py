@@ -119,7 +119,7 @@ class TestResolutionMatrix:
 
         result = service.run_binding("b1", source="draft", version=None, user_email="alice@x")
 
-        materializer.render_binding_checks.assert_called_once_with("b1")
+        materializer.render_binding_checks.assert_called_once_with("b1", rule_ids=None)
         run_set_service.add_member.assert_called_once_with("rs-new", result.run_id, "b1", None)
 
     def test_pinned_version_resolves_that_snapshot(self, service, monitored_tables, version_service, run_set_service):
@@ -238,6 +238,35 @@ class TestSubmission:
         assert submit_kwargs["config"]["run_type"] == "dryrun"
         _, started_kwargs = job_service.record_dryrun_started.call_args
         assert started_kwargs["run_type"] == "dryrun"
+
+    def test_rule_ids_filters_approved_checks(self, service, monitored_tables, version_service, job_service):
+        checks = [
+            {
+                "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+                "user_metadata": {"registry_rule_id": "rule-a"},
+            },
+            {
+                "check": {"function": "is_not_null", "arguments": {"column": "name"}},
+                "user_metadata": {"registry_rule_id": "rule-b"},
+            },
+        ]
+        monitored_tables.get.return_value = _detail(version=2)
+        version_service.get_checks.return_value = checks
+
+        service.run_binding("b1", source="approved", version=2, user_email="alice@x", rule_ids=["rule-a"])
+
+        _, kwargs = job_service.submit_run.call_args
+        submitted = kwargs["config"]["checks"]
+        assert len(submitted) == 1
+        assert submitted[0]["user_metadata"]["registry_rule_id"] == "rule-a"
+
+    def test_rule_ids_passed_to_draft_render(self, service, monitored_tables, materializer, job_service):
+        monitored_tables.get.return_value = _detail(version=0, table_fqn="cat.schema.tbl")
+        materializer.render_binding_checks.return_value = _CHECKS
+
+        service.run_binding("b1", source="draft", version=None, user_email="alice@x", rule_ids=["rule-x"])
+
+        materializer.render_binding_checks.assert_called_once_with("b1", rule_ids=["rule-x"])
 
     def test_scheduled_trigger_persists_scheduled_run_type(
         self, service, monitored_tables, version_service, job_service

@@ -13,6 +13,7 @@ from typing import Any
 from databricks.sdk import WorkspaceClient
 from pydantic import BaseModel
 
+from databricks_labs_dqx_app.backend.run_config_store import prepare_config_json
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ class JobService:
         job_id: str,
         sql: SqlExecutor,
         warehouse_id: str | None = None,
+        wheels_volume: str | None = None,
     ) -> None:
         self._ws = ws
         self._job_id = int(job_id) if job_id else 0
@@ -44,6 +46,7 @@ class JobService:
         # caller) wins; otherwise fall back to the SP executor's env-bound
         # warehouse so behaviour is unchanged when no override is set.
         self._warehouse_id = (warehouse_id or "").strip() or (sql.warehouse_id or "")
+        self._wheels_volume = (wheels_volume or "").strip()
 
     def submit_run(
         self,
@@ -60,18 +63,26 @@ class JobService:
         if not self._job_id:
             raise RuntimeError("DQX_JOB_ID is not configured — cannot submit job runs")
 
+        base_params = {
+            "task_type": task_type,
+            "view_fqn": view_fqn,
+            "result_catalog": self._sql.catalog,
+            "result_schema": self._sql.schema,
+            "run_id": run_id,
+            "requesting_user": requesting_user,
+            "warehouse_id": self._warehouse_id,
+        }
+        config_json = prepare_config_json(
+            self._ws,
+            wheels_volume=self._wheels_volume,
+            run_id=run_id,
+            config=config,
+            job_parameters_without_config=base_params,
+        )
+
         run = self._ws.jobs.run_now(
             job_id=self._job_id,
-            job_parameters={
-                "task_type": task_type,
-                "view_fqn": view_fqn,
-                "result_catalog": self._sql.catalog,
-                "result_schema": self._sql.schema,
-                "config_json": json.dumps(config),
-                "run_id": run_id,
-                "requesting_user": requesting_user,
-                "warehouse_id": self._warehouse_id,
-            },
+            job_parameters={**base_params, "config_json": config_json},
         )
         logger.info(
             "Submitted job run %s (job_id=%s, task_type=%s, app_run_id=%s)",

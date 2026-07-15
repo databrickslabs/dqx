@@ -1185,7 +1185,7 @@ class TestRunMonitoredTable:
         # and draft runs are capped by the admin setting, both resolved
         # inside run_binding itself.
         svc.run_binding.assert_called_once_with(
-            "b1", source="approved", version=None, user_email="alice@x", trigger="manual"
+            "b1", source="approved", version=None, user_email="alice@x", trigger="manual", rule_ids=None
         )
 
     def test_binding_not_found_maps_to_404(self):

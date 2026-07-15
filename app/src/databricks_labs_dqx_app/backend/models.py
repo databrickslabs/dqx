@@ -1389,6 +1389,11 @@ class RunMonitoredTableIn(BaseModel):
         default=None,
         description="Pin to a specific approved snapshot version. Ignored when source='draft'.",
     )
+    rule_ids: list[str] | None = Field(
+        default=None,
+        min_length=1,
+        description="Optional registry rule ids to run. Omit to run every applied rule on the binding.",
+    )
     # Deliberately NO sample_size field: approved/published runs always
     # check the whole table (never sample), and draft runs are capped by
     # the admin setting ``draft_run_sample_limit`` — sampling is not a

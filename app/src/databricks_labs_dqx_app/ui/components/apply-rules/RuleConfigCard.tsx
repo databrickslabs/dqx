@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical, RotateCcw } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical, Play, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -496,6 +496,11 @@ interface RuleConfigCardProps {
   labelDefinitions: LabelDefinition[];
   severityValues: string[];
   canEdit: boolean;
+  /** RUNNER-gated: show "Run this rule" in the card menu. */
+  canRunRule?: boolean;
+  runRuleBusy?: boolean;
+  runRuleDisabled?: boolean;
+  onRunRule?: () => void;
   busy: boolean;
   /** `null` = follow latest; a number = pin to that published version. */
   onPinChange: (version: number | null) => void;
@@ -535,6 +540,10 @@ export function RuleConfigCard({
   labelDefinitions,
   severityValues,
   canEdit,
+  canRunRule,
+  runRuleBusy,
+  runRuleDisabled,
+  onRunRule,
   busy,
   onPinChange,
   onSeverityChange,
@@ -707,11 +716,53 @@ export function RuleConfigCard({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+              {canRunRule && onRunRule && (
+                <DropdownMenuItem
+                  className="gap-2"
+                  disabled={runRuleDisabled || runRuleBusy}
+                  onClick={onRunRule}
+                >
+                  {runRuleBusy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Play className="h-3.5 w-3.5" />
+                  )}
+                  {t("monitoredTables.runThisRuleMenuItem")}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem variant="destructive" className="gap-2" onClick={onRemove}>
                 {t("monitoredTables.removeRuleFromMonitorMenuItem")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+        )}
+
+        {!canEdit && canRunRule && onRunRule && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="shrink-0">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRunRule();
+                  }}
+                  disabled={runRuleDisabled || runRuleBusy}
+                  className="shrink-0 focus:outline-none text-muted-foreground hover:text-foreground disabled:opacity-50"
+                  aria-label={t("monitoredTables.runThisRuleMenuItem")}
+                >
+                  {runRuleBusy ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Play className="h-4 w-4" />
+                  )}
+                </button>
+              </span>
+            </TooltipTrigger>
+            {runRuleDisabled && (
+              <TooltipContent>{t("monitoredTables.runThisRuleDisabledDirtyHint")}</TooltipContent>
+            )}
+          </Tooltip>
         )}
 
         <button

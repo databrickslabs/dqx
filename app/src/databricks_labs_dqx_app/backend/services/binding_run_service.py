@@ -135,6 +135,24 @@ def _extract_sql_query(checks: list[dict[str, Any]]) -> str | None:
     return None
 
 
+def _filter_checks_by_registry_rule_ids(
+    checks: list[dict[str, Any]], rule_ids: list[str] | None
+) -> list[dict[str, Any]]:
+    """Keep only checks whose provenance ``registry_rule_id`` is in *rule_ids*."""
+    if not rule_ids:
+        return checks
+    allowed = set(rule_ids)
+    out: list[dict[str, Any]] = []
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        meta = check.get("user_metadata")
+        rid = meta.get("registry_rule_id") if isinstance(meta, dict) else None
+        if rid in allowed:
+            out.append(check)
+    return out
+
+
 class BindingRunService:
     """Resolves a monitored table's checks and submits a run via the existing job path."""
 
@@ -166,6 +184,7 @@ class BindingRunService:
         user_email: str,
         trigger: RunSetTrigger = "manual",
         run_set_id: str | None = None,
+        rule_ids: list[str] | None = None,
     ) -> BindingRunResult:
         """Resolve checks for *binding_id* and submit a run.
 
@@ -213,8 +232,12 @@ class BindingRunService:
             raise BindingNotFoundError(f"Monitored table not found: {binding_id}")
         table_fqn = detail.table.table_fqn
 
-        checks, binding_version = self._resolve_checks(binding_id, detail.table.version, source, version)
+        checks, binding_version = self._resolve_checks(binding_id, detail.table.version, source, version, rule_ids)
         if not checks:
+            if rule_ids:
+                raise BindingRunError(
+                    f"No checks resolved for binding {binding_id} (source={source}, rule_ids={rule_ids})"
+                )
             raise BindingRunError(f"No checks resolved for binding {binding_id} (source={source})")
 
         # Stamp uniform run-provenance tags onto every check so the frozen
@@ -358,9 +381,10 @@ class BindingRunService:
         current_version: int,
         source: RunSource,
         version: int | None,
+        rule_ids: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], int | None]:
         if source == "draft":
-            return self._materializer.render_binding_checks(binding_id), None
+            return self._materializer.render_binding_checks(binding_id, rule_ids=rule_ids), None
 
         pinned = version if version is not None else current_version
         if version is None and current_version == 0:
@@ -372,4 +396,4 @@ class BindingRunService:
             checks = self._version_service.get_checks(binding_id, pinned)
         except LookupError as exc:
             raise MissingSnapshotError(str(exc)) from exc
-        return checks, pinned
+        return _filter_checks_by_registry_rule_ids(checks, rule_ids), pinned

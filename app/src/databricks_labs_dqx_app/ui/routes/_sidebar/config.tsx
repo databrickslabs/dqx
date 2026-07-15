@@ -82,6 +82,9 @@ import {
   type RulesRegistrySettingsIn,
   type ComputeSettingsIn,
   type JobsComputeModel,
+  type WarehouseOut,
+  type ClusterOut,
+  useCurrentUserRole,
 } from "@/lib/api";
 import {
   Select,
@@ -1636,9 +1639,123 @@ function RunReviewStatusesSettings() {
 // fill in.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Sentinel for "no endpoint selected" — Radix Select rejects an empty-string
-// item value.
+// Sentinel values for Radix Select — it rejects empty-string item values.
 const NO_ENDPOINT_VALUE = "__none__";
+const NO_WAREHOUSE_VALUE = "__default__";
+const NO_CLUSTER_VALUE = "__none__";
+
+/**
+ * SQL-warehouse dropdown. Always includes the currently-configured id even
+ * when the workspace list hasn't loaded yet (or the warehouse was since
+ * deleted), so Radix Select never receives a value with no matching item.
+ */
+function WarehouseSelect({
+  value,
+  onChange,
+  warehouses,
+  disabled,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  warehouses: WarehouseOut[];
+  disabled?: boolean;
+}) {
+  const { t } = useTranslation();
+  const options = useMemo(() => {
+    const byId = new Map(warehouses.map((w) => [w.id, w]));
+    if (value && !byId.has(value)) {
+      byId.set(value, { id: value, name: value, serverless: false, running: false });
+    }
+    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [warehouses, value]);
+
+  return (
+    <Select
+      value={value || NO_WAREHOUSE_VALUE}
+      onValueChange={(v) => onChange(v === NO_WAREHOUSE_VALUE ? "" : v)}
+      disabled={disabled}
+    >
+      <SelectTrigger className="h-8 text-xs font-mono w-full">
+        <SelectValue placeholder={t("config.computeWarehousePlaceholder")} />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={NO_WAREHOUSE_VALUE} className="text-xs">
+          {t("config.computeWarehouseDefault")}
+        </SelectItem>
+        {options.length === 0 && (
+          <SelectLabel className="font-normal">{t("config.computeNoWarehouses")}</SelectLabel>
+        )}
+        {options.map((w) => (
+          <SelectItem key={w.id} value={w.id} className="text-xs font-mono">
+            {w.name}
+            {w.serverless ? " · serverless" : ""}
+            {w.id === value && !warehouses.some((x) => x.id === value)
+              ? ` (${t("config.computeWarehouseCustomOption")})`
+              : ""}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/**
+ * All-purpose cluster dropdown for jobs compute. Mirrors {@link WarehouseSelect}:
+ * always exposes a "none" sentinel item and keeps the saved cluster id selectable
+ * even when the list is empty or still loading.
+ */
+function ClusterSelect({
+  value,
+  onChange,
+  clusters,
+  clustersError,
+  disabled,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  clusters: ClusterOut[];
+  clustersError?: boolean;
+  disabled?: boolean;
+}) {
+  const { t } = useTranslation();
+  const options = useMemo(() => {
+    const byId = new Map(clusters.map((c) => [c.cluster_id, c]));
+    if (value && !byId.has(value)) {
+      byId.set(value, { cluster_id: value, cluster_name: value, state: "" });
+    }
+    return Array.from(byId.values()).sort((a, b) => a.cluster_name.localeCompare(b.cluster_name));
+  }, [clusters, value]);
+
+  return (
+    <Select
+      value={value || NO_CLUSTER_VALUE}
+      onValueChange={(v) => onChange(v === NO_CLUSTER_VALUE ? "" : v)}
+      disabled={disabled}
+    >
+      <SelectTrigger className="h-8 text-xs font-mono w-full mt-1.5">
+        <SelectValue placeholder={t("config.computeClusterPlaceholder")} />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={NO_CLUSTER_VALUE} className="text-xs">
+          {t("config.computeClusterNone")}
+        </SelectItem>
+        {options.length === 0 && (
+          <SelectLabel className="font-normal">
+            {clustersError ? t("config.computeClustersUnavailable") : t("config.computeNoClusters")}
+          </SelectLabel>
+        )}
+        {options.map((c) => (
+          <SelectItem key={c.cluster_id} value={c.cluster_id} className="text-xs font-mono">
+            {c.cluster_name}
+            {c.cluster_id === value && !clusters.some((x) => x.cluster_id === value)
+              ? ` (${t("config.computeClusterCustomOption")})`
+              : ""}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
 
 /**
  * Serving-endpoint dropdown for the AI endpoint field. Always includes the
@@ -2217,7 +2334,7 @@ function ComputeSettingsCard() {
   const queryClient = useQueryClient();
   const { data: settingsResp, isLoading, isError: settingsError, refetch: refetchSettings } = useGetComputeSettings();
   const settings = settingsResp?.data;
-  const { data: role } = useCurrentUserRoleSuspense();
+  const { data: role } = useCurrentUserRole();
   const isAdmin = role?.data?.role === "admin";
 
   const saveMutation = useSaveComputeSettings();
@@ -2348,29 +2465,12 @@ function ComputeSettingsCard() {
             <Database className="h-3.5 w-3.5" />
             {t("config.computeWarehouseLabel")}
           </Label>
-          <Select
-            value={warehouseId || NO_WAREHOUSE_VALUE}
-            onValueChange={(v) => setWarehouseId(v === NO_WAREHOUSE_VALUE ? "" : v)}
+          <WarehouseSelect
+            value={warehouseId}
+            onChange={setWarehouseId}
+            warehouses={warehouses}
             disabled={!isAdmin || saveMutation.isPending}
-          >
-            <SelectTrigger className="h-8 text-xs font-mono w-full">
-              <SelectValue placeholder={t("config.computeWarehousePlaceholder")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NO_WAREHOUSE_VALUE} className="text-xs">
-                {t("config.computeWarehouseDefault")}
-              </SelectItem>
-              {warehouses.length === 0 && (
-                <SelectLabel className="font-normal">{t("config.computeNoWarehouses")}</SelectLabel>
-              )}
-              {warehouses.map((w) => (
-                <SelectItem key={w.id} value={w.id} className="text-xs font-mono">
-                  {w.name}
-                  {w.serverless ? " · serverless" : ""}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          />
         </div>
 
         {/* SP access warning */}
@@ -2431,27 +2531,13 @@ function ComputeSettingsCard() {
           </Select>
           {jobsKind === "existing_cluster" && (
             <>
-              <Select
-                value={clusterId || NO_CLUSTER_VALUE}
-                onValueChange={(v) => setClusterId(v === NO_CLUSTER_VALUE ? "" : v)}
+              <ClusterSelect
+                value={clusterId}
+                onChange={setClusterId}
+                clusters={clusters}
+                clustersError={clustersError}
                 disabled={!isAdmin || saveMutation.isPending}
-              >
-                <SelectTrigger className="h-8 text-xs font-mono w-full mt-1.5">
-                  <SelectValue placeholder={t("config.computeClusterPlaceholder")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {clusters.length === 0 && (
-                    <SelectLabel className="font-normal">
-                      {clustersError ? t("config.computeClustersUnavailable") : t("config.computeNoClusters")}
-                    </SelectLabel>
-                  )}
-                  {clusters.map((c) => (
-                    <SelectItem key={c.cluster_id} value={c.cluster_id} className="text-xs font-mono">
-                      {c.cluster_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              />
               <p className="text-[11px] text-muted-foreground leading-relaxed pt-1">
                 {t("config.computeJobsClusterNote")}
               </p>
@@ -2470,9 +2556,6 @@ function ComputeSettingsCard() {
     </Card>
   );
 }
-
-const NO_WAREHOUSE_VALUE = "__default__";
-const NO_CLUSTER_VALUE = "__none__";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Danger zone — the admin "Reset database" action. DESTRUCTIVE: wipes all

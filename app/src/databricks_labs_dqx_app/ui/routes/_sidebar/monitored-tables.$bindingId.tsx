@@ -332,6 +332,35 @@ function MonitoredTableDetailPage() {
   }, [bindingId, appliedRules]);
 
   const isDirty = desiredApplicationsKey(stagedRows) !== desiredApplicationsKey(baseline);
+
+  const runRuleMutation = useRunMonitoredTable();
+  const [runningRuleId, setRunningRuleId] = useState<string | null>(null);
+  const handleRunRule = useCallback(
+    (ruleId: string) => {
+      const source = table.status === "approved" && !isDirty ? "approved" : "draft";
+      setRunningRuleId(ruleId);
+      runRuleMutation.mutate(
+        { bindingId, data: { source, rule_ids: [ruleId] } },
+        {
+          onSuccess: (resp) => {
+            runActivity.registerRun(resp.data.run_set_id);
+            toast.success(t("monitoredTables.toastRunRuleStarted"), {
+              action: {
+                label: t("monitoredTables.toastRunStartedViewAction"),
+                onClick: () =>
+                  void navigate({ to: "/runs-history", search: { runSetId: resp.data.run_set_id } }),
+              },
+            });
+          },
+          onError: (err: unknown) => {
+            toast.error(extractApiError(err, t("monitoredTables.toastRunFailed")), { duration: 6000 });
+          },
+          onSettled: () => setRunningRuleId(null),
+        },
+      );
+    },
+    [bindingId, isDirty, navigate, runActivity, runRuleMutation, t, table.status],
+  );
   // Bypasses the nav guard right after a successful save/submit/approve so an
   // in-flight invalidate+refetch (which briefly leaves the page mid-settle)
   // can't fire a spurious "unsaved changes" prompt when the user JUST saved
@@ -770,6 +799,11 @@ function MonitoredTableDetailPage() {
               stagedRows={stagedRows}
               setStagedRows={setStagedRows}
               canEdit={perms.canCreateRules}
+              canRunRules={perms.canRunRules}
+              isDirty={isDirty}
+              runInProgress={runActivity.hasActive || runRuleMutation.isPending}
+              runningRuleId={runningRuleId}
+              onRunRule={handleRunRule}
               initialJumpColumn={pendingColumnJump}
               onJumpColumnConsumed={() => setPendingColumnJump(null)}
             />
@@ -1765,6 +1799,11 @@ function ApplyRulesTab({
   stagedRows,
   setStagedRows,
   canEdit,
+  canRunRules,
+  isDirty,
+  runInProgress,
+  runningRuleId,
+  onRunRule,
   initialJumpColumn,
   onJumpColumnConsumed,
 }: {
@@ -1779,6 +1818,11 @@ function ApplyRulesTab({
   stagedRows: AppliedRuleOut[];
   setStagedRows: (updater: (prev: AppliedRuleOut[]) => AppliedRuleOut[]) => void;
   canEdit: boolean;
+  canRunRules: boolean;
+  isDirty: boolean;
+  runInProgress: boolean;
+  runningRuleId: string | null;
+  onRunRule: (ruleId: string) => void;
   /** Column to land on when this tab is entered via the About-tab schema
    *  row's "deep link" (item 1 / P19-F chip-jump handoff, reused across
    *  tabs) — opens the by-column lens straight to that column's card. Radix
@@ -2344,6 +2388,10 @@ function ApplyRulesTab({
                 labelDefinitions={labelDefinitions}
                 severityValues={severityValues}
                 canEdit={canEdit}
+                canRunRule={canRunRules}
+                runRuleBusy={runInProgress || runningRuleId === rule.rule_id}
+                runRuleDisabled={isDirty || runInProgress}
+                onRunRule={() => onRunRule(rule.rule_id)}
                 busy={false}
                 onPinChange={(v) => handlePinChange(rule, v)}
                 onSeverityChange={(v) => handleSeverityChange(rule, v)}

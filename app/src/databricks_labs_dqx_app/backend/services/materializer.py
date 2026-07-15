@@ -802,7 +802,7 @@ class Materializer:
     def _opt_str(value: str | None) -> str:
         return f"'{escape_sql_string(value)}'" if value else "NULL"
 
-    def render_binding_checks(self, binding_id: str) -> list[dict[str, Any]]:
+    def render_binding_checks(self, binding_id: str, rule_ids: list[str] | None = None) -> list[dict[str, Any]]:
         """Render the binding's CURRENT persisted applied-rules state to check dicts.
 
         Read-only draft-run source (design spec §4.1, ``source == draft``):
@@ -813,6 +813,10 @@ class Materializer:
         ``RulesCatalogService.get_approved_checks_for_table`` output), so a
         draft run of a monitored table executes its live authored state
         without waiting for approval/materialization.
+
+        When *rule_ids* is set, only applications whose registry ``rule_id``
+        is listed are rendered — enabling a per-rule draft run without
+        executing the whole binding.
 
         Reflects the PERSISTED applied-rule state only — staged-but-unsaved
         editor edits are not included (the UI must save first). For an
@@ -826,10 +830,13 @@ class Materializer:
         if detail is None:
             raise MaterializationError(f"Monitored table not found: {binding_id}")
 
+        allowed = set(rule_ids) if rule_ids else None
         checks: list[dict[str, Any]] = []
         for summary in detail.applied_rules:
             applied = summary.applied_rule
             if not applied.id:
+                continue
+            if allowed is not None and applied.rule_id not in allowed:
                 continue
             rendered = self._iter_rendered_checks(detail.table.table_fqn, applied)
             if rendered is None:

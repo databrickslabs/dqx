@@ -762,6 +762,7 @@ async def get_job_service(
         job_id=conf.job_id,
         sql=sql,
         warehouse_id=resolve_warehouse_id(app_settings),
+        wheels_volume=conf.wheels_volume,
     )
 
 
