@@ -203,6 +203,31 @@ def _mapped_columns(group: ColumnMappingGroup, slots: list[RuleSlot]) -> list[st
     return columns
 
 
+def _suffix_check_name_with_columns(check: dict[str, Any], group: ColumnMappingGroup, slots: list[RuleSlot]) -> None:
+    """Disambiguate a multi-column rule's per-column check names IN PLACE.
+
+    Called only when one applied rule maps to several columns. A check with a
+    PINNED name (``check["name"]`` set from the rule's reserved ``name`` tag)
+    would otherwise be identical across every column, so the metrics observer
+    (which counts failures by name) and the attribution view (which dedupes by
+    name) cannot tell the columns apart. Appending the group's mapped column(s)
+    makes each check name unique — e.g. ``Value is present (customer_id)`` —
+    so per-column results and failure records flow correctly.
+
+    A check WITHOUT a pinned name is left untouched: DQX auto-generates a
+    per-column name (``customer_id_is_null``) that is already unique. The rule's
+    ``registry_rule_id`` (in user_metadata) is never touched, so by-rule / Genie
+    identity grouping still collapses the columns back to one rule.
+    """
+    name = check.get("name")
+    if not name:
+        return
+    columns = _mapped_columns(group, slots)
+    if not columns:
+        return
+    check["name"] = f"{name} ({', '.join(columns)})"
+
+
 def render_check(
     *,
     mode: RuleMode,
@@ -517,6 +542,20 @@ class Materializer:
         # snapshots written before mode was frozen carry ``None`` — fall back to
         # the live rule's mode for those.
         rendered_mode = version_snapshot.mode or registry_rule.mode
+        # When ONE applied rule maps to MULTIPLE columns (several mapping
+        # groups), each group renders a separate check — but they all inherit
+        # the rule's single pinned name. Everything downstream keys on
+        # ``check_name`` (the metrics observer counts failures by name, the
+        # attribution view dedupes by name, the results/Genie views group by it),
+        # so identically-named per-column checks collapse to one and their
+        # failure counts merge — the by-column breakdown then shows a single
+        # column with pooled counts. Suffixing each check's name with its own
+        # column(s) makes the N checks distinct, so attribution keeps all N and
+        # the observer counts each column's failures separately (per-column
+        # results + failure records flow correctly). Rule IDENTITY is unchanged
+        # — ``registry_rule_id`` still ties them to one rule, so by-rule and
+        # Genie groupings (COALESCE(registry_rule_id, check_name)) are unaffected.
+        multi_column = len(applied.column_mapping) > 1
         rendered: list[tuple[str, str, dict[str, Any]]] = []
         for idx, group in enumerate(applied.column_mapping):
             row_id = f"{applied_id}-{idx}"
@@ -535,6 +574,8 @@ class Materializer:
             except (ValueError, UnsafeSqlQueryError):
                 logger.warning("Failed to render applied rule %s group %d", applied.id, idx, exc_info=True)
                 continue
+            if multi_column:
+                _suffix_check_name_with_columns(check, group, version_snapshot.definition.slots)
             row_table_fqn = self._resolve_table_fqn(table_fqn, is_tableless, registry_rule, version_snapshot)
             rendered.append((row_id, row_table_fqn, check))
         return rendered

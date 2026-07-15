@@ -1394,7 +1394,25 @@ class TestRenderBindingChecks:
 
         checks = materializer.render_binding_checks("b1")
         assert [c["check"]["arguments"]["column"] for c in checks] == ["a", "b"]
+        # Multi-column rule: each per-column check gets a DISTINCT name (pinned
+        # name suffixed with its column) so metrics/attribution can tell the
+        # columns apart — otherwise both would be "Not Null Check" and collapse
+        # to one column with pooled failure counts.
+        assert [c["name"] for c in checks] == ["Not Null Check (a)", "Not Null Check (b)"]
         sql.execute.assert_not_called()
+
+    def test_single_column_rule_keeps_plain_pinned_name(self, materializer, sql, registry, monitored_tables):
+        # A single-column application is NOT suffixed — the check keeps the
+        # rule's plain pinned name (no disambiguation needed).
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "customer_id"}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+
+        checks = materializer.render_binding_checks("b1")
+        assert [c["name"] for c in checks] == ["Not Null Check"]
 
     def test_raises_for_missing_binding(self, materializer, monitored_tables):
         monitored_tables.get.return_value = None
