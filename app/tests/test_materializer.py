@@ -652,10 +652,9 @@ class TestRenderCheckLowcodeMode:
         # is resolved by DQX's sql_query check at run time.
         assert args["query"] == "SELECT region, (NOT (COUNT(*) > 1)) AS condition FROM {{input_view}} GROUP BY region"
         assert args["merge_columns"] == ["region"]
-        # The mapped column is surfaced for results by-column attribution. DQX's
-        # sql_query has no ``columns`` parameter, so it is dropped before the
-        # check call (never passed positionally) — safe to carry in checks_json.
-        assert args["columns"] == ["region"]
+        # sql_query does NOT declare a ``columns`` parameter — DQX's validator
+        # rejects unknown args, so columns must NOT be in arguments.
+        assert "columns" not in args
         assert is_tableless is False
 
     def test_joins_only_renders_row_level_sql_query_with_join_key_merge_columns(self):
@@ -770,6 +769,123 @@ class TestRenderCheckLowcodeMode:
                 applied_rule_id="ar1",
                 app_settings=_app_settings_stub(),
             )
+
+    def test_group_by_sql_query_has_no_columns_arg_but_metadata_carries_them(self):
+        # sql_query does NOT declare a `columns` parameter — DQX's validator rejects
+        # any unknown arg, so `columns` must NOT be in arguments. The mapped columns
+        # instead ride in user_metadata['mapped_columns'] (JSON), which the
+        # attribution view reads so by-column still populates for sql_query rules.
+        body = {
+            "lowcode_ast": {"rows": [], "joins": []},
+            "group_by": "{{column}}",
+            "sql_query": "SELECT {{column}}, (NOT (COUNT(*) > 1)) AS condition FROM {{input_view}} GROUP BY {{column}}",
+            "merge_columns": ["{{column}}"],
+        }
+        definition = self._lowcode_definition(body)
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, _ = render_check(
+            mode="lowcode",
+            version=version,
+            group={"column": "region"},
+            effective_severity="High",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        assert check["check"]["function"] == "sql_query"
+        assert "columns" not in check["check"]["arguments"]
+        assert check["check"]["arguments"]["merge_columns"] == ["region"]
+        assert json.loads(check["user_metadata"]["mapped_columns"]) == ["region"]
+
+    def test_sql_expression_keeps_columns_arg_and_metadata(self):
+        # sql_expression DECLARES a columns param — keep arguments.columns AND also
+        # stamp the metadata carrier (uniform across modes).
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"predicate": "{{start}} <= {{end}}"},
+                "slots": [
+                    {"name": "start", "family": "any", "position": 0, "cardinality": "one"},
+                    {"name": "end", "family": "any", "position": 1, "cardinality": "one"},
+                ],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, _ = render_check(
+            mode="sql",
+            version=version,
+            group={"start": "shipped_at", "end": "delivered_at"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        assert check["check"]["arguments"]["columns"] == ["shipped_at", "delivered_at"]
+        assert json.loads(check["user_metadata"]["mapped_columns"]) == ["shipped_at", "delivered_at"]
+
+    def test_dqx_native_stamps_mapped_columns_metadata(self):
+        # dqx_native single-column check: arguments.column unchanged, metadata carrier added.
+        version = RuleVersion(
+            rule_id="r1", version=1, definition=_is_not_null_definition(), user_metadata={"name": "x"}
+        )
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="High",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        assert check["check"]["arguments"]["column"] == "customer_id"
+        assert json.loads(check["user_metadata"]["mapped_columns"]) == ["customer_id"]
+
+    def test_tableless_sql_query_no_mapped_columns_metadata(self):
+        definition = RuleDefinition.model_validate(
+            {"body": {"sql_query": "SELECT COUNT(*) > 100 AS condition FROM t"}, "slots": [], "parameters": []}
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="fail", user_metadata={})
+        check, is_tableless = render_check(
+            mode="sql",
+            version=version,
+            group={},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        assert is_tableless is True
+        assert "columns" not in check["check"]["arguments"]
+        assert "mapped_columns" not in check["user_metadata"]
+
+
+def test_dqx_rejects_columns_arg_on_sql_query():
+    # Documents the reason Task 2 removed arguments.columns from sql_query: DQX's
+    # ChecksValidator rejects any argument absent from the function signature.
+    import inspect
+
+    from databricks.labs.dqx import check_funcs
+    from databricks.labs.dqx.checks_validator import ChecksValidator
+
+    check = {
+        "criticality": "error",
+        "check": {"function": "sql_query", "arguments": {"query": "SELECT 1 AS condition", "columns": ["city"]}},
+    }
+    errors = ChecksValidator._validate_func_args(
+        check["check"]["arguments"],
+        check_funcs.sql_query,
+        check,
+        inspect.signature(check_funcs.sql_query).parameters,
+    )
+    assert any("Unexpected argument 'columns'" in e for e in errors)
 
 
 # ---------------------------------------------------------------------------

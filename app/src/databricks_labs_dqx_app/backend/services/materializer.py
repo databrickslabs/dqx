@@ -66,6 +66,7 @@ from databricks.labs.dqx.utils import is_sql_query_safe
 
 from databricks_labs_dqx_app.backend.registry_models import (
     RESERVED_DIMENSION_KEY,
+    RESERVED_MAPPED_COLUMNS_KEY,
     RESERVED_SEVERITY_KEY,
     AppliedRule,
     ColumnMappingGroup,
@@ -290,19 +291,6 @@ def render_check(
                     "The registry rule's SQL query contains prohibited statements and cannot be materialized."
                 )
             arguments = {"query": query, "negate": negate}
-            # Surface the rule's mapped columns for results by-column attribution
-            # (the view reads ``arguments.columns``). ``sql_query`` does not
-            # declare a ``columns`` parameter, but that is safe: DQX extracts
-            # ``columns`` into the rule's own field and only forwards it to the
-            # check function when the signature accepts it (it does for
-            # ``sql_expression``, not for ``sql_query``) — otherwise it is
-            # dropped before the call, never passed positionally (see
-            # checks_serializer + DQRule._build_args/_build_kwargs, which guard
-            # on ``"columns" in valid_params``). Omitted for a tableless
-            # (no-slot) query so its check dict is unchanged.
-            mapped_columns = _mapped_columns(group, definition.slots)
-            if mapped_columns:
-                arguments["columns"] = mapped_columns
             # A low-code advanced (group-by) rule folds its group-by columns
             # into ``body.merge_columns`` so the ``sql_query`` check joins the
             # per-group violation result back onto the source rows (row-level
@@ -363,6 +351,14 @@ def render_check(
     error_message = definition.error_message
     if error_message:
         check_dict["message_expr"] = error_message
+    # Stamp the mapped columns into user_metadata as a JSON array so the results
+    # attribution view can recover a check's columns uniformly across modes —
+    # essential for sql_query, whose check function rejects a `columns` argument
+    # (so its columns can't live in `check.arguments`). Only when non-empty, so a
+    # tableless/no-column check's metadata is unchanged.
+    mapped_columns = _mapped_columns(group, version.definition.slots)
+    if mapped_columns:
+        check_dict["user_metadata"][RESERVED_MAPPED_COLUMNS_KEY] = json.dumps(mapped_columns)
     return check_dict, is_tableless
 
 
