@@ -2333,3 +2333,36 @@ class ResetDatabaseOut(BaseModel):
     cleared_tables: list[str] = Field(default_factory=list)
     failed_tables: dict[str, str] = Field(default_factory=dict)
     preserved_note: str = ""
+
+
+class DeployDemoContentIn(BaseModel):
+    """Request body for the admin "Deploy demo content" endpoint.
+
+    Args:
+        wipe_first: When ``True``, the seed clears existing DQX Studio-managed
+            data before seeding so the demo lands on a clean slate.
+    """
+
+    wipe_first: bool = False
+
+
+class DeployDemoContentOut(BaseModel):
+    """Acknowledgement that a demo-content seed was launched.
+
+    The seed runs for ~30min on a background daemon thread, so this returns
+    immediately with the initial ``running`` state; progress is polled via the
+    demo-content status endpoint.
+    """
+
+    status: str
+    started_at: str
+
+
+class DemoContentStatusOut(BaseModel):
+    """Current state of the long-running demo-content seed job."""
+
+    state: str
+    phase: str
+    message: str
+    started_at: str
+    updated_at: str

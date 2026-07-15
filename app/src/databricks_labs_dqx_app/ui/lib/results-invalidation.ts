@@ -116,6 +116,19 @@ export function triggerScoreCacheRefresh(queryClient: QueryClient, tableFqns?: r
       for (const path of SCORE_CACHE_LIST_PATHS) {
         void queryClient.invalidateQueries({ queryKey: [path] });
       }
+      // Re-invalidate the results/score BREAKDOWN queries a SECOND time, now
+      // that the server-side recompute has landed. The caller already
+      // invalidated them once at run-settle, but that fired BEFORE this
+      // refresh-scores round-trip finished — so those queries refetched
+      // against not-yet-recomputed server data, got stale numbers, and (with
+      // `staleTime: Infinity`) cached them until a manual page reload. This is
+      // the bug where the Results tab "refreshes" on run completion but shows
+      // the previous run's results. Invalidating again here forces a final
+      // refetch against the fresh data. (Rule-application changes recompute
+      // synchronously in-request, so they don't need this second pass.)
+      void queryClient.invalidateQueries({
+        predicate: (query) => matchesResultsInvalidation(query.queryKey),
+      });
     })
     .catch(() => {
       // Fire-and-forget: a failed refresh only leaves the cached score

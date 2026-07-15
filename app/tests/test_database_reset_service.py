@@ -239,6 +239,50 @@ class TestReprovisionDefaults:
         assert role_stmts == ["DELETE FROM cat.sch.dq_role_mappings WHERE role <> 'admin'"]
 
 
+class TestGenieReprovision:
+    """FIX K: the reset wipes dq_app_settings (dq_genie_space_id / status), so
+    any reset must re-provision Genie or the UI sits on "Setting up Genie…"
+    forever. The re-provision is best-effort and must never fail the reset."""
+
+    def test_reset_invokes_genie_reprovision_when_provided(self):
+        calls: list[int] = []
+
+        def _genie() -> object:
+            calls.append(1)
+            return "space-123"
+
+        result = DatabaseResetService(
+            delta_sql=_FakeExecutor(), oltp_sql=_FakeExecutor(), genie_reprovision=_genie
+        ).reset_all_data(performed_by="admin@x.com")
+
+        assert calls == [1]
+        assert "genie_space" in result.reprovisioned_defaults
+        assert not result.failed_tables
+
+    def test_reset_skips_genie_reprovision_when_none(self):
+        # No callable (e.g. no warehouse bound) — the reset still succeeds and
+        # simply does not list a Genie re-provision.
+        result = DatabaseResetService(
+            delta_sql=_FakeExecutor(), oltp_sql=_FakeExecutor(), genie_reprovision=None
+        ).reset_all_data(performed_by="admin@x.com")
+
+        assert "genie_space" not in result.reprovisioned_defaults
+        assert not result.failed_tables
+
+    def test_a_failing_genie_reprovision_is_recorded_and_does_not_abort(self):
+        def _genie() -> object:
+            raise RuntimeError("genie boom")
+
+        result = DatabaseResetService(
+            delta_sql=_FakeExecutor(), oltp_sql=_FakeExecutor(), genie_reprovision=_genie
+        ).reset_all_data(performed_by="a@x")
+
+        assert "seed:genie_space" in result.failed_tables
+        assert "genie_space" not in result.reprovisioned_defaults
+        # The clear itself still succeeded for every table.
+        assert set(result.cleared_tables) == set(ALL_APP_TABLE_NAMES)
+
+
 class TestAudit:
     def test_result_records_actor_and_timestamp(self):
         result = DatabaseResetService(

@@ -314,6 +314,12 @@ def test_slot_tags_key_is_reserved():
     assert RESERVED_SLOT_TAGS_KEY in RESERVED_RULE_METADATA_KEYS
 
 
+def test_reserved_mapped_columns_key_value():
+    from databricks_labs_dqx_app.backend.registry_models import RESERVED_MAPPED_COLUMNS_KEY
+
+    assert RESERVED_MAPPED_COLUMNS_KEY == "mapped_columns"
+
+
 def test_origin_marker_constants():
     assert ORIGIN_KEY == "origin"
     assert ORIGIN_TAG_AUTO == "tag_auto"

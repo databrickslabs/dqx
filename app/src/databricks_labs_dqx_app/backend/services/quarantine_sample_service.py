@@ -33,6 +33,10 @@ from databricks_labs_dqx_app.backend.models import (
     FailingRecordFailureOut,
     FailingRecordOut,
 )
+from databricks_labs_dqx_app.backend.registry_models import (
+    RESERVED_MAPPED_COLUMNS_KEY,
+    RESERVED_NAME_KEY,
+)
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn
 
@@ -90,24 +94,44 @@ def parse_failures(row: dict[str, str | None]) -> list[ParsedFailure]:
                 continue
             columns = entry.get("columns")
             metadata = entry.get("user_metadata")
+            clean_metadata = (
+                {k: v for k, v in metadata.items() if isinstance(k, str) and isinstance(v, str)}
+                if isinstance(metadata, dict)
+                else {}
+            )
+            # Display the UNDERLYING rule name, not the per-column-suffixed check
+            # name. A rule applied to N columns renders N checks whose struct
+            # ``name`` is suffixed with the column (e.g. "Uniqueness (city)") to
+            # keep attribution distinct, but ``user_metadata['name']`` carries the
+            # generic rule name ("Uniqueness"). Fall back to the struct name for
+            # legacy/untagged failures that carry no metadata name.
+            struct_name = str(entry["name"]) if entry.get("name") is not None else None
+            rule_name = clean_metadata.get(RESERVED_NAME_KEY) or struct_name
+            # Recover the mapped columns when the struct itself carries none: DQX
+            # sql_query / sql_expression-with-no-columns checks emit an empty
+            # struct ``columns``, but the check's mapped columns are stamped in
+            # ``user_metadata['mapped_columns']`` (a JSON array) at materialization
+            # time — so the failing-cell highlighter still knows which column(s)
+            # the check involves.
+            resolved_columns: tuple[str, ...] = (
+                tuple(str(c) for c in columns) if isinstance(columns, list) and columns else ()
+            )
+            if not resolved_columns:
+                mapped = parse_json_or_none(clean_metadata.get(RESERVED_MAPPED_COLUMNS_KEY))
+                if isinstance(mapped, list):
+                    resolved_columns = tuple(str(c) for c in mapped)
             failures.append(
                 ParsedFailure(
-                    rule_name=str(entry["name"]) if entry.get("name") is not None else None,
+                    rule_name=rule_name,
                     message=str(entry["message"]) if entry.get("message") is not None else None,
-                    columns=tuple(str(c) for c in columns) if isinstance(columns, list) else (),
-                    user_metadata=(
-                        {k: v for k, v in metadata.items() if isinstance(k, str) and isinstance(v, str)}
-                        if isinstance(metadata, dict)
-                        else {}
-                    ),
+                    columns=resolved_columns,
+                    user_metadata=clean_metadata,
                 )
             )
     return failures
 
 
-def to_failing_record(
-    row: dict[str, str | None], failures: list[ParsedFailure] | None = None
-) -> FailingRecordOut:
+def to_failing_record(row: dict[str, str | None], failures: list[ParsedFailure] | None = None) -> FailingRecordOut:
     """Transform a dq_quarantine_records row into the UI's failure-highlight shape.
 
     The quarantined source row arrives as JSON text under *row_data*; the

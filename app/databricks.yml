@@ -253,6 +253,32 @@ resources:
             - CREATE_TABLE
       lifecycle:
         prevent_destroy: true
+    demo_schema:
+      # Home for the "Deploy demo content" seeded source tables (customers,
+      # orders, payments, products, shipments). Declared as a bundle resource so
+      # `bundle deploy` creates it owned by the app SP with ALL_PRIVILEGES — the
+      # app SP lacks catalog-level CREATE SCHEMA on the user catalog, so the
+      # seeder's `CREATE SCHEMA IF NOT EXISTS` is a no-op inside a schema it
+      # already fully owns. Kept separate from the app's own dqx_studio schema so
+      # a demo re-seed never touches app state.
+      catalog_name: ${var.catalog_name}
+      name: dqx_studio_demo
+      comment: "DQX Studio demo content source tables (seeded e-commerce data)"
+      grants:
+        - principal: ${resources.apps.dqx-studio.service_principal_client_id}
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: ${var.dqx_service_principal_application_id}
+          privileges:
+            - ALL_PRIVILEGES
+        # End users browse/preview the demo source tables via OBO, so they need
+        # read access (the demo is meant to be explored).
+        - principal: "account users"
+          privileges:
+            - USE_SCHEMA
+            - SELECT
+      lifecycle:
+        prevent_destroy: true
 
   volumes:
     wheels:
