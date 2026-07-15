@@ -277,9 +277,7 @@ async def get_database_reset_service(
     )
 
 
-def _build_genie_reprovision(
-    sp_ws: WorkspaceClient, app_settings: AppSettingsService
-) -> "Callable[[], object] | None":
+def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsService) -> "Callable[[], object] | None":
     """Build the zero-arg Genie re-provision callable, or None when unavailable.
 
     Mirrors ``backend.app._ensure_genie_space``: requires a bound SQL warehouse
@@ -875,6 +873,7 @@ async def get_demo_seed_service(
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     status: Annotated[DemoStatusStore, Depends(get_demo_status_store)],
     reset_service: Annotated[DatabaseResetService, Depends(get_database_reset_service)],
+    embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
 ) -> "DemoSeedService":
     """Assemble the demo-seed orchestrator with an SP-only service graph.
 
@@ -927,6 +926,7 @@ async def get_demo_seed_service(
         score_cache=score_cache,
         status=status,
         reset_service=reset_service,
+        embeddings=embeddings,
         catalog=conf.catalog,
     )
 

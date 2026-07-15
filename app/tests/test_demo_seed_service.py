@@ -169,6 +169,54 @@ def test_build_rules_is_idempotent_when_rule_already_approved():
     assert all(rid == "existing" for rid in rule_map.values())
 
 
+def test_build_rules_embeds_each_created_rule_for_suggestions():
+    # The suggest-rules feature retrieves from the dq_rule_embeddings corpus,
+    # which the HTTP approve route populates via embed_and_store. The seeder
+    # drives approve directly (no route), so it must embed here too — otherwise
+    # demo rules never enter the corpus and never surface as suggestions.
+    embeddings = MagicMock()
+    svc, deps = _svc(embeddings=embeddings)
+    _use_create_path(deps)
+
+    svc._build_rules("admin@example.com")
+
+    # one embed per manifest rule, each with the approved rule object
+    assert embeddings.embed_and_store.call_count == len(manifest.RULES)
+
+
+def test_build_rules_embeds_reused_rules_too():
+    # A rule reused from a prior seed (same fingerprint) may never have been
+    # embedded — embed it as well so re-running the seed heals a missing corpus row.
+    embeddings = MagicMock()
+    svc, deps = _svc(embeddings=embeddings)
+    deps["registry"].find_approved_rule_for_definition.return_value = MagicMock(rule_id="existing")
+
+    svc._build_rules("admin@example.com")
+
+    assert embeddings.embed_and_store.call_count == len(manifest.RULES)
+
+
+def test_build_rules_survives_embed_failure():
+    # embed_and_store is best-effort; even an unexpected raise must never abort
+    # the ~30min seed.
+    embeddings = MagicMock()
+    embeddings.embed_and_store.side_effect = RuntimeError("vector search down")
+    svc, deps = _svc(embeddings=embeddings)
+    _use_create_path(deps)
+
+    rule_map = svc._build_rules("admin@example.com")  # must not raise
+    assert set(rule_map) == {spec.key for spec in manifest.RULES}
+
+
+def test_build_rules_without_embeddings_service_is_a_noop():
+    # embeddings defaults to None (e.g. a minimal test graph) — the seeder must
+    # simply skip embedding, never crash.
+    svc, deps = _svc()  # no embeddings passed
+    _use_create_path(deps)
+    rule_map = svc._build_rules("admin@example.com")
+    assert set(rule_map) == {spec.key for spec in manifest.RULES}
+
+
 def test_wipe_first_calls_reset_service():
     reset = MagicMock()
     svc, deps = _svc(reset_service=reset)

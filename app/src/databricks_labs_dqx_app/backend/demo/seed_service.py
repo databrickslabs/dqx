@@ -67,6 +67,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     AuthorKind,
     ParamType,
     Polarity,
+    RegistryRule,
     RuleDefinition,
     RuleMode,
     RuleParameter,
@@ -87,6 +88,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
@@ -160,6 +162,7 @@ class DemoSeedService:
         score_cache: ScoreCacheService,
         status: DemoStatusStore,
         reset_service: DatabaseResetService | None = None,
+        embeddings: RuleEmbeddingsService | None = None,
         catalog: str = "dqx",
     ) -> None:
         self._demo_sql = demo_sql
@@ -177,6 +180,7 @@ class DemoSeedService:
         self._score_cache = score_cache
         self._status = status
         self._reset_service = reset_service
+        self._embeddings = embeddings
         self._catalog = catalog
         self._schema = manifest.SOURCE_SCHEMA
         self._started_at = ""
@@ -346,6 +350,7 @@ class DemoSeedService:
             existing = self._registry.find_approved_rule_for_definition(definition)
             if existing is not None:
                 rule_map[spec.key] = existing.rule_id
+                self._embed_rule(existing)
                 logger.info("Demo rule '%s' -> %s (reused approved)", spec.key, existing.rule_id)
                 continue
             rule, _warning = self._registry.create_rule(
@@ -360,8 +365,30 @@ class DemoSeedService:
             self._registry.submit(rule.rule_id, user_email)
             approved = self._registry.approve(rule.rule_id, user_email)
             rule_map[spec.key] = approved.rule_id
+            self._embed_rule(approved)
             logger.info("Demo rule '%s' -> %s (created)", spec.key, approved.rule_id)
         return rule_map
+
+    def _embed_rule(self, rule: RegistryRule) -> None:
+        """Embed an approved rule into the Vector Search corpus (best-effort).
+
+        The HTTP approve route calls ``RuleEmbeddingsService.embed_and_store``
+        so a published rule is retrievable by the suggest-rules feature; the
+        seeder drives ``RegistryService.approve`` directly (no route), so it
+        must embed here too or demo rules never enter the corpus and never
+        surface as suggestions (unlike hand-authored rules). ``embed_and_store``
+        is itself best-effort — a no-op when no embedding endpoint is
+        configured, and never raises — so this is safe to call unconditionally
+        and never aborts the ~30min seed.
+        """
+        if self._embeddings is None:
+            return
+        try:
+            self._embeddings.embed_and_store(rule)
+        except Exception as exc:  # noqa: BLE001
+            # embed_and_store already swallows its own failures; this guards the
+            # (unexpected) escape so a corpus hiccup can never fail the seed.
+            logger.warning("Demo rule embed skipped for %s: %s", rule.rule_id, self._sanitize(str(exc)))
 
     @staticmethod
     def _definition_for(spec: RuleSpec) -> RuleDefinition:

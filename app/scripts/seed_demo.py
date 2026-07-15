@@ -47,6 +47,7 @@ Options
                        Pass 0 for a build-only run (rules + bindings + products, no runs).
     --wipe-first       Drop and re-seed all demo governed objects before starting.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -183,6 +184,7 @@ def main() -> int:
         from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
         from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
         from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+        from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
         from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
         from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
         from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
@@ -239,14 +241,17 @@ def main() -> int:
             oltp = pg
             print(f"Lakebase OLTP executor configured (endpoint={lakebase_endpoint!r})")
         except (ImportError, AttributeError) as exc:
-            print(f"WARNING: Lakebase endpoint set but PgExecutor unavailable ({exc}); "
-                  f"falling back to Delta OLTP executor.")
+            print(
+                f"WARNING: Lakebase endpoint set but PgExecutor unavailable ({exc}); "
+                f"falling back to Delta OLTP executor."
+            )
     else:
         print("DQX_LAKEBASE_ENDPOINT not set — using Delta OLTP fallback.")
 
     # Build sub-services (mirrors get_demo_seed_service in dependencies.py).
     app_settings = AppSettingsService(sql=oltp)
     registry = RegistryService(sql=oltp)
+    embeddings = RuleEmbeddingsService(sql=oltp, sp_ws=ws, app_settings=app_settings)
     monitored_tables = MonitoredTableService(sql=oltp, profiling_sql=sp_sql)
     apply_rules = ApplyRulesService(sql=oltp, registry=registry, app_settings=app_settings)
     materializer = Materializer(
@@ -312,6 +317,7 @@ def main() -> int:
         score_cache=score_cache,
         status=status,
         reset_service=reset_service,
+        embeddings=embeddings,
         catalog=catalog,
     )
 
