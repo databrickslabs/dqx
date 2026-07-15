@@ -175,6 +175,66 @@ class TestParseFailures:
             )
         ]
 
+    def test_prefers_generic_rule_name_from_metadata_over_suffixed_struct_name(self):
+        # A rule applied to N columns renders N checks whose struct `name` is
+        # per-column suffixed ("Uniqueness (city)"), but user_metadata['name']
+        # holds the generic rule name — the failing-record tooltip must show the
+        # generic one.
+        parsed = parse_failures(
+            quarantine_row(
+                errors=[
+                    {
+                        "name": "Uniqueness (single column) (city)",
+                        "message": "duplicate city",
+                        "columns": None,
+                        "user_metadata": {"name": "Uniqueness (single column)", "dimension": "Uniqueness"},
+                    }
+                ]
+            )
+        )
+        assert parsed[0].rule_name == "Uniqueness (single column)"
+
+    def test_falls_back_to_struct_name_when_metadata_has_no_name(self):
+        parsed = parse_failures(
+            quarantine_row(errors=[{"name": "id_is_null", "message": "m", "columns": ["id"], "user_metadata": {}}])
+        )
+        assert parsed[0].rule_name == "id_is_null"
+
+    def test_recovers_columns_from_mapped_columns_when_struct_columns_empty(self):
+        # sql_query / sql_expression-without-columns checks emit an empty struct
+        # `columns`, but their mapped columns are stamped in
+        # user_metadata['mapped_columns'] (JSON) so the cell highlighter still works.
+        parsed = parse_failures(
+            quarantine_row(
+                errors=[
+                    {
+                        "name": "Uniqueness (city)",
+                        "message": "dup",
+                        "columns": None,
+                        "user_metadata": {"name": "Uniqueness", "mapped_columns": '["city"]'},
+                    }
+                ]
+            )
+        )
+        assert parsed[0].columns == ("city",)
+
+    def test_struct_columns_win_over_mapped_columns_when_present(self):
+        # When the struct itself carries columns (dqx_native), use those — do not
+        # override with the metadata carrier.
+        parsed = parse_failures(
+            quarantine_row(
+                errors=[
+                    {
+                        "name": "c1",
+                        "message": "m",
+                        "columns": ["id"],
+                        "user_metadata": {"mapped_columns": '["other"]'},
+                    }
+                ]
+            )
+        )
+        assert parsed[0].columns == ("id",)
+
     def test_merges_errors_and_warnings(self):
         parsed = parse_failures(
             quarantine_row(
@@ -298,9 +358,7 @@ class TestRowMatchesFilters:
     def test_dimension_filter(self):
         failures = [failure(quality_dimension="Validity")]
         assert QuarantineSampleService.row_matches_filters(failures, [], dimensions=("Validity",)) is True
-        assert (
-            QuarantineSampleService.row_matches_filters(failures, [], dimensions=("Completeness",)) is False
-        )
+        assert QuarantineSampleService.row_matches_filters(failures, [], dimensions=("Completeness",)) is False
 
     def test_column_filter_is_membership_over_failed_columns(self):
         assert QuarantineSampleService.row_matches_filters([failure()], ["id"], columns=("id",)) is True
@@ -314,14 +372,8 @@ class TestRowMatchesFilters:
         # Facets may be satisfied by DIFFERENT failures on the same row
         # (dqlake parity: one exists() predicate per facet).
         failures = [failure(rule_name="c1", severity="High"), failure(rule_name="c2", severity="Low")]
-        assert (
-            QuarantineSampleService.row_matches_filters(failures, [], rules=("c1",), severities=("Low",))
-            is True
-        )
-        assert (
-            QuarantineSampleService.row_matches_filters(failures, [], rules=("c1",), severities=("Med",))
-            is False
-        )
+        assert QuarantineSampleService.row_matches_filters(failures, [], rules=("c1",), severities=("Low",)) is True
+        assert QuarantineSampleService.row_matches_filters(failures, [], rules=("c1",), severities=("Med",)) is False
 
     def test_untagged_failures_never_match_active_metadata_facets(self):
         failures = [failure(severity=None, quality_dimension=None)]
