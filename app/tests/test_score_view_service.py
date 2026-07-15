@@ -149,6 +149,8 @@ class TestAttributionViewDdl:
         assert "from_json(user_metadata['mapped_columns'], 'ARRAY<STRING>')" in ddl
         # existing arg-based sources still come first
         assert "arg_columns" in ddl and "arg_column" in ddl
+        # Order matters: metadata fallback must come AFTER the argument-based sources.
+        assert ddl.index("arg_columns") < ddl.index("from_json(user_metadata['mapped_columns']")
 
 
 class TestShapingViewDdl:
