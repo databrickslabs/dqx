@@ -396,6 +396,56 @@ def test_weekly_trend_strips_polluting_now_history_but_keeps_cache_current():
     assert last.state == "succeeded"
 
 
+def test_orphan_sweep_runs_before_final_cache_refresh():
+    # BUG: the overview/homepage headline scores disagreed with the trend's final
+    # point. The final refresh_all_for_tables picks "latest published run per
+    # table" by run_time DESC; a not-yet-swept gate run sits at real wall-clock
+    # (newer than the final week's instant), so the cache latched the headline
+    # onto a gate run that _delete_orphan_metrics then deleted — leaving the
+    # cache scoring a run that no longer exists. The sweep MUST run BEFORE the
+    # final refresh so the refresh only ever sees the clean, re-dated weekly runs.
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["registry"].find_approved_rule_for_definition.side_effect = lambda _d: MagicMock(rule_id="r1")
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+    deps["app_sql"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+    deps["oltp"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+
+    low, high = manifest.UNIQUE_EXPECT_ROWS
+    in_band = (low + high) // 2
+
+    events: list[str] = []
+
+    def _query_dicts(sql, *_a, **_k):
+        if "SELECT 1" in sql:
+            return []
+        if "metric_name" in sql:
+            return _metrics_rows(50_000, in_band)
+        return [{"status": "SUCCESS"}]
+
+    deps["app_sql"].query_dicts.side_effect = _query_dicts
+
+    def _app_execute(sql, *_a, **_k):
+        if sql.startswith("DELETE FROM") and "dq_metrics" in sql and "run_id NOT IN" in sql:
+            events.append("orphan_sweep")
+
+    deps["app_sql"].execute.side_effect = _app_execute
+    deps["score_cache"].refresh_all_for_tables.side_effect = lambda *_a, **_k: events.append("final_refresh") or (0, 0)
+
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=1)
+
+    assert "orphan_sweep" in events, "expected an orphan-metrics sweep"
+    assert "final_refresh" in events, "expected a final cache refresh"
+    # refresh_all_for_tables is only called once (the final truthful refresh), so
+    # a simple index compare proves the sweep runs first — the refresh then never
+    # sees the deleted gate run
+    assert events.index("orphan_sweep") < events.index("final_refresh"), (
+        f"orphan sweep must precede the final cache refresh; got {events!r}"
+    )
+
+
 def test_history_cleanup_cutoff_is_final_week_instant_not_now():
     # BUG: a now()-based cutoff only strips the FINAL refresh's real-now history
     # appends; the per-week appends (one straggler per trend step) predate it and

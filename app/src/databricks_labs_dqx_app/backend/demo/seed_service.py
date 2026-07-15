@@ -780,33 +780,42 @@ class DemoSeedService:
             self._redate_history("global", "global", target_iso)
             trend_points += 1
 
-        # Final truthful refresh so the app's cached scores are current. This
-        # re-runs tables -> products -> global to update ``dq_score_cache``, but
-        # ScoreCacheService ALSO appends ``dq_score_history`` rows at real
-        # wall-clock ``now()`` that the demo cannot fully re-date: each weekly
-        # ``refresh_*`` + ``_redate_history`` pair only moves the SINGLE latest
-        # row, yet a refresh can append more than one history row per scope (a
-        # table/product refresh recomputes the global rollup too), so a real-now
-        # straggler is left behind every week — plus one final batch from this
-        # closing refresh. A ``now()``-based cutoff only catches that final
-        # batch; the mid-run per-week stragglers predate it and survive. The
-        # cutoff must therefore be the newest LEGITIMATE instant: the final
-        # week's instant (``now - 30min``; see :meth:`_week_instant`). Every
-        # genuine re-dated point across every scope is at-or-before it, and every
-        # un-re-dated real-now append is well after it, so deleting rows strictly
-        # after this cutoff strips ALL pollution (per-week + final) in one pass
-        # while preserving all nine back-dated weekly points.
+        # History-cleanup cutoff for the final refresh's real-now appends.
+        # ScoreCacheService appends ``dq_score_history`` rows at real wall-clock
+        # ``now()`` that the demo cannot fully re-date: each weekly ``refresh_*``
+        # + ``_redate_history`` pair only moves the SINGLE latest row, yet a
+        # refresh can append more than one history row per scope (a table/product
+        # refresh recomputes the global rollup too), so a real-now straggler is
+        # left behind every week — plus one final batch from the closing refresh.
+        # A ``now()``-based cutoff only catches that final batch; the mid-run
+        # per-week stragglers predate it and survive. The cutoff must therefore
+        # be the newest LEGITIMATE instant: the final week's instant
+        # (``now - 30min``; see :meth:`_week_instant`). Every genuine re-dated
+        # point across every scope is at-or-before it, and every un-re-dated
+        # real-now append is well after it, so deleting rows strictly after this
+        # cutoff strips ALL pollution (per-week + final) in one pass while
+        # preserving all nine back-dated weekly points.
         cutoff = redate.iso(self._week_instant(now, weeks - 1, weeks))
+        # Sweep gate-run metric rows that trickled in AFTER _delete_run's bounded
+        # wait already saw the run clean (a late job-metrics batch). By now every
+        # gate job has long quiesced, so a run_id present in dq_metrics with no
+        # dq_validation_runs row can only be such a deleted-gate leftover — every
+        # legit weekly run keeps its re-dated validation-run row. This MUST run
+        # BEFORE the final refresh: those leftovers sit at real wall-clock
+        # (newer than the final week's instant), so the cache's
+        # "latest published run per table" (ORDER BY run_time DESC) selection
+        # would otherwise latch the headline score onto a gate run that this
+        # sweep then deletes — leaving the overview/homepage showing a score for
+        # a run that no longer exists and disagreeing with the trend's final
+        # point. Sweeping first guarantees the refresh only ever sees the clean,
+        # re-dated weekly runs, so cache == trend end.
+        self._delete_orphan_metrics()
+        # Final truthful refresh so the app's cached scores are current. This
+        # re-runs tables -> products -> global to update dq_score_cache; it also
+        # appends real-now dq_score_history rows that _delete_history_after then
+        # strips (see the cutoff rationale above).
         self._score_cache.refresh_all_for_tables(sorted(self._table_fqns()))
         self._delete_history_after(cutoff)
-        # Sweep any gate-run metric rows that trickled in AFTER _delete_run's
-        # bounded wait already saw the run clean (a late job-metrics batch). By
-        # now every gate job has long quiesced, so a run_id present in dq_metrics
-        # with no dq_validation_runs row can only be such a deleted-gate leftover
-        # — every legit weekly run keeps its re-dated validation-run row. This
-        # kills the last real-wall-clock orphan points on the dimension/severity
-        # charts deterministically, without racing the async metrics write.
-        self._delete_orphan_metrics()
         return trend_points
 
     def _tighten_card_rule(self, rule_map: dict[str, str], user_email: str) -> None:
