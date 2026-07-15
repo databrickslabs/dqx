@@ -427,6 +427,15 @@ RESERVED_DIMENSION_KEY = "dimension"
 RESERVED_SEVERITY_KEY = "severity"
 RESERVED_SLOT_TAGS_KEY = "slot_tags"
 
+# The reserved user_metadata key holding a materialized check's mapped columns
+# as a JSON-encoded array string (e.g. '["city"]'). Populated by the
+# materializer for EVERY mode so the results attribution view can recover a
+# check's columns uniformly — critically for sql_query, whose DQX check
+# function rejects a `columns` argument, so its columns cannot live in
+# `arguments`. Read in SQL via from_json(user_metadata['mapped_columns'],
+# 'ARRAY<STRING>').
+RESERVED_MAPPED_COLUMNS_KEY = "mapped_columns"
+
 # Applied-rule origin marker (in AppliedRule.user_metadata) distinguishing an
 # auto-created tag-mapping attachment from a hand-applied one. The tag-reconcile
 # engine only ever touches ``tag_auto`` rows; hand-applied rows stay unmarked.
@@ -504,10 +513,7 @@ def set_slot_tags(user_metadata: dict[str, Any], mapping: dict[str, list[str]]) 
     dropped; when the resulting map is empty the key is removed entirely. Never
     mutates *user_metadata* in place.
     """
-    cleaned = {
-        slot: [t for t in tags if isinstance(t, str) and t]
-        for slot, tags in mapping.items()
-    }
+    cleaned = {slot: [t for t in tags if isinstance(t, str) and t] for slot, tags in mapping.items()}
     cleaned = {slot: tags for slot, tags in cleaned.items() if tags}
     updated = dict(user_metadata)
     if cleaned:
