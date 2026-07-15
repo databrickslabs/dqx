@@ -382,6 +382,15 @@ def test_weekly_trend_strips_polluting_now_history_but_keeps_cache_current():
     cleanup = [s for s in executed if s.startswith("DELETE FROM") and "dq_score_history" in s and "computed_at >" in s]
     assert cleanup, "expected a dq_score_history post-cutoff cleanup DELETE"
 
+    # (c) an orphan-metrics sweep deletes dq_metrics rows whose run_id has no
+    # dq_validation_runs row — the deleted-gate-run late-metrics leftovers that
+    # otherwise orphan a real-now point on the dimension/severity charts
+    app_executed = [call.args[0] for call in deps["app_sql"].execute.call_args_list]
+    orphan_sweep = [
+        s for s in app_executed if s.startswith("DELETE FROM") and "dq_metrics" in s and "run_id NOT IN" in s
+    ]
+    assert orphan_sweep, "expected an orphan dq_metrics anti-join sweep DELETE"
+
     # terminal status succeeded
     last = deps["status"].set.call_args_list[-1].args[0]
     assert last.state == "succeeded"

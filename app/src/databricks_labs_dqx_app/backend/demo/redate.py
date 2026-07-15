@@ -80,8 +80,7 @@ def build_redate_runs_sql(runs_fqn: str, run_id: str, target_iso: str, duration_
     start = _ts(target_iso)
     end = f"{start} + INTERVAL {int(duration_seconds)} SECONDS"
     return (
-        f"UPDATE {runs_fqn} SET created_at = {start}, updated_at = {end} "
-        f"WHERE run_id = '{escape_sql_string(run_id)}'"
+        f"UPDATE {runs_fqn} SET created_at = {start}, updated_at = {end} WHERE run_id = '{escape_sql_string(run_id)}'"
     )
 
 
@@ -115,6 +114,32 @@ def build_delete_runs_sql(runs_fqn: str, run_id: str) -> str:
         A ``DELETE`` statement targeting the matched run.
     """
     return f"DELETE FROM {runs_fqn} WHERE run_id = '{escape_sql_string(run_id)}'"
+
+
+def build_delete_orphan_metrics_sql(metrics_fqn: str, runs_fqn: str) -> str:
+    """Build SQL to delete *dq_metrics* rows whose run has no *dq_validation_runs* row.
+
+    A run's *dq_metrics* rows and its *dq_validation_runs* row are written by
+    the same serverless job, but the metrics can trickle in over several
+    seconds. The validation gate deletes each throwaway run from BOTH tables
+    once its misfire assertions pass (see ``_delete_run``); if a late batch of
+    that job's metric rows lands *after* the delete, it survives as a
+    "``run_id`` with metrics but no validation-run row" — a stray real-wall-clock
+    trend point on the dimension/severity charts. Every legitimate weekly run
+    keeps a (re-dated) *dq_validation_runs* row, so a run_id present in
+    *dq_metrics* but absent from *dq_validation_runs* is definitionally such a
+    deleted-gate-run leftover. This anti-join delete strips exactly those
+    orphans in one statement, run once after the trend is built and all gate
+    jobs have quiesced.
+
+    Args:
+        metrics_fqn: Fully-qualified *dq_metrics* table name.
+        runs_fqn: Fully-qualified *dq_validation_runs* table name.
+
+    Returns:
+        A ``DELETE`` statement removing metric rows with no matching run row.
+    """
+    return f"DELETE FROM {metrics_fqn} WHERE run_id NOT IN (SELECT run_id FROM {runs_fqn} WHERE run_id IS NOT NULL)"
 
 
 def build_redate_latest_history_sql(history_fqn: str, scope_type: str, scope_key: str, target_iso: str) -> str:

@@ -794,6 +794,14 @@ class DemoSeedService:
         cutoff = redate.iso(datetime.now(timezone.utc) - timedelta(seconds=1))
         self._score_cache.refresh_all_for_tables(sorted(self._table_fqns()))
         self._delete_history_after(cutoff)
+        # Sweep any gate-run metric rows that trickled in AFTER _delete_run's
+        # bounded wait already saw the run clean (a late job-metrics batch). By
+        # now every gate job has long quiesced, so a run_id present in dq_metrics
+        # with no dq_validation_runs row can only be such a deleted-gate leftover
+        # — every legit weekly run keeps its re-dated validation-run row. This
+        # kills the last real-wall-clock orphan points on the dimension/severity
+        # charts deterministically, without racing the async metrics write.
+        self._delete_orphan_metrics()
         return trend_points
 
     def _tighten_card_rule(self, rule_map: dict[str, str], user_email: str) -> None:
@@ -836,6 +844,21 @@ class DemoSeedService:
         """Delete ``dq_score_history`` rows appended after *cutoff_iso* (the polluting real-now appends)."""
         history_fqn = self._oltp.fqn("dq_score_history")
         self._oltp.execute(redate.build_delete_history_after_sql(history_fqn, cutoff_iso))
+
+    def _delete_orphan_metrics(self) -> None:
+        """Delete ``dq_metrics`` rows whose run has no ``dq_validation_runs`` row.
+
+        Final backstop for the validation-gate cleanup race: a deleted gate
+        run's serverless job can append a late batch of metric rows after
+        :meth:`_delete_run` already saw the run clean, leaving rows with a
+        ``run_id`` present in ``dq_metrics`` but absent from
+        ``dq_validation_runs``. Every legitimate weekly run keeps its re-dated
+        validation-run row, so this anti-join delete strips exactly those
+        real-wall-clock orphan points and nothing else.
+        """
+        metrics_fqn = self._app_sql.fqn("dq_metrics")
+        runs_fqn = self._app_sql.fqn("dq_validation_runs")
+        self._app_sql.execute(redate.build_delete_orphan_metrics_sql(metrics_fqn, runs_fqn))
 
     def _week_mutations(self, week: int, weeks: int) -> list[str]:
         """Flatten every table's per-week mutation statements for *week*."""

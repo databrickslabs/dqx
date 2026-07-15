@@ -82,3 +82,22 @@ def test_delete_history_after_targets_computed_at_cutoff():
 def test_delete_history_after_cutoff_is_escaped_against_injection():
     sql = r.build_delete_history_after_sql(H, "a'b")
     assert "'a''b'" in sql  # ANSI doubled-quote escaping
+
+
+def test_delete_orphan_metrics_is_anti_join_on_validation_runs():
+    # A deleted gate run's late metric batch survives as a run_id present in
+    # dq_metrics but absent from dq_validation_runs. The sweep must delete
+    # exactly those via an anti-join, keying only on run_id (no timestamp, no
+    # scope filter) so every legit weekly run — which keeps its re-dated
+    # validation-run row — is preserved.
+    sql = r.build_delete_orphan_metrics_sql(M, RUNS)
+    assert sql.startswith("DELETE FROM")
+    assert M in sql and RUNS in sql
+    assert "run_id NOT IN" in sql
+    # subquery pulls the surviving run_ids from the runs table
+    assert "SELECT run_id FROM" in sql
+    # guards against a NULL run_id in the runs table making NOT IN drop everything
+    assert "run_id IS NOT NULL" in sql
+    # no time/scope predicate — the anti-join alone defines "orphan"
+    assert "computed_at" not in sql
+    assert "run_time" not in sql
