@@ -56,6 +56,7 @@ import {
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { LabelsEditor } from "@/components/Labels";
 import { HelpTooltip } from "@/components/HelpTooltip";
+import { TagPicker } from "@/components/apply-rules/TagPicker";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
 import { RuleResultsTab } from "@/components/registry-rules/RuleResultsTab";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
@@ -81,6 +82,7 @@ import {
 } from "@/lib/lowcodeCompile";
 import { EMPTY_LOWCODE_AST, isV2Ast, type AnyRow, type LowcodeAstV2 } from "@/lib/lowcodeAst";
 import { cn } from "@/lib/utils";
+import selector from "@/lib/selector";
 import { stripSqlLineComments } from "@/lib/sqlComments";
 import type { LabelDefinition } from "@/lib/api-custom";
 import {
@@ -93,6 +95,7 @@ import {
   useGetTableColumns,
   useAiGenerateRule,
   useAiSuggestField,
+  useListGovernedTags,
   type RegistryRuleOut,
   type RuleDefinition,
   type RuleSlot,
@@ -122,6 +125,8 @@ import {
   parseParamValue,
   paramValueToRaw,
   severityValueCriticality,
+  slotTagsFromUserMetadata,
+  userMetadataWithSlotTags,
   type ParsedCheckDefinition,
 } from "@/lib/registry-rule-conversion";
 import { RegistryRuleFormJsonDialog } from "@/components/registry-rules/RegistryRuleFormJsonDialog";
@@ -458,6 +463,121 @@ function nextSlotName(existing: string[]): string {
 }
 
 /**
+ * apply-on-tag: the per-slot `class.*` tag region on a slot's header row —
+ * removable chips for each declared tag plus a dashed "+ Apply to a tag"
+ * button that opens a {@link TagPicker} popover. All controls
+ * `stopPropagation` so interacting with tags never toggles the slot's
+ * expand/collapse. When *disabled* (read-only view), chips render statically
+ * with no remove affordance and no add button.
+ */
+function SlotTagRegion({
+  tags,
+  disabled,
+  onAddTag,
+  onRemoveTag,
+}: {
+  tags: string[];
+  disabled?: boolean;
+  onAddTag: (tag: string) => void;
+  onRemoveTag: (tag: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  // Governed-tag descriptions for chip hovertext. React Query dedupes this with
+  // the TagPicker's own fetch, so the second call is cheap. Look up by the full
+  // `key=value` string first, falling back to the bare `key` (values inherit the
+  // tag's description).
+  const { data: governedTagsData } = useListGovernedTags(selector());
+  const descriptions = new Map<string, string | null>(
+    (governedTagsData?.tags ?? []).map((g) => [g.tag, g.description ?? null]),
+  );
+  const describeTag = (tag: string): string | undefined => {
+    const direct = descriptions.get(tag);
+    if (direct) return direct;
+    const eq = tag.indexOf("=");
+    if (eq > 0) {
+      const bare = descriptions.get(tag.slice(0, eq));
+      if (bare) return bare;
+    }
+    return undefined;
+  };
+  return (
+    <TooltipProvider delayDuration={200}>
+    <div className="flex flex-wrap items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      {tags.map((tag) => {
+        const description = describeTag(tag);
+        const chip = (
+          <span
+            className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-mono bg-muted/60 border-border text-muted-foreground"
+          >
+            {tag}
+            {!disabled && (
+              <button
+                type="button"
+                aria-label={t("monitoredTables.slotTagRemove")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemoveTag(tag);
+                }}
+                className="ml-0.5 opacity-60 hover:opacity-100 focus:outline-none leading-none"
+              >
+                ×
+              </button>
+            )}
+          </span>
+        );
+        // App-native tooltip with the governed-tag description — only when the
+        // tag actually has one (many governed tags have a NULL description).
+        return description ? (
+          <Tooltip key={tag}>
+            <TooltipTrigger asChild>{chip}</TooltipTrigger>
+            <TooltipContent className="max-w-xs">{description}</TooltipContent>
+          </Tooltip>
+        ) : (
+          <span key={tag} className="contents">
+            {chip}
+          </span>
+        );
+      })}
+      {!disabled && (
+        <Popover open={open} onOpenChange={setOpen}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-xs text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-2 py-0.5"
+                  >
+                    {tags.length === 0
+                      ? t("monitoredTables.applyToTagButton")
+                      : t("monitoredTables.applyToAnotherTagButton")}
+                  </button>
+                </PopoverTrigger>
+              </TooltipTrigger>
+              <TooltipContent>{t("monitoredTables.applyToTagTooltip")}</TooltipContent>
+            </Tooltip>
+          <PopoverContent
+            className="w-72 p-0"
+            align="start"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <TagPicker
+              selected={tags}
+              onSelect={(tag) => {
+                onAddTag(tag);
+                setOpen(false);
+              }}
+            />
+          </PopoverContent>
+        </Popover>
+      )}
+    </div>
+    </TooltipProvider>
+  );
+}
+
+/**
  * "Columns used" slot-declaration panel, ported from the dqlake
  * `ColumnsUsedPanel`. Shared by all three authoring modes: SQL / Low-Code
  * authors freely add/remove/rename/retype `{{slot}}` placeholders their
@@ -480,6 +600,8 @@ function SlotsPanel({
   allowAddRemove = true,
   expandableArgKey,
   lockFamily = false,
+  slotTags,
+  onSlotTagsChange,
 }: {
   value: RuleSlot[];
   onChange: (next: RuleSlot[]) => void;
@@ -491,6 +613,10 @@ function SlotsPanel({
   /** dqx_native only (item 10): the slot family is fixed by the check's
    * semantics and shown read-only rather than as an editable Select. */
   lockFamily?: boolean;
+  /** apply-on-tag: per-slot `class.*` tag map (slot name -> tags). Chips render
+   * on each slot's header row; editable exactly when `!disabled`. */
+  slotTags: Record<string, string[]>;
+  onSlotTagsChange: (next: Record<string, string[]>) => void;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -539,15 +665,48 @@ function SlotsPanel({
   };
 
   const setAt = (i: number, patch: Partial<RuleSlot>) => {
+    const prevName = value[i]?.name;
     const next = value.slice();
     next[i] = { ...next[i], ...patch };
     onChange(next);
+    // Follow a slot rename: move its tag entry to the new name so the
+    // slot -> tags map stays keyed on the live slot name (no orphan left).
+    const nextName = next[i]?.name;
+    if (patch.name !== undefined && prevName !== undefined && nextName !== undefined && prevName !== nextName) {
+      const entry = slotTags[prevName];
+      if (entry !== undefined) {
+        const updated = { ...slotTags };
+        delete updated[prevName];
+        updated[nextName] = entry;
+        onSlotTagsChange(updated);
+      }
+    }
   };
   const removeAt = (i: number) => {
+    const removedName = value[i]?.name;
     const next = value.slice();
     next.splice(i, 1);
     onChange(next.map((s, idx) => ({ ...s, position: idx })));
     if (expanded === i) setExpanded(null);
+    // Drop the removed slot's tag entry so it never dangles as an orphan.
+    if (removedName !== undefined && slotTags[removedName] !== undefined) {
+      const updated = { ...slotTags };
+      delete updated[removedName];
+      onSlotTagsChange(updated);
+    }
+  };
+  const addTagToSlot = (slotName: string, tag: string) => {
+    const existing = slotTags[slotName] ?? [];
+    if (existing.includes(tag)) return;
+    onSlotTagsChange({ ...slotTags, [slotName]: [...existing, tag] });
+  };
+  const removeTagFromSlot = (slotName: string, tag: string) => {
+    const existing = slotTags[slotName] ?? [];
+    const nextTags = existing.filter((tg) => tg !== tag);
+    const updated = { ...slotTags };
+    if (nextTags.length > 0) updated[slotName] = nextTags;
+    else delete updated[slotName];
+    onSlotTagsChange(updated);
   };
   const add = () => {
     const name = nextSlotName(value.map((s) => s.name));
@@ -602,7 +761,15 @@ function SlotsPanel({
               onClick={() => !disabled && setExpanded(isOpen ? null : i)}
             >
               <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-3 py-2">
-                <code className={cn("text-xs", !nameOk && "text-destructive")}>{`{{${slot.name}}}`}</code>
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  <code className={cn("text-xs mr-1", !nameOk && "text-destructive")}>{`{{${slot.name}}}`}</code>
+                  <SlotTagRegion
+                    tags={slotTags[slot.name] ?? []}
+                    disabled={disabled}
+                    onAddTag={(tag) => addTagToSlot(slot.name, tag)}
+                    onRemoveTag={(tag) => removeTagFromSlot(slot.name, tag)}
+                  />
+                </div>
                 <Badge variant="outline" className="text-[10px] font-medium">
                   {familyLabel(slot.family)}
                 </Badge>
@@ -817,6 +984,9 @@ interface RuleEditSnapshot {
   sqlPredicate: string;
   sqlSlots: RuleSlot[];
   nativeSlots: RuleSlot[];
+  /** apply-on-tag: per-slot `class.*` tag map (slot name -> tags). Hydrated
+   * from / persisted to `user_metadata.slot_tags`. */
+  slotTags: Record<string, string[]>;
   lowcodeAst: LowcodeAstV2;
   groupBy: string;
   authorKind: CreateRegistryRuleInAuthorKind | undefined;
@@ -852,6 +1022,7 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
     sqlPredicate: isNative ? "" : String(body.predicate ?? ""),
     sqlSlots: isNative ? [] : (rule.definition?.slots ?? []),
     nativeSlots: isNative ? (rule.definition?.slots ?? []) : [],
+    slotTags: slotTagsFromUserMetadata(md),
     lowcodeAst: rule.mode === "lowcode" && isV2Ast(storedAst) ? storedAst : EMPTY_LOWCODE_AST,
     groupBy: rule.mode === "lowcode" && typeof body.group_by === "string" ? body.group_by : "",
     authorKind: rule.author_kind ?? undefined,
@@ -893,6 +1064,7 @@ const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   sqlPredicate: "",
   sqlSlots: [seededFirstSlot()],
   nativeSlots: [],
+  slotTags: {},
   lowcodeAst: EMPTY_LOWCODE_AST,
   groupBy: "",
   authorKind: "human",
@@ -985,6 +1157,10 @@ export function RegistryRuleFormDialog({
   // `selectedFn`), this needs to be real state: seeded fresh whenever the
   // function selection changes, but otherwise left alone so edits persist.
   const [nativeSlots, setNativeSlots] = useState<RuleSlot[]>([]);
+  // apply-on-tag: per-slot `class.*` tag map (slot name -> tags), shared across
+  // all authoring modes' "Columns used" panel. Round-trips through
+  // `user_metadata.slot_tags` (see buildUserMetadata / snapshotFromRule).
+  const [slotTags, setSlotTags] = useState<Record<string, string[]>>({});
   const [errorMessage, setErrorMessage] = useState("");
   const [polarity, setPolarity] = useState<Polarity>("pass");
   const [name, setName] = useState("");
@@ -1065,6 +1241,9 @@ export function RegistryRuleFormDialog({
       if (typeof v === "string") freeTags[k] = v;
     }
     setTags(freeTags);
+    // apply-on-tag: hydrate the slot -> tags map (nested object, ignored by the
+    // string-only `freeTags` loop above). Empty for a brand-new rule.
+    setSlotTags(sourceRule ? slotTagsFromUserMetadata(md) : {});
 
     if (sourceRule) {
       setAuthorKind(sourceRule.author_kind ?? undefined);
@@ -1250,6 +1429,7 @@ export function RegistryRuleFormDialog({
     sqlPredicate,
     sqlSlots,
     nativeSlots,
+    slotTags,
     lowcodeAst,
     groupBy,
     authorKind,
@@ -1397,7 +1577,15 @@ export function RegistryRuleFormDialog({
     if (description.trim()) md[RESERVED_DESCRIPTION_KEY] = description.trim();
     if (dimension) md[RESERVED_DIMENSION_KEY] = dimension;
     if (severity) md[RESERVED_SEVERITY_KEY] = severity;
-    return md;
+    // apply-on-tag: persist the slot -> tags map, pruning any orphan entry that
+    // no longer references a declared slot (e.g. a slot the author removed or
+    // renamed) so the stored `slot_tags` never keys off a non-existent slot.
+    const currentSlotNames = new Set((mode === "dqx_native" ? nativeSlots : sqlSlots).map((s) => s.name));
+    const prunedSlotTags: Record<string, string[]> = {};
+    for (const [slot, slotTagList] of Object.entries(slotTags)) {
+      if (currentSlotNames.has(slot)) prunedSlotTags[slot] = slotTagList;
+    }
+    return userMetadataWithSlotTags(md, prunedSlotTags);
   };
 
   // Write a parsed "As JSON" edit (item 11) back into the form state. Mirrors
@@ -1446,6 +1634,11 @@ export function RegistryRuleFormDialog({
       freeTags[k] = v;
     }
     setTags(freeTags);
+    // apply-on-tag: mirror the string-tag rehydration for the slot -> tags map.
+    // `parsed.userMetadata` is string-only (the JSON parser drops non-string
+    // values), so a JSON round-trip that omits `slot_tags` clears the map —
+    // consistent with how the JSON surface treats any non-string metadata.
+    setSlotTags(slotTagsFromUserMetadata(parsed.userMetadata));
     // JSON is mostly the implementation body — land the steward there to review.
     setPageTab("implementation");
     toast.success(t("rulesRegistry.jsonAppliedToForm"));
@@ -2085,6 +2278,8 @@ export function RegistryRuleFormDialog({
           allowAddRemove={mode !== "dqx_native"}
           expandableArgKey={mode === "dqx_native" ? nativeExpandableArgKey : undefined}
           lockFamily={mode === "dqx_native"}
+          slotTags={slotTags}
+          onSlotTagsChange={setSlotTags}
         />
       )}
 

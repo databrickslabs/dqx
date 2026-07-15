@@ -82,6 +82,7 @@ class CheckResultRow:
     columns: tuple[str, ...] = ()
     rule_id: str | None = None
     run_mode: str | None = None
+    rule_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,7 @@ def parse_check_rows(raw_rows: list[dict[str, str | None]]) -> list[CheckResultR
                 columns=_parse_columns_json(row.get("columns_json")),
                 rule_id=row.get("registry_rule_id"),
                 run_mode=row.get("run_mode"),
+                rule_name=row.get("rule_name"),
             )
         )
     return out
@@ -226,7 +228,7 @@ def _group_rows(
         for label, acc in groups.items()
     ]
     # dqlake: ORDER BY failed_tests DESC.
-    out.sort(key=lambda g: (g.failed_tests or 0), reverse=True)
+    out.sort(key=lambda g: g.failed_tests or 0, reverse=True)
     return out
 
 
@@ -243,13 +245,13 @@ def _by_rule_rows(rows: list[CheckResultRow]) -> list[GroupRowOut]:
     UI can facet-filter by identity instead of the version-dependent
     label; name-keyed (legacy) groups keep it None.
     """
-    newest_name: dict[str, tuple[str, str]] = {}  # key -> (run_date, check_name)
+    newest: dict[str, tuple[str, str, str | None]] = {}  # key -> (run_date, check_name, rule_name)
     identity_ids: dict[str, str] = {}
     for row in rows:
         key = _rule_key(row)
-        candidate = (row.run_date or "", row.check_name)
-        if key not in newest_name or candidate[0] > newest_name[key][0]:
-            newest_name[key] = candidate
+        candidate = (row.run_date or "", row.check_name, row.rule_name)
+        if key not in newest or candidate[0] > newest[key][0]:
+            newest[key] = candidate
         if row.rule_id is not None:
             identity_ids[key] = row.rule_id
     out = _group_rows(rows, _rule_key)
@@ -257,7 +259,8 @@ def _by_rule_rows(rows: list[CheckResultRow]) -> list[GroupRowOut]:
         if group.label is None:  # defensive: _rule_key never yields None
             continue
         group.rule_id = identity_ids.get(group.label)
-        group.label = newest_name[group.label][1]
+        _run_date, check_name, rule_name = newest[group.label]
+        group.label = rule_name or check_name
     return out
 
 
@@ -350,11 +353,7 @@ def annotate_trend_versions(
     and the whole call is a no-op when no freeze carries a timestamp.
     """
     freezes = sorted(
-        (
-            (ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc), ver)
-            for ver, ts in version_freezes
-            if ts is not None
-        ),
+        ((ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc), ver) for ver, ts in version_freezes if ts is not None),
         key=lambda kv: kv[0],
     )
     if not freezes:
@@ -673,9 +672,7 @@ def compute_entity_results(
             # the as-of batch so the carry-forward Average truncates to the
             # chosen batch (dqlake's `<=` HAVING on the batches CTE).
             scope_instants = {row.run_date for row in capped_rows}
-            expansion = [
-                row for row in asof_rows if row.run_date in scope_instants and row_matches_facets(row, facets)
-            ]
+            expansion = [row for row in asof_rows if row.run_date in scope_instants and row_matches_facets(row, facets)]
         result.trend = _trend_asof(expansion)
         result.trend_by_dimension = _trend_grouped(expansion, lambda row: row.dimension)
         result.trend_by_severity = _trend_grouped(expansion, lambda row: row.severity)

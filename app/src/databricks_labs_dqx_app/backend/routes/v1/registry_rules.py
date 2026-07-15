@@ -27,6 +27,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_permissions_service,
     get_registry_service,
     get_rule_embeddings_service,
+    get_tag_reconcile_service,
     require_role,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
@@ -52,6 +53,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_versions import Mo
 from databricks_labs_dqx_app.backend.services.pending_application_service import PendingApplicationService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
+from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 
 router = APIRouter()
 
@@ -573,6 +575,7 @@ def approve_registry_rule(
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     pending: Annotated[PendingApplicationService, Depends(get_pending_application_service)],
+    tag_reconcile: Annotated[TagReconcileService, Depends(get_tag_reconcile_service)],
     user_email: CurrentUser,
 ) -> RegistryRuleOut:
     """Approve (publish) a pending registry rule — bumps version and freezes a snapshot.
@@ -613,6 +616,15 @@ def approve_registry_rule(
             apply_rules=apply_rules,
             pending=pending,
         )
+        # Apply-on-tag (Task 7): after a successful publish, attach this rule
+        # to every monitored table it now tag-matches. Best-effort and a no-op
+        # when tag-auto-apply is off (the service gates internally); double-
+        # guarded here so this post-success side effect can never turn a
+        # successful approve into a 500.
+        try:
+            tag_reconcile.reconcile_rule(rule_id, user_email)
+        except Exception:
+            logger.warning("Tag auto-apply reconcile after approve failed (non-fatal)", exc_info=True)
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

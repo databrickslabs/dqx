@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { deriveSlotsAndParameters, fnSupportsNegate } from "./registry-rule-conversion";
+import {
+  deriveSlotsAndParameters,
+  fnSupportsNegate,
+  slotTagsFromUserMetadata,
+  userMetadataWithSlotTags,
+} from "./registry-rule-conversion";
 import { familyForSparkType } from "./slot-mapping";
 import type { CheckFunctionDef } from "./api";
 
@@ -246,5 +251,48 @@ describe("parseDqxCheckJson — sql_query imports without the single-table picke
     expect(result.mode).toBe("sql");
     expect((result.definition.body as { sql_query: string }).sql_query).toContain("sales_franchises");
     expect(result.userMetadata.name).toBe("cities_with_zero_reviews");
+  });
+});
+
+describe("slot_tags helpers (apply-on-tag) — mirror backend get_slot_tags/set_slot_tags", () => {
+  test("round-trips a slot -> tags map through user_metadata", () => {
+    const md = userMetadataWithSlotTags({ name: "x" }, { c1: ["class.pii"] });
+    expect(md.slot_tags).toEqual({ c1: ["class.pii"] });
+    expect(md.name).toBe("x");
+    expect(slotTagsFromUserMetadata(md)).toEqual({ c1: ["class.pii"] });
+  });
+
+  test("returns {} when slot_tags is absent", () => {
+    expect(slotTagsFromUserMetadata({})).toEqual({});
+    expect(slotTagsFromUserMetadata(undefined)).toEqual({});
+  });
+
+  test("drops slots with empty tag lists on write", () => {
+    const md = userMetadataWithSlotTags({}, { c1: ["class.pii"], c2: [] });
+    expect(md.slot_tags).toEqual({ c1: ["class.pii"] });
+  });
+
+  test("removes the slot_tags key entirely when the map is empty", () => {
+    const md = userMetadataWithSlotTags({ slot_tags: { c1: ["class.pii"] } }, { c1: [] });
+    expect("slot_tags" in md).toBe(false);
+  });
+
+  test("ignores non-array slot values and non-string tags on read", () => {
+    expect(
+      slotTagsFromUserMetadata({
+        slot_tags: { c1: "class.pii", c2: ["class.ok", 3, "", null], c3: ["class.a"] },
+      } as Record<string, unknown>),
+    ).toEqual({ c2: ["class.ok"], c3: ["class.a"] });
+  });
+
+  test("returns {} when slot_tags is a non-object (array / string)", () => {
+    expect(slotTagsFromUserMetadata({ slot_tags: ["x"] } as Record<string, unknown>)).toEqual({});
+    expect(slotTagsFromUserMetadata({ slot_tags: "nope" } as Record<string, unknown>)).toEqual({});
+  });
+
+  test("does not mutate the input user_metadata", () => {
+    const md = { name: "x" };
+    userMetadataWithSlotTags(md, { c1: ["class.pii"] });
+    expect(md).toEqual({ name: "x" });
   });
 });

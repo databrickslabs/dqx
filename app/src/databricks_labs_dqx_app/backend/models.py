@@ -40,6 +40,7 @@ from .services.monitored_table_service import (
     MonitoredTableSummary,
 )
 from .services.rule_suggester import RuleSuggestion, SuggestRulesResult
+from .services.tag_suggestion_service import TagRuleSuggestion
 
 if TYPE_CHECKING:
     # Imported for typing only: a runtime import would form a cycle
@@ -1053,6 +1054,47 @@ class SuggestRulesOut(BaseModel):
         )
 
 
+class TagRuleSuggestionOut(BaseModel):
+    """One tag-matched, accept-to-attach rule suggestion for a monitored table (apply-on-tag).
+
+    The OFF-path counterpart to auto-apply: surfaced on a table's Apply Rules
+    screen when ``tag_auto_apply`` is off. ``column_mapping`` is the single
+    representative slot->column group; ``explanation`` names the matched tags.
+    """
+
+    rule_id: str
+    rule_name: str | None = None
+    dimension: str | None = None
+    severity: str | None = None
+    column_mapping: ColumnMappingGroup
+    explanation: str = ""
+
+    @classmethod
+    def from_domain(cls, suggestion: "TagRuleSuggestion") -> "TagRuleSuggestionOut":
+        return cls(
+            rule_id=suggestion.rule_id,
+            rule_name=suggestion.rule_name,
+            dimension=suggestion.dimension,
+            severity=suggestion.severity,
+            column_mapping=suggestion.column_mapping,
+            explanation=suggestion.explanation,
+        )
+
+
+class TagSuggestionsOut(BaseModel):
+    """Response of ``GET /monitored-tables/{binding_id}/tag-suggestions``.
+
+    Best-effort: on any read/service failure the route returns an empty list
+    with HTTP 200, never a 500 (mirroring the suggest-rules contract).
+    """
+
+    suggestions: list[TagRuleSuggestionOut] = Field(default_factory=list)
+
+    @classmethod
+    def from_domain(cls, suggestions: list["TagRuleSuggestion"]) -> "TagSuggestionsOut":
+        return cls(suggestions=[TagRuleSuggestionOut.from_domain(s) for s in suggestions])
+
+
 class ProfilingSuggestionOut(BaseModel):
     """One applicable profiler-derived rule suggestion shown on the Profile page (B2-82).
 
@@ -1118,9 +1160,7 @@ class ApplyProfilingSuggestionsOut(BaseModel):
     def from_domain(cls, result: "BatchApplyResult") -> "ApplyProfilingSuggestionsOut":
         return cls(
             applied=[AppliedRuleOut.from_domain(a) for a in result.applied],
-            failed=[
-                ProfilingSuggestionApplyFailureOut(index=f.index, reason=f.reason) for f in result.failed
-            ],
+            failed=[ProfilingSuggestionApplyFailureOut(index=f.index, reason=f.reason) for f in result.failed],
         )
 
 
@@ -1342,7 +1382,9 @@ class ValidationRunSummaryOut(BaseModel):
 class RunMonitoredTableIn(BaseModel):
     """Body of ``POST /monitored-tables/{binding_id}/run`` (``runMonitoredTable``)."""
 
-    source: RegistryRunSetSource = Field(description="'approved' resolves a frozen snapshot; 'draft' renders live state")
+    source: RegistryRunSetSource = Field(
+        description="'approved' resolves a frozen snapshot; 'draft' renders live state"
+    )
     version: int | None = Field(
         default=None,
         description="Pin to a specific approved snapshot version. Ignored when source='draft'.",
@@ -2140,6 +2182,15 @@ class TableTagsOut(BaseModel):
     column_tags: dict[str, list[str]] = Field(default_factory=dict, description="Column name to list of tags mapping")
 
 
+class GovernedTagOut(BaseModel):
+    tag: str = Field(description="Governed tag key, or key=value")
+    description: str | None = Field(default=None, description="Governed tag description, if any")
+
+
+class GovernedTagsOut(BaseModel):
+    tags: list[GovernedTagOut] = Field(default_factory=list, description="Governed tags visible to the caller")
+
+
 # ---------------------------------------------------------------------------
 # Schedule config models
 # ---------------------------------------------------------------------------
@@ -2251,7 +2302,9 @@ class ObjectGrantOut(BaseModel):
     principal_id: str = Field(description="Workspace SCIM id; 'users' for the workspace users group")
     principal_type: str = Field(description="'user' or 'group'")
     principal_name: str | None = Field(default=None, description="Human-readable principal name")
-    privileges: list[str] = Field(default_factory=list, description="Granted privileges (SELECT/MODIFY/APPLY or ALL_PRIVILEGES)")
+    privileges: list[str] = Field(
+        default_factory=list, description="Granted privileges (SELECT/MODIFY/APPLY or ALL_PRIVILEGES)"
+    )
     inherit: bool = Field(default=False, description="Whether this grant flows down to child objects")
     grantor: str | None = Field(default=None, description="Who granted this")
     updated_at: str | None = Field(default=None, description="When the grant was last set (ISO8601)")
@@ -2271,7 +2324,9 @@ class ObjectGrantsOut(BaseModel):
     object_id: str = Field(description="Securable object id")
     grants: list[ObjectGrantOut] = Field(default_factory=list)
     can_manage: bool = Field(default=False, description="Whether the caller may add/remove grants on this object")
-    default_inherit: bool = Field(default=False, description="Admin default for the per-grant inheritance toggle on new grants")
+    default_inherit: bool = Field(
+        default=False, description="Admin default for the per-grant inheritance toggle on new grants"
+    )
 
 
 class SetObjectGrantIn(BaseModel):
@@ -2280,7 +2335,10 @@ class SetObjectGrantIn(BaseModel):
     principal_id: str = Field(description="Workspace SCIM id; 'users' for the workspace users group")
     principal_type: str = Field(description="'user' or 'group'")
     principal_name: str | None = Field(default=None, description="Human-readable principal name")
-    privileges: list[str] = Field(default_factory=list, description="Privileges to grant (empty removes the grant, or revokes the users-group default)")
+    privileges: list[str] = Field(
+        default_factory=list,
+        description="Privileges to grant (empty removes the grant, or revokes the users-group default)",
+    )
     inherit: bool = Field(default=False, description="Whether the grant flows down to child objects")
 
 
@@ -2444,3 +2502,36 @@ class ExportOut(BaseModel):
     filename: str = Field(description="Suggested download filename, e.g. 'registry_rules.dqx.yaml'.")
     content: str = Field(description="The rendered YAML document.")
     format: str = Field(description="The export format: 'dqx' or 'odcs'.")
+
+
+class DeployDemoContentIn(BaseModel):
+    """Request body for the admin "Deploy demo content" endpoint.
+
+    Args:
+        wipe_first: When ``True``, the seed clears existing DQX Studio-managed
+            data before seeding so the demo lands on a clean slate.
+    """
+
+    wipe_first: bool = False
+
+
+class DeployDemoContentOut(BaseModel):
+    """Acknowledgement that a demo-content seed was launched.
+
+    The seed runs for ~30min on a background daemon thread, so this returns
+    immediately with the initial ``running`` state; progress is polled via the
+    demo-content status endpoint.
+    """
+
+    status: str
+    started_at: str
+
+
+class DemoContentStatusOut(BaseModel):
+    """Current state of the long-running demo-content seed job."""
+
+    state: str
+    phase: str
+    message: str
+    started_at: str
+    updated_at: str

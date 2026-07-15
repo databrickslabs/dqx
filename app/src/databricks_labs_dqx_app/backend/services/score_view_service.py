@@ -206,7 +206,12 @@ class ScoreViewService:
             "  user_metadata['severity'] AS severity,\n"
             "  user_metadata['dimension'] AS dimension,\n"
             "  user_metadata['registry_rule_id'] AS registry_rule_id,\n"
-            "  COALESCE(arg_columns, CASE WHEN arg_column IS NOT NULL THEN array(arg_column) END) AS columns\n"
+            "  user_metadata['name'] AS rule_name,\n"
+            "  COALESCE(\n"
+            "    arg_columns,\n"
+            "    CASE WHEN arg_column IS NOT NULL THEN array(arg_column) END,\n"
+            "    from_json(user_metadata['mapped_columns'], 'ARRAY<STRING>')\n"
+            "  ) AS columns\n"
             "FROM exploded\n"
             "WHERE check_name IS NOT NULL\n"
             "QUALIFY ROW_NUMBER() OVER (PARTITION BY run_id, source_table_fqn, check_name ORDER BY pos) = 1"
@@ -311,6 +316,7 @@ class ScoreViewService:
             "  a.severity,\n"
             "  a.dimension,\n"
             "  a.registry_rule_id,\n"
+            "  a.rule_name,\n"
             "  a.columns\n"
             "FROM exploded e\n"
             f"LEFT JOIN {self.attribution_view_fqn_quoted} a\n"
@@ -400,6 +406,7 @@ class ScoreViewService:
             "  c.severity,\n"
             "  c.dimension,\n"
             "  c.registry_rule_id,\n"
+            "  c.rule_name,\n"
             "  c.columns\n"
             "FROM asof a\n"
             f"JOIN {v} c\n"
@@ -451,12 +458,7 @@ class ScoreViewService:
             "    comment: Row-weighted DQ score between 0 and 1 (NULL when no rows or no checks)\n"
         )
         return (
-            f"CREATE OR REPLACE VIEW {self.metric_view_fqn_quoted}\n"
-            "WITH METRICS\n"
-            "LANGUAGE YAML\n"
-            "AS $$\n"
-            f"{yaml_body}"
-            "$$"
+            f"CREATE OR REPLACE VIEW {self.metric_view_fqn_quoted}\nWITH METRICS\nLANGUAGE YAML\nAS $$\n{yaml_body}$$"
         )
 
     def ensure_views(self) -> None:

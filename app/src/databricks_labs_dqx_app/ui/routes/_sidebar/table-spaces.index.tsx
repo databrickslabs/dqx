@@ -37,7 +37,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, CheckCircle2, LayoutGrid, Loader2, Play, Plus, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
+import { AlertCircle, Boxes, CheckCircle2, Loader2, Play, Plus, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
 import {
   useListDataProducts,
   useApproveDataProduct,
@@ -464,17 +464,13 @@ function DataProductsPage() {
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center text-center">
-                {/* LayoutGrid, not the Boxes brand mark: Boxes is built from
-                    dense isometric diagonals at fractional coordinates
-                    (2.97, 14.63, 4.42, 4.74, 2.85…) that can't align to the
-                    pixel grid, so at 48px / 30% opacity its strokes anti-alias
-                    into a soft, "blurry" glyph. The working empty states use
-                    axis-aligned glyphs on integer coords (monitored-tables
-                    Table2, registry-rules Library) which stay crisp — this is
-                    the four-rect LayoutGrid equivalent (P23 item 18). Boxes
-                    stays as the sidebar brand mark, where 24px / full opacity
-                    renders it fine. */}
-                <LayoutGrid className="h-12 w-12 text-muted-foreground/30 mb-3" />
+                {/* Boxes — the same glyph as the Table Spaces sidebar nav, so
+                    the empty state reads as the same feature. Boxes is built
+                    from isometric diagonals at fractional coordinates that
+                    anti-alias softly at 48px / very-low opacity, so we render
+                    it a touch smaller (h-10) and at /50 opacity where its
+                    strokes stay crisp rather than blurring. */}
+                <Boxes className="h-10 w-10 text-muted-foreground/50 mb-3" />
                 <p className="text-sm text-muted-foreground">
                   {hasActiveFilters
                     ? t("dataProducts.emptyState")

@@ -53,6 +53,9 @@ class TestGetRulesRegistrySettings:
         assert result.auto_upgrade_without_approval is False
         assert result.default_auto_upgrade is True
 
+    def test_tag_auto_apply_defaults_false(self, svc):
+        assert get_rules_registry_settings(svc).tag_auto_apply is False
+
 
 class TestSaveRulesRegistrySettings:
     def test_requires_at_least_one_field(self, svc):
@@ -95,3 +98,13 @@ class TestSaveRulesRegistrySettings:
         assert result.auto_upgrade_without_approval is True
         assert result.default_auto_upgrade is False
         assert sql_executor_mock.upsert.call_count == 2
+
+    def test_saves_tag_auto_apply_independently(self, svc, sql_executor_mock):
+        _wire_stateful_store(sql_executor_mock)
+        result = save_rules_registry_settings(
+            RulesRegistrySettingsIn(tag_auto_apply=True), svc, "admin@x"
+        )
+        assert result.tag_auto_apply is True
+        assert result.auto_upgrade_without_approval is False
+        assert result.default_auto_upgrade is True
+        assert sql_executor_mock.upsert.call_count == 1

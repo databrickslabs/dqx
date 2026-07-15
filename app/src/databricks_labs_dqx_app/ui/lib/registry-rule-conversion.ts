@@ -38,6 +38,48 @@ import { RESERVED_NAME_KEY, RESERVED_SEVERITY_KEY, getTag } from "@/components/R
 export const COLUMN_KINDS = new Set(["column", "columns"]);
 
 /**
+ * Reserved `user_metadata` key holding the apply-on-tag slot -> tags map.
+ * Mirrors the backend's `registry_models.RESERVED_SLOT_TAGS_KEY`.
+ */
+export const SLOT_TAGS_KEY = "slot_tags";
+
+/**
+ * Read the reserved `slot_tags` map from a rule's `user_metadata`. Mirrors the
+ * backend's `registry_models.get_slot_tags`: returns a `{slot: [tag, ...]}`
+ * dict, `{}` when absent or malformed. Non-array slot values are dropped;
+ * non-string / empty tags within a list are dropped. Unlike the sibling
+ * string-tag hydration (which keeps only string values and therefore ignores
+ * this nested object), this reads the object shape explicitly.
+ */
+export function slotTagsFromUserMetadata(md: Record<string, unknown> | undefined): Record<string, string[]> {
+  const raw = md?.[SLOT_TAGS_KEY];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [slot, tags] of Object.entries(raw as Record<string, unknown>)) {
+    if (Array.isArray(tags)) out[slot] = tags.filter((t): t is string => typeof t === "string" && t.length > 0);
+  }
+  return out;
+}
+
+/**
+ * Return a NEW `user_metadata` with `slot_tags` set to *slotTags* (never
+ * mutates *md*). Mirrors the backend's `registry_models.set_slot_tags`: slots
+ * with an empty tag list are dropped, and the key is removed entirely when the
+ * resulting map is empty.
+ */
+export function userMetadataWithSlotTags(
+  md: Record<string, unknown>,
+  slotTags: Record<string, string[]>,
+): Record<string, unknown> {
+  const cleaned: Record<string, string[]> = {};
+  for (const [slot, tags] of Object.entries(slotTags)) if (tags.length > 0) cleaned[slot] = [...tags];
+  const next = { ...md };
+  if (Object.keys(cleaned).length > 0) next[SLOT_TAGS_KEY] = cleaned;
+  else delete next[SLOT_TAGS_KEY];
+  return next;
+}
+
+/**
  * The `negate` argument is NOT rendered as a raw boolean parameter row for a
  * `dqx_native` rule (item 11). Instead it is surfaced as the PASS/FAIL
  * polarity switcher and injected at materialization time from the rule's

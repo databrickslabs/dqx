@@ -1124,6 +1124,10 @@ class RulesRegistrySettingsOut(BaseModel):
         description="Attach-time default pin for new applications/members: follow latest "
         "(True, default) vs. pin to the current version (False)."
     )
+    tag_auto_apply: bool = Field(
+        description="Tag-mapping apply behaviour: eagerly auto-attach tag-mapped rules "
+        "across monitored tables (True) vs. only surface them as suggestions (False, default)."
+    )
 
 
 class RulesRegistrySettingsIn(BaseModel):
@@ -1131,12 +1135,14 @@ class RulesRegistrySettingsIn(BaseModel):
 
     auto_upgrade_without_approval: bool | None = None
     default_auto_upgrade: bool | None = None
+    tag_auto_apply: bool | None = None
 
 
 def _rules_registry_settings_out(svc: AppSettingsService) -> RulesRegistrySettingsOut:
     return RulesRegistrySettingsOut(
         auto_upgrade_without_approval=svc.get_auto_upgrade_without_approval(),
         default_auto_upgrade=svc.get_default_auto_upgrade(),
+        tag_auto_apply=svc.get_tag_auto_apply(),
     )
 
 
@@ -1167,16 +1173,22 @@ def save_rules_registry_settings(
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     email: Annotated[str, Depends(get_user_email)],
 ) -> RulesRegistrySettingsOut:
-    """Update one or both Rules Registry governance settings (admin only)."""
-    if body.auto_upgrade_without_approval is None and body.default_auto_upgrade is None:
+    """Update one or more Rules Registry governance settings (admin only)."""
+    if (
+        body.auto_upgrade_without_approval is None
+        and body.default_auto_upgrade is None
+        and body.tag_auto_apply is None
+    ):
         raise HTTPException(
             status_code=400,
-            detail="At least one of auto_upgrade_without_approval or default_auto_upgrade must be provided.",
+            detail="At least one of auto_upgrade_without_approval, default_auto_upgrade, or tag_auto_apply must be provided.",
         )
     if body.auto_upgrade_without_approval is not None:
         svc.save_auto_upgrade_without_approval(body.auto_upgrade_without_approval, user_email=email)
     if body.default_auto_upgrade is not None:
         svc.save_default_auto_upgrade(body.default_auto_upgrade, user_email=email)
+    if body.tag_auto_apply is not None:
+        svc.save_tag_auto_apply(body.tag_auto_apply, user_email=email)
     logger.info("Saved Rules Registry governance settings (by=%s)", email)
     return _rules_registry_settings_out(svc)
 

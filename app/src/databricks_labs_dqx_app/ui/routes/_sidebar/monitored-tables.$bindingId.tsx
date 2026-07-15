@@ -81,18 +81,22 @@ import {
   useSaveAppliedRules,
   useListRegistryRules,
   useGetTableColumns,
+  useGetTableTags,
   useListMonitoredTableVersions,
   useRunMonitoredTable,
   useSuggestRulesForTable,
   usePreviewTableData,
   useQueryTableData,
   useGetSampleQuestions,
+  getListTagSuggestionsQueryOptions,
   type AppliedRuleOut,
   type ColumnOut,
   type MonitoredTableOut,
   type MonitoredTableVersionOut,
   type RegistryRuleOut,
+  type SuggestedRuleMappingOut,
   type TableDataOut,
+  type TagRuleSuggestionOut,
 } from "@/lib/api";
 import {
   DropdownMenu,
@@ -126,6 +130,7 @@ import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availabil
 import { AI_BUTTON_BG, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
 import { AddRulesDialog } from "@/components/apply-rules/AddRulesDialog";
 import { AiSuggestionDialog, type SuggestRulesState } from "@/components/apply-rules/AiSuggestionDialog";
+import { suggestionKey } from "@/components/apply-rules/ai-suggestion-utils";
 import { RuleConfigCard, computeStatus } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
 import {
@@ -1120,6 +1125,40 @@ function RunTableAction({
 // with About's "Open in Unity Catalog" link line.
 const SCHEMA_PAGE_SIZE = 6;
 
+/** Applied governed tags for one schema column, rendered on a single
+ *  fixed-height line. Shows the first tag as a compact chip; if there are more,
+ *  a trailing `+N` badge whose tooltip lists every applied tag. Never wraps —
+ *  the row stays `h-8`. Empty → a muted "-" (matches the Description empty
+ *  state). */
+function ColumnTagsCell({ tags }: { tags: string[] }) {
+  const { t } = useTranslation();
+  if (tags.length === 0) {
+    return <span className="text-muted-foreground text-xs">-</span>;
+  }
+  const [first, ...rest] = tags;
+  return (
+    <div className="flex items-center gap-1 overflow-hidden whitespace-nowrap">
+      <Badge variant="secondary" className="text-[10px] font-mono max-w-full shrink" title={first}>
+        <span className="truncate">{first}</span>
+      </Badge>
+      {rest.length > 0 && (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="outline" className="text-[10px] shrink-0 cursor-default">
+                +{rest.length}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent>
+              <span className="text-xs">{t("monitoredTables.aboutColTagsAllLabel", { tags: tags.join(", ") })}</span>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+    </div>
+  );
+}
+
 function AboutTab({
   bindingId,
   table,
@@ -1145,6 +1184,13 @@ function AboutTab({
     query: { enabled: parts.length === 3 },
   });
   const columns: ColumnOut[] = columnsQuery.data?.data ?? [];
+
+  // Applied governed tags per column (from `get_table_tags`, sourced from
+  // information_schema.column_tags). Absent/failed → no tags shown.
+  const tagsQuery = useGetTableTags(catalog ?? "", schema ?? "", tableName ?? "", {
+    query: { enabled: parts.length === 3 },
+  });
+  const columnTags: Record<string, string[]> = tagsQuery.data?.data?.column_tags ?? {};
 
   const filteredColumns = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -1172,7 +1218,10 @@ function AboutTab({
 
   return (
     <div className="space-y-6 pt-4">
-      <div className="grid gap-6 lg:grid-cols-2 items-start">
+      {/* About (metadata) : Schema (columns table) — the schema table gets the
+          larger share so its Column/Type/Tags/Description columns + filter box
+          breathe; About's definition list is narrow by nature. */}
+      <div className="grid gap-6 lg:grid-cols-[5fr_7fr] items-start">
         <section className="space-y-3">
           <h2 className="text-sm font-semibold">{t("monitoredTables.aboutSectionTitle")}</h2>
           <dl className="grid grid-cols-[160px_1fr] gap-x-4 gap-y-2 text-xs">
@@ -1246,8 +1295,11 @@ function AboutTab({
                         <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-[26%]">
                           {t("monitoredTables.aboutColColumn")}
                         </th>
-                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-28">
+                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-20">
                           {t("monitoredTables.aboutColType")}
+                        </th>
+                        <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 py-2 w-[28%]">
+                          {t("monitoredTables.aboutColTags")}
                         </th>
                         <th className="px-3 py-1.5">
                           <div className="flex items-center justify-between gap-3">
@@ -1261,7 +1313,7 @@ function AboutTab({
                                 setFilter(e.target.value);
                                 setPage(1);
                               }}
-                              className="max-w-xs h-7 text-xs font-normal normal-case tracking-normal"
+                              className="w-44 h-7 text-xs font-normal normal-case tracking-normal"
                             />
                           </div>
                         </th>
@@ -1301,6 +1353,9 @@ function AboutTab({
                             </Badge>
                           </td>
                           <td className="px-3 py-1 overflow-hidden">
+                            <ColumnTagsCell tags={columnTags[c.name] ?? []} />
+                          </td>
+                          <td className="px-3 py-1 overflow-hidden">
                             {c.comment ? (
                               <span className="text-xs block truncate" title={c.comment}>
                                 {c.comment}
@@ -1313,7 +1368,7 @@ function AboutTab({
                       ))}
                       {filteredColumns.length === 0 && (
                         <tr>
-                          <td colSpan={3} className="text-center text-muted-foreground py-6 text-sm">
+                          <td colSpan={4} className="text-center text-muted-foreground py-6 text-sm">
                             {t("monitoredTables.aboutNoMatchingColumns")}
                           </td>
                         </tr>
@@ -1750,6 +1805,7 @@ function ApplyRulesTab({
   // auto-expanded (after staging or a by-column "jump to rule").
   const [rulePage, setRulePage] = useState(1);
 
+  const queryClient = useQueryClient();
   const parts = tableFqn.split(".");
   const columnsQuery = useGetTableColumns(parts[0] ?? "", parts[1] ?? "", parts[2] ?? "", {
     query: { enabled: parts.length === 3 },
@@ -1783,7 +1839,7 @@ function ApplyRulesTab({
   // `suggestState` so opening the Suggest dialog is instant instead of waiting
   // on the round-trip; a manual "Refresh" in the dialog re-runs it.
   const suggestMutation = useSuggestRulesForTable();
-  const { mutate: suggestRules, isPending: suggestPending } = suggestMutation;
+  const { isPending: suggestPending } = suggestMutation;
   const [suggestState, setSuggestState] = useState<SuggestRulesState | null>(null);
   const suggestPrefetchedRef = useRef(false);
   // Guards against a stale response/timeout clobbering a newer request's
@@ -1817,32 +1873,71 @@ function ApplyRulesTab({
       });
     }, SUGGEST_RULES_TIMEOUT_MS);
 
-    suggestRules(
-      { bindingId },
-      {
-        onSuccess: (resp) => {
-          if (suggestRequestIdRef.current !== requestId) return;
-          clearSuggestTimeout();
-          setSuggestState({
-            available: resp.data.available,
-            reason: resp.data.reason,
-            suggestions: resp.data.suggestions ?? [],
-          });
-        },
-        onError: (err) => {
-          if (suggestRequestIdRef.current !== requestId) return;
-          clearSuggestTimeout();
-          const reason = aiUnavailableReason(err);
-          if (reason) reportUnavailable(reason);
-          setSuggestState({
-            available: false,
-            reason: reason ?? t("monitoredTables.suggestRulesFetchFailed"),
-            suggestions: [],
-          });
-        },
-      },
-    );
-  }, [bindingId, suggestRules, reportUnavailable, clearSuggestTimeout, t]);
+    // Fire BOTH the AI suggester AND the tag-suggestions fetch and show their
+    // UNION. The two are independent: a workspace with no AI configured still
+    // gets tag suggestions, and an AI failure/timeout never discards tag
+    // results. `allSettled` lets each settle on its own; the requestId guard
+    // (and the timeout above) still ensures a stale response can't clobber a
+    // newer one.
+    void (async () => {
+      const [aiResp, tagResp] = await Promise.allSettled([
+        suggestMutation.mutateAsync({ bindingId }),
+        queryClient.fetchQuery(getListTagSuggestionsQueryOptions(bindingId)),
+      ]);
+      if (suggestRequestIdRef.current !== requestId) return;
+      clearSuggestTimeout();
+
+      // Tag suggestions map field-by-field onto the AI suggestion shape (the
+      // two generated types are structurally identical but nominally distinct).
+      const tagSuggestions: SuggestedRuleMappingOut[] =
+        tagResp.status === "fulfilled"
+          ? (tagResp.value.data.suggestions ?? []).map((s: TagRuleSuggestionOut) => ({
+              rule_id: s.rule_id,
+              rule_name: s.rule_name,
+              dimension: s.dimension,
+              severity: s.severity,
+              column_mapping: s.column_mapping,
+              explanation: s.explanation,
+            }))
+          : [];
+
+      let aiAvailableResult = false;
+      let aiReason: string | undefined;
+      let aiSuggestions: SuggestedRuleMappingOut[] = [];
+      if (aiResp.status === "fulfilled") {
+        aiAvailableResult = aiResp.value.data.available;
+        aiReason = aiResp.value.data.reason;
+        aiSuggestions = aiResp.value.data.suggestions ?? [];
+      } else {
+        const reason = aiUnavailableReason(aiResp.reason);
+        if (reason) reportUnavailable(reason);
+        aiReason = reason ?? t("monitoredTables.suggestRulesFetchFailed");
+      }
+
+      // Union, de-duped by (rule_id + sorted slot->column set). AI is listed
+      // first so on an exact collision its explanation wins; every (rule,
+      // column) the AI did NOT also suggest keeps its "Matched tag …" reason.
+      const merged: SuggestedRuleMappingOut[] = [];
+      const seen = new Set<string>();
+      for (const s of [...aiSuggestions, ...tagSuggestions]) {
+        const key = suggestionKey(s);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(s);
+      }
+
+      // Available when EITHER source has something to offer. When tag
+      // suggestions exist the dialog is available regardless of the AI, so the
+      // AI reason is moot; with no tag suggestions we preserve the exact prior
+      // reason plumbing (AI reason on both the available and unavailable path).
+      const available = aiAvailableResult || tagSuggestions.length > 0;
+      setSuggestState({
+        available,
+        reason: tagSuggestions.length > 0 ? undefined : aiReason,
+        suggestions: merged,
+      });
+    })();
+  }, [bindingId, suggestMutation, queryClient, reportUnavailable, clearSuggestTimeout, t]);
 
   // Mirrors dqlake's `canSuggest` gate on `AiSuggestionButton`: the table's
   // columns come from Unity Catalog (`columnsQuery`), and when that read
