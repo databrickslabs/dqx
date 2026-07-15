@@ -116,7 +116,7 @@ _TERMINAL_RUN_STATES = ("SUCCESS", "FAILED", "CANCELED")
 # those rows so the re-date UPDATE never matches zero rows and strands a week at
 # wall-clock now. Bounded and short — the metrics write trails the terminal row
 # by seconds, not minutes.
-_METRICS_TIMEOUT_SECONDS = 120
+_METRICS_TIMEOUT_SECONDS = 300
 _METRICS_POLL_SECONDS = 5
 
 
@@ -838,15 +838,47 @@ class DemoSeedService:
         """
         metrics_fqn = self._app_sql.fqn("dq_metrics")
         runs_fqn = self._app_sql.fqn("dq_validation_runs")
-        if not self._wait_for_metrics(run_id):
-            logger.warning(
-                "Demo re-date: no dq_metrics rows for run %s after waiting %ss — its metrics "
-                "will not be back-dated and may show as a stray 'now' point in the trend.",
-                self._sanitize(run_id),
-                _METRICS_TIMEOUT_SECONDS,
-            )
-        self._app_sql.execute(redate.build_redate_metrics_sql(metrics_fqn, run_id, target_iso))
-        self._app_sql.execute(redate.build_redate_runs_sql(runs_fqn, run_id, target_iso))
+        # A run writes SEVERAL ``dq_metrics`` rows that can trickle in over a few
+        # seconds AFTER the terminal ``dq_validation_runs`` row that
+        # :meth:`_wait_for_run` gates on. So re-date, then re-check for any row of
+        # this run_id still off the target instant, and re-date again until none
+        # remain (or a bounded deadline). This catches metric rows that landed
+        # after the first UPDATE — otherwise they stay at real wall-clock and
+        # orphan the week's dimension/severity point (those charts read
+        # ``dq_metrics.run_time`` directly). Matches dqlake, where one UPDATE on a
+        # single fact table suffices.
+        deadline = time.monotonic() + _METRICS_TIMEOUT_SECONDS
+        while True:
+            self._wait_for_metrics(run_id)
+            self._app_sql.execute(redate.build_redate_metrics_sql(metrics_fqn, run_id, target_iso))
+            self._app_sql.execute(redate.build_redate_runs_sql(runs_fqn, run_id, target_iso))
+            if not self._metrics_off_target(run_id, target_iso):
+                return
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    "Demo re-date: run %s still has dq_metrics rows off the target instant after %ss; "
+                    "a stray trend point may remain.",
+                    self._sanitize(run_id),
+                    _METRICS_TIMEOUT_SECONDS,
+                )
+                return
+            time.sleep(_METRICS_POLL_SECONDS)
+
+    def _metrics_off_target(self, run_id: str, target_iso: str) -> bool:
+        """Return True if any ``dq_metrics`` row for *run_id* is not at *target_iso*.
+
+        Used by :meth:`_redate_run` to detect metric rows that arrived after the
+        re-date UPDATE (so they are still at real wall-clock and would orphan the
+        week's trend point). ``iso`` emits whole-second instants, which cast back
+        to string exactly, so the string comparison is precise.
+        """
+        metrics_fqn = self._app_sql.fqn("dq_metrics")
+        rows = self._app_sql.query_dicts(
+            f"SELECT 1 FROM {metrics_fqn} "  # noqa: S608
+            f"WHERE run_id = '{escape_sql_string(run_id)}' "
+            f"AND CAST(run_time AS STRING) <> '{escape_sql_string(target_iso)}' LIMIT 1"
+        )
+        return bool(rows)
 
     def _wait_for_metrics(self, run_id: str) -> bool:
         """Poll ``dq_metrics`` until at least one row exists for *run_id*; return whether it appeared.

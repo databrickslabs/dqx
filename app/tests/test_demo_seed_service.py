@@ -254,7 +254,9 @@ def test_weekly_trend_uses_passed_rule_map_never_refingerprints():
     deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
-    deps["app_sql"].query_dicts.side_effect = lambda *_a, **_k: [{"status": "SUCCESS"}]
+    # Off-target ('<>') re-date check returns no stragglers (clean); the metrics
+    # existence poll / status reads return a row.
+    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: [] if "<>" in sql else [{"status": "SUCCESS"}]
 
     binding_map = {b.table: f"b-{b.table}" for b in manifest.BINDINGS}
     svc._build_weekly_trend(binding_map, authoritative, ["p1"], 1, "admin@example.com", datetime.now(timezone.utc))
@@ -359,6 +361,8 @@ def test_weekly_trend_strips_polluting_now_history_but_keeps_cache_current():
     in_band = (low + high) // 2
 
     def _query_dicts(sql, *_a, **_k):
+        if "<>" in sql:
+            return []  # off-target straggler check: no rows off the target instant
         if "metric_name" in sql:
             return _metrics_rows(50_000, in_band)
         return [{"status": "SUCCESS"}]
@@ -425,6 +429,8 @@ def test_weekly_trend_tightens_card_rule_at_tighten_week():
     in_band = (low + high) // 2
 
     def _query_dicts(sql, *_a, **_k):
+        if "<>" in sql:
+            return []  # off-target straggler check: no rows off the target instant
         if "metric_name" in sql:
             return _metrics_rows(50_000, in_band)
         return [{"status": "SUCCESS"}]
@@ -457,6 +463,8 @@ def test_validation_gate_submits_all_runs_before_waiting():
     in_band = (low + high) // 2
 
     def _query_dicts(sql, *_a, **_k):
+        if "<>" in sql:
+            return []  # off-target straggler check: no rows off the target instant
         if "metric_name" in sql:
             return _metrics_rows(50_000, in_band)
         events.append("wait")
@@ -499,6 +507,8 @@ def test_weekly_trend_submits_all_bindings_before_waiting_or_redating():
     in_band = (low + high) // 2
 
     def _query_dicts(sql, *_a, **_k):
+        if "<>" in sql:
+            return []  # off-target straggler check: no rows off the target instant
         if "metric_name" in sql:
             return _metrics_rows(50_000, in_band)
         # The metrics-existence poll (FIX E) reads run_id from dq_metrics; it must
@@ -617,40 +627,46 @@ def test_redate_run_waits_for_metrics_rows_before_updating(monkeypatch):
     monkeypatch.setattr(ss, "_METRICS_POLL_SECONDS", 0)  # no real sleep in the poll loop
     svc, deps = _svc()
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
-    # metrics rows appear only on the second poll — the first sees none yet.
-    calls = {"n": 0}
+    # The existence poll sees no rows first, rows on the second poll; then the
+    # post-re-date off-target check ('<>' query) reports everything on target.
+    existence_calls = {"n": 0}
 
     def _query_dicts(sql, *_a, **_k):
-        assert "dq_metrics" in sql  # the existence poll targets dq_metrics
-        calls["n"] += 1
-        return [] if calls["n"] == 1 else [{"run_id": "run1"}]
+        assert "dq_metrics" in sql
+        if "<>" in sql:
+            return []  # off-target check: no rows off the target instant
+        existence_calls["n"] += 1
+        return [] if existence_calls["n"] == 1 else [{"run_id": "run1"}]
 
     deps["app_sql"].query_dicts.side_effect = _query_dicts
 
     svc._redate_run("run1", "2026-05-01 09:30:00")
 
-    assert calls["n"] == 2  # polled until the metrics rows appeared
+    assert existence_calls["n"] == 2  # polled until the metrics rows appeared
     updates = [c.args[0] for c in deps["app_sql"].execute.call_args_list if c.args[0].startswith("UPDATE")]
     assert any("dq_metrics" in s for s in updates)
     assert any("dq_validation_runs" in s for s in updates)
 
 
-def test_redate_run_logs_loudly_when_metrics_never_appear(monkeypatch, caplog):
-    # FIX E: if the dq_metrics rows never materialise within the bounded window,
-    # the re-date must NOT be silently skipped — it must emit a loud demo-layer
-    # warning so a stranded week is never invisible. (The UPDATE still runs; it
-    # simply matches nothing, which the warning flags.)
+def test_redate_run_logs_loudly_when_metrics_stay_off_target(monkeypatch, caplog):
+    # FIX E: if metric rows for the run stay off the target instant past the
+    # bounded window (e.g. they never all materialise), the re-date loop must NOT
+    # silently give up — it emits a loud demo-layer warning so a stranded week
+    # (a potential stray 'now' trend point) is never invisible.
     from databricks_labs_dqx_app.backend.demo import seed_service as ss
 
     monkeypatch.setattr(ss, "_METRICS_TIMEOUT_SECONDS", 0)  # deadline already passed
     monkeypatch.setattr(ss, "_METRICS_POLL_SECONDS", 0)
     svc, deps = _svc()
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
-    deps["app_sql"].query_dicts.side_effect = lambda *_a, **_k: []  # metrics never appear
+    # existence poll finds rows, but the off-target check ('<>') always reports a
+    # straggler — so the loop can never confirm a clean re-date and, with the
+    # deadline already passed, must warn.
+    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: [{"run_id": "run1"}]
 
     with caplog.at_level("WARNING", logger="databricks_labs_dqx_app.backend.demo.seed_service"):
         svc._redate_run("run1", "2026-05-01 09:30:00")
-    assert "no dq_metrics rows for run" in caplog.text
+    assert "still has dq_metrics rows off the target instant" in caplog.text
 
 
 def test_weekly_trend_redates_every_run_id_once_per_binding_per_week():
@@ -675,7 +691,7 @@ def test_weekly_trend_redates_every_run_id_once_per_binding_per_week():
     deps["binding_run"].run_binding.side_effect = _run_binding
     # run-status poll + metrics-existence poll both return a present, terminal row.
     deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
-        [{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}]
+        [] if "<>" in sql else ([{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}])
     )
 
     weeks = 3
@@ -713,7 +729,7 @@ def test_weekly_trend_tightens_card_rule_exactly_once_no_version_cluster():
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
-        [{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}]
+        [] if "<>" in sql else ([{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}])
     )
 
     rule_map = {spec.key: "card-rid" for spec in manifest.RULES}
@@ -741,7 +757,7 @@ def test_weekly_trend_reapproves_bindings_only_on_lifecycle_change():
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
-        [{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}]
+        [] if "<>" in sql else ([{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}])
     )
 
     applied_per_table: dict[str, int] = {}
@@ -776,7 +792,7 @@ def test_weekly_trend_redates_history_for_every_scope_each_week():
     deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
-    deps["app_sql"].query_dicts.side_effect = lambda *_a, **_k: [{"status": "SUCCESS"}]
+    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: [] if "<>" in sql else [{"status": "SUCCESS"}]
 
     weeks = 2
     binding_map = {"customers": "b-customers", "orders": "b-orders", "products": "b-products"}
@@ -857,6 +873,8 @@ def test_validation_gate_deletes_gate_runs_from_both_tables():
     in_band = (low + high) // 2
 
     def _query_dicts(sql, *_a, **_k):
+        if "<>" in sql:
+            return []  # off-target straggler check: no rows off the target instant
         if "metric_name" in sql:
             return _metrics_rows(50_000, in_band)
         return [{"status": "SUCCESS"}]
