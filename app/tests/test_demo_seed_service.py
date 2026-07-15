@@ -254,9 +254,11 @@ def test_weekly_trend_uses_passed_rule_map_never_refingerprints():
     deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
-    # Off-target ('<>') re-date check returns no stragglers (clean); the metrics
-    # existence poll / status reads return a row.
-    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: [] if "<>" in sql else [{"status": "SUCCESS"}]
+    # SELECT 1 existence probes (off-target re-date check) return no stragglers;
+    # the metrics existence poll / status reads return a row.
+    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
+        [] if "SELECT 1" in sql else [{"status": "SUCCESS"}]
+    )
 
     binding_map = {b.table: f"b-{b.table}" for b in manifest.BINDINGS}
     svc._build_weekly_trend(binding_map, authoritative, ["p1"], 1, "admin@example.com", datetime.now(timezone.utc))
@@ -361,8 +363,8 @@ def test_weekly_trend_strips_polluting_now_history_but_keeps_cache_current():
     in_band = (low + high) // 2
 
     def _query_dicts(sql, *_a, **_k):
-        if "<>" in sql:
-            return []  # off-target straggler check: no rows off the target instant
+        if "SELECT 1" in sql:
+            return []  # SELECT 1 existence probe (off-target re-date check + gate delete-verify): no rows
         if "metric_name" in sql:
             return _metrics_rows(50_000, in_band)
         return [{"status": "SUCCESS"}]
@@ -429,8 +431,8 @@ def test_weekly_trend_tightens_card_rule_at_tighten_week():
     in_band = (low + high) // 2
 
     def _query_dicts(sql, *_a, **_k):
-        if "<>" in sql:
-            return []  # off-target straggler check: no rows off the target instant
+        if "SELECT 1" in sql:
+            return []  # SELECT 1 existence probe (off-target re-date check + gate delete-verify): no rows
         if "metric_name" in sql:
             return _metrics_rows(50_000, in_band)
         return [{"status": "SUCCESS"}]
@@ -463,8 +465,8 @@ def test_validation_gate_submits_all_runs_before_waiting():
     in_band = (low + high) // 2
 
     def _query_dicts(sql, *_a, **_k):
-        if "<>" in sql:
-            return []  # off-target straggler check: no rows off the target instant
+        if "SELECT 1" in sql:
+            return []  # SELECT 1 existence probe (off-target re-date check + gate delete-verify): no rows
         if "metric_name" in sql:
             return _metrics_rows(50_000, in_band)
         events.append("wait")
@@ -507,8 +509,8 @@ def test_weekly_trend_submits_all_bindings_before_waiting_or_redating():
     in_band = (low + high) // 2
 
     def _query_dicts(sql, *_a, **_k):
-        if "<>" in sql:
-            return []  # off-target straggler check: no rows off the target instant
+        if "SELECT 1" in sql:
+            return []  # SELECT 1 existence probe (off-target re-date check + gate delete-verify): no rows
         if "metric_name" in sql:
             return _metrics_rows(50_000, in_band)
         # The metrics-existence poll (FIX E) reads run_id from dq_metrics; it must
@@ -633,7 +635,7 @@ def test_redate_run_waits_for_metrics_rows_before_updating(monkeypatch):
 
     def _query_dicts(sql, *_a, **_k):
         assert "dq_metrics" in sql
-        if "<>" in sql:
+        if "SELECT 1" in sql:
             return []  # off-target check: no rows off the target instant
         existence_calls["n"] += 1
         return [] if existence_calls["n"] == 1 else [{"run_id": "run1"}]
@@ -691,7 +693,7 @@ def test_weekly_trend_redates_every_run_id_once_per_binding_per_week():
     deps["binding_run"].run_binding.side_effect = _run_binding
     # run-status poll + metrics-existence poll both return a present, terminal row.
     deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
-        [] if "<>" in sql else ([{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}])
+        [] if "SELECT 1" in sql else ([{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}])
     )
 
     weeks = 3
@@ -729,7 +731,7 @@ def test_weekly_trend_tightens_card_rule_exactly_once_no_version_cluster():
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
-        [] if "<>" in sql else ([{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}])
+        [] if "SELECT 1" in sql else ([{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}])
     )
 
     rule_map = {spec.key: "card-rid" for spec in manifest.RULES}
@@ -757,7 +759,7 @@ def test_weekly_trend_reapproves_bindings_only_on_lifecycle_change():
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
-        [] if "<>" in sql else ([{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}])
+        [] if "SELECT 1" in sql else ([{"run_id": "present"}] if "dq_metrics" in sql else [{"status": "SUCCESS"}])
     )
 
     applied_per_table: dict[str, int] = {}
@@ -792,7 +794,9 @@ def test_weekly_trend_redates_history_for_every_scope_each_week():
     deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["oltp"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
-    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: [] if "<>" in sql else [{"status": "SUCCESS"}]
+    deps["app_sql"].query_dicts.side_effect = lambda sql, *_a, **_k: (
+        [] if "SELECT 1" in sql else [{"status": "SUCCESS"}]
+    )
 
     weeks = 2
     binding_map = {"customers": "b-customers", "orders": "b-orders", "products": "b-products"}
@@ -845,8 +849,7 @@ def test_week_instant_matches_dqlake_cadence_irregular_monotonic_and_final_recen
         acc += gaps_ref[weeks - 2 - i]
         days_ago[i] = acc
     expected = [
-        now - timedelta(days=days_ago[i], hours=hours[i % len(hours)], minutes=(i * 17) % 60)
-        for i in range(weeks)
+        now - timedelta(days=days_ago[i], hours=hours[i % len(hours)], minutes=(i * 17) % 60) for i in range(weeks)
     ]
     expected[weeks - 1] = now - timedelta(minutes=30)
     assert pts == expected
@@ -873,8 +876,8 @@ def test_validation_gate_deletes_gate_runs_from_both_tables():
     in_band = (low + high) // 2
 
     def _query_dicts(sql, *_a, **_k):
-        if "<>" in sql:
-            return []  # off-target straggler check: no rows off the target instant
+        if "SELECT 1" in sql:
+            return []  # SELECT 1 existence probe (off-target re-date check + gate delete-verify): no rows
         if "metric_name" in sql:
             return _metrics_rows(50_000, in_band)
         return [{"status": "SUCCESS"}]

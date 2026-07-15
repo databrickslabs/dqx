@@ -234,9 +234,7 @@ class DemoSeedService:
                 self._set_status("running", "validate", "Running validation gate", user_email)
                 self._validation_gate(binding_map, user_email)
                 self._set_status("running", "trend", f"Building {weeks}-week quality trend", user_email)
-                trend_points = self._build_weekly_trend(
-                    binding_map, rule_map, product_ids, weeks, user_email, now
-                )
+                trend_points = self._build_weekly_trend(binding_map, rule_map, product_ids, weeks, user_email, now)
             else:
                 # Build-only: still refresh caches so the app shows a truthful
                 # (current) score for the freshly governed tables.
@@ -554,11 +552,36 @@ class DemoSeedService:
             self._delete_run(run_id)
 
     def _delete_run(self, run_id: str) -> None:
-        """Delete a throwaway run's ``dq_metrics`` and ``dq_validation_runs`` rows."""
+        """Delete a throwaway (validation-gate) run's ``dq_metrics`` + ``dq_validation_runs`` rows.
+
+        Same trickle race as :meth:`_redate_run`: a run writes several
+        ``dq_metrics`` rows that can land AFTER the terminal ``dq_validation_runs``
+        row, so a single DELETE can leave late-arriving metric rows behind — and
+        because the gate runs at real wall-clock, those survivors show up as a
+        stray real-now point on every chart (this is exactly the orphan point on
+        the Score-by-Dimension/Severity trend). So DELETE, then re-check for any
+        remaining row of this run_id, and repeat until none remain (bounded).
+        """
         metrics_fqn = self._app_sql.fqn("dq_metrics")
         runs_fqn = self._app_sql.fqn("dq_validation_runs")
-        self._app_sql.execute(redate.build_delete_metrics_sql(metrics_fqn, run_id))
-        self._app_sql.execute(redate.build_delete_runs_sql(runs_fqn, run_id))
+        deadline = time.monotonic() + _METRICS_TIMEOUT_SECONDS
+        while True:
+            self._app_sql.execute(redate.build_delete_metrics_sql(metrics_fqn, run_id))
+            self._app_sql.execute(redate.build_delete_runs_sql(runs_fqn, run_id))
+            remaining = self._app_sql.query_dicts(
+                f"SELECT 1 FROM {metrics_fqn} WHERE run_id = '{escape_sql_string(run_id)}' LIMIT 1"  # noqa: S608
+            )
+            if not remaining:
+                return
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    "Demo gate cleanup: run %s still has dq_metrics rows after %ss; "
+                    "a stray 'now' trend point may remain.",
+                    self._sanitize(run_id),
+                    _METRICS_TIMEOUT_SECONDS,
+                )
+                return
+            time.sleep(_METRICS_POLL_SECONDS)
 
     def _assert_no_misfire(self, table: str, run_id: str) -> None:
         """Raise when a run's check misfired — catastrophic rate, or a uniqueness band breach.
