@@ -652,6 +652,69 @@ def test_weekly_trend_submits_all_bindings_before_waiting_or_redating():
     assert max(waits) < min(redates)
 
 
+def test_weekly_trend_sweeps_orphans_before_each_weeks_score_refresh():
+    # BUG: customers/orders trend went FLAT — the same wrong score frozen into all
+    # 9 weekly points — because the validation gate's baseline runs left orphan
+    # dq_metrics at real wall-clock (newer than every back-dated instant), so each
+    # week's refresh_for_tables picked the GATE run's baseline score via its
+    # "latest run by run_time DESC" window instead of THAT week's re-dated run.
+    # The per-week orphan sweep must run AFTER the runs are waited for and BEFORE
+    # the first per-table score refresh, every week.
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["registry"].find_approved_rule_for_definition.side_effect = lambda _d: MagicMock(rule_id="r1")
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+    deps["app_sql"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+    deps["oltp"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+
+    low, high = manifest.UNIQUE_EXPECT_ROWS
+    in_band = (low + high) // 2
+    events: list[str] = []
+
+    def _query_dicts(sql, *_a, **_k):
+        if "SELECT 1" in sql:
+            return []
+        if "metric_name" in sql:
+            return _metrics_rows(50_000, in_band)
+        if "dq_metrics" in sql:
+            return [{"run_id": "run1"}]
+        return [{"status": "SUCCESS"}]
+
+    deps["app_sql"].query_dicts.side_effect = _query_dicts
+
+    def _app_execute(sql, *_a, **_k):
+        if sql.startswith("DELETE FROM") and "dq_metrics" in sql and "run_id NOT IN" in sql:
+            events.append("sweep")
+
+    deps["app_sql"].execute.side_effect = _app_execute
+    deps["score_cache"].refresh_for_tables.side_effect = lambda *_a, **_k: events.append("refresh") or 1
+
+    weeks = 2
+    binding_map = {"customers": "b-customers", "orders": "b-orders"}
+    rule_map = {spec.key: "r1" for spec in manifest.RULES}
+    svc._build_weekly_trend(binding_map, rule_map, ["p1"], weeks, "admin@example.com", datetime.now(timezone.utc))
+
+    # one sweep per week (before that week's per-table refreshes) PLUS the final
+    # pre-refresh sweep => weeks + 1. (The final refresh_all_for_tables is a
+    # different method, not captured by the refresh_for_tables mock here.)
+    assert events.count("sweep") == weeks + 1, f"expected a sweep per week plus a final sweep; got {events!r}"
+    # the FIRST op each week is the sweep — no refresh precedes the first sweep
+    assert events[0] == "sweep", f"first weekly op must be the orphan sweep; got {events!r}"
+    # every refresh is preceded by the sweep of its week: between consecutive
+    # sweeps there is at least one sweep before any refresh in that block
+    first_refresh = events.index("refresh")
+    assert events.index("sweep") < first_refresh, (
+        f"each week's orphan sweep must precede its score refresh; got {events!r}"
+    )
+    # the expected interleave for 2 weeks x 2 tables: sweep,refresh,refresh per
+    # week, then a trailing final sweep
+    assert events == ["sweep", "refresh", "refresh", "sweep", "refresh", "refresh", "sweep"], (
+        f"unexpected sweep/refresh interleave; got {events!r}"
+    )
+
+
 def _runs_table_query_dicts(table_rows: list[dict[str, str]]):
     """A query-aware ``dq_validation_runs`` mock over a simulated multi-row table.
 

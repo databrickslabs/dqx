@@ -766,6 +766,21 @@ class DemoSeedService:
                 week_runs[table] = run.run_id
             for run_id in week_runs.values():
                 self._wait_for_run(run_id)
+            # Sweep any deleted-gate-run orphan metrics BEFORE this week's score
+            # refresh. The validation gate runs execute against BASELINE-reset
+            # data at real wall-clock and are deleted, but a late-arriving metrics
+            # batch can survive past _delete_run's bounded wait (see
+            # _delete_orphan_metrics). Those orphans sit at real "now" — newer
+            # than every back-dated weekly instant — so refresh_for_tables'
+            # "latest published run per table (ORDER BY run_time DESC)" selection
+            # would pick the GATE run's baseline score instead of THIS week's
+            # re-dated run, freezing the same wrong score into every weekly trend
+            # point (the whole 9-week series goes flat). Sweeping here, before the
+            # refresh, guarantees each week's score comes from that week's run.
+            # Anti-join keeps this week's just-submitted runs (they hold a
+            # dq_validation_runs row from submit time), so only true gate
+            # leftovers are removed.
+            self._delete_orphan_metrics()
             for table, run_id in week_runs.items():
                 self._redate_run(run_id, target_iso)
                 self._score_cache.refresh_for_tables([self._table_fqn(table)])
