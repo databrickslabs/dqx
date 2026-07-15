@@ -317,6 +317,8 @@ class TestRegistrySubmitWiring:
         perms.get_object_owner.return_value = "owner@x"
         app_settings = _app_settings(mode)
         app_settings.get_auto_upgrade_without_approval.return_value = False
+        pending = MagicMock()
+        pending.list_for_rule.return_value = []
         submit_registry_rule(
             rule_id="rr1",
             svc=svc,
@@ -325,6 +327,8 @@ class TestRegistrySubmitWiring:
             version_svc=MagicMock(),
             monitored_tables=MagicMock(),
             app_settings=app_settings,
+            apply_rules=MagicMock(),
+            pending=pending,
             perms=perms,
             role=UserRole.RULE_APPROVER,
             principal_ids=frozenset({"me"}),

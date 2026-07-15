@@ -27,8 +27,10 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_monitored_table_service,
     get_monitored_table_version_service,
     get_obo_ws,
+    get_pending_application_service,
     get_permissions_service,
     get_profiling_suggestion_service,
+    get_registry_service,
     get_rule_suggester,
     get_rules_catalog_service,
     require_role,
@@ -44,6 +46,9 @@ from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     AppliedRuleOut,
     ApplyRuleIn,
+    BatchRecordPendingApplicationsFailure,
+    BatchRecordPendingApplicationsIn,
+    BatchRecordPendingApplicationsOut,
     BulkRegisterMonitoredTablesIn,
     BulkRegisterMonitoredTablesOut,
     MonitoredTableDetailOut,
@@ -55,6 +60,7 @@ from databricks_labs_dqx_app.backend.models import (
     MonitoredTableVersionOut,
     ApplyProfilingSuggestionsIn,
     ApplyProfilingSuggestionsOut,
+    PendingApplicationOut,
     ProfilingSuggestionOut,
     RegisterMonitoredTableIn,
     RunMonitoredTableIn,
@@ -65,12 +71,13 @@ from databricks_labs_dqx_app.backend.models import (
     SetAppliedRuleSeverityOverrideIn,
     SuggestRulesOut,
 )
-from databricks_labs_dqx_app.backend.registry_models import MonitoredTable
+from databricks_labs_dqx_app.backend.registry_models import MonitoredTable, get_rule_name
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     ApplyRulesService,
     DesiredAppliedRule,
     MappingIncompleteError,
     RuleNotPublishedError,
+    UnsafeRowFilterError,
 )
 from databricks_labs_dqx_app.backend.services.binding_run_service import (
     BindingNotFoundError,
@@ -88,6 +95,8 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableSummary,
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+from databricks_labs_dqx_app.backend.services.pending_application_service import PendingApplicationService
+from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.profiling_suggestion_service import (
     BindingNotFoundError as ProfilingBindingNotFoundError,
     ProfilingSuggestionService,
@@ -152,8 +161,8 @@ def _apply_snapshot_check_counts(
     re-materialization can (wrongly, pre-Fix-B) drop to zero, so a scored table
     could show 0 checks. Count from the snapshot instead:
 
-    * approved binding (``version > 0``) -> ``len(checks_json)`` of its current
-      frozen snapshot, resolved for ALL such bindings in one batched
+    * approved binding (``version > 0``) -> the cached ``check_count`` of its
+      current frozen snapshot, resolved for ALL such bindings in one batched
       :meth:`MonitoredTableVersionService.snapshot_counts_many` call;
     * never-approved binding (``version == 0``, no snapshot) -> the live render
       count (exactly what a draft run would execute), resolved for ALL such
@@ -561,9 +570,13 @@ def apply_rule_to_table(
             user_email,
             pinned_version=body.pinned_version,
             severity_override=body.severity_override,
+            row_filter=body.row_filter,
+            pass_threshold=body.pass_threshold,
             tags=body.tags,
         )
         return AppliedRuleOut.from_domain(applied)
+    except UnsafeRowFilterError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except MappingIncompleteError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except RuleNotPublishedError as e:
@@ -573,6 +586,101 @@ def apply_rule_to_table(
     except Exception as e:
         logger.error(f"Failed to apply rule to monitored table {binding_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to apply rule: {e}")
+
+
+@router.post(
+    "/pending-applications/batch",
+    response_model=BatchRecordPendingApplicationsOut,
+    operation_id="batchRecordPendingApplications",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def batch_record_pending_applications(
+    body: BatchRecordPendingApplicationsIn,
+    pending: Annotated[PendingApplicationService, Depends(get_pending_application_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> BatchRecordPendingApplicationsOut:
+    """Stage applications for rules that landed ``pending_approval`` (Bulk Contract Import Phase 2).
+
+    Records each ``(binding_id, rule_id, column_mapping)`` in
+    ``dq_pending_applications``; on the rule's later approval,
+    ``_publish_registry_rule`` drains them into real applied-rule links. This
+    is a lightweight staging write (no rule/binding validation or
+    materialization here) — the activation path re-validates via
+    ``ApplyRulesService.apply_rule``, so an entry whose binding/rule vanishes
+    before approval is silently skipped there rather than failing the import.
+
+    Partial success is allowed; per-entry errors are returned in ``failed[]``
+    with a generic message (details are logged server-side).
+    """
+    recorded = 0
+    failed: list[BatchRecordPendingApplicationsFailure] = []
+    user_email = _current_user_email(obo_ws)
+    for index, entry in enumerate(body.applications):
+        try:
+            pending.record(entry.binding_id, entry.rule_id, entry.column_mapping, user_email)
+            recorded += 1
+        except Exception as e:
+            logger.error(
+                "Failed to record pending application (binding %s, rule %s): %s",
+                entry.binding_id,
+                entry.rule_id,
+                e,
+                exc_info=True,
+            )
+            failed.append(
+                BatchRecordPendingApplicationsFailure(
+                    index=index,
+                    error="Failed to record pending application.",
+                )
+            )
+    return BatchRecordPendingApplicationsOut(recorded=recorded, failed=failed)
+
+
+@router.get(
+    "/{binding_id}/pending-applications",
+    response_model=list[PendingApplicationOut],
+    operation_id="listPendingApplications",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def list_pending_applications(
+    binding_id: str,
+    pending: Annotated[PendingApplicationService, Depends(get_pending_application_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+) -> list[PendingApplicationOut]:
+    """List applications staged against this binding that are waiting on rule approval.
+
+    Recorded by Bulk Contract Import when a freshly-created rule lands
+    ``pending_approval`` (approval-enabled orgs): the intended
+    ``(binding, rule, column_mapping)`` is parked in ``dq_pending_applications``
+    and drained into a real ``dq_applied_rules`` link by
+    ``_publish_registry_rule`` when the rule is approved. These are NOT applied
+    rules yet (no materialized checks) — the Apply Rules tab surfaces them
+    read-only so the staged intent is visible instead of the table looking like
+    it has no rules. Enriched with the referenced rule's name/status in one
+    batched lookup; ``None`` when the rule has since been deleted.
+    """
+    try:
+        rows = pending.list_for_binding(binding_id)
+        rules = registry.get_rules_many([r.rule_id for r in rows])
+        out: list[PendingApplicationOut] = []
+        for row in rows:
+            rule = rules.get(row.rule_id)
+            out.append(
+                PendingApplicationOut(
+                    id=row.id or "",
+                    binding_id=row.binding_id,
+                    rule_id=row.rule_id,
+                    rule_name=get_rule_name(rule.user_metadata) if rule else None,
+                    rule_status=rule.status if rule else None,
+                    column_mapping=row.column_mapping,
+                    created_by=row.created_by,
+                    created_at=row.created_at.isoformat() if row.created_at else None,
+                )
+            )
+        return out
+    except Exception as e:
+        logger.error("Failed to list pending applications for binding %s: %s", binding_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to list pending applications.")
 
 
 @router.put(
@@ -615,6 +723,8 @@ def save_applied_rules(
                 column_mapping=entry.column_mapping,
                 pinned_version=entry.pinned_version,
                 severity_override=entry.severity_override,
+                row_filter=entry.row_filter,
+                pass_threshold=entry.pass_threshold,
                 tags=entry.tags,
             )
             for entry in body.applications
@@ -627,7 +737,7 @@ def save_applied_rules(
         # severity until the next background refetch.
         out: list[AppliedRuleOut] = []
         for a in applied:
-            name, dimension, severity = svc.rule_display_tags(a.rule_id)
+            name, dimension, severity, source = svc.rule_display_tags(a.rule_id)
             out.append(
                 AppliedRuleOut.from_summary(
                     AppliedRuleSummary(
@@ -635,10 +745,13 @@ def save_applied_rules(
                         rule_name=name,
                         rule_dimension=dimension,
                         rule_severity=severity,
+                        rule_source=source,
                     )
                 )
             )
         return out
+    except UnsafeRowFilterError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except MappingIncompleteError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except RuleNotPublishedError as e:

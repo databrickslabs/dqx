@@ -33,11 +33,13 @@ from .services.permissions_service import PermissionsService
 from .services.registry_service import RegistryService
 from .services.monitored_table_service import MonitoredTableService
 from .services.apply_rules_service import ApplyRulesService
+from .services.pending_application_service import PendingApplicationService
 from .services.materializer import Materializer
 from .services.monitored_table_versions import MonitoredTableVersionService
 from .services.run_sets import RunSetService
 from .services.binding_run_service import BindingRunService
 from .services.data_product_service import DataProductService
+from .services.export_service import ExportService
 from .services.entitlement_service import EntitlementService
 from .services.rule_embeddings import RuleEmbeddingsService
 from .services.score_cache_service import ScoreCacheService
@@ -347,6 +349,19 @@ async def get_apply_rules_service(
     return ApplyRulesService(sql=sql, registry=registry, app_settings=app_settings)
 
 
+async def get_pending_application_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+) -> PendingApplicationService:
+    """Create a PendingApplicationService routed at the OLTP executor.
+
+    Backs the Bulk Contract Import Phase 2 store (``dq_pending_applications``):
+    the execute step records applications for rules that land
+    ``pending_approval``, and ``_publish_registry_rule`` drains them into real
+    ``dq_applied_rules`` links on the rule's approval.
+    """
+    return PendingApplicationService(sql=sql)
+
+
 async def get_materializer(
     sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     registry: Annotated[RegistryService, Depends(get_registry_service)],
@@ -361,14 +376,23 @@ async def get_monitored_table_version_service(
     sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+    materializer: Annotated[Materializer, Depends(get_materializer)],
 ) -> MonitoredTableVersionService:
     """Create a MonitoredTableVersionService routed at the OLTP executor.
 
     Reads the binding's approved rows via ``RulesCatalogService`` and the
-    applied-rule linkage via ``MonitoredTableService`` to freeze/re-freeze
-    ``dq_monitored_table_versions`` snapshots.
+    applied-rule linkage via ``MonitoredTableService`` to freeze/re-freeze the
+    reference snapshots in ``dq_monitored_table_versions``; the ``Materializer``
+    reconstructs the runner payload on demand from the registry
+    (``dq_rule_versions``) when :meth:`MonitoredTableVersionService.get_checks`
+    is called.
     """
-    return MonitoredTableVersionService(sql=sql, monitored_tables=monitored_tables, rules_catalog=rules_catalog)
+    return MonitoredTableVersionService(
+        sql=sql,
+        monitored_tables=monitored_tables,
+        rules_catalog=rules_catalog,
+        materializer=materializer,
+    )
 
 
 async def get_rule_embeddings_service(
@@ -682,6 +706,23 @@ async def get_data_product_service(
         binding_run_service=binding_run_service,
         version_service=version_service,
         app_settings=app_settings,
+    )
+
+
+async def get_export_service(
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    materializer: Annotated[Materializer, Depends(get_materializer)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    data_products: Annotated[DataProductService, Depends(get_data_product_service)],
+) -> ExportService:
+    """Create an ExportService wired to the registry / table / product services + materializer."""
+    return ExportService(
+        registry=registry,
+        app_settings=app_settings,
+        materializer=materializer,
+        monitored_tables=monitored_tables,
+        data_products=data_products,
     )
 
 

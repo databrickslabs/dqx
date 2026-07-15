@@ -8,13 +8,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronUp, Lock, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
-import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
 import {
   STICKY_ACTIONS_HEAD_CLASS,
   STICKY_ACTIONS_CELL_CLASS,
@@ -34,9 +34,12 @@ import {
   StatusBadge,
   ModifiedBadge,
   ModeBadge,
+  RuleSourceBadge,
+  normalizeRuleSource,
   type LabelColorDefinition,
 } from "@/components/RegistryRuleBadges";
 import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
+import { formatDateTime, getRelativeTimeParts } from "@/lib/format-utils";
 import type { RegistryRuleOut } from "@/lib/api";
 
 /** Column keys that carry a comparable value and can drive client sort. */
@@ -50,7 +53,8 @@ export type RulesTableSortKey =
   | "version"
   | "steward"
   | "createdBy"
-  | "updated"
+  | "source"
+  | "modified"
   | "mode";
 
 type ColumnKey = RulesTableSortKey | "actions";
@@ -115,6 +119,38 @@ function TruncatedCell({
           {tooltipText ?? text}
         </TooltipContent>
       )}
+    </Tooltip>
+  );
+}
+
+/** Relative modified time with absolute timestamp + author in the tooltip. */
+function ModifiedTimestampCell({
+  iso,
+  by,
+}: {
+  iso: string | null | undefined;
+  by: string | null | undefined;
+}) {
+  const { t } = useTranslation();
+  const rel = getRelativeTimeParts(iso);
+  if (!rel) return <span className="text-muted-foreground">—</span>;
+  const label =
+    rel.key === "justNow"
+      ? t("common.relativeJustNow")
+      : t(`common.relative${rel.key[0].toUpperCase()}${rel.key.slice(1)}`, { count: rel.count });
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="cursor-default text-muted-foreground">{label}</span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-xs">
+        <div>{formatDateTime(iso)}</div>
+        {by ? (
+          <div className="text-xs text-muted-foreground mt-0.5">
+            {t("rulesRegistry.modifiedBy", { user: by })}
+          </div>
+        ) : null}
+      </TooltipContent>
     </Tooltip>
   );
 }
@@ -237,6 +273,15 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     renderHeader: (label) => label,
     renderCell: (r) => <TruncatedCell text={r.steward || "—"} className="text-muted-foreground" />,
   },
+  source: {
+    labelKey: "rulesRegistry.colSource",
+    toggleable: true,
+    defaultVisible: true,
+    defaultWidth: 100,
+    sortable: true,
+    renderHeader: (label) => label,
+    renderCell: (r) => <RuleSourceBadge source={r.source} />,
+  },
   createdBy: {
     labelKey: "rulesRegistry.colCreatedBy",
     toggleable: true,
@@ -246,16 +291,17 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     renderHeader: (label) => label,
     renderCell: (r) => <TruncatedCell text={r.created_by || "—"} className="text-muted-foreground" />,
   },
-  updated: {
-    labelKey: "rulesRegistry.colUpdated",
-    toggleable: true,
+  modified: {
+    labelKey: "rulesRegistry.colModified",
+    // Always visible — stewards need the modified timestamp at a glance.
+    toggleable: false,
     defaultVisible: true,
     defaultWidth: 140,
     sortable: true,
-    // Most recently updated first (B2-92); rows with no timestamp sort last.
+    // Most recently modified first (B2-92); rows with no timestamp sort last.
     defaultSortDir: "desc",
     renderHeader: (label) => label,
-    renderCell: (r) => <RelativeTimeCell iso={r.updated_at} />,
+    renderCell: (r) => <ModifiedTimestampCell iso={r.updated_at} by={r.updated_by} />,
   },
   mode: {
     labelKey: "rulesRegistry.colMode",
@@ -315,8 +361,9 @@ const DEFAULT_ORDER: ColumnKey[] = [
   "status",
   "version",
   "steward",
+  "source",
+  "modified",
   "createdBy",
-  "updated",
   "mode",
   "dimension",
   "severity",
@@ -372,9 +419,11 @@ export function getRulesTableSortValue(key: RulesTableSortKey, r: RegistryRuleOu
       return r.version > 0 ? r.version : null;
     case "steward":
       return (r.steward ?? "").toLowerCase() || null;
+    case "source":
+      return normalizeRuleSource(r.source);
     case "createdBy":
       return (r.created_by ?? "").toLowerCase() || null;
-    case "updated":
+    case "modified":
       return r.updated_at || null;
     case "mode":
       return r.mode || null;
@@ -395,6 +444,14 @@ export function getRulesTableSortConfig(key: RulesTableSortKey): SortColumnConfi
 // `useColumnLayout` hook — see components/data-table/column-layout.ts.
 const LS_KEY_LAYOUT = "dqx.rulesRegistry.layout";
 
+export interface RulesTableSelection {
+  selectedIds: Set<string>;
+  /** Rule ids that may be toggled (e.g. exclude built-ins). */
+  selectableRuleIds: Set<string>;
+  onToggle: (ruleId: string) => void;
+  onToggleAll: () => void;
+}
+
 export interface RulesTableProps {
   /** Rows to render — already filtered, sorted, and paginated by the caller. */
   rows: RegistryRuleOut[];
@@ -414,6 +471,8 @@ export interface RulesTableProps {
    * replaces the body with a text row when there's nothing to show.
    */
   emptyMessage?: ReactNode;
+  /** When set, renders a leading checkbox column for bulk lifecycle actions. */
+  selection?: RulesTableSelection;
 }
 
 /**
@@ -433,9 +492,15 @@ export function RulesTable({
   renderActions,
   toolbarExtra,
   emptyMessage,
+  selection,
 }: RulesTableProps) {
   const { t } = useTranslation();
   const ctx = useMemo<RulesTableRenderContext>(() => ({ labelDefinitions }), [labelDefinitions]);
+  const showSelection = !!selection;
+  const selectableCount = selection?.selectableRuleIds.size ?? 0;
+  const allSelected =
+    showSelection && selectableCount > 0 && selection!.selectedIds.size === selectableCount;
+  const someSelected = showSelection && selection!.selectedIds.size > 0 && !allSelected;
 
   const {
     colOrder,
@@ -456,7 +521,9 @@ export function RulesTable({
     onHeaderClick(key);
   }
 
-  const totalWidth = visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0);
+  const totalWidth =
+    (showSelection ? 40 : 0) +
+    visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0);
 
   // Actions is pinned last: excluded from the Edit Columns list/reorder
   // entirely (it's the only surface for rule lifecycle actions and must
@@ -486,12 +553,23 @@ export function RulesTable({
       <div className="overflow-x-auto">
         <Table className="table-fixed" style={{ width: totalWidth, minWidth: totalWidth }}>
           <colgroup>
+            {showSelection && <col style={{ width: 40, minWidth: 40, maxWidth: 40 }} />}
             {orderedKeys.map((k) => (
               <col key={k} style={{ width: colWidths[k] ?? COLUMNS[k].defaultWidth }} />
             ))}
           </colgroup>
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
+              {showSelection && (
+                <TableHead className="w-10 px-2">
+                  <Checkbox
+                    checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                    onCheckedChange={() => selection!.onToggleAll()}
+                    aria-label={t("common.selectAll")}
+                    disabled={selectableCount === 0}
+                  />
+                </TableHead>
+              )}
               {orderedKeys.map((k) => {
                 const def = COLUMNS[k];
                 const width = colWidths[k] ?? def.defaultWidth;
@@ -545,6 +623,22 @@ export function RulesTable({
           <TableBody>
             {rows.map((r) => (
               <TableRow key={r.rule_id} className="group cursor-pointer" onClick={() => onRowClick(r)}>
+                {showSelection && (
+                  <TableCell
+                    className="w-10 p-2 align-middle"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {selection!.selectableRuleIds.has(r.rule_id) ? (
+                      <Checkbox
+                        checked={selection!.selectedIds.has(r.rule_id)}
+                        onCheckedChange={() => selection!.onToggle(r.rule_id)}
+                        aria-label={t("rulesRegistry.selectRowAria", {
+                          name: getTag(r, RESERVED_NAME_KEY) || r.rule_id,
+                        })}
+                      />
+                    ) : null}
+                  </TableCell>
+                )}
                 {orderedKeys.map((k) => {
                   const width = colWidths[k] ?? COLUMNS[k].defaultWidth;
                   return (

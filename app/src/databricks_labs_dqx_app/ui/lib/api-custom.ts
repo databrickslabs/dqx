@@ -6,7 +6,13 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import type { UseMutationOptions, UseMutationResult, UseQueryOptions, UseQueryResult } from "@tanstack/react-query";
 import * as axios from "axios";
 import type { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
-import type { RuleCatalogEntryOut, RunStatusOut } from "./api";
+import type {
+  BatchImportRegistryRulesIn,
+  BatchImportRegistryRulesOut,
+  CreateRegistryRuleOut,
+  RuleCatalogEntryOut,
+  RunStatusOut,
+} from "./api";
 
 export interface BatchSaveRulesIn {
   table_fqns: string[];
@@ -1295,6 +1301,129 @@ export const useClearRunReviewStatus = <
   });
 };
 
+// ---------------------------------------------------------------------------
+// Batch-record pending applications (Bulk Contract Import — Phase 2)
+//
+// Stages applications for registry rules that landed ``pending_approval``
+// (approval-enabled orgs): each (binding_id, rule_id, column_mapping) is
+// recorded in ``dq_pending_applications`` and activated by the backend when
+// the rule is later approved. Hand-written here until the OpenAPI spec is
+// regenerated (``make app-regen-api``). Mirrors the backend
+// ``batchRecordPendingApplications`` operation.
+// ---------------------------------------------------------------------------
+
+export interface RecordPendingApplicationIn {
+  binding_id: string;
+  rule_id: string;
+  /** One slot-name -> column-name group per materialized check; empty for
+   *  whole-table rules (no slots). */
+  column_mapping: Array<Record<string, string>>;
+}
+
+export interface BatchRecordPendingApplicationsIn {
+  applications: RecordPendingApplicationIn[];
+}
+
+export interface BatchRecordPendingApplicationsFailure {
+  index: number;
+  error: string;
+}
+
+export interface BatchRecordPendingApplicationsOut {
+  recorded: number;
+  failed: BatchRecordPendingApplicationsFailure[];
+}
+
+export const batchRecordPendingApplications = (
+  body: BatchRecordPendingApplicationsIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<BatchRecordPendingApplicationsOut>> => {
+  return axios.default.post(`/api/v1/monitored-tables/pending-applications/batch`, body, options);
+};
+
+// ---------------------------------------------------------------------------
+// List pending applications for a binding (Bulk Contract Import — Phase 2)
+//
+// Read side of the staging store: the applications recorded above that are
+// still waiting on their rule's approval. Surfaced read-only on the Apply
+// Rules tab so a staged (but not-yet-applied) rule is visible instead of the
+// table looking empty. Enriched server-side with the referenced rule's
+// name/status. Mirrors the backend ``listPendingApplications`` operation.
+// ---------------------------------------------------------------------------
+
+export interface PendingApplicationOut {
+  id: string;
+  binding_id: string;
+  rule_id: string;
+  rule_name: string | null;
+  rule_status: string | null;
+  column_mapping: Array<Record<string, string>>;
+  created_by: string | null;
+  created_at: string | null;
+}
+
+export const listPendingApplications = (
+  bindingId: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<PendingApplicationOut[]>> => {
+  return axios.default.get(
+    `/api/v1/monitored-tables/${encodeURIComponent(bindingId)}/pending-applications`,
+    options,
+  );
+};
+
+export const getListPendingApplicationsQueryKey = (bindingId: string) =>
+  ["pending-applications", bindingId] as const;
+
+// ---------------------------------------------------------------------------
+// Batch-import registry rules with structural dedup (Bulk Contract Import)
+//
+// Extends the generated `batchImportRegistryRules` with `skip_duplicates`:
+// when true the backend reuses an existing structurally-identical ACTIVE rule
+// (draft/pending_approval/approved) instead of minting a duplicate, and dedupes
+// repeated rules within the batch — returning the matches in `reused`. Kept
+// here (rather than editing the auto-generated api.ts) until the OpenAPI spec
+// is regenerated. Posts to the same endpoint as the generated client.
+// ---------------------------------------------------------------------------
+
+export interface BatchImportRegistryRulesDedupIn extends BatchImportRegistryRulesIn {
+  /** Reuse an existing active rule by fingerprint instead of creating a copy. */
+  skip_duplicates?: boolean;
+}
+
+export interface BatchImportRegistryRulesDedupOut extends BatchImportRegistryRulesOut {
+  /** Rules matched to an existing active rule by fingerprint — not created. */
+  reused?: CreateRegistryRuleOut[];
+}
+
+export const batchImportRegistryRulesWithDedup = (
+  body: BatchImportRegistryRulesDedupIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<BatchImportRegistryRulesDedupOut>> => {
+  return axios.default.post(`/api/v1/registry-rules/batch-import`, body, options);
+};
+
+export const useListPendingApplications = <
+  TData = Awaited<ReturnType<typeof listPendingApplications>>,
+  TError = AxiosError<unknown>,
+>(
+  bindingId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof listPendingApplications>>, TError, TData>>;
+    axios?: AxiosRequestConfig;
+  },
+): UseQueryResult<TData, TError> => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListPendingApplicationsQueryKey(bindingId);
+  const queryFn = () => listPendingApplications(bindingId, axiosOptions);
+  return useQuery({
+    queryKey,
+    queryFn,
+    enabled: !!bindingId,
+    ...queryOptions,
+  }) as UseQueryResult<TData, TError>;
+};
+
 export const getRunReviewStatusHistory = (
   runId: string,
   options?: AxiosRequestConfig,
@@ -1322,4 +1451,98 @@ export const useRunReviewStatusHistory = <
     enabled: Boolean(runId),
     ...queryOptions,
   }) as UseQueryResult<TData, TError>;
+};
+
+// ---------------------------------------------------------------------------
+// Export to YAML — registry rules / monitored tables / table spaces.
+// Backend renders the YAML (DQX check-list or ODCS DataContract) and returns
+// an ExportOut envelope; the client downloads `content` as `filename`. These
+// are on-demand actions (fetch-on-click, no react-query cache), so they are
+// plain axios calls rather than hooks. Moves to the generated client once the
+// OpenAPI spec is regenerated.
+// ---------------------------------------------------------------------------
+
+/** The two export formats. `dqx` = DQX check-list YAML (re-importable);
+ *  `odcs` = ODCS v3 DataContract. The rule registry supports `dqx` only. */
+export type ExportFormat = "dqx" | "odcs";
+
+export interface ExportOut {
+  /** Suggested download filename, e.g. "registry_rules.dqx.yaml". */
+  filename: string;
+  /** The rendered YAML document. */
+  content: string;
+  /** The format that was produced: "dqx" or "odcs". */
+  format: string;
+}
+
+export interface RegistryRuleExportParams {
+  status?: string | null;
+  dimension?: string | null;
+  severity?: string | null;
+  steward?: string | null;
+  tag?: string | null;
+}
+
+export interface MonitoredTableExportParams {
+  format?: ExportFormat;
+  status?: string | null;
+  steward?: string | null;
+  catalog?: string | null;
+  schema?: string | null;
+  name?: string | null;
+}
+
+export const exportRegistryRules = (
+  params?: RegistryRuleExportParams,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ExportOut>> =>
+  axios.default.get(`/api/v1/export/registry-rules`, { ...options, params });
+
+export const exportRegistryRule = (
+  ruleId: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ExportOut>> =>
+  axios.default.get(`/api/v1/export/registry-rules/${encodeURIComponent(ruleId)}`, options);
+
+export const exportMonitoredTables = (
+  params?: MonitoredTableExportParams,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ExportOut>> =>
+  axios.default.get(`/api/v1/export/monitored-tables`, { ...options, params });
+
+export const exportMonitoredTable = (
+  bindingId: string,
+  format: ExportFormat,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ExportOut>> =>
+  axios.default.get(`/api/v1/export/monitored-tables/${encodeURIComponent(bindingId)}`, {
+    ...options,
+    params: { format },
+  });
+
+export const exportDataProducts = (
+  format: ExportFormat,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ExportOut>> =>
+  axios.default.get(`/api/v1/export/data-products`, { ...options, params: { format } });
+
+export const exportDataProduct = (
+  productId: string,
+  format: ExportFormat,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ExportOut>> =>
+  axios.default.get(`/api/v1/export/data-products/${encodeURIComponent(productId)}`, {
+    ...options,
+    params: { format },
+  });
+
+/** Trigger a browser download of an ExportOut's YAML content. */
+export const downloadExportFile = (out: ExportOut): void => {
+  const blob = new Blob([out.content], { type: "application/x-yaml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = out.filename;
+  a.click();
+  URL.revokeObjectURL(url);
 };

@@ -29,6 +29,7 @@ import { ScoreBox } from "@/components/results/ScoreBox";
 import { RunPicker } from "@/components/results/RunPicker";
 import { RunModeSelect, includeDraftsParam } from "@/components/results/RunModeSelect";
 import { RunReviewStatusPanel } from "@/components/RunReviewStatusPanel";
+import { CommentThread } from "@/components/CommentThread";
 import { RunInProgressBanner } from "@/components/results/RunInProgressBanner";
 import { CollapsibleSection } from "@/components/results/CollapsibleSection";
 import { CollapseRegion } from "@/components/results/CollapseRegion";
@@ -743,10 +744,16 @@ function ResultsBody({
           between the score and the over-time trend, INTERACTABLE (the same
           editable RunReviewStatusPanel used in Runs History — dropdown +
           revert-to-default + audit history), not the old read-only badge.
-          The panel gates edits for users without permission. */}
+          The panel gates edits for users without permission. Per-run comments
+          (entityType="run") sit directly below it — the same thread shown in
+          Runs History's expanded rows — so the steward can set the review
+          status and discuss the run without leaving the page. */}
       {effectiveRunId && (
-        <div className="rounded-lg border bg-card p-4">
+        <div className="space-y-4 rounded-lg border bg-card p-4">
           <RunReviewStatusPanel runId={effectiveRunId} />
+          <div className="border-t pt-4">
+            <CommentThread entityType="run" entityId={effectiveRunId} />
+          </div>
         </div>
       )}
 

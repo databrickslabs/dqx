@@ -266,6 +266,19 @@ class AppliedRule(BaseModel):
     rule_id: str
     pinned_version: int | None = Field(default=None, description="None = follow latest published")
     severity_override: str | None = None
+    row_filter: str | None = Field(
+        default=None,
+        description="Optional SQL WHERE predicate scoping which rows THIS rule's check validates. "
+        "None/blank = validate every row. Rendered into the DQX check's native ``filter`` at "
+        "materialization; safety is enforced before it is persisted.",
+    )
+    pass_threshold: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Optional per-rule minimum % of rows that must pass for this rule to be considered "
+        "healthy. None = no per-rule threshold. Stored/surfaced now; run-time enforcement wired later.",
+    )
     column_mapping: list[ColumnMappingGroup] = Field(
         default_factory=list,
         description="One entry per materialized check: a slot-name -> column-name mapping group",
@@ -317,12 +330,16 @@ RunSetTrigger = Literal["manual", "scheduled"]
 class MonitoredTableVersion(BaseModel):
     """Domain model for a ``dq_monitored_table_versions`` row.
 
-    A FROZEN snapshot of a monitored table's approved rule set (design spec
-    §3.2). ``checks_json`` is the exact list of DQX check dicts the runner
-    consumes (same shape as ``RulesCatalogService.get_approved_checks_for_table``
-    output); ``state_json`` is display-only metadata (applied rules with
-    registry ids/versions/pins/severities/mappings at freeze time).
-    ``refrozen_at`` is set when this version's content is rewritten in place
+    A REFERENCE snapshot of a monitored table's approved rule set (design spec
+    §3.2). ``state_json`` stores references to the versioned registry rules
+    that make up the set (``rule_refs``: applied-rule id, RESOLVED registry
+    version, column mapping, severity override, per-application tags), display
+    metadata (``applied_rules``), and the cached rendered ``check_count``. The
+    runner-shaped check dicts are reconstructed on demand from the registry
+    (``dq_rule_versions``) by ``MonitoredTableVersionService.get_checks`` — not
+    stored here. ``checks_json`` remains on this domain model only as a
+    transport for those resolved checks and is left empty by the listing path.
+    ``refrozen_at`` is set when this version's references are rewritten in place
     without a version bump (auto-upgrade or a per-rule approval/rejection
     affecting this binding) — never mutated at initial freeze time.
     """

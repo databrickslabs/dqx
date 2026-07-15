@@ -4,11 +4,16 @@ version freeze service.
 Drives the service against a spec-bound ``SqlExecutor`` mock (dialect
 helpers wired like the materializer's ``sql`` fixture, ``query`` given a
 per-test dispatcher keyed on the emitted SQL) plus mocked
-``MonitoredTableService`` / ``RulesCatalogService`` so no Spark or
-workspace is needed. Asserts the freeze/re-freeze SQL and — critically —
-that a frozen snapshot mirrors ONLY the binding's own approved rows
-(scoped by ``applied_rule_id``), excluding directly-authored non-registry
-approved rules on the same ``table_fqn``.
+``MonitoredTableService`` / ``RulesCatalogService`` / ``Materializer`` so no
+Spark or workspace is needed. Asserts the freeze/re-freeze SQL and —
+critically — that a frozen snapshot references ONLY the binding's own
+approved rows (scoped by ``applied_rule_id``), excluding directly-authored
+non-registry approved rules on the same ``table_fqn``.
+
+The snapshot is REFERENCE-based: freeze stores ``state_json.rule_refs``
+(applied-rule id + RESOLVED registry version + mapping) rather than a copy
+of the rendered rule set, and :meth:`get_checks` reconstructs the runner
+payload by re-rendering those references through the ``Materializer``.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from unittest.mock import create_autospec
 import pytest
 
 from databricks_labs_dqx_app.backend.registry_models import AppliedRule, MonitoredTable
+from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     AppliedRuleSummary,
     MonitoredTableDetail,
@@ -56,13 +62,23 @@ def rules_catalog():
 
 
 @pytest.fixture
-def service(sql, monitored_tables, rules_catalog):
-    return MonitoredTableVersionService(sql=sql, monitored_tables=monitored_tables, rules_catalog=rules_catalog)
+def materializer():
+    return create_autospec(Materializer, instance=True)
 
 
-def _check(applied_rule_id: str | None, column: str) -> dict:
+@pytest.fixture
+def service(sql, monitored_tables, rules_catalog, materializer):
+    return MonitoredTableVersionService(
+        sql=sql,
+        monitored_tables=monitored_tables,
+        rules_catalog=rules_catalog,
+        materializer=materializer,
+    )
+
+
+def _check(applied_rule_id: str | None, column: str, registry_version: str = "1") -> dict:
     """A materialized check dict shaped like ``get_approved_checks_for_table`` output."""
-    user_metadata: dict[str, str] = {"registry_rule_id": "r1", "registry_version": "1"}
+    user_metadata: dict[str, str] = {"registry_rule_id": "r1", "registry_version": registry_version}
     if applied_rule_id is not None:
         user_metadata["applied_rule_id"] = applied_rule_id
     return {
@@ -106,10 +122,10 @@ def _dispatch(sql, mapping: dict[str, list]):
 
 
 class TestFreezeNewVersion:
-    def test_bumps_version_and_freezes_scoped_checks(self, service, sql, monitored_tables, rules_catalog):
+    def test_bumps_version_and_freezes_scoped_refs(self, service, sql, monitored_tables, rules_catalog):
         monitored_tables.get.return_value = _detail(["ar1", "ar2"])
         # Table's approved rows include a directly-authored (non-registry) rule
-        # on the same table_fqn — it must NOT be frozen into the binding snapshot.
+        # on the same table_fqn — it must NOT be referenced by the snapshot.
         rules_catalog.get_approved_checks_for_table.return_value = [
             _check("ar1", "id"),
             _check("ar2", "name"),
@@ -120,15 +136,16 @@ class TestFreezeNewVersion:
         new_version = service.freeze_new_version("b1", "alice@x")
 
         assert new_version == 2
-        # version bumped on dq_monitored_tables
         exec_sqls = [c.args[0] for c in sql.execute.call_args_list]
         assert any(f"UPDATE {_TABLES} SET version = 2" in s for s in exec_sqls)
-        assert any(f"INSERT INTO {_VERSIONS}" in s and "version = 2" not in s for s in exec_sqls)
-        # frozen checks_json = the first json_literal_expr payload
-        frozen_checks = json.loads(sql.json_literal_expr.call_args_list[0].args[0])
-        frozen_ids = {c["user_metadata"].get("applied_rule_id") for c in frozen_checks}
-        assert frozen_ids == {"ar1", "ar2"}
-        assert all("applied_rule_id" in c["user_metadata"] for c in frozen_checks)
+        assert any(f"INSERT INTO {_VERSIONS}" in s and "checks_json" not in s for s in exec_sqls)
+        # frozen state carries references to ONLY the binding's own applied rules
+        state = json.loads(sql.json_literal_expr.call_args_list[0].args[0])
+        ref_ids = {r["applied_rule_id"] for r in state["rule_refs"]}
+        assert ref_ids == {"ar1", "ar2"}
+        assert all(r["registry_version"] == 1 for r in state["rule_refs"])
+        # cached rendered count = the scoped approved checks (excludes the direct rule)
+        assert state["check_count"] == 2
 
     def test_state_json_carries_applied_rule_display_metadata(self, service, sql, monitored_tables, rules_catalog):
         monitored_tables.get.return_value = _detail(["ar1"])
@@ -137,12 +154,13 @@ class TestFreezeNewVersion:
 
         service.freeze_new_version("b1", "alice@x")
 
-        state = json.loads(sql.json_literal_expr.call_args_list[1].args[0])
+        state = json.loads(sql.json_literal_expr.call_args_list[0].args[0])
         assert len(state["applied_rules"]) == 1
         entry = state["applied_rules"][0]
         assert entry["applied_rule_id"] == "ar1"
         assert entry["rule_id"] == "r1"
         assert entry["rule_name"] == "Not Null"
+        assert entry["registry_version"] == 1
         assert entry["column_mapping"] == [{"column": "ar1"}]
 
     def test_first_approval_freezes_v1(self, service, sql, monitored_tables, rules_catalog):
@@ -188,15 +206,15 @@ class TestRefreezeCurrent:
         # DATA-LOSS GUARD (B2-27): the binding's approved rows momentarily
         # resolve to nothing (e.g. an upstream re-materialization couldn't
         # re-render a rule against a new version). The re-freeze must KEEP the
-        # previous non-empty snapshot rather than emptying it — otherwise the
-        # pinned version (and every source='approved' run) would have 0 checks.
+        # previous non-empty snapshot rather than emptying its references.
         monitored_tables.get.return_value = _detail(["ar1"])
         rules_catalog.get_approved_checks_for_table.return_value = []  # newly-computed set is empty
         _dispatch(
             sql,
             {
                 f"SELECT version FROM {_TABLES}": [["3"]],
-                f"FROM {_VERSIONS}": [[json.dumps([_check("ar1", "id")])]],  # previous snapshot NON-empty
+                # previous snapshot has NON-empty references
+                f"FROM {_VERSIONS}": [[json.dumps({"rule_refs": [{"applied_rule_id": "ar1"}]})]],
             },
         )
 
@@ -214,7 +232,7 @@ class TestRefreezeCurrent:
             sql,
             {
                 f"SELECT version FROM {_TABLES}": [["3"]],
-                f"FROM {_VERSIONS}": [[json.dumps([])]],  # previous snapshot already empty
+                f"FROM {_VERSIONS}": [[json.dumps({"rule_refs": []})]],  # previous snapshot already empty
             },
         )
 
@@ -269,16 +287,47 @@ class TestRefreezeForQualityRule:
 
 
 class TestGetChecks:
-    def test_returns_frozen_checks(self, service, sql):
-        frozen = [_check("ar1", "id")]
-        _dispatch(sql, {f"FROM {_VERSIONS}": [[json.dumps(frozen)]]})
+    def test_reconstructs_checks_from_refs(self, service, sql, materializer):
+        state = {
+            "rule_refs": [
+                {
+                    "applied_rule_id": "ar1",
+                    "rule_id": "r1",
+                    "registry_version": 2,
+                    "column_mapping": [{"column": "id"}],
+                }
+            ],
+            "check_count": 1,
+        }
+        _dispatch(
+            sql,
+            {
+                f"FROM {_VERSIONS}": [[json.dumps(state)]],
+                f"SELECT table_fqn FROM {_TABLES}": [["cat.schema.customers"]],
+            },
+        )
+        rendered = [_check("ar1", "id", registry_version="2")]
+        materializer.render_applied_checks.return_value = rendered
+
         result = service.get_checks("b1", 1)
-        assert result == frozen
+
+        assert result == rendered
+        # re-rendered from the frozen ref, pinned to the RESOLVED registry version
+        args = materializer.render_applied_checks.call_args
+        assert args.args[0] == "cat.schema.customers"
+        applied = args.args[1]
+        assert applied[0].id == "ar1"
+        assert applied[0].pinned_version == 2
 
     def test_missing_snapshot_raises_lookup_error(self, service, sql):
         _dispatch(sql, {f"FROM {_VERSIONS}": []})
         with pytest.raises(LookupError):
             service.get_checks("b1", 9)
+
+    def test_empty_refs_returns_empty_without_rendering(self, service, sql, materializer):
+        _dispatch(sql, {f"FROM {_VERSIONS}": [[json.dumps({"rule_refs": []})]]})
+        assert service.get_checks("b1", 1) == []
+        materializer.render_applied_checks.assert_not_called()
 
 
 class TestListVersions:
@@ -313,14 +362,14 @@ class TestSnapshotCountsMany:
             [
                 "b1",
                 "1",
-                json.dumps([_check("ar1", "id"), _check("ar2", "name")]),
-                json.dumps({"applied_rules": [{"applied_rule_id": "ar1"}]}),
+                json.dumps({"rule_refs": [{"applied_rule_id": "ar1"}], "check_count": 2}),
             ],
             [
                 "b2",
                 "3",
-                json.dumps([_check("ar9", "id")]),
-                json.dumps({"applied_rules": [{"applied_rule_id": "ar9"}, {"applied_rule_id": "ar10"}]}),
+                json.dumps(
+                    {"rule_refs": [{"applied_rule_id": "ar9"}, {"applied_rule_id": "ar10"}], "check_count": 1}
+                ),
             ],
         ]
         result = service.snapshot_counts_many([("b1", 1), ("b2", 3)])

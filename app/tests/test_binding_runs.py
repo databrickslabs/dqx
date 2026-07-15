@@ -36,8 +36,14 @@ _RUNS_TABLE = "dqx_test.dqx_app_test.dq_validation_runs"
 _CHECKS = [{"check": {"function": "is_not_null", "arguments": {"column": "id"}}}]
 
 
-def _detail(binding_id: str = "b1", table_fqn: str = "cat.schema.tbl", version: int = 2) -> MonitoredTableDetail:
-    return MonitoredTableDetail(table=MonitoredTable(binding_id=binding_id, table_fqn=table_fqn, version=version))
+def _detail(
+    binding_id: str = "b1",
+    table_fqn: str = "cat.schema.tbl",
+    version: int = 2,
+) -> MonitoredTableDetail:
+    return MonitoredTableDetail(
+        table=MonitoredTable(binding_id=binding_id, table_fqn=table_fqn, version=version)
+    )
 
 
 @pytest.fixture

@@ -26,6 +26,7 @@ from .review_status import router as review_status_router
 from .schedules import router as schedules_router
 from .run_sets import router as run_sets_router
 from .data_products import router as data_products_router
+from .export import router as export_router
 from .compute import router as compute_router
 from .table_data import router as table_data_router
 from .rule_test import router as rule_test_router
@@ -60,6 +61,7 @@ v1_router.include_router(home_router, prefix="/home", tags=["home"])
 v1_router.include_router(review_status_router, prefix="/runs", tags=["review-status"])
 v1_router.include_router(run_sets_router, prefix="/run-sets", tags=["run-sets"])
 v1_router.include_router(data_products_router, prefix="/data-products", tags=["data-products"])
+v1_router.include_router(export_router, prefix="/export", tags=["export"])
 v1_router.include_router(compute_router, prefix="/compute", tags=["compute"])
 v1_router.include_router(table_data_router, prefix="/table-data", tags=["table-data"])
 v1_router.include_router(rule_test_router, prefix="/rule-tests", tags=["rule-tests"])

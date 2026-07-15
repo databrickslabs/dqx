@@ -15,6 +15,8 @@ import {
 } from "@/components/monitored-tables/MonitoredTablesTable";
 import { compareSortValues } from "@/components/data-table/sort";
 import { AddMonitoredTableModal } from "@/components/monitored-tables/AddMonitoredTableModal";
+import { ExportYamlMenu } from "@/components/ExportYamlMenu";
+import { exportMonitoredTable, exportMonitoredTables } from "@/lib/api-custom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -327,12 +329,19 @@ function MonitoredTablesPage() {
             <h1 className="text-2xl font-semibold tracking-tight">{t("monitoredTables.title")}</h1>
             <p className="text-sm text-muted-foreground mt-1">{t("monitoredTables.subtitle")}</p>
           </div>
-          {perms.canCreateRules && (
-            <Button onClick={() => setAddOpen(true)} className="gap-2">
-              <Plus className="h-4 w-4" />
-              {t("monitoredTables.monitorTable")}
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            <ExportYamlMenu
+              fetchDqx={() => exportMonitoredTables({ format: "dqx" })}
+              fetchOdcs={() => exportMonitoredTables({ format: "odcs" })}
+              size="default"
+            />
+            {perms.canCreateRules && (
+              <Button onClick={() => setAddOpen(true)} className="gap-2">
+                <Plus className="h-4 w-4" />
+                {t("monitoredTables.monitorTable")}
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Bare table — no Card wrapper, matching the Rules Registry list.
@@ -403,15 +412,19 @@ function MonitoredTablesPage() {
             </>
           }
           renderActions={
-            // Actions column stays visible for anyone who can approve OR
-            // create/delete OR run — an approver-only user still needs to
-            // see the approve/reject buttons even without create/delete
-            // rights, and a runner needs the Run button (item 76). Mirrors
+            // Export is a read, so the actions column is ALWAYS present (even
+            // for viewers) to host the per-row export menu; the approve /
+            // reject / run / delete buttons stay gated inside. Mirrors
             // RulesTable's per-status action gating
             // (registry-rules.index.tsx#renderActionsCell).
-            perms.canApproveRules || perms.canCreateRules || perms.canRunRules
-              ? (summary) => (
+            (summary) => (
                   <div className="flex items-center justify-end gap-1">
+                    <ExportYamlMenu
+                      fetchDqx={() => exportMonitoredTable(summary.table.binding_id, "dqx")}
+                      fetchOdcs={() => exportMonitoredTable(summary.table.binding_id, "odcs")}
+                      variant="ghost"
+                      iconOnly
+                    />
                     {perms.canRunRules && (summary.table.version ?? 0) > 0 && (
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -478,7 +491,6 @@ function MonitoredTablesPage() {
                     )}
                   </div>
                 )
-              : undefined
           }
           emptyState={
             isLoading ? (

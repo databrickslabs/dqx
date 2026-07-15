@@ -13,13 +13,20 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
-from databricks_labs_dqx_app.backend.models import CreateRegistryRuleIn, UpdateRegistryRuleIn
+from databricks_labs_dqx_app.backend.models import (
+    BATCH_IMPORT_MAX_RULES,
+    BatchImportRegistryRulesIn,
+    CreateRegistryRuleIn,
+    UpdateRegistryRuleIn,
+)
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition
 from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
     approve_registry_rule,
     backfill_rule_embeddings,
+    batch_import_registry_rules,
     create_registry_rule,
     delete_registry_rule,
     deprecate_registry_rule,
@@ -152,6 +159,140 @@ class TestCreateAndUpdate:
             create_registry_rule(body=body, svc=svc, user_email="alice@x")
         assert excinfo.value.status_code == 400
 
+
+class TestBatchImport:
+    def test_batch_import_creates_all_rules(self):
+        svc = MagicMock()
+        svc.create_rule.side_effect = [(_rule("r1"), None), (_rule("r2"), None)]
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+            ],
+        )
+        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x")
+        assert result.saved == 2
+        assert len(result.created) == 2
+        assert svc.create_rule.call_count == 2
+        assert svc.create_rule.call_args_list[0].kwargs["source"] == "import"
+
+    def test_batch_import_submits_when_requested(self):
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())],
+            also_submit=True,
+        )
+        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x")
+        assert result.submitted == 1
+        svc.submit.assert_called_once_with("r1", "alice@x")
+
+    def test_batch_import_continues_after_failure(self):
+        svc = MagicMock()
+        svc.create_rule.side_effect = [ValueError("bad"), (_rule("r2"), None)]
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+            ],
+        )
+        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x")
+        assert result.saved == 1
+        assert len(result.failed) == 1
+        assert result.failed[0].index == 0
+
+    def test_batch_import_generic_exception_returns_sanitized_message(self):
+        # CWE-209: a DB/driver exception must NOT be echoed verbatim to the
+        # caller; the response carries a generic message while the details are
+        # logged server-side.
+        svc = MagicMock()
+        leaky = RuntimeError('psycopg: relation "dq_rules" does not exist; host=db.internal port=5432')
+        svc.create_rule.side_effect = leaky
+        body = BatchImportRegistryRulesIn(rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())])
+        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x")
+        assert result.saved == 0
+        assert len(result.failed) == 1
+        assert "dq_rules" not in result.failed[0].error
+        assert "db.internal" not in result.failed[0].error
+        assert result.failed[0].error == "Failed to import this rule due to an internal error."
+
+    def test_batch_import_validation_error_stays_user_facing(self):
+        # ValueError is app-raised validation — its message is safe + actionable
+        # and must still reach the importer.
+        svc = MagicMock()
+        svc.create_rule.side_effect = ValueError("definition is missing required slot 'column'")
+        body = BatchImportRegistryRulesIn(rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())])
+        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x")
+        assert result.failed[0].error == "definition is missing required slot 'column'"
+
+    def test_batch_import_rejects_empty_payload(self):
+        with pytest.raises(ValidationError):
+            BatchImportRegistryRulesIn(rules=[])
+
+    def test_batch_import_rejects_payload_over_cap(self):
+        # DoS guard: the per-rule synchronous DB loop must never be handed an
+        # unbounded payload — validation rejects it before any DB work.
+        one = CreateRegistryRuleIn(mode="dqx_native", definition=_definition())
+        with pytest.raises(ValidationError):
+            BatchImportRegistryRulesIn(rules=[one] * (BATCH_IMPORT_MAX_RULES + 1))
+        # The cap itself is accepted.
+        assert len(BatchImportRegistryRulesIn(rules=[one] * BATCH_IMPORT_MAX_RULES).rules) == BATCH_IMPORT_MAX_RULES
+
+    def test_skip_duplicates_reuses_existing_active_rule(self):
+        # A re-import of a rule that already exists (any active status) must
+        # reuse it, not mint a copy — keeps re-importing a contract idempotent.
+        svc = MagicMock()
+        svc.compute_definition_fingerprint.return_value = "fp1"
+        svc.get_active_rule_by_fingerprint.return_value = _rule("existing", status="approved", version=1)
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())],
+            skip_duplicates=True,
+        )
+        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x")
+        assert result.saved == 0
+        assert result.created == []
+        assert len(result.reused) == 1
+        assert result.reused[0].rule.rule_id == "existing"
+        svc.create_rule.assert_not_called()
+
+    def test_skip_duplicates_dedupes_within_the_batch(self):
+        # Two structurally-identical rules in one payload collapse to a single
+        # create; the second is reported as reused with no extra DB write.
+        svc = MagicMock()
+        svc.compute_definition_fingerprint.return_value = "fp1"
+        svc.get_active_rule_by_fingerprint.return_value = None
+        svc.create_rule.return_value = (_rule("r1"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+            ],
+            skip_duplicates=True,
+        )
+        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x")
+        assert len(result.created) == 1
+        assert len(result.reused) == 1
+        assert result.reused[0].rule.rule_id == "r1"
+        svc.create_rule.assert_called_once()
+
+    def test_skip_duplicates_off_never_dedupes(self):
+        # Default posture: no fingerprinting, both identical rules are created.
+        svc = MagicMock()
+        svc.create_rule.side_effect = [(_rule("r1"), None), (_rule("r2"), None)]
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+            ],
+        )
+        result = batch_import_registry_rules(body=body, svc=svc, user_email="alice@x")
+        assert len(result.created) == 2
+        assert result.reused == []
+        svc.compute_definition_fingerprint.assert_not_called()
+        svc.get_active_rule_by_fingerprint.assert_not_called()
+
+
+class TestCreateAndUpdateContinued:
     def test_update_rejects_non_draft_with_400(self):
         svc = MagicMock()
         svc.update_draft.side_effect = ValueError("only draft rules can be edited")
@@ -233,7 +374,14 @@ class TestDelete:
 
 class TestLifecycleRoutes:
     @staticmethod
-    def _submit_deps() -> dict:
+    def _pending_stub() -> MagicMock:
+        """A PendingApplicationService stub with no staged rows (activation no-ops)."""
+        pending = MagicMock()
+        pending.list_for_rule.return_value = []
+        return pending
+
+    @classmethod
+    def _submit_deps(cls) -> dict:
         """Common submit-route deps with approvals mode = ``enabled`` (no auto-approve)."""
         app_settings = _no_auto_upgrade()
         app_settings.get_approvals_mode.return_value = "enabled"
@@ -243,6 +391,8 @@ class TestLifecycleRoutes:
             "version_svc": MagicMock(),
             "monitored_tables": MagicMock(),
             "app_settings": app_settings,
+            "apply_rules": MagicMock(),
+            "pending": cls._pending_stub(),
             "perms": MagicMock(),
             "role": UserRole.RULE_AUTHOR,
             "principal_ids": frozenset(),
@@ -268,7 +418,7 @@ class TestLifecycleRoutes:
         embeddings = MagicMock()
         materializer = MagicMock()
         result = approve_registry_rule(
-            "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), user_email="alice@x"
+            "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), apply_rules=MagicMock(), pending=self._pending_stub(), user_email="alice@x"
         )
         assert result.status == "approved"
         assert result.version == 1
@@ -279,7 +429,7 @@ class TestLifecycleRoutes:
         svc.approve.return_value = published
         embeddings = MagicMock()
         materializer = MagicMock()
-        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), user_email="alice@x")
+        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), apply_rules=MagicMock(), pending=self._pending_stub(), user_email="alice@x")
         embeddings.embed_and_store.assert_called_once_with(published)
 
     def test_approve_propagates_unexpected_embedding_errors_as_500(self):
@@ -293,7 +443,7 @@ class TestLifecycleRoutes:
         materializer = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
-                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), user_email="alice@x"
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), apply_rules=MagicMock(), pending=self._pending_stub(), user_email="alice@x"
             )
         assert excinfo.value.status_code == 500
 
@@ -306,7 +456,7 @@ class TestLifecycleRoutes:
         svc.approve.return_value = published
         embeddings = MagicMock()
         materializer = MagicMock()
-        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), user_email="alice@x")
+        approve_registry_rule("r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), apply_rules=MagicMock(), pending=self._pending_stub(), user_email="alice@x")
         materializer.rematerialize_for_rule.assert_called_once_with("r1")
 
     def test_approve_propagates_unexpected_materializer_errors_as_500(self):
@@ -317,7 +467,7 @@ class TestLifecycleRoutes:
         materializer.rematerialize_for_rule.side_effect = TypeError("boom")
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
-                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), user_email="alice@x"
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), apply_rules=MagicMock(), pending=self._pending_stub(), user_email="alice@x"
             )
         assert excinfo.value.status_code == 500
 
@@ -342,6 +492,8 @@ class TestLifecycleRoutes:
             version_svc=version_svc,
             monitored_tables=monitored_tables,
             app_settings=_no_auto_upgrade(),
+            apply_rules=MagicMock(),
+            pending=self._pending_stub(),
             user_email="alice@x",
         )
         assert monitored_tables.rollup_status.call_count == 2
@@ -369,6 +521,8 @@ class TestLifecycleRoutes:
             version_svc=version_svc,
             monitored_tables=monitored_tables,
             app_settings=app_settings,
+            apply_rules=MagicMock(),
+            pending=self._pending_stub(),
             user_email="alice@x",
         )
         version_svc.refreeze_current.assert_called_once_with("b1")
@@ -379,6 +533,38 @@ class TestLifecycleRoutes:
         svc.reject.return_value = _rule(status="rejected")
         result = reject_registry_rule("r1", svc=svc, user_email="alice@x")
         assert result.status == "rejected"
+
+    def test_revoke_success(self):
+        from databricks_labs_dqx_app.backend.routes.v1.registry_rules import revoke_registry_rule
+
+        svc = MagicMock()
+        rule = _rule(status="pending_approval")
+        rule.created_by = "alice@x"
+        svc.get_rule.return_value = rule
+        svc.revoke.return_value = _rule(status="draft")
+        result = revoke_registry_rule(
+            "r1",
+            svc=svc,
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert result.status == "draft"
+
+    def test_revoke_forbidden_for_other_author(self):
+        from databricks_labs_dqx_app.backend.routes.v1.registry_rules import revoke_registry_rule
+
+        svc = MagicMock()
+        rule = _rule(status="pending_approval")
+        rule.created_by = "other@x"
+        svc.get_rule.return_value = rule
+        with pytest.raises(HTTPException) as exc:
+            revoke_registry_rule(
+                "r1",
+                svc=svc,
+                user_email="alice@x",
+                role=UserRole.RULE_AUTHOR,
+            )
+        assert exc.value.status_code == 403
 
     def test_deprecate_success(self):
         svc = MagicMock()
@@ -399,7 +585,7 @@ class TestLifecycleRoutes:
         materializer = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
-                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), user_email="alice@x"
+                "r1", svc=svc, embeddings=embeddings, materializer=materializer, version_svc=MagicMock(), app_settings=_no_auto_upgrade(), monitored_tables=MagicMock(), apply_rules=MagicMock(), pending=self._pending_stub(), user_email="alice@x"
             )
         assert excinfo.value.status_code == 404
 

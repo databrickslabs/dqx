@@ -253,7 +253,10 @@ async def _build_scheduler_data_product_service(
         sql=oltp, registry=registry, monitored_tables=monitored_tables, app_settings=app_settings
     )
     version_service = await get_monitored_table_version_service(
-        sql=oltp, monitored_tables=monitored_tables, rules_catalog=rules_catalog
+        sql=oltp,
+        monitored_tables=monitored_tables,
+        rules_catalog=rules_catalog,
+        materializer=materializer,
     )
     view_service = await get_view_service(sql=sp_sql, sp_sql=sp_sql)
     job_service = await get_job_service(sp_ws=sp_ws, sql=sp_sql, app_settings=app_settings)

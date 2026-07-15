@@ -68,6 +68,7 @@ class AppliedRuleSummary:
     rule_name: str | None = None
     rule_dimension: str | None = None
     rule_severity: str | None = None
+    rule_source: str | None = None
 
 
 @dataclass
@@ -151,8 +152,8 @@ class MonitoredTableService:
             f"{last_run_at} AS last_run_at, "
             f"{prefix}created_by, {created_at} AS created_at, "
             f"{prefix}updated_by, {updated_at} AS updated_at, "
-            # schedule_kind (B2-52) appended last so existing positional
-            # indices in ``_row_to_table`` stay stable (row[13]).
+            # schedule_kind (B2-52) appended last so existing positional indices
+            # in ``_row_to_table`` stay stable (schedule_kind=row[13]).
             f"{prefix}schedule_kind"
         )
 
@@ -163,7 +164,10 @@ class MonitoredTableService:
         return (
             "id, binding_id, rule_id, pinned_version, severity_override, "
             f"{column_mapping} AS column_mapping_json, {user_metadata} AS user_metadata_json, "
-            f"mapping_hash, created_by, {created_at} AS created_at"
+            f"mapping_hash, created_by, {created_at} AS created_at, "
+            # row_filter (10) + pass_threshold (11) appended last so existing
+            # positional indices in ``_row_to_applied_rule`` stay stable.
+            "row_filter, pass_threshold"
         )
 
     # ------------------------------------------------------------------
@@ -267,13 +271,20 @@ class MonitoredTableService:
         return {row[0] for row in rows if row and row[0] is not None}
 
     def _insert(self, binding: MonitoredTable) -> None:
+        # schedule_kind MUST be written explicitly: the Delta CHECK constraint
+        # chk_dq_monitored_tables_schedule_kind rejects a NULL value on insert
+        # (``NULL IN (...)`` is not treated as passing here), so omitting the
+        # column — which defaults it to NULL — fails registration. The binding
+        # always carries a concrete enum (SCHEDULE_KIND_DEFAULT on the model).
         sql = (
             f"INSERT INTO {self._table} "
-            "(binding_id, table_fqn, steward, status, version, created_by, created_at, updated_by, updated_at) "
+            "(binding_id, table_fqn, steward, status, version, created_by, created_at, "
+            "updated_by, updated_at, schedule_kind) "
             "VALUES "
             f"('{escape_sql_string(binding.binding_id)}', '{escape_sql_string(binding.table_fqn)}', "
             f"{self._opt_str(binding.steward)}, '{escape_sql_string(binding.status)}', 0, "
-            f"{self._opt_str(binding.created_by)}, now(), {self._opt_str(binding.updated_by)}, now())"
+            f"{self._opt_str(binding.created_by)}, now(), {self._opt_str(binding.updated_by)}, now(), "
+            f"'{escape_sql_string(binding.schedule_kind)}')"
         )
         self._sql.execute(sql)
 
@@ -330,7 +341,7 @@ class MonitoredTableService:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY mt.updated_at DESC LIMIT 2000"
         rows = self._sql.query(sql)
-        # schedule_kind (B2-52) is selected at index 13, so the score-cache
+        # Base columns end with schedule_kind (index 13), so the score-cache
         # LEFT-JOIN columns follow at 14..17.
         tables = [(self._row_to_table(row), parse_cached_score(row[14], row[15], row[16], row[17])) for row in rows]
         if catalog:
@@ -618,13 +629,14 @@ class MonitoredTableService:
         applied_rules = [self._row_to_applied_rule(row) for row in rows]
         summaries: list[AppliedRuleSummary] = []
         for applied_rule in applied_rules:
-            name, dimension, severity = self._rule_tags(applied_rule.rule_id)
+            name, dimension, severity, source = self._rule_tags(applied_rule.rule_id)
             summaries.append(
                 AppliedRuleSummary(
                     applied_rule=applied_rule,
                     rule_name=name,
                     rule_dimension=dimension,
                     rule_severity=severity,
+                    rule_source=source,
                 )
             )
         return summaries
@@ -658,22 +670,23 @@ class MonitoredTableService:
             grouped.setdefault(applied.binding_id, []).append(applied)
         return grouped
 
-    def _rule_tags(self, rule_id: str) -> tuple[str | None, str | None, str | None]:
-        """Look up name/dimension/severity tags for *rule_id* from ``dq_rules``.
+    def _rule_tags(self, rule_id: str) -> tuple[str | None, str | None, str | None, str | None]:
+        """Look up name/dimension/severity/source for *rule_id* from ``dq_rules``.
 
-        Returns ``(None, None, None)`` if the rule row is missing (e.g. a
+        Returns ``(None, None, None, None)`` if the rule row is missing (e.g. a
         registry rule was hard-deleted out from under an application) —
         callers display a graceful blank rather than failing the whole
         monitored-table detail view.
         """
         e = escape_sql_string(rule_id)
         user_metadata = self._sql.select_json_text("user_metadata")
-        sql = f"SELECT {user_metadata} FROM {self._rules_table} WHERE rule_id = '{e}'"  # noqa: S608
+        sql = f"SELECT source, {user_metadata} FROM {self._rules_table} WHERE rule_id = '{e}'"  # noqa: S608
         rows = self._sql.query(sql)
         if not rows or not rows[0]:
-            return None, None, None
-        metadata = self._parse_json_dict(rows[0][0])
-        return get_rule_name(metadata), get_rule_dimension(metadata), get_rule_severity(metadata)
+            return None, None, None, None
+        source = rows[0][0] if rows[0][0] else None
+        metadata = self._parse_json_dict(rows[0][1])
+        return get_rule_name(metadata), get_rule_dimension(metadata), get_rule_severity(metadata), source
 
     # ------------------------------------------------------------------
     # Submit-for-review lifecycle (draft -> pending_approval -> approved/rejected)
@@ -1019,4 +1032,24 @@ class MonitoredTableService:
             mapping_hash=row[7],
             created_by=row[8],
             created_at=self._parse_timestamp(row[9]),
+            row_filter=self._parse_applied_row_filter(row[10] if len(row) > 10 else None),
+            pass_threshold=self._parse_applied_pass_threshold(row[11] if len(row) > 11 else None),
         )
+
+    @staticmethod
+    def _parse_applied_row_filter(raw: object) -> str | None:
+        """Coerce a stored applied-rule ``row_filter`` cell to a non-empty str, or None."""
+        if raw is None:
+            return None
+        text = str(raw).strip()
+        return text or None
+
+    @staticmethod
+    def _parse_applied_pass_threshold(raw: object) -> int | None:
+        """Coerce a stored applied-rule ``pass_threshold`` cell to an int in [0, 100], or None."""
+        if raw is None or raw == "":
+            return None
+        try:
+            return max(0, min(100, int(raw)))
+        except (TypeError, ValueError):
+            return None

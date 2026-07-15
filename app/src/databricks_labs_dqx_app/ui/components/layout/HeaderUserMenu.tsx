@@ -14,7 +14,6 @@ import {
   Settings,
   User as UserIcon,
   ChevronDown,
-  Upload,
   Languages,
   ExternalLink,
 } from "lucide-react";
@@ -146,12 +145,6 @@ function HeaderUserMenuContent() {
               </DropdownMenuSubContent>
             </DropdownMenuPortal>
           </DropdownMenuSub>
-          <DropdownMenuItem asChild>
-            <Link to="/rules/import">
-              <Upload />
-              {t("sidebar.importRules")}
-            </Link>
-          </DropdownMenuItem>
         </DropdownMenuGroup>
         {isAdmin && (
           <>

@@ -165,6 +165,15 @@ class TestPgMigrationsCatalogue:
         assert "chk_dq_monitored_tables_schedule_kind" in v14.sql
         assert "chk_dq_data_products_schedule_kind" in v14.sql
 
+    def test_v15_creates_pending_applications_table(self):
+        # Bulk Contract Import Phase 2: staged applications awaiting approval.
+        v15 = next(m for m in PG_MIGRATIONS if m.version == 15)
+        assert "CREATE TABLE IF NOT EXISTS" in v15.sql
+        assert "dq_pending_applications" in v15.sql
+        assert "column_mapping JSONB" in v15.sql
+        # One pending row per (binding, rule) — enforced by a UNIQUE constraint.
+        assert "UNIQUE (binding_id, rule_id)" in v15.sql
+
 
 # ---------------------------------------------------------------------------
 # PgMigration dataclass behaviour

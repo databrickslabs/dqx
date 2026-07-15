@@ -227,3 +227,24 @@ describe("parseDqxCheckJson — severity is authoritative on import (item 56)", 
     expect(severityOf(result)).toBeUndefined();
   });
 });
+
+describe("parseDqxCheckJson — sql_query imports without the single-table picker list", () => {
+  test("accepts sql_query even when omitted from checkFunctions (cross-table import)", () => {
+    const result = parse(
+      {
+        criticality: "error",
+        check: {
+          function: "sql_query",
+          arguments: {
+            query: "SELECT f.city FROM samples.bakehouse.sales_franchises f HAVING COUNT(*) = 0",
+          },
+        },
+        user_metadata: { name: "cities_with_zero_reviews" },
+      },
+      [], // sql_query is hidden from listCheckFunctions — must still parse
+    );
+    expect(result.mode).toBe("sql");
+    expect((result.definition.body as { sql_query: string }).sql_query).toContain("sales_franchises");
+    expect(result.userMetadata.name).toBe("cities_with_zero_reviews");
+  });
+});

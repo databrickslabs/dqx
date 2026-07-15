@@ -31,7 +31,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from databricks_labs_dqx_app.backend.migrations import (
+    ANALYTICAL_TABLE_NAMES,
     MIGRATIONS,
+    OLTP_TABLE_NAMES,
     MigrationRunner,
     _validate_template_safe,
 )
@@ -154,6 +156,25 @@ class TestScheduleKindDeltaMigration:
         assert "chk_dq_monitored_tables_schedule_kind" in v2.sql_template
         assert "schedule_kind" in v10.sql_template
         assert "chk_dq_data_products_schedule_kind" in v10.sql_template
+
+
+class TestPendingApplicationsMigration:
+    """Bulk Contract Import Phase 2: dq_pending_applications (v19, OLTP fallback)."""
+
+    def test_v19_creates_pending_applications_table(self) -> None:
+        v19 = next(m for m in MIGRATIONS if m.version == 19)
+        assert "CREATE TABLE IF NOT EXISTS {catalog}.{schema}.dq_pending_applications" in v19.sql_template
+        assert "binding_id" in v19.sql_template
+        assert "rule_id" in v19.sql_template
+        assert "column_mapping" in v19.sql_template
+        # Must be an OLTP-fallback table so it's skipped when Lakebase owns it.
+        assert v19.oltp_fallback is True
+
+    def test_pending_applications_is_an_oltp_table(self) -> None:
+        # The reset feature and physical routing derive the table set from the
+        # CREATE statements — the new table must land in the OLTP bucket only.
+        assert "dq_pending_applications" in OLTP_TABLE_NAMES
+        assert "dq_pending_applications" not in ANALYTICAL_TABLE_NAMES
 
 
 # ---------------------------------------------------------------------------

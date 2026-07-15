@@ -12,6 +12,8 @@ import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,7 +34,7 @@ import { slotFamilyToLowcode, type LowcodeColumnRef } from "@/lib/lowcodeCompile
 import { buildVersionPinMenuModel } from "@/lib/version-pin-menu";
 import selector from "@/lib/selector";
 import { MappingChips } from "./MappingChips";
-import { RESERVED_DESCRIPTION_KEY } from "@/components/RegistryRuleBadges";
+import { RESERVED_DESCRIPTION_KEY, RuleSourceBadge } from "@/components/RegistryRuleBadges";
 import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag } from "./shared";
 
 // ---------------------------------------------------------------------------
@@ -498,6 +500,12 @@ interface RuleConfigCardProps {
   /** `null` = follow latest; a number = pin to that published version. */
   onPinChange: (version: number | null) => void;
   onSeverityChange: (value: string) => void;
+  /** Per-rule SQL WHERE predicate scoping which rows this rule's check
+   *  validates. `null`/blank = every row. Pure local `stagedRows` mutation. */
+  onRowFilterChange: (value: string | null) => void;
+  /** Per-rule minimum % of rows that must pass. `null` = no per-rule
+   *  threshold. Pure local `stagedRows` mutation. */
+  onPassThresholdChange: (value: number | null) => void;
   onRemove: () => void;
   onJumpToColumn?: (colName: string) => void;
   /** Removes the mapping group (and its owning staged row) at this
@@ -530,6 +538,8 @@ export function RuleConfigCard({
   busy,
   onPinChange,
   onSeverityChange,
+  onRowFilterChange,
+  onPassThresholdChange,
   onRemove,
   onJumpToColumn,
   onRemoveMapping,
@@ -634,6 +644,9 @@ export function RuleConfigCard({
                   />
                 </span>
               )}
+              <span className="shrink-0">
+                <RuleSourceBadge source={registryRule?.source ?? rule.rule_source} />
+              </span>
             </div>
             {description && (
               <div className="text-xs italic text-muted-foreground truncate max-w-[560px] leading-snug">
@@ -720,6 +733,56 @@ export function RuleConfigCard({
         <div className="overflow-hidden">
           <div className="border-t px-4 py-4 space-y-3">
             <RuleLogicDisclosure open={logicOpen} onToggle={() => setLogicOpen((p) => !p)} registryRule={registryRule} />
+            {/* Per-rule overrides (item: WHERE filter + pass threshold). Both
+                edit the LOCAL staged row (no network call); saved with the tab.
+                Filter is rendered into the DQX check's native per-check
+                ``filter`` at run time; threshold is stored/surfaced for now. */}
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 rounded-md border bg-muted/20 px-3 py-3">
+              <div className="space-y-1 min-w-0">
+                <Label htmlFor={`rule-filter-${rule.rule_id}`} className="text-xs">
+                  {t("monitoredTables.ruleFilterLabel")}
+                </Label>
+                <Input
+                  id={`rule-filter-${rule.rule_id}`}
+                  type="text"
+                  value={rule.row_filter ?? ""}
+                  disabled={!canEdit || busy}
+                  placeholder={t("monitoredTables.ruleFilterPlaceholder")}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    onRowFilterChange(v.trim() === "" ? null : v);
+                  }}
+                  className="h-8 font-mono text-xs"
+                />
+                <p className="text-[11px] text-muted-foreground">{t("monitoredTables.ruleFilterHint")}</p>
+              </div>
+              <div className="space-y-1 sm:w-32">
+                <Label htmlFor={`rule-threshold-${rule.rule_id}`} className="text-xs">
+                  {t("monitoredTables.ruleThresholdLabel")}
+                </Label>
+                <Input
+                  id={`rule-threshold-${rule.rule_id}`}
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={rule.pass_threshold ?? ""}
+                  disabled={!canEdit || busy}
+                  placeholder={t("monitoredTables.ruleThresholdPlaceholder")}
+                  onChange={(e) => {
+                    const raw = e.target.value.trim();
+                    if (raw === "") {
+                      onPassThresholdChange(null);
+                      return;
+                    }
+                    const n = Number.parseInt(raw, 10);
+                    if (!Number.isNaN(n)) onPassThresholdChange(Math.max(0, Math.min(100, n)));
+                  }}
+                  className="h-8 text-xs"
+                />
+                <p className="text-[11px] text-muted-foreground">{t("monitoredTables.ruleThresholdHint")}</p>
+              </div>
+            </div>
             <MappingChips
               columnMapping={rule.column_mapping ?? []}
               slots={slots}

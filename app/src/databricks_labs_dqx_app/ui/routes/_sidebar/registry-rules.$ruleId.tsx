@@ -34,6 +34,7 @@ import {
   RotateCcw,
   Table2,
   Trash2,
+  Undo2,
   XCircle,
 } from "lucide-react";
 import { CommentsDialog } from "@/components/CommentThread";
@@ -43,8 +44,13 @@ import {
   useDeleteRegistryRule,
   useApproveRegistryRule,
   useRejectRegistryRule,
+  useRevokeRegistryRule,
 } from "@/lib/api";
-import { useLabelDefinitions } from "@/lib/api-custom";
+import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
+import selector from "@/lib/selector";
+import type { User as UserType } from "@/lib/api";
+import { useLabelDefinitions, exportRegistryRule } from "@/lib/api-custom";
+import { ExportYamlMenu } from "@/components/ExportYamlMenu";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import {
@@ -116,6 +122,8 @@ function RegistryRuleDetailPage() {
 
   const { data } = useGetRegistryRuleSuspense(ruleId);
   const rule = data.data.rule;
+  const { data: currentUser } = useCurrentUserSuspense(selector<UserType>());
+  const currentUserEmail = currentUser?.user_name ?? "";
 
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
@@ -177,7 +185,8 @@ function RegistryRuleDetailPage() {
 
   const approveMutation = useApproveRegistryRule();
   const rejectMutation = useRejectRegistryRule();
-  const lifecycleBusy = approveMutation.isPending || rejectMutation.isPending;
+  const revokeMutation = useRevokeRegistryRule();
+  const lifecycleBusy = approveMutation.isPending || rejectMutation.isPending || revokeMutation.isPending;
 
   const handleApprove = useCallback(() => {
     approveMutation.mutate(
@@ -211,6 +220,29 @@ function RegistryRuleDetailPage() {
       },
     );
   }, [rejectMutation, ruleId, t, invalidateDetail, invalidateAfterLifecycleChange]);
+
+  const canRevokeSubmission =
+    rule.status === "pending_approval" &&
+    (perms.canApproveRules ||
+      (perms.canCreateRules &&
+        currentUserEmail &&
+        (rule.updated_by ?? rule.created_by ?? "").toLowerCase() === currentUserEmail.toLowerCase()));
+
+  const handleRevoke = useCallback(() => {
+    revokeMutation.mutate(
+      { ruleId },
+      {
+        onSuccess: () => {
+          toast.success(t("rulesRegistry.toastRevoked"));
+          invalidateDetail();
+          invalidateAfterLifecycleChange();
+        },
+        onError: (err) => {
+          toast.error(extractApiError(err, t("rulesRegistry.toastRevokeFailed")), { duration: 6000 });
+        },
+      },
+    );
+  }, [revokeMutation, ruleId, t, invalidateDetail, invalidateAfterLifecycleChange]);
 
   const handleActiveTabChange = useCallback(
     (nextTab: PageTab) => {
@@ -274,6 +306,7 @@ function RegistryRuleDetailPage() {
   // is deep in its edit state); these route-owned controls just join them.
   const headerActions = (
     <>
+      <ExportYamlMenu fetchDqx={() => exportRegistryRule(ruleId)} className="h-8" />
       {canApproveReject && (
         <>
           <Button
@@ -305,6 +338,22 @@ function RegistryRuleDetailPage() {
             {t("rulesRegistry.actionReject")}
           </Button>
         </>
+      )}
+      {canRevokeSubmission && !canApproveReject && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-2 h-8 text-amber-600 border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950"
+          onClick={handleRevoke}
+          disabled={lifecycleBusy}
+        >
+          {revokeMutation.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Undo2 className="h-3.5 w-3.5" />
+          )}
+          {t("rulesRegistry.actionRevoke")}
+        </Button>
       )}
       {showActionsMenu && (
         <DropdownMenu>

@@ -23,6 +23,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_materializer,
     get_monitored_table_service,
     get_monitored_table_version_service,
+    get_pending_application_service,
     get_permissions_service,
     get_registry_service,
     get_rule_embeddings_service,
@@ -32,6 +33,9 @@ from databricks_labs_dqx_app.backend.services.permissions_service import Permiss
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     BackfillRuleEmbeddingsOut,
+    BatchImportRegistryRulesFailure,
+    BatchImportRegistryRulesIn,
+    BatchImportRegistryRulesOut,
     CreateRegistryRuleIn,
     CreateRegistryRuleOut,
     RegistryRuleDetailOut,
@@ -45,6 +49,7 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRu
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+from databricks_labs_dqx_app.backend.services.pending_application_service import PendingApplicationService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 
@@ -168,6 +173,114 @@ def create_registry_rule(
         raise HTTPException(status_code=500, detail=f"Failed to create registry rule: {e}")
 
 
+@router.post(
+    "/batch-import",
+    response_model=BatchImportRegistryRulesOut,
+    operation_id="batchImportRegistryRules",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def batch_import_registry_rules(
+    body: BatchImportRegistryRulesIn,
+    svc: Annotated[RegistryService, Depends(get_registry_service)],
+    user_email: CurrentUser,
+) -> BatchImportRegistryRulesOut:
+    """Bulk-create registry drafts from imported checks in a single request.
+
+    Avoids N sequential round-trips (each of which re-resolves Databricks
+    auth) when importing many rules from YAML or a data contract.
+
+    The batch is a SYNCHRONOUS per-rule loop of DB writes running on one
+    worker thread + connection, so the payload is bounded to
+    ``BATCH_IMPORT_MAX_RULES`` (rejected at request validation before any DB
+    work) to keep a single request from monopolising a worker / connection.
+    Per-rule failures are collected (partial success) rather than aborting
+    the batch.
+    """
+    created: list[CreateRegistryRuleOut] = []
+    reused: list[CreateRegistryRuleOut] = []
+    failed: list[BatchImportRegistryRulesFailure] = []
+    submitted = 0
+    submit_failed = 0
+    # Fingerprints already materialized in THIS batch (created OR reused), so a
+    # contract that lists the same rule twice collapses to one — matches the
+    # cross-import dedup below (skip_duplicates only).
+    seen_in_batch: dict[str, CreateRegistryRuleOut] = {}
+
+    for index, rule_in in enumerate(body.rules):
+        try:
+            fingerprint: str | None = None
+            if body.skip_duplicates:
+                fingerprint = svc.compute_definition_fingerprint(
+                    rule_in.mode, rule_in.definition, rule_in.polarity
+                )
+                # Intra-batch duplicate → reuse the earlier result, no DB work.
+                in_batch = seen_in_batch.get(fingerprint)
+                if in_batch is not None:
+                    reused.append(in_batch)
+                    continue
+                # Cross-import duplicate → reuse the existing active rule rather
+                # than minting another copy (keeps re-imports idempotent).
+                existing = svc.get_active_rule_by_fingerprint(fingerprint)
+                if existing is not None:
+                    existing_out = CreateRegistryRuleOut(
+                        rule=RegistryRuleOut.from_domain(existing), dedup_warning=None
+                    )
+                    reused.append(existing_out)
+                    seen_in_batch[fingerprint] = existing_out
+                    continue
+
+            rule, warning = svc.create_rule(
+                mode=rule_in.mode,
+                definition=rule_in.definition,
+                user_email=user_email,
+                polarity=rule_in.polarity,
+                author_kind=rule_in.author_kind,
+                user_metadata=rule_in.user_metadata,
+                steward=rule_in.steward,
+                source="import",
+            )
+            out = CreateRegistryRuleOut(rule=RegistryRuleOut.from_domain(rule), dedup_warning=warning)
+            created.append(out)
+            if fingerprint is not None:
+                seen_in_batch[fingerprint] = out
+
+            if body.also_submit:
+                try:
+                    svc.submit(rule.rule_id, user_email)
+                    submitted += 1
+                except Exception as submit_err:
+                    logger.warning(
+                        "Batch import created rule %s but submit failed: %s",
+                        rule.rule_id,
+                        submit_err,
+                    )
+                    submit_failed += 1
+        except (UnsafeSqlQueryError, ValueError) as e:
+            # Intentionally user-facing: unsafe-SQL and validation errors carry
+            # app-authored, safe messages the importer needs to fix the rule.
+            failed.append(BatchImportRegistryRulesFailure(index=index, error=str(e)))
+        except Exception as e:
+            # CWE-209: never surface raw exception text for unexpected errors —
+            # DB/driver exceptions (SQLAlchemy/psycopg) can leak table names,
+            # SQL, or connection detail. Log the specifics server-side and
+            # return a generic message to the caller.
+            logger.error("Batch import failed for rule index %s: %s", index, e, exc_info=True)
+            failed.append(
+                BatchImportRegistryRulesFailure(
+                    index=index, error="Failed to import this rule due to an internal error."
+                )
+            )
+
+    return BatchImportRegistryRulesOut(
+        created=created,
+        reused=reused,
+        saved=len(created),
+        submitted=submitted,
+        submit_failed=submit_failed,
+        failed=failed,
+    )
+
+
 @router.put(
     "/{rule_id}",
     response_model=RegistryRuleOut,
@@ -286,6 +399,45 @@ def delete_registry_rule(
 # ------------------------------------------------------------------
 
 
+def _activate_pending_applications(
+    rule_id: str,
+    approver: str,
+    *,
+    apply_rules: ApplyRulesService,
+    pending: PendingApplicationService,
+) -> None:
+    """Drain staged (Bulk Contract Import) applications for a just-approved rule.
+
+    On publish, every ``dq_pending_applications`` row for ``rule_id`` becomes
+    applicable (the rule is now ``approved``), so turn each into a real
+    ``dq_applied_rules`` link via :meth:`ApplyRulesService.apply_rule` and
+    delete the pending row. Runs BEFORE ``rematerialize_for_rule`` so the
+    freshly-applied rows are materialized in the same publish. Best-effort per
+    row: a single activation failure is logged and skipped (the pending row
+    survives for a later retry) and never turns a successful publish into a
+    5xx. ``apply_rule`` is idempotent for an identical mapping, so a
+    delete-after-apply failure self-heals on the next approval.
+    """
+    try:
+        staged = pending.list_for_rule(rule_id)
+    except Exception:
+        logger.warning("Failed to list pending applications for rule %s", rule_id, exc_info=True)
+        return
+    for p in staged:
+        try:
+            apply_rules.apply_rule(p.binding_id, rule_id, p.column_mapping, p.created_by or approver)
+            if p.id:
+                pending.delete(p.id)
+        except Exception:
+            logger.warning(
+                "Failed to activate pending application %s (binding %s, rule %s)",
+                p.id,
+                p.binding_id,
+                rule_id,
+                exc_info=True,
+            )
+
+
 def _publish_registry_rule(
     rule_id: str,
     approver: str,
@@ -296,6 +448,8 @@ def _publish_registry_rule(
     version_svc: MonitoredTableVersionService,
     monitored_tables: MonitoredTableService,
     app_settings: AppSettingsService,
+    apply_rules: ApplyRulesService,
+    pending: PendingApplicationService,
 ) -> RegistryRule:
     """Publish (approve) a pending registry rule and run its side effects.
 
@@ -307,6 +461,9 @@ def _publish_registry_rule(
     published rule.
     """
     rule = svc.approve(rule_id, approver)
+    # Activate any Bulk Contract Import pre-staged applications BEFORE
+    # rematerialize so their new dq_quality_rules copies are produced here.
+    _activate_pending_applications(rule_id, approver, apply_rules=apply_rules, pending=pending)
     embeddings.embed_and_store(rule)
     rematerialized = materializer.rematerialize_for_rule(rule_id)
     auto_upgrade = app_settings.get_auto_upgrade_without_approval()
@@ -341,6 +498,8 @@ def submit_registry_rule(
     version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    pending: Annotated[PendingApplicationService, Depends(get_pending_application_service)],
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
@@ -385,6 +544,8 @@ def submit_registry_rule(
                 version_svc=version_svc,
                 monitored_tables=monitored_tables,
                 app_settings=app_settings,
+                apply_rules=apply_rules,
+                pending=pending,
             )
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
@@ -410,6 +571,8 @@ def approve_registry_rule(
     version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    pending: Annotated[PendingApplicationService, Depends(get_pending_application_service)],
     user_email: CurrentUser,
 ) -> RegistryRuleOut:
     """Approve (publish) a pending registry rule — bumps version and freezes a snapshot.
@@ -447,6 +610,8 @@ def approve_registry_rule(
             version_svc=version_svc,
             monitored_tables=monitored_tables,
             app_settings=app_settings,
+            apply_rules=apply_rules,
+            pending=pending,
         )
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
@@ -480,6 +645,46 @@ def reject_registry_rule(
     except Exception as e:
         logger.error(f"Failed to reject registry rule {rule_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to reject registry rule: {e}")
+
+
+def _can_revoke_registry_submission(rule: RegistryRule, user_email: str, role: UserRole) -> bool:
+    """Authors may revoke their own pending submissions; approvers/admins any."""
+    if role in (UserRole.ADMIN, UserRole.RULE_APPROVER):
+        return True
+    author = (rule.updated_by or rule.created_by or "").lower()
+    return bool(author) and author == user_email.lower()
+
+
+@router.post(
+    "/{rule_id}/revoke",
+    response_model=RegistryRuleOut,
+    operation_id="revokeRegistryRule",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def revoke_registry_rule(
+    rule_id: str,
+    svc: Annotated[RegistryService, Depends(get_registry_service)],
+    user_email: CurrentUser,
+    role: CurrentUserRole,
+) -> RegistryRuleOut:
+    """Revoke a pending registry submission back to draft (or approved for revisions)."""
+    try:
+        existing = svc.get_rule(rule_id)
+        if existing is None:
+            raise RuntimeError(f"Registry rule not found: {rule_id}")
+        if not _can_revoke_registry_submission(existing, user_email, role):
+            raise HTTPException(status_code=403, detail="You can only revoke your own submissions.")
+        rule = svc.revoke(rule_id, user_email)
+        return RegistryRuleOut.from_domain(rule)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to revoke registry rule {rule_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to revoke registry rule: {e}")
 
 
 @router.post(

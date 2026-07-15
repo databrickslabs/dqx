@@ -14,6 +14,8 @@ import {
   type DataProductsSortKey,
 } from "@/components/data-products/DataProductsTable";
 import { compareSortValues } from "@/components/data-table/sort";
+import { ExportYamlMenu } from "@/components/ExportYamlMenu";
+import { exportDataProduct, exportDataProducts } from "@/lib/api-custom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -308,12 +310,19 @@ function DataProductsPage() {
             <h1 className="text-2xl font-semibold tracking-tight">{t("dataProducts.title")}</h1>
             <p className="text-sm text-muted-foreground mt-1">{t("dataProducts.subtitle")}</p>
           </div>
-          {perms.canCreateRules && (
-            <Button onClick={() => navigate({ to: "/table-spaces/new" })} className="gap-2">
-              <Plus className="h-4 w-4" />
-              {t("dataProducts.newProduct")}
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            <ExportYamlMenu
+              fetchDqx={() => exportDataProducts("dqx")}
+              fetchOdcs={() => exportDataProducts("odcs")}
+              size="default"
+            />
+            {perms.canCreateRules && (
+              <Button onClick={() => navigate({ to: "/table-spaces/new" })} className="gap-2">
+                <Plus className="h-4 w-4" />
+                {t("dataProducts.newProduct")}
+              </Button>
+            )}
+          </div>
         </div>
 
         <DataProductsTable
@@ -324,12 +333,18 @@ function DataProductsPage() {
           onRowClick={openProduct}
           pendingProductId={pendingId}
           renderActions={
-            // Actions column stays visible for anyone who can approve OR
-            // create/delete OR run — mirrors Monitored Tables overview's
-            // gating, now including the runner-only case (item 76).
-            perms.canApproveRules || perms.canCreateRules || perms.canRunRules
-              ? (product) => (
+            // Export is a read, so the actions column is ALWAYS present (even
+            // for viewers) to host the per-row export menu; the approve /
+            // reject / run / delete buttons stay gated inside. Mirrors
+            // Monitored Tables overview's gating.
+            (product) => (
                   <div className="flex items-center justify-end gap-1">
+                    <ExportYamlMenu
+                      fetchDqx={() => exportDataProduct(product.product_id, "dqx")}
+                      fetchOdcs={() => exportDataProduct(product.product_id, "odcs")}
+                      variant="ghost"
+                      iconOnly
+                    />
                     {perms.canRunRules && (product.runnable_count ?? 0) > 0 && (
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -396,7 +411,6 @@ function DataProductsPage() {
                     )}
                   </div>
                 )
-              : undefined
           }
           toolbarExtra={
             <>

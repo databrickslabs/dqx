@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from databricks.labs.dqx.utils import is_sql_query_safe
 
 from databricks_labs_dqx_app.backend.sql_utils import (
+    escape_json_for_sql_string_literal,
     escape_sql_string,
     fqn_needs_quoting,
     quote_fqn,
@@ -95,6 +98,19 @@ class TestEscapeSqlString:
 
     def test_empty_string_round_trips(self):
         assert escape_sql_string("") == ""
+
+
+class TestEscapeJsonForSqlStringLiteral:
+    def test_doubles_json_backslash_escapes_before_quoting(self):
+        payload = json.dumps({"body": {"sql_query": "SELECT a\nFROM b"}})
+        escaped = escape_json_for_sql_string_literal(payload)
+        assert "\\n" in payload
+        assert "\\\\n" in escaped
+        assert escaped == escape_sql_string(payload.replace("\\", "\\\\"))
+
+    def test_still_doubles_single_quotes(self):
+        payload = json.dumps({"message": "it's fine"})
+        assert escape_json_for_sql_string_literal(payload) == escape_sql_string(payload.replace("\\", "\\\\"))
 
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ from typing import Any, Protocol, runtime_checkable
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import Disposition, Format, StatementState
 
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+from databricks_labs_dqx_app.backend.sql_utils import escape_json_for_sql_string_literal, escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +354,7 @@ class SqlExecutor:
         returned expression is safe to inline into a larger statement
         as it already includes the proper escaping.
         """
-        return f"parse_json('{escape_sql_string(json_str)}')"
+        return f"parse_json('{escape_json_for_sql_string_literal(json_str)}')"
 
     def ts_text(self, col: str) -> str:
         """Project a timestamp column as an ISO-formatted string.

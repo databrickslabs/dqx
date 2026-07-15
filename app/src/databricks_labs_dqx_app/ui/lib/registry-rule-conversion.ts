@@ -88,6 +88,21 @@ const CRITICALITY_TO_SEVERITY_DEFAULT: Record<"warn" | "error", string> = {
 };
 
 /**
+ * Representative app severity (Low/Medium/High/Critical) for a raw DQX
+ * criticality — the display-side inverse of {@link resolveCriticality}. Used by
+ * import preview tables to show the app's severity axis instead of raw
+ * error/warn when a check has no explicit `user_metadata.severity`. Lossy
+ * (criticality → severity is many-to-one); the lossless path is always
+ * `user_metadata.severity` when present.
+ */
+export function defaultSeverityForCriticality(criticality: unknown): string {
+  if (criticality === "warn" || criticality === "error") {
+    return CRITICALITY_TO_SEVERITY_DEFAULT[criticality];
+  }
+  return CRITICALITY_TO_SEVERITY_DEFAULT.warn;
+}
+
+/**
  * Extract the admin-edited severity -> criticality map from the fetched
  * label definitions (the reserved `severity` definition's
  * `value_criticality`), for threading into {@link resolveCriticality} /
@@ -408,10 +423,6 @@ export function parseDqxCheckJson(
   if (typeof functionName !== "string" || !functionName) {
     throw new Error(t("rulesRegistry.jsonShapeError"));
   }
-  const fn = checkFunctions.find((f) => f.name === functionName);
-  if (!fn) {
-    throw new Error(t("rulesRegistry.jsonUnknownFunctionError", { function: functionName }));
-  }
   const rawArguments = checkInner.arguments;
   const args: Record<string, unknown> =
     typeof rawArguments === "object" && rawArguments !== null && !Array.isArray(rawArguments)
@@ -424,6 +435,9 @@ export function parseDqxCheckJson(
     dict.criticality,
   );
 
+  // Cross-table / custom SQL checks are intentionally omitted from the
+  // single-table check-function picker (see check_functions.py) but must
+  // still import via YAML/JSON — handle them before the registry lookup.
   if (SQL_FUNCTION_NAMES.has(functionName)) {
     const polarity: "pass" | "fail" = args.negate === true ? "fail" : "pass";
     const body: Record<string, unknown> =
@@ -465,6 +479,11 @@ export function parseDqxCheckJson(
       },
       userMetadata,
     };
+  }
+
+  const fn = checkFunctions.find((f) => f.name === functionName);
+  if (!fn) {
+    throw new Error(t("rulesRegistry.jsonUnknownFunctionError", { function: functionName }));
   }
 
   const { slots: templateSlots, parameters: derivedParams } = deriveSlotsAndParameters(fn);

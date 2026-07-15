@@ -84,6 +84,31 @@ class TestCreateRule:
         inserted_sql = sql.execute.call_args_list[0].args[0]
         assert "INSERT INTO dqx_test.dqx_app_test.dq_rules" in inserted_sql
 
+    def test_create_multiline_sql_query_doubles_json_backslashes_for_delta(self, svc, sql):
+        """Multiline sql_query rules must survive parse_json() on Delta."""
+        from databricks_labs_dqx_app.backend.sql_utils import escape_json_for_sql_string_literal
+
+        sql.json_literal_expr.side_effect = lambda j: f"parse_json('{escape_json_for_sql_string_literal(j)}')"
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {
+                    "sql_query": (
+                        "SELECT f.city\n"
+                        "FROM samples.bakehouse.sales_franchises f\n"
+                        "GROUP BY f.city\n"
+                        "HAVING COUNT(*) = 0"
+                    )
+                },
+                "slots": [],
+                "parameters": [],
+            }
+        )
+        svc.create_rule(mode="sql", definition=definition, user_email="alice@x", source="import")
+        inserted_sql = sql.execute.call_args_list[0].args[0]
+        assert "parse_json(" in inserted_sql
+        assert "\\\\n" in inserted_sql
+        assert "\nFROM samples" not in inserted_sql.split("parse_json(", 1)[1]
+
     def test_defaults_steward_to_creator_when_unset(self, svc):
         # No steward supplied -> the creator becomes the accountable steward.
         rule, _ = svc.create_rule(mode="dqx_native", definition=_native_definition(), user_email="alice@x")
@@ -527,6 +552,21 @@ class TestLifecycle:
         updated = svc.reject("r1", "approver@x")
         assert updated.status == "rejected"
 
+    def test_revoke_first_submission_returns_to_draft(self, svc, sql):
+        sql.query.return_value = [_row_for(self._rule("pending_approval", version=0))]
+        updated = svc.revoke("r1", "author@x")
+        assert updated.status == "draft"
+
+    def test_revoke_revision_returns_to_approved(self, svc, sql):
+        sql.query.return_value = [_row_for(self._rule("pending_approval", version=1))]
+        updated = svc.revoke("r1", "author@x")
+        assert updated.status == "approved"
+
+    def test_cannot_revoke_non_pending(self, svc, sql):
+        sql.query.return_value = [_row_for(self._rule("draft"))]
+        with pytest.raises(ValueError, match="not pending approval"):
+            svc.revoke("r1", "author@x")
+
     def test_deprecate_approved(self, svc, sql):
         sql.query.return_value = [_row_for(self._rule("approved", version=1))]
         updated = svc.deprecate("r1", "approver@x")
@@ -649,6 +689,35 @@ class TestListAndGet:
     def test_get_rule_by_fingerprint_not_found(self, svc, sql):
         sql.query.return_value = []
         assert svc.get_rule_by_fingerprint("deadbeef") is None
+
+    def test_get_active_rule_by_fingerprint_scopes_to_active_and_prefers_approved(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        rule = RegistryRule(rule_id="r1", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        sql.query.return_value = [_row_for(rule)]
+        found = svc.get_active_rule_by_fingerprint("fp1")
+        assert found is not None and found.rule_id == "r1"
+        called_sql = sql.query.call_args[0][0]
+        # Only active statuses are eligible; rejected/deprecated re-imports recreate.
+        assert "status IN ('draft', 'pending_approval', 'approved')" in called_sql
+        # An approved match wins over a draft/pending one so it can apply immediately.
+        assert "WHEN 'approved' THEN 0" in called_sql
+
+    def test_get_active_rule_by_fingerprint_not_found(self, svc, sql):
+        sql.query.return_value = []
+        assert svc.get_active_rule_by_fingerprint("deadbeef") is None
+
+    def test_compute_definition_fingerprint_matches_created_rule(self, svc):
+        # The unsaved-triple fingerprint must equal what create_rule would store,
+        # otherwise dedup would never match a freshly-imported rule.
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+        from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
+
+        definition = _native_definition()
+        expected = compute_registry_rule_fingerprint(
+            RegistryRule(rule_id="x", mode="dqx_native", status="draft", version=0, definition=definition)
+        )
+        assert svc.compute_definition_fingerprint("dqx_native", definition) == expected
 
 
 class TestGetRulesMany:

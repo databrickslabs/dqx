@@ -636,6 +636,14 @@ _V2_OLTP_FALLBACK = (
     "  rule_id STRING NOT NULL,"
     "  pinned_version INT,"
     "  severity_override STRING,"
+    # Per-application overrides (v22 converges Delta-OLTP DBs deployed before
+    # these columns existed): ``row_filter`` is an optional SQL WHERE predicate
+    # scoping which rows THIS rule's check validates (rendered into the DQX
+    # check's native ``filter``); NULL/blank = every row. ``pass_threshold`` is
+    # an optional percent (stored/surfaced now; enforcement wired later). Free
+    # text row_filter — safety is enforced in the app layer.
+    "  row_filter STRING,"
+    "  pass_threshold INT,"
     "  column_mapping VARIANT,"
     "  user_metadata VARIANT,"
     "  mapping_hash STRING NOT NULL,"
@@ -823,14 +831,16 @@ _V10_DATA_PRODUCTS = (
     f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables "
     f"  ADD CONSTRAINT chk_dq_monitored_tables_version_not_null CHECK (version IS NOT NULL);"
     #
-    # dq_monitored_table_versions — frozen approved rule-set snapshot per
-    # binding version (design spec §3.2); see the Postgres v6 comment for
-    # the checks_json/state_json/refrozen_at semantics.
+    # dq_monitored_table_versions — REFERENCE snapshot per binding version
+    # (design spec §3.2); see the Postgres v6 comment for the
+    # state_json/refrozen_at semantics. ``state_json.rule_refs`` stores
+    # references to the versioned registry rules that make up the approved
+    # set; the runner payload is reconstructed on demand from
+    # ``dq_rule_versions`` rather than logging a copy of the applied rule set.
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_monitored_table_versions ("
     "  id           STRING NOT NULL,"
     "  binding_id   STRING NOT NULL,"
     "  version      INT NOT NULL,"
-    "  checks_json  VARIANT NOT NULL,"
     "  state_json   VARIANT,"
     "  created_by   STRING,"
     "  created_at   TIMESTAMP,"
@@ -1108,6 +1118,58 @@ _V18_SCHEDULE_KIND = (
 )
 
 
+# dq_pending_applications — staged registry-rule applications waiting on
+# approval (Bulk Contract Import Phase 2). When a rule is created + submitted
+# but lands ``pending_approval`` (approval-enabled orgs), the intended
+# (binding, rule, column_mapping) is recorded here instead of being dropped.
+# On the rule's approval, ``_publish_registry_rule`` drains every pending row
+# for that rule into a real ``dq_applied_rules`` link (via
+# ``ApplyRulesService.apply_rule``) and deletes it. Rows are transient — the
+# service enforces one pending row per (binding_id, rule_id) (no UNIQUE on
+# Delta, matching every other OLTP-shaped table in this baseline).
+# ``column_mapping`` mirrors ``dq_applied_rules.column_mapping`` (VARIANT list
+# of slot->column groups). Marked ``oltp_fallback=True``: lives in Lakebase
+# when enabled (Postgres mirror is v15), else Delta.
+_V19_PENDING_APPLICATIONS = (
+    f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_pending_applications ("
+    "  id             STRING NOT NULL,"
+    "  binding_id     STRING NOT NULL,"
+    "  rule_id        STRING NOT NULL,"
+    "  column_mapping VARIANT,"
+    "  created_by     STRING,"
+    "  created_at     TIMESTAMP,"
+    "  CONSTRAINT pk_dq_pending_applications PRIMARY KEY (id) RELY"
+    ") CLUSTER BY (rule_id, binding_id)"
+)
+
+
+# Monitored tables: add per-table ``pass_threshold`` (percent of rows that must
+# pass for a run to be healthy; NULL = inherit the global default). The v2
+# OLTP-fallback baseline above now declares the column + CHECK, so this is a
+# NO-OP on fresh installs; it exists purely to converge Delta-OLTP databases
+# already deployed WITHOUT it (the same edit-in-place trap corrected by
+# v9/v12/v13/v17/v18). Plain ``ADD COLUMN`` / ``ADD CONSTRAINT`` (not
+# ``IF NOT EXISTS`` — unsupported on some warehouse versions); on an
+# already-converged DB each raises ``COLUMN_ALREADY_EXISTS`` /
+# ``DELTA_CONSTRAINT_ALREADY_EXISTS`` which ``_IDEMPOTENT_ERROR_FRAGMENTS``
+# swallows. Marked ``oltp_fallback=True``: the table lives in Lakebase when
+# enabled (Postgres mirror is v16), so this only runs against Delta.
+# Applied rules: add per-rule ``row_filter`` (optional SQL WHERE predicate scoping
+# which rows THIS rule's check validates — rendered into the DQX check's native
+# ``filter``) and ``pass_threshold`` (optional percent; stored/surfaced now,
+# enforcement wired later). The v2 OLTP-fallback baseline above now declares both
+# columns, so this is a NO-OP on fresh installs; it exists purely to converge
+# Delta-OLTP databases already deployed WITHOUT them. Plain ``ADD COLUMN`` (not
+# ``IF NOT EXISTS``); on an already-converged DB each raises ``COLUMN_ALREADY_EXISTS``
+# which ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows. No CHECK — row_filter is free text
+# and its safety is enforced in the app layer. ``oltp_fallback=True``: only runs
+# against Delta (Postgres mirror is v18).
+_V22_APPLIED_RULES_ROW_FILTER_THRESHOLD = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_applied_rules ADD COLUMN row_filter STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_applied_rules ADD COLUMN pass_threshold INT"
+)
+
+
 # OLTP fallback migration is identified by ``oltp_fallback=True`` so
 # the runner can skip it when Lakebase is enabled. Keeping the flag on
 # the migration itself (rather than e.g. a hard-coded version number)
@@ -1246,6 +1308,20 @@ MIGRATIONS: list[Migration] = [
         description="Schedulable scope: add schedule_kind to monitored tables + data products (B2-52) "
         "— used only when Lakebase is disabled",
         sql_template=_V18_SCHEDULE_KIND,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=19,
+        description="Staged registry-rule applications awaiting approval (dq_pending_applications) — "
+        "Bulk Contract Import Phase 2, used only when Lakebase is disabled",
+        sql_template=_V19_PENDING_APPLICATIONS,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=22,
+        description="Applied rules: add per-rule row_filter (SQL WHERE predicate) + pass_threshold (percent) "
+        "— used only when Lakebase is disabled",
+        sql_template=_V22_APPLIED_RULES_ROW_FILTER_THRESHOLD,
         oltp_fallback=True,
     ),
 ]

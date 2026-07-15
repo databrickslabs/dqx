@@ -38,6 +38,8 @@ import { Route as SidebarRulesCreateReusableRouteImport } from './../routes/_sid
 import { Route as SidebarRulesCreateRouteImport } from './../routes/_sidebar/rules.create'
 import { Route as SidebarRulesActiveRouteImport } from './../routes/_sidebar/rules.active'
 import { Route as SidebarRegistryRulesNewRouteImport } from './../routes/_sidebar/registry-rules.new'
+import { Route as SidebarRegistryRulesImportRouteImport } from './../routes/_sidebar/registry-rules.import'
+import { Route as SidebarRegistryRulesBulkImportRouteImport } from './../routes/_sidebar/registry-rules.bulk-import'
 import { Route as SidebarRegistryRulesRuleIdRouteImport } from './../routes/_sidebar/registry-rules.$ruleId'
 import { Route as SidebarMonitoredTablesNewRouteImport } from './../routes/_sidebar/monitored-tables.new'
 import { Route as SidebarMonitoredTablesBindingIdRouteImport } from './../routes/_sidebar/monitored-tables.$bindingId'
@@ -194,6 +196,18 @@ const SidebarRegistryRulesNewRoute = SidebarRegistryRulesNewRouteImport.update({
   path: '/registry-rules/new',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
+const SidebarRegistryRulesImportRoute =
+  SidebarRegistryRulesImportRouteImport.update({
+    id: '/registry-rules/import',
+    path: '/registry-rules/import',
+    getParentRoute: () => SidebarRouteRoute,
+  } as any)
+const SidebarRegistryRulesBulkImportRoute =
+  SidebarRegistryRulesBulkImportRouteImport.update({
+    id: '/registry-rules/bulk-import',
+    path: '/registry-rules/bulk-import',
+    getParentRoute: () => SidebarRouteRoute,
+  } as any)
 const SidebarRegistryRulesRuleIdRoute =
   SidebarRegistryRulesRuleIdRouteImport.update({
     id: '/registry-rules/$ruleId',
@@ -240,6 +254,8 @@ export interface FileRoutesByFullPath {
   '/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
   '/monitored-tables/new': typeof SidebarMonitoredTablesNewRoute
   '/registry-rules/$ruleId': typeof SidebarRegistryRulesRuleIdRoute
+  '/registry-rules/bulk-import': typeof SidebarRegistryRulesBulkImportRoute
+  '/registry-rules/import': typeof SidebarRegistryRulesImportRoute
   '/registry-rules/new': typeof SidebarRegistryRulesNewRoute
   '/rules/active': typeof SidebarRulesActiveRoute
   '/rules/create': typeof SidebarRulesCreateRoute
@@ -273,6 +289,8 @@ export interface FileRoutesByTo {
   '/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
   '/monitored-tables/new': typeof SidebarMonitoredTablesNewRoute
   '/registry-rules/$ruleId': typeof SidebarRegistryRulesRuleIdRoute
+  '/registry-rules/bulk-import': typeof SidebarRegistryRulesBulkImportRoute
+  '/registry-rules/import': typeof SidebarRegistryRulesImportRoute
   '/registry-rules/new': typeof SidebarRegistryRulesNewRoute
   '/rules/active': typeof SidebarRulesActiveRoute
   '/rules/create': typeof SidebarRulesCreateRoute
@@ -310,6 +328,8 @@ export interface FileRoutesById {
   '/_sidebar/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
   '/_sidebar/monitored-tables/new': typeof SidebarMonitoredTablesNewRoute
   '/_sidebar/registry-rules/$ruleId': typeof SidebarRegistryRulesRuleIdRoute
+  '/_sidebar/registry-rules/bulk-import': typeof SidebarRegistryRulesBulkImportRoute
+  '/_sidebar/registry-rules/import': typeof SidebarRegistryRulesImportRoute
   '/_sidebar/registry-rules/new': typeof SidebarRegistryRulesNewRoute
   '/_sidebar/rules/active': typeof SidebarRulesActiveRoute
   '/_sidebar/rules/create': typeof SidebarRulesCreateRoute
@@ -347,6 +367,8 @@ export interface FileRouteTypes {
     | '/monitored-tables/$bindingId'
     | '/monitored-tables/new'
     | '/registry-rules/$ruleId'
+    | '/registry-rules/bulk-import'
+    | '/registry-rules/import'
     | '/registry-rules/new'
     | '/rules/active'
     | '/rules/create'
@@ -380,6 +402,8 @@ export interface FileRouteTypes {
     | '/monitored-tables/$bindingId'
     | '/monitored-tables/new'
     | '/registry-rules/$ruleId'
+    | '/registry-rules/bulk-import'
+    | '/registry-rules/import'
     | '/registry-rules/new'
     | '/rules/active'
     | '/rules/create'
@@ -416,6 +440,8 @@ export interface FileRouteTypes {
     | '/_sidebar/monitored-tables/$bindingId'
     | '/_sidebar/monitored-tables/new'
     | '/_sidebar/registry-rules/$ruleId'
+    | '/_sidebar/registry-rules/bulk-import'
+    | '/_sidebar/registry-rules/import'
     | '/_sidebar/registry-rules/new'
     | '/_sidebar/rules/active'
     | '/_sidebar/rules/create'
@@ -646,6 +672,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SidebarRegistryRulesNewRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
+    '/_sidebar/registry-rules/import': {
+      id: '/_sidebar/registry-rules/import'
+      path: '/registry-rules/import'
+      fullPath: '/registry-rules/import'
+      preLoaderRoute: typeof SidebarRegistryRulesImportRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/registry-rules/bulk-import': {
+      id: '/_sidebar/registry-rules/bulk-import'
+      path: '/registry-rules/bulk-import'
+      fullPath: '/registry-rules/bulk-import'
+      preLoaderRoute: typeof SidebarRegistryRulesBulkImportRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
     '/_sidebar/registry-rules/$ruleId': {
       id: '/_sidebar/registry-rules/$ruleId'
       path: '/registry-rules/$ruleId'
@@ -741,6 +781,8 @@ interface SidebarRouteRouteChildren {
   SidebarMonitoredTablesBindingIdRoute: typeof SidebarMonitoredTablesBindingIdRoute
   SidebarMonitoredTablesNewRoute: typeof SidebarMonitoredTablesNewRoute
   SidebarRegistryRulesRuleIdRoute: typeof SidebarRegistryRulesRuleIdRoute
+  SidebarRegistryRulesBulkImportRoute: typeof SidebarRegistryRulesBulkImportRoute
+  SidebarRegistryRulesImportRoute: typeof SidebarRegistryRulesImportRoute
   SidebarRegistryRulesNewRoute: typeof SidebarRegistryRulesNewRoute
   SidebarTableSpacesProductIdRoute: typeof SidebarTableSpacesProductIdRoute
   SidebarTableSpacesNewRoute: typeof SidebarTableSpacesNewRoute
@@ -765,6 +807,8 @@ const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
   SidebarMonitoredTablesBindingIdRoute: SidebarMonitoredTablesBindingIdRoute,
   SidebarMonitoredTablesNewRoute: SidebarMonitoredTablesNewRoute,
   SidebarRegistryRulesRuleIdRoute: SidebarRegistryRulesRuleIdRoute,
+  SidebarRegistryRulesBulkImportRoute: SidebarRegistryRulesBulkImportRoute,
+  SidebarRegistryRulesImportRoute: SidebarRegistryRulesImportRoute,
   SidebarRegistryRulesNewRoute: SidebarRegistryRulesNewRoute,
   SidebarTableSpacesProductIdRoute: SidebarTableSpacesProductIdRoute,
   SidebarTableSpacesNewRoute: SidebarTableSpacesNewRoute,

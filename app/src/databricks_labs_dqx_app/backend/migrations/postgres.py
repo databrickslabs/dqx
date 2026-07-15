@@ -349,6 +349,10 @@ PG_MIGRATIONS: list[PgMigration] = [
             # concrete value; v14 below converges already-deployed DBs (the same
             # edit-in-place trap ``schedule_cron``'s v9 had to correct).
             "  schedule_kind    TEXT NOT NULL DEFAULT 'dq_only',"
+            # Optional per-table pass threshold (percent of rows that must pass
+            # for a run to be healthy). NULL = inherit the global default
+            # (``default_pass_threshold`` in dq_app_settings). v16 converges
+            # already-deployed DBs. CHECK allows NULL.
             "  last_profiled_at TIMESTAMPTZ,"
             # Denormalized run/profile pointers written on completion
             # (write-on-complete, T-perf) so the list/detail read paths never
@@ -392,11 +396,22 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  rule_id            TEXT NOT NULL,"
             "  pinned_version     INTEGER,"
             "  severity_override  TEXT,"
+            # Per-application overrides (v18 converges already-deployed DBs):
+            # ``row_filter`` is an optional SQL WHERE predicate scoping which rows
+            # THIS rule's check validates (rendered into the DQX check's native
+            # ``filter``); NULL/blank = validate every row. ``pass_threshold`` is
+            # an optional percent (stored/surfaced now; run-time enforcement wired
+            # later); NULL = no per-rule threshold. row_filter is free text —
+            # safety is enforced in the app layer, not by a CHECK.
+            "  row_filter         TEXT,"
+            "  pass_threshold     INT,"
             "  column_mapping     JSONB,"
             "  user_metadata      JSONB,"
             "  mapping_hash       TEXT NOT NULL,"
             "  created_by         TEXT,"
             "  created_at         TIMESTAMPTZ,"
+            "  CONSTRAINT chk_dq_applied_rules_pass_threshold "
+            "    CHECK (pass_threshold IS NULL OR (pass_threshold >= 0 AND pass_threshold <= 100)),"
             "  CONSTRAINT uq_dq_applied_rules_binding_rule_mapping "
             "    UNIQUE (binding_id, rule_id, mapping_hash)"
             ");"
@@ -564,21 +579,24 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"ALTER TABLE {_S}.dq_monitored_tables "
             "  ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;"
             # ----------------------------------------------------------
-            # dq_monitored_table_versions — frozen approved rule-set
-            # snapshot per binding version (design spec §3.2).
-            # ``checks_json`` is the exact shape the runner consumes
-            # (same as ``get_approved_checks_for_table`` output);
-            # ``state_json`` is display-only metadata (applied-rule
-            # registry ids/versions/pins/severities/mappings at freeze
-            # time). ``refrozen_at`` is set when vN's content is
-            # rewritten in place without a version bump (auto-upgrade or
-            # a per-rule approval/rejection affecting this binding).
+            # dq_monitored_table_versions — REFERENCE snapshot per binding
+            # version (design spec §3.2). ``state_json`` stores lightweight
+            # references to the versioned registry rules that make up the
+            # approved set (``rule_refs``: applied-rule id, RESOLVED
+            # registry version, column mapping, severity override,
+            # per-application tags), display metadata (``applied_rules``),
+            # and the cached rendered ``check_count``. The runner payload is
+            # reconstructed on demand from ``dq_rule_versions`` — no copy of
+            # the rendered rule set is stored here (reviewer feedback: refer
+            # to versioned registry rules rather than log every applied set).
+            # ``refrozen_at`` is set when vN's references are rewritten in
+            # place without a version bump (auto-upgrade or a per-rule
+            # approval/rejection affecting this binding).
             # ----------------------------------------------------------
             f"CREATE TABLE IF NOT EXISTS {_S}.dq_monitored_table_versions ("
             "  id           TEXT PRIMARY KEY,"
             "  binding_id   TEXT NOT NULL,"
             "  version      INTEGER NOT NULL,"
-            "  checks_json  JSONB NOT NULL,"
             "  state_json   JSONB,"
             "  created_by   TEXT,"
             "  created_at   TIMESTAMPTZ,"
@@ -951,6 +969,67 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"ALTER TABLE {_S}.dq_data_products "
             "  ADD CONSTRAINT chk_dq_data_products_schedule_kind "
             "    CHECK (schedule_kind IN ('profiling_only','dq_only','profiling_and_dq'));"
+        ),
+    ),
+    PgMigration(
+        version=15,
+        description="Staged registry-rule applications awaiting approval (dq_pending_applications)",
+        sql=(
+            # ----------------------------------------------------------
+            # dq_pending_applications — staged (binding, rule, mapping)
+            # applications recorded by the Bulk Contract Import execute
+            # step when a freshly-created rule lands ``pending_approval``
+            # instead of ``approved``. On the rule's approval,
+            # ``_publish_registry_rule`` drains every pending row for that
+            # rule into a real ``dq_applied_rules`` link and deletes it, so
+            # the table stays small/transient. ``column_mapping`` mirrors
+            # ``dq_applied_rules.column_mapping`` (JSONB list of slot->column
+            # groups). ``UNIQUE (binding_id, rule_id)`` enforces one pending
+            # row per (table, rule) — a re-record for the same pair replaces
+            # the mapping (service-side upsert). ``binding_id``/``rule_id``
+            # are informal references (service-enforced, no FK) matching the
+            # ``dq_applied_rules`` convention in v1.
+            # ----------------------------------------------------------
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_pending_applications ("
+            "  id             TEXT PRIMARY KEY,"
+            "  binding_id     TEXT NOT NULL,"
+            "  rule_id        TEXT NOT NULL,"
+            "  column_mapping JSONB,"
+            "  created_by     TEXT,"
+            "  created_at     TIMESTAMPTZ,"
+            "  CONSTRAINT uq_dq_pending_applications_binding_rule "
+            "    UNIQUE (binding_id, rule_id)"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_pending_applications_rule_id "
+            f"  ON {_S}.dq_pending_applications (rule_id);"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_pending_applications_binding_id "
+            f"  ON {_S}.dq_pending_applications (binding_id);"
+        ),
+    ),
+    PgMigration(
+        version=18,
+        description="Applied rules: add per-rule row_filter (SQL WHERE predicate) + pass_threshold (percent)",
+        sql=(
+            # ----------------------------------------------------------
+            # Per-applied-rule ``row_filter`` (optional SQL WHERE predicate that
+            # scopes which rows THIS rule's check validates — rendered into the
+            # DQX check's native ``filter``) and ``pass_threshold`` (optional
+            # percent; stored/surfaced now, enforcement wired later). The v1
+            # baseline above now declares both columns, so this is a NO-OP on
+            # fresh installs; it exists purely to converge databases already
+            # deployed WITHOUT them. NULL = no filter / inherit. ``IF NOT EXISTS``
+            # is native Postgres syntax, so a re-run is a true no-op. No CHECK on
+            # row_filter (free text; safety enforced in the app layer).
+            # ----------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_applied_rules "
+            "  ADD COLUMN IF NOT EXISTS row_filter TEXT;"
+            f"ALTER TABLE {_S}.dq_applied_rules "
+            "  ADD COLUMN IF NOT EXISTS pass_threshold INT;"
+            f"ALTER TABLE {_S}.dq_applied_rules "
+            "  DROP CONSTRAINT IF EXISTS chk_dq_applied_rules_pass_threshold;"
+            f"ALTER TABLE {_S}.dq_applied_rules "
+            "  ADD CONSTRAINT chk_dq_applied_rules_pass_threshold "
+            "    CHECK (pass_threshold IS NULL OR (pass_threshold >= 0 AND pass_threshold <= 100));"
         ),
     ),
 ]

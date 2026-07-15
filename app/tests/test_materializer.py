@@ -1406,6 +1406,63 @@ class TestRenderBindingChecks:
         assert checks[0]["check"]["function"] == "is_not_null"
 
 
+class TestRenderAppliedChecks:
+    """``render_applied_checks`` — reference resolution for frozen version snapshots.
+
+    Renders a GIVEN list of applied-rule references (each pinning an explicit
+    registry version) against the immutable ``dq_rule_versions`` snapshots,
+    reproducing the runner payload without a stored copy of the rule set. Used
+    by :class:`MonitoredTableVersionService.get_checks`.
+    """
+
+    def test_renders_refs_against_pinned_versions(self, materializer, sql, registry):
+        applied = AppliedRule(
+            id="ar1",
+            binding_id="b1",
+            rule_id="r1",
+            pinned_version=1,  # the RESOLVED version frozen into the reference
+            column_mapping=[{"column": "customer_id"}],
+            mapping_hash="h",
+        )
+        registry.get_rules_many.return_value = {"r1": _published_rule()}
+        registry.get_versions_many.return_value = {("r1", 1): _version_snapshot()}
+
+        checks = materializer.render_applied_checks("cat.schema.customers", [applied])
+
+        expected, _ = render_check(
+            mode="dqx_native",
+            version=_version_snapshot(),
+            group={"column": "customer_id"},
+            effective_severity="High",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        assert checks == [expected]
+        # Batch path: resolves via grouped queries, never the per-id lookups.
+        registry.get_rule.assert_not_called()
+        registry.get_version.assert_not_called()
+        registry.get_versions_many.assert_called_once_with({("r1", 1)})
+        # Read-only: renders without writing to dq_quality_rules.
+        sql.execute.assert_not_called()
+
+    def test_empty_and_idless_refs_render_nothing(self, materializer, registry):
+        idless = AppliedRule(id=None, binding_id="b1", rule_id="r1", column_mapping=[{"column": "c"}])
+        assert materializer.render_applied_checks("cat.schema.t", []) == []
+        assert materializer.render_applied_checks("cat.schema.t", [idless]) == []
+        registry.get_rules_many.assert_not_called()
+
+    def test_unresolvable_ref_contributes_nothing(self, materializer, registry):
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", pinned_version=1, column_mapping=[{"column": "c"}], mapping_hash="h"
+        )
+        registry.get_rules_many.return_value = {}  # registry rule vanished
+        registry.get_versions_many.return_value = {}
+        assert materializer.render_applied_checks("cat.schema.t", [applied]) == []
+
+
 class TestRenderBindingChecksCountsMany:
     """``render_binding_checks_counts_many`` — the BATCHED draft check-count path (B2-141).
 

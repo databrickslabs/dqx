@@ -70,7 +70,7 @@ class RegistryService:
     # :meth:`approve` / ``Materializer._iter_rendered_checks``).
     VALID_TRANSITIONS: dict[str, set[str]] = {
         "draft": {"pending_approval"},
-        "pending_approval": {"approved", "rejected"},
+        "pending_approval": {"approved", "rejected", "draft"},
         "approved": {"deprecated", "pending_approval"},
         "rejected": set(),
         "deprecated": {"approved"},
@@ -203,6 +203,49 @@ class RegistryService:
         if not rows:
             return None
         return self._row_to_rule(rows[0])
+
+    def get_active_rule_by_fingerprint(self, fingerprint: str) -> RegistryRule | None:
+        """Get the first ACTIVE (draft/pending_approval/approved) rule matching *fingerprint*.
+
+        Backs the Bulk Contract Import ``skip_duplicates`` dedup: a re-import
+        of the same contract must reuse an existing structurally-identical rule
+        rather than mint yet another copy. ``rejected``/``deprecated`` rules are
+        deliberately excluded — those were intentionally set aside, so a
+        re-import is allowed to recreate the rule. When several active rules
+        share the fingerprint, an ``approved`` one is preferred (it can be
+        applied immediately), then ``pending_approval``, then ``draft``.
+        """
+        e_fp = escape_sql_string(fingerprint)
+        sql = (
+            f"SELECT {self._select_cols} FROM {self._table} "  # noqa: S608
+            f"WHERE fingerprint = '{e_fp}' AND status IN ('draft', 'pending_approval', 'approved') "
+            "ORDER BY CASE status WHEN 'approved' THEN 0 WHEN 'pending_approval' THEN 1 ELSE 2 END LIMIT 1"
+        )
+        rows = self._sql.query(sql)
+        if not rows:
+            return None
+        return self._row_to_rule(rows[0])
+
+    def compute_definition_fingerprint(
+        self,
+        mode: RuleMode,
+        definition: RuleDefinition,
+        polarity: Polarity | None = None,
+    ) -> str:
+        """Structural fingerprint for an unsaved (mode, definition, polarity) triple.
+
+        Lets callers (e.g. the batch-import dedup) compute the same fingerprint
+        :meth:`create_rule` would assign, without first inserting the rule.
+        """
+        probe = RegistryRule(
+            rule_id="__fp_probe__",
+            mode=mode,
+            status="draft",
+            version=0,
+            polarity=polarity,
+            definition=definition,
+        )
+        return compute_registry_rule_fingerprint(probe)
 
     def get_approved_rule_by_fingerprint(self, fingerprint: str) -> RegistryRule | None:
         """Get the first ``approved`` registry rule matching *fingerprint*.
@@ -755,6 +798,25 @@ class RegistryService:
         if rule is None:
             raise RuntimeError(f"Registry rule not found: {rule_id}")
         target: RuleStatus = "approved" if rule.version >= 1 else "rejected"
+        return self._transition(rule_id, target, user_email)
+
+    def revoke(self, rule_id: str, user_email: str) -> RegistryRule:
+        """Revoke a pending submission back to a working state.
+
+        First-time submission (``version == 0``): ``pending_approval -> draft``
+        so the author can keep editing without a terminal rejection.
+
+        Revision review (``version >= 1``): ``pending_approval -> approved`` —
+        the live edits are retained (still reads as "Modified since vN") and
+        the frozen vN snapshot keeps serving, matching the recovery path for
+        a rejected revision.
+        """
+        rule = self._get(rule_id)
+        if rule is None:
+            raise RuntimeError(f"Registry rule not found: {rule_id}")
+        if rule.status != "pending_approval":
+            raise ValueError(f"Cannot revoke: rule is not pending approval (status={rule.status})")
+        target: RuleStatus = "approved" if rule.version >= 1 else "draft"
         return self._transition(rule_id, target, user_email)
 
     def deprecate(self, rule_id: str, user_email: str) -> RegistryRule:

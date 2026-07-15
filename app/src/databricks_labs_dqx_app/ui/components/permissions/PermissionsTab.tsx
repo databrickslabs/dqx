@@ -51,6 +51,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { HelpTooltip } from "@/components/HelpTooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Loader2,
   Pencil,
@@ -58,6 +59,7 @@ import {
   Trash2,
   User as UserIcon,
   Users,
+  Undo2,
 } from "lucide-react";
 import {
   useListObjectGrants,
@@ -412,6 +414,27 @@ export function PermissionsTab({
     }
   };
 
+  const handleRevokeDefault = async (grant: ObjectGrantOut) => {
+    if (!isUsersGroupGrant(grant)) return;
+    try {
+      await setMut.mutateAsync({
+        objectType,
+        objectId,
+        data: {
+          principal_id: grant.principal_id,
+          principal_type: grant.principal_type,
+          principal_name: grant.principal_name ?? grant.principal_id,
+          privileges: [],
+          inherit: grant.inherit ?? defaultInherit,
+        },
+      });
+      invalidate();
+      toast.success(t("permissions.grantRemoved"));
+    } catch (e) {
+      toast.error(extractApiError(e, t("permissions.grantRemoveFailed")), { duration: 6000 });
+    }
+  };
+
   const handleRemove = async (grant: ObjectGrantOut) => {
     setRemovingId(grant.principal_id);
     try {
@@ -570,23 +593,43 @@ export function PermissionsTab({
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
                                   </Button>
-                                  {/* The synthetic default has no stored row to
-                                      delete — revoke it via edit-to-empty. */}
-                                  {!isDefault && (
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-7 w-7 text-destructive hover:text-destructive"
-                                      onClick={() => handleRemove(grant)}
-                                      disabled={removingId === grant.principal_id}
-                                      aria-label={t("permissions.removePermission")}
-                                    >
-                                      {removingId === grant.principal_id ? (
-                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      ) : (
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                      )}
-                                    </Button>
+                                  {usersGroup && isDefault ? (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-7 w-7 text-destructive hover:text-destructive"
+                                          onClick={() => handleRevokeDefault(grant)}
+                                          disabled={setMut.isPending}
+                                          aria-label={t("permissions.revokePermission")}
+                                        >
+                                          {setMut.isPending ? (
+                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                          ) : (
+                                            <Undo2 className="h-3.5 w-3.5" />
+                                          )}
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent>{t("permissions.revokePermission")}</TooltipContent>
+                                    </Tooltip>
+                                  ) : (
+                                    !isDefault && (
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7 text-destructive hover:text-destructive"
+                                        onClick={() => handleRemove(grant)}
+                                        disabled={removingId === grant.principal_id}
+                                        aria-label={t("permissions.removePermission")}
+                                      >
+                                        {removingId === grant.principal_id ? (
+                                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                        ) : (
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        )}
+                                      </Button>
+                                    )
                                   )}
                                 </div>
                               )}

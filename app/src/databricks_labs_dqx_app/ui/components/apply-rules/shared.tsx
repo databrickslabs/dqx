@@ -198,6 +198,10 @@ export function buildDesiredApplications(stagedRows: AppliedRuleOut[]): DesiredA
       column_mapping: rows.flatMap((row) => row.column_mapping ?? []),
       pinned_version: first?.pinned_version ?? null,
       severity_override: first?.severity_override ?? null,
+      // Per-rule overrides live on the rule (all of a rule_id's rows share one
+      // value), so read them off the first row like pin/severity above.
+      row_filter: first?.row_filter ?? null,
+      pass_threshold: first?.pass_threshold ?? null,
       tags: (first?.user_metadata ?? {}) as Record<string, unknown>,
     };
   });
@@ -219,6 +223,8 @@ export function desiredApplicationsKey(stagedRows: AppliedRuleOut[]): string {
         .sort(),
       pinned_version: application.pinned_version ?? null,
       severity_override: application.severity_override ?? null,
+      row_filter: application.row_filter ?? null,
+      pass_threshold: application.pass_threshold ?? null,
       tags: JSON.stringify(Object.fromEntries(Object.entries(application.tags ?? {}).sort())),
     }))
     .sort((a, b) => a.rule_id.localeCompare(b.rule_id));

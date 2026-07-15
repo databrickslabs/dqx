@@ -778,9 +778,9 @@ class DataProductService:
         An UNPINNED member tracks the binding's latest approved state, so it
         reports the live summary counts. A member PINNED to a specific version
         enforces that version's FROZEN snapshot, so it must report the
-        snapshot's counts (``dq_monitored_table_versions.state_json`` /
-        ``checks_json`` lengths) — resolved from the pre-fetched
-        *pinned_counts* map (see :meth:`_pinned_snapshot_counts`), not the
+        snapshot's counts (its ``dq_monitored_table_versions.state_json``
+        reference count + cached ``check_count``) — resolved from the
+        pre-fetched *pinned_counts* map (see :meth:`_pinned_snapshot_counts`), not the
         binding's current (possibly newer or emptied) live count, which would
         otherwise mislead the owner about what the pin actually enforces.
         Falls back to the live counts if the pinned snapshot can't be resolved

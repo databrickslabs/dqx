@@ -142,6 +142,19 @@ def escape_sql_string(value: str) -> str:
     return value.replace("'", "''")
 
 
+def escape_json_for_sql_string_literal(value: str) -> str:
+    """Escape JSON text for a single-quoted SQL string literal (Delta).
+
+    ``json.dumps`` emits backslash escapes (``\\n``, ``\\"``, ``\\\\``). On the
+    Databricks SQL string-literal path a backslash is itself an escape
+    character, so those must be doubled before :func:`escape_sql_string` doubles
+    any single-quotes — otherwise ``\\n`` in the JSON becomes a literal newline
+    inside the ``parse_json`` argument and JSON parsing fails when persisting
+    multiline ``sql_query`` rules.
+    """
+    return escape_sql_string(value.replace("\\", "\\\\"))
+
+
 def validate_fqn(fqn: str) -> str:
     """Validate that a string is a valid three-part Unity Catalog identifier.
 

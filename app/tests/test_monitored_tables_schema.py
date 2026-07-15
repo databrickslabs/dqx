@@ -197,13 +197,14 @@ class TestDataProductsPostgres:
             "id",
             "binding_id",
             "version",
-            "checks_json",
             "state_json",
             "created_by",
             "created_at",
             "refrozen_at",
         ):
             assert col in sql
+        # Reference-based snapshot: no frozen copy of the rendered rule set.
+        assert "checks_json" not in sql
         assert "UNIQUE (binding_id, version)" in sql
 
     def test_data_products_table(self):
@@ -282,13 +283,14 @@ class TestDataProductsDelta:
         for col in (
             "binding_id",
             "version",
-            "checks_json",
             "state_json",
             "created_by",
             "created_at",
             "refrozen_at",
         ):
             assert col in sql
+        # Reference-based snapshot: no frozen copy of the rendered rule set.
+        assert "checks_json" not in sql
 
     def test_data_products_table(self):
         sql = self._v10().sql_template

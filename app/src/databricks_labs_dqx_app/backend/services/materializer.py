@@ -182,6 +182,8 @@ def render_check(
     registry_version: int,
     applied_rule_id: str,
     app_settings: AppSettingsService,
+    row_filter: str | None = None,
+    pass_threshold: int | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Render one materialized ``dq_quality_rules.check`` dict for one mapping group.
 
@@ -276,6 +278,11 @@ def render_check(
         applied_rule_id=applied_rule_id,
     )
 
+    # Per-applied-rule ``pass_threshold`` is carried on the check's user_metadata
+    # (stored/surfaced now; run-time enforcement wired later — store_display).
+    if pass_threshold is not None:
+        user_metadata = {**user_metadata, "pass_threshold": str(pass_threshold)}
+
     check_dict: dict[str, Any] = {
         "criticality": resolve_criticality(effective_severity, app_settings),
         "check": check_inner,
@@ -287,6 +294,13 @@ def render_check(
     error_message = definition.error_message
     if error_message:
         check_dict["message_expr"] = error_message
+    # Per-applied-rule ``row_filter`` scopes which rows THIS check validates —
+    # rendered straight into DQX's native per-check ``filter`` (a SQL WHERE
+    # predicate). Blank/None = validate every row. Safety was validated before
+    # the filter was persisted (ApplyRulesService.validate_row_filter).
+    row_filter_clean = row_filter.strip() if row_filter and row_filter.strip() else None
+    if row_filter_clean:
+        check_dict["filter"] = row_filter_clean
     return check_dict, is_tableless
 
 
@@ -480,6 +494,8 @@ class Materializer:
                     registry_version=version_number,
                     applied_rule_id=applied_id,
                     app_settings=self._app_settings,
+                    row_filter=applied.row_filter,
+                    pass_threshold=applied.pass_threshold,
                 )
             except (ValueError, UnsafeSqlQueryError):
                 logger.warning("Failed to render applied rule %s group %d", applied.id, idx, exc_info=True)
@@ -728,6 +744,52 @@ class Materializer:
             if not applied.id:
                 continue
             rendered = self._iter_rendered_checks(detail.table.table_fqn, applied)
+            if rendered is None:
+                continue
+            checks.extend(check for _row_id, _row_fqn, check in rendered)
+        return checks
+
+    def render_applied_checks(self, table_fqn: str, applied_rules: list[AppliedRule]) -> list[dict[str, Any]]:
+        """Render a GIVEN list of applied-rule references to runner-shaped check dicts.
+
+        The reference-resolution counterpart of :meth:`render_binding_checks`:
+        instead of reading a binding's LIVE ``dq_applied_rules`` state, it
+        renders the exact *applied_rules* handed in — each expected to pin an
+        explicit registry version (``pinned_version`` set to the version that
+        was resolved when the reference was frozen). Resolving every reference
+        against the IMMUTABLE ``dq_rule_versions`` snapshot reproduces the same
+        check dicts materialization persisted, so a frozen monitored-table
+        version can store lightweight references
+        (:class:`~.monitored_table_versions.MonitoredTableVersionService`)
+        rather than a full copy of the rendered rule set, and reconstruct the
+        runner payload on demand.
+
+        The only value that is NOT reproduced from immutable state is the
+        rendered ``criticality`` — :func:`render_check` resolves it through the
+        admin-editable severity->criticality mapping (``app_settings``), so a
+        later change to that global policy is reflected on the next resolve.
+        The frozen ``severity`` tag itself (from the pinned version snapshot,
+        plus any per-application ``severity_override``) is fully reproducible.
+
+        Registry rows for every reference are resolved in two grouped queries
+        (``get_rules_many`` + ``get_versions_many``) and shared across the
+        per-reference renders — no per-reference round-trip.
+        """
+        resolvable = [a for a in applied_rules if a.id]
+        if not resolvable:
+            return []
+        rules = self._registry.get_rules_many({a.rule_id for a in resolvable})
+        version_pairs: set[tuple[str, int]] = set()
+        for applied in resolvable:
+            registry_rule = rules.get(applied.rule_id)
+            version_number = applied.pinned_version or (registry_rule.version if registry_rule else 0)
+            if version_number > 0:
+                version_pairs.add((applied.rule_id, version_number))
+        versions = self._registry.get_versions_many(version_pairs)
+
+        checks: list[dict[str, Any]] = []
+        for applied in resolvable:
+            rendered = self._iter_rendered_checks(table_fqn, applied, rules=rules, versions=versions)
             if rendered is None:
                 continue
             checks.extend(check for _row_id, _row_fqn, check in rendered)

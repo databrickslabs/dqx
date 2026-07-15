@@ -528,9 +528,10 @@ class TestRuleDisplayTags:
     def test_derives_tags_from_live_registry_metadata(self, svc, registry):
         rule = _published_rule()
         rule.user_metadata = {"name": "Not Null Check", "dimension": "Completeness", "severity": "High"}
+        rule.source = "import"
         registry.get_rule.return_value = rule
-        assert svc.rule_display_tags("r1") == ("Not Null Check", "Completeness", "High")
+        assert svc.rule_display_tags("r1") == ("Not Null Check", "Completeness", "High", "import")
 
     def test_missing_rule_degrades_to_blanks(self, svc, registry):
         registry.get_rule.return_value = None
-        assert svc.rule_display_tags("gone") == (None, None, None)
+        assert svc.rule_display_tags("gone") == (None, None, None, None)

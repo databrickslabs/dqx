@@ -24,7 +24,14 @@ from databricks_labs_dqx_app.backend.models import (
     SetAppliedRuleSeverityOverrideIn,
 )
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
-from databricks_labs_dqx_app.backend.registry_models import AppliedRule, MonitoredTable, MonitoredTableVersion
+from databricks_labs_dqx_app.backend.registry_models import (
+    AppliedRule,
+    MonitoredTable,
+    MonitoredTableVersion,
+    RegistryRule,
+    RuleDefinition,
+)
+from databricks_labs_dqx_app.backend.services.pending_application_service import PendingApplication
 from databricks_labs_dqx_app.backend.routes.v1 import monitored_tables as mt_routes
 from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     apply_rule_to_table,
@@ -35,6 +42,7 @@ from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     get_monitored_table_profile,
     list_monitored_table_versions,
     list_monitored_tables,
+    list_pending_applications,
     register_monitored_table,
     reject_monitored_table,
     remove_applied_rule,
@@ -46,7 +54,10 @@ from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     suggest_rules_for_table,
     update_monitored_table_schedule,
 )
-from databricks_labs_dqx_app.backend.models import RunMonitoredTableIn, UpdateMonitoredTableScheduleIn
+from databricks_labs_dqx_app.backend.models import (
+    RunMonitoredTableIn,
+    UpdateMonitoredTableScheduleIn,
+)
 from databricks_labs_dqx_app.backend.services.binding_run_service import (
     BindingNotFoundError,
     BindingRunError,
@@ -390,7 +401,15 @@ class TestApplyRuleToTable:
         )
         assert result.id == "ar1"
         svc.apply_rule.assert_called_once_with(
-            "b1", "r1", [{"column": "id"}], "alice@x", pinned_version=None, severity_override=None, tags={}
+            "b1",
+            "r1",
+            [{"column": "id"}],
+            "alice@x",
+            pinned_version=None,
+            severity_override=None,
+            row_filter=None,
+            pass_threshold=None,
+            tags={},
         )
 
     def test_mapping_incomplete_raises_422(self):
@@ -447,7 +466,7 @@ class TestSaveAppliedRules:
         svc = MagicMock()
         applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}])
         svc.save_applied_rules.return_value = [applied]
-        svc.rule_display_tags.return_value = (None, None, None)
+        svc.rule_display_tags.return_value = (None, None, None, None)
         body = SaveAppliedRulesIn(applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])])
         result = save_applied_rules(
             "b1",
@@ -472,7 +491,7 @@ class TestSaveAppliedRules:
         svc = MagicMock()
         applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}])
         svc.save_applied_rules.return_value = [applied]
-        svc.rule_display_tags.return_value = ("Not Null Check", "Completeness", "High")
+        svc.rule_display_tags.return_value = ("Not Null Check", "Completeness", "High", "ui")
         body = SaveAppliedRulesIn(applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])])
         result = save_applied_rules(
             "b1",
@@ -486,6 +505,7 @@ class TestSaveAppliedRules:
         assert result[0].rule_name == "Not Null Check"
         assert result[0].rule_dimension == "Completeness"
         assert result[0].rule_severity == "High"
+        assert result[0].rule_source == "ui"
         svc.rule_display_tags.assert_called_once_with("r1")
 
     def test_empty_applications_removes_everything(self):
@@ -1116,4 +1136,62 @@ class TestVersionChecks:
         version_svc.get_checks.side_effect = RuntimeError("boom")
         with pytest.raises(HTTPException) as exc:
             mt_routes.get_monitored_table_version_checks("b1", 1, version_svc)
+        assert exc.value.status_code == 500
+
+
+# ---------------------------------------------------------------------------
+# listPendingApplications — read side of the Bulk Contract Import staging store
+# ---------------------------------------------------------------------------
+
+
+class TestListPendingApplications:
+    def test_enriches_with_rule_name_and_status(self):
+        pending = MagicMock()
+        pending.list_for_binding.return_value = [
+            PendingApplication(
+                id="p1",
+                binding_id="b1",
+                rule_id="r1",
+                column_mapping=[{"column": "email"}],
+                created_by="alice@x",
+                created_at=None,
+            ),
+            # A pending row whose rule was deleted before approval — must still
+            # be returned, with name/status left None rather than dropped.
+            PendingApplication(id="p2", binding_id="b1", rule_id="r_missing", column_mapping=[]),
+        ]
+        registry = MagicMock()
+        registry.get_rules_many.return_value = {
+            "r1": RegistryRule(
+                rule_id="r1",
+                mode="dqx_native",
+                status="pending_approval",
+                definition=RuleDefinition(),
+                user_metadata={"name": "Email valid"},
+            ),
+        }
+
+        out = list_pending_applications("b1", pending=pending, registry=registry)
+
+        assert [o.rule_id for o in out] == ["r1", "r_missing"]
+        assert out[0].rule_name == "Email valid"
+        assert out[0].rule_status == "pending_approval"
+        assert out[0].column_mapping == [{"column": "email"}]
+        assert out[1].rule_name is None
+        assert out[1].rule_status is None
+        pending.list_for_binding.assert_called_once_with("b1")
+
+    def test_empty_returns_empty_list(self):
+        pending = MagicMock()
+        pending.list_for_binding.return_value = []
+        registry = MagicMock()
+        registry.get_rules_many.return_value = {}
+        assert list_pending_applications("b1", pending=pending, registry=registry) == []
+
+    def test_unexpected_error_maps_to_500(self):
+        pending = MagicMock()
+        pending.list_for_binding.side_effect = RuntimeError("boom")
+        registry = MagicMock()
+        with pytest.raises(HTTPException) as exc:
+            list_pending_applications("b1", pending=pending, registry=registry)
         assert exc.value.status_code == 500

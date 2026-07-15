@@ -50,6 +50,51 @@ class MappingIncompleteError(ValueError):
     """Raised by :meth:`ApplyRulesService.apply_rule` when *column_mapping* doesn't cover every slot."""
 
 
+class UnsafeRowFilterError(ValueError):
+    """Raised when a per-rule ``row_filter`` predicate contains prohibited SQL."""
+
+
+def _clean_row_filter(raw: object) -> str | None:
+    """Normalize a per-rule ``row_filter`` to a non-empty stripped str, or None."""
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
+
+
+def _clamp_pass_threshold(raw: object) -> int | None:
+    """Coerce a per-rule ``pass_threshold`` to an int in [0, 100], or None."""
+    if raw is None or raw == "":
+        return None
+    try:
+        return max(0, min(100, int(raw)))
+    except (TypeError, ValueError):
+        return None
+
+
+def validate_row_filter(row_filter: str | None) -> None:
+    """Reject an unsafe per-rule row filter before it is persisted.
+
+    ``None``/blank is always allowed. A concrete predicate is validated by
+    wrapping it in a throwaway ``SELECT`` and running DQX's ``is_sql_query_safe``
+    (the same guard the view layer uses), so statement terminators, DDL/DML and
+    other injection vectors are rejected. Raises :class:`UnsafeRowFilterError`.
+    """
+    cleaned = _clean_row_filter(row_filter)
+    if cleaned is None:
+        return
+    if len(cleaned) > _ROW_FILTER_MAX_LEN:
+        raise UnsafeRowFilterError(f"Row filter is too long (max {_ROW_FILTER_MAX_LEN} characters).")
+    from databricks.labs.dqx.utils import is_sql_query_safe
+
+    if not is_sql_query_safe(f"SELECT * FROM _t WHERE ({cleaned})"):
+        raise UnsafeRowFilterError("Row filter contains prohibited SQL and cannot be used.")
+
+
+# Cap the free-text per-rule filter so it can't bloat the row or the rendered check.
+_ROW_FILTER_MAX_LEN = 4000
+
+
 @dataclass
 class DesiredAppliedRule:
     """One entry in the FULL desired set passed to :meth:`ApplyRulesService.save_applied_rules`.
@@ -63,6 +108,8 @@ class DesiredAppliedRule:
     column_mapping: list[ColumnMappingGroup] = field(default_factory=list)
     pinned_version: int | None = None
     severity_override: str | None = None
+    row_filter: str | None = None
+    pass_threshold: int | None = None
     tags: dict[str, Any] = field(default_factory=dict)
 
 
@@ -85,7 +132,10 @@ class ApplyRulesService:
         return (
             "id, binding_id, rule_id, pinned_version, severity_override, "
             f"{column_mapping} AS column_mapping_json, {user_metadata} AS user_metadata_json, "
-            f"mapping_hash, created_by, {created_at} AS created_at"
+            f"mapping_hash, created_by, {created_at} AS created_at, "
+            # row_filter (10) + pass_threshold (11) appended last so existing
+            # positional indices in ``_row_to_applied_rule`` stay stable.
+            "row_filter, pass_threshold"
         )
 
     # ------------------------------------------------------------------
@@ -100,6 +150,8 @@ class ApplyRulesService:
         user_email: str,
         pinned_version: int | None = None,
         severity_override: str | None = None,
+        row_filter: str | None = None,
+        pass_threshold: int | None = None,
         tags: dict[str, Any] | None = None,
     ) -> AppliedRule:
         """Apply a published registry rule to a monitored table's column mapping.
@@ -153,12 +205,18 @@ class ApplyRulesService:
                 "only published rules can be applied to a monitored table."
             )
         self._validate_mapping_complete(column_mapping, rule.definition.slots)
+        validate_row_filter(row_filter)
 
         mapping_hash = compute_mapping_hash(column_mapping)
         existing = self._get_by_natural_key(binding_id, rule_id, mapping_hash)
         if existing is not None:
             return self._update_mutable_fields(
-                existing, pinned_version=pinned_version, severity_override=severity_override, tags=tags
+                existing,
+                pinned_version=pinned_version,
+                severity_override=severity_override,
+                row_filter=row_filter,
+                pass_threshold=pass_threshold,
+                tags=tags,
             )
 
         # Attach-time-only default_auto_upgrade resolution: this is the
@@ -178,6 +236,8 @@ class ApplyRulesService:
             rule_id=rule_id,
             pinned_version=resolved_pinned_version,
             severity_override=severity_override,
+            row_filter=_clean_row_filter(row_filter),
+            pass_threshold=_clamp_pass_threshold(pass_threshold),
             column_mapping=column_mapping,
             user_metadata=dict(tags or {}),
             mapping_hash=mapping_hash,
@@ -221,10 +281,14 @@ class ApplyRulesService:
         *,
         pinned_version: int | None,
         severity_override: str | None,
+        row_filter: str | None,
+        pass_threshold: int | None,
         tags: dict[str, Any] | None,
     ) -> AppliedRule:
         existing.pinned_version = pinned_version
         existing.severity_override = severity_override
+        existing.row_filter = _clean_row_filter(row_filter)
+        existing.pass_threshold = _clamp_pass_threshold(pass_threshold)
         if tags is not None:
             existing.user_metadata = dict(tags)
         e_id = escape_sql_string(existing.id or "")
@@ -233,6 +297,8 @@ class ApplyRulesService:
             f"UPDATE {self._table} SET "
             f"  pinned_version = {existing.pinned_version if existing.pinned_version is not None else 'NULL'}, "
             f"  severity_override = {self._opt_str(existing.severity_override)}, "
+            f"  row_filter = {self._opt_str(existing.row_filter)}, "
+            f"  pass_threshold = {existing.pass_threshold if existing.pass_threshold is not None else 'NULL'}, "
             f"  user_metadata = {metadata_expr} "
             f"WHERE id = '{e_id}'"
         )
@@ -245,12 +311,14 @@ class ApplyRulesService:
         metadata_expr = self._sql.json_literal_expr(json.dumps(applied.user_metadata))
         sql = (
             f"INSERT INTO {self._table} "
-            "(id, binding_id, rule_id, pinned_version, severity_override, column_mapping, user_metadata, "
-            "mapping_hash, created_by, created_at) VALUES "
+            "(id, binding_id, rule_id, pinned_version, severity_override, row_filter, pass_threshold, "
+            "column_mapping, user_metadata, mapping_hash, created_by, created_at) VALUES "
             f"('{escape_sql_string(applied.id or '')}', '{escape_sql_string(applied.binding_id)}', "
             f"'{escape_sql_string(applied.rule_id)}', "
             f"{applied.pinned_version if applied.pinned_version is not None else 'NULL'}, "
-            f"{self._opt_str(applied.severity_override)}, {column_mapping_expr}, {metadata_expr}, "
+            f"{self._opt_str(applied.severity_override)}, {self._opt_str(applied.row_filter)}, "
+            f"{applied.pass_threshold if applied.pass_threshold is not None else 'NULL'}, "
+            f"{column_mapping_expr}, {metadata_expr}, "
             f"'{escape_sql_string(applied.mapping_hash or '')}', {self._opt_str(applied.created_by)}, now())"
         )
         self._sql.execute(sql)
@@ -360,6 +428,7 @@ class ApplyRulesService:
                     "only published rules can be applied to a monitored table."
                 )
             self._validate_mapping_complete(entry.column_mapping, rule.definition.slots)
+            validate_row_filter(entry.row_filter)
             desired_hashes[entry.rule_id] = compute_mapping_hash(entry.column_mapping)
 
         # Remove anything not present in the desired set (by rule_id) or
@@ -376,6 +445,8 @@ class ApplyRulesService:
                 user_email,
                 pinned_version=entry.pinned_version,
                 severity_override=entry.severity_override,
+                row_filter=entry.row_filter,
+                pass_threshold=entry.pass_threshold,
                 tags=entry.tags,
             )
             for entry in deduped_entries
@@ -395,22 +466,27 @@ class ApplyRulesService:
         )
         return results
 
-    def rule_display_tags(self, rule_id: str) -> tuple[str | None, str | None, str | None]:
-        """Return the ``(name, dimension, severity)`` reserved tags for *rule_id*.
+    def rule_display_tags(self, rule_id: str) -> tuple[str | None, str | None, str | None, str | None]:
+        """Return the ``(name, dimension, severity, source)`` for *rule_id*.
 
-        Read from the LIVE registry rule's ``user_metadata`` — the same source
+        Read from the LIVE registry rule — the same source
         ``MonitoredTableService`` joins when it builds the detail view's
         applied-rule summaries. Lets callers (e.g. the ``saveAppliedRules``
         route) return the ENRICHED :class:`AppliedRuleOut` shape without a
         second round-trip through ``MonitoredTableService``. Returns
-        ``(None, None, None)`` when the rule row is missing so the caller
+        ``(None, None, None, None)`` when the rule row is missing so the caller
         degrades to a blank display rather than failing the whole save.
         """
         rule = self._registry.get_rule(rule_id)
         if rule is None:
-            return None, None, None
+            return None, None, None, None
         metadata = rule.user_metadata
-        return get_rule_name(metadata), get_rule_dimension(metadata), get_rule_severity(metadata)
+        return (
+            get_rule_name(metadata),
+            get_rule_dimension(metadata),
+            get_rule_severity(metadata),
+            rule.source,
+        )
 
     # ------------------------------------------------------------------
     # List / Get
@@ -565,4 +641,6 @@ class ApplyRulesService:
             mapping_hash=row[7],
             created_by=row[8],
             created_at=self._parse_timestamp(row[9]),
+            row_filter=_clean_row_filter(row[10] if len(row) > 10 else None),
+            pass_threshold=_clamp_pass_threshold(row[11] if len(row) > 11 else None),
         )

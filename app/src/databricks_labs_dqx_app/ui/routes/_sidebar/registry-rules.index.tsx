@@ -21,6 +21,7 @@ import {
   AlertCircle,
   Library,
   Plus,
+  Upload,
   RotateCcw,
   Search,
   XCircle,
@@ -30,6 +31,7 @@ import {
   CheckCircle2,
   Trash2,
   Loader2,
+  Undo2,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -50,9 +52,14 @@ import {
   useDeprecateRegistryRule,
   useUndeprecateRegistryRule,
   useDeleteRegistryRule,
+  useRevokeRegistryRule,
   type RegistryRuleOut,
 } from "@/lib/api";
-import { useLabelDefinitions } from "@/lib/api-custom";
+import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
+import selector from "@/lib/selector";
+import type { User as UserType } from "@/lib/api";
+import { useLabelDefinitions, exportRegistryRules, exportRegistryRule } from "@/lib/api-custom";
+import { ExportYamlMenu } from "@/components/ExportYamlMenu";
 import { LabelFilter, labelsMatchFilter, type LabelSelection } from "@/components/Labels";
 import { labelToken } from "@/lib/format-utils";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -66,6 +73,7 @@ import {
   getRulesTableSortValue,
   getRulesTableSortConfig,
   type RulesTableSortKey,
+  type RulesTableSelection,
 } from "@/components/rules/RulesTable";
 import { compareSortValues } from "@/components/data-table/sort";
 import {
@@ -131,6 +139,8 @@ function RegistryRulesPage() {
   const perms = usePermissions();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { data: currentUser } = useCurrentUserSuspense(selector<UserType>());
+  const currentUserEmail = currentUser?.user_name ?? "";
 
   const [dimensionFilter, setDimensionFilter] = useState<string>(ALL);
   const [severityFilter, setSeverityFilter] = useState<string>(ALL);
@@ -211,8 +221,8 @@ function RegistryRulesPage() {
     });
   }, [serverFilteredRules, stewardFilter, labelFilter, nameSearch]);
 
-  const [sortKey, setSortKey] = useState<RulesTableSortKey | null>(null);
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [sortKey, setSortKey] = useState<RulesTableSortKey | null>("modified");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const handleHeaderClick = useCallback(
     (key: RulesTableSortKey) => {
@@ -284,6 +294,72 @@ function RegistryRulesPage() {
 
   const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RegistryRuleOut | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
+  const [bulkDeprecateOpen, setBulkDeprecateOpen] = useState(false);
+  const [bulkRevokeOpen, setBulkRevokeOpen] = useState(false);
+
+  const isRuleAuthor = useCallback(
+    (rule: RegistryRuleOut) => {
+      if (!currentUserEmail) return false;
+      const author = (rule.updated_by ?? rule.created_by ?? "").toLowerCase();
+      return author === currentUserEmail.toLowerCase();
+    },
+    [currentUserEmail],
+  );
+
+  const canRevokeRule = useCallback(
+    (rule: RegistryRuleOut) =>
+      rule.status === "pending_approval" && (perms.canApproveRules || (perms.canCreateRules && isRuleAuthor(rule))),
+    [perms.canApproveRules, perms.canCreateRules, isRuleAuthor],
+  );
+
+  const selectableRuleIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const r of sortedRules) {
+      if (r.is_builtin) continue;
+      if (
+        (r.status === "pending_approval" && perms.canApproveRules) ||
+        (r.status === "approved" && perms.canApproveRules) ||
+        canRevokeRule(r)
+      ) {
+        ids.add(r.rule_id);
+      }
+    }
+    return ids;
+  }, [sortedRules, perms.canApproveRules, canRevokeRule]);
+
+  const selectedRules = useMemo(
+    () => sortedRules.filter((r) => selectedIds.has(r.rule_id)),
+    [sortedRules, selectedIds],
+  );
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === selectableRuleIds.size) return new Set();
+      return new Set(selectableRuleIds);
+    });
+  }, [selectableRuleIds]);
+
+  const tableSelection = useMemo<RulesTableSelection>(
+    () => ({
+      selectedIds,
+      selectableRuleIds,
+      onToggle: toggleSelect,
+      onToggleAll: toggleSelectAll,
+    }),
+    [selectedIds, selectableRuleIds, toggleSelect, toggleSelectAll],
+  );
 
   const submitMutation = useSubmitRegistryRule();
   const approveMutation = useApproveRegistryRule();
@@ -291,6 +367,78 @@ function RegistryRulesPage() {
   const deprecateMutation = useDeprecateRegistryRule();
   const undeprecateMutation = useUndeprecateRegistryRule();
   const deleteMutation = useDeleteRegistryRule();
+  const revokeMutation = useRevokeRegistryRule();
+
+  const bulkAction = useCallback(
+    async (
+      rulesToAct: RegistryRuleOut[],
+      mutate: (ruleId: string) => Promise<unknown>,
+      successMsg: string,
+      onSuccessInvalidate: () => void = invalidate,
+    ) => {
+      if (bulkBusy || rulesToAct.length === 0) return;
+      setBulkBusy(true);
+      let ok = 0;
+      let fail = 0;
+      let lastDetail = "";
+      for (const rule of rulesToAct) {
+        try {
+          await mutate(rule.rule_id);
+          ok++;
+        } catch (err: unknown) {
+          fail++;
+          const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+          if (detail) lastDetail = detail;
+        }
+      }
+      setBulkBusy(false);
+      setSelectedIds(new Set());
+      onSuccessInvalidate();
+      if (fail === 0) {
+        toast.success(t("rulesRegistry.bulkSucceeded", { count: ok, msg: successMsg }));
+      } else {
+        toast.warning(
+          t("rulesRegistry.bulkPartial", {
+            ok,
+            fail,
+            reason: lastDetail ? ` — ${lastDetail}` : "",
+          }),
+        );
+      }
+    },
+    [bulkBusy, invalidate, t],
+  );
+
+  const confirmBulkApprove = () => {
+    setBulkApproveOpen(false);
+    const eligible = selectedRules.filter((r) => r.status === "pending_approval");
+    bulkAction(
+      eligible,
+      (ruleId) => approveMutation.mutateAsync({ ruleId }),
+      t("rulesRegistry.bulkApproved"),
+      invalidateAfterApprovalChange,
+    );
+  };
+
+  const confirmBulkDeprecate = () => {
+    setBulkDeprecateOpen(false);
+    const eligible = selectedRules.filter((r) => r.status === "approved");
+    bulkAction(
+      eligible,
+      (ruleId) => deprecateMutation.mutateAsync({ ruleId }),
+      t("rulesRegistry.bulkDeprecated"),
+    );
+  };
+
+  const confirmBulkRevoke = () => {
+    setBulkRevokeOpen(false);
+    const eligible = selectedRules.filter((r) => canRevokeRule(r));
+    bulkAction(
+      eligible,
+      (ruleId) => revokeMutation.mutateAsync({ ruleId }),
+      t("rulesRegistry.bulkRevoked"),
+    );
+  };
 
   const runAction = useCallback(
     (
@@ -353,6 +501,13 @@ function RegistryRulesPage() {
       t("rulesRegistry.toastUndeprecated"),
       t("rulesRegistry.toastUndeprecateFailed"),
     );
+  const handleRevoke = (rule: RegistryRuleOut) =>
+    runAction(
+      rule.rule_id,
+      () => revokeMutation.mutateAsync({ ruleId: rule.rule_id }),
+      t("rulesRegistry.toastRevoked"),
+      t("rulesRegistry.toastRevokeFailed"),
+    );
   const confirmDelete = () => {
     if (!deleteTarget) return;
     const rule = deleteTarget;
@@ -377,6 +532,11 @@ function RegistryRulesPage() {
       }
       return (
         <div className="flex items-center justify-end gap-1">
+          <ExportYamlMenu
+            fetchDqx={() => exportRegistryRule(rule.rule_id)}
+            variant="ghost"
+            iconOnly
+          />
           {rule.status === "draft" && perms.canCreateRules && (
             <>
               <Tooltip>
@@ -441,6 +601,22 @@ function RegistryRulesPage() {
               </Tooltip>
             </>
           )}
+          {canRevokeRule(rule) && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 text-amber-600"
+                  aria-label={t("rulesRegistry.actionRevoke")}
+                  onClick={() => handleRevoke(rule)}
+                >
+                  <Undo2 className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("rulesRegistry.actionRevoke")}</TooltipContent>
+            </Tooltip>
+          )}
           {rule.status === "approved" && perms.canApproveRules && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -493,8 +669,64 @@ function RegistryRulesPage() {
       );
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pendingRuleId, perms],
+    [pendingRuleId, perms, canRevokeRule],
   );
+
+  const bulkToolbar =
+    selectedIds.size > 0 ? (
+      <div className="flex flex-wrap items-center gap-2 mb-3 p-2.5 rounded-lg bg-muted/60 border w-full">
+        <span className="text-sm font-medium mr-1">
+          {t("rulesRegistry.selectedCount", { count: selectedIds.size })}
+        </span>
+        {bulkBusy ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <>
+            {perms.canApproveRules && selectedRules.some((r) => r.status === "pending_approval") && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1 h-7 text-xs text-emerald-600"
+                onClick={() => setBulkApproveOpen(true)}
+              >
+                <CheckCircle2 className="h-3 w-3" />
+                {t("rulesRegistry.bulkApprove")}
+              </Button>
+            )}
+            {perms.canApproveRules && selectedRules.some((r) => r.status === "approved") && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1 h-7 text-xs"
+                onClick={() => setBulkDeprecateOpen(true)}
+              >
+                <Archive className="h-3 w-3" />
+                {t("rulesRegistry.bulkDeprecate")}
+              </Button>
+            )}
+            {selectedRules.some((r) => canRevokeRule(r)) && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1 h-7 text-xs text-amber-600"
+                onClick={() => setBulkRevokeOpen(true)}
+              >
+                <Undo2 className="h-3 w-3" />
+                {t("rulesRegistry.bulkRevoke")}
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs ml-auto"
+              onClick={() => setSelectedIds(new Set())}
+            >
+              {t("rulesRegistry.clearSelection")}
+            </Button>
+          </>
+        )}
+      </div>
+    ) : null;
 
   const filterControls = (
     <>
@@ -588,12 +820,34 @@ function RegistryRulesPage() {
             <h1 className="text-2xl font-semibold tracking-tight">{t("rulesRegistry.title")}</h1>
             <p className="text-sm text-muted-foreground mt-1">{t("rulesRegistry.description")}</p>
           </div>
-          {perms.canCreateRules && (
-            <Button onClick={() => navigate({ to: "/registry-rules/new" })} className="gap-2">
-              <Plus className="h-4 w-4" />
-              {t("rulesRegistry.newRule")}
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            <ExportYamlMenu
+              fetchDqx={() =>
+                exportRegistryRules({
+                  dimension: dimensionFilter === ALL ? undefined : dimensionFilter,
+                  severity: severityFilter === ALL ? undefined : severityFilter,
+                  steward: stewardFilter === ALL ? undefined : stewardFilter,
+                })
+              }
+              size="default"
+            />
+            {perms.canCreateRules && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => navigate({ to: "/registry-rules/import" })}
+                  className="gap-2"
+                >
+                  <Upload className="h-4 w-4" />
+                  {t("rulesRegistry.importRules")}
+                </Button>
+                <Button onClick={() => navigate({ to: "/registry-rules/new" })} className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  {t("rulesRegistry.newRule")}
+                </Button>
+              </>
+            )}
+          </div>
         </div>
 
         {isError ? (
@@ -602,6 +856,7 @@ function RegistryRulesPage() {
           <Skeleton className="h-64 w-full" />
         ) : (
           <>
+            {bulkToolbar}
             <RulesTable
               rows={pagedRules}
               labelDefinitions={labelDefinitions}
@@ -611,6 +866,7 @@ function RegistryRulesPage() {
               onRowClick={openRule}
               renderActions={renderActionsCell}
               toolbarExtra={filterControls}
+              selection={tableSelection}
               emptyMessage={
                 <div className="flex flex-col items-center justify-center text-center">
                   {/* h-12 w-12: an integer 2× of lucide's 24px grid renders
@@ -645,6 +901,57 @@ function RegistryRulesPage() {
             <AlertDialogAction className={cn("bg-destructive text-white hover:bg-destructive/90")} onClick={confirmDelete}>
               {t("rulesRegistry.actionDelete")}
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkApproveOpen} onOpenChange={setBulkApproveOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("rulesRegistry.bulkApproveTitle", {
+                count: selectedRules.filter((r) => r.status === "pending_approval").length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("rulesRegistry.bulkApproveBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkApprove}>{t("rulesRegistry.actionApprove")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeprecateOpen} onOpenChange={setBulkDeprecateOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("rulesRegistry.bulkDeprecateTitle", {
+                count: selectedRules.filter((r) => r.status === "approved").length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("rulesRegistry.bulkDeprecateBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkDeprecate}>{t("rulesRegistry.actionDeprecate")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkRevokeOpen} onOpenChange={setBulkRevokeOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("rulesRegistry.bulkRevokeTitle", {
+                count: selectedRules.filter((r) => canRevokeRule(r)).length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("rulesRegistry.bulkRevokeBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkRevoke}>{t("rulesRegistry.actionRevoke")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

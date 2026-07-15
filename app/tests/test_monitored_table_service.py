@@ -71,11 +71,11 @@ def _table_row(
     total_tests: str | None = None,
     score_computed_at: str | None = None,
 ) -> list[str]:
-    # ``schedule_kind`` (B2-52) is selected last among the base columns
-    # (index 13); the trailing 4 cells are the dq_score_cache LEFT-JOIN
-    # columns the list query selects (P3.4) — all None when the table has
-    # never been scored. The single-row read paths select only the first 14
-    # columns; the extra cells are simply ignored by _row_to_table.
+    # ``schedule_kind`` (B2-52) is at index 13; the trailing 4 cells are the
+    # dq_score_cache LEFT-JOIN columns the list query selects (P3.4, indices
+    # 14..17) — all None when the table has never been scored. The single-row
+    # read paths select only the first 14 columns; the extra cells are simply
+    # ignored by _row_to_table.
     return [
         binding_id,
         table_fqn,
@@ -139,6 +139,17 @@ class TestRegister:
         insert_sql = sql.execute.call_args[0][0]
         assert "INSERT INTO dqx_test.dqx_app_test.dq_monitored_tables" in insert_sql
         assert "cat.schema.tbl" in insert_sql
+
+    def test_insert_writes_concrete_schedule_kind(self, svc, sql):
+        # Regression: the Delta CHECK constraint
+        # chk_dq_monitored_tables_schedule_kind rejects a NULL schedule_kind on
+        # insert, so registration must write the concrete enum default rather
+        # than omitting the column (which defaulted it to NULL and failed).
+        sql.query.return_value = []
+        svc.register("cat.schema.tbl", "alice@x")
+        insert_sql = sql.execute.call_args[0][0]
+        assert "schedule_kind" in insert_sql
+        assert "'dq_only'" in insert_sql
 
     def test_defaults_steward_to_creator_when_unset(self, svc, sql):
         # No steward supplied (owner unresolved upstream) -> the creator becomes

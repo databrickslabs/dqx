@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
@@ -53,7 +53,6 @@ import {
   KeyRound,
   LineChart,
   Loader2,
-  MessageSquare,
   MoreVertical,
   Play,
   Plus,
@@ -105,10 +104,16 @@ import {
 import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
-import { CommentsDialog } from "@/components/CommentThread";
+import { CommentThread } from "@/components/CommentThread";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
-import { useLabelDefinitions, useWorkspaceHost } from "@/lib/api-custom";
+import {
+  exportMonitoredTable,
+  useLabelDefinitions,
+  useListPendingApplications,
+  useWorkspaceHost,
+} from "@/lib/api-custom";
+import { ExportYamlMenu } from "@/components/ExportYamlMenu";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { isRunStale, useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
@@ -340,8 +345,6 @@ function MonitoredTableDetailPage() {
   const deleteMutation = useDeleteMonitoredTable();
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [commentsOpen, setCommentsOpen] = useState(false);
-
   const persistStagedRows = useCallback(
     () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
     [saveMutation, bindingId, stagedRows],
@@ -569,6 +572,10 @@ function MonitoredTableDetailPage() {
                 {...computeRunGating(baseline.length, stagedRows.length)}
               />
             )}
+            <ExportYamlMenu
+              fetchDqx={() => exportMonitoredTable(bindingId, "dqx")}
+              fetchOdcs={() => exportMonitoredTable(bindingId, "odcs")}
+            />
             {/* ⋮ menu — "View in Runs History" (all roles) + Delete (editors
                 only). Schedule moved back to its own tab (P25 item 1 reverted
                 P23 item 13). */}
@@ -592,10 +599,6 @@ function MonitoredTableDetailPage() {
                 >
                   <History className="h-3.5 w-3.5" />
                   {t("runsHistory.menuViewRuns")}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setCommentsOpen(true)} className="gap-2">
-                  <MessageSquare className="h-3.5 w-3.5" />
-                  {t("monitoredTables.actionComments")}
                 </DropdownMenuItem>
                 {perms.canCreateRules && (
                   <DropdownMenuItem
@@ -737,7 +740,7 @@ function MonitoredTableDetailPage() {
           </div>
 
           <TabsContent value="about">
-            <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
+            <AboutTab bindingId={bindingId} table={table} onColumnClick={handleColumnDeepLink} />
           </TabsContent>
 
           {/* pt-4 matches the other tabs' top spacing (About/Schedule own it internally). */}
@@ -811,13 +814,6 @@ function MonitoredTableDetailPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <CommentsDialog
-        entityType="monitored_table"
-        entityId={bindingId}
-        open={commentsOpen}
-        onOpenChange={setCommentsOpen}
-      />
 
       <AlertDialog open={blocker.status === "blocked"}>
         <AlertDialogContent>
@@ -1125,9 +1121,11 @@ function RunTableAction({
 const SCHEMA_PAGE_SIZE = 6;
 
 function AboutTab({
+  bindingId,
   table,
   onColumnClick,
 }: {
+  bindingId: string;
   table: MonitoredTableOut;
   /** Deep-links to the Apply Rules "by column" lens, expanded to that
    *  column (item 1) — reuses the jump+expand handoff already wired
@@ -1342,6 +1340,14 @@ function AboutTab({
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">{t("monitoredTables.viewData.sectionTitle")}</h2>
         <ViewDataTab tableFqn={table.table_fqn} />
+      </section>
+
+      {/* Table-level notes (steward context, ownership, general discussion)
+          live here in About — moved off the header ⋮ menu. Run-specific
+          discussion instead lives with the run on the Results tab. */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold">{t("monitoredTables.commentsSectionTitle")}</h2>
+        <CommentThread entityType="monitored_table" entityId={bindingId} />
       </section>
     </div>
   );
@@ -1650,6 +1656,53 @@ function ProfileTab({
 // (expandable), so a screenful is ~10 before the list runs off the bottom
 // (item 51). The by-column lens paginates its own, denser rows internally.
 const RULE_PAGE_SIZE = 10;
+
+/** Read-only panel listing applications staged against this binding that are
+ *  still waiting on their rule's approval (recorded by Bulk Contract Import
+ *  when a rule lands `pending_approval`). These aren't `dq_applied_rules` rows
+ *  yet — they auto-attach when the rule is approved — so surfacing them here
+ *  stops the tab from looking empty and gives approvers a jump-off to the
+ *  rule. Renders nothing when there are none (or on load/error). */
+function PendingApplicationsPanel({ bindingId }: { bindingId: string }) {
+  const { t } = useTranslation();
+  const { data } = useListPendingApplications(bindingId);
+  const pending = data?.data ?? [];
+  if (pending.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-400">
+        <Clock className="h-3.5 w-3.5" />
+        {t("monitoredTables.pendingApplications.title", { count: pending.length })}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {t("monitoredTables.pendingApplications.description")}
+      </p>
+      <ul className="space-y-1">
+        {pending.map((p) => {
+          const cols = [...new Set(p.column_mapping.flatMap((g) => Object.values(g)))];
+          return (
+            <li key={p.id} className="flex flex-wrap items-center gap-2 text-xs">
+              <Link
+                to="/registry-rules/$ruleId"
+                params={{ ruleId: p.rule_id }}
+                className="font-medium text-primary hover:underline"
+              >
+                {p.rule_name || p.rule_id}
+              </Link>
+              {p.rule_status && <StatusBadge status={p.rule_status} />}
+              {cols.length > 0 && (
+                <span className="font-mono text-muted-foreground">
+                  {t("monitoredTables.pendingApplications.columns", { columns: cols.join(", ") })}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
 
 function ApplyRulesTab({
   bindingId,
@@ -2004,6 +2057,17 @@ function ApplyRulesTab({
     setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, severity_override } : r)));
   };
 
+  // Per-rule WHERE filter + pass threshold — like severity/pin above, these are
+  // properties of the rule application (shared across all of a rule_id's staged
+  // rows), so update every row for that rule_id. Pure local staged mutation.
+  const handleRowFilterChange = (rule: AppliedRuleOut, value: string | null) => {
+    setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, row_filter: value } : r)));
+  };
+
+  const handlePassThresholdChange = (rule: AppliedRuleOut, value: number | null) => {
+    setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, pass_threshold: value } : r)));
+  };
+
   return (
     <div className="space-y-4 pt-4">
       {/* Table unreachable via Unity Catalog — mirrors dqlake's AppliedRulesList
@@ -2015,6 +2079,7 @@ function ApplyRulesTab({
           {t("monitoredTables.suggestRulesTableUnavailableReason")}
         </div>
       )}
+      <PendingApplicationsPanel bindingId={bindingId} />
       <div className="flex items-center gap-3 flex-wrap">
         {stagedRows.length > 0 && (
           <div className="flex items-center gap-1">
@@ -2187,6 +2252,8 @@ function ApplyRulesTab({
                 busy={false}
                 onPinChange={(v) => handlePinChange(rule, v)}
                 onSeverityChange={(v) => handleSeverityChange(rule, v)}
+                onRowFilterChange={(v) => handleRowFilterChange(rule, v)}
+                onPassThresholdChange={(v) => handlePassThresholdChange(rule, v)}
                 onRemove={() => setRemoveTarget(rule)}
                 onRemoveMapping={(groupIdx) => handleRemoveMappingGroup(rule.rule_id, groupIdx)}
                 onChangeMapping={(groupIdx, slotName, colName) =>

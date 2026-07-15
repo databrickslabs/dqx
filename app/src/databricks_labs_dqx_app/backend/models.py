@@ -506,6 +506,123 @@ class CreateRegistryRuleOut(BaseModel):
     )
 
 
+# Upper bound on a single batch import. The endpoint runs a SYNCHRONOUS
+# per-rule loop of DB writes on one worker thread + connection, so an
+# unbounded payload would let a single request block a worker and hold a DB
+# connection for an arbitrarily long time (DoS). A YAML file / data contract
+# import is a handful-to-hundreds of rules in practice; anything larger should
+# be split client-side. Requests over this cap are rejected at validation
+# (422) before any DB work starts.
+BATCH_IMPORT_MAX_RULES = 500
+
+
+class BatchImportRegistryRulesIn(BaseModel):
+    """Bulk-create registry drafts from imported check dicts (YAML, data contract, …)."""
+
+    rules: list[CreateRegistryRuleIn] = Field(min_length=1, max_length=BATCH_IMPORT_MAX_RULES)
+    also_submit: bool = Field(
+        default=False,
+        description="When true, transition each successfully created draft to pending_approval.",
+    )
+    skip_duplicates: bool = Field(
+        default=False,
+        description=(
+            "When true, reuse an existing structurally-identical ACTIVE rule "
+            "(draft/pending_approval/approved) instead of creating a duplicate, "
+            "and dedupe repeated rules within this batch. Reused rules are "
+            "returned in ``reused`` and are neither re-created nor re-submitted. "
+            "Makes re-importing the same contract bundle idempotent."
+        ),
+    )
+
+
+class BatchImportRegistryRulesFailure(BaseModel):
+    """One rule that failed during a batch import."""
+
+    index: int
+    error: str
+
+
+class BatchImportRegistryRulesOut(BaseModel):
+    """Result of a bulk registry import — partial success is allowed."""
+
+    created: list[CreateRegistryRuleOut] = Field(default_factory=list)
+    reused: list[CreateRegistryRuleOut] = Field(
+        default_factory=list,
+        description="Rules matched to an existing active rule by fingerprint (skip_duplicates) — not created.",
+    )
+    saved: int = 0
+    submitted: int = 0
+    submit_failed: int = 0
+    failed: list[BatchImportRegistryRulesFailure] = Field(default_factory=list)
+
+
+# Cap the number of pending applications a single batch-record call accepts.
+# Mirrors ``BATCH_IMPORT_MAX_RULES``: the endpoint runs a synchronous
+# per-entry DB write loop, so an unbounded payload would block the uvicorn
+# worker and hold DB connections. Bulk Contract Import chunks to this limit.
+BATCH_RECORD_PENDING_MAX = 500
+
+
+class RecordPendingApplicationIn(BaseModel):
+    """One staged (binding, rule, mapping) application awaiting the rule's approval."""
+
+    binding_id: str = Field(description="The monitored table binding this application will attach to")
+    rule_id: str = Field(description="The registry rule (not yet approved) to apply on publish")
+    column_mapping: list[ColumnMappingGroup] = Field(
+        default_factory=list,
+        description="One slot-name -> column-name mapping group per materialized check; may be "
+        "empty for whole-table rules (no slots).",
+    )
+
+
+class BatchRecordPendingApplicationsIn(BaseModel):
+    """Bulk-record pending applications for rules that landed ``pending_approval``.
+
+    Used by Bulk Contract Import when auto-approve is off: rules are created +
+    submitted but stay pending, so their intended table bindings + column
+    mappings are staged here and activated by ``_publish_registry_rule`` when
+    the rule is later approved.
+    """
+
+    applications: list[RecordPendingApplicationIn] = Field(min_length=1, max_length=BATCH_RECORD_PENDING_MAX)
+
+
+class BatchRecordPendingApplicationsFailure(BaseModel):
+    """One pending application that failed to record during a batch call."""
+
+    index: int
+    error: str
+
+
+class BatchRecordPendingApplicationsOut(BaseModel):
+    """Result of a batch pending-application record — partial success is allowed."""
+
+    recorded: int = 0
+    failed: list[BatchRecordPendingApplicationsFailure] = Field(default_factory=list)
+
+
+class PendingApplicationOut(BaseModel):
+    """A staged (approval-gated) application, enriched with its rule's display fields.
+
+    Surfaced read-only on the Apply Rules tab so an application staged by Bulk
+    Contract Import (recorded while the rule was still ``pending_approval``) is
+    visible instead of the table looking empty. It is NOT a real applied rule:
+    no ``dq_applied_rules`` row exists and no checks are materialized until the
+    rule is approved and the approval hook drains it. ``rule_name``/
+    ``rule_status`` are ``None`` when the referenced rule has since vanished.
+    """
+
+    id: str
+    binding_id: str
+    rule_id: str
+    rule_name: str | None = None
+    rule_status: str | None = None
+    column_mapping: list[ColumnMappingGroup] = Field(default_factory=list)
+    created_by: str | None = None
+    created_at: str | None = None
+
+
 class RegistryRuleDetailOut(BaseModel):
     """A registry rule plus its current published snapshot (None if never published)."""
 
@@ -533,6 +650,8 @@ class UpdateMonitoredTableScheduleIn(BaseModel):
         default=REGISTRY_SCHEDULE_KIND_DEFAULT,
         description="What the scheduled run does: profiling only, DQ only, or both (default both)",
     )
+
+
 
 
 class BulkRegisterMonitoredTablesIn(BaseModel):
@@ -564,6 +683,15 @@ class AppliedRuleOut(BaseModel):
     rule_id: str
     pinned_version: int | None = None
     severity_override: str | None = None
+    row_filter: str | None = Field(
+        default=None,
+        description="Per-rule SQL WHERE predicate scoping which rows this rule's check validates; "
+        "None/blank = every row.",
+    )
+    pass_threshold: int | None = Field(
+        default=None,
+        description="Per-rule minimum % of rows that must pass; None = no per-rule threshold.",
+    )
     column_mapping: list[dict[str, str]] = Field(default_factory=list)
     user_metadata: dict[str, Any] = Field(default_factory=dict)
     mapping_hash: str | None = None
@@ -572,6 +700,7 @@ class AppliedRuleOut(BaseModel):
     rule_name: str | None = None
     rule_dimension: str | None = None
     rule_severity: str | None = None
+    rule_source: str | None = None
 
     @classmethod
     def from_summary(cls, summary: AppliedRuleSummary) -> "AppliedRuleOut":
@@ -582,6 +711,8 @@ class AppliedRuleOut(BaseModel):
             rule_id=applied_rule.rule_id,
             pinned_version=applied_rule.pinned_version,
             severity_override=applied_rule.severity_override,
+            row_filter=applied_rule.row_filter,
+            pass_threshold=applied_rule.pass_threshold,
             column_mapping=applied_rule.column_mapping,
             user_metadata=applied_rule.user_metadata,
             mapping_hash=applied_rule.mapping_hash,
@@ -590,6 +721,7 @@ class AppliedRuleOut(BaseModel):
             rule_name=summary.rule_name,
             rule_dimension=summary.rule_dimension,
             rule_severity=summary.rule_severity,
+            rule_source=summary.rule_source,
         )
 
     @classmethod
@@ -604,6 +736,8 @@ class AppliedRuleOut(BaseModel):
             rule_id=applied.rule_id,
             pinned_version=applied.pinned_version,
             severity_override=applied.severity_override,
+            row_filter=applied.row_filter,
+            pass_threshold=applied.pass_threshold,
             column_mapping=applied.column_mapping,
             user_metadata=applied.user_metadata,
             mapping_hash=applied.mapping_hash,
@@ -628,6 +762,17 @@ class ApplyRuleIn(BaseModel):
     severity_override: str | None = Field(
         default=None, description="Overrides the rule's tagged severity for this application only"
     )
+    row_filter: str | None = Field(
+        default=None,
+        description="Per-rule SQL WHERE predicate scoping which rows this rule's check validates; "
+        "None/blank = every row. Validated for SQL safety before persistence.",
+    )
+    pass_threshold: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Per-rule minimum % of rows that must pass; None = no per-rule threshold.",
+    )
     tags: dict[str, Any] = Field(default_factory=dict, description="Per-application free-text tags")
 
 
@@ -645,6 +790,17 @@ class DesiredAppliedRuleIn(BaseModel):
     )
     severity_override: str | None = Field(
         default=None, description="Overrides the rule's tagged severity for this application only"
+    )
+    row_filter: str | None = Field(
+        default=None,
+        description="Per-rule SQL WHERE predicate scoping which rows this rule's check validates; "
+        "None/blank = every row. Validated for SQL safety before persistence.",
+    )
+    pass_threshold: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Per-rule minimum % of rows that must pass; None = no per-rule threshold.",
     )
     tags: dict[str, Any] = Field(default_factory=dict, description="Per-application free-text tags")
 
@@ -2275,3 +2431,16 @@ class ResetDatabaseOut(BaseModel):
     cleared_tables: list[str] = Field(default_factory=list)
     failed_tables: dict[str, str] = Field(default_factory=dict)
     preserved_note: str = ""
+
+
+class ExportOut(BaseModel):
+    """A rendered YAML export the client downloads as a file.
+
+    ``format`` is ``dqx`` (a DQX check-list YAML, re-importable into the
+    registry) or ``odcs`` (an ODCS v3 DataContract). ``filename`` is a
+    suggested download name; ``content`` is the raw YAML text.
+    """
+
+    filename: str = Field(description="Suggested download filename, e.g. 'registry_rules.dqx.yaml'.")
+    content: str = Field(description="The rendered YAML document.")
+    format: str = Field(description="The export format: 'dqx' or 'odcs'.")

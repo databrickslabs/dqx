@@ -51,6 +51,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { CheckCircle2, Clock, History, Loader2, MessageSquare, MoreVertical, Play, Save, Send, Trash2, XCircle } from "lucide-react";
 import { CommentsDialog } from "@/components/CommentThread";
+import { ExportYamlMenu } from "@/components/ExportYamlMenu";
+import { exportDataProduct } from "@/lib/api-custom";
 import { cn } from "@/lib/utils";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
 
@@ -541,6 +543,11 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                 {runPending ? t("dataProducts.runningLabel") : t("dataProducts.runNowButton")}
               </Button>
             ))}
+
+          <ExportYamlMenu
+            fetchDqx={() => exportDataProduct(product.product_id, "dqx")}
+            fetchOdcs={() => exportDataProduct(product.product_id, "odcs")}
+          />
 
           {/* ⋮ menu — Runs (dqlake-exact, item 29), Run draft, Delete. */}
           <DropdownMenu>

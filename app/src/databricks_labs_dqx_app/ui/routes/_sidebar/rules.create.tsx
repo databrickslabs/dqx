@@ -21,10 +21,8 @@ function CreateRulesLanding() {
   const { canCreateRules } = usePermissions();
   if (!canCreateRules) return <Navigate to="/rules/active" replace />;
 
-  // ``/rules/import`` is now a tabbed landing that hosts both DQX YAML
-  // imports and ODCS data-contract generation — the standalone "From
-  // data contract" tile was removed to keep this grid focused on
-  // distinct *kinds* of rule sources rather than file formats.
+  // Bulk import (YAML / data contract) lives under Rules Registry at
+  // ``/registry-rules/import``.
   //
   // The standalone "Validate table schema" tile was also removed: schema
   // validation and other reference-table checks (foreign_key, …) are
@@ -50,7 +48,7 @@ function CreateRulesLanding() {
       description: t("rulesCreate.profileDescription"),
     },
     {
-      to: "/rules/import",
+      to: "/registry-rules/import",
       icon: Upload,
       title: t("rulesCreate.importTitle"),
       description: t("rulesCreate.importDescription"),

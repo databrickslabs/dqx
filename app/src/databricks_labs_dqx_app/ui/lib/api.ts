@@ -308,6 +308,16 @@ export type AppliedRuleOutPinnedVersion = number | null;
 
 export type AppliedRuleOutSeverityOverride = string | null;
 
+/**
+ * Per-rule SQL WHERE predicate scoping which rows this rule's check validates; None/blank = every row.
+ */
+export type AppliedRuleOutRowFilter = string | null;
+
+/**
+ * Per-rule minimum % of rows that must pass; None = no per-rule threshold.
+ */
+export type AppliedRuleOutPassThreshold = number | null;
+
 export type AppliedRuleOutColumnMappingItem = {[key: string]: string};
 
 export type AppliedRuleOutUserMetadata = { [key: string]: unknown };
@@ -324,6 +334,8 @@ export type AppliedRuleOutRuleDimension = string | null;
 
 export type AppliedRuleOutRuleSeverity = string | null;
 
+export type AppliedRuleOutRuleSource = string | null;
+
 /**
  * A ``dq_applied_rules`` row, denormalized with its registry rule's descriptive tags.
  */
@@ -333,6 +345,10 @@ export interface AppliedRuleOut {
   rule_id: string;
   pinned_version?: AppliedRuleOutPinnedVersion;
   severity_override?: AppliedRuleOutSeverityOverride;
+  /** Per-rule SQL WHERE predicate scoping which rows this rule's check validates; None/blank = every row. */
+  row_filter?: AppliedRuleOutRowFilter;
+  /** Per-rule minimum % of rows that must pass; None = no per-rule threshold. */
+  pass_threshold?: AppliedRuleOutPassThreshold;
   column_mapping?: AppliedRuleOutColumnMappingItem[];
   user_metadata?: AppliedRuleOutUserMetadata;
   mapping_hash?: AppliedRuleOutMappingHash;
@@ -341,6 +357,7 @@ export interface AppliedRuleOut {
   rule_name?: AppliedRuleOutRuleName;
   rule_dimension?: AppliedRuleOutRuleDimension;
   rule_severity?: AppliedRuleOutRuleSeverity;
+  rule_source?: AppliedRuleOutRuleSource;
 }
 
 /**
@@ -383,6 +400,16 @@ export type ApplyRuleInPinnedVersion = number | null;
 export type ApplyRuleInSeverityOverride = string | null;
 
 /**
+ * Per-rule SQL WHERE predicate scoping which rows this rule's check validates; None/blank = every row. Validated for SQL safety before persistence.
+ */
+export type ApplyRuleInRowFilter = string | null;
+
+/**
+ * Per-rule minimum % of rows that must pass; None = no per-rule threshold.
+ */
+export type ApplyRuleInPassThreshold = number | null;
+
+/**
  * Per-application free-text tags
  */
 export type ApplyRuleInTags = { [key: string]: unknown };
@@ -399,6 +426,10 @@ export interface ApplyRuleIn {
   pinned_version?: ApplyRuleInPinnedVersion;
   /** Overrides the rule's tagged severity for this application only */
   severity_override?: ApplyRuleInSeverityOverride;
+  /** Per-rule SQL WHERE predicate scoping which rows this rule's check validates; None/blank = every row. Validated for SQL safety before persistence. */
+  row_filter?: ApplyRuleInRowFilter;
+  /** Per-rule minimum % of rows that must pass; None = no per-rule threshold. */
+  pass_threshold?: ApplyRuleInPassThreshold;
   /** Per-application free-text tags */
   tags?: ApplyRuleInTags;
 }
@@ -424,6 +455,42 @@ export interface ApprovalsModeOut {
 export interface BackfillRuleEmbeddingsOut {
   total_published: number;
   embedded: number;
+}
+
+/**
+ * One rule that failed during a batch import.
+ */
+export interface BatchImportRegistryRulesFailure {
+  index: number;
+  error: string;
+}
+
+/**
+ * Bulk-create registry drafts from imported check dicts (YAML, data contract, …).
+ */
+export interface BatchImportRegistryRulesIn {
+  /**
+   * @minItems 1
+   * @maxItems 500
+   */
+  rules: CreateRegistryRuleIn[];
+  /** When true, transition each successfully created draft to pending_approval. */
+  also_submit?: boolean;
+  /** When true, reuse an existing structurally-identical ACTIVE rule (draft/pending_approval/approved) instead of creating a duplicate, and dedupe repeated rules within this batch. Reused rules are returned in ``reused`` and are neither re-created nor re-submitted. Makes re-importing the same contract bundle idempotent. */
+  skip_duplicates?: boolean;
+}
+
+/**
+ * Result of a bulk registry import — partial success is allowed.
+ */
+export interface BatchImportRegistryRulesOut {
+  created?: CreateRegistryRuleOut[];
+  /** Rules matched to an existing active rule by fingerprint (skip_duplicates) — not created. */
+  reused?: CreateRegistryRuleOut[];
+  saved?: number;
+  submitted?: number;
+  submit_failed?: number;
+  failed?: BatchImportRegistryRulesFailure[];
 }
 
 /**
@@ -473,6 +540,38 @@ export interface BatchProfileRunOut {
   runs: ProfileRunOut[];
   /** Per-table failures encountered during batch submission. Empty when every table submitted successfully. The route still returns 2xx as long as at least one table submitted; clients should always check ``errors`` and surface them to the user. */
   errors?: BatchProfileRunFailure[];
+}
+
+/**
+ * One pending application that failed to record during a batch call.
+ */
+export interface BatchRecordPendingApplicationsFailure {
+  index: number;
+  error: string;
+}
+
+/**
+ * Bulk-record pending applications for rules that landed ``pending_approval``.
+
+Used by Bulk Contract Import when auto-approve is off: rules are created +
+submitted but stay pending, so their intended table bindings + column
+mappings are staged here and activated by ``_publish_registry_rule`` when
+the rule is later approved.
+ */
+export interface BatchRecordPendingApplicationsIn {
+  /**
+   * @minItems 1
+   * @maxItems 500
+   */
+  applications: RecordPendingApplicationIn[];
+}
+
+/**
+ * Result of a batch pending-application record — partial success is allowed.
+ */
+export interface BatchRecordPendingApplicationsOut {
+  recorded?: number;
+  failed?: BatchRecordPendingApplicationsFailure[];
 }
 
 export interface BatchRunFromCatalogIn {
@@ -1064,6 +1163,16 @@ export type DesiredAppliedRuleInPinnedVersion = number | null;
 export type DesiredAppliedRuleInSeverityOverride = string | null;
 
 /**
+ * Per-rule SQL WHERE predicate scoping which rows this rule's check validates; None/blank = every row. Validated for SQL safety before persistence.
+ */
+export type DesiredAppliedRuleInRowFilter = string | null;
+
+/**
+ * Per-rule minimum % of rows that must pass; None = no per-rule threshold.
+ */
+export type DesiredAppliedRuleInPassThreshold = number | null;
+
+/**
  * Per-application free-text tags
  */
 export type DesiredAppliedRuleInTags = { [key: string]: unknown };
@@ -1080,6 +1189,10 @@ export interface DesiredAppliedRuleIn {
   pinned_version?: DesiredAppliedRuleInPinnedVersion;
   /** Overrides the rule's tagged severity for this application only */
   severity_override?: DesiredAppliedRuleInSeverityOverride;
+  /** Per-rule SQL WHERE predicate scoping which rows this rule's check validates; None/blank = every row. Validated for SQL safety before persistence. */
+  row_filter?: DesiredAppliedRuleInRowFilter;
+  /** Per-rule minimum % of rows that must pass; None = no per-rule threshold. */
+  pass_threshold?: DesiredAppliedRuleInPassThreshold;
   /** Per-application free-text tags */
   tags?: DesiredAppliedRuleInTags;
 }
@@ -2129,6 +2242,37 @@ export interface OutputConfig {
   cluster_by?: string[];
 }
 
+export type PendingApplicationOutRuleName = string | null;
+
+export type PendingApplicationOutRuleStatus = string | null;
+
+export type PendingApplicationOutColumnMappingItem = {[key: string]: string};
+
+export type PendingApplicationOutCreatedBy = string | null;
+
+export type PendingApplicationOutCreatedAt = string | null;
+
+/**
+ * A staged (approval-gated) application, enriched with its rule's display fields.
+
+Surfaced read-only on the Apply Rules tab so an application staged by Bulk
+Contract Import (recorded while the rule was still ``pending_approval``) is
+visible instead of the table looking empty. It is NOT a real applied rule:
+no ``dq_applied_rules`` row exists and no checks are materialized until the
+rule is approved and the approval hook drains it. ``rule_name``/
+``rule_status`` are ``None`` when the referenced rule has since vanished.
+ */
+export interface PendingApplicationOut {
+  id: string;
+  binding_id: string;
+  rule_id: string;
+  rule_name?: PendingApplicationOutRuleName;
+  rule_status?: PendingApplicationOutRuleStatus;
+  column_mapping?: PendingApplicationOutColumnMappingItem[];
+  created_by?: PendingApplicationOutCreatedBy;
+  created_at?: PendingApplicationOutCreatedAt;
+}
+
 /**
  * Admin setting: default state of the per-grant inheritance toggle.
  */
@@ -2349,6 +2493,20 @@ export interface QuarantineRecordOut {
   errors?: QuarantineRecordOutErrors;
   warnings?: QuarantineRecordOutWarnings;
   created_at?: QuarantineRecordOutCreatedAt;
+}
+
+export type RecordPendingApplicationInColumnMappingItem = {[key: string]: string};
+
+/**
+ * One staged (binding, rule, mapping) application awaiting the rule's approval.
+ */
+export interface RecordPendingApplicationIn {
+  /** The monitored table binding this application will attach to */
+  binding_id: string;
+  /** The registry rule (not yet approved) to apply on publish */
+  rule_id: string;
+  /** One slot-name -> column-name mapping group per materialized check; may be empty for whole-table rules (no slots). */
+  column_mapping?: RecordPendingApplicationInColumnMappingItem[];
 }
 
 /**
@@ -12618,6 +12776,79 @@ export function useListRegistryRuleVersionsSuspense<TData = Awaited<ReturnType<t
 
 
 /**
+ * Bulk-create registry drafts from imported checks in a single request.
+
+Avoids N sequential round-trips (each of which re-resolves Databricks
+auth) when importing many rules from YAML or a data contract.
+
+The batch is a SYNCHRONOUS per-rule loop of DB writes running on one
+worker thread + connection, so the payload is bounded to
+``BATCH_IMPORT_MAX_RULES`` (rejected at request validation before any DB
+work) to keep a single request from monopolising a worker / connection.
+Per-rule failures are collected (partial success) rather than aborting
+the batch.
+ * @summary Batch Import Registry Rules
+ */
+export const batchImportRegistryRules = (
+    batchImportRegistryRulesIn: BatchImportRegistryRulesIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<BatchImportRegistryRulesOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/registry-rules/batch-import`,
+      batchImportRegistryRulesIn,options
+    );
+  }
+
+
+
+export const getBatchImportRegistryRulesMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof batchImportRegistryRules>>, TError,{data: BatchImportRegistryRulesIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof batchImportRegistryRules>>, TError,{data: BatchImportRegistryRulesIn}, TContext> => {
+
+const mutationKey = ['batchImportRegistryRules'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof batchImportRegistryRules>>, {data: BatchImportRegistryRulesIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  batchImportRegistryRules(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BatchImportRegistryRulesMutationResult = NonNullable<Awaited<ReturnType<typeof batchImportRegistryRules>>>
+    export type BatchImportRegistryRulesMutationBody = BatchImportRegistryRulesIn
+    export type BatchImportRegistryRulesMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Batch Import Registry Rules
+ */
+export const useBatchImportRegistryRules = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof batchImportRegistryRules>>, TError,{data: BatchImportRegistryRulesIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof batchImportRegistryRules>>,
+        TError,
+        {data: BatchImportRegistryRulesIn},
+        TContext
+      > => {
+
+      const mutationOptions = getBatchImportRegistryRulesMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * Submit a draft registry rule for approval.
 
 Honours the app-wide approvals mode (issue #94): in ``disabled`` mode, or in
@@ -12835,6 +13066,68 @@ export const useRejectRegistryRule = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getRejectRegistryRuleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Revoke a pending registry submission back to draft (or approved for revisions).
+ * @summary Revoke Registry Rule
+ */
+export const revokeRegistryRule = (
+    ruleId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RegistryRuleOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/registry-rules/${ruleId}/revoke`,undefined,options
+    );
+  }
+
+
+
+export const getRevokeRegistryRuleMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof revokeRegistryRule>>, TError,{ruleId: string}, TContext> => {
+
+const mutationKey = ['revokeRegistryRule'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revokeRegistryRule>>, {ruleId: string}> = (props) => {
+          const {ruleId} = props ?? {};
+
+          return  revokeRegistryRule(ruleId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RevokeRegistryRuleMutationResult = NonNullable<Awaited<ReturnType<typeof revokeRegistryRule>>>
+    
+    export type RevokeRegistryRuleMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Revoke Registry Rule
+ */
+export const useRevokeRegistryRule = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeRegistryRule>>, TError,{ruleId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof revokeRegistryRule>>,
+        TError,
+        {ruleId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRevokeRegistryRuleMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
@@ -14277,6 +14570,237 @@ export const useSaveAppliedRules = <TError = AxiosError<HTTPValidationError>,
       return useMutation(mutationOptions, queryClient);
     }
     
+/**
+ * Stage applications for rules that landed ``pending_approval`` (Bulk Contract Import Phase 2).
+
+Records each ``(binding_id, rule_id, column_mapping)`` in
+``dq_pending_applications``; on the rule's later approval,
+``_publish_registry_rule`` drains them into real applied-rule links. This
+is a lightweight staging write (no rule/binding validation or
+materialization here) — the activation path re-validates via
+``ApplyRulesService.apply_rule``, so an entry whose binding/rule vanishes
+before approval is silently skipped there rather than failing the import.
+
+Partial success is allowed; per-entry errors are returned in ``failed[]``
+with a generic message (details are logged server-side).
+ * @summary Batch Record Pending Applications
+ */
+export const batchRecordPendingApplications = (
+    batchRecordPendingApplicationsIn: BatchRecordPendingApplicationsIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<BatchRecordPendingApplicationsOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/monitored-tables/pending-applications/batch`,
+      batchRecordPendingApplicationsIn,options
+    );
+  }
+
+
+
+export const getBatchRecordPendingApplicationsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof batchRecordPendingApplications>>, TError,{data: BatchRecordPendingApplicationsIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof batchRecordPendingApplications>>, TError,{data: BatchRecordPendingApplicationsIn}, TContext> => {
+
+const mutationKey = ['batchRecordPendingApplications'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof batchRecordPendingApplications>>, {data: BatchRecordPendingApplicationsIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  batchRecordPendingApplications(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BatchRecordPendingApplicationsMutationResult = NonNullable<Awaited<ReturnType<typeof batchRecordPendingApplications>>>
+    export type BatchRecordPendingApplicationsMutationBody = BatchRecordPendingApplicationsIn
+    export type BatchRecordPendingApplicationsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Batch Record Pending Applications
+ */
+export const useBatchRecordPendingApplications = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof batchRecordPendingApplications>>, TError,{data: BatchRecordPendingApplicationsIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof batchRecordPendingApplications>>,
+        TError,
+        {data: BatchRecordPendingApplicationsIn},
+        TContext
+      > => {
+
+      const mutationOptions = getBatchRecordPendingApplicationsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * List applications staged against this binding that are waiting on rule approval.
+
+Recorded by Bulk Contract Import when a freshly-created rule lands
+``pending_approval`` (approval-enabled orgs): the intended
+``(binding, rule, column_mapping)`` is parked in ``dq_pending_applications``
+and drained into a real ``dq_applied_rules`` link by
+``_publish_registry_rule`` when the rule is approved. These are NOT applied
+rules yet (no materialized checks) — the Apply Rules tab surfaces them
+read-only so the staged intent is visible instead of the table looking like
+it has no rules. Enriched with the referenced rule's name/status in one
+batched lookup; ``None`` when the rule has since been deleted.
+ * @summary List Pending Applications
+ */
+export const listPendingApplications = (
+    bindingId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<PendingApplicationOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitored-tables/${bindingId}/pending-applications`,options
+    );
+  }
+
+
+
+
+export const getListPendingApplicationsQueryKey = (bindingId?: string,) => {
+    return [
+    `/api/v1/monitored-tables/${bindingId}/pending-applications`
+    ] as const;
+    }
+
+    
+export const getListPendingApplicationsQueryOptions = <TData = Awaited<ReturnType<typeof listPendingApplications>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPendingApplications>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPendingApplicationsQueryKey(bindingId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPendingApplications>>> = ({ signal }) => listPendingApplications(bindingId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(bindingId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPendingApplications>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListPendingApplicationsQueryResult = NonNullable<Awaited<ReturnType<typeof listPendingApplications>>>
+export type ListPendingApplicationsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListPendingApplications<TData = Awaited<ReturnType<typeof listPendingApplications>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPendingApplications>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPendingApplications>>,
+          TError,
+          Awaited<ReturnType<typeof listPendingApplications>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPendingApplications<TData = Awaited<ReturnType<typeof listPendingApplications>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPendingApplications>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPendingApplications>>,
+          TError,
+          Awaited<ReturnType<typeof listPendingApplications>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPendingApplications<TData = Awaited<ReturnType<typeof listPendingApplications>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPendingApplications>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Pending Applications
+ */
+
+export function useListPendingApplications<TData = Awaited<ReturnType<typeof listPendingApplications>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPendingApplications>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListPendingApplicationsQueryOptions(bindingId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListPendingApplicationsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listPendingApplications>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPendingApplications>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPendingApplicationsQueryKey(bindingId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPendingApplications>>> = ({ signal }) => listPendingApplications(bindingId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPendingApplications>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListPendingApplicationsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listPendingApplications>>>
+export type ListPendingApplicationsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListPendingApplicationsSuspense<TData = Awaited<ReturnType<typeof listPendingApplications>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPendingApplications>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPendingApplicationsSuspense<TData = Awaited<ReturnType<typeof listPendingApplications>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPendingApplications>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPendingApplicationsSuspense<TData = Awaited<ReturnType<typeof listPendingApplications>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPendingApplications>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Pending Applications
+ */
+
+export function useListPendingApplicationsSuspense<TData = Awaited<ReturnType<typeof listPendingApplications>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPendingApplications>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListPendingApplicationsSuspenseQueryOptions(bindingId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
 /**
  * Remove an applied rule and every ``dq_quality_rules`` row it materialized.
 

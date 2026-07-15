@@ -228,3 +228,38 @@ export function AuthorKindBadge({ authorKind }: { authorKind?: RegistryRuleOutAu
     </Badge>
   );
 }
+
+/** Normalized registry-rule origin for display/sort (`ui` when unset). */
+export function normalizeRuleSource(source: string | null | undefined): string {
+  return source && source.length > 0 ? source : "ui";
+}
+
+const RULE_SOURCE_CLASS: Record<string, string> = {
+  import: "border-blue-500 text-blue-600",
+  profiling: "border-cyan-500 text-cyan-600",
+  builtin: "border-slate-500 text-slate-600",
+  ui: "border-emerald-500 text-emerald-600",
+};
+
+/**
+ * How the registry rule was authored: UI, import, profiling suggester, or built-in seed.
+ * Registry rows store `source` on `dq_rules`; applied rules may carry `rule_source`
+ * from the same join.
+ */
+export function RuleSourceBadge({ source }: { source?: string | null }) {
+  const { t } = useTranslation();
+  const key = normalizeRuleSource(source);
+  const labelKey =
+    key === "import"
+      ? "rulesRegistry.sourceImported"
+      : key === "profiling"
+        ? "rulesRegistry.sourceProfiling"
+        : key === "builtin"
+          ? "rulesRegistry.sourceBuiltin"
+          : "rulesRegistry.sourceUi";
+  return (
+    <Badge variant="outline" className={cn("text-[10px] py-0 px-1.5", RULE_SOURCE_CLASS[key] ?? RULE_SOURCE_CLASS.ui)}>
+      {t(labelKey)}
+    </Badge>
+  );
+}
