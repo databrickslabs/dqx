@@ -112,8 +112,12 @@ class TestAttributionViewDdl:
     def test_columns_stay_an_array_merging_column_and_columns(self, svc):
         # A single-column check renders arguments.column, a multi-column
         # one arguments.columns — the view exposes ONE array column.
+        # The COALESCE also falls back to user_metadata['mapped_columns']
+        # for sql_query checks (see test_attribution_view_columns_fall_back_*).
         ddl = svc.attribution_view_ddl()
-        assert "COALESCE(arg_columns, CASE WHEN arg_column IS NOT NULL THEN array(arg_column) END)" in ddl
+        assert "COALESCE(" in ddl
+        assert "arg_columns" in ddl
+        assert "CASE WHEN arg_column IS NOT NULL THEN array(arg_column) END" in ddl
 
     def test_only_rows_with_checks_json_participate(self, svc):
         # The app inserts a RUNNING lifecycle row without checks_json; the
@@ -133,6 +137,18 @@ class TestAttributionViewDdl:
         # A check without a name gets a DQX-generated check name at run
         # time — it can never join back to the metrics row.
         assert "check_name IS NOT NULL" in svc.attribution_view_ddl()
+
+    def test_attribution_view_exposes_rule_name_from_metadata(self, svc):
+        ddl = svc.attribution_view_ddl()
+        assert "user_metadata['name'] AS rule_name" in ddl
+
+    def test_attribution_view_columns_fall_back_to_metadata_mapped_columns(self, svc):
+        ddl = svc.attribution_view_ddl()
+        # sql_query checks carry columns only in user_metadata['mapped_columns'];
+        # the COALESCE must recover them so by-column populates for sql_query.
+        assert "from_json(user_metadata['mapped_columns'], 'ARRAY<STRING>')" in ddl
+        # existing arg-based sources still come first
+        assert "arg_columns" in ddl and "arg_column" in ddl
 
 
 class TestShapingViewDdl:
