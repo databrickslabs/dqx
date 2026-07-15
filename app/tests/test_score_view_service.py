@@ -205,6 +205,9 @@ class TestShapingViewDdl:
         assert "a.registry_rule_id" in ddl
         assert "a.columns" in ddl  # stays an ARRAY<STRING> column
 
+    def test_shaping_view_carries_rule_name(self, svc):
+        assert "a.rule_name" in svc.shaping_view_ddl()
+
     def test_reads_run_provenance_tags_from_the_run_level_metadata_map(self, svc):
         # dq_metrics is long-format: the run-level user_metadata map repeats
         # per metric row, so MAX over the grouped rows picks it from any row.
@@ -298,6 +301,9 @@ class TestAsofViewDdl:
             "c.columns",
         ):
             assert column in ddl, column
+
+    def test_asof_view_carries_rule_name(self, svc):
+        assert "c.rule_name" in svc.asof_view_ddl()
 
     def test_null_run_times_never_enter_the_expansion(self, svc):
         assert "WHERE run_time IS NOT NULL" in svc.asof_view_ddl()
