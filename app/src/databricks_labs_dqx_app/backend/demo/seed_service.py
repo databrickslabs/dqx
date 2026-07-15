@@ -272,7 +272,7 @@ class DemoSeedService:
         # Governed column tags are a best-effort showcase, not core demo state.
         # Assigning a governed tag needs the ASSIGN privilege on that tag AND a
         # metastore that defines it; either can be absent in a given workspace.
-        # A tag that can't be applied must NOT abort the ~1h build — log the
+        # A tag that can't be applied must NOT abort the ~30min build — log the
         # governed-tag name (a manifest constant, not user input) and continue.
         for tag in manifest.COLUMN_TAGS:
             try:
@@ -282,7 +282,7 @@ class DemoSeedService:
                 # pyproject.toml): tag assignment is a best-effort showcase, so
                 # ANY failure — a missing ASSIGN privilege, an undefined tag, a
                 # transient API error — is logged and skipped rather than
-                # aborting the ~1h seed.
+                # aborting the ~30min seed.
                 logger.warning(
                     "Skipped governed tag %s on %s.%s: %s",
                     tag.tag,
@@ -848,7 +848,7 @@ class DemoSeedService:
         every binding's column materialization — is unchanged and stays valid.
 
         Best-effort: a failure here is logged and swallowed so it can never
-        abort the ~1h seed, but under normal operation it succeeds.
+        abort the ~30min seed, but under normal operation it succeeds.
         """
         rule_id = rule_map.get("card_format")
         if rule_id is None:

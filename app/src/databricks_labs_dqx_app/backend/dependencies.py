@@ -878,7 +878,7 @@ async def get_demo_seed_service(
 ) -> "DemoSeedService":
     """Assemble the demo-seed orchestrator with an SP-only service graph.
 
-    The demo seed runs on a background daemon thread for ~1h with no request
+    The demo seed runs on a background daemon thread for ~30min with no request
     context, so every collaborator must be service-principal-authenticated —
     there is no user OBO token to fall back on. Two SP-only decisions are
     load-bearing:

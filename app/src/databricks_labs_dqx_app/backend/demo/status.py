@@ -25,7 +25,7 @@ DEMO_STATUS_KEY = "demo_content_status"
 # ``running`` forever and blocking every future deploy with a 409. A run that
 # has not advanced its status within this window is therefore considered dead so
 # an interrupted seed self-heals. The bound is generous: it exceeds the seed's
-# realistic wall-clock (well under an hour) with wide margin, and the seed writes
+# realistic wall-clock (~30 minutes) with wide margin, and the seed writes
 # a status update at every phase, so a live run refreshes ``updated_at`` long
 # before the window elapses.
 _STALE_RUNNING_AFTER_SECONDS = 2 * 60 * 60  # 2 hours

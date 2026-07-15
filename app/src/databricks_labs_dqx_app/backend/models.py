@@ -2349,7 +2349,7 @@ class DeployDemoContentIn(BaseModel):
 class DeployDemoContentOut(BaseModel):
     """Acknowledgement that a demo-content seed was launched.
 
-    The seed runs for ~1h on a background daemon thread, so this returns
+    The seed runs for ~30min on a background daemon thread, so this returns
     immediately with the initial ``running`` state; progress is polled via the
     demo-content status endpoint.
     """

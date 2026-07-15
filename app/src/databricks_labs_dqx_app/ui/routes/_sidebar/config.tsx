@@ -2619,7 +2619,7 @@ function DangerZoneCard() {
 // realistic sample DQX Studio deployment (sample tables, rules across every
 // quality dimension, weeks of run history). NON-destructive by default, but the
 // recommended path wipes existing Studio data first for a clean slate — so the
-// wipe-first checkbox defaults to checked. The seed runs ~1h on a background
+// wipe-first checkbox defaults to checked. The seed runs ~30min on a background
 // thread; we poll the status endpoint (only while running) and surface a subtle
 // banner. The backend route is hard-gated to ADMIN; the UI gate is convenience.
 // ─────────────────────────────────────────────────────────────────────────────

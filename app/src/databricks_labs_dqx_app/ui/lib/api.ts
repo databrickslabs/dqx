@@ -1076,7 +1076,7 @@ export interface DeployDemoContentIn {
 /**
  * Acknowledgement that a demo-content seed was launched.
 
-The seed runs for ~1h on a background daemon thread, so this returns
+The seed runs for ~30min on a background daemon thread, so this returns
 immediately with the initial ``running`` state; progress is polled via the
 demo-content status endpoint.
  */
@@ -24416,7 +24416,7 @@ export const useResetDatabase = <TError = AxiosError<HTTPValidationError>,
 /**
  * Launch the governed demo-content seed on a background thread (Admin only).
 
-The seed runs for ~1h, so this endpoint fires it on a named daemon thread
+The seed runs for ~30min, so this endpoint fires it on a named daemon thread
 and returns immediately with the initial ``running`` state. Progress is
 polled via ``GET /demo/status``. A 409 is returned when a seed is already
 in progress so two concurrent deploys can't race.
