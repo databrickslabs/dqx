@@ -222,7 +222,7 @@ def test_text_instructions_single_entry_with_newline_terminated_paragraphs() -> 
     assert len(text_instructions) == 1
     content = text_instructions[0]["content"]
     assert content == list(gs.TEXT_INSTRUCTIONS)
-    assert len(content) == 12
+    assert len(content) == 13
     assert all(p.endswith("\n") for p in content)
     joined = "".join(content)
     assert "MEASURE()" in joined
@@ -554,6 +554,25 @@ def test_text_instructions_change_answers_name_the_run_instant() -> None:
     assert "curr_run_ts" in joined
     assert "prev_run_ts" in joined
     assert "run date and time" in joined
+
+
+def test_genie_rule_queries_label_from_rule_name() -> None:
+    # The by-rule/applied/drift SQL must display MAX(`rule_name`) (the
+    # underlying rule name), not MAX(`check_name`) (the per-column suffixed
+    # name).  Identity grouping and rollup shape must stay intact.
+    sql_text = str(gs._curated_sqls(CATALOG, SCHEMA))
+    assert "MAX(`rule_name`) AS rule_name" in sql_text
+    assert "COALESCE(`registry_rule_id`, `check_name`)" in sql_text
+    assert "COUNT(DISTINCT `check_name`)" in sql_text
+
+
+def test_genie_instructions_explain_column_fanout() -> None:
+    # TEXT_INSTRUCTIONS must include the per-column fan-out explanation so
+    # Genie presents a multi-column rule ONCE by its rule_name and treats the
+    # per-column checks as a rollup.
+    joined = "".join(gs.TEXT_INSTRUCTIONS)
+    assert "one check per column" in joined
+    assert "registry_rule_id" in joined
 
 
 def test_benchmarks_reuse_curated_sql_verbatim_and_cover_all_questions() -> None:

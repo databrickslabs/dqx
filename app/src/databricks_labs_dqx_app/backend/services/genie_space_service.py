@@ -239,6 +239,16 @@ TEXT_INSTRUCTIONS = [
         "may not know it. Each sentence should add something new — a number, a cause, a "
         "definition, or a next step — and when there is nothing more to add, stop.\n"
     ),
+    (
+        "A rule applied to several columns fans out into one check per column: "
+        "those checks share the rule's name (the `rule_name` field) and its "
+        "`registry_rule_id`, differing only in `check_name` (suffixed with the "
+        "column). Report such a rule ONCE by its `rule_name`, and treat the "
+        "per-column checks as its rollup — `COUNT(DISTINCT check_name)` is how "
+        "many columns it covers and the exploded `columns` array attributes "
+        "failures to each. Never present the suffixed `check_name` as a separate "
+        "rule.\n"
+    ),
 ]
 
 # id_factory contract shared by the pure builders: mirrors
@@ -511,7 +521,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "),\n"
         "cur AS (\n"
         "  SELECT COALESCE(`registry_rule_id`, `check_name`) AS rule_key,\n"
-        "         MAX(`check_name`) AS rule_name, MAX(`dimension`) AS dim,\n"
+        "         MAX(`rule_name`) AS rule_name, MAX(`dimension`) AS dim,\n"
         "         MAX(`severity`) AS sev, MAX(to_json(`columns`)) AS cols,\n"
         # col_set is the FULL DISTINCT mapped-column set this rule ran
         # against, unioned across all its check rows. A rule applied to
@@ -530,7 +540,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "),\n"
         "prev AS (\n"
         "  SELECT COALESCE(`registry_rule_id`, `check_name`) AS rule_key,\n"
-        "         MAX(`check_name`) AS rule_name, MAX(`dimension`) AS dim,\n"
+        "         MAX(`rule_name`) AS rule_name, MAX(`dimension`) AS dim,\n"
         "         MAX(`severity`) AS sev, MAX(to_json(`columns`)) AS cols,\n"
         "         array_distinct(flatten(collect_list(`columns`))) AS col_set,\n"
         "         COUNT(DISTINCT `check_name`) AS check_count,\n"
