@@ -462,6 +462,9 @@ class TestRenderCheckSqlMode:
         assert check["check"]["function"] == "sql_expression"
         assert check["check"]["arguments"]["expression"] == "customer_id IS NOT NULL"
         assert check["check"]["arguments"]["negate"] is False
+        # The mapped column is surfaced for DQX reporting + results by-column
+        # attribution (sql_expression accepts a ``columns`` arg).
+        assert check["check"]["arguments"]["columns"] == ["customer_id"]
 
     def test_fail_polarity_negates(self):
         definition = self._sql_definition({"predicate": "{{column}} IS NULL"})
@@ -497,6 +500,38 @@ class TestRenderCheckSqlMode:
         )
         assert is_tableless is True
         assert check["check"]["function"] == "sql_query"
+        # A tableless (no-slot) query has no mapped columns, so no ``columns``
+        # key is added — the check dict stays unchanged for this case.
+        assert "columns" not in check["check"]["arguments"]
+
+    def test_sql_expression_surfaces_deduped_mapped_columns_in_slot_order(self):
+        # A multi-slot SQL predicate reports every referenced column once, in
+        # slot-declaration order, so the results by-column breakdown attributes
+        # the check to each involved column (was empty before: SQL checks
+        # carried no ``arguments.columns``).
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"predicate": "{{start}} <= {{end}} AND {{start}} IS NOT NULL"},
+                "slots": [
+                    {"name": "start", "family": "any", "position": 0, "cardinality": "one"},
+                    {"name": "end", "family": "any", "position": 1, "cardinality": "one"},
+                ],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, _ = render_check(
+            mode="sql",
+            version=version,
+            group={"start": "shipped_at", "end": "delivered_at"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        assert check["check"]["arguments"]["columns"] == ["shipped_at", "delivered_at"]
 
     def test_unsafe_sql_raises(self):
         definition = self._sql_definition({"predicate": "1=1; DROP TABLE {{column}}"})
@@ -617,6 +652,10 @@ class TestRenderCheckLowcodeMode:
         # is resolved by DQX's sql_query check at run time.
         assert args["query"] == "SELECT region, (NOT (COUNT(*) > 1)) AS condition FROM {{input_view}} GROUP BY region"
         assert args["merge_columns"] == ["region"]
+        # The mapped column is surfaced for results by-column attribution. DQX's
+        # sql_query has no ``columns`` parameter, so it is dropped before the
+        # check call (never passed positionally) — safe to carry in checks_json.
+        assert args["columns"] == ["region"]
         assert is_tableless is False
 
     def test_joins_only_renders_row_level_sql_query_with_join_key_merge_columns(self):
@@ -1437,9 +1476,7 @@ class TestRenderBindingChecksCountsMany:
         registry.get_rules_many.return_value = {"r1": _published_rule()}
         registry.get_versions_many.return_value = {("r1", 1): _version_snapshot()}
 
-        counts = materializer.render_binding_checks_counts_many(
-            [("b1", "cat.schema.t1"), ("b2", "cat.schema.t2")]
-        )
+        counts = materializer.render_binding_checks_counts_many([("b1", "cat.schema.t1"), ("b2", "cat.schema.t2")])
 
         assert counts == {"b1": 3, "b2": 1}
 

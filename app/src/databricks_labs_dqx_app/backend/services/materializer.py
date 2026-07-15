@@ -171,6 +171,38 @@ def _substitute_text(text: str, group: ColumnMappingGroup, slots: list[RuleSlot]
     return result
 
 
+def _mapped_columns(group: ColumnMappingGroup, slots: list[RuleSlot]) -> list[str]:
+    """The real columns a SQL/lowcode check references, in slot-declaration order.
+
+    SQL (*sql_expression*) and low-code (*sql_query*) checks bind their columns
+    inside the predicate/query text rather than in a ``column`` argument, so the
+    DQX check functions accept a separate ``columns`` list "used for validation
+    against the actual input DataFrame, reporting and for constructing name
+    prefix" (see :func:`databricks.labs.dqx.check_funcs.sql_expression`). Without
+    it the results attribution view — which only reads ``arguments.column`` /
+    ``arguments.columns`` — has no columns for these checks, so the by-column
+    breakdown is empty for every SQL/low-code rule.
+
+    Each slot value is the mapped column (a ``"many"`` slot carries a
+    comma-separated list, exactly as :func:`_substitute_text` expands it).
+    Returns the columns de-duplicated with first-seen order preserved so a rule
+    referencing the same column in two slots reports it once.
+    """
+    columns: list[str] = []
+    for slot in slots:
+        value = group.get(slot.name)
+        if not value:
+            continue
+        if slot.cardinality == "many":
+            mapped = [c.strip() for c in value.split(",") if c.strip()]
+        else:
+            mapped = [value.strip()] if value.strip() else []
+        for col in mapped:
+            if col not in columns:
+                columns.append(col)
+    return columns
+
+
 def render_check(
     *,
     mode: RuleMode,
@@ -233,6 +265,19 @@ def render_check(
                     "The registry rule's SQL query contains prohibited statements and cannot be materialized."
                 )
             arguments = {"query": query, "negate": negate}
+            # Surface the rule's mapped columns for results by-column attribution
+            # (the view reads ``arguments.columns``). ``sql_query`` does not
+            # declare a ``columns`` parameter, but that is safe: DQX extracts
+            # ``columns`` into the rule's own field and only forwards it to the
+            # check function when the signature accepts it (it does for
+            # ``sql_expression``, not for ``sql_query``) — otherwise it is
+            # dropped before the call, never passed positionally (see
+            # checks_serializer + DQRule._build_args/_build_kwargs, which guard
+            # on ``"columns" in valid_params``). Omitted for a tableless
+            # (no-slot) query so its check dict is unchanged.
+            mapped_columns = _mapped_columns(group, definition.slots)
+            if mapped_columns:
+                arguments["columns"] = mapped_columns
             # A low-code advanced (group-by) rule folds its group-by columns
             # into ``body.merge_columns`` so the ``sql_query`` check joins the
             # per-group violation result back onto the source rows (row-level
@@ -259,6 +304,12 @@ def render_check(
                     "The registry rule's SQL predicate contains prohibited statements and cannot be materialized."
                 )
             arguments = {"expression": expression, "negate": negate}
+            # Surface the rule's mapped columns (see the sql_query branch and
+            # _mapped_columns) so DQX validates/reports them and the results
+            # by-column breakdown populates for SQL-expression rules.
+            mapped_columns = _mapped_columns(group, definition.slots)
+            if mapped_columns:
+                arguments["columns"] = mapped_columns
             for param in definition.parameters:
                 if param.value is not None:
                     arguments[param.name] = param.value
