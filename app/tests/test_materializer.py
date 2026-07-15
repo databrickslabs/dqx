@@ -866,6 +866,50 @@ class TestRenderCheckLowcodeMode:
         assert "columns" not in check["check"]["arguments"]
         assert "mapped_columns" not in check["user_metadata"]
 
+    def test_sql_query_columns_recoverable_by_attribution_contract(self):
+        """Guarantees sql_query columns survive rendering for results attribution.
+
+        The attribution view relies on columns being recoverable via
+        user_metadata['mapped_columns'] (JSON), NOT arguments (which DQX validator
+        rejects as unknown). This test pins the contract: a rendered sql_query check
+        exposes its columns through the metadata carrier and omits them from arguments.
+        """
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {
+                    "sql_query": "SELECT {{col}}, (NOT (COUNT({{col}}) = 1)) AS condition FROM {{input_view}} GROUP BY {{col}}",
+                    "merge_columns": ["{{col}}"],
+                },
+                "slots": [{"name": "col", "family": "any", "position": 0, "cardinality": "one"}],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(
+            rule_id="r1",
+            version=1,
+            definition=definition,
+            polarity="pass",
+            user_metadata={"name": "Unique value check"},
+        )
+        check, _ = render_check(
+            mode="lowcode",
+            version=version,
+            group={"col": "city"},
+            effective_severity="High",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        # 1. No columns arg (would fail DQX validation)
+        assert "columns" not in check["check"]["arguments"]
+        # 2. Columns are recoverable via the metadata carrier the attribution view reads
+        recovered = json.loads(check["user_metadata"]["mapped_columns"])
+        assert recovered == ["city"]
+        # 3. The underlying rule name is available for display
+        assert check["user_metadata"]["name"] == "Unique value check"
+
 
 def test_dqx_rejects_columns_arg_on_sql_query():
     # Documents the reason Task 2 removed arguments.columns from sql_query: DQX's
