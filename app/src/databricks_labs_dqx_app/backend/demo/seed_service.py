@@ -782,16 +782,21 @@ class DemoSeedService:
 
         # Final truthful refresh so the app's cached scores are current. This
         # re-runs tables -> products -> global to update ``dq_score_cache``, but
-        # ScoreCacheService ALSO appends one ``dq_score_history`` row per scope at
-        # real wall-clock ``now()`` — and those appends are never re-dated, so
-        # they would leave stuck real-now points on the back-dated trend. Every
-        # genuine weekly point was already re-dated to at-or-before the final
-        # week's instant, so we snapshot a cutoff the instant BEFORE the refresh
-        # and delete every history row appended at/after it. Using a cutoff taken
-        # here (not the seed-start ``now``, which precedes this refresh by the
-        # whole run) guarantees the refresh's own appends are stripped regardless
-        # of how long the run took, while the re-dated weekly points survive.
-        cutoff = redate.iso(datetime.now(timezone.utc) - timedelta(seconds=1))
+        # ScoreCacheService ALSO appends ``dq_score_history`` rows at real
+        # wall-clock ``now()`` that the demo cannot fully re-date: each weekly
+        # ``refresh_*`` + ``_redate_history`` pair only moves the SINGLE latest
+        # row, yet a refresh can append more than one history row per scope (a
+        # table/product refresh recomputes the global rollup too), so a real-now
+        # straggler is left behind every week — plus one final batch from this
+        # closing refresh. A ``now()``-based cutoff only catches that final
+        # batch; the mid-run per-week stragglers predate it and survive. The
+        # cutoff must therefore be the newest LEGITIMATE instant: the final
+        # week's instant (``now - 30min``; see :meth:`_week_instant`). Every
+        # genuine re-dated point across every scope is at-or-before it, and every
+        # un-re-dated real-now append is well after it, so deleting rows strictly
+        # after this cutoff strips ALL pollution (per-week + final) in one pass
+        # while preserving all nine back-dated weekly points.
+        cutoff = redate.iso(self._week_instant(now, weeks - 1, weeks))
         self._score_cache.refresh_all_for_tables(sorted(self._table_fqns()))
         self._delete_history_after(cutoff)
         # Sweep any gate-run metric rows that trickled in AFTER _delete_run's

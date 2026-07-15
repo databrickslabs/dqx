@@ -396,6 +396,56 @@ def test_weekly_trend_strips_polluting_now_history_but_keeps_cache_current():
     assert last.state == "succeeded"
 
 
+def test_history_cleanup_cutoff_is_final_week_instant_not_now():
+    # BUG: a now()-based cutoff only strips the FINAL refresh's real-now history
+    # appends; the per-week appends (one straggler per trend step) predate it and
+    # survive as clustered real-now points on the homepage global trend. The
+    # cutoff must be the newest LEGITIMATE instant — the final week's instant
+    # (now - 30min) — so EVERY un-re-dated real-now append (per-week + final) is
+    # strictly after it and deleted, while all back-dated weekly points survive.
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["registry"].find_approved_rule_for_definition.side_effect = lambda _d: MagicMock(rule_id="r1")
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+    deps["app_sql"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+    deps["oltp"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+
+    low, high = manifest.UNIQUE_EXPECT_ROWS
+    in_band = (low + high) // 2
+
+    def _query_dicts(sql, *_a, **_k):
+        if "SELECT 1" in sql:
+            return []
+        if "metric_name" in sql:
+            return _metrics_rows(50_000, in_band)
+        return [{"status": "SUCCESS"}]
+
+    deps["app_sql"].query_dicts.side_effect = _query_dicts
+
+    weeks = 3
+    now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc)
+    svc._build_weekly_trend(
+        {b.table: f"b-{b.table}" for b in manifest.BINDINGS},
+        {spec.key: "r1" for spec in manifest.RULES},
+        ["p1"],
+        weeks,
+        "admin@example.com",
+        now,
+    )
+
+    # the final-week instant is the intended cutoff (now - 30min), NOT a value
+    # near real wall-clock now — every genuine point is at-or-before it
+    expected_cutoff = redate.iso(svc._week_instant(now, weeks - 1, weeks))
+    executed = [call.args[0] for call in deps["oltp"].execute.call_args_list]
+    cleanup = [s for s in executed if s.startswith("DELETE FROM") and "dq_score_history" in s and "computed_at >" in s]
+    assert cleanup, "expected a dq_score_history post-cutoff cleanup DELETE"
+    assert any(expected_cutoff in s for s in cleanup), (
+        f"cleanup cutoff must be the final-week instant {expected_cutoff!r}; got {cleanup!r}"
+    )
+
+
 def test_tighten_card_rule_bumps_version_via_edit_submit_approve():
     # BUG E: the "tightened card validation" beat must produce a REAL registry
     # rule version increment — an edit-in-place + re-approve of the card rule.
