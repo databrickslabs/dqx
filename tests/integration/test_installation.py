@@ -1,4 +1,9 @@
 import logging
+import os
+import re
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
+from functools import partial
 from unittest import skip
 from unittest.mock import patch, create_autospec
 import pytest
@@ -609,3 +614,62 @@ def test_install_config_rejects_no_output_and_no_quarantine(ws):
         match="At least one of an output table or a quarantine table",
     ):
         installer.configure()
+
+
+# DQX installs its workflows as jobs named "[<INSTALL_FOLDER>] <workflow>" (see mixins._get_name);
+# the workflow suffix is one of the deployed steps below.
+_DQX_JOB_NAME_PATTERN = re.compile(r"^\[.+\] (profiler|quality-checker|e2e|anomaly-trainer)$")
+
+
+def _safe_delete_job(delete: Callable[[], object], name: str) -> None:
+    """Best-effort delete: a single failure is logged and never blocks the rest of the sweep."""
+    try:
+        delete()
+    except NotFound:
+        pass
+    except Exception as e:  # noqa: BLE001 — best-effort sweep must not block the test run
+        logger.warning(f"Failed to delete orphaned DQX job '{name}': {e}")
+
+
+def _remove_orphaned_jobs(ws) -> None:
+    """Delete orphaned DQX workflow jobs (profiler, quality-checker, e2e, anomaly-trainer) left behind
+    by cancelled CI runs.
+
+    Orphaned jobs accumulate when a github action is cancelled and the ``installation_ctx`` fixture
+    teardown (which calls ``uninstall()`` to remove the deployed jobs) does not run. Jobs count toward
+    the per-workspace job limit, so they are swept explicitly here, mirroring the orphaned-Lakebase
+    sweep.
+
+    Runs only in CI. Jobs younger than the 2h grace period are skipped so a concurrent run's freshly
+    deployed jobs (and the current run's own jobs) are never deleted; a real long-lived install is
+    protected because the sweep only runs in the ephemeral CI test workspace.
+    """
+    run_id = os.getenv("GITHUB_RUN_ID")
+    if not run_id:
+        return  # only applicable when run in CI
+
+    grace_period = datetime.now(timezone.utc) - timedelta(hours=2)  # aligned with tests timeout
+
+    matched = attempted = 0
+    for job in ws.jobs.list():
+        name = (job.settings.name if job.settings else None) or ""
+        if not _DQX_JOB_NAME_PATTERN.match(name):
+            continue
+        matched += 1
+        created = datetime.fromtimestamp(job.created_time / 1000, tz=timezone.utc) if job.created_time else None
+        if created is not None and created >= grace_period:
+            continue  # too young — may belong to a concurrent or the current run
+        _safe_delete_job(partial(ws.jobs.delete, job_id=job.job_id), name)
+        attempted += 1
+    logger.info(f"DQX job sweep: matched_naming={matched} delete_attempts={attempted}")
+
+
+def test_remove_orphaned_jobs(ws):
+    """Maintenance sweep: remove orphaned DQX workflow jobs left by cancelled CI runs.
+
+    Mirrors the orphaned-Lakebase-resource sweep. Deployed workflow jobs (profiler, quality-checker,
+    e2e, anomaly-trainer) count toward the per-workspace job limit and are only cleaned by the
+    installation fixture teardown, so a cancelled run leaks them. Runs only in CI; jobs younger than
+    the 2h grace period are skipped.
+    """
+    _remove_orphaned_jobs(ws)
