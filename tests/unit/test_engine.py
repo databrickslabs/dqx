@@ -514,6 +514,8 @@ def test_apply_checks_raises_when_minor_version_below_required(dbr_version):
         ("15.4 LTS", _check_requires_dbr_17_1),
         # Serverless reports e.g. "18.2.x-photon-scala2.13"; it must parse to (18, 2), not hard-fail.
         ("18.2.x-photon-scala2.13", _check_requires_dbr_max),
+        # Bare-major serverless form below the required major: "16.x" must fail a 17.1 requirement.
+        ("16.x-photon-scala2.13", _check_requires_dbr_17_1),
     ],
 )
 def test_apply_checks_parses_dbr_version_with_suffix(dbr_version, required_check):

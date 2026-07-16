@@ -35,6 +35,7 @@ Currently locked down:
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_ROOT = REPO_ROOT / "src"
 TESTS_ROOT = REPO_ROOT / "tests"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
+TASKS_PYPROJECT = REPO_ROOT / "tasks" / "pyproject.toml"
+
+# Matches a ``databricks-labs-dqx`` requirement string (with or without
+# an ``[extras]`` group) that carries an exact ``==`` pin, e.g.
+# ``databricks-labs-dqx[llm,datacontract]==0.15.0``. Anchored at the
+# start so it only matches the requirement for this exact package, and
+# the version is captured up to the first whitespace / marker (``;``).
+_DQX_EXACT_PIN = re.compile(
+    r"^databricks-labs-dqx(?:\[[^\]]*\])?==(?P<version>[^\s;]+)\s*$",
+)
 
 # Matches the actual silencing pattern: an ``except`` clause carrying
 # an inline noqa directive for the broad-except rule (with or without
@@ -116,9 +127,9 @@ class TestBleNoqaPolicy:
         comment and the code aligned.
         """
         text = PYPROJECT.read_text(encoding="utf-8")
-        assert "[tool.ruff.lint]" in text, (
-            "pyproject.toml must declare a ``[tool.ruff.lint]`` block " "to anchor the documented BLE001 policy."
-        )
+        assert (
+            "[tool.ruff.lint]" in text
+        ), "pyproject.toml must declare a ``[tool.ruff.lint]`` block to anchor the documented BLE001 policy."
         assert "BLE001" in text, (
             "pyproject.toml must document the project's BLE001 policy "
             "(it's the single source of truth that replaces the "
@@ -434,4 +445,59 @@ class TestPsycopgExecutePyrightIgnorePolicy:
             "boundary helpers from ``backend.pg_cursor_helpers``. "
             "If the runner stopped using them, route every cursor "
             "call through the helpers instead of dropping them."
+        )
+
+
+class TestDqxVersionLockstep:
+    """The app and its task-runner must pin the SAME ``databricks-labs-dqx``.
+
+    The app (``app/pyproject.toml``) authors and dry-runs rules; the
+    serverless task-runner (``app/tasks/pyproject.toml``) executes the
+    scheduled / async jobs against Databricks compute. Both pin the DQX
+    engine from the registry with an exact ``==`` version, and each file
+    carries a "Keep in lockstep with the pin in <the other>" comment.
+
+    Nothing else enforces that coupling. A partial bump (e.g. moving the
+    app to a new engine release but forgetting the task-runner) would
+    silently ship a task-runner that resolves a *different* engine
+    version than the one that authored the rules — the classic "passes
+    in dry-run, behaves differently in the scheduled run" drift, since
+    rule serialization / check semantics can change between engine
+    versions. This test makes that mismatch fail at ``make app-test``
+    instead of in production.
+    """
+
+    @staticmethod
+    def _dqx_pin(pyproject_path: Path) -> str:
+        """Return the exact ``==`` version the file pins DQX at.
+
+        Fails the test (not merely returns ``None``) if the requirement
+        is missing or isn't an exact pin — a range / unpinned dep would
+        defeat the lockstep guarantee just as surely as a mismatch.
+        """
+        with pyproject_path.open("rb") as f:
+            deps = tomllib.load(f).get("project", {}).get("dependencies", [])
+        for dep in deps:
+            match = _DQX_EXACT_PIN.match(dep.strip())
+            if match:
+                return match.group("version")
+        raise AssertionError(
+            f"{pyproject_path.relative_to(REPO_ROOT.parent)} has no exact "
+            "``databricks-labs-dqx==<version>`` pin in [project].dependencies. "
+            "The app and task-runner must both pin the engine to the SAME "
+            "exact version (see the lockstep comments in both files); a "
+            "range or unpinned dep breaks that guarantee."
+        )
+
+    def test_app_and_task_runner_pin_the_same_dqx_version(self):
+        app_pin = self._dqx_pin(PYPROJECT)
+        task_pin = self._dqx_pin(TASKS_PYPROJECT)
+        assert app_pin == task_pin, (
+            "``databricks-labs-dqx`` is pinned to different versions in the "
+            f"app ({app_pin}, app/pyproject.toml) and the task-runner "
+            f"({task_pin}, app/tasks/pyproject.toml). They MUST match — the "
+            "task-runner executes the rules the app authors, so a version "
+            "skew means the engine that validates rules at author-time "
+            "differs from the one that runs them. Bump both pins together "
+            "(that's what the 'Keep in lockstep' comments in both files mean)."
         )

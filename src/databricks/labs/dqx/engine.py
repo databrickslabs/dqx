@@ -3,6 +3,7 @@ import inspect
 import logging
 import os
 import re
+import sys
 from concurrent import futures
 from collections.abc import Callable
 from datetime import datetime
@@ -426,7 +427,9 @@ class DQEngineCore(DQEngineCoreBase):
         The requirement is declared by decorating a check function with *requires_dbr_version("major.minor")*.
         The current DBR version is resolved via the *current_version().dbr_version* Spark SQL function and compared
         as a *(major, minor)* tuple. The version string may carry a suffix (for example *"18.2.x-photon-scala2.13"*
-        on serverless or *"15.4 LTS"*); only the leading *major.minor* is used.
+        on serverless or *"15.4 LTS"*); only the leading *major* and optional *minor* are used. A bare-major
+        serverless form such as *"17.x-photon-scala2.13"* has no numeric minor, so only the major is compared
+        (for example *"17.x"* satisfies a *"17.1"* requirement).
 
         When the version cannot be determined - *current_version().dbr_version* returns null or empty - the
         requirement is not enforced rather than blocking an environment that may well support the check.
@@ -463,12 +466,11 @@ class DQEngineCore(DQEngineCoreBase):
         if dbr_version_str is None or not dbr_version_str.strip():
             return
 
-        # Resolve the leading "major.minor" prefix, tolerating suffixes such as "18.2.x-photon-scala2.13"
-        # (serverless) or "15.4 LTS".
-        match = re.match(r"\s*(\d+)\.(\d+)", dbr_version_str)
+        match = re.match(r"\s*(\d+)(?:\.(\d+))?", dbr_version_str)
         if match is None:
             raise InvalidCheckError(f"Cannot parse Databricks Runtime version: '{dbr_version_str}'.")
-        current = (int(match.group(1)), int(match.group(2)))
+        minor = int(match.group(2)) if match.group(2) is not None else sys.maxsize
+        current = (int(match.group(1)), minor)
 
         if current < required:
             check_names = ", ".join(sorted(versioned))
