@@ -331,3 +331,13 @@ def test_dq_rule_replace_reruns_validation():
 
     with pytest.raises(InvalidCheckError):
         rule.replace(check_func=is_unique)
+
+
+def test_dq_rule_rejects_unknown_kwarg():
+    """Unknown/misspelled kwargs must be rejected, not silently dropped (extra='forbid').
+
+    Regression: the Pydantic migration defaulted to extra='ignore', so a typo like
+    'colummn' was accepted and dropped where the pre-migration dataclass raised TypeError.
+    """
+    with pytest.raises(InvalidCheckError):
+        DQRowRule(check_func=is_not_null, column="id", colummn="typo")

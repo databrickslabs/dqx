@@ -2,7 +2,7 @@ from abc import ABC
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from pydantic import BaseModel, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from databricks.labs.dqx.checks_serializer import SerializerFactory
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
@@ -334,6 +334,8 @@ class BaseChecksStorageConfig(BaseModel, ABC):
     Args:
         location: The file path or table name where checks are stored.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     location: str
 
