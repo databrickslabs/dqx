@@ -338,7 +338,7 @@
     "byRule": "Por regla",
     "crossTableTab": "Entre tablas",
     "allSources": "Todos los Orígenes",
-    "imported": "Importada",
+    "import": "Importada",
     "ai": "IA",
     "ui": "UI",
     "failedLoadRules": "Error al cargar reglas: {{error}}",
