@@ -395,7 +395,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
     if (!parsedChecks || !targetTable) return;
     setIsSaving(true);
     try {
-      await saveRules({ table_fqn: targetTable, checks: parsedChecks, source: "imported" } as SaveRulesIn);
+      await saveRules({ table_fqn: targetTable, checks: parsedChecks, source: "import" } as SaveRulesIn);
       toast.success(t("rulesImport.savedDrafts", { count: parsedChecks.length }));
       onDone();
     } catch {
@@ -409,7 +409,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
     if (!parsedChecks || !targetTable) return;
     setIsSubmitting(true);
     try {
-      const resp = await saveRules({ table_fqn: targetTable, checks: parsedChecks, source: "imported" } as SaveRulesIn);
+      const resp = await saveRules({ table_fqn: targetTable, checks: parsedChecks, source: "import" } as SaveRulesIn);
       const savedRules = resp.data;
 
       let submitted = 0;

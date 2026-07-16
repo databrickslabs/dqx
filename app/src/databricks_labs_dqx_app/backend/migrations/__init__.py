@@ -131,6 +131,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from databricks_labs_dqx_app.backend.models import RuleSource, RuleStatus
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
@@ -404,10 +405,10 @@ _V2_OLTP_FALLBACK = (
     ") CLUSTER BY (table_fqn, status, rule_id);"
     f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules "
     f"  ADD CONSTRAINT chk_dq_quality_rules_status "
-    f"  CHECK (status IN ('draft','pending_approval','approved','rejected'));"
+    f"  CHECK (status IN ({RuleStatus.sql_in_list()}));"
     f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules "
     f"  ADD CONSTRAINT chk_dq_quality_rules_source "
-    f"  CHECK (source IN ('ui','sql','profiler','import','ai'));"
+    f"  CHECK (source IN ({RuleSource.sql_in_list()}));"
     #
     # Append-only audit trail for rule changes. Carries the post-state
     # ``check`` payload on every row plus an explicit
