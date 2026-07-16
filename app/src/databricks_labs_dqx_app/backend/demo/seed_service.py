@@ -163,6 +163,7 @@ class DemoSeedService:
         status: DemoStatusStore,
         reset_service: DatabaseResetService | None = None,
         embeddings: RuleEmbeddingsService | None = None,
+        tagging_ws: WorkspaceClient | None = None,
         catalog: str = "dqx",
     ) -> None:
         self._demo_sql = demo_sql
@@ -181,9 +182,28 @@ class DemoSeedService:
         self._status = status
         self._reset_service = reset_service
         self._embeddings = embeddings
+        # Optional caller (OBO) client used ONLY for governed-tag assignment.
+        # Assigning a governed class.* tag needs ASSIGN on the tag policy, which
+        # the app SP typically lacks but the admin who triggered the deploy
+        # usually holds — so tagging runs as them when provided, falling back to
+        # the SP. Set on the instance by the deploy route before the seed thread
+        # launches (tagging happens in the first phase, so the OBO token is
+        # still fresh). ``None`` in CLI/tests → SP-only, best-effort as before.
+        self._tagging_ws = tagging_ws
         self._catalog = catalog
         self._schema = manifest.SOURCE_SCHEMA
         self._started_at = ""
+
+    def set_tagging_ws(self, ws: WorkspaceClient | None) -> None:
+        """Set the (OBO) client used for governed-tag assignment.
+
+        The DI factory builds this service SP-only; the deploy route calls this
+        with the admin caller's OBO client before launching the seed thread, so
+        governed class.* tags are assigned as the admin (who holds ASSIGN on the
+        tag policy) rather than the app SP (which usually does not). See
+        :meth:`_assign_column_tag`.
+        """
+        self._tagging_ws = ws
 
     # ------------------------------------------------------------------
     # Public entrypoint
@@ -301,11 +321,16 @@ class DemoSeedService:
         Governed tags have dotted keys (e.g. ``class.location``) that NO
         ``ALTER TABLE ... SET TAGS`` SQL can assign — the ``.`` is reserved in
         the tag-key grammar. The Unity Catalog Entity Tag Assignments API is the
-        correct mechanism, so this calls
-        :meth:`sp_ws.entity_tag_assignments.create` with the full dotted key
-        against the fully-qualified column entity. Classification (``class.*``)
-        tags carry an empty value; their allowed-values set is what constrains
-        them.
+        correct mechanism, so this calls ``entity_tag_assignments.create`` with
+        the full dotted key against the fully-qualified column entity.
+        Classification (``class.*``) tags carry an empty value; their
+        allowed-values set is what constrains them.
+
+        Assigning a governed tag also requires ASSIGN on the tag policy. The app
+        SP usually lacks it, but the admin who triggered the deploy usually holds
+        it — so this prefers the caller's OBO client (``_tagging_ws``) when the
+        deploy route supplied one, falling back to the SP client otherwise (CLI /
+        tests / no-OBO). The whole call stays best-effort in the caller.
 
         Args:
             tag: the governed column tag specification to assign.
@@ -316,7 +341,8 @@ class DemoSeedService:
         if not tag.tag.startswith("class."):
             raise ValueError(f"governed demo tags must be class.*: {tag.tag}")
         entity_name = f"{self._catalog}.{self._schema}.{tag.table}.{tag.column}"
-        self._sp_ws.entity_tag_assignments.create(
+        tagging_ws = self._tagging_ws or self._sp_ws
+        tagging_ws.entity_tag_assignments.create(
             EntityTagAssignment(
                 entity_type="columns",
                 entity_name=entity_name,

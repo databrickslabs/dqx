@@ -101,9 +101,7 @@ def reset_database(
         result = svc.reset_all_data(performed_by=performed_by)
     except Exception as e:
         logger.error(f"Database reset failed: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="Database reset failed. See server logs for details."
-        ) from e
+        raise HTTPException(status_code=500, detail="Database reset failed. See server logs for details.") from e
 
     return ResetDatabaseOut(
         status="reset",
@@ -153,6 +151,13 @@ def deploy_demo_content(
         ),
         user_email=performed_by,
     )
+
+    # Governed class.* column tags need ASSIGN on the tag policy — the app SP
+    # usually lacks it, but the admin triggering this deploy usually holds it.
+    # Hand the seeder the caller's OBO client so tag assignment runs as them
+    # (falling back to the SP). Tagging is the seed's first phase, so the OBO
+    # token is still fresh when the background thread reaches it.
+    seeder.set_tagging_ws(obo_ws)
 
     def _run() -> None:
         try:
