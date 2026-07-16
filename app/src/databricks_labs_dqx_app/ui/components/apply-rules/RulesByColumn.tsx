@@ -14,10 +14,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Plus } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Pagination } from "@/components/Pagination";
 import { cn } from "@/lib/utils";
 import { useGetTableColumns, type AppliedRuleOut, type ColumnOut } from "@/lib/api";
+import { computeMatchedTagsForSlot } from "@/lib/registry-rule-conversion";
 import { familyForType, type ColumnFamily } from "./ColumnPicker";
 import { paletteAt } from "./MappingChips";
 
@@ -36,6 +38,8 @@ interface RuleEntry {
   ruleName: string;
   slot: string;
   mappingIndex: number;
+  /** Governed tags that matched (slot suggestion ∩ column tags). Empty = no match. */
+  matchedTags: string[];
 }
 
 interface RulesByColumnProps {
@@ -55,9 +59,21 @@ interface RulesByColumnProps {
   openColumn?: string | null;
   /** Fired when a column card is toggled — only used in controlled mode. */
   onOpenColumnChange?: (name: string | null) => void;
+  /** Applied governed tags per column for the table, keyed by column name.
+   *  From `useGetTableTags`. Used to compute matched governed tag chips for
+   *  each rule-entry row. */
+  columnTags?: Record<string, string[]>;
+  /** Governed slot-tag suggestions per rule, keyed by rule_id.
+   *  Each value is `{slotName: [tag, ...]}` parsed from `user_metadata.slot_tags`.
+   *  Used alongside `columnTags` to show matched tag chips inline. */
+  ruleSlotTagsById?: Map<string, Record<string, string[]>>;
 }
 
-function useRulesByColumn(appliedRules: AppliedRuleOut[]): Map<string, RuleEntry[]> {
+function useRulesByColumn(
+  appliedRules: AppliedRuleOut[],
+  columnTags: Record<string, string[]> | undefined,
+  ruleSlotTagsById: Map<string, Record<string, string[]>> | undefined,
+): Map<string, RuleEntry[]> {
   return useMemo(() => {
     const map = new Map<string, RuleEntry[]>();
     // Tracks the next combined mapping-group index per rule_id — mirrors
@@ -68,6 +84,7 @@ function useRulesByColumn(appliedRules: AppliedRuleOut[]): Map<string, RuleEntry
     const nextIndexByRuleId = new Map<string, number>();
     for (const rule of appliedRules) {
       const ruleName = rule.rule_name || rule.rule_id;
+      const slotTags = ruleSlotTagsById?.get(rule.rule_id) ?? {};
       (rule.column_mapping ?? []).forEach((group) => {
         const mappingIndex = nextIndexByRuleId.get(rule.rule_id) ?? 0;
         nextIndexByRuleId.set(rule.rule_id, mappingIndex + 1);
@@ -79,13 +96,15 @@ function useRulesByColumn(appliedRules: AppliedRuleOut[]): Map<string, RuleEntry
           // `groupAppliedRulesByRuleId`), so this must match the card's
           // `rule-card-${rule_id}` DOM id regardless of which underlying row
           // the clicked column's mapping group came from.
-          list.push({ ruleId: rule.rule_id, ruleName, slot, mappingIndex });
+          const matchedTags =
+            columnTags ? computeMatchedTagsForSlot(slotTags, columnTags, slot, column) : [];
+          list.push({ ruleId: rule.rule_id, ruleName, slot, mappingIndex, matchedTags });
           map.set(column, list);
         }
       });
     }
     return map;
-  }, [appliedRules]);
+  }, [appliedRules, columnTags, ruleSlotTagsById]);
 }
 
 function FamilyBadge({ family }: { family: ColumnFamily }) {
@@ -188,6 +207,19 @@ function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddR
                   )}
                 />
                 <span className="text-sm font-medium truncate flex-1">{entry.ruleName}</span>
+                {entry.matchedTags.length > 0 && (
+                  <span className="flex items-center gap-1 shrink-0">
+                    {entry.matchedTags.map((tag) => (
+                      <Badge
+                        key={tag}
+                        variant="secondary"
+                        className="text-[10px] font-mono px-1.5 py-0 h-auto opacity-75"
+                      >
+                        {tag}
+                      </Badge>
+                    ))}
+                  </span>
+                )}
                 <span className="font-mono text-xs text-muted-foreground shrink-0">{`{{${entry.slot}}}`}</span>
               </button>
             ))}
@@ -221,9 +253,11 @@ export function RulesByColumn({
   search,
   openColumn: controlledOpenColumn,
   onOpenColumnChange,
+  columnTags,
+  ruleSlotTagsById,
 }: RulesByColumnProps) {
   const { t } = useTranslation();
-  const rulesByColumn = useRulesByColumn(appliedRules);
+  const rulesByColumn = useRulesByColumn(appliedRules, columnTags, ruleSlotTagsById);
   const [internalOpenColumn, setInternalOpenColumn] = useState<string | null>(null);
   // 1-indexed page (item 51). Reset to the first page whenever the search
   // narrows the column set so it can't strand the view on an empty page.

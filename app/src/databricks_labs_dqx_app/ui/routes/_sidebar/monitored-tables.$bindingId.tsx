@@ -128,6 +128,7 @@ import { AiSuggestionDialog, type SuggestRulesState } from "@/components/apply-r
 import { suggestionKey } from "@/components/apply-rules/ai-suggestion-utils";
 import { RuleConfigCard, computeStatus } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
+import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 import {
   RESERVED_SEVERITY_KEY,
   buildDesiredApplications,
@@ -1939,6 +1940,27 @@ function ApplyRulesTab({
     return m;
   }, [publishedRules]);
 
+  // Applied governed tags per column — sourced from Unity Catalog
+  // `information_schema.column_tags` via `get_table_tags`. Used to render
+  // matched governed tag chips alongside column chips in both lenses.
+  // Same call as the About tab; the query is deduplicated by React Query.
+  const tableTagsQuery = useGetTableTags(parts[0] ?? "", parts[1] ?? "", parts[2] ?? "", {
+    query: { enabled: parts.length === 3 },
+  });
+  const columnTags: Record<string, string[]> = tableTagsQuery.data?.data?.column_tags ?? {};
+
+  // slot_tags per rule: rule_id → {slotName → [governedTag, ...]}. Built once
+  // from `ruleById` so `useRulesByColumn` can compute matched tags per entry
+  // without re-parsing `user_metadata` on every render.
+  const ruleSlotTagsById = useMemo(() => {
+    const m = new Map<string, Record<string, string[]>>();
+    for (const [ruleId, rule] of ruleById) {
+      const st = slotTagsFromUserMetadata(rule.user_metadata as Record<string, unknown> | undefined);
+      if (Object.keys(st).length > 0) m.set(ruleId, st);
+    }
+    return m;
+  }, [ruleById]);
+
   // Completeness status per rule group — drives the "needs attention"
   // filter and the by-rule/by-column incomplete-mapping indicators.
   const statuses = useMemo(
@@ -2291,6 +2313,7 @@ function ApplyRulesTab({
                 onAddMapping={(group) => handleAddMapping(rule.rule_id, group)}
                 columns={columns}
                 forceOpen={expandRuleIds.includes(rule.rule_id)}
+                columnTags={Object.keys(columnTags).length > 0 ? columnTags : undefined}
                 onJumpToColumn={(colName) => {
                   setFilter("all");
                   setSearch("");
@@ -2336,6 +2359,8 @@ function ApplyRulesTab({
           openColumn={openColumnName}
           onOpenColumnChange={setOpenColumnName}
           onAddRule={(column) => openAddDialog(column)}
+          columnTags={Object.keys(columnTags).length > 0 ? columnTags : undefined}
+          ruleSlotTagsById={ruleSlotTagsById.size > 0 ? ruleSlotTagsById : undefined}
           onJumpToRule={(ruleId) => {
             setFilter("all");
             setSearch("");

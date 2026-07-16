@@ -34,6 +34,7 @@ import selector from "@/lib/selector";
 import { MappingChips } from "./MappingChips";
 import { RESERVED_DESCRIPTION_KEY } from "@/components/RegistryRuleBadges";
 import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag } from "./shared";
+import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 
 // ---------------------------------------------------------------------------
 // Completeness status — derives whether every applied mapping group fills
@@ -519,6 +520,10 @@ interface RuleConfigCardProps {
    *  action, or right after a fresh "Add rules" apply, so the target card
    *  opens automatically instead of requiring an extra click. */
   forceOpen?: boolean;
+  /** Applied governed tags per column for the table, keyed by column name.
+   *  From `useGetTableTags`. When provided, matched governed tag chips are
+   *  shown alongside each column chip in the mapping display. */
+  columnTags?: Record<string, string[]>;
 }
 
 export function RuleConfigCard({
@@ -537,6 +542,7 @@ export function RuleConfigCard({
   onAddMapping,
   columns,
   forceOpen,
+  columnTags,
 }: RuleConfigCardProps) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(Boolean(forceOpen));
@@ -549,6 +555,9 @@ export function RuleConfigCard({
   const dimension = rule.rule_dimension || "";
   const description = registryRule ? getTag(registryRule, RESERVED_DESCRIPTION_KEY) : "";
   const ruleSeverity = rule.rule_severity || "";
+  // Parse slot_tags from the registry rule's user_metadata once. Handles both
+  // object and JSON-string shapes — `slotTagsFromUserMetadata` is defensive.
+  const slotTags = slotTagsFromUserMetadata(registryRule?.user_metadata as Record<string, unknown> | undefined);
   const effectiveSeverity = rule.severity_override ?? ruleSeverity;
   const slots = registryRule?.definition.slots ?? [];
   const status = computeStatus(rule, slots);
@@ -731,6 +740,8 @@ export function RuleConfigCard({
               pendingValues={canEdit ? (pendingGroup ?? undefined) : undefined}
               onPendingSelect={canEdit ? handlePendingSelect : undefined}
               onCancelAdd={() => setPendingGroup(null)}
+              slotTags={Object.keys(slotTags).length > 0 ? slotTags : undefined}
+              columnTags={columnTags}
             />
           </div>
         </div>

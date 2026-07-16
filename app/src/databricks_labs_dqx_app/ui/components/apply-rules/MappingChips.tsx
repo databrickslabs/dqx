@@ -16,9 +16,11 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import type { AppliedRuleOutColumnMappingItem, ColumnOut, RuleSlot } from "@/lib/api";
+import { computeMatchedTagsForSlot } from "@/lib/registry-rule-conversion";
 import { ColumnDropdownList, MultiColumnPicker, columnsForSlot } from "./ColumnPicker";
 
 const PALETTE = [
@@ -382,6 +384,14 @@ interface MappingChipsProps {
    *  "x" on the last slot row's pending chip. */
   onCancelAdd?: () => void;
   className?: string;
+  /** Governed slot-tag suggestions for this rule: `slot_tags` from the rule's
+   *  `user_metadata` (parsed via `slotTagsFromUserMetadata`). When provided
+   *  together with `columnTags`, matched governed tags are shown as small
+   *  inline chips after each column chip. */
+  slotTags?: Record<string, string[]>;
+  /** Governed tags applied to each column of this table, keyed by column name.
+   *  From `useGetTableTags`. */
+  columnTags?: Record<string, string[]>;
 }
 
 export function MappingChips({
@@ -397,6 +407,8 @@ export function MappingChips({
   onPendingSelect,
   onCancelAdd,
   className,
+  slotTags,
+  columnTags,
 }: MappingChipsProps) {
   const { t } = useTranslation();
   const addingGroup = pendingValues !== undefined;
@@ -463,32 +475,47 @@ export function MappingChips({
                     {t("monitoredTables.noColumnMapped")}
                   </span>
                 ) : (
-                  filled.map(({ colName, groupIdx }) =>
-                    onChangeGroup ? (
-                      <EditableChip
-                        key={groupIdx}
-                        colorClass={paletteAt(groupIdx)}
-                        label={colName}
-                        slot={slot}
-                        columns={columns}
-                        excludeColumns={usedColumns}
-                        onChange={(next) => onChangeGroup(groupIdx, slot.name, next)}
-                        onJump={onJumpToColumn ? () => onJumpToColumn(colName) : undefined}
-                        onRemove={onRemoveGroup ? () => onRemoveGroup(groupIdx) : undefined}
-                        removeTitle={t("monitoredTables.removeMappingGroupTitle", { count: groupIdx + 1 })}
-                      />
-                    ) : (
-                      <ReadonlyChip
-                        key={groupIdx}
-                        colorClass={paletteAt(groupIdx)}
-                        label={colName}
-                        onJump={onJumpToColumn ? () => onJumpToColumn(colName) : undefined}
-                        onRemove={onRemoveGroup ? () => onRemoveGroup(groupIdx) : undefined}
-                        removeTitle={t("monitoredTables.removeMappingGroupTitle", { count: groupIdx + 1 })}
-                        busy={busyGroupIdx === groupIdx}
-                      />
-                    ),
-                  )
+                  filled.map(({ colName, groupIdx }) => {
+                    const matchedTags =
+                      slotTags && columnTags
+                        ? computeMatchedTagsForSlot(slotTags, columnTags, slot.name, colName)
+                        : [];
+                    return (
+                      <span key={groupIdx} className="inline-flex items-center gap-1 flex-wrap">
+                        {onChangeGroup ? (
+                          <EditableChip
+                            colorClass={paletteAt(groupIdx)}
+                            label={colName}
+                            slot={slot}
+                            columns={columns}
+                            excludeColumns={usedColumns}
+                            onChange={(next) => onChangeGroup(groupIdx, slot.name, next)}
+                            onJump={onJumpToColumn ? () => onJumpToColumn(colName) : undefined}
+                            onRemove={onRemoveGroup ? () => onRemoveGroup(groupIdx) : undefined}
+                            removeTitle={t("monitoredTables.removeMappingGroupTitle", { count: groupIdx + 1 })}
+                          />
+                        ) : (
+                          <ReadonlyChip
+                            colorClass={paletteAt(groupIdx)}
+                            label={colName}
+                            onJump={onJumpToColumn ? () => onJumpToColumn(colName) : undefined}
+                            onRemove={onRemoveGroup ? () => onRemoveGroup(groupIdx) : undefined}
+                            removeTitle={t("monitoredTables.removeMappingGroupTitle", { count: groupIdx + 1 })}
+                            busy={busyGroupIdx === groupIdx}
+                          />
+                        )}
+                        {matchedTags.map((tag) => (
+                          <Badge
+                            key={tag}
+                            variant="secondary"
+                            className="text-[10px] font-mono px-1.5 py-0 h-auto opacity-75"
+                          >
+                            {tag}
+                          </Badge>
+                        ))}
+                      </span>
+                    );
+                  })
                 )}
 
                 {/* In-progress "add mapping group" flow: one placeholder

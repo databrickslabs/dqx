@@ -80,6 +80,26 @@ export function userMetadataWithSlotTags(
 }
 
 /**
+ * Compute the governed tags that "matched" for a single slot→column assignment:
+ * the intersection of the tags the slot SUGGESTS (from the rule's
+ * `slot_tags[slotName]`) and the tags ACTUALLY APPLIED to the mapped column
+ * (from Unity Catalog `column_tags[columnName]`). Returns `[]` when either
+ * side is empty or no overlap exists.
+ */
+export function computeMatchedTagsForSlot(
+  slotTags: Record<string, string[]>,
+  columnTags: Record<string, string[]>,
+  slotName: string,
+  columnName: string,
+): string[] {
+  const suggested = slotTags[slotName] ?? [];
+  const applied = columnTags[columnName] ?? [];
+  if (suggested.length === 0 || applied.length === 0) return [];
+  const appliedSet = new Set(applied);
+  return suggested.filter((t) => appliedSet.has(t));
+}
+
+/**
  * The `negate` argument is NOT rendered as a raw boolean parameter row for a
  * `dqx_native` rule (item 11). Instead it is surfaced as the PASS/FAIL
  * polarity switcher and injected at materialization time from the rule's

@@ -496,6 +496,40 @@ RULES: tuple[RuleSpec, ...] = (
         author_kind="ai_assisted",
         polarity="pass",
     ),
+    # ----------------------------------------------------------------------- #
+    # Governed-tag SHOWCASE rules — carry a class.* slot tag but are NOT
+    # referenced by any binding below, so the seed creates+approves them into
+    # the registry yet leaves them UNAPPLIED. That gives the tag-based
+    # apply-rules / suggestion flow a live, un-applied match to demonstrate:
+    # each targets the same governed tag as a tagged demo column
+    # (class.location -> customers.country_code, class.credit_card ->
+    # payments.card_last4), so the "matched tag" surfaces in the apply-rules UI.
+    # ----------------------------------------------------------------------- #
+    RuleSpec(
+        key="iso2_country",
+        name="Valid ISO 3166-1 alpha-2 country code",
+        description="Country code is a two-letter uppercase ISO 3166-1 alpha-2 code.",
+        dimension="Validity",
+        severity="Medium",
+        mode="dqx_native",
+        body={"function": "regex_match", "arguments": {"column": "{{country}}"}},
+        slots=(SlotSpec("country", "text", arg_key="column"),),
+        parameters=(ParamSpec("regex", "regex", "^[A-Z]{2}$"),),
+        author_kind="ai_generated",
+        slot_tags={"country": ("class.location",)},
+    ),
+    RuleSpec(
+        key="card_not_null",
+        name="Card last-four is present",
+        description="Stored last four card digits are not null.",
+        dimension="Completeness",
+        severity="Medium",
+        mode="dqx_native",
+        body={"function": "is_not_null", "arguments": {"column": "{{code}}"}},
+        slots=(SlotSpec("code", "any", arg_key="column"),),
+        author_kind="ai_assisted",
+        slot_tags={"code": ("class.credit_card",)},
+    ),
 )
 
 RULES_BY_KEY: dict[str, RuleSpec] = {r.key: r for r in RULES}

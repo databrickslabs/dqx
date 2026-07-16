@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  computeMatchedTagsForSlot,
   deriveSlotsAndParameters,
   fnSupportsNegate,
   slotTagsFromUserMetadata,
@@ -273,5 +274,50 @@ describe("slot_tags helpers (apply-on-tag) — mirror backend get_slot_tags/set_
     const md = { name: "x" };
     userMetadataWithSlotTags(md, { c1: ["class.pii"] });
     expect(md).toEqual({ name: "x" });
+  });
+});
+
+describe("computeMatchedTagsForSlot — governed tag intersection for demo chips", () => {
+  test("returns intersection of slot suggestions and column applied tags", () => {
+    const slotTags = { country: ["class.location", "class.geo"] };
+    const columnTags = { country_code: ["class.location", "class.pii"] };
+    expect(computeMatchedTagsForSlot(slotTags, columnTags, "country", "country_code")).toEqual([
+      "class.location",
+    ]);
+  });
+
+  test("returns [] when slot has no suggested tags", () => {
+    const slotTags: Record<string, string[]> = {};
+    const columnTags = { country_code: ["class.location"] };
+    expect(computeMatchedTagsForSlot(slotTags, columnTags, "country", "country_code")).toEqual([]);
+  });
+
+  test("returns [] when column has no applied tags", () => {
+    const slotTags = { country: ["class.location"] };
+    const columnTags: Record<string, string[]> = {};
+    expect(computeMatchedTagsForSlot(slotTags, columnTags, "country", "country_code")).toEqual([]);
+  });
+
+  test("returns [] when no overlap exists", () => {
+    const slotTags = { country: ["class.location"] };
+    const columnTags = { country_code: ["class.pii"] };
+    expect(computeMatchedTagsForSlot(slotTags, columnTags, "country", "country_code")).toEqual([]);
+  });
+
+  test("returns all matching tags when there are multiple", () => {
+    const slotTags = { code: ["class.credit_card", "class.pii"] };
+    const columnTags = { card_last4: ["class.credit_card", "class.pii", "class.other"] };
+    expect(
+      computeMatchedTagsForSlot(slotTags, columnTags, "code", "card_last4"),
+    ).toEqual(["class.credit_card", "class.pii"]);
+  });
+
+  test("preserves order from slot suggestions (not from column tags)", () => {
+    const slotTags = { slot: ["class.z", "class.a"] };
+    const columnTags = { col: ["class.a", "class.z"] };
+    expect(computeMatchedTagsForSlot(slotTags, columnTags, "slot", "col")).toEqual([
+      "class.z",
+      "class.a",
+    ]);
   });
 });
