@@ -346,13 +346,19 @@ class InstallationService:
             return
 
         logger.info(f"Deleting DQX v{self._product_info.version()} from {self._ws.config.host}")
+
+        # Remove workflow jobs first, independently of the install folder. Jobs and the install folder
+        # are separate resources: if the folder is already gone (partial/failed install, or a prior
+        # cleanup step), gating job removal behind files() would orphan the jobs and leak them toward
+        # the workspace job limit.
+        self._workflow_installer.remove_jobs()
+
         try:
             self._installation.files()  # this also deletes the dashboard
         except NotFound:
             logger.error(f"Check if {self._installation.install_folder()} is present")
             return
 
-        self._workflow_installer.remove_jobs()
         default_run_config = self._config.get_run_config()
         self._warehouse_configurator.remove(default_run_config.warehouse_id)
         self._installation.remove()
