@@ -338,7 +338,7 @@
     "byRule": "By rule",
     "crossTableTab": "Cross-table",
     "allSources": "All Sources",
-    "imported": "Imported",
+    "import": "Imported",
     "ai": "AI",
     "ui": "UI",
     "failedLoadRules": "Failed to load rules: {{error}}",
