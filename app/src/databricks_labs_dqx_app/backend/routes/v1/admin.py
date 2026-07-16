@@ -23,6 +23,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_database_reset_service,
     get_demo_seed_service,
     get_demo_status_store,
+    get_obo_sql_executor,
     get_obo_ws,
     require_role,
 )
@@ -38,6 +39,7 @@ from databricks_labs_dqx_app.backend.services.database_reset_service import (
     RESET_CONFIRMATION_PHRASE,
     DatabaseResetService,
 )
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 # Router-level ADMIN gate: every route below requires the ADMIN role,
 # enforced server-side regardless of any UI gating.
@@ -119,6 +121,7 @@ def deploy_demo_content(
     seeder: Annotated[DemoSeedService, Depends(get_demo_seed_service)],
     status_store: Annotated[DemoStatusStore, Depends(get_demo_status_store)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
 ) -> DeployDemoContentOut:
     """Launch the governed demo-content seed on a background thread (Admin only).
 
@@ -154,10 +157,11 @@ def deploy_demo_content(
 
     # Governed class.* column tags need ASSIGN on the tag policy — the app SP
     # usually lacks it, but the admin triggering this deploy usually holds it.
-    # Hand the seeder the caller's OBO client so tag assignment runs as them
-    # (falling back to the SP). Tagging is the seed's first phase, so the OBO
-    # token is still fresh when the background thread reaches it.
-    seeder.set_tagging_ws(obo_ws)
+    # Hand the seeder the caller's OBO SqlExecutor so the SET TAG DDL runs as
+    # them (falling back to the SP). SET TAG needs only the `sql` warehouse
+    # scope — no Unity Catalog OBO API scope. Tagging is the seed's first phase,
+    # so the OBO token is still fresh when the background thread reaches it.
+    seeder.set_tagging_sql(obo_sql)
 
     def _run() -> None:
         try:

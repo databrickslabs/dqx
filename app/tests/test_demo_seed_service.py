@@ -226,62 +226,66 @@ def test_wipe_first_calls_reset_service():
     reset.reset_all_data.assert_called_once()
 
 
-def test_build_source_data_assigns_governed_column_tags_via_sdk():
-    # Governed dotted-key tags (class.location, class.credit_card) can't be set
-    # via ALTER TABLE SQL — they must go through the Entity Tag Assignments API.
+def _tag_ddls(sql_mock) -> list[str]:
+    """The SET TAG statements a SqlExecutor mock received."""
+    return [c.args[0] for c in sql_mock.execute.call_args_list if c.args and c.args[0].startswith("SET TAG ON COLUMN")]
+
+
+def test_build_source_data_assigns_governed_tags_via_set_tag_ddl():
+    # Governed dotted-key tags (class.location, class.credit_card) are assigned
+    # with `SET TAG ON COLUMN <fqn>.<col> `<dotted.key>`` — the dotted key
+    # backtick-quoted so it's treated literally. Runs as SQL (only the `sql`
+    # scope), NOT the Unity Catalog entity-tag-assignments OBO API.
     svc, deps = _svc()
     svc._build_source_data()
 
-    create = deps["sp_ws"].entity_tag_assignments.create
-    assert create.call_count == len(manifest.COLUMN_TAGS)
-
-    from databricks.sdk.service.catalog import EntityTagAssignment
-
-    seen: dict[str, EntityTagAssignment] = {}
-    for call in create.call_args_list:
-        assignment = call.args[0] if call.args else call.kwargs["tag_assignment"]
-        assert isinstance(assignment, EntityTagAssignment)
-        assert assignment.entity_type == "columns"
-        seen[assignment.entity_name] = assignment
-
+    ddls = _tag_ddls(deps["demo_sql"])
+    assert len(ddls) == len(manifest.COLUMN_TAGS)
     for tag in manifest.COLUMN_TAGS:
-        entity_name = f"dqx.{manifest.SOURCE_SCHEMA}.{tag.table}.{tag.column}"
-        assert entity_name in seen
-        assert seen[entity_name].tag_key == tag.tag  # the FULL dotted key
-        assert "." in seen[entity_name].tag_key
-
-
-def test_column_tags_use_obo_client_when_set_not_the_sp():
-    # Governed class.* tags need ASSIGN on the tag policy, which the app SP
-    # usually lacks but the deploying admin holds. When the route hands the
-    # seeder the caller's OBO client via set_tagging_ws, tag assignment must run
-    # as THEM (OBO), not the SP.
-    from databricks.sdk import WorkspaceClient
-
-    svc, deps = _svc()
-    obo = create_autospec(WorkspaceClient, instance=True)
-    svc.set_tagging_ws(obo)
-
-    svc._build_source_data()
-
-    # every tag assignment went through the OBO client; the SP client was untouched
-    assert obo.entity_tag_assignments.create.call_count == len(manifest.COLUMN_TAGS)
+        # the governed key appears backtick-quoted with its dot intact
+        assert any(f"`{tag.tag}`" in d and f"`{tag.column}`" in d and tag.table in d for d in ddls), (
+            f"no SET TAG DDL for {tag.tag} on {tag.table}.{tag.column}; got {ddls!r}"
+        )
+    # the SP entity-tag API is no longer used for tagging
     assert not deps["sp_ws"].entity_tag_assignments.create.called
 
 
-def test_column_tags_fall_back_to_sp_when_no_obo():
-    # CLI / tests / no-OBO deploy: with no tagging_ws set, assignment falls back
-    # to the SP client (best-effort as before).
-    svc, deps = _svc()  # tagging_ws defaults to None
+def test_column_tags_use_obo_sql_when_set_not_the_sp():
+    # Governed class.* tags need ASSIGN on the tag policy, which the app SP
+    # usually lacks but the deploying admin holds. When the route hands the
+    # seeder the caller's OBO SqlExecutor via set_tagging_sql, the SET TAG DDL
+    # must run through IT (OBO), not the SP-owned demo executor.
+    from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+
+    svc, deps = _svc()
+    obo_sql = create_autospec(SqlExecutor, instance=True)
+    svc.set_tagging_sql(obo_sql)
+
     svc._build_source_data()
-    assert deps["sp_ws"].entity_tag_assignments.create.call_count == len(manifest.COLUMN_TAGS)
+
+    assert len(_tag_ddls(obo_sql)) == len(manifest.COLUMN_TAGS)
+    # the SP-owned demo executor ran the table DDL but NOT the SET TAG statements
+    assert _tag_ddls(deps["demo_sql"]) == []
+
+
+def test_column_tags_fall_back_to_sp_when_no_obo():
+    # CLI / tests / no-OBO deploy: with no tagging_sql set, the SET TAG DDL runs
+    # on the SP-owned demo executor (best-effort as before).
+    svc, deps = _svc()  # tagging_sql defaults to None
+    svc._build_source_data()
+    assert len(_tag_ddls(deps["demo_sql"])) == len(manifest.COLUMN_TAGS)
 
 
 def test_build_source_data_swallows_tag_assignment_errors():
     # A missing ASSIGN privilege / undefined governed tag must NOT abort the
-    # ~1h seed — the failure is logged best-effort and seeding continues.
+    # ~30min seed — the failure is logged best-effort and seeding continues.
     svc, deps = _svc()
-    deps["sp_ws"].entity_tag_assignments.create.side_effect = RuntimeError("no ASSIGN privilege")
+
+    def _raise_on_set_tag(sql, *_a, **_k):
+        if sql.startswith("SET TAG ON COLUMN"):
+            raise RuntimeError("no ASSIGN privilege")
+
+    deps["demo_sql"].execute.side_effect = _raise_on_set_tag
     _use_create_path(deps)
     deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
 

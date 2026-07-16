@@ -47,7 +47,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.catalog import EntityTagAssignment
 
 from databricks_labs_dqx_app.backend.demo import datagen, manifest, redate
 from databricks_labs_dqx_app.backend.demo.manifest import (
@@ -92,7 +91,7 @@ from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddi
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_object_fqn
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +162,7 @@ class DemoSeedService:
         status: DemoStatusStore,
         reset_service: DatabaseResetService | None = None,
         embeddings: RuleEmbeddingsService | None = None,
-        tagging_ws: WorkspaceClient | None = None,
+        tagging_sql: SqlExecutor | None = None,
         catalog: str = "dqx",
     ) -> None:
         self._demo_sql = demo_sql
@@ -182,28 +181,28 @@ class DemoSeedService:
         self._status = status
         self._reset_service = reset_service
         self._embeddings = embeddings
-        # Optional caller (OBO) client used ONLY for governed-tag assignment.
-        # Assigning a governed class.* tag needs ASSIGN on the tag policy, which
-        # the app SP typically lacks but the admin who triggered the deploy
-        # usually holds — so tagging runs as them when provided, falling back to
-        # the SP. Set on the instance by the deploy route before the seed thread
-        # launches (tagging happens in the first phase, so the OBO token is
-        # still fresh). ``None`` in CLI/tests → SP-only, best-effort as before.
-        self._tagging_ws = tagging_ws
+        # Optional caller (OBO) SqlExecutor used ONLY for governed-tag
+        # assignment. Assigning a governed class.* tag needs ASSIGN on the tag
+        # policy, which the app SP typically lacks but the admin who triggered
+        # the deploy usually holds — so the SET TAG DDL runs as them when
+        # provided, falling back to the SP-owned demo executor. Set by the deploy
+        # route before the seed thread launches (tagging is the first phase, so
+        # the OBO token is still fresh). ``None`` in CLI/tests → SP, best-effort.
+        self._tagging_sql = tagging_sql
         self._catalog = catalog
         self._schema = manifest.SOURCE_SCHEMA
         self._started_at = ""
 
-    def set_tagging_ws(self, ws: WorkspaceClient | None) -> None:
-        """Set the (OBO) client used for governed-tag assignment.
+    def set_tagging_sql(self, sql: SqlExecutor | None) -> None:
+        """Set the (OBO) SqlExecutor used for governed-tag assignment.
 
         The DI factory builds this service SP-only; the deploy route calls this
-        with the admin caller's OBO client before launching the seed thread, so
-        governed class.* tags are assigned as the admin (who holds ASSIGN on the
-        tag policy) rather than the app SP (which usually does not). See
+        with the admin caller's OBO SqlExecutor before launching the seed thread,
+        so the ``SET TAG`` DDL runs as the admin (who holds ASSIGN on the tag
+        policy) rather than the app SP (which usually does not). See
         :meth:`_assign_column_tag`.
         """
-        self._tagging_ws = ws
+        self._tagging_sql = sql
 
     # ------------------------------------------------------------------
     # Public entrypoint
@@ -316,21 +315,21 @@ class DemoSeedService:
                 )
 
     def _assign_column_tag(self, tag: manifest.ColumnTagSpec) -> None:
-        """Assign one governed ``class.*`` column tag via the Entity Tag Assignments API.
+        """Assign one governed ``class.*`` column tag via ``SET TAG ON COLUMN`` SQL.
 
-        Governed tags have dotted keys (e.g. ``class.location``) that NO
-        ``ALTER TABLE ... SET TAGS`` SQL can assign — the ``.`` is reserved in
-        the tag-key grammar. The Unity Catalog Entity Tag Assignments API is the
-        correct mechanism, so this calls ``entity_tag_assignments.create`` with
-        the full dotted key against the fully-qualified column entity.
-        Classification (``class.*``) tags carry an empty value; their
-        allowed-values set is what constrains them.
+        Governed tags have dotted keys (e.g. ``class.location``). The
+        ``SET TAG ON COLUMN <fqn>.<col> `<dotted.key>``` DDL assigns them when
+        the key is backtick-quoted (the older ``ALTER COLUMN ... SET TAGS(...)``
+        form rejects the dot; ``SET TAG`` does not). Running it as SQL means it
+        needs only the ``sql`` warehouse scope — no Unity Catalog OBO API scope
+        — and it succeeds when the executing identity holds ASSIGN on the tag
+        policy plus APPLY TAG on the column.
 
-        Assigning a governed tag also requires ASSIGN on the tag policy. The app
-        SP usually lacks it, but the admin who triggered the deploy usually holds
-        it — so this prefers the caller's OBO client (``_tagging_ws``) when the
-        deploy route supplied one, falling back to the SP client otherwise (CLI /
-        tests / no-OBO). The whole call stays best-effort in the caller.
+        Assigning a governed tag requires ASSIGN on the tag policy: the app SP
+        usually lacks it, but the admin who triggered the deploy usually holds
+        it — so this runs through the caller's OBO SqlExecutor (``_tagging_sql``)
+        when the deploy route supplied one, falling back to the SP-owned
+        ``_demo_sql`` otherwise (CLI / tests / no-OBO). Best-effort in the caller.
 
         Args:
             tag: the governed column tag specification to assign.
@@ -340,16 +339,13 @@ class DemoSeedService:
         """
         if not tag.tag.startswith("class."):
             raise ValueError(f"governed demo tags must be class.*: {tag.tag}")
-        entity_name = f"{self._catalog}.{self._schema}.{tag.table}.{tag.column}"
-        tagging_ws = self._tagging_ws or self._sp_ws
-        tagging_ws.entity_tag_assignments.create(
-            EntityTagAssignment(
-                entity_type="columns",
-                entity_name=entity_name,
-                tag_key=tag.tag,
-                tag_value="",
-            )
-        )
+        # Column FQN identifier-quoted; the governed tag key backtick-quoted so
+        # its dot is treated literally. tag.table/column/tag are manifest
+        # constants (not user input); quote_object_fqn validates the FQN parts.
+        column_fqn = f"{quote_object_fqn(self._catalog, self._schema, tag.table)}.`{tag.column}`"
+        tag_key = "`" + tag.tag.replace("`", "``") + "`"
+        tagging_sql = self._tagging_sql or self._demo_sql
+        tagging_sql.execute(f"SET TAG ON COLUMN {column_fqn} {tag_key}")  # noqa: S608 (manifest constants)
 
     # ------------------------------------------------------------------
     # Phase: rules
