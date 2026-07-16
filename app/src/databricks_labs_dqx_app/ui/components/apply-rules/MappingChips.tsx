@@ -469,7 +469,10 @@ export function MappingChips({
                 <FamilyBadge family={slot.family} />
               </div>
               <span className="text-muted-foreground text-xs justify-self-center self-center">&rarr;</span>
-              <div className="flex flex-wrap items-center gap-1.5">
+              {/* items-start so a column chip's matched-tag line (stacked below
+                  it) doesn't vertically-center the row's other chips / the
+                  "+ Apply to another column" button — they stay on the top line. */}
+              <div className="flex flex-wrap items-start gap-1.5">
                 {filled.length === 0 && !onAddGroup && !addingGroup ? (
                   <span className="text-xs text-muted-foreground italic">
                     {t("monitoredTables.noColumnMapped")}
@@ -481,7 +484,10 @@ export function MappingChips({
                         ? computeMatchedTagsForSlot(slotTags, columnTags, slot.name, colName)
                         : [];
                     return (
-                      <span key={groupIdx} className="inline-flex items-center gap-1 flex-wrap">
+                      // Column chip on top; any matched governed-tag chips sit
+                      // on the line BELOW it (not to its right), so the match
+                      // reads as metadata about the column above it.
+                      <span key={groupIdx} className="inline-flex flex-col items-start gap-1">
                         {onChangeGroup ? (
                           <EditableChip
                             colorClass={paletteAt(groupIdx)}
@@ -504,15 +510,19 @@ export function MappingChips({
                             busy={busyGroupIdx === groupIdx}
                           />
                         )}
-                        {matchedTags.map((tag) => (
-                          <Badge
-                            key={tag}
-                            variant="secondary"
-                            className="text-[10px] font-mono px-1.5 py-0 h-auto opacity-75"
-                          >
-                            {tag}
-                          </Badge>
-                        ))}
+                        {matchedTags.length > 0 && (
+                          <span className="inline-flex flex-wrap items-center gap-1">
+                            {matchedTags.map((tag) => (
+                              <Badge
+                                key={tag}
+                                variant="secondary"
+                                className="text-[10px] font-mono px-1.5 py-0 h-auto opacity-75"
+                              >
+                                {tag}
+                              </Badge>
+                            ))}
+                          </span>
+                        )}
                       </span>
                     );
                   })
