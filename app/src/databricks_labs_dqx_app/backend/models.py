@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Any
 
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
@@ -133,13 +134,28 @@ class GenerateRulesFromContractOut(BaseModel):
     )
 
 
+class RuleSource(Enum):
+    """Source (e.g. 'ui', 'profiler') where the rule was created."""
+
+    ui = "ui"
+    sql = "sql"
+    profiler = "profiler"
+    user_import = "import"
+    ai = "ai"
+
+    @classmethod
+    def sql_in_list(cls) -> str:
+        """Renders the members as a SQL-safe list for 'IN' expressions."""
+        return ", ".join(f"'{member.value}'" for member in cls)
+
+
 class RuleCatalogEntryOut(BaseModel):
     table_fqn: str
     display_name: str = ""
     checks: list[dict[str, Any]]
     version: int
     status: str
-    source: str = "ui"
+    source: RuleSource = RuleSource.ui
     rule_id: str | None = None
     created_by: str | None = None
     created_at: str | None = None
@@ -147,17 +163,35 @@ class RuleCatalogEntryOut(BaseModel):
     updated_at: str | None = None
 
 
+class RuleStatus(Enum):
+    """Lifecycle status of a rule in the catalog."""
+
+    draft = "draft"
+    pending_approval = "pending_approval"
+    approved = "approved"
+    rejected = "rejected"
+
+    @classmethod
+    def sql_in_list(cls) -> str:
+        """Renders the members as a SQL-safe list for 'IN' expressions."""
+        return ", ".join(f"'{member.value}'" for member in cls)
+
+
 class SaveRulesIn(BaseModel):
     table_fqn: str = Field(description="Fully qualified table name (catalog.schema.table)")
     checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
-    source: str = Field(default="ui", description="Origin of the rules: ui, imported, or ai")
+    source: RuleSource = Field(
+        default=RuleSource.ui, description="Origin of the rules: ui, sql, profiler, import, or ai"
+    )
     rule_id: str | None = Field(default=None, description="If set, update existing rule instead of creating")
 
 
 class BatchSaveRulesIn(BaseModel):
     table_fqns: list[str] = Field(description="Fully qualified table names to apply the checks to")
     checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
-    source: str = Field(default="ui", description="Origin of the rules: ui, imported, or ai")
+    source: RuleSource = Field(
+        default=RuleSource.ui, description="Origin of the rules: ui, sql, profiler, import, or ai"
+    )
 
 
 class BatchSaveRulesOut(BaseModel):
@@ -208,7 +242,7 @@ class FilterTablesByColumnsOut(BaseModel):
 
 
 class SetStatusIn(BaseModel):
-    status: str = Field(description="New status: draft | pending_approval | approved | rejected")
+    status: RuleStatus = Field(description="New status: draft | pending_approval | approved | rejected")
     expected_version: int | None = Field(
         default=None,
         description="If provided, the update is rejected when the current version does not match (optimistic concurrency).",
