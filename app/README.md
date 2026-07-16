@@ -77,7 +77,9 @@ On every cold start the FastAPI lifespan (`backend/app.py`) hashes the locally b
 
 The app uses a **hybrid storage architecture**: high-volume append/analytical tables stay on Delta in Unity Catalog, while OLTP tables (rules catalog, app settings, RBAC, comments, schedule configs) live in **Lakebase Postgres** for sub-millisecond reads (see [DEPLOYMENT.md → Lakebase backend](DEPLOYMENT.md#lakebase-backend)).
 
-The schemas, wheels volume, and Lakebase instance are declared as bundle resources in `databricks.yml` with `lifecycle.prevent_destroy: true`. The bundle creates them on first deploy; `databricks bundle destroy` is blocked from dropping them. The app's `dqx_studio` Postgres schema (inside the `databricks_postgres` admin database on the Lakebase instance) is created at startup and is not itself a bundle resource, but is protected transitively by the instance-level guard. For workspaces where these resources were created out-of-band, run `make app-bind` once per target to adopt them into bundle management before the first deploy (see [DEPLOYMENT.md → Migrating an existing workspace](DEPLOYMENT.md#migrating-an-existing-workspace)).
+The schemas, wheels volume, and Lakebase Postgres **project** are declared as bundle resources in `databricks.yml` with `lifecycle.prevent_destroy: true`. The bundle creates them on first deploy; `databricks bundle destroy` is blocked from dropping them. The app's `dqx_studio` Postgres schema (inside the `databricks_postgres` admin database on the Lakebase project) is created at startup and is not itself a bundle resource, but is protected transitively by the project-level guard.
+
+> **Note:** the default SQL warehouse (`Small`) and Lakebase project (0.5–1 CU, scale-to-zero) are deliberately small — a safe, low-cost starting point rather than a tuned production config. Monitor under real load and tune (`sql_warehouse_size`, `lakebase_max_cu`) — see [DEPLOYMENT.md](DEPLOYMENT.md#variable-reference).
 
 ```
 {catalog} (Unity Catalog)
@@ -110,7 +112,7 @@ Lakebase (Postgres) — when enabled (default):
          └── dq_migrations              ← Lakebase migration version tracker
 ```
 
-`(OLTP*)` = lives in **Lakebase Postgres** when `lakebase_instance_name` is set in `databricks.yml`, otherwise in **Delta** (the `v2: Delta OLTP fallback` migration). The split is invisible to service code: `SqlExecutor` (Delta) and `PgExecutor` (Lakebase) share an identical public surface — `execute`, `query`, `query_dicts`, `upsert`, plus the dialect helpers `q(identifier)`, `json_literal_expr(json_str)`, and `ts_text(col)` that emit dialect-correct SQL fragments.
+`(OLTP*)` = lives in **Lakebase Postgres** when `lakebase_endpoint` is set in `databricks.yml`, otherwise in **Delta** (the `v2: Delta OLTP fallback` migration). The split is invisible to service code: `SqlExecutor` (Delta) and `PgExecutor` (Lakebase) share an identical public surface — `execute`, `query`, `query_dicts`, `upsert`, plus the dialect helpers `q(identifier)`, `json_literal_expr(json_str)`, and `ts_text(col)` that emit dialect-correct SQL fragments.
 
 ### Role-Based Access Control
 
@@ -141,6 +143,6 @@ The app aligns with the [DQX Summary Metrics spec](https://github.com/databricks
 
 ## Stack
 
-- **Backend**: Python 3.11+, FastAPI ~0.119, Pydantic 2, Databricks SDK ~0.73, Databricks Connect ~15.4
+- **Backend**: Python 3.12+, FastAPI ~0.119, Pydantic 2, Databricks SDK ~0.120, Databricks SQL Connector 4.2.5 (data-plane queries), psycopg 3 (Lakebase/Postgres)
 - **Frontend**: React 19, TypeScript, TanStack Router + React Query, shadcn/ui, Tailwind CSS 4, Vite 7
 - **Code generation**: orval (OpenAPI → TypeScript types + React Query hooks)

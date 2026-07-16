@@ -80,7 +80,7 @@ class AppConfig(BaseSettings):
     # ------------------------------------------------------------------
     # Lakebase (Postgres) backend
     # ------------------------------------------------------------------
-    # When ``lakebase_instance_name`` is set the OLTP-style tables
+    # When ``lakebase_endpoint`` is set the OLTP-style tables
     # (rules catalog, app settings, RBAC, comments, schedule configs,
     # scheduler bookkeeping) are routed to a Lakebase Postgres instance
     # instead of Delta. Bulk/append-only tables (validation runs,
@@ -90,17 +90,20 @@ class AppConfig(BaseSettings):
     # Leaving these empty keeps the legacy "everything on Delta"
     # behaviour, so existing deployments continue to work without
     # changes.  See ``app/databricks.yml`` for the deploy-time toggle.
-    lakebase_instance_name: str = Field(
+    lakebase_endpoint: str = Field(
         default="",
-        validation_alias="DQX_LAKEBASE_INSTANCE_NAME",
+        validation_alias="DQX_LAKEBASE_ENDPOINT",
         description=(
-            "Lakebase instance name. Empty — or any of the sentinel "
-            "values ``-`` / ``disabled`` / ``off`` / ``none`` "
-            "(case-insensitive) — disables Lakebase routing. The "
-            "sentinel form exists because Databricks Apps rejects "
-            "env vars with an empty ``value`` string, so deployments "
-            "that want to disable Lakebase must pass a non-empty "
-            "placeholder."
+            "Lakebase endpoint resource path (Postgres *projects* model), "
+            "e.g. ``projects/dqx-studio-db/branches/dev/endpoints/primary``. "
+            "The single connection input: it drives both host resolution "
+            "(``postgres.get_endpoint``) and OAuth credential issuance "
+            "(``postgres.generate_database_credential``). Empty — or any of "
+            "the sentinel values ``-`` / ``disabled`` / ``off`` / ``none`` "
+            "(case-insensitive) — disables Lakebase routing and falls back "
+            "to Delta. The sentinel form exists because Databricks Apps "
+            "rejects env vars with an empty ``value`` string, so deployments "
+            "that want to disable Lakebase must pass a non-empty placeholder."
         ),
     )
     # Default must match the ``lakebase_database_name`` bundle var in
@@ -188,12 +191,12 @@ class AppConfig(BaseSettings):
         """``True`` when the deployment was provisioned with Lakebase.
 
         Falls back to ``False`` (legacy UC-only mode) when the
-        instance name is empty or set to a recognised "disabled"
+        endpoint path is empty or set to a recognised "disabled"
         sentinel so existing tests, dev setups, and Lakebase-less
         Databricks Apps deployments keep working with no Postgres
         dependency.
         """
-        return self.lakebase_instance_name.strip().lower() not in self._LAKEBASE_DISABLED_SENTINELS
+        return self.lakebase_endpoint.strip().lower() not in self._LAKEBASE_DISABLED_SENTINELS
 
 
 conf = AppConfig()
