@@ -251,6 +251,32 @@ def test_build_source_data_assigns_governed_column_tags_via_sdk():
         assert "." in seen[entity_name].tag_key
 
 
+def test_column_tags_use_obo_client_when_set_not_the_sp():
+    # Governed class.* tags need ASSIGN on the tag policy, which the app SP
+    # usually lacks but the deploying admin holds. When the route hands the
+    # seeder the caller's OBO client via set_tagging_ws, tag assignment must run
+    # as THEM (OBO), not the SP.
+    from databricks.sdk import WorkspaceClient
+
+    svc, deps = _svc()
+    obo = create_autospec(WorkspaceClient, instance=True)
+    svc.set_tagging_ws(obo)
+
+    svc._build_source_data()
+
+    # every tag assignment went through the OBO client; the SP client was untouched
+    assert obo.entity_tag_assignments.create.call_count == len(manifest.COLUMN_TAGS)
+    assert not deps["sp_ws"].entity_tag_assignments.create.called
+
+
+def test_column_tags_fall_back_to_sp_when_no_obo():
+    # CLI / tests / no-OBO deploy: with no tagging_ws set, assignment falls back
+    # to the SP client (best-effort as before).
+    svc, deps = _svc()  # tagging_ws defaults to None
+    svc._build_source_data()
+    assert deps["sp_ws"].entity_tag_assignments.create.call_count == len(manifest.COLUMN_TAGS)
+
+
 def test_build_source_data_swallows_tag_assignment_errors():
     # A missing ASSIGN privilege / undefined governed tag must NOT abort the
     # ~1h seed — the failure is logged best-effort and seeding continues.
