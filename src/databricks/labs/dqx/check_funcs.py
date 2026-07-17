@@ -15,7 +15,7 @@ from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
-from databricks.labs.dqx.calculations_utils import calculate_median_absolute_deviation_bounds
+from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
 from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,

@@ -9,7 +9,7 @@ from pyspark.sql import DataFrame
 from pyspark.sql import types as T, functions as F
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileBuilder
-from databricks.labs.dqx.calculations_utils import calculate_median_absolute_deviation_bounds
+from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
 from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_DISTINCT_RATIO,
     PROFILE_OPTION_FILTER,
@@ -28,8 +28,6 @@ from databricks.labs.dqx.profiler.profile_options import (
 TextType = T.CharType | T.StringType | T.VarcharType
 TEXT_TYPES: tuple[type[TextType], ...] = (T.CharType, T.StringType, T.VarcharType)
 
-NumericType = T.IntegerType | T.LongType | T.FloatType | T.DoubleType
-NUMERICAL_TYPES: tuple[type[NumericType], ...] = (T.IntegerType, T.LongType, T.FloatType, T.DoubleType)
 
 PROFILE_BUILDER_REGISTRY: dict[str, DQProfileBuilder] = {}
 logger = logging.getLogger(__name__)
@@ -170,19 +168,6 @@ def _is_text(column_type: T.DataType) -> bool:
         True if the column is a Spark text type, otherwise False
     """
     return isinstance(column_type, TEXT_TYPES)
-
-
-def _is_numeric(column_type: T.DataType) -> bool:
-    """
-    Returns True if the input column type is a Spark numeric type.
-
-    Args:
-        column_type: Input column type
-
-    Returns:
-        True if the column is a Spark numeric type, otherwise False.
-    """
-    return isinstance(column_type, NUMERICAL_TYPES)
 
 
 def _make_null_or_empty_profile(
@@ -689,9 +674,9 @@ def make_has_no_outliers_profile(
     """
     Creates a *has_no_outliers* profile using the same MAD method as the *has_no_outliers* check rule.
 
-    A profile is returned when all of the following conditions are met:
+    A profile is returned when all the following conditions are met:
     - The column type is numeric (integer, long, float, or double).
-    - The DataFrame is non-empty after applying *filter_condition*.
+    - The DataFrame is non-empty.
     - The fraction of outliers (values outside *median* ± 3.5 × MAD) is below *outliers_ratio*.
 
     Args:
@@ -704,22 +689,21 @@ def make_has_no_outliers_profile(
     Returns:
         A DQProfile if all conditions are met, otherwise None.
     """
-    if not _is_numeric(column_type):
+    if not isinstance(column_type, T.NumericType):
         return None
 
-    total_count = profiler_metrics.get("count", 0)
-    if total_count == 0:
+    total_non_null_count = profiler_metrics.get("count_non_null", 0)
+    if total_non_null_count == 0:
         return None
 
-    filter_condition = profiler_options.get(PROFILE_OPTION_FILTER, None)
-    bounds = calculate_median_absolute_deviation_bounds(df, column_name, filter_condition)
+    bounds = calculate_median_absolute_deviation_bounds(df, column_name)
     if bounds is None:
         return None
 
     lower_bound, upper_bound = bounds
     outliers_count = df.filter((F.col(column_name) < lower_bound) | (F.col(column_name) > upper_bound)).count()
 
-    outliers_ratio = float(outliers_count) / total_count
+    outliers_ratio = float(outliers_count) / total_non_null_count
     outliers_ratio_threshold = profiler_options.get(PROFILE_OPTION_OUTLIERS_RATIO, 0.01)
 
     if outliers_ratio < outliers_ratio_threshold:
@@ -727,7 +711,7 @@ def make_has_no_outliers_profile(
             name="has_no_outliers",
             description=f"Column {column_name} has {outliers_ratio * 100:.1f}% of outliers (allowed: {outliers_ratio_threshold * 100:.1f}%). Lower boundary - {lower_bound}, upper boundary - {upper_bound}.",
             column=column_name,
-            filter=filter_condition,
+            filter=None,
         )
 
     return None

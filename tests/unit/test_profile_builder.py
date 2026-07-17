@@ -515,5 +515,54 @@ def test_min_max_rounding_enabled_for_decimal_type(mock_df):
 
 @pytest.mark.parametrize("column_type", [T.StringType(), T.BooleanType(), T.DateType(), T.TimestampType()])
 def test_has_no_outliers_non_numeric_type_returns_none(mock_df, column_type):
-    profile = make_has_no_outliers_profile(mock_df, "col", column_type, {"count": 10}, {"outliers_ratio": 0.01})
+    profile = make_has_no_outliers_profile(mock_df, "col", column_type, {"count_non_null": 10}, {"outliers_ratio": 0.01})
+    assert profile is None
+
+
+def test_has_no_outliers_count_non_null_zero_returns_none(mock_df):
+    profile = make_has_no_outliers_profile(mock_df, "col", T.IntegerType(), {"count_non_null": 0}, {"outliers_ratio": 0.01})
+    assert profile is None
+
+
+def test_has_no_outliers_numeric_no_outliers_returns_profile(mock_df):
+    # median=3.0, MAD=1.0 → bounds=(-0.5, 6.5); filter returns 0 outliers
+    mock_df.agg.return_value.collect.return_value = [[3.0]]
+    mock_df.select.return_value.agg.return_value.collect.return_value = [[1.0]]
+    mock_df.filter.return_value.count.return_value = 0
+
+    profile = make_has_no_outliers_profile(
+        mock_df, "measurement", T.IntegerType(), {"count_non_null": 10}, {"outliers_ratio": 0.05}
+    )
+
+    assert profile is not None
+    assert profile.name == "has_no_outliers"
+    assert profile.column == "measurement"
+    assert profile.filter is None
+    assert "0.0% of outliers" in profile.description
+    assert "-0.5" in profile.description
+    assert "6.5" in profile.description
+
+
+def test_has_no_outliers_outliers_exceed_threshold_returns_none(mock_df):
+    # median=3.0, MAD=1.0 → bounds=(-0.5, 6.5); 2 outliers / 4 non-null = 50% > 10% threshold
+    mock_df.agg.return_value.collect.return_value = [[3.0]]
+    mock_df.select.return_value.agg.return_value.collect.return_value = [[1.0]]
+    mock_df.filter.return_value.count.return_value = 2
+
+    profile = make_has_no_outliers_profile(
+        mock_df, "col", T.IntegerType(), {"count_non_null": 4}, {"outliers_ratio": 0.1}
+    )
+
+    assert profile is None
+
+
+def test_has_no_outliers_bounds_none_returns_none(mock_df):
+    # median=None → calculate_median_absolute_deviation_bounds returns None
+    mock_df.agg.return_value.collect.return_value = [[None]]
+    mock_df.select.return_value.agg.return_value.collect.return_value = [[None]]
+
+    profile = make_has_no_outliers_profile(
+        mock_df, "col", T.IntegerType(), {"count_non_null": 5}, {"outliers_ratio": 0.01}
+    )
+
     assert profile is None
