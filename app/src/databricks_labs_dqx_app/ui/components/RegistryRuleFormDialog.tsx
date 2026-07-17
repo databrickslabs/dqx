@@ -429,10 +429,11 @@ function ConditionSelector({
   );
 
   // Cycling animation: fade out → pick a WEIGHTED-RANDOM next label (never the
-  // same one twice in a row) → fade in, every 2s. Stopped while the picker is
-  // open or reduced-motion is requested.
+  // same one twice in a row) → fade in, every 2s. Keeps running while the picker
+  // is OPEN (the trigger label keeps cycling behind the menu). Stopped only once
+  // a selection is committed (isChanging → static label) or reduced-motion.
   useEffect(() => {
-    if (shouldReduceMotion || open) return;
+    if (shouldReduceMotion || isChanging) return;
     if (shortlist.length <= 1) return;
     const id = setInterval(() => {
       setVisible(false);
@@ -452,7 +453,7 @@ function ConditionSelector({
       }, 200);
     }, 2000);
     return () => clearInterval(id);
-  }, [shouldReduceMotion, open, shortlist.length, shortlistWeights]);
+  }, [shouldReduceMotion, isChanging, shortlist.length, shortlistWeights]);
 
   const exampleLabel = shortlist[exampleIndex] ?? "";
 
@@ -517,19 +518,19 @@ function ConditionSelector({
               className="h-8 text-xs"
             />
           )}
-          {/* Animate the drill between views (root ⇄ basic / operators): the
-              container smoothly resizes to the incoming view's height (the
-              popover follows) while the content crossfades. `layout` drives the
-              height/width tween; AnimatePresence crossfades the keyed content. */}
-          <motion.div layout transition={{ layout: { duration: 0.18, ease: "easeOut" } }} className="overflow-hidden">
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.div
-                key={view}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.1, ease: "easeOut" }}
-              >
+          {/* Crossfade + slide ONLY when the drill view changes (root ⇄ basic /
+              operators) — keyed by `view`. Deliberately NOT a `layout`
+              animation: layout re-tweened the height on every search keystroke
+              (content filtering), which read as janky. Within-view resizing
+              (search) is now instant; only the view swap animates. */}
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={view}
+              initial={{ opacity: 0, x: view === "root" ? -8 : 8 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: view === "root" ? 8 : -8 }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
+            >
           <CommandList className="max-h-80">
             {view === "root" && (
               // ── Root: the three ways to author a rule. Basic Checks and
@@ -684,9 +685,8 @@ function ConditionSelector({
               </>
             )}
           </CommandList>
-              </motion.div>
-            </AnimatePresence>
-          </motion.div>
+            </motion.div>
+          </AnimatePresence>
         </Command>
       </PopoverContent>
     </Popover>
