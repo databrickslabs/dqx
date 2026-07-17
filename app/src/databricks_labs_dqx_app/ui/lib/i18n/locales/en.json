@@ -361,7 +361,14 @@
     "draftSampleAdminOnlyHint": "Only admins can change this setting.",
     "reviewStatusUnnamed": "unnamed",
     "reviewStatusRemoveAria": "Remove {{value}}",
-    "reviewStatusFallback": "status"
+    "reviewStatusFallback": "status",
+    "addGovernedKey": "Add new governed key",
+    "governedKeySearchPlaceholder": "Search governed tag keys…",
+    "governedKeyLoading": "Loading governed tag keys…",
+    "governedKeyError": "Could not load governed tag keys.",
+    "governedKeyEmpty": "No governed tag keys available.",
+    "governedKeyValueCount_one": "{{count}} value",
+    "governedKeyValueCount_other": "{{count}} values"
   },
   "discovery": {
     "breadcrumb": "Discovery",
@@ -1576,6 +1583,7 @@
     "ifCondition": "If",
     "polaritySwitcherUnsupported": "Not supported by this rule",
     "nameLabel": "Name",
+    "missingFieldsHeader": "Fill in the following before submitting:",
     "namePlaceholder": "e.g. Order amount is positive",
     "stewardLabel": "Steward",
     "descriptionLabel": "Description",

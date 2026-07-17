@@ -361,7 +361,14 @@
     "draftSampleAdminOnlyHint": "Only admins can change this setting.",
     "reviewStatusUnnamed": "unnamed",
     "reviewStatusRemoveAria": "Remove {{value}}",
-    "reviewStatusFallback": "status"
+    "reviewStatusFallback": "status",
+    "addGovernedKey": "Adicionar nova chave governada",
+    "governedKeySearchPlaceholder": "Pesquisar chaves de tag governadas…",
+    "governedKeyLoading": "Carregando chaves de tag governadas…",
+    "governedKeyError": "Não foi possível carregar as chaves de tag governadas.",
+    "governedKeyEmpty": "Nenhuma chave de tag governada disponível.",
+    "governedKeyValueCount_one": "{{count}} valor",
+    "governedKeyValueCount_other": "{{count}} valores"
   },
   "discovery": {
     "breadcrumb": "Descoberta",
@@ -1576,6 +1583,7 @@
     "ifCondition": "Se",
     "polaritySwitcherUnsupported": "Não suportado por esta regra",
     "nameLabel": "Nome",
+    "missingFieldsHeader": "Preencha o seguinte antes de enviar:",
     "namePlaceholder": "ex.: Valor do pedido é positivo",
     "stewardLabel": "Responsável",
     "descriptionLabel": "Descrição",

@@ -1334,45 +1334,58 @@ function SlotsPanel({
                   </button>
                 )}
               </div>
-              {isOpen && !disabled && (
+              {!disabled && (
+                // Animate the detail open/close via the grid-rows trick (0fr↔1fr),
+                // matching AdvancedDisclosure — smooth on both expand and collapse.
                 <div
-                  className="grid grid-cols-2 gap-3 px-3 pb-3 pt-2 border-t"
+                  className={cn(
+                    "grid transition-[grid-template-rows] duration-200 ease-out",
+                    isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+                  )}
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <div className="space-y-1">
-                    <Label className="text-[11px] text-muted-foreground">{t("rulesRegistry.slotsPanelNameLabel")}</Label>
-                    <Input
-                      value={slot.name}
-                      onChange={(e) => setAt(i, { name: e.target.value })}
-                      className="font-mono text-xs h-8"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-[11px] text-muted-foreground">{t("rulesRegistry.slotsPanelFamilyLabel")}</Label>
-                    {lockFamily ? (
-                      // Native mode (item 10): the check's semantics fix the
-                      // family, so it's shown read-only with a hint rather than
-                      // an editable Select.
-                      <div className="flex h-8 items-center gap-1.5">
-                        <Badge variant="outline" className="text-[10px] font-medium">
-                          {familyLabel(slot.family)}
-                        </Badge>
-                        <HelpTooltip text={t("rulesRegistry.slotFamilyLockedTooltip")} />
+                  <div className="overflow-hidden">
+                    <div className="grid grid-cols-2 gap-3 px-3 pb-3 pt-2 border-t">
+                      <div className="space-y-1">
+                        <Label className="text-[11px] text-muted-foreground">
+                          {t("rulesRegistry.slotsPanelNameLabel")}
+                        </Label>
+                        <Input
+                          value={slot.name}
+                          onChange={(e) => setAt(i, { name: e.target.value })}
+                          className="font-mono text-xs h-8"
+                        />
                       </div>
-                    ) : (
-                      <Select value={slot.family} onValueChange={(v) => setAt(i, { family: v as RuleSlotFamilyType })}>
-                        <SelectTrigger className="h-8 text-xs w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent position="popper">
-                          {SLOT_FAMILIES.map((f) => (
-                            <SelectItem key={f} value={f} className="text-xs">
-                              {familyLabel(f)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    )}
+                      <div className="space-y-1">
+                        <Label className="text-[11px] text-muted-foreground">
+                          {t("rulesRegistry.slotsPanelFamilyLabel")}
+                        </Label>
+                        {lockFamily ? (
+                          // Native mode (item 10): the check's semantics fix the
+                          // family, so it's shown read-only with a hint rather than
+                          // an editable Select.
+                          <div className="flex h-8 items-center gap-1.5">
+                            <Badge variant="outline" className="text-[10px] font-medium">
+                              {familyLabel(slot.family)}
+                            </Badge>
+                            <HelpTooltip text={t("rulesRegistry.slotFamilyLockedTooltip")} />
+                          </div>
+                        ) : (
+                          <Select value={slot.family} onValueChange={(v) => setAt(i, { family: v as RuleSlotFamilyType })}>
+                            <SelectTrigger className="h-8 text-xs w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent position="popper">
+                              {SLOT_FAMILIES.map((f) => (
+                                <SelectItem key={f} value={f} className="text-xs">
+                                  {familyLabel(f)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -3784,7 +3797,7 @@ export function RegistryRuleFormDialog({
     button: ReactNode,
     disabledByGate: boolean,
     labels: string[],
-    tooltipKey: string,
+    _tooltipKey: string,
   ) => {
     if (!disabledByGate || labels.length === 0) return button;
     return (
@@ -3795,7 +3808,16 @@ export function RegistryRuleFormDialog({
               {button}
             </span>
           </TooltipTrigger>
-          <TooltipContent>{t(tooltipKey, { fields: labels.join(", ") })}</TooltipContent>
+          {/* A header line + one bullet per missing field, rather than a single
+              comma-run — much easier to scan when several things are missing. */}
+          <TooltipContent className="max-w-xs">
+            <p className="font-medium">{t("rulesRegistry.missingFieldsHeader")}</p>
+            <ul className="mt-1 list-disc pl-4 space-y-0.5">
+              {labels.map((label, i) => (
+                <li key={i}>{label}</li>
+              ))}
+            </ul>
+          </TooltipContent>
         </Tooltip>
       </TooltipProvider>
     );

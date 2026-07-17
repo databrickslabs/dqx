@@ -45,6 +45,7 @@ import {
   type DraftDefinition,
 } from "@/lib/label-definition-drafts";
 import { resolveCriticality } from "@/lib/registry-rule-conversion";
+import { GovernedKeyPicker, type GovernedKeySeed } from "@/components/settings/GovernedKeyPicker";
 import {
   useGetAiSettings,
   useSaveAiSettings,
@@ -461,6 +462,33 @@ function LabelDefinitionsSettings() {
     });
   };
 
+  // Seed a normal, editable custom-tag draft from a Unity Catalog governed tag.
+  // Import-time population only — the key/description/allowed values are copied
+  // once, then it behaves like any hand-authored draft (no ongoing sync).
+  const addGovernedDraft = (seed: GovernedKeySeed) => {
+    setDrafts((prev) => {
+      // Guard against a governed key that already exists as a draft.
+      if (prev.some((d) => d.key.trim() === seed.key.trim())) return prev;
+      const next: DraftDefinition[] = [
+        ...prev,
+        {
+          draftId: crypto.randomUUID(),
+          key: seed.key,
+          description: seed.description,
+          values: [...seed.values],
+          allow_custom_values: false,
+          value_colors: null,
+          value_descriptions: null,
+          value_criticality: null,
+          is_builtin: false,
+        },
+      ];
+      // Governed key is valid and non-empty, so a save can fire immediately.
+      triggerAutoSave(next);
+      return next;
+    });
+  };
+
   if (isLoading) {
     return <Skeleton className="h-40 w-full" />;
   }
@@ -525,6 +553,10 @@ function LabelDefinitionsSettings() {
               <Plus className="h-3.5 w-3.5" />
               {t("config.addLabelDefinition")}
             </Button>
+            <GovernedKeyPicker
+              existingKeys={drafts.map((d) => d.key)}
+              onPick={addGovernedDraft}
+            />
           </div>
           {validation.length > 0 && (
             <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
