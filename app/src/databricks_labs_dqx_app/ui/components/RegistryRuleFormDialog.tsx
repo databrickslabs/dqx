@@ -2666,7 +2666,7 @@ export function RegistryRuleFormDialog({
   // permissionsTabContent below), alongside the UC-style grants surface.
   const aboutTabContent = (
     <div className="space-y-4 pt-2">
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <Label>
           {t("rulesRegistry.nameLabel")} <span className="text-destructive">*</span>
         </Label>
@@ -2695,7 +2695,7 @@ export function RegistryRuleFormDialog({
         {nameError && <p className="text-[10px] text-red-500">{nameError}</p>}
       </div>
 
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <Label>{t("rulesRegistry.descriptionLabel")}</Label>
         <div className="relative group">
           <Textarea
@@ -2719,7 +2719,7 @@ export function RegistryRuleFormDialog({
 
       <Separator />
 
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <div className="flex items-center gap-1.5">
           <Label>
             {t("rulesRegistry.severityLabel")} <span className="text-destructive">*</span>
@@ -2764,7 +2764,7 @@ export function RegistryRuleFormDialog({
         </div>
       </div>
 
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <div className="flex items-center gap-1.5">
           <Label>
             {t("rulesRegistry.dimensionLabel")} <span className="text-destructive">*</span>
@@ -3102,7 +3102,10 @@ export function RegistryRuleFormDialog({
           "← change rule type" back affordance) followed by the chosen mode's
           body below. */}
       <div className="space-y-2">
-        <Label>{t("rulesRegistry.conditionLabel")}</Label>
+        {/* Same header treatment as "Columns used" (SectionHeader h2) so the
+            Implementation section headers are consistent with each other and
+            with About/Permissions. */}
+        <SectionHeader>{t("rulesRegistry.conditionLabel")}</SectionHeader>
         {/* Unified top row — the low-code condition-row chrome
             (`IF [column ▾] [selector] …`) is reused for EVERY rule type. The
             operator cell is the merged ConditionSelector: a cycling rule-type
