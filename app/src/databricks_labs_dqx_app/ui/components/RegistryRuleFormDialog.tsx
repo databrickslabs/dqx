@@ -3179,11 +3179,6 @@ export function RegistryRuleFormDialog({
                 placeholder={t("rulesRegistry.filterPlaceholder")}
                 disabled={readOnly}
               />
-              {sqlSlots.length > 0 && (
-                <p className="text-[10px] text-muted-foreground">
-                  {t("rulesRegistry.filterHint", { slots: sqlSlots.map((s) => `{{${s.name}}}`).join(", ") })}
-                </p>
-              )}
             </div>
           </AdvancedDisclosure>
           <div className="flex flex-wrap items-center gap-3">
@@ -3329,11 +3324,6 @@ export function RegistryRuleFormDialog({
                 placeholder={t("rulesRegistry.filterPlaceholder")}
                 disabled={readOnly}
               />
-              {nativeSlots.length > 0 && (
-                <p className="text-[10px] text-muted-foreground">
-                  {t("rulesRegistry.filterHint", { slots: nativeSlots.map((s) => `{{${s.name}}}`).join(", ") })}
-                </p>
-              )}
             </div>
           </AdvancedDisclosure>
         </div>
@@ -3422,11 +3412,6 @@ export function RegistryRuleFormDialog({
                 placeholder={t("rulesRegistry.filterPlaceholder")}
                 disabled={readOnly}
               />
-              {sqlSlots.length > 0 && (
-                <p className="text-[10px] text-muted-foreground">
-                  {t("rulesRegistry.filterHint", { slots: sqlSlots.map((s) => `{{${s.name}}}`).join(", ") })}
-                </p>
-              )}
             </div>
           </AdvancedDisclosure>
           <div className="flex flex-wrap items-center gap-3">

@@ -43,9 +43,6 @@ export function JoinsBuilder({ ast, onChange, declaredColumns, readOnly }: Props
   return (
     <div className="space-y-3">
       <Label className="text-xs">{t("rulesRegistry.lowcodeJoinsLabel")}</Label>
-      {/* Matches Group By's Label + one-line description formatting
-          directly above (item 23e). */}
-      <p className="text-[10px] text-muted-foreground">{t("rulesRegistry.lowcodeJoinsHelp")}</p>
       {ast.joins.length === 0 && (
         <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.lowcodeNoJoins")}</p>
       )}

@@ -76,7 +76,6 @@ export function GroupByField({ value, onChange, declaredColumns, disabled }: Pro
   return (
     <div className="flex flex-col gap-2">
       <Label className="text-xs">{t("rulesRegistry.lowcodeGroupByLabel")}</Label>
-      <p className="text-[10px] text-muted-foreground">{t("rulesRegistry.lowcodeGroupByHelp")}</p>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
