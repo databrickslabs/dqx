@@ -1630,10 +1630,6 @@ export function RegistryRuleFormDialog({
   );
 
   const [mode, setMode] = useState<RegistryMode>("dqx_native");
-  /** Whether the SQL editor's optional joins card starts open — true when the user
-   * picked "Cross-Table SQL" from the decision-point menu so the joins card is
-   * immediately visible without an extra click. */
-  const [sqlJoinsDefaultOpen, setSqlJoinsDefaultOpen] = useState(false);
   const [decisionPointChosen, setDecisionPointChosen] = useState(false);
   const [internalPageTab, setInternalPageTab] = useState<PageTab>("about");
   const pageTab = controlledActiveTab ?? internalPageTab;
@@ -2984,7 +2980,6 @@ export function RegistryRuleFormDialog({
         setSqlPredicate("");
         setSqlJoins([]);
       }
-      setSqlJoinsDefaultOpen(false);
       setMode("sql");
       setModeSwitch(null);
       return;
@@ -3462,21 +3457,12 @@ export function RegistryRuleFormDialog({
               </p>
             )}
           </div>
-          {/* Optional joins card — reuses the low-code JoinsBuilder. A declared
-              join makes this rule "cross-table" (sql_query path); no joins keeps
-              it single-table (predicate path). Body type is derived at save time
-              from join presence — no hidden flag needed. "Cross-Table SQL" from
-              the decision-point menu opens this card by default. */}
-          <AdvancedDisclosure
-            label={t("rulesRegistry.advancedSectionLabel")}
-            defaultOpen={sqlJoinsDefaultOpen || sqlJoins.length > 0 || !!filter}
-          >
-            <JoinsBuilder
-              ast={{ rows: [], joins: sqlJoins }}
-              onChange={(next) => setSqlJoins(next.joins)}
-              declaredColumns={sqlSlots.map((s) => ({ name: s.name, family: slotFamilyToLowcode(s.family) }))}
-              readOnly={readOnly}
-            />
+          {/* SQL mode authors joins INLINE in the code editor above — a
+              cross-table check is written as a full `SELECT … FROM … JOIN …`
+              in the predicate editor (round-tripped via buildSqlBody's
+              sql_query passthrough). No structured joins card here. Advanced in
+              SQL mode is just the row filter. */}
+          <AdvancedDisclosure label={t("rulesRegistry.advancedSectionLabel")} defaultOpen={!!filter}>
             {/* Row filter — a SQL WHERE predicate applied before the rule
                 condition. Supports {{slot}} placeholders. */}
             <div className="space-y-1.5">
