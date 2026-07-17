@@ -2336,6 +2336,11 @@ export function RegistryRuleFormDialog({
     // Switch the mode segmented control onto the real authoring mode so the
     // steward immediately sees (and can tweak) what the proposal filled in.
     setMode(appliedMode);
+    // An AI proposal commits the rule type — mark the decision point chosen so
+    // the chosen mode's body renders. Without this, using Build-with-AI on a
+    // brand-new rule (before manually picking a type) filled the state but left
+    // every mode body gated/hidden, so it looked like nothing happened.
+    setDecisionPointChosen(true);
     setName(proposal.name?.trim() ?? "");
     setDescription(proposal.description?.trim() ?? "");
     if (proposal.dimension) {
