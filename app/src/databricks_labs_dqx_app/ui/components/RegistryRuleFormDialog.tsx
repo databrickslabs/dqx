@@ -950,6 +950,7 @@ function SlotsPanel({
   slotTags,
   onSlotTagsChange,
   isSingleColumnFn = false,
+  addDisabledReason,
 }: {
   value: RuleSlot[];
   onChange: (next: RuleSlot[]) => void;
@@ -969,6 +970,9 @@ function SlotsPanel({
    * parameter, so any extra columns the author adds are filter-only — clicking
    * "+ Add column" opens an explanatory popover before proceeding. */
   isSingleColumnFn?: boolean;
+  /** When set, "+ Add column" is disabled and shows this text as a tooltip —
+   * used to gate adding columns until a rule condition/type is chosen. */
+  addDisabledReason?: string;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -1092,7 +1096,27 @@ function SlotsPanel({
           // "Columns used" header sits at a different height than in SQL/
           // Low-Code, which do show a real button here.
           !disabled ? (
-            isSingleColumnFn ? (
+            addDisabledReason ? (
+              // Gated: no rule condition chosen yet. Disabled + explanatory tooltip.
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-block">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled
+                        className="h-7 px-2.5 text-xs gap-1.5"
+                      >
+                        {t("rulesRegistry.slotsPanelAddButton")}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>{addDisabledReason}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : isSingleColumnFn ? (
               <Popover open={singleColPopoverOpen} onOpenChange={setSingleColPopoverOpen}>
                 <PopoverTrigger asChild>
                   <Button
@@ -2674,6 +2698,11 @@ export function RegistryRuleFormDialog({
   const showColumnsUsedPanel = mode === "sql" || mode === "lowcode" || (mode === "dqx_native" && fnDerivedSlots.length > 0);
   const currentSlots = mode === "dqx_native" ? nativeSlots : sqlSlots;
   const setCurrentSlots = mode === "dqx_native" ? setNativeSlots : setSqlSlots;
+  // Whether the author has committed to a rule condition/type yet. Until then,
+  // "+ Add column" and the "Advanced" section are gated (disabled + tooltip) —
+  // there's no rule to add filter columns to or configure advanced options for.
+  // Native additionally requires a function actually selected.
+  const conditionChosen = decisionPointChosen && (mode !== "dqx_native" || functionName.trim().length > 0);
   // Human label for the CURRENTLY-selected rule type, shown on the persistent
   // "condition picker" chip after a type has been chosen (the entry point the
   // author returns to — via the chip's dropdown back affordance — to change
@@ -2905,6 +2934,7 @@ export function RegistryRuleFormDialog({
           slotTags={slotTags}
           onSlotTagsChange={setSlotTags}
           isSingleColumnFn={mode === "dqx_native" && fnDerivedSlots.length === 1 && !nativeExpandableArgKey}
+          addDisabledReason={conditionChosen ? undefined : t("rulesRegistry.addColumnGatedTooltip")}
         />
       )}
 
@@ -2917,36 +2947,75 @@ export function RegistryRuleFormDialog({
           body below. */}
       <div className="space-y-2">
         <Label>{t("rulesRegistry.conditionLabel")}</Label>
-        {/* The merged condition selector — one element for the whole IF-row
-            operator cell. Before a type is chosen (or in native / SQL mode) it
-            renders in a standalone `IF {{col}} <selector>` anchor here. In
-            Condition Builder mode it moves INTO the low-code first row's
-            operator cell (below), so the same element both picks the operator
-            AND hosts the back-to-root rule-type switch. */}
+        {/* Unified top row — the low-code condition-row chrome
+            (`IF [column ▾] [selector] …`) is reused for EVERY rule type. The
+            operator cell is the merged ConditionSelector: a cycling rule-type
+            picker before anything is chosen, the native-checks list once a
+            basic check is chosen, or (in Condition Builder) the operators list.
+            SQL and Low-Code render their own bodies below; native shows its
+            parameters below. This standalone anchor renders for the UNCHOSEN,
+            NATIVE and SQL states — Low-Code uses LowcodeBuilder (same chrome),
+            whose first row hosts the selector. */}
         {(!decisionPointChosen || mode !== "lowcode") && (
-          <div className="flex items-center gap-3">
-            <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
-            <span className="font-mono text-xs text-muted-foreground">
-              {currentSlots[0] ? `{{${currentSlots[0].name}}}` : "{{column_1}}"}
-            </span>
-            {/* Content-width in the standalone anchor (the selector itself is
-                w-full to match the low-code operator cell, so cap it here). */}
-            <div className="w-64">
-              <ConditionSelector
-                checkFunctions={checkFunctions}
-                currentSlots={currentSlots}
-                operatorFamily={anchorOperatorFamily}
-                onSelect={decisionPointChosen ? requestModeChange : handleDecisionPointSelect}
-                disabled={readOnly}
-                currentLabel={decisionPointChosen ? currentTypeLabel : undefined}
-                // In native mode (a chosen basic check) re-open straight into the
-                // Basic Checks list; SQL mode has no submenu so root is fine.
-                initialView={decisionPointChosen && mode === "dqx_native" ? "basic" : "root"}
-              />
+          <div className="grid max-w-2xl grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1.6fr)_minmax(0,0.4fr)] gap-2 items-center py-1">
+            <div className="flex items-center h-8 pl-2 justify-self-start">
+              <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
             </div>
+            {/* Column cell — styled like the low-code column Select but DISABLED:
+                for native checks the column binding is governed by "Columns used"
+                above (a basic check takes a single input column), so this cell is
+                a read-only mirror with an explanatory tooltip. */}
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-block w-full">
+                    <button
+                      type="button"
+                      disabled
+                      data-slot="select-trigger"
+                      className="border-input dark:bg-input/30 flex h-8 w-full items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-1 font-mono text-xs whitespace-nowrap shadow-xs opacity-70 cursor-not-allowed"
+                    >
+                      <span className="truncate">
+                        {currentSlots[0] ? `{{${currentSlots[0].name}}}` : "{{column_1}}"}
+                      </span>
+                      <ChevronDown className="size-4 opacity-50 shrink-0" />
+                    </button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{t("rulesRegistry.nativeSingleColumnTooltip")}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <ConditionSelector
+              checkFunctions={checkFunctions}
+              currentSlots={currentSlots}
+              operatorFamily={anchorOperatorFamily}
+              onSelect={decisionPointChosen ? requestModeChange : handleDecisionPointSelect}
+              disabled={readOnly}
+              currentLabel={decisionPointChosen ? currentTypeLabel : undefined}
+              // In native mode (a chosen basic check) re-open straight into the
+              // Basic Checks list; SQL mode has no submenu so root is fine.
+              initialView={decisionPointChosen && mode === "dqx_native" ? "basic" : "root"}
+            />
+            {/* Trailing em-dash mirrors the low-code row's value/delete slot so
+                the grid columns line up; native/SQL have no per-row value here. */}
+            <span className="text-muted-foreground text-center select-none">—</span>
           </div>
         )}
       </div>
+
+      {/* Advanced — always present in the layout, but DISABLED with an
+          explanatory tooltip until a rule condition is chosen (there's nothing
+          to configure yet). Once chosen, each mode renders its own populated
+          Advanced section (below) instead of this gated placeholder. */}
+      {!conditionChosen && (
+        <AdvancedDisclosure
+          label={t("rulesRegistry.advancedSectionLabel")}
+          disabled
+          disabledReason={t("rulesRegistry.advancedGatedTooltip")}
+        >
+          <span />
+        </AdvancedDisclosure>
+      )}
 
       {decisionPointChosen && mode === "lowcode" && (
         <div className="space-y-3">
