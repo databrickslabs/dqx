@@ -1640,7 +1640,6 @@
     "lowcodeGroupByEmpty": "No matching columns.",
     "lowcodeGroupByClear": "Clear selection",
     "lowcodeJoinsLabel": "Joins",
-    "lowcodeNoJoins": "No joins configured. Add a join to bring in a related table.",
     "lowcodeAddJoin": "Add join",
     "lowcodeAddKey": "Add key",
     "lowcodeJoinSelectTable": "Select table",
@@ -1743,7 +1742,10 @@
     "resultsNoAccessibleTables_one": "This rule is applied to {{count}} monitored table you don't have access to.",
     "resultsNoAccessibleTables_other": "This rule is applied to {{count}} monitored tables you don't have access to.",
     "resultsOverallScoreLabel_one": "Overall score across {{count}} table",
-    "resultsOverallScoreLabel_other": "Overall score across {{count}} tables"
+    "resultsOverallScoreLabel_other": "Overall score across {{count}} tables",
+    "joinPickCatalogPlaceholder": "Select catalog…",
+    "joinPickSchemaPlaceholder": "Select schema…",
+    "joinPickTablePlaceholder": "Select table…"
   },
   "monitoredTables": {
     "breadcrumb": "Tables",

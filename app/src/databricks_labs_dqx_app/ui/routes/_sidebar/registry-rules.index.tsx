@@ -63,8 +63,7 @@ import {
 import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
 import type { User as UserType } from "@/lib/api";
-import { useLabelDefinitions, exportRegistryRules } from "@/lib/api-custom";
-import { ExportYamlMenu } from "@/components/ExportYamlMenu";
+import { useLabelDefinitions } from "@/lib/api-custom";
 import { LabelFilter, labelsMatchFilter, type LabelSelection } from "@/components/Labels";
 import { labelToken } from "@/lib/format-utils";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -845,16 +844,8 @@ function RegistryRulesPage() {
             <p className="text-sm text-muted-foreground mt-1">{t("rulesRegistry.description")}</p>
           </div>
           <div className="flex items-center gap-2">
-            <ExportYamlMenu
-              fetchDqx={() =>
-                exportRegistryRules({
-                  dimension: dimensionFilter === ALL ? undefined : dimensionFilter,
-                  severity: severityFilter === ALL ? undefined : severityFilter,
-                  steward: stewardFilter === ALL ? undefined : stewardFilter,
-                })
-              }
-              size="default"
-            />
+            {/* Export moved to a contextual action (per-selection / row menu) —
+                removed from the always-on overview header. */}
             {perms.canCreateRules && (
               <>
                 <Button

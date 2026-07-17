@@ -99,7 +99,7 @@ export function JoinTablePickerModal({
         <div className="grid grid-cols-3 gap-2 py-2">
           <MultiSelectPopover
             label={t("monitoredTables.wizard.catalogsLabel")}
-            placeholder={t("monitoredTables.wizard.catalogsPlaceholder")}
+            placeholder={t("rulesRegistry.joinPickCatalogPlaceholder")}
             searchPlaceholder={t("monitoredTables.wizard.searchCatalogs")}
             options={catalogOptions}
             selected={catalog ? [catalog] : []}
@@ -110,7 +110,7 @@ export function JoinTablePickerModal({
           />
           <MultiSelectPopover
             label={t("monitoredTables.wizard.schemasLabel")}
-            placeholder={t("monitoredTables.wizard.schemasPlaceholder", { count: catalog ? 1 : 0 })}
+            placeholder={t("rulesRegistry.joinPickSchemaPlaceholder")}
             searchPlaceholder={t("monitoredTables.wizard.searchSchemas")}
             options={schemaOptions}
             selected={schema ? [schema] : []}
@@ -123,7 +123,7 @@ export function JoinTablePickerModal({
           />
           <MultiSelectPopover
             label={t("monitoredTables.wizard.tablesLabel")}
-            placeholder={t("monitoredTables.wizard.tablesPlaceholder", { count: schema ? 1 : 0 })}
+            placeholder={t("rulesRegistry.joinPickTablePlaceholder")}
             searchPlaceholder={t("monitoredTables.wizard.searchTables")}
             options={tableOptions}
             selected={table ? [table] : []}

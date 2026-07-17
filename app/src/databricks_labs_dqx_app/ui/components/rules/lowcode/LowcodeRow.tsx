@@ -64,9 +64,12 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
         // `w-full` (DQX's is `w-fit`, which is what left the earlier build
         // looking ragged with controls pinned to the left of each track).
         "grid max-w-2xl gap-2 items-center py-1",
+        // Value track widened (1.4fr → 2.2fr) so the value input has room to
+        // grow with its content (long "in" lists, wide strings) instead of
+        // being clipped narrow; column/operator tracks keep their behaviour.
         readOnly
-          ? "grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.4fr)]"
-          : "grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.4fr)_28px]",
+          ? "grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,2.2fr)]"
+          : "grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,2.2fr)_28px]",
       )}
     >
       {isFirst ? (

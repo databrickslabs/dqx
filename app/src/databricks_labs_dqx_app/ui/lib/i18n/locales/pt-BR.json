@@ -1640,7 +1640,6 @@
     "lowcodeGroupByEmpty": "Nenhuma coluna correspondente.",
     "lowcodeGroupByClear": "Limpar seleção",
     "lowcodeJoinsLabel": "Junções",
-    "lowcodeNoJoins": "Nenhuma junção configurada. Adicione uma junção para incluir uma tabela relacionada.",
     "lowcodeAddJoin": "Adicionar junção",
     "lowcodeAddKey": "Adicionar chave",
     "lowcodeJoinSelectTable": "Selecionar tabela",
@@ -1743,7 +1742,10 @@
     "resultsNoAccessibleTables_one": "Esta regra está aplicada a {{count}} tabela monitorada à qual você não tem acesso.",
     "resultsNoAccessibleTables_other": "Esta regra está aplicada a {{count}} tabelas monitoradas às quais você não tem acesso.",
     "resultsOverallScoreLabel_one": "Pontuação geral em {{count}} tabela",
-    "resultsOverallScoreLabel_other": "Pontuação geral em {{count}} tabelas"
+    "resultsOverallScoreLabel_other": "Pontuação geral em {{count}} tabelas",
+    "joinPickCatalogPlaceholder": "Selecionar catálogo…",
+    "joinPickSchemaPlaceholder": "Selecionar esquema…",
+    "joinPickTablePlaceholder": "Selecionar tabela…"
   },
   "monitoredTables": {
     "breadcrumb": "Tabelas",

@@ -1640,7 +1640,6 @@
     "lowcodeGroupByEmpty": "Nessuna colonna corrispondente.",
     "lowcodeGroupByClear": "Cancella selezione",
     "lowcodeJoinsLabel": "Join",
-    "lowcodeNoJoins": "Nessun join configurato. Aggiungi un join per includere una tabella correlata.",
     "lowcodeAddJoin": "Aggiungi join",
     "lowcodeAddKey": "Aggiungi chiave",
     "lowcodeJoinSelectTable": "Seleziona tabella",
@@ -1743,7 +1742,10 @@
     "resultsNoAccessibleTables_one": "Questa regola è applicata a {{count}} tabella monitorata a cui non hai accesso.",
     "resultsNoAccessibleTables_other": "Questa regola è applicata a {{count}} tabelle monitorate a cui non hai accesso.",
     "resultsOverallScoreLabel_one": "Punteggio complessivo su {{count}} tabella",
-    "resultsOverallScoreLabel_other": "Punteggio complessivo su {{count}} tabelle"
+    "resultsOverallScoreLabel_other": "Punteggio complessivo su {{count}} tabelle",
+    "joinPickCatalogPlaceholder": "Seleziona catalogo…",
+    "joinPickSchemaPlaceholder": "Seleziona schema…",
+    "joinPickTablePlaceholder": "Seleziona tabella…"
   },
   "monitoredTables": {
     "breadcrumb": "Tabelle",

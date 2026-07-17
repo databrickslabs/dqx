@@ -1640,7 +1640,6 @@
     "lowcodeGroupByEmpty": "No hay columnas coincidentes.",
     "lowcodeGroupByClear": "Borrar selección",
     "lowcodeJoinsLabel": "Uniones",
-    "lowcodeNoJoins": "No hay uniones configuradas. Añade una unión para incorporar una tabla relacionada.",
     "lowcodeAddJoin": "Añadir unión",
     "lowcodeAddKey": "Añadir clave",
     "lowcodeJoinSelectTable": "Seleccionar tabla",
@@ -1743,7 +1742,10 @@
     "resultsNoAccessibleTables_one": "Esta regla está aplicada a {{count}} tabla monitorizada a la que no tienes acceso.",
     "resultsNoAccessibleTables_other": "Esta regla está aplicada a {{count}} tablas monitorizadas a las que no tienes acceso.",
     "resultsOverallScoreLabel_one": "Puntuación global en {{count}} tabla",
-    "resultsOverallScoreLabel_other": "Puntuación global en {{count}} tablas"
+    "resultsOverallScoreLabel_other": "Puntuación global en {{count}} tablas",
+    "joinPickCatalogPlaceholder": "Seleccionar catálogo…",
+    "joinPickSchemaPlaceholder": "Seleccionar esquema…",
+    "joinPickTablePlaceholder": "Seleccionar tabla…"
   },
   "monitoredTables": {
     "breadcrumb": "Tablas",
