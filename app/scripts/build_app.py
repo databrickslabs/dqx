@@ -36,6 +36,7 @@ Designed to be cwd-independent — paths resolve relative to this file.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tomllib
@@ -67,6 +68,12 @@ def _run(cmd: list[str]) -> None:
     """
     print(f"  $ {' '.join(cmd)}", flush=True)
     subprocess.run(cmd, cwd=APP_DIR, check=True)  # noqa: S603
+
+
+def _node_bin(name: str) -> str:
+    """Return the path to a ``node_modules/.bin`` executable for this platform."""
+    suffix = ".cmd" if os.name == "nt" else ""
+    return str(NODE_BIN / f"{name}{suffix}")
 
 
 def _load_pyproject() -> dict:
@@ -160,7 +167,7 @@ def _run_orval() -> None:
     locally-installed binary directly so the pinned ``orval`` is used
     regardless of which package manager is on PATH.
     """
-    _run([str(NODE_BIN / "orval")])
+    _run([_node_bin("orval")])
 
 
 def _run_vite_build() -> None:
@@ -169,7 +176,7 @@ def _run_vite_build() -> None:
     Vite reads ``vite.config.ts``, which sets ``build.outDir`` to the
     package's ``__dist__`` folder so it ships inside the package source.
     """
-    _run([str(NODE_BIN / "vite"), "build"])
+    _run([_node_bin("vite"), "build"])
 
 
 def _assemble_deploy_tree() -> None:

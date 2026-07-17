@@ -60,6 +60,7 @@ from databricks.labs.dqx.checks_serializer import (
     SerializerFactory,
     ChecksNormalizer,
     deserialize_checks,
+    project_to_check_schema,
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator
 from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
@@ -163,8 +164,12 @@ class DataFrameConverter:
                 stacklevel=2,
             )
 
-        # Denormalize special markers back to objects
-        return [ChecksNormalizer.denormalize_value(DataFrameConverter._row_to_check_dict(row)) for row in check_rows]
+        # Route each row through project_to_check_schema so the Delta and Lakebase loaders agree on
+        # the loaded shape (allow-list from CheckSpec.model_fields), then denormalize special markers.
+        return [
+            ChecksNormalizer.denormalize_value(project_to_check_schema(DataFrameConverter._row_to_check_dict(row)))
+            for row in check_rows
+        ]
 
     @staticmethod
     def _row_to_check_dict(row: Row) -> dict[str, object]:
@@ -569,7 +574,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         engine = create_engine(
             engine_url,
             pool_recycle=45 * 60,  # recycle connections every 45 minutes
-            connect_args={'sslmode': 'require'},
+            connect_args={"sslmode": "require"},
             pool_size=4,
         )
         event.listen(engine, "do_connect", self._prepare_before_connect(config))
@@ -848,9 +853,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                     f"for run_config_name='{config.run_config_name}'. "
                     f"Make sure the profiler has run successfully and saved checks to this location."
                 )
-            checks_dict = [dict(check) for check in checks]
-            # Omit message_expr when absent so both backends behave the same (Delta only sets it when
-            # not None); leave the pre-existing versioning-key leakage alone (out of scope here).
+            checks_dict = [project_to_check_schema(dict(check)) for check in checks]
+            # project_to_check_schema drops storage-only keys; additionally omit message_expr when
+            # absent so both backends behave the same (Delta only sets it when not None).
             for check_dict in checks_dict:
                 if check_dict.get("message_expr") is None:
                     check_dict.pop("message_expr", None)
@@ -876,7 +881,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         if not inspector.has_table(table, schema=schema):
             return False
         cols = inspector.get_columns(table, schema=schema)
-        existing_column_names = {col['name'] for col in cols}
+        existing_column_names = {col["name"] for col in cols}
         return all(x in existing_column_names for x in _VERSIONING_COLUMNS)
 
     @staticmethod
@@ -897,7 +902,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         if not inspector.has_table(table, schema=schema):
             return False
         cols = inspector.get_columns(table, schema=schema)
-        existing_column_names = {col['name'] for col in cols}
+        existing_column_names = {col["name"] for col in cols}
         return column in existing_column_names
 
     def _check_for_undefined_table_error(self, e: ProgrammingError, config: LakebaseChecksStorageConfig) -> NoReturn:
@@ -914,8 +919,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             NotFound: If the table does not exist in the Lakebase instance (pgcode 42P01).
             ProgrammingError: Re-raises the original error if it's not an undefined table error.
         """
-        pgcode = getattr(getattr(e, 'orig', None), 'pgcode', None)
-        postgres_undefined_table_error = '42P01'
+        pgcode = getattr(getattr(e, "orig", None), "pgcode", None)
+        postgres_undefined_table_error = "42P01"
         if pgcode == postgres_undefined_table_error:
             raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
         raise e
