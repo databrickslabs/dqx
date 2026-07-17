@@ -3,11 +3,12 @@ import pytest
 
 from databricks.labs.dqx.profiler.profile_builder import make_has_no_outliers_profile
 
+
 @pytest.mark.parametrize(
     "col_type",
     [(T.ByteType()), (T.IntegerType()), (T.LongType()), (T.ShortType()), (T.FloatType()), (T.DoubleType())],
 )
-def test_make_has_no_outliers_profile_empty_data_frame(spark,col_type):
+def test_make_has_no_outliers_profile_empty_data_frame(spark, col_type):
     """No profile when count_non_null is zero (early-exit path)."""
     df = spark.createDataFrame([], T.StructType([T.StructField("col", col_type)]))
     profiler_metrics = {"count_non_null": 0}
@@ -38,7 +39,7 @@ def test_make_has_no_outliers_profile_bounds_none(spark):
         (T.ShortType(), [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,), (10,), (1000,)]),
         (T.FloatType(), [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,), (10,), (1000,)]),
         (T.DoubleType(), [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,), (10,), (1000,)]),
-    ]
+    ],
 )
 def test_make_has_no_outliers_profile_outliers_below_threshold(spark, col_type, data):
     """
@@ -65,9 +66,9 @@ def test_make_has_no_outliers_profile_outliers_below_threshold(spark, col_type, 
         (T.ShortType(), [(1,), (2,), (3,), (4,), (100,), (200,), (300,)]),
         (T.FloatType(), [(1,), (2,), (3,), (4,), (100,), (200,), (300,)]),
         (T.DoubleType(), [(1,), (2,), (3,), (4,), (100,), (200,), (300,)]),
-    ]
+    ],
 )
-def test_make_has_no_outliers_profile_outliers_above_threshold(spark,col_type,data):
+def test_make_has_no_outliers_profile_outliers_above_threshold(spark, col_type, data):
     """
     Test expects no profile for the following case: 7 values with three extreme values.
     3 outliers out of 7 ≈ 43 %. The threshold configuration is 10 %, hence no profile is expected to return.
@@ -81,6 +82,7 @@ def test_make_has_no_outliers_profile_outliers_above_threshold(spark,col_type,da
     profile = make_has_no_outliers_profile(df, "col", col_type, profiler_metrics, profiler_options)
     assert profile is None
 
+
 @pytest.mark.parametrize(
     "col_type",
     [
@@ -90,7 +92,7 @@ def test_make_has_no_outliers_profile_outliers_above_threshold(spark,col_type,da
         (T.ShortType()),
         (T.FloatType()),
         (T.DoubleType()),
-    ]
+    ],
 )
 def test_make_has_no_outliers_profile_outliers_null_values(spark, col_type):
     """

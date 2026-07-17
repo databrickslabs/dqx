@@ -78,9 +78,13 @@ def test_profiler(spark, ws):
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
         ),
-        DQProfile(name='has_no_outliers', column='t1',
-                  description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
-                  parameters=None, filter=None),
+        DQProfile(
+            name='has_no_outliers',
+            column='t1',
+            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            parameters=None,
+            filter=None,
+        ),
         DQProfile(name="is_not_null", column="d1", description=None, parameters=None),
         DQProfile(
             name="min_max",
@@ -112,7 +116,7 @@ def test_profiler(spark, ws):
             description="Real min/max values were used",
             parameters={"min": date(2023, 1, 6), "max": date(2023, 1, 8)},
         ),
-        DQProfile(name="is_not_null", column="b1", description=None, parameters=None)
+        DQProfile(name="is_not_null", column="b1", description=None, parameters=None),
     ]
 
     assert len(stats.keys()) > 0
@@ -220,9 +224,13 @@ def test_profiler_rounding_midnight_behavior(spark, ws):
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
         ),
-        DQProfile(name='has_no_outliers', column='t1',
-                  description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
-                  parameters=None, filter=None),
+        DQProfile(
+            name='has_no_outliers',
+            column='t1',
+            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            parameters=None,
+            filter=None,
+        ),
         DQProfile(name="is_not_null", column="d1", description=None, parameters=None),
         DQProfile(
             name="min_max",
@@ -345,9 +353,13 @@ def test_profiler_non_default_profile_options(spark, ws):
             parameters={"min": 1, "max": 3},
             filter="t1 > 0",
         ),
-        DQProfile(name='has_no_outliers', column='t1',
-                  description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
-                  parameters=None, filter=None),
+        DQProfile(
+            name='has_no_outliers',
+            column='t1',
+            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            parameters=None,
+            filter=None,
+        ),
         DQProfile(
             name="is_not_empty",  # Column t2 contains null values
             column="t2",
@@ -459,9 +471,13 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
         ),
-        DQProfile(name='has_no_outliers', column='t1',
-                  description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
-                  parameters=None, filter=None),
+        DQProfile(
+            name='has_no_outliers',
+            column='t1',
+            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            parameters=None,
+            filter=None,
+        ),
         DQProfile(
             name="is_not_empty", column="t2", description=None, parameters={"trim_strings": False}
         ),  # t2 contains null values
@@ -565,9 +581,13 @@ def test_profiler_non_default_profile_options_with_rounding_enabled(spark, ws):
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
         ),
-        DQProfile(name='has_no_outliers', column='t1',
-                  description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
-                  parameters=None, filter=None),
+        DQProfile(
+            name='has_no_outliers',
+            column='t1',
+            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            parameters=None,
+            filter=None,
+        ),
         DQProfile(name="is_not_empty", column="t2", description=None, parameters={"trim_strings": False}),
         DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None),
         DQProfile(
@@ -1729,9 +1749,13 @@ def test_profile_with_dataset_filter(spark, ws):
             filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
             description="Real min/max values were used",
         ),
-        DQProfile(name='has_no_outliers', column='cost',
-                  description='Column cost has 0.0% of outliers (allowed: 1.0%). Lower boundary - -25.0, upper boundary - 325.0.',
-                  parameters=None, filter=None),
+        DQProfile(
+            name='has_no_outliers',
+            column='cost',
+            description='Column cost has 0.0% of outliers (allowed: 1.0%). Lower boundary - -25.0, upper boundary - 325.0.',
+            parameters=None,
+            filter=None,
+        ),
         DQProfile(
             name="is_not_null",
             column="next_scheduled_date",

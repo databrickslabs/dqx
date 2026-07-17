@@ -46,7 +46,7 @@ test_rules = [
         name="has_no_outliers",
         column="price",
         description="Price has no outliers",
-    )
+    ),
 ]
 
 
@@ -122,7 +122,7 @@ def test_generate_dq_rules(ws, spark):
             },
             "name": "price_has_no_outliers",
             "criticality": "error",
-        }
+        },
     ]
     assert expectations == expected, f"Actual expectations: {expectations}"
 
@@ -199,7 +199,7 @@ def test_generate_dq_rules_warn(ws, spark):
             },
             "name": "price_has_no_outliers",
             "criticality": "warn",
-        }
+        },
     ]
     assert expectations == expected, f"Actual expectations: {expectations}"
 
@@ -318,7 +318,7 @@ def test_generate_dq_rules_dataframe_filter(ws, spark):
             },
             "name": "price_has_no_outliers",
             "criticality": "error",
-        }
+        },
     ]
     assert expectations == expected
 
@@ -380,7 +380,7 @@ def test_generate_dq_rules_dataframe_filter_none(ws, spark):
             },
             "name": "price_has_no_outliers",
             "criticality": "error",
-        }
+        },
     ]
     assert expectations == expected
 
