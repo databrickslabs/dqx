@@ -18,10 +18,17 @@ type Props = {
   onChange: (next: AnyRow) => void;
   onDelete: () => void;
   readOnly?: boolean;
-  /** When provided (registry editor's first row), render this in place of the
-   * standard operator dropdown — the merged condition selector, which also
-   * hosts the escalate-to-SQL/native / change-rule-type affordances. */
-  operatorSlot?: ReactNode;
+  /** When provided (registry editor), render the operator cell via this callback
+   * instead of the standard OperatorDropdown — used to swap in the merged
+   * condition selector. Receives this row's family + operator getter/setter and
+   * whether it's the first row (row 0 hosts escalation/change-type; rows 2+ and
+   * aggregated rows are operators-only). Applies to both row and aggregated kinds. */
+  renderOperator?: (ctx: {
+    family: Family;
+    value: string;
+    onChange: (op: string) => void;
+    isFirst: boolean;
+  }) => ReactNode;
   /** Whether this row can be deleted. `false` hides the X — used to keep at
    * least one condition on the rule (a rule with zero conditions is invalid). */
   canDelete?: boolean;
@@ -34,7 +41,7 @@ function familyOf(name: string, declared: LowcodeColumnRef[]): Family {
 
 // Ported 1:1 from dqlake's LowcodeRow — one condition row: IF anchor / AND-OR
 // pill, column (or aggregate) picker, operator dropdown, value cell, delete.
-export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, readOnly, operatorSlot, canDelete = true }: Props) {
+export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, readOnly, renderOperator, canDelete = true }: Props) {
   const { t } = useTranslation();
   const family: Family =
     row.kind === "row"
@@ -132,7 +139,9 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
         />
       )}
 
-      {operatorSlot ?? <OperatorDropdown value={row.operator} family={family} onChange={setOperator} />}
+      {renderOperator
+        ? renderOperator({ family, value: row.operator, onChange: setOperator, isFirst })
+        : <OperatorDropdown value={row.operator} family={family} onChange={setOperator} />}
       <ValueCell operator={row.operator} family={family} value={row.value} onChange={setValue} />
 
       {!readOnly &&

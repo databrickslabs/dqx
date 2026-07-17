@@ -296,6 +296,7 @@ function ConditionSelector({
   currentLabel,
   operatorFamily,
   initialView,
+  operatorsOnly,
 }: {
   checkFunctions: ApiCheckFunctionDef[];
   currentSlots: RuleSlot[];
@@ -313,11 +314,17 @@ function ConditionSelector({
    * re-opening lands directly on that type's options instead of the root — the
    * back-arrow then returns to root to change type. Defaults to "root". */
   initialView?: ConditionSelectorView;
+  /** Operators-only mode: no root / no escalation to SQL/native / no
+   * change-rule-type. Used for the low-code SECONDARY condition rows (2+, incl.
+   * aggregated) whose operator cell is just an operator picker in the merged
+   * style — the rule type is fixed by then. Locks the view to "operators" and
+   * hides the back affordance. */
+  operatorsOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const isChanging = currentLabel !== undefined;
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<ConditionSelectorView>(initialView ?? "root");
+  const [view, setView] = useState<ConditionSelectorView>(operatorsOnly ? "operators" : initialView ?? "root");
   const [query, setQuery] = useState("");
   const shouldReduceMotion = useReducedMotion();
   const shortlist = useDecisionPointShortlist(checkFunctions, t);
@@ -325,10 +332,11 @@ function ConditionSelector({
   const [visible, setVisible] = useState(true);
 
   // On each (re)open, land in the caller's initial view — the matching drill-in
-  // once a type is chosen, else the root.
+  // once a type is chosen, else the root. operators-only always opens on the
+  // operators list.
   useEffect(() => {
-    if (open) setView(initialView ?? "root");
-  }, [open, initialView]);
+    if (open) setView(operatorsOnly ? "operators" : initialView ?? "root");
+  }, [open, initialView, operatorsOnly]);
 
   // Condition Builder operators for the anchor column, grouped by type with
   // section headings (mirrors the low-code OperatorDropdown). For a typed
@@ -642,14 +650,19 @@ function ConditionSelector({
               // (via operatorFamily). Monospace like the low-code row. Picking
               // one enters low-code mode with that operator on the first row.
               <>
-                <button
-                  type="button"
-                  onClick={() => setView("root")}
-                  className="flex w-full items-center gap-1.5 px-2 py-1.5 text-[11px] font-medium text-muted-foreground border-b hover:text-foreground"
-                >
-                  <ArrowLeft className="h-3 w-3 shrink-0" />
-                  {t("rulesRegistry.coreConditionBuilder")}
-                </button>
+                {/* Back-to-root affordance (change rule type) — hidden in
+                    operators-only mode (secondary low-code rows have no rule
+                    type to change). */}
+                {!operatorsOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setView("root")}
+                    className="flex w-full items-center gap-1.5 px-2 py-1.5 text-[11px] font-medium text-muted-foreground border-b hover:text-foreground"
+                  >
+                    <ArrowLeft className="h-3 w-3 shrink-0" />
+                    {t("rulesRegistry.coreConditionBuilder")}
+                  </button>
+                )}
                 {(() => {
                   const q = query.trim().toLowerCase();
                   const filtered = operatorGroups
@@ -3141,27 +3154,44 @@ export function RegistryRuleFormDialog({
         )}
         {/* Low-Code builder renders INSIDE the Condition section (directly under
             the header, same as the anchor row above) so the IF row sits at the
-            identical vertical position across every rule type. Its first row's
-            operator cell is the merged ConditionSelector (escalate / change
-            type). Advanced + THEN THE ROW follow as their own block below. */}
+            identical vertical position across every rule type. EVERY row's
+            operator cell (incl. aggregated) is the merged ConditionSelector: the
+            FIRST row hosts escalation / change-rule-type; secondary rows (2+)
+            are operators-only. Advanced + THEN THE ROW follow below. */}
         {decisionPointChosen && mode === "lowcode" && (
           <LowcodeBuilder
             ast={lowcodeAst}
             onChange={setLowcodeAst}
             declaredColumns={lowcodeColumns}
             readOnly={readOnly}
-            firstRowOperatorSlot={
-              <ConditionSelector
-                checkFunctions={checkFunctions}
-                currentSlots={currentSlots}
-                operatorFamily={anchorOperatorFamily}
-                onSelect={requestModeChange}
-                disabled={readOnly}
-                currentLabel={lowcodeAst.rows[0]?.operator || t("rulesRegistry.coreConditionBuilder")}
-                // Already in Condition Builder: re-open straight into the
-                // operators list (back-arrow returns to root to change type).
-                initialView="operators"
-              />
+            renderOperator={({ family, value, onChange, isFirst }) =>
+              isFirst ? (
+                <ConditionSelector
+                  checkFunctions={checkFunctions}
+                  currentSlots={currentSlots}
+                  operatorFamily={anchorOperatorFamily}
+                  onSelect={requestModeChange}
+                  disabled={readOnly}
+                  currentLabel={value || t("rulesRegistry.coreConditionBuilder")}
+                  // Already in Condition Builder: re-open straight into the
+                  // operators list (back-arrow returns to root to change type).
+                  initialView="operators"
+                />
+              ) : (
+                // Secondary row: operators-only merged dropdown, keyed to THIS
+                // row's column family, setting THIS row's operator.
+                <ConditionSelector
+                  checkFunctions={checkFunctions}
+                  currentSlots={currentSlots}
+                  operatorFamily={family}
+                  onSelect={(choice) => {
+                    if (choice.operator) onChange(choice.operator);
+                  }}
+                  disabled={readOnly}
+                  currentLabel={value || t("rulesRegistry.lowcodeOperatorPlaceholder")}
+                  operatorsOnly
+                />
+              )
             }
           />
         )}

@@ -5,16 +5,24 @@ import { Plus } from "lucide-react";
 import { LowcodeRow } from "./LowcodeRow";
 import type { AnyRow, LowcodeAstV2 } from "@/lib/lowcodeAst";
 import type { LowcodeColumnRef } from "@/lib/lowcodeCompile";
+import type { Family } from "@/lib/lowcodeOperators";
 
 type Props = {
   ast: LowcodeAstV2;
   onChange: (next: LowcodeAstV2) => void;
   declaredColumns: LowcodeColumnRef[];
   readOnly?: boolean;
-  /** Rendered in the first row's operator-cell position instead of the standard
-   * operator dropdown — the registry editor passes its merged condition selector
-   * here so the IF row's operator cell doubles as the rule-type switch. */
-  firstRowOperatorSlot?: ReactNode;
+  /** Renders the operator cell for EACH condition row (row + aggregated) via the
+   * registry editor's merged condition selector. Receives this row's family +
+   * operator getter/setter and whether it's the first row (row 0 hosts
+   * escalation/change-type; rows 2+ are operators-only). When omitted, rows use
+   * the standard OperatorDropdown. */
+  renderOperator?: (ctx: {
+    family: Family;
+    value: string;
+    onChange: (op: string) => void;
+    isFirst: boolean;
+  }) => ReactNode;
 };
 
 function defaultColumnRef(declared: LowcodeColumnRef[]): string {
@@ -23,7 +31,7 @@ function defaultColumnRef(declared: LowcodeColumnRef[]): string {
 
 // Ported 1:1 from dqlake's LowcodeBuilder — the row stack with "Add
 // condition" / "Add aggregated condition" actions.
-export function LowcodeBuilder({ ast, onChange, declaredColumns, readOnly, firstRowOperatorSlot }: Props) {
+export function LowcodeBuilder({ ast, onChange, declaredColumns, readOnly, renderOperator }: Props) {
   const { t } = useTranslation();
 
   const addRow = () => {
@@ -85,7 +93,7 @@ export function LowcodeBuilder({ ast, onChange, declaredColumns, readOnly, first
           onChange={(r) => updateRow(i, r)}
           onDelete={() => deleteRow(i)}
           readOnly={readOnly}
-          operatorSlot={i === 0 ? firstRowOperatorSlot : undefined}
+          renderOperator={renderOperator}
           // A rule must keep at least one condition — hide the X on the last
           // remaining row.
           canDelete={ast.rows.length > 1}

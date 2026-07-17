@@ -110,9 +110,11 @@ function Layout() {
             </SidebarMenuItem>
 
             {/* Divider separating the authoring group (Rules / Tables /
-                Spaces) from the observability group (Runs History / Results)
-                — a horizontal rule so the two concerns read as distinct. */}
-            <SidebarSeparator className="my-1" />
+                Spaces) from the observability group (Runs History / Results).
+                mx-0 so it spans the same width as the full-width nav buttons
+                (both sit inside the group's p-2) instead of the default mx-2,
+                which pushed its right end past the buttons toward the edge. */}
+            <SidebarSeparator className="mx-0 w-full my-1" />
 
             {/* Runs History — visible to all */}
             <SidebarMenuItem>
