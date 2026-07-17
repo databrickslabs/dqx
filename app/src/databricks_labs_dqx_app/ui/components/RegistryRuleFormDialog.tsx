@@ -3480,13 +3480,16 @@ export function RegistryRuleFormDialog({
               SQL mode is just the row filter. */}
           <AdvancedDisclosure label={t("rulesRegistry.advancedSectionLabel")} defaultOpen={!!filter}>
             {/* Row filter — a SQL WHERE predicate applied before the rule
-                condition. Supports {{slot}} placeholders. */}
+                condition. In SQL mode this uses the SAME code editor as the
+                predicate (slot autocomplete + linting), not a plain input —
+                consistent with authoring the rest of the rule in SQL. Supports
+                {{slot}} placeholders. */}
             <div className="space-y-1.5">
               <Label className="text-xs">{t("rulesRegistry.filterLabel")}</Label>
-              <Input
-                className="h-7 text-xs font-mono"
+              <PredicateEditor
                 value={filter}
-                onChange={(e) => setFilter(e.target.value)}
+                onChange={setFilter}
+                declaredColumns={sqlSlots}
                 placeholder={t("rulesRegistry.filterPlaceholder")}
                 disabled={readOnly}
               />
