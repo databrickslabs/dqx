@@ -10055,7 +10055,7 @@ def test_apply_checks_with_has_valid_schema_special_char_columns_are_valid(ws, s
             check_func=check_funcs.has_valid_schema,
             check_func_kwargs={
                 "expected_schema": "id int, `Customer Name` string, `Ääkkönen` int",
-                "columns": ["Customer Name", "Ääkkönen"],
+                "columns": ["id", "Customer Name", "Ääkkönen"],
                 "strict": False,
             },
         ),
