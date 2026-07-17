@@ -21,7 +21,7 @@ from databricks.labs.dqx.check_funcs import (
     compare_datasets,
     is_data_fresh_per_time_window,
     has_valid_schema,
-    aggr_matches_upstream_dataset,
+    aggr_matches_dataset,
 )
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError
@@ -1629,12 +1629,12 @@ def test_is_aggr_non_curated_aggregate_with_warning(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_ref_df_name_match(spark: SparkSession):
+def test_aggr_matches_dataset_ref_df_name_match(spark: SparkSession):
     """Row counts match against a reference DataFrame passed via ref_df_name -> no violation."""
     test_df = spark.createDataFrame([["a", 1], ["b", 2], ["c", 3]], SCHEMA)
     ref_df = spark.createDataFrame([["x", 1], ["y", 2], ["z", 3]], SCHEMA)
 
-    checks = [aggr_matches_upstream_dataset("a", ref_df_name="ref_df", aggr_type="count")]
+    checks = [aggr_matches_dataset("a", ref_df_name="ref_df", aggr_type="count")]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
     expected = spark.createDataFrame(
@@ -1649,12 +1649,12 @@ def test_aggr_matches_upstream_dataset_ref_df_name_match(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_ref_df_name_mismatch(spark: SparkSession):
+def test_aggr_matches_dataset_ref_df_name_mismatch(spark: SparkSession):
     """Row counts differ against a reference DataFrame -> violation with both counts in the message."""
     test_df = spark.createDataFrame([["a", 1], ["b", 2]], SCHEMA)
     ref_df = spark.createDataFrame([["x", 1], ["y", 2], ["z", 3]], SCHEMA)
 
-    checks = [aggr_matches_upstream_dataset("a", ref_df_name="ref_df", aggr_type="count")]
+    checks = [aggr_matches_dataset("a", ref_df_name="ref_df", aggr_type="count")]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
     expected_message = "Count value 2 in column 'a' is not equal to DataFrame 'ref_df' column 'a' limit: 3"
@@ -1669,7 +1669,7 @@ def test_aggr_matches_upstream_dataset_ref_df_name_mismatch(spark: SparkSession)
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_with_tolerance(spark: SparkSession):
+def test_aggr_matches_dataset_with_tolerance(spark: SparkSession):
     """Sum comparison via a differently-named ref_column: passes within abs_tolerance, flags outside it."""
     checked_schema = "a: string, b: int, c: int"
     test_df = spark.createDataFrame([["a", 50, 1000], ["b", 50, 1000]], checked_schema)
@@ -1678,10 +1678,10 @@ def test_aggr_matches_upstream_dataset_with_tolerance(spark: SparkSession):
     ref_df = spark.createDataFrame([["p", 95, 500], ["q", 10, 500]], ref_schema)
 
     within_tolerance = [
-        aggr_matches_upstream_dataset("b", ref_df_name="ref_df", ref_column="amount", aggr_type="sum", abs_tolerance=10)
+        aggr_matches_dataset("b", ref_df_name="ref_df", ref_column="amount", aggr_type="sum", abs_tolerance=10)
     ]
     outside_tolerance = [
-        aggr_matches_upstream_dataset("b", ref_df_name="ref_df", ref_column="amount", aggr_type="sum", abs_tolerance=1)
+        aggr_matches_dataset("b", ref_df_name="ref_df", ref_column="amount", aggr_type="sum", abs_tolerance=1)
     ]
 
     actual_within = _apply_checks(test_df, within_tolerance, ref_dfs={"ref_df": ref_df}, spark=spark)
@@ -1704,13 +1704,13 @@ def test_aggr_matches_upstream_dataset_with_tolerance(spark: SparkSession):
     assertDataFrameEqual(actual_outside, expected_outside, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_row_filters(spark: SparkSession):
+def test_aggr_matches_dataset_row_filters(spark: SparkSession):
     """row_filter/ref_row_filter exclude non-matching rows from the count on both sides before comparing."""
     test_df = spark.createDataFrame([["a", 1], ["b", None], ["c", 3]], SCHEMA)
     ref_df = spark.createDataFrame([["x", 1], ["y", 3], ["z", None]], SCHEMA)
 
     checks = [
-        aggr_matches_upstream_dataset(
+        aggr_matches_dataset(
             "a",
             ref_df_name="ref_df",
             aggr_type="count",
@@ -1732,7 +1732,7 @@ def test_aggr_matches_upstream_dataset_row_filters(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_star_column_with_row_filter(spark: SparkSession):
+def test_aggr_matches_dataset_star_column_with_row_filter(spark: SparkSession):
     """column='*' (count(*) over all rows) combined with row_filter counts filtered rows correctly, no violation."""
     # 5 rows total, but only 3 have b is not null
     test_df = spark.createDataFrame([["a", 1], ["b", None], ["c", 3], ["d", None], ["e", 5]], SCHEMA)
@@ -1740,7 +1740,7 @@ def test_aggr_matches_upstream_dataset_star_column_with_row_filter(spark: SparkS
     ref_df = spark.createDataFrame([["v", 1], ["w", 2], ["x", 3], ["y", None]], SCHEMA)
 
     checks = [
-        aggr_matches_upstream_dataset(
+        aggr_matches_dataset(
             "*",
             ref_df_name="ref_df",
             aggr_type="count",
@@ -1765,7 +1765,7 @@ def test_aggr_matches_upstream_dataset_star_column_with_row_filter(spark: SparkS
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_star_column_with_row_filter_mismatch(spark: SparkSession):
+def test_aggr_matches_dataset_star_column_with_row_filter_mismatch(spark: SparkSession):
     """column='*' with row_filter flags a violation when filtered row counts differ across sides."""
     # 5 rows total, only 3 have b is not null
     test_df = spark.createDataFrame([["a", 1], ["b", None], ["c", 3], ["d", None], ["e", 5]], SCHEMA)
@@ -1773,7 +1773,7 @@ def test_aggr_matches_upstream_dataset_star_column_with_row_filter_mismatch(spar
     ref_df = spark.createDataFrame([["v", 1], ["w", 2], ["x", 3], ["y", 4], ["z", 5]], SCHEMA)
 
     checks = [
-        aggr_matches_upstream_dataset(
+        aggr_matches_dataset(
             "*",
             ref_df_name="ref_df",
             aggr_type="count",
@@ -1799,12 +1799,12 @@ def test_aggr_matches_upstream_dataset_star_column_with_row_filter_mismatch(spar
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_ref_column_override(spark: SparkSession):
+def test_aggr_matches_dataset_ref_column_override(spark: SparkSession):
     """ref_column targets a differently-named column on the reference side and is correctly aggregated."""
     test_df = spark.createDataFrame([["p", 7, 500], ["q", 13, 500]], "a: string, b: int, c: int")
     ref_df = spark.createDataFrame([["m", 8, 900], ["n", 12, 900]], "x: string, y: int, z: int")
 
-    checks = [aggr_matches_upstream_dataset("b", ref_df_name="ref_df", ref_column="y", aggr_type="sum")]
+    checks = [aggr_matches_dataset("b", ref_df_name="ref_df", ref_column="y", aggr_type="sum")]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
     # _apply_checks selects only "a", "b", plus the condition column - "c" is not part of the output
@@ -1816,7 +1816,7 @@ def test_aggr_matches_upstream_dataset_ref_column_override(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_empty_upstream_sum_flags(spark: SparkSession):
+def test_aggr_matches_dataset_empty_upstream_sum_flags(spark: SparkSession):
     """Regression: sum(b) over an empty upstream is NULL, which must still be flagged as a mismatch."""
     # Regression: an empty upstream yields sum(b)=NULL. Without null-safe handling the tolerance
     # comparison would evaluate to NULL, making the violation condition NULL (no violation) and
@@ -1824,7 +1824,7 @@ def test_aggr_matches_upstream_dataset_empty_upstream_sum_flags(spark: SparkSess
     test_df = spark.createDataFrame([["a", 1], ["b", 2]], SCHEMA)
     ref_df = spark.createDataFrame([], SCHEMA)
 
-    checks = [aggr_matches_upstream_dataset("b", ref_df_name="ref_df", aggr_type="sum")]
+    checks = [aggr_matches_dataset("b", ref_df_name="ref_df", aggr_type="sum")]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
     # concat_ws skips the NULL upstream metric, leaving a trailing "limit: " with nothing after it
@@ -1837,13 +1837,13 @@ def test_aggr_matches_upstream_dataset_empty_upstream_sum_flags(spark: SparkSess
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_empty_upstream_count_flags(spark: SparkSession):
+def test_aggr_matches_dataset_empty_upstream_count_flags(spark: SparkSession):
     """count(a) over an empty upstream is 0 (not NULL), and is correctly flagged as a mismatch."""
     # count is null-safe (empty upstream -> 0, not NULL) so a mismatch is flagged directly.
     test_df = spark.createDataFrame([["a", 1], ["b", 2]], SCHEMA)
     ref_df = spark.createDataFrame([], SCHEMA)
 
-    checks = [aggr_matches_upstream_dataset("a", ref_df_name="ref_df", aggr_type="count")]
+    checks = [aggr_matches_dataset("a", ref_df_name="ref_df", aggr_type="count")]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
     expected_message = "Count value 2 in column 'a' is not equal to DataFrame 'ref_df' column 'a' limit: 0"
@@ -1855,14 +1855,14 @@ def test_aggr_matches_upstream_dataset_empty_upstream_count_flags(spark: SparkSe
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_count_distinct(spark: SparkSession):
+def test_aggr_matches_dataset_count_distinct(spark: SparkSession):
     """count_distinct compares distinct values (not row counts) across differently-named columns."""
     # Distinct value counts differ across sides (3 distinct b vs 2 distinct y) even though the row
     # counts match, so the check must compare distinct values (not rows) and flag the mismatch.
     test_df = spark.createDataFrame([["a", 1], ["b", 2], ["c", 3]], SCHEMA)
     ref_df = spark.createDataFrame([["m", 5], ["n", 5], ["o", 6]], "x: string, y: int")
 
-    checks = [aggr_matches_upstream_dataset("b", ref_df_name="ref_df", ref_column="y", aggr_type="count_distinct")]
+    checks = [aggr_matches_dataset("b", ref_df_name="ref_df", ref_column="y", aggr_type="count_distinct")]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
     expected_message = "Distinct count value 3 in column 'b' is not equal to DataFrame 'ref_df' column 'y' limit: 2"
@@ -1874,7 +1874,7 @@ def test_aggr_matches_upstream_dataset_count_distinct(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_with_ref_table(spark: SparkSession, make_schema, make_random):
+def test_aggr_matches_dataset_with_ref_table(spark: SparkSession, make_schema, make_random):
     """ref_table (a real Unity Catalog table) is read and compared the same way as ref_df_name."""
     test_df = spark.createDataFrame([["a", 1], ["b", 2]], SCHEMA)
     ref_df = spark.createDataFrame([["x", 1], ["y", 2], ["z", 3]], SCHEMA)
@@ -1884,7 +1884,7 @@ def test_aggr_matches_upstream_dataset_with_ref_table(spark: SparkSession, make_
     ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)
 
-    condition, apply = aggr_matches_upstream_dataset("a", ref_table=ref_table, aggr_type="count")
+    condition, apply = aggr_matches_dataset("a", ref_table=ref_table, aggr_type="count")
     actual = apply(test_df, spark, {}).select("a", "b", condition)
 
     expected_message = f"Count value 2 in column 'a' is not equal to table '{ref_table}' column 'a' limit: 3"
@@ -1896,26 +1896,26 @@ def test_aggr_matches_upstream_dataset_with_ref_table(spark: SparkSession, make_
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_ref_params_missing():
+def test_aggr_matches_dataset_ref_params_missing():
     """Neither ref_df_name nor ref_table provided -> MissingParameterError."""
     with pytest.raises(
         MissingParameterError, match="Either 'ref_df_name' or 'ref_table' is required but neither was provided."
     ):
-        aggr_matches_upstream_dataset("a")
+        aggr_matches_dataset("a")
 
 
-def test_aggr_matches_upstream_dataset_ref_params_both_provided():
+def test_aggr_matches_dataset_ref_params_both_provided():
     """Both ref_df_name and ref_table provided -> InvalidParameterError."""
     with pytest.raises(InvalidParameterError, match="Both 'ref_df_name' and 'ref_table' were provided"):
-        aggr_matches_upstream_dataset("a", ref_df_name="ref_df", ref_table="catalog.schema.table")
+        aggr_matches_dataset("a", ref_df_name="ref_df", ref_table="catalog.schema.table")
 
 
-def test_aggr_matches_upstream_dataset_group_by_match(spark: SparkSession):
+def test_aggr_matches_dataset_group_by_match(spark: SparkSession):
     """Per-group counts match on both sides via group_by -> no violation for any group."""
     test_df = spark.createDataFrame([["x", 1], ["x", 2], ["y", 3], ["y", 4]], SCHEMA)
     ref_df = spark.createDataFrame([["x", 10], ["x", 20], ["y", 30], ["y", 40]], SCHEMA)
 
-    checks = [aggr_matches_upstream_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
+    checks = [aggr_matches_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
     expected = spark.createDataFrame(
@@ -1926,12 +1926,12 @@ def test_aggr_matches_upstream_dataset_group_by_match(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_group_by_mismatch(spark: SparkSession):
+def test_aggr_matches_dataset_group_by_mismatch(spark: SparkSession):
     """Per-group counts differ for one group only -> only that group's rows are flagged."""
     test_df = spark.createDataFrame([["x", 1], ["x", 2], ["y", 3]], SCHEMA)
     ref_df = spark.createDataFrame([["x", 10], ["x", 20], ["y", 30], ["y", 40]], SCHEMA)
 
-    checks = [aggr_matches_upstream_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
+    checks = [aggr_matches_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
     expected_message_y = (
@@ -1945,12 +1945,12 @@ def test_aggr_matches_upstream_dataset_group_by_mismatch(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_ref_group_by_different_names(spark: SparkSession):
+def test_aggr_matches_dataset_ref_group_by_different_names(spark: SparkSession):
     """ref_group_by targets a differently-named group column on the reference side, by position."""
     test_df = spark.createDataFrame([["x", 10], ["x", 20], ["y", 5]], SCHEMA)
     ref_df = spark.createDataFrame([["x", 30], ["y", 100]], "r: string, amt: int")
 
-    condition, apply_fn = aggr_matches_upstream_dataset(
+    condition, apply_fn = aggr_matches_dataset(
         "b", ref_df_name="ref_df", ref_column="amt", aggr_type="sum", group_by=["a"], ref_group_by=["r"]
     )
     actual = apply_fn(test_df, spark, {"ref_df": ref_df}).select("a", "b", condition)
@@ -1968,12 +1968,12 @@ def test_aggr_matches_upstream_dataset_ref_group_by_different_names(spark: Spark
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_group_by_null_key_match(spark: SparkSession):
+def test_aggr_matches_dataset_group_by_null_key_match(spark: SparkSession):
     """Regression: a legitimately NULL group_by key must match via null-safe join, not be treated as a mismatch."""
     test_df = spark.createDataFrame([[None, 1], [None, 2], ["y", 3]], SCHEMA)
     ref_df = spark.createDataFrame([[None, 10], [None, 20], ["y", 30]], SCHEMA)
 
-    checks = [aggr_matches_upstream_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
+    checks = [aggr_matches_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
     expected = spark.createDataFrame(
@@ -1984,12 +1984,12 @@ def test_aggr_matches_upstream_dataset_group_by_null_key_match(spark: SparkSessi
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_group_by_null_key_mismatch(spark: SparkSession):
+def test_aggr_matches_dataset_group_by_null_key_mismatch(spark: SparkSession):
     """A NULL group_by key present on both sides with differing per-group metrics is still flagged."""
     test_df = spark.createDataFrame([[None, 1], [None, 2], ["y", 3]], SCHEMA)
     ref_df = spark.createDataFrame([[None, 10], ["y", 30]], SCHEMA)
 
-    checks = [aggr_matches_upstream_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
+    checks = [aggr_matches_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
     expected_message_null = (
@@ -2003,12 +2003,12 @@ def test_aggr_matches_upstream_dataset_group_by_null_key_mismatch(spark: SparkSe
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_group_by_group_only_in_checked(spark: SparkSession):
+def test_aggr_matches_dataset_group_by_group_only_in_checked(spark: SparkSession):
     """A group present in the checked DataFrame but absent from the reference yields a NULL limit -> flagged."""
     test_df = spark.createDataFrame([["x", 1], ["z", 5]], SCHEMA)
     ref_df = spark.createDataFrame([["x", 10]], SCHEMA)
 
-    checks = [aggr_matches_upstream_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
+    checks = [aggr_matches_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
     # concat_ws skips the NULL upstream metric, leaving a trailing "limit: " with nothing after it
@@ -2023,14 +2023,12 @@ def test_aggr_matches_upstream_dataset_group_by_group_only_in_checked(spark: Spa
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_group_by_with_tolerance(spark: SparkSession):
+def test_aggr_matches_dataset_group_by_with_tolerance(spark: SparkSession):
     """Grouped sum comparison: a per-group diff within abs_tolerance passes, outside it is flagged."""
     test_df = spark.createDataFrame([["x", 50], ["x", 50], ["y", 50], ["y", 50]], SCHEMA)
     ref_df = spark.createDataFrame([["x", 52], ["x", 53], ["y", 100], ["y", 100]], SCHEMA)
 
-    checks = [
-        aggr_matches_upstream_dataset("b", ref_df_name="ref_df", aggr_type="sum", group_by=["a"], abs_tolerance=10)
-    ]
+    checks = [aggr_matches_dataset("b", ref_df_name="ref_df", aggr_type="sum", group_by=["a"], abs_tolerance=10)]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
     # group "x": checked sum=100, ref sum=105, diff=5 <= 10 -> passes
@@ -2051,16 +2049,14 @@ def test_aggr_matches_upstream_dataset_group_by_with_tolerance(spark: SparkSessi
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_group_by_with_ref_row_filter(spark: SparkSession):
+def test_aggr_matches_dataset_group_by_with_ref_row_filter(spark: SparkSession):
     """ref_row_filter is applied before the reference-side grouped aggregation."""
     test_df = spark.createDataFrame([["x", 1], ["x", 2], ["y", 3]], SCHEMA)
     # the extra x row (b=99) would break the match if not excluded by ref_row_filter first
     ref_df = spark.createDataFrame([["x", 10], ["x", 20], ["x", 99], ["y", 30]], SCHEMA)
 
     checks = [
-        aggr_matches_upstream_dataset(
-            "b", ref_df_name="ref_df", aggr_type="count", group_by=["a"], ref_row_filter="b < 50"
-        )
+        aggr_matches_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"], ref_row_filter="b < 50")
     ]
     actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
 
@@ -2072,16 +2068,16 @@ def test_aggr_matches_upstream_dataset_group_by_with_ref_row_filter(spark: Spark
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_aggr_matches_upstream_dataset_ref_group_by_without_group_by():
+def test_aggr_matches_dataset_ref_group_by_without_group_by():
     """ref_group_by provided without group_by -> InvalidParameterError."""
     with pytest.raises(InvalidParameterError, match="'ref_group_by' was provided without 'group_by'"):
-        aggr_matches_upstream_dataset("a", ref_df_name="ref_df", ref_group_by=["x"])
+        aggr_matches_dataset("a", ref_df_name="ref_df", ref_group_by=["x"])
 
 
-def test_aggr_matches_upstream_dataset_group_by_length_mismatch():
+def test_aggr_matches_dataset_group_by_length_mismatch():
     """group_by and ref_group_by lengths differ -> InvalidParameterError."""
     with pytest.raises(InvalidParameterError, match="'group_by' has 2 entries but 'ref_group_by' has 1"):
-        aggr_matches_upstream_dataset("a", ref_df_name="ref_df", group_by=["a", "b"], ref_group_by=["x"])
+        aggr_matches_dataset("a", ref_df_name="ref_df", group_by=["a", "b"], ref_group_by=["x"])
 
 
 def test_dataset_compare(spark: SparkSession, set_utc_timezone):

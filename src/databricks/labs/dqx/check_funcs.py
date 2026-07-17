@@ -2062,7 +2062,7 @@ def has_no_aggr_outliers(
 
 
 @register_rule("dataset")
-def aggr_matches_upstream_dataset(
+def aggr_matches_dataset(
     column: str | Column,
     ref_table: str | None = None,
     ref_df_name: str | None = None,

@@ -286,14 +286,12 @@ def test_has_valid_schema_parameter_validation(expected_schema, ref_df_name, ref
         ),
     ],
 )
-def test_aggr_matches_upstream_dataset_ref_params_exceptions(
-    ref_df_name, ref_table, expected_exception, expected_message
-):
+def test_aggr_matches_dataset_ref_params_exceptions(ref_df_name, ref_table, expected_exception, expected_message):
     """ref_df_name/ref_table must be exactly one of the two, otherwise the rule fails to build."""
     with pytest.raises(expected_exception, match=expected_message):
         DQDatasetRule(
             criticality="warn",
-            check_func=check_funcs.aggr_matches_upstream_dataset,
+            check_func=check_funcs.aggr_matches_dataset,
             column="id",
             check_func_kwargs={
                 "ref_df_name": ref_df_name,
@@ -310,14 +308,14 @@ def test_aggr_matches_upstream_dataset_ref_params_exceptions(
         (-1, -1),
     ],
 )
-def test_aggr_matches_upstream_dataset_invalid_tolerance_exceptions(abs_tolerance, rel_tolerance):
+def test_aggr_matches_dataset_invalid_tolerance_exceptions(abs_tolerance, rel_tolerance):
     """Negative abs_tolerance/rel_tolerance must be rejected at rule-build time."""
     with pytest.raises(
         InvalidParameterError, match="Absolute and/or relative tolerances if provided must be non-negative"
     ):
         DQDatasetRule(
             criticality="warn",
-            check_func=check_funcs.aggr_matches_upstream_dataset,
+            check_func=check_funcs.aggr_matches_dataset,
             column="id",
             check_func_kwargs={
                 "ref_table": "catalog.schema.ref_table",
