@@ -60,15 +60,15 @@ Available check functions:
 _RULE_PROPOSAL_SYSTEM_TEMPLATE = """\
 You are a data quality rule design assistant for the DQX Rules Registry. Given a business \
 description of a data quality requirement (and optional table schema/sample data), propose \
-ONE reusable rule in "{mode}" mode.
+ONE reusable {mode_label} rule.
 
 Return ONLY a JSON object with these fields:
   - "name": a short human-readable rule name (max 80 chars)
   - "description": a one-sentence description of what the rule checks
   - "dimension": one of Validity, Completeness, Accuracy, Consistency, Uniqueness, Timeliness
   - "severity": one of Low, Medium, High, Critical
-  - "polarity": "pass" or "fail" (use "pass" for dqx_native; for sql, "pass" means the SQL \
-predicate must be true for a row to pass)
+  - "polarity": "pass" or "fail" (use "pass" for a Basic Rules rule; for a SQL rule, "pass" \
+means the SQL predicate must be true for a row to pass)
   - "definition": {definition_shape}{columns_field}
 
 Guidelines:
@@ -80,6 +80,11 @@ Available check functions:
 
 _DQX_NATIVE_DEFINITION_SHAPE = '{"function": "<check function name>", "arguments": {<arg name>: <value>, ...}}'
 _SQL_DEFINITION_SHAPE = '{"sql_query": "<a SELECT-only predicate expression, no DML/DDL>"}'
+
+# Friendly, user-facing names for each internal mode id — used only in the
+# human-readable PROSE the model reads (the internal ids "dqx_native"/"sql"/
+# "lowcode" remain the app-wide contract; see parse_rule_type_intent).
+_MODE_LABELS = {"dqx_native": "Basic Rules", "sql": "SQL", "lowcode": "Custom Checks"}
 
 # Low-code proposal prompt (B2-132). Ported from dqlake's `_GENERATE_LOWCODE_SYSTEM`
 # and adapted to DQX: the model emits a low-code AST (`rows` + `joins`) plus the
@@ -93,7 +98,7 @@ _SQL_DEFINITION_SHAPE = '{"sql_query": "<a SELECT-only predicate expression, no 
 _LOWCODE_PROPOSAL_SYSTEM_TEMPLATE = """\
 You are a data quality rule design assistant for the DQX Rules Registry. Given a business \
 description of a data quality requirement (and optional table schema/sample data), propose \
-ONE reusable rule as a LOW-CODE rule expressed as a structured AST.
+ONE reusable Custom Checks rule expressed as a structured AST.
 
 Return ONLY a JSON object with these fields:
   - "name": a short human-readable rule name (max 80 chars)
@@ -214,15 +219,25 @@ _INTENT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(rf"\bsql\s+{_RULE_KIND}\b|\b{_RULE_KIND}\s+(?:in|using|with|as)\s+sql\b", re.IGNORECASE),
     ),
     (
+        # "Custom Checks" is the friendly name for the lowcode mode; the old
+        # "low-code" / "condition builder" phrasings still route here too.
         "lowcode",
-        re.compile(rf"\blow[\s-]?code\s+{_RULE_KIND}\b|\blow[\s-]?code\b(?=.*\b{_RULE_KIND}\b)", re.IGNORECASE),
+        re.compile(
+            rf"\blow[\s-]?code\s+{_RULE_KIND}\b"
+            rf"|\blow[\s-]?code\b(?=.*\b{_RULE_KIND}\b)"
+            rf"|\bcustom\s+(?:condition|{_RULE_KIND})\b",
+            re.IGNORECASE,
+        ),
     ),
     (
+        # "Basic Rules" is the friendly name for the dqx_native mode; the old
+        # "native" / "built-in function" phrasings still route here too.
         "dqx_native",
         re.compile(
             rf"\b(?:dqx[\s-]?)?native\s+{_RULE_KIND}\b"
             rf"|\bbuilt[\s-]?in\s+(?:function|{_RULE_KIND})\b"
-            rf"|\bnative\s+(?:function|{_RULE_KIND})\b",
+            rf"|\bnative\s+(?:function|{_RULE_KIND})\b"
+            rf"|\bbasic\s+{_RULE_KIND}\b",
             re.IGNORECASE,
         ),
     ),
@@ -251,6 +266,54 @@ def parse_rule_type_intent(description: str) -> str | None:
         if pattern.search(description):
             return mode
     return None
+
+
+# High-signal phrases that a single named basic (``dqx_native``) check function
+# expresses crisply and directly. When a description clearly asks for one of
+# these, the built-in check is a better, tidier rule than a hand-rolled
+# low-code / SQL equivalent — so generation tries ``dqx_native`` FIRST for these
+# (instead of the usual low-code-first cascade), while still falling through to
+# low-code and SQL if the model can't produce a valid basic check.
+#
+# Deliberately CONSERVATIVE — only distinctive concepts whose meaning maps
+# unambiguously onto one built-in check (e.g. "unique"/"duplicate" -> is_unique)
+# are listed. Generic phrasing keeps the low-code-first default so this never
+# steals rules the low-code builder should own.
+_BASIC_CHECK_SIGNALS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\buniqu\w*\b", re.IGNORECASE),  # unique / uniqueness / uniquely -> is_unique
+    re.compile(r"\bduplicat\w*\b", re.IGNORECASE),  # duplicate(s) / duplication -> is_unique
+    re.compile(r"\boutlier\w*\b", re.IGNORECASE),  # outlier(s) -> has_no_outliers
+    re.compile(r"\banomal\w*\b", re.IGNORECASE),  # anomaly / anomalies -> has_no_row_anomalies
+)
+
+
+def prefers_basic_check(description: str) -> bool:
+    """Whether a description closely matches a named basic (``dqx_native``) check.
+
+    Pure and case-insensitive. Returns ``True`` only for a clear, distinctive
+    match to a concept a single built-in check expresses crisply (see
+    :data:`_BASIC_CHECK_SIGNALS`) — e.g. "values must be unique" -> ``is_unique``
+    — so :func:`generate_rule` can try ``dqx_native`` first for it. Conservative
+    by design: anything fuzzier returns ``False`` and keeps the low-code-first
+    cascade.
+
+    Args:
+        description: The user's natural-language rule description.
+
+    Returns:
+        True when the description clearly matches a named basic check.
+    """
+    if not description:
+        return False
+    return any(pattern.search(description) for pattern in _BASIC_CHECK_SIGNALS)
+
+
+# Cascade orders tried when no explicit rule type is requested. The default is
+# low-code-first (the guided, most-editable surface); when the description
+# closely matches a named basic check, ``dqx_native`` is tried first so the
+# crisp built-in wins over a hand-rolled equivalent.
+_DEFAULT_CASCADE: tuple[str, ...] = ("lowcode", "dqx_native", "sql")
+_BASIC_FIRST_CASCADE: tuple[str, ...] = ("dqx_native", "lowcode", "sql")
 
 
 _VALID_DIMENSIONS = frozenset({"Validity", "Completeness", "Accuracy", "Consistency", "Uniqueness", "Timeliness"})
@@ -467,6 +530,11 @@ class AiRulesService:
         Mirrors dqlake's low-code-first "build with AI": the low-code mode is the guided,
         most-editable authoring surface, so it is tried FIRST; the caller falls through to
         ``dqx_native`` and then ``sql`` only when the current mode cannot express the check.
+        The one exception is a description that clearly names a concept a single named basic
+        (``dqx_native``) check expresses crisply (e.g. "values must be unique" -> ``is_unique``):
+        :func:`prefers_basic_check` detects it and the cascade tries ``dqx_native`` FIRST, so the
+        tidy built-in wins over a hand-rolled low-code/SQL equivalent (still falling through to
+        low-code then sql if the model can't produce a valid basic check).
 
         When the *description* EXPLICITLY asks for a specific rule type (B2-140) — e.g.
         "write a SQL rule…", "low-code rule…", "use a built-in function…" —
@@ -503,8 +571,12 @@ class AiRulesService:
                 f"AI could not generate a valid, safe {requested_mode} rule for this description."
             )
 
-        # No explicit type — the low-code-first cascade (lowcode → dqx_native → sql).
-        for mode in ("lowcode", "dqx_native", "sql"):
+        # No explicit type — run the cascade. Default is low-code-first, but a
+        # description that clearly names a concept a single basic check expresses
+        # crisply (e.g. "unique") tries dqx_native FIRST so the built-in wins over
+        # a hand-rolled low-code/SQL equivalent (still falling through if it can't).
+        cascade = _BASIC_FIRST_CASCADE if prefers_basic_check(description) else _DEFAULT_CASCADE
+        for mode in cascade:
             validated = await self._generate_in_mode(mode, context, user_email)
             if validated is not None:
                 validated["author_kind"] = "ai_generated"
@@ -558,7 +630,7 @@ class AiRulesService:
     ) -> dict[str, Any] | None:
         is_native = mode == "dqx_native"
         system = _RULE_PROPOSAL_SYSTEM_TEMPLATE.format(
-            mode=mode,
+            mode_label=_MODE_LABELS.get(mode, mode),
             definition_shape=definition_shape,
             columns_field=_DQX_NATIVE_COLUMNS_FIELD if is_native else "",
             columns_guidance=_DQX_NATIVE_COLUMNS_GUIDANCE if is_native else "",
