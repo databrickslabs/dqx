@@ -2986,10 +2986,14 @@ export function RegistryRuleFormDialog({
             parameters below. This standalone anchor renders for the UNCHOSEN,
             NATIVE and SQL states — Low-Code uses LowcodeBuilder (same chrome),
             whose first row hosts the selector. */}
-        {(!decisionPointChosen || mode !== "lowcode") && (
-          <div className="grid max-w-2xl grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1.6fr)_minmax(0,0.4fr)] gap-2 items-center py-1">
+        {(!decisionPointChosen || mode === "dqx_native") && (
+          <div className="grid max-w-2xl grid-cols-[80px_minmax(0,1fr)_minmax(0,1fr)] gap-2 items-center py-1">
             <div className="flex items-center h-8 pl-2 justify-self-start">
-              <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
+              {/* Same IF styling as LowcodeRow's inline IF so the framing word is
+                  identical in size across native / low-code / SQL. */}
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {t("rulesRegistry.ifCondition")}
+              </span>
             </div>
             {/* Column cell — styled like the low-code column Select but DISABLED.
                 Before a type is chosen it explains that a condition must be
@@ -3028,9 +3032,6 @@ export function RegistryRuleFormDialog({
               // Basic Checks list; SQL mode has no submenu so root is fine.
               initialView={decisionPointChosen && mode === "dqx_native" ? "basic" : "root"}
             />
-            {/* Trailing em-dash mirrors the low-code row's value/delete slot so
-                the grid columns line up; native/SQL have no per-row value here. */}
-            <span className="text-muted-foreground text-center select-none">—</span>
           </div>
         )}
         {/* Low-Code builder renders INSIDE the Condition section (directly under
@@ -3287,7 +3288,25 @@ export function RegistryRuleFormDialog({
                 directly above the editor (dqlake's ImplementationTab layout). */}
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
+                <div className="flex items-center gap-2">
+                  {/* Back to the rule-type picker — SQL has no in-row selector
+                      cell (its whole body IS the editor), so the change-type
+                      affordance is a small back arrow next to IF. */}
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      onClick={() => setDecisionPointChosen(false)}
+                      aria-label={t("rulesRegistry.changeRuleTypeHeader")}
+                      title={t("rulesRegistry.changeRuleTypeHeader")}
+                      className="text-muted-foreground hover:text-foreground -ml-1 p-0.5 rounded"
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {t("rulesRegistry.ifCondition")}
+                  </span>
+                </div>
                 <SqlAiAssistMenu
                   predicate={sqlPredicate}
                   slots={sqlSlots}
