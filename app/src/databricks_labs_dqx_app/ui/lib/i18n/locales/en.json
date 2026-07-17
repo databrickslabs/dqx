@@ -1570,6 +1570,7 @@
     "nativeSingleColumnTooltip": "This rule's input column is set in \"Columns used\" above; a basic check takes a single input column.",
     "advancedGatedTooltip": "Choose a rule condition first to configure advanced options.",
     "filterLabel": "Row filter",
+    "filterAddCondition": "Add filter condition",
     "filterPlaceholder": "e.g. {{region}} = 'EU'",
     "polarityFail": "Fails when true",
     "polarityPass": "Passes when true",

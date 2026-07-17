@@ -1570,6 +1570,7 @@
     "nativeSingleColumnTooltip": "La colonna di input di questa regola è impostata in \"Colonne utilizzate\" sopra; un controllo di base usa una singola colonna di input.",
     "advancedGatedTooltip": "Scegli prima una condizione della regola per configurare le opzioni avanzate.",
     "filterLabel": "Filtro riga",
+    "filterAddCondition": "Aggiungi condizione di filtro",
     "filterPlaceholder": "es.: {{region}} = 'EU'",
     "polarityFail": "Fallisce quando vero",
     "polarityPass": "Supera quando vero",

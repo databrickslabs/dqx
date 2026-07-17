@@ -1570,6 +1570,7 @@
     "nativeSingleColumnTooltip": "A coluna de entrada desta regra é definida em \"Colunas usadas\" acima; uma verificação básica usa uma única coluna de entrada.",
     "advancedGatedTooltip": "Escolha primeiro uma condição de regra para configurar as opções avançadas.",
     "filterLabel": "Filtro de linha",
+    "filterAddCondition": "Adicionar condição de filtro",
     "filterPlaceholder": "ex.: {{region}} = 'EU'",
     "polarityFail": "Falha quando verdadeiro",
     "polarityPass": "Passa quando verdadeiro",

@@ -70,6 +70,7 @@ import { PredicateEditor } from "@/components/rules/PredicateEditor";
 import { AdvancedDisclosure } from "@/components/rules/AdvancedDisclosure";
 import { CursorTooltip } from "@/components/rules/CursorTooltip";
 import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
+import { FilterBuilder } from "@/components/rules/lowcode/FilterBuilder";
 import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
 import { GroupByField } from "@/components/rules/lowcode/GroupByField";
 import {
@@ -1707,7 +1708,15 @@ export function RegistryRuleFormDialog({
   // `user_metadata.slot_tags` (see buildUserMetadata / snapshotFromRule).
   const [slotTags, setSlotTags] = useState<Record<string, string[]>>({});
   const [errorMessage, setErrorMessage] = useState("");
+  // The row filter's compiled SQL (persisted as definition.filter). For
+  // native / low-code modes it's built visually (filterAst below) and this
+  // string is the compiled output; for SQL mode it's typed in the code editor.
   const [filter, setFilter] = useState("");
+  // Native / low-code row-filter builder AST (rows only — a filter is a plain
+  // WHERE predicate). Persisted in the rule body as `filter_ast` so it
+  // round-trips into the builder (mirrors how `lowcode_ast` is stored); the
+  // compiled predicate is what materializes into definition.filter.
+  const [filterAst, setFilterAst] = useState<LowcodeAstV2>(EMPTY_LOWCODE_AST);
   const [polarity, setPolarity] = useState<Polarity>("pass");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -1782,6 +1791,14 @@ export function RegistryRuleFormDialog({
     setNameError(null);
     setErrorMessage(sourceRule?.definition?.error_message ?? "");
     setFilter(sourceRule?.definition?.filter ?? "");
+    // Row filter builder — rehydrate the re-editable AST stored alongside the
+    // compiled `filter` predicate (mirrors how `lowcode_ast` companions the
+    // low-code SQL). Absent/legacy rules (filter typed as raw SQL) start empty;
+    // the compiled `filter` string still round-trips via setFilter above.
+    {
+      const storedFilterAst = ((sourceRule?.definition?.body ?? {}) as Record<string, unknown>).filter_ast;
+      setFilterAst(isV2Ast(storedFilterAst) ? storedFilterAst : EMPTY_LOWCODE_AST);
+    }
     setAiDescription("");
     setPendingNativeArgs(null);
     setPendingNativeSlots(null);
@@ -2192,6 +2209,12 @@ export function RegistryRuleFormDialog({
   const buildDefinition = (): RuleDefinition => {
     const trimmedError = errorMessage.trim();
     const trimmedFilter = filter.trim();
+    // The row-filter builder's re-editable AST, persisted alongside the compiled
+    // `filter` predicate so the visual builder reopens as-authored (mirrors how
+    // `lowcode_ast` companions the low-code SQL). Only carried for native /
+    // low-code modes (SQL mode's filter is a raw code-editor string); omitted
+    // when there are no filter rows so unfiltered rules stay clean.
+    const filterAstBody = filterAst.rows.length > 0 ? { filter_ast: filterAst } : {};
     if (mode === "sql") {
       // Body type is derived from join presence — mirrors compileLowcodeBody's
       // own classification: no joins → { predicate }; joins present → compile
@@ -2226,7 +2249,7 @@ export function RegistryRuleFormDialog({
       // (joins/group-by) is what materializes and runs via the existing
       // sql-mode path — the AST is display/edit-only.
       const compiled = compileLowcodeBody(lowcodeAst, groupBy);
-      const body: Record<string, unknown> = { lowcode_ast: lowcodeAst };
+      const body: Record<string, unknown> = { lowcode_ast: lowcodeAst, ...filterAstBody };
       if (groupBy.trim()) body.group_by = groupBy.trim();
       if (compiled.predicate !== undefined) body.predicate = compiled.predicate;
       if (compiled.sql_query !== undefined) body.sql_query = compiled.sql_query;
@@ -2244,7 +2267,7 @@ export function RegistryRuleFormDialog({
       value: parseParamValue(p.type, paramRawValues[p.name] ?? ""),
     }));
     return {
-      body: { function: functionName, arguments: nativeArguments(nativeSlots, selectedFn) },
+      body: { function: functionName, arguments: nativeArguments(nativeSlots, selectedFn), ...filterAstBody },
       slots: nativeSlots,
       parameters,
       error_message: trimmedError || undefined,
@@ -2281,6 +2304,10 @@ export function RegistryRuleFormDialog({
     setPolarity(parsed.polarity ?? "pass");
     setErrorMessage(def.error_message ?? "");
     setFilter(def.filter ?? "");
+    {
+      const storedFilterAst = body.filter_ast;
+      setFilterAst(isV2Ast(storedFilterAst) ? storedFilterAst : EMPTY_LOWCODE_AST);
+    }
     if (parsed.mode === "dqx_native") {
       setFunctionName(String(body.function ?? ""));
       const raw: Record<string, string> = {};
@@ -2867,6 +2894,22 @@ export function RegistryRuleFormDialog({
     ...joinedColumns,
   ];
 
+  // Columns the row-filter builder offers — the CURRENT mode's declared slots
+  // (native uses nativeSlots, low-code uses sqlSlots) mapped to the low-code
+  // family vocabulary. Joined columns aren't relevant to a pre-condition filter.
+  const filterColumns: LowcodeColumnRef[] = currentSlots.map((s) => ({
+    name: s.name,
+    family: slotFamilyToLowcode(s.family),
+  }));
+
+  // Update the filter builder's AST and keep the compiled SQL (`filter`, what
+  // materializes into DQRule.filter) in sync. compileAstToSql yields the raw
+  // predicate (no NOT wrapping) — exactly a WHERE clause.
+  const handleFilterAstChange = (next: LowcodeAstV2) => {
+    setFilterAst(next);
+    setFilter(compileAstToSql(next));
+  };
+
   // The low-code family of the ANCHOR column (the first declared slot) — drives
   // which monospace operators the merged selector's Condition Builder drill-in
   // offers. Falls back to ANY when nothing is declared yet.
@@ -3255,16 +3298,17 @@ export function RegistryRuleFormDialog({
               disabled={readOnly}
             />
             {/* Row filter — a SQL WHERE predicate applied before the rule
-                condition, scoped to rows the check should consider. Supports
-                {{slot}} placeholders substituted at materialize time. */}
+                condition, scoped to rows the check should consider. Built
+                visually via the same low-code row controls as the main
+                condition; the AST persists (`body.filter_ast`) and the
+                compiled predicate materializes into DQRule.filter. */}
             <div className="space-y-1.5">
               <Label className="text-xs">{t("rulesRegistry.filterLabel")}</Label>
-              <Input
-                className="h-7 text-xs font-mono"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder={t("rulesRegistry.filterPlaceholder")}
-                disabled={readOnly}
+              <FilterBuilder
+                ast={filterAst}
+                onChange={handleFilterAstChange}
+                declaredColumns={filterColumns}
+                readOnly={readOnly}
               />
             </div>
           </AdvancedDisclosure>
@@ -3397,19 +3441,19 @@ export function RegistryRuleFormDialog({
               />
             </div>
           )}
-          {/* Advanced — row filter pre-applied before the rule condition. */}
+          {/* Advanced — row filter pre-applied before the rule condition,
+              built visually with the same low-code row controls. */}
           <AdvancedDisclosure
             label={t("rulesRegistry.advancedSectionLabel")}
             defaultOpen={!!filter}
           >
             <div className="space-y-1.5">
               <Label className="text-xs">{t("rulesRegistry.filterLabel")}</Label>
-              <Input
-                className="h-7 text-xs font-mono"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder={t("rulesRegistry.filterPlaceholder")}
-                disabled={readOnly}
+              <FilterBuilder
+                ast={filterAst}
+                onChange={handleFilterAstChange}
+                declaredColumns={filterColumns}
+                readOnly={readOnly}
               />
             </div>
           </AdvancedDisclosure>
