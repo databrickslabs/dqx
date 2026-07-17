@@ -1558,7 +1558,6 @@
     "unknownColumnReference": "Riferimento a colonna sconosciuta: {{name}}",
     "advancedSectionLabel": "Avanzate",
     "nativeSingleColumnTooltip": "La colonna di input di questa regola è impostata in \"Colonne utilizzate\" sopra; un controllo di base usa una singola colonna di input.",
-    "addColumnGatedTooltip": "Scegli prima una condizione della regola, poi potrai aggiungere altre colonne per i filtri avanzati.",
     "advancedGatedTooltip": "Scegli prima una condizione della regola per configurare le opzioni avanzate.",
     "filterLabel": "Filtro riga",
     "filterPlaceholder": "es.: {{region}} = 'EU'",

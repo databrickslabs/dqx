@@ -1558,7 +1558,6 @@
     "unknownColumnReference": "Unknown column reference: {{name}}",
     "advancedSectionLabel": "Advanced",
     "nativeSingleColumnTooltip": "This rule's input column is set in \"Columns used\" above; a basic check takes a single input column.",
-    "addColumnGatedTooltip": "Choose a rule condition first — then you can add more columns for advanced filters.",
     "advancedGatedTooltip": "Choose a rule condition first to configure advanced options.",
     "filterLabel": "Row filter",
     "filterPlaceholder": "e.g. {{region}} = 'EU'",

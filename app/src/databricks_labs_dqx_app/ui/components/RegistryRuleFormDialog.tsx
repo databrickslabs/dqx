@@ -68,6 +68,7 @@ import { PredicatePolaritySwitch } from "@/components/rules/PredicatePolaritySwi
 import { PredicateEditorExplainer } from "@/components/rules/PredicateEditorExplainer";
 import { PredicateEditor } from "@/components/rules/PredicateEditor";
 import { AdvancedDisclosure } from "@/components/rules/AdvancedDisclosure";
+import { CursorTooltip } from "@/components/rules/CursorTooltip";
 import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
 import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
 import { GroupByField } from "@/components/rules/lowcode/GroupByField";
@@ -310,7 +311,30 @@ function ConditionSelector({
     if (open) setView(initialView ?? "root");
   }, [open, initialView]);
 
-  const operators = OPERATORS_BY_FAMILY[operatorFamily] ?? OPERATORS_BY_FAMILY.ANY;
+  // Condition Builder operators for the anchor column, grouped by type with
+  // section headings (mirrors the low-code OperatorDropdown): the column
+  // family's own operators first, then the universal (ANY) operators deduped
+  // under a second heading. A non-specific ("ANY") column shows just one group.
+  const operatorGroups = useMemo((): { heading: string; ops: string[] }[] => {
+    const familyOps = OPERATORS_BY_FAMILY[operatorFamily] ?? OPERATORS_BY_FAMILY.ANY;
+    const familyHeadings: Record<LowcodeFamily, string> = {
+      NUMERIC: t("rulesRegistry.slotFamilyNumeric"),
+      TEXTUAL: t("rulesRegistry.slotFamilyText"),
+      TEMPORAL: t("rulesRegistry.slotFamilyTemporal"),
+      BOOLEAN: t("rulesRegistry.slotFamilyBoolean"),
+      ANY: t("rulesRegistry.slotFamilyAny"),
+    };
+    if (operatorFamily === "ANY") {
+      return [{ heading: familyHeadings.ANY, ops: familyOps }];
+    }
+    const familySet = new Set(familyOps);
+    const universalOps = OPERATORS_BY_FAMILY.ANY.filter((o) => !familySet.has(o));
+    const groups = [{ heading: familyHeadings[operatorFamily], ops: familyOps }];
+    if (universalOps.length > 0) {
+      groups.push({ heading: t("rulesRegistry.lowcodeUniversalOperators"), ops: universalOps });
+    }
+    return groups;
+  }, [operatorFamily, t]);
 
   const filteredNativeFns = useMemo(() => {
     const nativeFns = checkFunctions.filter((fn) => fn.name !== "sql_expression" && fn.name !== "sql_query");
@@ -544,10 +568,13 @@ function ConditionSelector({
             )}
 
             {view === "operators" && (
-              // ── Condition Builder drill-in: the anchor column-family's
-              // operators, rendered monospace like the low-code row. Picking one
-              // enters low-code mode with that operator on the first row. Back
-              // returns to root.
+              // ── Condition Builder drill-in: operators for the anchor column,
+              // GROUPED by type with basic-checks-style section headings —
+              // the column-family's own operators first, then the universal
+              // (ANY) operators under a second heading (deduped), mirroring the
+              // low-code OperatorDropdown. Filtered by the column's data type
+              // (via operatorFamily). Monospace like the low-code row. Picking
+              // one enters low-code mode with that operator on the first row.
               <>
                 <button
                   type="button"
@@ -557,21 +584,23 @@ function ConditionSelector({
                   <ArrowLeft className="h-3 w-3 shrink-0" />
                   {t("rulesRegistry.coreConditionBuilder")}
                 </button>
-                <CommandGroup>
-                  {operators.map((op) => (
-                    <CommandItem
-                      key={op}
-                      value={op}
-                      onSelect={() => {
-                        onSelect({ type: "lowcode", operator: op });
-                        setOpen(false);
-                      }}
-                      className="text-xs font-mono"
-                    >
-                      {op}
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
+                {operatorGroups.map(({ heading, ops }) => (
+                  <CommandGroup key={heading} heading={heading}>
+                    {ops.map((op) => (
+                      <CommandItem
+                        key={op}
+                        value={op}
+                        onSelect={() => {
+                          onSelect({ type: "lowcode", operator: op });
+                          setOpen(false);
+                        }}
+                        className="text-xs font-mono"
+                      >
+                        {op}
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                ))}
               </>
             )}
           </CommandList>
@@ -1016,8 +1045,12 @@ function SlotsPanel({
     ? value.filter((s) => (s.arg_key ?? s.name) === expandableArgKey).length
     : 0;
   const canAddSlot = allowAddRemove || expandableArgKey !== undefined;
-  const canRemoveSlot = (slot: RuleSlot): boolean => {
+  const canRemoveSlot = (slot: RuleSlot, index: number): boolean => {
     if (allowAddRemove) return true;
+    // Single-column native fn: the first slot is the fixed input column (bound
+    // to the function); any EXTRA slots the author added are filter-only and
+    // freely removable — just never the fixed first one.
+    if (isSingleColumnFn) return index > 0;
     return expandableArgKey !== undefined && (slot.arg_key ?? slot.name) === expandableArgKey && expandableGroupSize > 1;
   };
 
@@ -1097,25 +1130,22 @@ function SlotsPanel({
           // Low-Code, which do show a real button here.
           !disabled ? (
             addDisabledReason ? (
-              // Gated: no rule condition chosen yet. Disabled + explanatory tooltip.
-              <TooltipProvider delayDuration={200}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-block">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled
-                        className="h-7 px-2.5 text-xs gap-1.5"
-                      >
-                        {t("rulesRegistry.slotsPanelAddButton")}
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>{addDisabledReason}</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+              // Gated: no rule condition chosen yet. Disabled + cursor-following
+              // explanatory tooltip (tracks the mouse rather than pinning to the
+              // button center).
+              <CursorTooltip text={addDisabledReason}>
+                <span className="inline-block">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled
+                    className="h-7 px-2.5 text-xs gap-1.5"
+                  >
+                    {t("rulesRegistry.slotsPanelAddButton")}
+                  </Button>
+                </span>
+              </CursorTooltip>
             ) : isSingleColumnFn ? (
               <Popover open={singleColPopoverOpen} onOpenChange={setSingleColPopoverOpen}>
                 <PopoverTrigger asChild>
@@ -1170,7 +1200,7 @@ function SlotsPanel({
         {value.map((slot, i) => {
           const isOpen = expanded === i;
           const nameOk = SLOT_NAME_PATTERN.test(slot.name);
-          const removable = canRemoveSlot(slot);
+          const removable = canRemoveSlot(slot, i);
           return (
             <div
               key={i}
@@ -2934,7 +2964,7 @@ export function RegistryRuleFormDialog({
           slotTags={slotTags}
           onSlotTagsChange={setSlotTags}
           isSingleColumnFn={mode === "dqx_native" && fnDerivedSlots.length === 1 && !nativeExpandableArgKey}
-          addDisabledReason={conditionChosen ? undefined : t("rulesRegistry.addColumnGatedTooltip")}
+          addDisabledReason={conditionChosen ? undefined : t("rulesRegistry.advancedGatedTooltip")}
         />
       )}
 
@@ -2961,30 +2991,32 @@ export function RegistryRuleFormDialog({
             <div className="flex items-center h-8 pl-2 justify-self-start">
               <FramingWord>{t("rulesRegistry.ifCondition")}</FramingWord>
             </div>
-            {/* Column cell — styled like the low-code column Select but DISABLED:
-                for native checks the column binding is governed by "Columns used"
-                above (a basic check takes a single input column), so this cell is
-                a read-only mirror with an explanatory tooltip. */}
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-block w-full">
-                    <button
-                      type="button"
-                      disabled
-                      data-slot="select-trigger"
-                      className="border-input dark:bg-input/30 flex h-8 w-full items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-1 font-mono text-xs whitespace-nowrap shadow-xs opacity-70 cursor-not-allowed"
-                    >
-                      <span className="truncate">
-                        {currentSlots[0] ? `{{${currentSlots[0].name}}}` : "{{column_1}}"}
-                      </span>
-                      <ChevronDown className="size-4 opacity-50 shrink-0" />
-                    </button>
+            {/* Column cell — styled like the low-code column Select but DISABLED.
+                Before a type is chosen it explains that a condition must be
+                picked first; once a native basic check is chosen it explains
+                that the input column is governed by "Columns used" above (a
+                basic check takes a single input column). Cursor-following tooltip. */}
+            <CursorTooltip
+              text={
+                conditionChosen
+                  ? t("rulesRegistry.nativeSingleColumnTooltip")
+                  : t("rulesRegistry.advancedGatedTooltip")
+              }
+            >
+              <span className="inline-block w-full">
+                <button
+                  type="button"
+                  disabled
+                  data-slot="select-trigger"
+                  className="border-input dark:bg-input/30 flex h-8 w-full items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-1 font-mono text-xs whitespace-nowrap shadow-xs opacity-70 cursor-not-allowed"
+                >
+                  <span className="truncate">
+                    {currentSlots[0] ? `{{${currentSlots[0].name}}}` : "{{column_1}}"}
                   </span>
-                </TooltipTrigger>
-                <TooltipContent>{t("rulesRegistry.nativeSingleColumnTooltip")}</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+                  <ChevronDown className="size-4 opacity-50 shrink-0" />
+                </button>
+              </span>
+            </CursorTooltip>
             <ConditionSelector
               checkFunctions={checkFunctions}
               currentSlots={currentSlots}
@@ -3001,6 +3033,33 @@ export function RegistryRuleFormDialog({
             <span className="text-muted-foreground text-center select-none">—</span>
           </div>
         )}
+        {/* Low-Code builder renders INSIDE the Condition section (directly under
+            the header, same as the anchor row above) so the IF row sits at the
+            identical vertical position across every rule type. Its first row's
+            operator cell is the merged ConditionSelector (escalate / change
+            type). Advanced + THEN THE ROW follow as their own block below. */}
+        {decisionPointChosen && mode === "lowcode" && (
+          <LowcodeBuilder
+            ast={lowcodeAst}
+            onChange={setLowcodeAst}
+            declaredColumns={lowcodeColumns}
+            readOnly={readOnly}
+            firstRowOperatorSlot={
+              <ConditionSelector
+                checkFunctions={checkFunctions}
+                currentSlots={currentSlots}
+                operatorFamily={anchorOperatorFamily}
+                onSelect={requestModeChange}
+                disabled={readOnly}
+                currentLabel={lowcodeAst.rows[0]?.operator || t("rulesRegistry.coreConditionBuilder")}
+                currentLabelMono={!!lowcodeAst.rows[0]?.operator}
+                // Already in Condition Builder: re-open straight into the
+                // operators list (back-arrow returns to root to change type).
+                initialView="operators"
+              />
+            }
+          />
+        )}
       </div>
 
       {/* Advanced — always present in the layout, but DISABLED with an
@@ -3008,44 +3067,18 @@ export function RegistryRuleFormDialog({
           to configure yet). Once chosen, each mode renders its own populated
           Advanced section (below) instead of this gated placeholder. */}
       {!conditionChosen && (
-        <AdvancedDisclosure
-          label={t("rulesRegistry.advancedSectionLabel")}
-          disabled
-          disabledReason={t("rulesRegistry.advancedGatedTooltip")}
-        >
-          <span />
-        </AdvancedDisclosure>
+        <CursorTooltip text={t("rulesRegistry.advancedGatedTooltip")}>
+          <AdvancedDisclosure label={t("rulesRegistry.advancedSectionLabel")} disabled>
+            <span />
+          </AdvancedDisclosure>
+        </CursorTooltip>
       )}
 
       {decisionPointChosen && mode === "lowcode" && (
         <div className="space-y-3">
-          <div className="space-y-1.5">
-            {/* The "Condition" header is rendered once above. Low-Code renders
-                "IF" inline with the first row; that first row's operator cell is
-                the merged ConditionSelector (via firstRowOperatorSlot), so the
-                escalate-to-SQL/native and change-rule-type affordances live
-                right in the IF row. */}
-            <LowcodeBuilder
-              ast={lowcodeAst}
-              onChange={setLowcodeAst}
-              declaredColumns={lowcodeColumns}
-              readOnly={readOnly}
-              firstRowOperatorSlot={
-                <ConditionSelector
-                  checkFunctions={checkFunctions}
-                  currentSlots={currentSlots}
-                  operatorFamily={anchorOperatorFamily}
-                  onSelect={requestModeChange}
-                  disabled={readOnly}
-                  currentLabel={lowcodeAst.rows[0]?.operator || t("rulesRegistry.coreConditionBuilder")}
-                  currentLabelMono={!!lowcodeAst.rows[0]?.operator}
-                  // Already in Condition Builder: re-open straight into the
-                  // operators list (back-arrow returns to root to change type).
-                  initialView="operators"
-                />
-              }
-            />
-          </div>
+          {/* The IF row / builder rows render up in the Condition section (so
+              the row aligns across rule types); this block holds only the
+              Advanced section + THEN THE ROW. */}
           {/* Advanced — group-by + joins, folded into the compiled SQL that
               actually runs (see lowcodeCompile.compileLowcodeBody). Placed
               above "THEN THE ROW" (item 23f) since group-by/joins configure
