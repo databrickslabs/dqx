@@ -96,7 +96,7 @@ class DQRuleManager:
         identifier escaping (e.g. "Customer Name" -> "`Customer Name`").
         """
         name = get_column_name_or_alias(column)
-        if is_simple_column_expression(name):
+        if is_simple_column_expression(name) or (name.startswith("`") and name.endswith("`")):
             return name
         return quote_column_name(name)
 

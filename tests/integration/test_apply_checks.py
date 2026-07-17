@@ -10041,7 +10041,7 @@ def test_apply_checks_with_has_valid_schema_extra_columns_in_params(ws, spark):
 
 
 def test_apply_checks_with_has_valid_schema_special_char_columns_are_valid(ws, spark):
-    """Column names with spaces / non-ASCII characters (that require SQL identifier escaping
+    """Column names with spaces / non-ASCII characters (that require SQL identifier escaping)
     must be treated as valid and the check must run instead of being skipped."""
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
 
