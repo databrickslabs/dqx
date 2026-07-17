@@ -2069,6 +2069,8 @@ def aggr_matches_upstream_dataset(
     ref_column: str | Column | None = None,
     aggr_type: str = "count",
     aggr_params: dict[str, Any] | None = None,
+    group_by: list[str | Column] | None = None,
+    ref_group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
     ref_row_filter: str | None = None,
     abs_tolerance: float | None = None,
@@ -2094,6 +2096,15 @@ def aggr_matches_upstream_dataset(
         aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
             percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
             arguments to the Spark function.
+        group_by: Optional list of column names or Column expressions in the checked DataFrame to compare
+            the aggregate per group instead of dataset-wide. Only simple column expressions are supported,
+            e.g. *F.col("region")*. A group present in the checked DataFrame but absent from the reference
+            is reported as a mismatch; groups present only in the reference are not surfaced. Note that
+            when *aggr_type* is a window-incompatible aggregate (e.g. *count_distinct*), the checked-side
+            grouping join is not null-safe, so a legitimately null group key may under-report.
+        ref_group_by: Optional list of group-by columns on the reference (upstream) side, matched to
+            *group_by* by position. Defaults to *group_by* when omitted. Must have the same length as
+            *group_by*. Requires *group_by* to be set.
         row_filter: Optional SQL expression to filter rows in the checked DataFrame before aggregation.
             Auto-injected from the check filter.
         ref_row_filter: Optional SQL expression to filter rows in the reference DataFrame or table before
@@ -2117,6 +2128,8 @@ def aggr_matches_upstream_dataset(
         InvalidParameterError:
             - if both *ref_df_name* and *ref_table* are provided.
             - if *abs_tolerance* or *rel_tolerance* is negative.
+            - if *ref_group_by* is provided without *group_by*.
+            - if *group_by* and *ref_group_by* lengths differ.
     """
     if ref_df_name and ref_table:
         raise InvalidParameterError(
@@ -2124,6 +2137,23 @@ def aggr_matches_upstream_dataset(
         )
     if not ref_df_name and not ref_table:
         raise MissingParameterError("Either 'ref_df_name' or 'ref_table' is required but neither was provided.")
+
+    if ref_group_by and not group_by:
+        raise InvalidParameterError(
+            "'ref_group_by' was provided without 'group_by'. Please provide 'group_by' for the checked "
+            "DataFrame as well."
+        )
+    group_by_names: list[str] | None = None
+    ref_group_by_names: list[str] | None = None
+    if group_by:
+        resolved_ref_group_by = group_by if ref_group_by is None else ref_group_by
+        if len(group_by) != len(resolved_ref_group_by):
+            raise InvalidParameterError(
+                f"'group_by' has {len(group_by)} entries but 'ref_group_by' has {len(resolved_ref_group_by)}. "
+                "Both must have the same length to allow comparison."
+            )
+        group_by_names = get_columns_as_strings(group_by, allow_simple_expressions_only=True)
+        ref_group_by_names = get_columns_as_strings(resolved_ref_group_by, allow_simple_expressions_only=True)
 
     ref_column = column if ref_column is None else ref_column
     _, ref_col_str, ref_col_expr = get_normalized_column_and_expr(ref_column)
@@ -2134,14 +2164,14 @@ def aggr_matches_upstream_dataset(
 
     # The reference aggregate isn't known yet (it requires reading ref_table/ref_dfs, only available in
     # apply()), so it's passed to _is_aggr_compare as the *name* of a column that will exist on df once
-    # the crossJoin below runs, rather than as a literal value or a Column tied to ref_df's own lineage
+    # the crossJoin/join below runs, rather than as a literal value or a Column tied to ref_df's own lineage
     # (Spark can't resolve a Column across two unrelated DataFrames without a join).
     condition, aggr_apply = _is_aggr_compare(
         column=column,
         limit=ref_metric_col,
         aggr_type=aggr_type,
         aggr_params=aggr_params,
-        group_by=None,
+        group_by=group_by,
         row_filter=row_filter,
         compare_op=py_operator.ne,
         compare_op_label=f"not equal to {ref_label} column '{ref_col_str}'",
@@ -2155,9 +2185,13 @@ def aggr_matches_upstream_dataset(
         """
         Apply the upstream comparison check logic to the DataFrame.
 
-        Computes the aggregation on the reference (upstream) DataFrame or table, joins it onto the
-        checked DataFrame as a single scalar column, then delegates the actual comparison (including
-        curated-aggregate type validation and null-safe matching) to *_is_aggr_compare*.
+        Computes the aggregation on the reference (upstream) DataFrame or table. When *group_by* is not
+        set, the aggregate is a single scalar joined onto every row via *crossJoin*. When *group_by* is
+        set, the reference aggregate is computed per *ref_group_by* group and null-safe joined onto the
+        checked DataFrame by matching *group_by*/*ref_group_by* keys (groups missing on the reference side
+        yield a null reference metric, which is treated as a mismatch). Either way, the actual comparison
+        (including curated-aggregate type validation and null-safe matching) is delegated to
+        *_is_aggr_compare*.
 
         Args:
             df: The input DataFrame to validate.
@@ -2170,6 +2204,27 @@ def aggr_matches_upstream_dataset(
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
         ref_filtered_df = ref_df.filter(ref_row_filter) if ref_row_filter else ref_df
         ref_aggr_expr = _build_aggregate_expression(aggr_type, ref_col_expr, aggr_params)
+
+        if group_by_names and ref_group_by_names:
+            ref_group_cols = [F.col(col) for col in ref_group_by_names]
+            ref_metric_df = ref_filtered_df.groupBy(*ref_group_cols).agg(ref_aggr_expr.alias(ref_metric_col))
+
+            if aggr_type not in CURATED_AGGR_FUNCTIONS:
+                _validate_aggregate_return_type(ref_metric_df, aggr_type, ref_metric_col)
+
+            # groups only present in the reference are intentionally not surfaced: this check, like every
+            # other dataset check in this module, only annotates rows that exist in the checked DataFrame.
+            joined = _match_rows(
+                df.alias("df"),
+                ref_metric_df.alias("ref_df"),
+                group_by_names,
+                ref_group_by_names,
+                check_missing_records=False,
+                null_safe_row_matching=True,
+            )
+            joined = joined.select("df.*", F.col(f"ref_df.{ref_metric_col}").alias(ref_metric_col))
+            return aggr_apply(joined)
+
         ref_metric_df = ref_filtered_df.select(ref_aggr_expr.alias(ref_metric_col)).limit(1)
 
         if aggr_type not in CURATED_AGGR_FUNCTIONS:

@@ -1910,6 +1910,180 @@ def test_aggr_matches_upstream_dataset_ref_params_both_provided():
         aggr_matches_upstream_dataset("a", ref_df_name="ref_df", ref_table="catalog.schema.table")
 
 
+def test_aggr_matches_upstream_dataset_group_by_match(spark: SparkSession):
+    """Per-group counts match on both sides via group_by -> no violation for any group."""
+    test_df = spark.createDataFrame([["x", 1], ["x", 2], ["y", 3], ["y", 4]], SCHEMA)
+    ref_df = spark.createDataFrame([["x", 10], ["x", 20], ["y", 30], ["y", 40]], SCHEMA)
+
+    checks = [aggr_matches_upstream_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    expected = spark.createDataFrame(
+        [["x", 1, None], ["x", 2, None], ["y", 3, None], ["y", 4, None]],
+        f"{SCHEMA}, b_count_group_by_a_not_equal_to_upstream_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_aggr_matches_upstream_dataset_group_by_mismatch(spark: SparkSession):
+    """Per-group counts differ for one group only -> only that group's rows are flagged."""
+    test_df = spark.createDataFrame([["x", 1], ["x", 2], ["y", 3]], SCHEMA)
+    ref_df = spark.createDataFrame([["x", 10], ["x", 20], ["y", 30], ["y", 40]], SCHEMA)
+
+    checks = [aggr_matches_upstream_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    expected_message_y = (
+        "Count value 1 in column 'b' per group of columns 'a' is not equal to DataFrame 'ref_df' column 'b' limit: 2"
+    )
+    expected = spark.createDataFrame(
+        [["x", 1, None], ["x", 2, None], ["y", 3, expected_message_y]],
+        f"{SCHEMA}, b_count_group_by_a_not_equal_to_upstream_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_aggr_matches_upstream_dataset_ref_group_by_different_names(spark: SparkSession):
+    """ref_group_by targets a differently-named group column on the reference side, by position."""
+    test_df = spark.createDataFrame([["x", 10], ["x", 20], ["y", 5]], SCHEMA)
+    ref_df = spark.createDataFrame([["x", 30], ["y", 100]], "r: string, amt: int")
+
+    condition, apply_fn = aggr_matches_upstream_dataset(
+        "b", ref_df_name="ref_df", ref_column="amt", aggr_type="sum", group_by=["a"], ref_group_by=["r"]
+    )
+    actual = apply_fn(test_df, spark, {"ref_df": ref_df}).select("a", "b", condition)
+
+    # group "x": checked sum=30 matches ref sum=30 -> no violation
+    # group "y": checked sum=5 vs ref sum=100 -> violation
+    expected_message_y = (
+        "Sum value 5 in column 'b' per group of columns 'a' is not equal to DataFrame 'ref_df' column 'amt' limit: 100"
+    )
+    expected = spark.createDataFrame(
+        [["x", 10, None], ["x", 20, None], ["y", 5, expected_message_y]],
+        f"{SCHEMA}, b_sum_group_by_a_not_equal_to_upstream_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_aggr_matches_upstream_dataset_group_by_null_key_match(spark: SparkSession):
+    """Regression: a legitimately NULL group_by key must match via null-safe join, not be treated as a mismatch."""
+    test_df = spark.createDataFrame([[None, 1], [None, 2], ["y", 3]], SCHEMA)
+    ref_df = spark.createDataFrame([[None, 10], [None, 20], ["y", 30]], SCHEMA)
+
+    checks = [aggr_matches_upstream_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    expected = spark.createDataFrame(
+        [[None, 1, None], [None, 2, None], ["y", 3, None]],
+        f"{SCHEMA}, b_count_group_by_a_not_equal_to_upstream_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_aggr_matches_upstream_dataset_group_by_null_key_mismatch(spark: SparkSession):
+    """A NULL group_by key present on both sides with differing per-group metrics is still flagged."""
+    test_df = spark.createDataFrame([[None, 1], [None, 2], ["y", 3]], SCHEMA)
+    ref_df = spark.createDataFrame([[None, 10], ["y", 30]], SCHEMA)
+
+    checks = [aggr_matches_upstream_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    expected_message_null = (
+        "Count value 2 in column 'b' per group of columns 'a' is not equal to DataFrame 'ref_df' column 'b' limit: 1"
+    )
+    expected = spark.createDataFrame(
+        [[None, 1, expected_message_null], [None, 2, expected_message_null], ["y", 3, None]],
+        f"{SCHEMA}, b_count_group_by_a_not_equal_to_upstream_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_aggr_matches_upstream_dataset_group_by_group_only_in_checked(spark: SparkSession):
+    """A group present in the checked DataFrame but absent from the reference yields a NULL limit -> flagged."""
+    test_df = spark.createDataFrame([["x", 1], ["z", 5]], SCHEMA)
+    ref_df = spark.createDataFrame([["x", 10]], SCHEMA)
+
+    checks = [aggr_matches_upstream_dataset("b", ref_df_name="ref_df", aggr_type="count", group_by=["a"])]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    # concat_ws skips the NULL upstream metric, leaving a trailing "limit: " with nothing after it
+    expected_message_z = (
+        "Count value 1 in column 'b' per group of columns 'a' is not equal to DataFrame 'ref_df' column 'b' limit: "
+    )
+    expected = spark.createDataFrame(
+        [["x", 1, None], ["z", 5, expected_message_z]],
+        f"{SCHEMA}, b_count_group_by_a_not_equal_to_upstream_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_aggr_matches_upstream_dataset_group_by_with_tolerance(spark: SparkSession):
+    """Grouped sum comparison: a per-group diff within abs_tolerance passes, outside it is flagged."""
+    test_df = spark.createDataFrame([["x", 50], ["x", 50], ["y", 50], ["y", 50]], SCHEMA)
+    ref_df = spark.createDataFrame([["x", 52], ["x", 53], ["y", 100], ["y", 100]], SCHEMA)
+
+    checks = [
+        aggr_matches_upstream_dataset("b", ref_df_name="ref_df", aggr_type="sum", group_by=["a"], abs_tolerance=10)
+    ]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    # group "x": checked sum=100, ref sum=105, diff=5 <= 10 -> passes
+    # group "y": checked sum=100, ref sum=200, diff=100 > 10 -> flagged
+    expected_message_y = (
+        "Sum value 100 in column 'b' per group of columns 'a' is not equal to DataFrame 'ref_df' column 'b' limit: 200"
+    )
+    expected = spark.createDataFrame(
+        [
+            ["x", 50, None],
+            ["x", 50, None],
+            ["y", 50, expected_message_y],
+            ["y", 50, expected_message_y],
+        ],
+        f"{SCHEMA}, b_sum_group_by_a_not_equal_to_upstream_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_aggr_matches_upstream_dataset_group_by_with_ref_row_filter(spark: SparkSession):
+    """ref_row_filter is applied before the reference-side grouped aggregation."""
+    test_df = spark.createDataFrame([["x", 1], ["x", 2], ["y", 3]], SCHEMA)
+    # the extra x row (b=99) would break the match if not excluded by ref_row_filter first
+    ref_df = spark.createDataFrame([["x", 10], ["x", 20], ["x", 99], ["y", 30]], SCHEMA)
+
+    checks = [
+        aggr_matches_upstream_dataset(
+            "b", ref_df_name="ref_df", aggr_type="count", group_by=["a"], ref_row_filter="b < 50"
+        )
+    ]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    expected = spark.createDataFrame(
+        [["x", 1, None], ["x", 2, None], ["y", 3, None]],
+        f"{SCHEMA}, b_count_group_by_a_not_equal_to_upstream_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_aggr_matches_upstream_dataset_ref_group_by_without_group_by():
+    """ref_group_by provided without group_by -> InvalidParameterError."""
+    with pytest.raises(InvalidParameterError, match="'ref_group_by' was provided without 'group_by'"):
+        aggr_matches_upstream_dataset("a", ref_df_name="ref_df", ref_group_by=["x"])
+
+
+def test_aggr_matches_upstream_dataset_group_by_length_mismatch():
+    """group_by and ref_group_by lengths differ -> InvalidParameterError."""
+    with pytest.raises(InvalidParameterError, match="'group_by' has 2 entries but 'ref_group_by' has 1"):
+        aggr_matches_upstream_dataset("a", ref_df_name="ref_df", group_by=["a", "b"], ref_group_by=["x"])
+
+
 def test_dataset_compare(spark: SparkSession, set_utc_timezone):
     schema = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
 
