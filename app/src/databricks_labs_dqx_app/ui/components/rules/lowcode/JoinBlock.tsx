@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, X } from "lucide-react";
+import { ChevronDown, Plus, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { JoinTablePickerModal } from "@/components/rules/lowcode/JoinTablePickerModal";
 import { useGetTableColumns } from "@/lib/api";
 import type { JoinAst, JoinKeyAst, JoinType } from "@/lib/lowcodeAst";
@@ -32,7 +33,11 @@ type Props = {
 // TablePickerModal). Structure/interactions otherwise 1:1.
 export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) {
   const { t } = useTranslation();
-  const [pickerOpen, setPickerOpen] = useState(false);
+  // A freshly-added join has no target table yet — open the table picker
+  // immediately so "Add join" lands the user straight in the modal. Existing
+  // joins (target_table set) start closed. (Initial state only; JoinsBuilder
+  // keys each block, so a new block mounts with this fresh.)
+  const [pickerOpen, setPickerOpen] = useState(() => !join.target_table);
   const parts = (join.target_table || "").split(".");
   const [catalog, schema, table] = parts.length === 3 ? parts : ["", "", ""];
   const { data } = useGetTableColumns(catalog, schema, table, {
@@ -72,30 +77,22 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
             ))}
           </SelectContent>
         </Select>
-        {join.target_table ? (
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="min-w-0 flex-1 truncate font-mono text-xs" title={join.target_table}>
-              {join.target_table}
-            </span>
-            <button
-              type="button"
-              className="shrink-0 text-xs text-primary underline-offset-2 hover:underline"
-              onClick={() => setPickerOpen(true)}
-            >
-              {t("rulesRegistry.lowcodeJoinChangeTable")}
-            </button>
-          </div>
-        ) : (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 w-full justify-start font-normal text-muted-foreground"
-            onClick={() => setPickerOpen(true)}
-          >
-            {t("rulesRegistry.lowcodeJoinSelectTable")}
-          </Button>
-        )}
+        {/* Selected table shows in a dropdown-style box (matching the JOIN-type
+            Select next to it); clicking anywhere on it re-opens the pre-seeded
+            table picker modal. Empty state shows the placeholder in the same box. */}
+        <button
+          type="button"
+          data-slot="select-trigger"
+          data-size="sm"
+          onClick={() => setPickerOpen(true)}
+          title={join.target_table || undefined}
+          className="border-input dark:bg-input/30 dark:hover:bg-input/50 flex h-8 w-full items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-1 font-mono text-xs whitespace-nowrap shadow-xs outline-none"
+        >
+          <span className={cn("truncate", join.target_table ? "text-foreground" : "text-muted-foreground")}>
+            {join.target_table || t("rulesRegistry.lowcodeJoinSelectTable")}
+          </span>
+          <ChevronDown className="size-4 opacity-50 shrink-0" />
+        </button>
         <JoinTablePickerModal
           open={pickerOpen}
           onOpenChange={setPickerOpen}
