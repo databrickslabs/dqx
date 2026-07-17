@@ -34,7 +34,7 @@ import { slotFamilyToLowcode, type LowcodeColumnRef } from "@/lib/lowcodeCompile
 import { buildVersionPinMenuModel } from "@/lib/version-pin-menu";
 import selector from "@/lib/selector";
 import { MappingChips } from "./MappingChips";
-import { RESERVED_DESCRIPTION_KEY, RuleSourceBadge } from "@/components/RegistryRuleBadges";
+import { RESERVED_DESCRIPTION_KEY } from "@/components/RegistryRuleBadges";
 import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag } from "./shared";
 import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 
@@ -665,9 +665,10 @@ export function RuleConfigCard({
                   />
                 </span>
               )}
-              <span className="shrink-0">
-                <RuleSourceBadge source={registryRule?.source ?? rule.rule_source} />
-              </span>
+              {/* Rule-type / source tag intentionally omitted in the by-rule
+                  apply lens — the rule's origin (UI/import/AI) isn't relevant
+                  when mapping it to a table's columns, and the chip added
+                  visual noise beside the name + dimension. */}
             </div>
             {description && (
               <div className="text-xs italic text-muted-foreground truncate max-w-[560px] leading-snug">

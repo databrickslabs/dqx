@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,10 @@ type Props = {
   onChange: (next: AnyRow) => void;
   onDelete: () => void;
   readOnly?: boolean;
+  /** When provided (registry editor's first row), render this in place of the
+   * standard operator dropdown — the merged condition selector, which also
+   * hosts the escalate-to-SQL/native / change-rule-type affordances. */
+  operatorSlot?: ReactNode;
 };
 
 function familyOf(name: string, declared: LowcodeColumnRef[]): Family {
@@ -26,7 +31,7 @@ function familyOf(name: string, declared: LowcodeColumnRef[]): Family {
 
 // Ported 1:1 from dqlake's LowcodeRow — one condition row: IF anchor / AND-OR
 // pill, column (or aggregate) picker, operator dropdown, value cell, delete.
-export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, readOnly }: Props) {
+export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, readOnly, operatorSlot }: Props) {
   const { t } = useTranslation();
   const family: Family =
     row.kind === "row"
@@ -124,7 +129,7 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
         />
       )}
 
-      <OperatorDropdown value={row.operator} family={family} onChange={setOperator} />
+      {operatorSlot ?? <OperatorDropdown value={row.operator} family={family} onChange={setOperator} />}
       <ValueCell operator={row.operator} family={family} value={row.value} onChange={setValue} />
 
       {!readOnly && (

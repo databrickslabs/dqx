@@ -16,6 +16,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { useGlobalResultsEnabled } from "@/hooks/use-global-results-enabled";
 
@@ -107,6 +108,11 @@ function Layout() {
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
+
+            {/* Divider separating the authoring group (Rules / Tables /
+                Spaces) from the observability group (Runs History / Results)
+                — a horizontal rule so the two concerns read as distinct. */}
+            <SidebarSeparator className="my-1" />
 
             {/* Runs History — visible to all */}
             <SidebarMenuItem>
