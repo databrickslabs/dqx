@@ -20,7 +20,9 @@ export function ValueCell({ operator, family, value, onChange }: Props) {
   const shape = valueCellShape(operator, family);
 
   if (shape.kind === "none") {
-    return <div className="text-xs text-muted-foreground italic">—</div>;
+    // Operators like "is null" / "is not null" take no value — render an empty
+    // cell (no placeholder dash) so the row reads cleanly.
+    return <div aria-hidden />;
   }
 
   if (shape.kind === "single") {

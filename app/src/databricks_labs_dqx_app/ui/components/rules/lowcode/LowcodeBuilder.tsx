@@ -86,6 +86,9 @@ export function LowcodeBuilder({ ast, onChange, declaredColumns, readOnly, first
           onDelete={() => deleteRow(i)}
           readOnly={readOnly}
           operatorSlot={i === 0 ? firstRowOperatorSlot : undefined}
+          // A rule must keep at least one condition — hide the X on the last
+          // remaining row.
+          canDelete={ast.rows.length > 1}
         />
       ))}
       {!readOnly && (

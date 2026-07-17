@@ -149,8 +149,15 @@ type RegistryMode = "dqx_native" | "lowcode" | "sql";
 
 /** A condition-selector / change-type selection: the target authoring surface
  * plus, for a native check, the chosen function name; for a low-code choice, an
- * optional operator to seed the first condition row with. */
-type DecisionPointChoice = { type: "lowcode" | "sql" | "native"; fnName?: string; operator?: string };
+ * optional operator to seed the first condition row with, and (when the operator
+ * was picked from a specific data-type group while the column was still "any")
+ * the family to auto-assign to the anchor column. */
+type DecisionPointChoice = {
+  type: "lowcode" | "sql" | "native";
+  fnName?: string;
+  operator?: string;
+  operatorFamily?: LowcodeFamily;
+};
 type Polarity = "pass" | "fail";
 
 // Top-level page tabs. Persisted to the URL (`?tab=`) by the routed detail
@@ -251,6 +258,12 @@ function useDecisionPointShortlist(
 /** Which drill-in view the merged condition selector is showing. */
 type ConditionSelectorView = "root" | "basic" | "operators";
 
+/** Override the cmdk group-heading styling to the ALL-CAPS framing-word style
+ * used by the IF / THEN THE ROW headers (not the default sans-medium), so the
+ * dropdown section headers read as section labels rather than list items. */
+const COMMAND_GROUP_HEADING_CLASS =
+  "[&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:text-[10px]";
+
 /**
  * The single merged condition selector that sits in the operator-cell position
  * of the always-present `IF <column> <selector>` row. Its root offers the three
@@ -272,7 +285,6 @@ function ConditionSelector({
   onSelect,
   disabled,
   currentLabel,
-  currentLabelMono,
   operatorFamily,
   initialView,
 }: {
@@ -281,11 +293,9 @@ function ConditionSelector({
   onSelect: (choice: DecisionPointChoice) => void;
   disabled?: boolean;
   /** The current selection's display label; undefined before anything is chosen
-   * (then the cycling placeholder shows). */
+   * (then the cycling placeholder shows). Always rendered grey + monospace to
+   * match the low-code column picker. */
   currentLabel?: string;
-  /** Render *currentLabel* in monospace (a low-code operator) vs. plain (a check
-   * label or "SQL"). */
-  currentLabelMono?: boolean;
   /** The anchor column's low-code family — drives which monospace operators the
    * "Condition Builder" drill-in offers. */
   operatorFamily: LowcodeFamily;
@@ -312,11 +322,16 @@ function ConditionSelector({
   }, [open, initialView]);
 
   // Condition Builder operators for the anchor column, grouped by type with
-  // section headings (mirrors the low-code OperatorDropdown): the column
-  // family's own operators first, then the universal (ANY) operators deduped
-  // under a second heading. A non-specific ("ANY") column shows just one group.
-  const operatorGroups = useMemo((): { heading: string; ops: string[] }[] => {
-    const familyOps = OPERATORS_BY_FAMILY[operatorFamily] ?? OPERATORS_BY_FAMILY.ANY;
+  // section headings (mirrors the low-code OperatorDropdown). For a typed
+  // column: the column family's own operators first, then the universal (ANY)
+  // operators deduped under a second heading. For an "any"-typed column (data
+  // type not yet chosen) we show EVERY data type's operators — each under its
+  // own heading — so the author can pick any operator; selecting one then lets
+  // them set the column's data type in "Columns used".
+  // Each group carries the *family* to auto-assign to the anchor column when an
+  // operator is picked from it while the column is still "any" (null family =
+  // don't change the column's data type — the universal / already-typed groups).
+  const operatorGroups = useMemo((): { heading: string; ops: string[]; family: LowcodeFamily | null }[] => {
     const familyHeadings: Record<LowcodeFamily, string> = {
       NUMERIC: t("rulesRegistry.slotFamilyNumeric"),
       TEXTUAL: t("rulesRegistry.slotFamilyText"),
@@ -325,13 +340,31 @@ function ConditionSelector({
       ANY: t("rulesRegistry.slotFamilyAny"),
     };
     if (operatorFamily === "ANY") {
-      return [{ heading: familyHeadings.ANY, ops: familyOps }];
+      // Universal operators first (no data-type implied → family null), then
+      // every typed family's operators (deduped against the universal set),
+      // each under its data-type heading. Picking from a typed group
+      // auto-assigns that data type to the column.
+      const universal = OPERATORS_BY_FAMILY.ANY;
+      const universalSet = new Set(universal);
+      const groups: { heading: string; ops: string[]; family: LowcodeFamily | null }[] = [
+        { heading: familyHeadings.ANY, ops: universal, family: null },
+      ];
+      for (const fam of ["NUMERIC", "TEXTUAL", "TEMPORAL", "BOOLEAN"] as const) {
+        const ops = OPERATORS_BY_FAMILY[fam].filter((o) => !universalSet.has(o));
+        if (ops.length > 0) groups.push({ heading: familyHeadings[fam], ops, family: fam });
+      }
+      return groups;
     }
+    // Column already typed → its family's operators + a Universal group; no
+    // family change on pick.
+    const familyOps = OPERATORS_BY_FAMILY[operatorFamily] ?? OPERATORS_BY_FAMILY.ANY;
     const familySet = new Set(familyOps);
     const universalOps = OPERATORS_BY_FAMILY.ANY.filter((o) => !familySet.has(o));
-    const groups = [{ heading: familyHeadings[operatorFamily], ops: familyOps }];
+    const groups: { heading: string; ops: string[]; family: LowcodeFamily | null }[] = [
+      { heading: familyHeadings[operatorFamily], ops: familyOps, family: null },
+    ];
     if (universalOps.length > 0) {
-      groups.push({ heading: t("rulesRegistry.lowcodeUniversalOperators"), ops: universalOps });
+      groups.push({ heading: t("rulesRegistry.lowcodeUniversalOperators"), ops: universalOps, family: null });
     }
     return groups;
   }, [operatorFamily, t]);
@@ -428,13 +461,20 @@ function ConditionSelector({
           data-size="sm"
           className="border-input dark:bg-input/30 dark:hover:bg-input/50 focus-visible:border-ring focus-visible:ring-ring/50 flex h-8 w-full items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-1 font-mono text-xs whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <span className="relative flex items-center overflow-hidden">
+          {/* Monospace like the low-code operator/column controls. A COMMITTED
+              selection renders in foreground (so it matches the plain operator
+              dropdowns on rows 2+ and the column picker's selected value); the
+              cycling PLACEHOLDER (nothing chosen yet) stays muted grey. */}
+          <span
+            className={cn(
+              "relative flex items-center overflow-hidden",
+              isChanging ? "text-foreground" : "text-muted-foreground",
+            )}
+          >
             {isChanging ? (
-              // A selection has been made: show it statically (monospace for a
-              // low-code operator, plain for a check label / SQL).
-              <span className={cn("truncate", currentLabelMono ? "font-mono" : "font-sans")}>{currentLabel}</span>
+              <span className="truncate">{currentLabel}</span>
             ) : shouldReduceMotion ? (
-              <span className="text-muted-foreground font-sans">{t("rulesRegistry.decisionPointPlaceholder")}</span>
+              <span>{t("rulesRegistry.decisionPointPlaceholder")}</span>
             ) : (
               <AnimatePresence mode="wait" initial={false}>
                 <motion.span
@@ -443,7 +483,7 @@ function ConditionSelector({
                   animate={{ opacity: visible ? 1 : 0, y: visible ? 0 : -6 }}
                   exit={{ opacity: 0, y: -6 }}
                   transition={{ duration: 0.18, ease: "easeInOut" }}
-                  className="whitespace-nowrap text-muted-foreground font-sans"
+                  className="whitespace-nowrap"
                 >
                   {exampleLabel}
                 </motion.span>
@@ -543,7 +583,7 @@ function ConditionSelector({
                   <span className="text-xs text-muted-foreground">{t("rulesRegistry.noMatches")}</span>
                 </CommandEmpty>
                 {grouped.map(([category, fns]) => (
-                  <CommandGroup key={category} heading={category}>
+                  <CommandGroup key={category} heading={category} className={COMMAND_GROUP_HEADING_CLASS}>
                     {fns.map((fn) => (
                       <CommandItem
                         key={fn.name}
@@ -584,14 +624,16 @@ function ConditionSelector({
                   <ArrowLeft className="h-3 w-3 shrink-0" />
                   {t("rulesRegistry.coreConditionBuilder")}
                 </button>
-                {operatorGroups.map(({ heading, ops }) => (
-                  <CommandGroup key={heading} heading={heading}>
+                {operatorGroups.map(({ heading, ops, family }) => (
+                  <CommandGroup key={heading} heading={heading} className={COMMAND_GROUP_HEADING_CLASS}>
                     {ops.map((op) => (
                       <CommandItem
                         key={op}
                         value={op}
                         onSelect={() => {
-                          onSelect({ type: "lowcode", operator: op });
+                          // Picking from a typed group while the column is "any"
+                          // auto-assigns that data type to the anchor column.
+                          onSelect({ type: "lowcode", operator: op, operatorFamily: family ?? undefined });
                           setOpen(false);
                         }}
                         className="text-xs font-mono"
@@ -2785,6 +2827,21 @@ export function RegistryRuleFormDialog({
     return lowcodeAst.rows.some((r) => (r.column_ref ?? "").trim().length > 0);
   };
 
+  // Auto-assign a data type to the ANCHOR (first) low-code column when the
+  // author picked an operator from a typed group while the column was still
+  // "any" — so the column's family follows the operator they chose.
+  const applyOperatorFamilyToAnchor = (family: LowcodeFamily) => {
+    const slotFamily: RuleSlotFamilyType = (
+      { NUMERIC: "numeric", TEXTUAL: "text", TEMPORAL: "temporal", BOOLEAN: "boolean", ANY: "any" } as const
+    )[family];
+    setSqlSlots((prev) => {
+      if (prev.length === 0 || prev[0].family === slotFamily) return prev;
+      const next = prev.slice();
+      next[0] = { ...next[0], family: slotFamily };
+      return next;
+    });
+  };
+
   // Apply a rule-type *choice*: land in the target mode, translating or
   // carrying over as much authored state as the transition allows (ported from
   // dqlake's ModeSwitchDialog, generalized to the three DQX modes + the native
@@ -2897,6 +2954,7 @@ export function RegistryRuleFormDialog({
         rows[0] = { ...rows[0], kind: "row", column_ref: rows[0]?.column_ref || anchorCol, operator: choice.operator! };
         return { ...prev, rows };
       });
+      if (choice.operatorFamily) applyOperatorFamilyToAnchor(choice.operatorFamily);
     }
     setMode(next);
     setModeSwitch(null);
@@ -2926,6 +2984,7 @@ export function RegistryRuleFormDialog({
         rows[0] = { ...rows[0], operator: choice.operator! } as AnyRow;
         return { ...prev, rows };
       });
+      if (choice.operatorFamily) applyOperatorFamilyToAnchor(choice.operatorFamily);
       return;
     }
     // Re-selecting the same native function (or the same non-native surface with
@@ -3053,7 +3112,6 @@ export function RegistryRuleFormDialog({
                 onSelect={requestModeChange}
                 disabled={readOnly}
                 currentLabel={lowcodeAst.rows[0]?.operator || t("rulesRegistry.coreConditionBuilder")}
-                currentLabelMono={!!lowcodeAst.rows[0]?.operator}
                 // Already in Condition Builder: re-open straight into the
                 // operators list (back-arrow returns to root to change type).
                 initialView="operators"
@@ -3245,7 +3303,9 @@ export function RegistryRuleFormDialog({
               (its inherent polarity) with an explanatory tooltip. Hidden until
               a function is chosen so the empty-state hint reads cleanly. */}
           {functionName !== "" && (
-            <div className="flex flex-wrap items-center gap-3">
+            // A little extra breathing room between the check's parameters and
+            // the THEN THE ROW polarity switch.
+            <div className="flex flex-wrap items-center gap-3 pt-2">
               <FramingWord>{t("rulesRegistry.thenTheRow")}</FramingWord>
               <PredicatePolaritySwitch
                 value={nativeSupportsNegate ? polarity : "pass"}

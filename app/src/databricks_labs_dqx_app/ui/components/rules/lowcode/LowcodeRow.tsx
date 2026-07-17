@@ -22,6 +22,9 @@ type Props = {
    * standard operator dropdown — the merged condition selector, which also
    * hosts the escalate-to-SQL/native / change-rule-type affordances. */
   operatorSlot?: ReactNode;
+  /** Whether this row can be deleted. `false` hides the X — used to keep at
+   * least one condition on the rule (a rule with zero conditions is invalid). */
+  canDelete?: boolean;
 };
 
 function familyOf(name: string, declared: LowcodeColumnRef[]): Family {
@@ -31,7 +34,7 @@ function familyOf(name: string, declared: LowcodeColumnRef[]): Family {
 
 // Ported 1:1 from dqlake's LowcodeRow — one condition row: IF anchor / AND-OR
 // pill, column (or aggregate) picker, operator dropdown, value cell, delete.
-export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, readOnly, operatorSlot }: Props) {
+export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, readOnly, operatorSlot, canDelete = true }: Props) {
   const { t } = useTranslation();
   const family: Family =
     row.kind === "row"
@@ -132,11 +135,16 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
       {operatorSlot ?? <OperatorDropdown value={row.operator} family={family} onChange={setOperator} />}
       <ValueCell operator={row.operator} family={family} value={row.value} onChange={setValue} />
 
-      {!readOnly && (
-        <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={onDelete}>
-          <X className="h-4 w-4" />
-        </Button>
-      )}
+      {!readOnly &&
+        (canDelete ? (
+          <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={onDelete}>
+            <X className="h-4 w-4" />
+          </Button>
+        ) : (
+          // Keep the grid column so the row stays aligned, but no X — a rule
+          // must keep at least one condition.
+          <span aria-hidden className="h-8 w-8" />
+        ))}
     </div>
   );
 }
