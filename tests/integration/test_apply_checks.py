@@ -10040,6 +10040,38 @@ def test_apply_checks_with_has_valid_schema_extra_columns_in_params(ws, spark):
     assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
 
 
+def test_apply_checks_with_has_valid_schema_special_char_columns_are_valid(ws, spark):
+    """Column names with spaces / non-ASCII characters (that require SQL identifier escaping
+    must be treated as valid and the check must run instead of being skipped."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, `Customer Name` string, `Ääkkönen` int"
+    test_df = spark.createDataFrame([[1, "Alice", 10], [2, "Bob", 20]], schema)
+
+    checks = [
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, `Customer Name` string, `Ääkkönen` int",
+                "columns": ["Customer Name", "Ääkkönen"],
+                "strict": False,
+            },
+        ),
+    ]
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, "Alice", 10, None, None],
+            [2, "Bob", 20, None, None],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+    assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
 def test_apply_checks_and_save_in_tables_for_patterns_missing_output_suffix(ws, spark):
     dq_engine = DQEngine(ws)
 

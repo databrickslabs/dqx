@@ -13,7 +13,7 @@ from databricks.labs.dqx.rule import (
     DQRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
-from databricks.labs.dqx.utils import get_column_name_or_alias
+from databricks.labs.dqx.utils import get_column_name_or_alias, is_simple_column_expression, quote_column_name
 
 logger = logging.getLogger(__name__)
 
@@ -74,17 +74,31 @@ class DQRuleManager:
     def invalid_columns(self) -> list[str]:
         """
         Returns list of invalid check columns in the input DataFrame.
+
+        Column names that contain characters requiring SQL identifier escaping (e.g. spaces, such as
+        "Customer Name") are back-quoted so they are unambiguous in the skip / error messages.
         """
         invalid_cols = []
 
         if self.check.column is not None and self._is_invalid_column(self.check.column):
-            invalid_cols.append(get_column_name_or_alias(self.check.column))
+            invalid_cols.append(self._display_column_name(self.check.column))
         elif self.check.columns is not None:  # either column or columns can be provided, but not both
             for column in self.check.columns:
                 if self._is_invalid_column(column):
-                    invalid_cols.append(get_column_name_or_alias(column))
+                    invalid_cols.append(self._display_column_name(column))
 
         return invalid_cols
+
+    @staticmethod
+    def _display_column_name(column: str | Column) -> str:
+        """
+        Returns the column name for use in skip / error messages, back-quoting names that require SQL
+        identifier escaping (e.g. "Customer Name" -> "`Customer Name`").
+        """
+        name = get_column_name_or_alias(column)
+        if is_simple_column_expression(name):
+            return name
+        return quote_column_name(name)
 
     @cached_property
     def has_invalid_columns(self) -> bool:
@@ -260,11 +274,28 @@ class DQRuleManager:
             col_expr = F.expr(column) if isinstance(column, str) else column
             _ = self.df.select(col_expr).schema  # perform logical plan validation without triggering computation
         except AnalysisException as e:
+            # The input string may be a SQL expression (e.g. "a + b") or a plain column name that may require
+            # SQL identifier escaping (spaces / non-ASCII / reserved chars, e.g. "Customer Name"). To validate
+            # the input string, we first attempt F.expr() and retry failing strings as a backtick-quoted identifiers.
+            # String expressions parse cleanly and only genuine single-identifier names pass fallback validation.
+            if isinstance(column, str) and not self._is_invalid_quoted_column(column):
+                return False
             # If column is not accessible or column expression cannot be evaluated, an AnalysisException is thrown.
             # Note: This does not cover all error conditions. Some issues only appear during a Spark action.
             logger.debug(
                 f"Invalid column '{column}' provided in the check '{self.check.name}'",
                 exc_info=e,
             )
+            return True
+        return False
+
+    def _is_invalid_quoted_column(self, column: str) -> bool:
+        """
+        Returns True if the string cannot be resolved as a single backtick-quoted column identifier,
+        otherwise False.
+        """
+        try:
+            _ = self.df.select(F.expr(quote_column_name(column))).schema
+        except AnalysisException:
             return True
         return False

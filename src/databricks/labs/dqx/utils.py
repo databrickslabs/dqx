@@ -220,6 +220,24 @@ def normalize_bound_args(val: Any, allow_simple_expressions_only: bool = True) -
     return _normalize_leaf_value(val, allow_simple_expressions_only)
 
 
+def quote_column_name(name: str) -> str:
+    """
+    Wraps a column name in backticks so it can be used as a SQL identifier.
+
+    Column names containing spaces, non-ASCII characters, or other characters that require escaping
+    (e.g. "Customer Name", "Ääkkönen") are not valid bare SQL identifiers and must be back-quoted before
+    being parsed by ``F.expr``.
+
+    Args:
+        name: Column name to quote.
+
+    Returns:
+        The column name wrapped in backticks with embedded backticks escaped.
+    """
+    escaped = name.replace("`", "``")
+    return f"`{escaped}`"
+
+
 def normalize_col_str(col_str: str) -> str:
     """
     Normalizes string to be compatible with metastore column names by applying the following transformations:
