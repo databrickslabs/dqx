@@ -32,6 +32,7 @@ import {
   Trash2,
   Loader2,
   Undo2,
+  GitCompare,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -55,10 +56,14 @@ import {
   useRevokeRegistryRule,
   type RegistryRuleOut,
 } from "@/lib/api";
+import {
+  RegistryRuleDiffDialog,
+  type RegistryDiffTarget,
+} from "@/components/drafts/ChangeDiffDialog";
 import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
 import type { User as UserType } from "@/lib/api";
-import { useLabelDefinitions, exportRegistryRules, exportRegistryRule } from "@/lib/api-custom";
+import { useLabelDefinitions, exportRegistryRules } from "@/lib/api-custom";
 import { ExportYamlMenu } from "@/components/ExportYamlMenu";
 import { LabelFilter, labelsMatchFilter, type LabelSelection } from "@/components/Labels";
 import { labelToken } from "@/lib/format-utils";
@@ -294,6 +299,7 @@ function RegistryRulesPage() {
 
   const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RegistryRuleOut | null>(null);
+  const [diffTarget, setDiffTarget] = useState<RegistryDiffTarget | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
@@ -532,11 +538,6 @@ function RegistryRulesPage() {
       }
       return (
         <div className="flex items-center justify-end gap-1">
-          <ExportYamlMenu
-            fetchDqx={() => exportRegistryRule(rule.rule_id)}
-            variant="ghost"
-            iconOnly
-          />
           {rule.status === "draft" && perms.canCreateRules && (
             <>
               <Tooltip>
@@ -647,6 +648,29 @@ function RegistryRulesPage() {
                 </Button>
               </TooltipTrigger>
               <TooltipContent>{t("rulesRegistry.actionUndeprecate")}</TooltipContent>
+            </Tooltip>
+          )}
+          {(rule.display_status === "modified" || rule.status === "pending_approval") && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 text-purple-600 dark:text-purple-400"
+                  aria-label={t("rulesDrafts.diff.viewChanges")}
+                  onClick={() =>
+                    setDiffTarget({
+                      ruleId: rule.rule_id,
+                      name: getTag(rule, RESERVED_NAME_KEY) || rule.rule_id,
+                      version: rule.version,
+                      definition: rule.definition,
+                    })
+                  }
+                >
+                  <GitCompare className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("rulesDrafts.diff.viewChanges")}</TooltipContent>
             </Tooltip>
           )}
           {rule.status === "rejected" && perms.canCreateRules && (
@@ -955,6 +979,8 @@ function RegistryRulesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <RegistryRuleDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
     </FadeIn>
   );
 }

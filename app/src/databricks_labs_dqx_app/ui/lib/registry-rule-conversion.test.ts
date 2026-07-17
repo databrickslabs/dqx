@@ -3,11 +3,12 @@ import {
   computeMatchedTagsForSlot,
   deriveSlotsAndParameters,
   fnSupportsNegate,
+  nativeArguments,
   slotTagsFromUserMetadata,
   userMetadataWithSlotTags,
 } from "./registry-rule-conversion";
 import { familyForSparkType } from "./slot-mapping";
-import type { CheckFunctionDef } from "./api";
+import type { CheckFunctionDef, RuleSlot } from "./api";
 
 // Unit tests for the registry-rule <-> DQX-check conversion helpers touched by
 // P19-D items 10 (typed slot families + ARRAY) and 11 (negate -> polarity).
@@ -340,5 +341,38 @@ describe("computeMatchedTagsForSlot — governed tag intersection for demo chips
       "class.z",
       "class.a",
     ]);
+  });
+});
+
+describe("nativeArguments — CRIT-1: single-column fn extra slots are filter-only", () => {
+  const slot = (name: string, over: Partial<RuleSlot> = {}): RuleSlot =>
+    ({ name, family: "any", position: 0, cardinality: "one", ...over }) as RuleSlot;
+
+  test("single-column fn: the sole signature slot binds the function argument", () => {
+    const isNotNull = fn({ params: [param("column", "column")] });
+    const slots: RuleSlot[] = [slot("column_1", { arg_key: "column", position: 0 })];
+    expect(nativeArguments(slots, isNotNull)).toEqual({ column: "{{column_1}}" });
+  });
+
+  test("single-column fn: an added extra slot (arg_key undefined) does NOT leak a scalar argument", () => {
+    // The "+ Add column" path on a single-column fn appends a slot with no
+    // arg_key — it exists only for the advanced filter. It must NOT become its
+    // own top-level argument key (e.g. column_2=...) or the runner throws a
+    // TypeError (is_not_null(column=..., column_2=...)).
+    const isNotNull = fn({ params: [param("column", "column")] });
+    const slots: RuleSlot[] = [
+      slot("column_1", { arg_key: "column", position: 0 }),
+      slot("column_2", { arg_key: undefined, position: 1 }),
+    ];
+    expect(nativeArguments(slots, isNotNull)).toEqual({ column: "{{column_1}}" });
+  });
+
+  test("list-arg fn: multiple slots sharing the list arg_key still render as a list", () => {
+    const foreignKey = fn({ params: [param("columns", "columns")] });
+    const slots: RuleSlot[] = [
+      slot("column_1", { arg_key: "columns", position: 0 }),
+      slot("column_2", { arg_key: "columns", position: 1 }),
+    ];
+    expect(nativeArguments(slots, foreignKey)).toEqual({ columns: ["{{column_1}}", "{{column_2}}"] });
   });
 });

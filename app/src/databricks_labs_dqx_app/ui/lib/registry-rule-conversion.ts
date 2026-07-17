@@ -273,9 +273,21 @@ export function listColumnArgKey(fn: ApiCheckFunctionDef | undefined): string | 
  */
 export function nativeArguments(slots: RuleSlot[], fn?: ApiCheckFunctionDef): Record<string, unknown> {
   const listArgKey = listColumnArgKey(fn);
+  // The set of real column-kind parameter names the selected function actually
+  // accepts. A slot whose key isn't one of these is an EXTRA (filter-only)
+  // slot — e.g. a column added via "+ Add column" on a single-column function,
+  // which carries no `arg_key`, so its key falls back to its own `column_N`
+  // name. Such slots exist solely for the advanced filter (spec §B3, single-
+  // column arity UX) and must NEVER surface as their own top-level argument, or
+  // the rendered check becomes e.g. `is_not_null(column=…, column_2=…)` and the
+  // runner throws a TypeError. When `fn` is unknown (raw JSON editor for an
+  // unrecognized function) we can't classify parameters, so every slot binds —
+  // preserving the pre-existing pass-through behaviour.
+  const columnArgKeys = fn ? new Set((fn.params ?? []).filter((p) => COLUMN_KINDS.has(p.kind)).map((p) => p.name)) : null;
   const groups = new Map<string, RuleSlot[]>();
   for (const s of slots) {
     const key = s.arg_key ?? s.name;
+    if (columnArgKeys && !columnArgKeys.has(key)) continue; // extra/filter-only slot
     const members = groups.get(key);
     if (members) members.push(s);
     else groups.set(key, [s]);

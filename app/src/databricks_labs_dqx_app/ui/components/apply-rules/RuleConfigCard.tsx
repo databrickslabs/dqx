@@ -24,7 +24,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { AppliedRuleOut, ColumnOut, RegistryRuleOut, RegistryRuleVersionOut, RuleParameter, RuleSlot } from "@/lib/api";
-import { useListRegistryRuleVersions } from "@/lib/api";
+import { useListCheckFunctions, useListRegistryRuleVersions } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
 import { paramValueToRaw } from "@/lib/registry-rule-conversion";
 import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
@@ -164,6 +164,13 @@ function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   const predicate = typeof body.predicate === "string" ? body.predicate : undefined;
   const parameters = registryRule.definition.parameters ?? [];
 
+  // Resolve friendly label for the check function name. React Query caches
+  // the result so this call does not issue a network request per card.
+  const { data: fnData } = useListCheckFunctions();
+  const fnLabel = fn
+    ? (fnData?.data?.functions ?? []).find((f) => f.name === fn)?.label ?? fn
+    : undefined;
+
   if (registryRule.mode === "lowcode") {
     return <LowcodeLogicBody registryRule={registryRule} />;
   }
@@ -172,7 +179,7 @@ function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
     return <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>;
   }
 
-  const text = sql ?? predicate ?? `${fn}(${args ? JSON.stringify(args) : ""})`;
+  const text = sql ?? predicate ?? `${fnLabel}(${args ? JSON.stringify(args) : ""})`;
 
   return (
     <div className="space-y-3">
@@ -506,9 +513,6 @@ interface RuleConfigCardProps {
   /** `null` = follow latest; a number = pin to that published version. */
   onPinChange: (version: number | null) => void;
   onSeverityChange: (value: string) => void;
-  /** Per-rule SQL WHERE predicate scoping which rows this rule's check
-   *  validates. `null`/blank = every row. Pure local `stagedRows` mutation. */
-  onRowFilterChange: (value: string | null) => void;
   /** Per-rule minimum % of rows that must pass. `null` = no per-rule
    *  threshold. Pure local `stagedRows` mutation. */
   onPassThresholdChange: (value: number | null) => void;
@@ -552,7 +556,6 @@ export function RuleConfigCard({
   busy,
   onPinChange,
   onSeverityChange,
-  onRowFilterChange,
   onPassThresholdChange,
   onRemove,
   onJumpToColumn,
@@ -793,29 +796,9 @@ export function RuleConfigCard({
         <div className="overflow-hidden">
           <div className="border-t px-4 py-4 space-y-3">
             <RuleLogicDisclosure open={logicOpen} onToggle={() => setLogicOpen((p) => !p)} registryRule={registryRule} />
-            {/* Per-rule overrides (item: WHERE filter + pass threshold). Both
-                edit the LOCAL staged row (no network call); saved with the tab.
-                Filter is rendered into the DQX check's native per-check
-                ``filter`` at run time; threshold is stored/surfaced for now. */}
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 rounded-md border bg-muted/20 px-3 py-3">
-              <div className="space-y-1 min-w-0">
-                <Label htmlFor={`rule-filter-${rule.rule_id}`} className="text-xs">
-                  {t("monitoredTables.ruleFilterLabel")}
-                </Label>
-                <Input
-                  id={`rule-filter-${rule.rule_id}`}
-                  type="text"
-                  value={rule.row_filter ?? ""}
-                  disabled={!canEdit || busy}
-                  placeholder={t("monitoredTables.ruleFilterPlaceholder")}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    onRowFilterChange(v.trim() === "" ? null : v);
-                  }}
-                  className="h-8 font-mono text-xs"
-                />
-                <p className="text-[11px] text-muted-foreground">{t("monitoredTables.ruleFilterHint")}</p>
-              </div>
+            {/* Per-rule pass-threshold override. Edits the LOCAL staged row
+                (no network call); saved with the tab. */}
+            <div className="rounded-md border bg-muted/20 px-3 py-3">
               <div className="space-y-1 sm:w-32">
                 <Label htmlFor={`rule-threshold-${rule.rule_id}`} className="text-xs">
                   {t("monitoredTables.ruleThresholdLabel")}

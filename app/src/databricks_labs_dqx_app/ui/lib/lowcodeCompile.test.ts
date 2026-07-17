@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildSqlBody,
   compileAstToSql,
   compileJoinsToSql,
   compileLowcodeBody,
@@ -317,5 +318,81 @@ describe("pruneStaleGroupByRefs", () => {
     const withJoinKey: LowcodeColumnRef[] = [...declared, col("orders.total")];
     const value = "{{region}}, orders.total";
     expect(pruneStaleGroupByRefs(value, withJoinKey)).toBe(value);
+  });
+});
+
+describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without corruption", () => {
+  const CROSS_TABLE_QUERY =
+    "SELECT {{customer_id}}, (NOT ({{amount}} > 0)) AS condition " +
+    "FROM {{input_view}} LEFT JOIN c.s.orders ON c.s.orders.cid = {{customer_id}}";
+
+  test("loaded cross-table rule, unedited resave -> stays sql_query (current text)", () => {
+    // No-edit resave reopens with sqlJoins=[] and the full SELECT in the editor.
+    // It must be persisted as sql_query, NOT flipped into { predicate: <SELECT> }.
+    const body = buildSqlBody({
+      sqlPredicate: CROSS_TABLE_QUERY,
+      sqlJoins: [],
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.sql_query).toBe(CROSS_TABLE_QUERY);
+    expect(body.predicate).toBeUndefined();
+  });
+
+  test("loaded cross-table rule, EDITED query text -> saves the edit AS sql_query (not sql_expression)", () => {
+    // The literal edit+resave case: the author tweaks the loaded SELECT. As long
+    // as the rule is still a loaded cross-table query, the edited text is saved
+    // as sql_query — never downgraded to a broken sql_expression.
+    const edited = CROSS_TABLE_QUERY.replace("> 0", "> 100");
+    const body = buildSqlBody({
+      sqlPredicate: edited,
+      sqlJoins: [],
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.sql_query).toBe(edited);
+    expect(body.predicate).toBeUndefined();
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("passthrough preserves merge_columns (row-level merge, not dataset-level)", () => {
+    const body = buildSqlBody({
+      sqlPredicate: CROSS_TABLE_QUERY,
+      sqlJoins: [],
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("passthrough without merge_columns stays dataset-level (no merge_columns key)", () => {
+    const q = "SELECT (NOT (COUNT(*) > 0)) AS condition FROM {{input_view}} CROSS JOIN c.s.dim";
+    const body = buildSqlBody({ sqlPredicate: q, sqlJoins: [], sqlQueryPassthrough: {} });
+    expect(body.sql_query).toBe(q);
+    expect(body.merge_columns).toBeUndefined();
+  });
+
+  test("joins re-declared -> recompiles a fresh sql_query from predicate + joins (passthrough ignored)", () => {
+    const joins: JoinAst[] = [
+      { join_type: "LEFT", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "customer_id" }] },
+    ];
+    const body = buildSqlBody({
+      sqlPredicate: "{{customer_id}} IS NOT NULL",
+      sqlJoins: joins,
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.sql_query).toBe(
+      "SELECT {{customer_id}}, (NOT ({{customer_id}} IS NOT NULL)) AS condition " +
+        "FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{customer_id}}",
+    );
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("no joins, no passthrough -> plain single-table { predicate }", () => {
+    const body = buildSqlBody({ sqlPredicate: "{{email}} IS NOT NULL", sqlJoins: [] });
+    expect(body).toEqual({ predicate: "{{email}} IS NOT NULL" });
+  });
+
+  test("no joins, null passthrough (type changed away) -> falls back to { predicate }", () => {
+    expect(buildSqlBody({ sqlPredicate: "x > 0", sqlJoins: [], sqlQueryPassthrough: null })).toEqual({
+      predicate: "x > 0",
+    });
   });
 });

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, X } from "lucide-react";
-import { CatalogBrowser } from "@/components/CatalogBrowser";
+import { SingleTableScopePicker } from "@/components/monitored-tables/SingleTableScopePicker";
 import { useGetTableColumns } from "@/lib/api";
 import type { JoinAst, JoinKeyAst, JoinType } from "@/lib/lowcodeAst";
 import type { LowcodeColumnRef } from "@/lib/lowcodeCompile";
@@ -71,8 +71,8 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
             ))}
           </SelectContent>
         </Select>
-        <CatalogBrowser
-          value={join.target_table || undefined}
+        <SingleTableScopePicker
+          value={join.target_table || ""}
           onChange={(fqn) => onChange({ ...join, target_table: fqn })}
         />
         {!isCross ? (

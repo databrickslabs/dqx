@@ -370,3 +370,69 @@ export function compileLowcodeBody(ast: LowcodeAstV2, groupBy: string): Compiled
   // No usable row key (e.g. CROSS-join-only) — dataset-level single-row query.
   return { sql_query: `SELECT (${failCond}) AS condition FROM ${from}` };
 }
+
+/**
+ * Build the SQL-mode rule body (`{ predicate }` or `{ sql_query, merge_columns? }`)
+ * from the SQL editor's raw predicate + declared joins.
+ *
+ * The body TYPE is derived from join presence (mirroring
+ * {@link compileLowcodeBody}'s classification — no separate stored flag):
+ *
+ *   • joins declared     →  compile predicate + joins into a `sql_query`
+ *                           (`merge_columns` = input-side join keys, or absent
+ *                           for a CROSS-join-only dataset-level query);
+ *   • no joins, but the  →  emit the CURRENT editor text as `sql_query`,
+ *     editor holds a         preserving the loaded body's `merge_columns`
+ *     loaded cross-table      (*sqlQueryPassthrough* non-null). This is the
+ *     query                   CRIT-2 fix: joins are not round-trippable from a
+ *                            raw `sql_query` string, so a cross-table rule
+ *                            reopens with `sqlJoins = []` and its whole
+ *                            `SELECT … FROM {{input_view}} … JOIN …` sitting in
+ *                            the predicate editor. Without this branch that body
+ *                            would be mis-emitted as `{ predicate: <full SELECT> }`,
+ *                            flipping the rule into a broken `sql_expression`.
+ *                            Using the CURRENT predicate text (not a frozen
+ *                            snapshot) means editing the query — the literal
+ *                            "edit + resave" case — keeps it a valid `sql_query`;
+ *   • otherwise          →  a plain single-table `{ predicate }`.
+ *
+ * *sqlQueryPassthrough* is non-null exactly while the editor still holds a rule
+ * loaded as a cross-table `sql_query` (see `loadedSqlQueryRef`). It carries the
+ * loaded `merge_columns` to preserve (dropping them would flip the runtime from
+ * a row-level merge to a dataset-level single-row query). The caller drops it
+ * the moment the author changes the rule TYPE (the decision-point re-pick), so
+ * an intentional conversion to another mode is honoured; re-declaring joins
+ * takes the recompile branch above regardless.
+ */
+export function buildSqlBody(params: {
+  sqlPredicate: string;
+  sqlJoins: JoinAst[];
+  sqlQueryPassthrough?: { merge_columns?: string[] } | null;
+}): CompiledLowcodeBody {
+  const { sqlPredicate, sqlJoins, sqlQueryPassthrough } = params;
+  const joinsSql = compileJoinsToSql(sqlJoins);
+  const pred = sqlPredicate.trim();
+  if (joinsSql) {
+    const failCond = `NOT (${pred})`;
+    const from = `{{input_view}} ${joinsSql}`;
+    const keyRefs = joinKeyRefs(sqlJoins);
+    if (keyRefs.length > 0) {
+      return {
+        sql_query: `SELECT ${keyRefs.join(", ")}, (${failCond}) AS condition FROM ${from}`,
+        merge_columns: keyRefs,
+      };
+    }
+    // CROSS-join-only: dataset-level single-row query (no usable row key).
+    return { sql_query: `SELECT (${failCond}) AS condition FROM ${from}` };
+  }
+  if (sqlQueryPassthrough && pred) {
+    // The editor holds a loaded cross-table sql_query. Persist the CURRENT text
+    // as sql_query (so edits are saved, not corrupted), preserving merge_columns.
+    const body: CompiledLowcodeBody = { sql_query: pred };
+    if (sqlQueryPassthrough.merge_columns && sqlQueryPassthrough.merge_columns.length > 0) {
+      body.merge_columns = sqlQueryPassthrough.merge_columns;
+    }
+    return body;
+  }
+  return { predicate: pred };
+}

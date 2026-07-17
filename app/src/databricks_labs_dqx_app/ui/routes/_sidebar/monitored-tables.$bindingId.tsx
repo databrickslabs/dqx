@@ -2218,13 +2218,9 @@ function ApplyRulesTab({
     setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, severity_override } : r)));
   };
 
-  // Per-rule WHERE filter + pass threshold — like severity/pin above, these are
-  // properties of the rule application (shared across all of a rule_id's staged
-  // rows), so update every row for that rule_id. Pure local staged mutation.
-  const handleRowFilterChange = (rule: AppliedRuleOut, value: string | null) => {
-    setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, row_filter: value } : r)));
-  };
-
+  // Per-rule pass threshold — like severity/pin above, this is a property of
+  // the rule application (shared across all of a rule_id's staged rows), so
+  // update every row for that rule_id. Pure local staged mutation.
   const handlePassThresholdChange = (rule: AppliedRuleOut, value: number | null) => {
     setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, pass_threshold: value } : r)));
   };
@@ -2417,7 +2413,6 @@ function ApplyRulesTab({
                 busy={false}
                 onPinChange={(v) => handlePinChange(rule, v)}
                 onSeverityChange={(v) => handleSeverityChange(rule, v)}
-                onRowFilterChange={(v) => handleRowFilterChange(rule, v)}
                 onPassThresholdChange={(v) => handlePassThresholdChange(rule, v)}
                 onRemove={() => setRemoveTarget(rule)}
                 onRemoveMapping={(groupIdx) => handleRemoveMappingGroup(rule.rule_id, groupIdx)}

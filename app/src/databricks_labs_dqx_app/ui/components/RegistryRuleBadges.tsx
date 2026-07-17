@@ -191,8 +191,8 @@ export function ModeBadge({ mode }: { mode: string }) {
     mode === "dqx_native"
       ? t("rulesRegistry.modeDqxNative")
       : mode === "lowcode"
-        ? t("rulesRegistry.modeLowcode")
-        : t("rulesRegistry.modeSql");
+        ? t("rulesRegistry.coreConditionBuilder")
+        : t("rulesRegistry.coreSql");
   return (
     <Badge variant="secondary" className="text-[10px] font-mono">
       {label}

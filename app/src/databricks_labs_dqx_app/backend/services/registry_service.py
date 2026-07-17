@@ -707,6 +707,20 @@ class RegistryService:
                 raise UnsafeSqlQueryError(
                     "The rule's SQL contains prohibited statements (e.g. DROP, INSERT, UPDATE) and cannot be saved."
                 )
+        # Validate the rule-level filter (definition.filter) using the same
+        # is_sql_query_safe wrapper as the per-applied-rule row_filter validator
+        # in apply_rules_service. Blank/None is always allowed.
+        filter_value = definition.filter
+        if filter_value and filter_value.strip():
+            _ROW_FILTER_MAX_LEN = 4000
+            if len(filter_value.strip()) > _ROW_FILTER_MAX_LEN:
+                raise UnsafeSqlQueryError(
+                    f"Rule filter is too long (max {_ROW_FILTER_MAX_LEN} characters)."
+                )
+            if not is_sql_query_safe(f"SELECT * FROM _t WHERE ({filter_value.strip()})"):
+                raise UnsafeSqlQueryError(
+                    "The rule's filter contains prohibited SQL and cannot be saved."
+                )
 
     def _dedup_warning(self, rule: RegistryRule) -> str | None:
         """Return a human-readable warning if a published rule shares this fingerprint."""

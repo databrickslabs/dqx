@@ -54,6 +54,7 @@ def compute_registry_rule_fingerprint(rule: RegistryRule) -> str:
             (_normalize_parameter(param) for param in rule.definition.parameters),
             key=lambda p: p["name"],
         ),
+        "filter": rule.definition.filter,
     }
     combined = json.dumps(fingerprint_data, sort_keys=True)
     return hashlib.sha256(combined.encode()).hexdigest()

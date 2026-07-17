@@ -676,6 +676,8 @@ export interface CheckDuplicatesOut {
 export interface CheckFunctionDef {
   /** Function name as registered in CHECK_FUNC_REGISTRY */
   name: string;
+  /** Human-readable display name for the UI (e.g. 'Is Not Null') */
+  label: string;
   /** 'row' or 'dataset' */
   rule_type: string;
   /** UX grouping bucket (e.g. 'Null & Empty', 'Numeric & Comparable', 'Aggregates'). Used to group entries in the UI dropdown. */
@@ -2942,6 +2944,11 @@ export type RuleDefinitionBody = { [key: string]: unknown };
 export type RuleDefinitionErrorMessage = string | null;
 
 /**
+ * Optional rule-level row filter (a SQL WHERE predicate), mirroring DQRule.filter. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'filter' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty.
+ */
+export type RuleDefinitionFilter = string | null;
+
+/**
  * Mode-specific rule body plus its typed slots/params.
 
 ``body`` holds the mode-specific payload (native: ``{function,
@@ -2958,6 +2965,8 @@ export interface RuleDefinition {
   parameters?: RuleParameter[];
   /** Optional custom failure message (a Spark SQL expression string), mirroring DQRule.message_expr. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'message_expr' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty. */
   error_message?: RuleDefinitionErrorMessage;
+  /** Optional rule-level row filter (a SQL WHERE predicate), mirroring DQRule.filter. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'filter' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty. */
+  filter?: RuleDefinitionFilter;
 }
 
 export type RuleHistoryEntryOutRuleId = string | null;

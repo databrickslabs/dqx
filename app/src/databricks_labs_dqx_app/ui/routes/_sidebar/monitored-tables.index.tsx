@@ -12,11 +12,12 @@ import {
   getMonitoredTablesSortValue,
   getMonitoredTablesSortConfig,
   type MonitoredTablesSortKey,
+  type MonitoredTablesTableSelection,
 } from "@/components/monitored-tables/MonitoredTablesTable";
 import { compareSortValues } from "@/components/data-table/sort";
 import { AddMonitoredTableModal } from "@/components/monitored-tables/AddMonitoredTableModal";
 import { ExportYamlMenu } from "@/components/ExportYamlMenu";
-import { exportMonitoredTable, exportMonitoredTables } from "@/lib/api-custom";
+import { exportMonitoredTables } from "@/lib/api-custom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -38,7 +39,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, CheckCircle2, Loader2, Play, Plus, RotateCcw, Search, Table2, Trash2, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, GitCompare, Loader2, Play, Plus, RotateCcw, Search, Table2, Trash2, XCircle } from "lucide-react";
 import {
   useListMonitoredTables,
   useDeleteMonitoredTable,
@@ -47,6 +48,10 @@ import {
   useRunMonitoredTable,
   type MonitoredTableSummaryOut,
 } from "@/lib/api";
+import {
+  MonitoredTableDiffDialog,
+  type MonitoredTableDiffTarget,
+} from "@/components/drafts/ChangeDiffDialog";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
@@ -129,6 +134,7 @@ function MonitoredTablesPage() {
   const [scoreFilter, setScoreFilter] = useState<string>(DQ_SCORE_FILTER_ALL);
   const [nameSearch, setNameSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<MonitoredTableSummaryOut | null>(null);
+  const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
@@ -240,6 +246,190 @@ function MonitoredTablesPage() {
   const runMutation = useRunMonitoredTable();
   const [rejectTarget, setRejectTarget] = useState<MonitoredTableSummaryOut | null>(null);
 
+  // Bulk-selection state — mirrors registry-rules.index.tsx
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
+  const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
+  const [bulkRunOpen, setBulkRunOpen] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
+  /** Binding IDs eligible for selection: the same gating as the row-level
+   *  action bar — runnable (version > 0, canRunRules), approvable /
+   *  rejectable (pending + canApproveRules), or deletable (canCreateRules,
+   *  not pending). */
+  const selectableIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const r of sortedTables) {
+      const bindingId = r.table.binding_id;
+      const isPending = r.table.status === "pending_approval";
+      if (
+        (perms.canRunRules && (r.table.version ?? 0) > 0) ||
+        (isPending && perms.canApproveRules) ||
+        (perms.canCreateRules && !isPending)
+      ) {
+        ids.add(bindingId);
+      }
+    }
+    return ids;
+  }, [sortedTables, perms]);
+
+  const selectedRows = useMemo(
+    () => sortedTables.filter((r) => selectedIds.has(r.table.binding_id)),
+    [sortedTables, selectedIds],
+  );
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === selectableIds.size) return new Set();
+      return new Set(selectableIds);
+    });
+  }, [selectableIds]);
+
+  const tableSelection = useMemo<MonitoredTablesTableSelection>(
+    () => ({
+      selectedIds,
+      selectableIds,
+      onToggle: toggleSelect,
+      onToggleAll: toggleSelectAll,
+    }),
+    [selectedIds, selectableIds, toggleSelect, toggleSelectAll],
+  );
+
+  /** Runs a bulk operation sequentially and shows success/partial toasts —
+   *  mirrors registry-rules.index.tsx's `bulkAction`. */
+  const bulkAction = useCallback(
+    async (
+      rowsToAct: MonitoredTableSummaryOut[],
+      mutate: (bindingId: string) => Promise<unknown>,
+      successMsg: string,
+    ) => {
+      if (bulkBusy || rowsToAct.length === 0) return;
+      setBulkBusy(true);
+      let ok = 0;
+      let fail = 0;
+      let lastDetail = "";
+      for (const r of rowsToAct) {
+        try {
+          await mutate(r.table.binding_id);
+          ok++;
+          invalidateAfterMonitoredTableChange(queryClient, r.table.binding_id);
+        } catch (err: unknown) {
+          fail++;
+          const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+          if (detail) lastDetail = detail;
+        }
+      }
+      setBulkBusy(false);
+      setSelectedIds(new Set());
+      if (fail === 0) {
+        toast.success(t("monitoredTables.bulkSucceeded", { count: ok, msg: successMsg }));
+      } else {
+        toast.warning(
+          t("monitoredTables.bulkPartial", {
+            ok,
+            fail,
+            reason: lastDetail ? ` — ${lastDetail}` : "",
+          }),
+        );
+      }
+    },
+    [bulkBusy, queryClient, t],
+  );
+
+  const confirmBulkRun = () => {
+    setBulkRunOpen(false);
+    const eligible = selectedRows.filter((r) => (r.table.version ?? 0) > 0 && perms.canRunRules);
+    bulkAction(
+      eligible,
+      (bindingId) => runMutation.mutateAsync({ bindingId, data: { source: "approved" } }),
+      t("monitoredTables.bulkRunStarted"),
+    );
+  };
+
+  const confirmBulkApprove = () => {
+    setBulkApproveOpen(false);
+    const eligible = selectedRows.filter((r) => r.table.status === "pending_approval");
+    bulkAction(
+      eligible,
+      (bindingId) => approveMutation.mutateAsync({ bindingId }),
+      t("monitoredTables.bulkApproved"),
+    );
+  };
+
+  const confirmBulkReject = () => {
+    setBulkRejectOpen(false);
+    const eligible = selectedRows.filter((r) => r.table.status === "pending_approval");
+    bulkAction(
+      eligible,
+      (bindingId) => rejectMutation.mutateAsync({ bindingId }),
+      t("monitoredTables.bulkRejected"),
+    );
+  };
+
+  const confirmBulkDelete = () => {
+    setBulkDeleteOpen(false);
+    const eligible = selectedRows.filter(
+      (r) => perms.canCreateRules && r.table.status !== "pending_approval",
+    );
+    bulkAction(
+      eligible,
+      (bindingId) => deleteMutation.mutateAsync({ bindingId }),
+      t("monitoredTables.bulkDeleted"),
+    );
+  };
+
+  const bulkToolbar =
+    selectedIds.size > 0 ? (
+      <div className="flex flex-wrap items-center gap-2 mb-3 p-2.5 rounded-lg bg-muted/60 border w-full">
+        <span className="text-sm font-medium mr-1">
+          {t("monitoredTables.selectedCount", { count: selectedIds.size })}
+        </span>
+        {bulkBusy ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <>
+            {perms.canRunRules && selectedRows.some((r) => (r.table.version ?? 0) > 0) && (
+              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs" onClick={() => setBulkRunOpen(true)}>
+                <Play className="h-3 w-3" />
+                {t("monitoredTables.bulkRun")}
+              </Button>
+            )}
+            {perms.canApproveRules && selectedRows.some((r) => r.table.status === "pending_approval") && (
+              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-emerald-600" onClick={() => setBulkApproveOpen(true)}>
+                <CheckCircle2 className="h-3 w-3" />
+                {t("monitoredTables.bulkApprove")}
+              </Button>
+            )}
+            {perms.canApproveRules && selectedRows.some((r) => r.table.status === "pending_approval") && (
+              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-destructive" onClick={() => setBulkRejectOpen(true)}>
+                <XCircle className="h-3 w-3" />
+                {t("monitoredTables.bulkReject")}
+              </Button>
+            )}
+            {perms.canCreateRules && selectedRows.some((r) => r.table.status !== "pending_approval") && (
+              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-destructive" onClick={() => setBulkDeleteOpen(true)}>
+                <Trash2 className="h-3 w-3" />
+                {t("monitoredTables.bulkDelete")}
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto" onClick={() => setSelectedIds(new Set())}>
+              {t("monitoredTables.clearSelection")}
+            </Button>
+          </>
+        )}
+      </div>
+    ) : null;
+
   // Shared runner for the row-level approve/reject actions — mirrors the
   // Rules Registry list page's `runAction` (registry-rules.index.tsx).
   const runRowAction = useCallback(
@@ -347,6 +537,7 @@ function MonitoredTablesPage() {
         {/* Bare table — no Card wrapper, matching the Rules Registry list.
             The filter row is passed as `toolbarExtra` so it renders inline
             with the Edit Columns button rather than on its own row. */}
+        {bulkToolbar}
         <MonitoredTablesTable
           rows={pagedTables}
           sortKey={sortKey}
@@ -356,6 +547,7 @@ function MonitoredTablesPage() {
             navigate({ to: "/monitored-tables/$bindingId", params: { bindingId: summary.table.binding_id } })
           }
           pendingBindingId={pendingId}
+          selection={tableSelection}
           toolbarExtra={
             <>
               <div className="relative w-56">
@@ -412,19 +604,11 @@ function MonitoredTablesPage() {
             </>
           }
           renderActions={
-            // Export is a read, so the actions column is ALWAYS present (even
-            // for viewers) to host the per-row export menu; the approve /
-            // reject / run / delete buttons stay gated inside. Mirrors
-            // RulesTable's per-status action gating
-            // (registry-rules.index.tsx#renderActionsCell).
+            // Per-status action gating: approve/reject gated on canApproveRules;
+            // run gated on canRunRules; delete gated on canCreateRules and hidden
+            // when the row has a pending approval. Mirrors registry-rules.index.tsx.
             (summary) => (
                   <div className="flex items-center justify-end gap-1">
-                    <ExportYamlMenu
-                      fetchDqx={() => exportMonitoredTable(summary.table.binding_id, "dqx")}
-                      fetchOdcs={() => exportMonitoredTable(summary.table.binding_id, "odcs")}
-                      variant="ghost"
-                      iconOnly
-                    />
                     {perms.canRunRules && (summary.table.version ?? 0) > 0 && (
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -473,7 +657,29 @@ function MonitoredTablesPage() {
                         </Tooltip>
                       </>
                     )}
-                    {perms.canCreateRules && (
+                    {summary.table.status === "pending_approval" && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 text-purple-600 dark:text-purple-400"
+                            aria-label={t("rulesDrafts.diff.viewChanges")}
+                            onClick={() =>
+                              setDiffTarget({
+                                bindingId: summary.table.binding_id,
+                                name: summary.table.table_fqn,
+                                version: summary.table.version ?? 0,
+                              })
+                            }
+                          >
+                            <GitCompare className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("rulesDrafts.diff.viewChanges")}</TooltipContent>
+                      </Tooltip>
+                    )}
+                    {perms.canCreateRules && summary.table.status !== "pending_approval" && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
@@ -568,6 +774,80 @@ function MonitoredTablesPage() {
       </AlertDialog>
 
       <AddMonitoredTableModal open={addOpen} onOpenChange={setAddOpen} />
+
+      <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+
+      <AlertDialog open={bulkRunOpen} onOpenChange={setBulkRunOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("monitoredTables.bulkRunTitle", {
+                count: selectedRows.filter((r) => (r.table.version ?? 0) > 0).length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("monitoredTables.bulkRunBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkRun}>{t("monitoredTables.runAction")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkApproveOpen} onOpenChange={setBulkApproveOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("monitoredTables.bulkApproveTitle", {
+                count: selectedRows.filter((r) => r.table.status === "pending_approval").length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("monitoredTables.bulkApproveBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkApprove}>{t("monitoredTables.approveAction")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkRejectOpen} onOpenChange={setBulkRejectOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("monitoredTables.bulkRejectTitle", {
+                count: selectedRows.filter((r) => r.table.status === "pending_approval").length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("monitoredTables.bulkRejectBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction className={cn("bg-destructive text-white hover:bg-destructive/90")} onClick={confirmBulkReject}>
+              {t("monitoredTables.rejectAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("monitoredTables.bulkDeleteTitle", {
+                count: selectedRows.filter((r) => r.table.status !== "pending_approval").length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("monitoredTables.bulkDeleteBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction className={cn("bg-destructive text-white hover:bg-destructive/90")} onClick={confirmBulkDelete}>
+              {t("monitoredTables.actionDelete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </FadeIn>
   );
 }
