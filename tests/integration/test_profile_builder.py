@@ -76,7 +76,7 @@ def test_make_has_no_outliers_profile_outliers_above_threshold(spark,col_type,da
     # [1..4] + three extreme values → 3 outliers out of 7 ≈ 43 %, threshold 10 % → None
     # MAD bounds: median=4, MAD=3 → lower=-6.5, upper=14.5 → 100, 200, 300 are outliers
     df = spark.createDataFrame(data, T.StructType([T.StructField("col", col_type)]))
-    profiler_metrics = {"count": len(data)}
+    profiler_metrics = {"count_non_null": len(data)}
     profiler_options = {"outliers_ratio": 0.1}
     profile = make_has_no_outliers_profile(df, "col", col_type, profiler_metrics, profiler_options)
     assert profile is None
