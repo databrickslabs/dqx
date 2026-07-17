@@ -8,7 +8,6 @@ import sys
 from concurrent import futures
 from collections.abc import Callable
 from datetime import datetime, timezone
-import re
 from functools import cached_property
 from typing import Any, cast
 from uuid import uuid4
