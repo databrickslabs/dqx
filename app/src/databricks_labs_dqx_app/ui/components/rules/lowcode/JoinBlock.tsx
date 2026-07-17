@@ -1,9 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, X } from "lucide-react";
-import { SingleTableScopePicker } from "@/components/monitored-tables/SingleTableScopePicker";
+import { JoinTablePickerModal } from "@/components/rules/lowcode/JoinTablePickerModal";
 import { useGetTableColumns } from "@/lib/api";
 import type { JoinAst, JoinKeyAst, JoinType } from "@/lib/lowcodeAst";
 import type { LowcodeColumnRef } from "@/lib/lowcodeCompile";
@@ -32,6 +32,7 @@ type Props = {
 // TablePickerModal). Structure/interactions otherwise 1:1.
 export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) {
   const { t } = useTranslation();
+  const [pickerOpen, setPickerOpen] = useState(false);
   const parts = (join.target_table || "").split(".");
   const [catalog, schema, table] = parts.length === 3 ? parts : ["", "", ""];
   const { data } = useGetTableColumns(catalog, schema, table, {
@@ -71,9 +72,35 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
             ))}
           </SelectContent>
         </Select>
-        <SingleTableScopePicker
+        {join.target_table ? (
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate font-mono text-xs" title={join.target_table}>
+              {join.target_table}
+            </span>
+            <button
+              type="button"
+              className="shrink-0 text-xs text-primary underline-offset-2 hover:underline"
+              onClick={() => setPickerOpen(true)}
+            >
+              {t("rulesRegistry.lowcodeJoinChangeTable")}
+            </button>
+          </div>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 w-full justify-start font-normal text-muted-foreground"
+            onClick={() => setPickerOpen(true)}
+          >
+            {t("rulesRegistry.lowcodeJoinSelectTable")}
+          </Button>
+        )}
+        <JoinTablePickerModal
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
           value={join.target_table || ""}
-          onChange={(fqn) => onChange({ ...join, target_table: fqn })}
+          onSelect={(fqn) => onChange({ ...join, target_table: fqn })}
         />
         {!isCross ? (
           <>
