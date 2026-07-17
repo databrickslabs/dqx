@@ -1018,10 +1018,20 @@ async def get_user_role(
     """
     try:
         user = await asyncio.to_thread(obo_ws.current_user.me)
-        user_groups = [g.display for g in (user.groups or []) if g.display]
-        logger.debug(f"Resolving role for {email} with groups: {user_groups}")
+        # Mappings match by string equality on the stored ``group_name`` column,
+        # which the Entitlements UI also uses for USER-level entitlements (it
+        # stores the picked user's display name / username there). So resolution
+        # matches against the user's own identity strings AS WELL AS their group
+        # memberships — otherwise a user-level entitlement would never take
+        # effect. Include display name, userName and email to cover whichever
+        # form the principal picker persisted.
+        principals = [g.display for g in (user.groups or []) if g.display]
+        for ident in (user.display_name, user.user_name, email):
+            if ident and ident not in principals:
+                principals.append(ident)
+        logger.debug(f"Resolving role for {email} with principals: {principals}")
 
-        role = role_svc.resolve_role(user_groups, conf.admin_group)
+        role = role_svc.resolve_role(principals, conf.admin_group)
         logger.debug(f"Resolved role for {email}: {role.value}")
         return role
     except Exception as e:
@@ -1099,8 +1109,13 @@ async def get_user_runner_flag(
     """
     try:
         user = await asyncio.to_thread(obo_ws.current_user.me)
-        user_groups = [g.display for g in (user.groups or []) if g.display]
-        return role_svc.has_runner_role(user_groups, conf.admin_group)
+        # Include the user's own identity strings alongside group memberships so
+        # a USER-level RUNNER entitlement resolves too (see get_user_role).
+        principals = [g.display for g in (user.groups or []) if g.display]
+        for ident in (user.display_name, user.user_name, email):
+            if ident and ident not in principals:
+                principals.append(ident)
+        return role_svc.has_runner_role(principals, conf.admin_group)
     except Exception as exc:
         logger.warning(
             f"Runner-flag resolution failed for {email}, falling back to False: {exc}",

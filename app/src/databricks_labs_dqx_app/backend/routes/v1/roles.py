@@ -6,9 +6,11 @@ Allows admins to manage role-to-group mappings for RBAC.
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.apps import AppPermissionLevel
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.config import conf
 from databricks_labs_dqx_app.backend.dependencies import (
     get_obo_ws,
     get_sp_ws,
@@ -19,6 +21,7 @@ from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     CreateRoleMappingIn,
     GroupOut,
+    PrivilegedPrincipalOut,
     RoleMappingHistoryOut,
     RoleMappingOut,
 )
@@ -220,6 +223,82 @@ def list_workspace_groups(
     except Exception as e:
         logger.error(f"Failed to list workspace groups: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list workspace groups: {e}")
+
+
+@router.get(
+    "/privileged-principals",
+    response_model=list[PrivilegedPrincipalOut],
+    operation_id="listPrivilegedPrincipals",
+)
+def list_privileged_principals(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> list[PrivilegedPrincipalOut]:
+    """List workspace admins and app CAN_MANAGE holders (Admin only).
+
+    Returns two categories of privileged principals so the Entitlements UI
+    can display them as non-removable (disabled) rows:
+
+    - *workspace_admin*: members of the SCIM ``admins`` group.
+    - *app_owner*: principals with ``CAN_MANAGE`` permission on this app.
+
+    De-duplication is intentionally omitted — a principal that is both a
+    workspace admin and an app owner appears twice (once per kind), which lets
+    the UI distinguish WHY they are privileged.
+
+    The app-permissions lookup is best-effort: if it fails (e.g. the SP lacks
+    the ``apps.get_permissions`` permission), the endpoint still returns
+    workspace admins with HTTP 200 rather than failing the whole request.
+    """
+    try:
+        results: list[PrivilegedPrincipalOut] = []
+
+        # --- Workspace admins via SCIM ---
+        try:
+            for group in sp_ws.groups.list(
+                filter='displayName eq "admins"',
+                attributes="id,members",
+            ):
+                if not group.members:
+                    continue
+                for member in group.members:
+                    name = member.display or member.value or ""
+                    if name:
+                        results.append(PrivilegedPrincipalOut(principal=name, kind="workspace_admin"))
+        except Exception as e:
+            # Strip newlines to prevent log injection (AGENTS.md §log-injection, CWE-117).
+            safe_err = str(e).replace(chr(10), " ").replace(chr(13), " ")
+            logger.warning(f"Failed to list workspace admins: {safe_err}")
+
+        # --- App owners via Databricks Apps permissions (best-effort) ---
+        # ``conf.app_slug_name`` is the registered app slug (e.g. "dqx-studio"),
+        # which is what the Apps permissions API expects — NOT the display name.
+        try:
+            app_perms = sp_ws.apps.get_permissions(conf.app_slug_name)
+            acl = app_perms.access_control_list or []
+            for entry in acl:
+                # A principal is an app owner only if it holds CAN_MANAGE.
+                all_perms = entry.all_permissions or []
+                if not any(p.permission_level == AppPermissionLevel.CAN_MANAGE for p in all_perms):
+                    continue
+                # Prefer user_name → group_name → service_principal_name → display_name
+                principal = (
+                    entry.user_name
+                    or entry.group_name
+                    or entry.service_principal_name
+                    or entry.display_name
+                    or ""
+                )
+                if principal:
+                    results.append(PrivilegedPrincipalOut(principal=principal, kind="app_owner"))
+        except Exception as e:
+            # Log a sanitised message — strip newlines to prevent log injection (AGENTS.md §log-injection).
+            safe_err = str(e).replace(chr(10), " ").replace(chr(13), " ")
+            logger.warning(f"Could not retrieve app permissions (degraded): {safe_err}")
+
+        return results
+    except Exception as e:
+        logger.error(f"Failed to list privileged principals: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list privileged principals: {e}")
 
 
 @router.get("/available-roles", response_model=list[str], operation_id="listAvailableRoles")

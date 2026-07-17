@@ -45,7 +45,7 @@ const BASE_TILES: { nameKey: string; descriptionKey: string; href: string; icon:
 const ADMIN_TILE = {
   nameKey: "home.grid.config",
   descriptionKey: "home.grid.configDesc",
-  href: "/config",
+  href: "/settings",
   icon: Settings,
 };
 

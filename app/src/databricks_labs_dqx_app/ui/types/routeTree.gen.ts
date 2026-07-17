@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './../routes/__root'
 import { Route as SidebarRouteRouteImport } from './../routes/_sidebar/route'
 import { Route as IndexRouteImport } from './../routes/index'
+import { Route as SidebarSettingsRouteImport } from './../routes/_sidebar/settings'
 import { Route as SidebarRunsHistoryRouteImport } from './../routes/_sidebar/runs-history'
 import { Route as SidebarRunsRouteImport } from './../routes/_sidebar/runs'
 import { Route as SidebarRulesRouteImport } from './../routes/_sidebar/rules'
@@ -19,7 +20,6 @@ import { Route as SidebarProfilerRouteImport } from './../routes/_sidebar/profil
 import { Route as SidebarProfileRouteImport } from './../routes/_sidebar/profile'
 import { Route as SidebarHomeRouteImport } from './../routes/_sidebar/home'
 import { Route as SidebarDiscoveryRouteImport } from './../routes/_sidebar/discovery'
-import { Route as SidebarConfigRouteImport } from './../routes/_sidebar/config'
 import { Route as SidebarTableSpacesIndexRouteImport } from './../routes/_sidebar/table-spaces.index'
 import { Route as SidebarRunsIndexRouteImport } from './../routes/_sidebar/runs.index'
 import { Route as SidebarRulesIndexRouteImport } from './../routes/_sidebar/rules.index'
@@ -54,6 +54,11 @@ const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const SidebarSettingsRoute = SidebarSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => SidebarRouteRoute,
 } as any)
 const SidebarRunsHistoryRoute = SidebarRunsHistoryRouteImport.update({
   id: '/runs-history',
@@ -93,11 +98,6 @@ const SidebarHomeRoute = SidebarHomeRouteImport.update({
 const SidebarDiscoveryRoute = SidebarDiscoveryRouteImport.update({
   id: '/discovery',
   path: '/discovery',
-  getParentRoute: () => SidebarRouteRoute,
-} as any)
-const SidebarConfigRoute = SidebarConfigRouteImport.update({
-  id: '/config',
-  path: '/config',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
 const SidebarTableSpacesIndexRoute = SidebarTableSpacesIndexRouteImport.update({
@@ -240,7 +240,6 @@ const SidebarDataProductsProductIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/config': typeof SidebarConfigRoute
   '/discovery': typeof SidebarDiscoveryRoute
   '/home': typeof SidebarHomeRoute
   '/profile': typeof SidebarProfileRoute
@@ -249,6 +248,7 @@ export interface FileRoutesByFullPath {
   '/rules': typeof SidebarRulesRouteWithChildren
   '/runs': typeof SidebarRunsRouteWithChildren
   '/runs-history': typeof SidebarRunsHistoryRoute
+  '/settings': typeof SidebarSettingsRoute
   '/data-products/$productId': typeof SidebarDataProductsProductIdRoute
   '/data-products/new': typeof SidebarDataProductsNewRoute
   '/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
@@ -277,13 +277,13 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/config': typeof SidebarConfigRoute
   '/discovery': typeof SidebarDiscoveryRoute
   '/home': typeof SidebarHomeRoute
   '/profile': typeof SidebarProfileRoute
   '/profiler': typeof SidebarProfilerRoute
   '/results': typeof SidebarResultsRoute
   '/runs-history': typeof SidebarRunsHistoryRoute
+  '/settings': typeof SidebarSettingsRoute
   '/data-products/$productId': typeof SidebarDataProductsProductIdRoute
   '/data-products/new': typeof SidebarDataProductsNewRoute
   '/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
@@ -314,7 +314,6 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_sidebar': typeof SidebarRouteRouteWithChildren
-  '/_sidebar/config': typeof SidebarConfigRoute
   '/_sidebar/discovery': typeof SidebarDiscoveryRoute
   '/_sidebar/home': typeof SidebarHomeRoute
   '/_sidebar/profile': typeof SidebarProfileRoute
@@ -323,6 +322,7 @@ export interface FileRoutesById {
   '/_sidebar/rules': typeof SidebarRulesRouteWithChildren
   '/_sidebar/runs': typeof SidebarRunsRouteWithChildren
   '/_sidebar/runs-history': typeof SidebarRunsHistoryRoute
+  '/_sidebar/settings': typeof SidebarSettingsRoute
   '/_sidebar/data-products/$productId': typeof SidebarDataProductsProductIdRoute
   '/_sidebar/data-products/new': typeof SidebarDataProductsNewRoute
   '/_sidebar/monitored-tables/$bindingId': typeof SidebarMonitoredTablesBindingIdRoute
@@ -353,7 +353,6 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/config'
     | '/discovery'
     | '/home'
     | '/profile'
@@ -362,6 +361,7 @@ export interface FileRouteTypes {
     | '/rules'
     | '/runs'
     | '/runs-history'
+    | '/settings'
     | '/data-products/$productId'
     | '/data-products/new'
     | '/monitored-tables/$bindingId'
@@ -390,13 +390,13 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/config'
     | '/discovery'
     | '/home'
     | '/profile'
     | '/profiler'
     | '/results'
     | '/runs-history'
+    | '/settings'
     | '/data-products/$productId'
     | '/data-products/new'
     | '/monitored-tables/$bindingId'
@@ -426,7 +426,6 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/_sidebar'
-    | '/_sidebar/config'
     | '/_sidebar/discovery'
     | '/_sidebar/home'
     | '/_sidebar/profile'
@@ -435,6 +434,7 @@ export interface FileRouteTypes {
     | '/_sidebar/rules'
     | '/_sidebar/runs'
     | '/_sidebar/runs-history'
+    | '/_sidebar/settings'
     | '/_sidebar/data-products/$productId'
     | '/_sidebar/data-products/new'
     | '/_sidebar/monitored-tables/$bindingId'
@@ -482,6 +482,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_sidebar/settings': {
+      id: '/_sidebar/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SidebarSettingsRouteImport
+      parentRoute: typeof SidebarRouteRoute
     }
     '/_sidebar/runs-history': {
       id: '/_sidebar/runs-history'
@@ -537,13 +544,6 @@ declare module '@tanstack/react-router' {
       path: '/discovery'
       fullPath: '/discovery'
       preLoaderRoute: typeof SidebarDiscoveryRouteImport
-      parentRoute: typeof SidebarRouteRoute
-    }
-    '/_sidebar/config': {
-      id: '/_sidebar/config'
-      path: '/config'
-      fullPath: '/config'
-      preLoaderRoute: typeof SidebarConfigRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
     '/_sidebar/table-spaces/': {
@@ -767,7 +767,6 @@ const SidebarRunsRouteWithChildren = SidebarRunsRoute._addFileChildren(
 )
 
 interface SidebarRouteRouteChildren {
-  SidebarConfigRoute: typeof SidebarConfigRoute
   SidebarDiscoveryRoute: typeof SidebarDiscoveryRoute
   SidebarHomeRoute: typeof SidebarHomeRoute
   SidebarProfileRoute: typeof SidebarProfileRoute
@@ -776,6 +775,7 @@ interface SidebarRouteRouteChildren {
   SidebarRulesRoute: typeof SidebarRulesRouteWithChildren
   SidebarRunsRoute: typeof SidebarRunsRouteWithChildren
   SidebarRunsHistoryRoute: typeof SidebarRunsHistoryRoute
+  SidebarSettingsRoute: typeof SidebarSettingsRoute
   SidebarDataProductsProductIdRoute: typeof SidebarDataProductsProductIdRoute
   SidebarDataProductsNewRoute: typeof SidebarDataProductsNewRoute
   SidebarMonitoredTablesBindingIdRoute: typeof SidebarMonitoredTablesBindingIdRoute
@@ -793,7 +793,6 @@ interface SidebarRouteRouteChildren {
 }
 
 const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
-  SidebarConfigRoute: SidebarConfigRoute,
   SidebarDiscoveryRoute: SidebarDiscoveryRoute,
   SidebarHomeRoute: SidebarHomeRoute,
   SidebarProfileRoute: SidebarProfileRoute,
@@ -802,6 +801,7 @@ const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
   SidebarRulesRoute: SidebarRulesRouteWithChildren,
   SidebarRunsRoute: SidebarRunsRouteWithChildren,
   SidebarRunsHistoryRoute: SidebarRunsHistoryRoute,
+  SidebarSettingsRoute: SidebarSettingsRoute,
   SidebarDataProductsProductIdRoute: SidebarDataProductsProductIdRoute,
   SidebarDataProductsNewRoute: SidebarDataProductsNewRoute,
   SidebarMonitoredTablesBindingIdRoute: SidebarMonitoredTablesBindingIdRoute,

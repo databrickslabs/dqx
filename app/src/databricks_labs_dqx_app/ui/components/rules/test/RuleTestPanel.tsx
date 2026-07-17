@@ -350,16 +350,22 @@ export function RuleTestPanel({
   );
 }
 
-function SampleSelector({
+export type { SampleKind };
+
+export function SampleSelector({
   kind,
   value,
   onKind,
   onValue,
+  disablePercent = false,
 }: {
   kind: SampleKind;
   value: number;
   onKind: (k: SampleKind) => void;
   onValue: (n: number) => void;
+  /** When true, hides the "percent" unit option so only records/full are available.
+   *  Use in contexts where the underlying setting is rows-only (e.g. draft_sample_limit). */
+  disablePercent?: boolean;
 }) {
   const { t } = useTranslation();
   return (
@@ -386,15 +392,19 @@ function SampleSelector({
               onValue(kind === "percent" ? Math.min(100, Math.max(1, n)) : n);
             }}
           />
-          <Select value={kind} onValueChange={(v) => onKind(v as "records" | "percent")}>
-            <SelectTrigger className="h-8 w-28 text-xs font-normal text-muted-foreground">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="records">{t("ruleTest.records")}</SelectItem>
-              <SelectItem value="percent">{t("ruleTest.percent")}</SelectItem>
-            </SelectContent>
-          </Select>
+          {!disablePercent ? (
+            <Select value={kind} onValueChange={(v) => onKind(v as "records" | "percent")}>
+              <SelectTrigger className="h-8 w-28 text-xs font-normal text-muted-foreground">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="records">{t("ruleTest.records")}</SelectItem>
+                <SelectItem value="percent">{t("ruleTest.percent")}</SelectItem>
+              </SelectContent>
+            </Select>
+          ) : (
+            <span className="text-xs text-muted-foreground w-28 px-1">{t("ruleTest.records")}</span>
+          )}
         </>
       )}
     </div>

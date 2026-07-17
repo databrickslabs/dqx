@@ -2377,6 +2377,28 @@ export interface PrincipalSearchOut {
   secondary?: PrincipalSearchOutSecondary;
 }
 
+/**
+ * Why this principal is privileged: 'workspace_admin' (member of the SCIM admins group) or 'app_owner' (CAN_MANAGE on the Databricks App)
+ */
+export type PrivilegedPrincipalOutKind = typeof PrivilegedPrincipalOutKind[keyof typeof PrivilegedPrincipalOutKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const PrivilegedPrincipalOutKind = {
+  workspace_admin: 'workspace_admin',
+  app_owner: 'app_owner',
+} as const;
+
+/**
+ * A principal that holds elevated access — either a workspace admin or an app CAN_MANAGE holder.
+ */
+export interface PrivilegedPrincipalOut {
+  /** Display name or email of the privileged principal */
+  principal: string;
+  /** Why this principal is privileged: 'workspace_admin' (member of the SCIM admins group) or 'app_owner' (CAN_MANAGE on the Databricks App) */
+  kind: PrivilegedPrincipalOutKind;
+}
+
 export type ProfileResultsOutRowsProfiled = number | null;
 
 export type ProfileResultsOutColumnsProfiled = number | null;
@@ -9519,6 +9541,167 @@ export function useListWorkspaceGroupsSuspense<TData = Awaited<ReturnType<typeof
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListWorkspaceGroupsSuspenseQueryOptions(params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * List workspace admins and app CAN_MANAGE holders (Admin only).
+
+Returns two categories of privileged principals so the Entitlements UI
+can display them as non-removable (disabled) rows:
+
+- *workspace_admin*: members of the SCIM ``admins`` group.
+- *app_owner*: principals with ``CAN_MANAGE`` permission on this app.
+
+De-duplication is intentionally omitted — a principal that is both a
+workspace admin and an app owner appears twice (once per kind), which lets
+the UI distinguish WHY they are privileged.
+
+The app-permissions lookup is best-effort: if it fails (e.g. the SP lacks
+the ``apps.get_permissions`` permission), the endpoint still returns
+workspace admins with HTTP 200 rather than failing the whole request.
+ * @summary List Privileged Principals
+ */
+export const listPrivilegedPrincipals = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<PrivilegedPrincipalOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/roles/privileged-principals`,options
+    );
+  }
+
+
+
+
+export const getListPrivilegedPrincipalsQueryKey = () => {
+    return [
+    `/api/v1/roles/privileged-principals`
+    ] as const;
+    }
+
+    
+export const getListPrivilegedPrincipalsQueryOptions = <TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPrivilegedPrincipalsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPrivilegedPrincipals>>> = ({ signal }) => listPrivilegedPrincipals({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListPrivilegedPrincipalsQueryResult = NonNullable<Awaited<ReturnType<typeof listPrivilegedPrincipals>>>
+export type ListPrivilegedPrincipalsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListPrivilegedPrincipals<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPrivilegedPrincipals>>,
+          TError,
+          Awaited<ReturnType<typeof listPrivilegedPrincipals>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPrivilegedPrincipals<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPrivilegedPrincipals>>,
+          TError,
+          Awaited<ReturnType<typeof listPrivilegedPrincipals>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPrivilegedPrincipals<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Privileged Principals
+ */
+
+export function useListPrivilegedPrincipals<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListPrivilegedPrincipalsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListPrivilegedPrincipalsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPrivilegedPrincipalsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPrivilegedPrincipals>>> = ({ signal }) => listPrivilegedPrincipals({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListPrivilegedPrincipalsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listPrivilegedPrincipals>>>
+export type ListPrivilegedPrincipalsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListPrivilegedPrincipalsSuspense<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPrivilegedPrincipalsSuspense<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPrivilegedPrincipalsSuspense<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Privileged Principals
+ */
+
+export function useListPrivilegedPrincipalsSuspense<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListPrivilegedPrincipalsSuspenseQueryOptions(options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

@@ -53,7 +53,7 @@ import {
 } from "@/lib/api-custom";
 // Re-use the colour token table from the Configuration page so the
 // badge here is visually identical to the swatch admins picked there.
-import { reviewStatusBadgeClasses } from "@/routes/_sidebar/config";
+import { reviewStatusBadgeStyle } from "@/routes/_sidebar/settings";
 
 interface RunReviewStatusPanelProps {
   runId: string;
@@ -157,7 +157,8 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
             >
               <Badge
                 variant="outline"
-                className={cn("text-[10px] font-normal", reviewStatusBadgeClasses(badgeColor))}
+                className="text-[10px] font-normal"
+                style={reviewStatusBadgeStyle(badgeColor)}
               >
                 {current.status || t("runReviewPanel.none")}
               </Badge>
@@ -187,10 +188,8 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
                   <span className="flex w-full items-center gap-2">
                     <Badge
                       variant="outline"
-                      className={cn(
-                        "text-[10px] font-normal shrink-0",
-                        reviewStatusBadgeClasses(opt.color),
-                      )}
+                      className="text-[10px] font-normal shrink-0"
+                      style={reviewStatusBadgeStyle(opt.color)}
                     >
                       {opt.value}
                     </Badge>

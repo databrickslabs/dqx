@@ -118,6 +118,10 @@ variables:
         # Starter Insights dashboard; admins can override at runtime via Configuration.
         - name: "DQX_DEFAULT_DASHBOARD_ID"
           value: "${resources.dashboards.dqx_quality_overview.id}"
+        # Registered app slug (unique-per-workspace name the app is registered under).
+        # Used by the privileged-principals endpoint to look up CAN_MANAGE holders.
+        - name: "DQX_APP_NAME"
+          value: "${var.app_name}"
 
 sync:
   include:

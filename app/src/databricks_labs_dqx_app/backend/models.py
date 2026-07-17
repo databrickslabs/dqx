@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from pydantic import BaseModel, Field
@@ -2174,6 +2174,15 @@ class RoleMappingHistoryOut(BaseModel):
 class GroupOut(BaseModel):
     display_name: str = Field(description="Group display name")
     id: str | None = Field(default=None, description="Group ID")
+
+
+class PrivilegedPrincipalOut(BaseModel):
+    """A principal that holds elevated access — either a workspace admin or an app CAN_MANAGE holder."""
+
+    principal: str = Field(description="Display name or email of the privileged principal")
+    kind: Literal["workspace_admin", "app_owner"] = Field(
+        description="Why this principal is privileged: 'workspace_admin' (member of the SCIM admins group) or 'app_owner' (CAN_MANAGE on the Databricks App)"
+    )
 
 
 # ---------------------------------------------------------------------------
