@@ -226,6 +226,12 @@ const DECISION_POINT_SHORTLIST_FN_NAMES: readonly string[] = [
   "is_in_list",
   "is_not_null_and_not_empty",
   "is_valid_date",
+  "is_not_null_and_is_in_list",
+  "is_not_in_future",
+  "is_valid_timestamp",
+  "is_not_less_than",
+  "is_not_greater_than",
+  "is_not_empty",
 ] as const;
 
 /**
@@ -247,10 +253,13 @@ function useDecisionPointShortlist(
       const fn = checkFunctions.find((f) => f.name === name);
       return fn?.label ?? name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
     });
+    // Example basic-check labels first; the two "Meets …" custom catch-alls
+    // trail but are drawn MORE often (see `shortlistWeights` — the last two
+    // entries carry a high weight) so authors discover them.
     return [
-      t("rulesRegistry.coreConditionBuilder"),
-      t("rulesRegistry.coreSql"),
       ...fnLabels,
+      t("rulesRegistry.shortlistMatchesCustomCondition"),
+      t("rulesRegistry.shortlistMatchesCustomSql"),
     ];
   }, [checkFunctions, t]);
 }
@@ -410,12 +419,12 @@ function ConditionSelector({
     if (!open) setQuery("");
   }, [open]);
 
-  // Per-entry draw weights: the FIRST two shortlist entries (Condition Builder
-  // / SQL) are surfaced much more prominently than the example basic checks so
-  // authors discover them — they carry a high weight; every other entry
-  // (individual basic-check labels) carries weight 1.
+  // Per-entry draw weights: the LAST two entries ("Meets Custom Condition" /
+  // "Meets SQL Condition") are the flexible catch-alls we most want authors to
+  // discover, so they carry a HIGH weight (5) and show frequently; the example
+  // basic-check labels each carry weight 1.
   const shortlistWeights = useMemo(
-    () => shortlist.map((_, i) => (i < 2 ? 5 : 1)),
+    () => shortlist.map((_, i) => (i >= shortlist.length - 2 ? 5 : 1)),
     [shortlist],
   );
 
@@ -493,18 +502,34 @@ function ConditionSelector({
           <ChevronDown className="size-4 opacity-50 shrink-0" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="p-0 w-[--radix-popover-trigger-width] min-w-72" align="start">
+      {/* Width sizes to content (floored at 18rem, capped at 28rem) so the
+          drill-in views — wider than the trigger — can grow, and the `layout`
+          motion.div animates that width change (X) as well as height. */}
+      <PopoverContent className="p-0 w-auto min-w-72 max-w-[28rem]" align="start">
         <Command shouldFilter={false}>
-          {/* Search only applies inside the Basic Checks drill-in (native
-              functions); the root + operators views are short curated lists. */}
-          {view === "basic" && (
+          {/* Search shows in the drill-in views (Basic Rules native functions +
+              Condition Builder operators); the root is a short curated list. */}
+          {(view === "basic" || view === "operators") && (
             <CommandInput
-              placeholder={t("rulesRegistry.searchFunctions")}
+              placeholder={view === "operators" ? t("rulesRegistry.searchOperators") : t("rulesRegistry.searchFunctions")}
               value={query}
               onValueChange={setQuery}
               className="h-8 text-xs"
             />
           )}
+          {/* Animate the drill between views (root ⇄ basic / operators): the
+              container smoothly resizes to the incoming view's height (the
+              popover follows) while the content crossfades. `layout` drives the
+              height/width tween; AnimatePresence crossfades the keyed content. */}
+          <motion.div layout transition={{ layout: { duration: 0.18, ease: "easeOut" } }} className="overflow-hidden">
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={view}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.1, ease: "easeOut" }}
+              >
           <CommandList className="max-h-80">
             {view === "root" && (
               // ── Root: the three ways to author a rule. Basic Checks and
@@ -624,28 +649,44 @@ function ConditionSelector({
                   <ArrowLeft className="h-3 w-3 shrink-0" />
                   {t("rulesRegistry.coreConditionBuilder")}
                 </button>
-                {operatorGroups.map(({ heading, ops, family }) => (
-                  <CommandGroup key={heading} heading={heading} className={COMMAND_GROUP_HEADING_CLASS}>
-                    {ops.map((op) => (
-                      <CommandItem
-                        key={op}
-                        value={op}
-                        onSelect={() => {
-                          // Picking from a typed group while the column is "any"
-                          // auto-assigns that data type to the anchor column.
-                          onSelect({ type: "lowcode", operator: op, operatorFamily: family ?? undefined });
-                          setOpen(false);
-                        }}
-                        className="text-xs font-mono"
-                      >
-                        {op}
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                ))}
+                {(() => {
+                  const q = query.trim().toLowerCase();
+                  const filtered = operatorGroups
+                    .map((g) => ({ ...g, ops: q ? g.ops.filter((op) => op.toLowerCase().includes(q)) : g.ops }))
+                    .filter((g) => g.ops.length > 0);
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="px-3 py-3 text-center text-xs text-muted-foreground">
+                        {t("rulesRegistry.noMatches")}
+                      </div>
+                    );
+                  }
+                  return filtered.map(({ heading, ops, family }) => (
+                    <CommandGroup key={heading} heading={heading} className={COMMAND_GROUP_HEADING_CLASS}>
+                      {ops.map((op) => (
+                        <CommandItem
+                          key={op}
+                          value={op}
+                          onSelect={() => {
+                            // Picking from a typed group while the column is "any"
+                            // auto-assigns that data type to the anchor column.
+                            onSelect({ type: "lowcode", operator: op, operatorFamily: family ?? undefined });
+                            setOpen(false);
+                          }}
+                          className="text-xs font-mono"
+                        >
+                          {op}
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  ));
+                })()}
               </>
             )}
           </CommandList>
+              </motion.div>
+            </AnimatePresence>
+          </motion.div>
         </Command>
       </PopoverContent>
     </Popover>
