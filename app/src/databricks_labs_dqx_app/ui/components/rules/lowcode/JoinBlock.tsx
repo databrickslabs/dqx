@@ -44,6 +44,14 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
     query: { enabled: Boolean(catalog && schema && table) },
   });
   const joinedCols = useMemo(() => data?.data ?? [], [data]);
+  // The input side of a join key must be a declared `{{slot}}` (an INPUT column),
+  // never a column sourced from a joined-to table — that would be invalid SQL.
+  // Joined-table columns carry dotted names (e.g. "catalog.schema.table.col"),
+  // declared slots are bare (e.g. "email"), so exclude any dotted name here.
+  const columnRefOptions = useMemo(
+    () => declaredColumns.filter((c) => !c.name.includes(".")),
+    [declaredColumns],
+  );
 
   const updateKey = (i: number, key: JoinKeyAst) => {
     const next = join.keys.slice();
@@ -126,7 +134,7 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
                 <SelectValue placeholder={t("rulesRegistry.lowcodeColumnRefPlaceholder")} />
               </SelectTrigger>
               <SelectContent>
-                {declaredColumns.map((c) => (
+                {columnRefOptions.map((c) => (
                   <SelectItem key={c.name} value={c.name} className="font-mono text-xs">{`{{${c.name}}}`}</SelectItem>
                 ))}
               </SelectContent>
@@ -174,7 +182,7 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
                   <SelectValue placeholder={t("rulesRegistry.lowcodeColumnRefPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {declaredColumns.map((c) => (
+                  {columnRefOptions.map((c) => (
                     <SelectItem key={c.name} value={c.name} className="font-mono text-xs">{`{{${c.name}}}`}</SelectItem>
                   ))}
                 </SelectContent>
