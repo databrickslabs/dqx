@@ -451,7 +451,7 @@ class DQGenerator(DQEngineBase):
 
         :param column: column to check.
         :param criticality: The criticality of the rule as "warn" or "error" (default is "error").
-        :param params: Additional parameters, including whether to trim strings.
+        :param params: Additional parameters (unused; reserved for future use).
         :return: A dictionary representing the data quality rule.
         """
         params = params or {}

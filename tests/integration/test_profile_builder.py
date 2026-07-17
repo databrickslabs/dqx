@@ -12,7 +12,7 @@ def test_make_has_no_outliers_profile_empty_data_frame(spark,col_type):
     df = spark.createDataFrame([], T.StructType([T.StructField("col", col_type)]))
     profiler_metrics = {"count_non_null": 0}
     profiler_options = {"outliers_ratio": 0.01}
-    profile = make_has_no_outliers_profile(df, "col", T.IntegerType(), profiler_metrics, profiler_options)
+    profile = make_has_no_outliers_profile(df, "col", col_type, profiler_metrics, profiler_options)
     assert profile is None
 
 
