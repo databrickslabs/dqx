@@ -59,6 +59,22 @@ describe("deriveSlotsAndParameters — item 10 family seeding + item 11 negate s
     );
     expect(parameters.map((p) => p.name)).toEqual(["regex"]);
   });
+
+  test("orders ref_table before ref_columns (a steward picks the table first)", () => {
+    // foreign_key's signature declares ref_columns before ref_table, which
+    // reads backwards in the editor — you can't choose reference columns
+    // before the table they live on.
+    const { parameters } = deriveSlotsAndParameters(
+      fn({
+        params: [
+          param("column", "column"),
+          param("ref_columns", "ref_columns"),
+          param("ref_table", "ref_table"),
+        ],
+      }),
+    );
+    expect(parameters.map((p) => p.name)).toEqual(["ref_table", "ref_columns"]);
+  });
 });
 
 describe("familyForSparkType — ARRAY family (item 10)", () => {

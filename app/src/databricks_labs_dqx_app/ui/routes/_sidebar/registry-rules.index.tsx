@@ -305,6 +305,7 @@ function RegistryRulesPage() {
   const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
   const [bulkDeprecateOpen, setBulkDeprecateOpen] = useState(false);
   const [bulkRevokeOpen, setBulkRevokeOpen] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   const isRuleAuthor = useCallback(
     (rule: RegistryRuleOut) => {
@@ -321,6 +322,17 @@ function RegistryRulesPage() {
     [perms.canApproveRules, perms.canCreateRules, isRuleAuthor],
   );
 
+  // Terminal-state rules (deprecated / rejected) are cleanup candidates: an
+  // author/approver can select them to export or delete. Mirrors the per-row
+  // delete gate (rejected → canCreateRules; deprecated → canApproveRules).
+  const canDeleteRule = useCallback(
+    (rule: RegistryRuleOut) =>
+      (rule.status === "rejected" && perms.canCreateRules) ||
+      (rule.status === "deprecated" && perms.canApproveRules) ||
+      (rule.status === "draft" && perms.canCreateRules),
+    [perms.canCreateRules, perms.canApproveRules],
+  );
+
   const selectableRuleIds = useMemo(() => {
     const ids = new Set<string>();
     for (const r of sortedRules) {
@@ -328,13 +340,14 @@ function RegistryRulesPage() {
       if (
         (r.status === "pending_approval" && perms.canApproveRules) ||
         (r.status === "approved" && perms.canApproveRules) ||
-        canRevokeRule(r)
+        canRevokeRule(r) ||
+        canDeleteRule(r)
       ) {
         ids.add(r.rule_id);
       }
     }
     return ids;
-  }, [sortedRules, perms.canApproveRules, canRevokeRule]);
+  }, [sortedRules, perms.canApproveRules, canRevokeRule, canDeleteRule]);
 
   const selectedRules = useMemo(
     () => sortedRules.filter((r) => selectedIds.has(r.rule_id)),
@@ -443,6 +456,16 @@ function RegistryRulesPage() {
       eligible,
       (ruleId) => revokeMutation.mutateAsync({ ruleId }),
       t("rulesRegistry.bulkRevoked"),
+    );
+  };
+
+  const confirmBulkDelete = () => {
+    setBulkDeleteOpen(false);
+    const eligible = selectedRules.filter((r) => canDeleteRule(r));
+    bulkAction(
+      eligible,
+      (ruleId) => deleteMutation.mutateAsync({ ruleId }),
+      t("rulesRegistry.bulkDeleted"),
     );
   };
 
@@ -747,6 +770,17 @@ function RegistryRulesPage() {
               size="sm"
               className="h-7 text-xs"
             />
+            {selectedRules.some((r) => canDeleteRule(r)) && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1 h-7 text-xs text-destructive"
+                onClick={() => setBulkDeleteOpen(true)}
+              >
+                <Trash2 className="h-3 w-3" />
+                {t("rulesRegistry.bulkDelete")}
+              </Button>
+            )}
             <Button
               size="sm"
               variant="ghost"
@@ -976,6 +1010,28 @@ function RegistryRulesPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={confirmBulkRevoke}>{t("rulesRegistry.actionRevoke")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("rulesRegistry.bulkDeleteTitle", {
+                count: selectedRules.filter((r) => canDeleteRule(r)).length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("rulesRegistry.bulkDeleteBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmBulkDelete}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {t("rulesRegistry.actionDelete")}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

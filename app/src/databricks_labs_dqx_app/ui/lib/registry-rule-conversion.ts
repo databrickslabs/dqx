@@ -240,6 +240,17 @@ export function deriveSlotsAndParameters(fn: ApiCheckFunctionDef | undefined): {
       });
     }
   }
+  // Surface `ref_table` before `ref_columns`: a steward picks the reference
+  // TABLE first, then the columns on it (the DQX signature declares
+  // `ref_columns` first, but that reads backwards in the editor — you can't
+  // meaningfully choose reference columns before the table they live on).
+  // Stable: only this one pair is swapped when both are present.
+  const refTableIdx = parameters.findIndex((p) => p.name === "ref_table");
+  const refColumnsIdx = parameters.findIndex((p) => p.name === "ref_columns");
+  if (refTableIdx > -1 && refColumnsIdx > -1 && refTableIdx > refColumnsIdx) {
+    const [refTable] = parameters.splice(refTableIdx, 1);
+    parameters.splice(refColumnsIdx, 0, refTable);
+  }
   return { slots, parameters };
 }
 

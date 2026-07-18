@@ -80,7 +80,6 @@ export const OPERATORS_BY_FAMILY: Record<Family, string[]> = {
     "contains only digits",
     "is uppercase",
     "is lowercase",
-    "is a valid email",
     "is a valid uuid",
     "is a valid ipv4",
     "passes luhn check",
@@ -208,7 +207,6 @@ const NONE_OPS = new Set([
   "contains only digits",
   "is uppercase",
   "is lowercase",
-  "is a valid email",
   "is a valid uuid",
   "is a valid ipv4",
   "passes luhn check",
@@ -239,6 +237,20 @@ export function valueCellShape(operator: string, family: Family): ValueCellShape
   if (family === "NUMERIC") return { kind: "single", type: "number" };
   if (family === "TEMPORAL") return { kind: "single", type: "date" };
   return { kind: "single", type: "text" };
+}
+
+/**
+ * Whether *operator* is offered for a column of *family* — i.e. it appears in
+ * that family's operator list OR the universal (ANY) list. Used to detect when
+ * changing a column's data type would strand an already-picked operator that
+ * the new type doesn't support (e.g. "contains" on a column retyped to
+ * numeric). A "type it as ANY" family accepts every operator.
+ */
+export function operatorValidForFamily(operator: string, family: Family): boolean {
+  if (family === "ANY") {
+    return Object.values(OPERATORS_BY_FAMILY).some((ops) => ops.includes(operator));
+  }
+  return OPERATORS_BY_FAMILY[family].includes(operator) || OPERATORS_BY_FAMILY.ANY.includes(operator);
 }
 
 export const FAMILY_LABEL: Record<Family, string> = {

@@ -124,7 +124,6 @@ describe("operator SQL", () => {
     ["contains only digits", null, "{{c}} RLIKE '^[0-9]+$'"],
     ["is uppercase", null, "{{c}} = upper({{c}})"],
     ["is lowercase", null, "{{c}} = lower({{c}})"],
-    ["is a valid email", null, "{{c}} RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'"],
     [
       "is a valid uuid",
       null,
@@ -220,7 +219,6 @@ describe("OPERATORS_BY_FAMILY — ported dqlake catalogue", () => {
       "contains only digits",
       "is uppercase",
       "is lowercase",
-      "is a valid email",
       "is a valid uuid",
       "is a valid ipv4",
       "passes luhn check",

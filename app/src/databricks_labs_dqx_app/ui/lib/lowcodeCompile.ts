@@ -183,8 +183,6 @@ function rowSql(left: string, operator: string, value: unknown): string {
   // The `\\.` in these TS literals emits a single backslash-dot (`\.`) into the
   // SQL — the literal-dot RLIKE escape. These patterns are hardcoded (not user
   // input), so they are NOT run through quote().
-  if (op === "is a valid email")
-    return `${left} RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'`;
   if (op === "is a valid uuid")
     return `${left} RLIKE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'`;
   if (op === "is a valid ipv4")

@@ -63,7 +63,6 @@ import { PermissionsTab } from "@/components/permissions/PermissionsTab";
 import { RuleResultsTab } from "@/components/registry-rules/RuleResultsTab";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ruleResultsState } from "@/lib/results-display";
-import { CatalogBrowser } from "@/components/CatalogBrowser";
 import { PredicatePolaritySwitch } from "@/components/rules/PredicatePolaritySwitch";
 import { PredicateEditorExplainer } from "@/components/rules/PredicateEditorExplainer";
 import { PredicateEditor } from "@/components/rules/PredicateEditor";
@@ -72,6 +71,7 @@ import { CursorTooltip } from "@/components/rules/CursorTooltip";
 import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
 import { FilterBuilder } from "@/components/rules/lowcode/FilterBuilder";
 import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
+import { JoinTablePickerModal } from "@/components/rules/lowcode/JoinTablePickerModal";
 import { GroupByField } from "@/components/rules/lowcode/GroupByField";
 import {
   ModeSwitchDialog,
@@ -88,7 +88,22 @@ import {
   slotFamilyToLowcode,
   type LowcodeColumnRef,
 } from "@/lib/lowcodeCompile";
-import { OPERATORS_BY_FAMILY, AI_OPS, type Family as LowcodeFamily } from "@/lib/lowcodeOperators";
+import {
+  OPERATORS_BY_FAMILY,
+  AI_OPS,
+  operatorValidForFamily,
+  type Family as LowcodeFamily,
+} from "@/lib/lowcodeOperators";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { EMPTY_LOWCODE_AST, isV2Ast, type AnyRow, type JoinAst, type LowcodeAstV2 } from "@/lib/lowcodeAst";
 import { cn } from "@/lib/utils";
 import selector from "@/lib/selector";
@@ -810,7 +825,10 @@ function FramingWord({ children }: { children: ReactNode }) {
   );
 }
 
-/** Reference-table picker for a `ref_table` DQX-native argument (foreign_key, has_valid_schema, …). */
+/** Reference-table picker for a `ref_table` DQX-native argument (foreign_key,
+ *  has_valid_schema, …). Renders a dropdown-style trigger that opens the
+ *  single-table pick modal (catalog → schema → table), matching the low-code
+ *  Joins card's table picker rather than three inline cascading selects. */
 function ReferenceTableField({
   value,
   onChange,
@@ -820,7 +838,27 @@ function ReferenceTableField({
   onChange: (fqn: string) => void;
   disabled?: boolean;
 }) {
-  return <CatalogBrowser value={value} onChange={onChange} disabled={disabled} />;
+  const { t } = useTranslation();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        data-slot="select-trigger"
+        data-size="sm"
+        disabled={disabled}
+        onClick={() => setPickerOpen(true)}
+        title={value || undefined}
+        className="border-input dark:bg-input/30 dark:hover:bg-input/50 flex h-8 w-full items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-1 font-mono text-xs whitespace-nowrap shadow-xs outline-none disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <span className={cn("truncate", value ? "text-foreground" : "text-muted-foreground")}>
+          {value || t("rulesRegistry.refTableSelectPlaceholder")}
+        </span>
+        <ChevronDown className="size-4 opacity-50 shrink-0" />
+      </button>
+      <JoinTablePickerModal open={pickerOpen} onOpenChange={setPickerOpen} value={value} onSelect={onChange} />
+    </>
+  );
 }
 
 /** Multi-column picker for a `ref_columns` DQX-native argument, sourced from the sibling `ref_table` argument. */
@@ -2066,13 +2104,18 @@ export function RegistryRuleFormDialog({
   // Names of the selected function's non-column parameters that have no
   // default (i.e. genuinely required) — drives both the red `*` markers on
   // parameter labels below and `canSubmit`'s native-mode check.
-  const requiredParamNames = useMemo(
-    () =>
-      new Set(
-        (selectedFn?.params ?? []).filter((p) => p.required && !COLUMN_KINDS.has(p.kind)).map((p) => p.name),
-      ),
-    [selectedFn],
-  );
+  const requiredParamNames = useMemo(() => {
+    const required = new Set(
+      (selectedFn?.params ?? []).filter((p) => p.required && !COLUMN_KINDS.has(p.kind)).map((p) => p.name),
+    );
+    // The DQX signature marks `ref_table` optional because the library also
+    // accepts an in-memory reference DataFrame (`ref_df_name`). The Studio
+    // hides that path entirely — a reference check authored here MUST name a
+    // Unity Catalog table — so `ref_table` is effectively mandatory. Force the
+    // red `*` + save-gate whenever the function exposes it.
+    if ((selectedFn?.params ?? []).some((p) => p.name === "ref_table")) required.add("ref_table");
+    return required;
+  }, [selectedFn]);
   const nativeRequiredParamsFilled = derivedParams
     .filter((p) => requiredParamNames.has(p.name))
     .every((p) => (paramRawValues[p.name] ?? "").trim().length > 0);
@@ -2882,6 +2925,55 @@ export function RegistryRuleFormDialog({
   const showColumnsUsedPanel = mode === "sql" || mode === "lowcode" || (mode === "dqx_native" && fnDerivedSlots.length > 0);
   const currentSlots = mode === "dqx_native" ? nativeSlots : sqlSlots;
   const setCurrentSlots = mode === "dqx_native" ? setNativeSlots : setSqlSlots;
+
+  // Pending incompatible column-type change awaiting confirmation. When the
+  // author retypes a column in "Columns used" to a family that strands one or
+  // more already-built low-code conditions (their operator isn't offered for
+  // the new type — e.g. "contains" after switching to numeric), we hold the
+  // proposed slots here and warn before clearing the affected conditions.
+  const [pendingTypeChange, setPendingTypeChange] = useState<{
+    nextSlots: RuleSlot[];
+    strandedColumns: string[];
+  } | null>(null);
+
+  // Drop every low-code condition row whose column is being retyped to an
+  // incompatible family (its operator is no longer offered). Keeps rows on
+  // other columns and rows that remain valid. Also re-anchors the first row's
+  // combinator to null if the original first row was removed.
+  const clearStrandedRows = (nextSlots: RuleSlot[]) => {
+    const familyByName = new Map(nextSlots.map((s) => [s.name, slotFamilyToLowcode(s.family)]));
+    const surviving = lowcodeAst.rows.filter((row) => {
+      if (row.kind !== "row") return true; // aggregated rows aren't family-operator gated here
+      const fam = familyByName.get(row.column_ref);
+      if (fam === undefined) return true; // column not among the retyped slots
+      return operatorValidForFamily(row.operator, fam);
+    });
+    const normalized = surviving.length > 0 ? [{ ...surviving[0], combinator: null }, ...surviving.slice(1)] : [];
+    setLowcodeAst({ ...lowcodeAst, rows: normalized });
+  };
+
+  // Wraps the SlotsPanel onChange: if a family change would strand low-code
+  // conditions, defer it behind a warning modal; otherwise apply immediately.
+  const handleSlotsChange = (next: RuleSlot[]) => {
+    if (mode === "lowcode") {
+      const prevByName = new Map(currentSlots.map((s) => [s.name, s.family]));
+      const retypedToIncompatible: string[] = [];
+      for (const slot of next) {
+        const prevFamily = prevByName.get(slot.name);
+        if (prevFamily === undefined || prevFamily === slot.family) continue;
+        const nextFamily = slotFamilyToLowcode(slot.family);
+        const stranded = lowcodeAst.rows.some(
+          (row) => row.kind === "row" && row.column_ref === slot.name && !operatorValidForFamily(row.operator, nextFamily),
+        );
+        if (stranded) retypedToIncompatible.push(slot.name);
+      }
+      if (retypedToIncompatible.length > 0) {
+        setPendingTypeChange({ nextSlots: next, strandedColumns: retypedToIncompatible });
+        return;
+      }
+    }
+    setCurrentSlots(next);
+  };
   // Whether the author has committed to a rule condition/type yet. Until then,
   // "+ Add column" and the "Advanced" section are gated (disabled + tooltip) —
   // there's no rule to add filter columns to or configure advanced options for.
@@ -3142,7 +3234,7 @@ export function RegistryRuleFormDialog({
       {showColumnsUsedPanel && (
         <SlotsPanel
           value={currentSlots}
-          onChange={setCurrentSlots}
+          onChange={handleSlotsChange}
           disabled={readOnly}
           allowAddRemove={mode !== "dqx_native"}
           expandableArgKey={mode === "dqx_native" ? nativeExpandableArgKey : undefined}
@@ -3738,6 +3830,37 @@ export function RegistryRuleFormDialog({
         onCancel={() => setModeSwitch(null)}
         onConfirm={() => modeSwitch && performModeSwitch(modeSwitch.choice)}
       />
+      {/* Incompatible column-type change warning: changing a column's data
+          type in "Columns used" to a family that no longer supports an
+          already-built condition clears those conditions. Confirm first. */}
+      <AlertDialog open={pendingTypeChange !== null} onOpenChange={(o) => !o && setPendingTypeChange(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("rulesRegistry.typeChangeWarnTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("rulesRegistry.typeChangeWarnBody", {
+                columns: (pendingTypeChange?.strandedColumns ?? []).join(", "),
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingTypeChange(null)}>
+              {t("common.cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingTypeChange) {
+                  clearStrandedRows(pendingTypeChange.nextSlots);
+                  setCurrentSlots(pendingTypeChange.nextSlots);
+                }
+                setPendingTypeChange(null);
+              }}
+            >
+              {t("rulesRegistry.typeChangeWarnConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {buildWithAiBanner}
       <Tabs value={pageTab} onValueChange={(v) => setPageTab(v as PageTab)}>
         <div className="flex flex-wrap items-center justify-between gap-3">
