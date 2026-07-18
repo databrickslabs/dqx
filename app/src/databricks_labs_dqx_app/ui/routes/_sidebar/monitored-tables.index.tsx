@@ -17,7 +17,7 @@ import {
 import { compareSortValues } from "@/components/data-table/sort";
 import { AddMonitoredTableModal } from "@/components/monitored-tables/AddMonitoredTableModal";
 import { ExportYamlMenu } from "@/components/ExportYamlMenu";
-import { exportMonitoredTables } from "@/lib/api-custom";
+import { exportMonitoredTable } from "@/lib/api-custom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -520,11 +520,8 @@ function MonitoredTablesPage() {
             <p className="text-sm text-muted-foreground mt-1">{t("monitoredTables.subtitle")}</p>
           </div>
           <div className="flex items-center gap-2">
-            <ExportYamlMenu
-              fetchDqx={() => exportMonitoredTables({ format: "dqx" })}
-              fetchOdcs={() => exportMonitoredTables({ format: "odcs" })}
-              size="default"
-            />
+            {/* Export moved to a per-row action (see renderActions) — it's a
+                contextual, per-table export, not an always-on header button. */}
             {perms.canCreateRules && (
               <Button onClick={() => setAddOpen(true)} className="gap-2">
                 <Plus className="h-4 w-4" />
@@ -609,6 +606,14 @@ function MonitoredTablesPage() {
             // when the row has a pending approval. Mirrors registry-rules.index.tsx.
             (summary) => (
                   <div className="flex items-center justify-end gap-1">
+                    {/* Per-table export (DQX / ODCS) — moved off the page
+                        header into this contextual row action. */}
+                    <ExportYamlMenu
+                      fetchDqx={() => exportMonitoredTable(summary.table.binding_id, "dqx")}
+                      fetchOdcs={() => exportMonitoredTable(summary.table.binding_id, "odcs")}
+                      variant="ghost"
+                      iconOnly
+                    />
                     {perms.canRunRules && (summary.table.version ?? 0) > 0 && (
                       <Tooltip>
                         <TooltipTrigger asChild>
