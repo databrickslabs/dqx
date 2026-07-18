@@ -676,3 +676,103 @@ class TestRuleDisplayTags:
     def test_missing_rule_degrades_to_blanks(self, svc, registry):
         registry.get_rule.return_value = None
         assert svc.rule_display_tags("gone") == (None, None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# column_pass_thresholds — persisted into and read back from user_metadata
+# ---------------------------------------------------------------------------
+
+
+class TestColumnPassThresholds:
+    """Verify that column_pass_thresholds round-trips through user_metadata via the tags path."""
+
+    def test_apply_rule_persists_column_pass_thresholds_in_user_metadata(self, svc, sql, registry):
+        """Saving tags that contain RESERVED_COLUMN_PASS_THRESHOLDS_KEY persists the map."""
+        from databricks_labs_dqx_app.backend.registry_models import (
+            RESERVED_COLUMN_PASS_THRESHOLDS_KEY,
+            get_applied_column_pass_thresholds,
+        )
+
+        registry.get_rule.return_value = _published_rule()
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists
+            [],  # no existing application with this natural key
+        ]
+        tags_with_thresholds = {RESERVED_COLUMN_PASS_THRESHOLDS_KEY: {"email": 90, "name": 75}}
+        applied = svc.apply_rule(
+            "b1",
+            "r1",
+            [{"column": "customer_id"}],
+            "alice@x",
+            tags=tags_with_thresholds,
+        )
+        # The persisted user_metadata carries the raw map
+        assert applied.user_metadata[RESERVED_COLUMN_PASS_THRESHOLDS_KEY] == {"email": 90, "name": 75}
+        # The accessor reads it back correctly
+        assert get_applied_column_pass_thresholds(applied.user_metadata) == {"email": 90, "name": 75}
+
+    def test_apply_rule_no_column_pass_thresholds_leaves_metadata_clean(self, svc, sql, registry):
+        """When no column_pass_thresholds are provided the key is absent from user_metadata."""
+        from databricks_labs_dqx_app.backend.registry_models import (
+            RESERVED_COLUMN_PASS_THRESHOLDS_KEY,
+            get_applied_column_pass_thresholds,
+        )
+
+        registry.get_rule.return_value = _published_rule()
+        sql.query.side_effect = [
+            [["b1"]],
+            [],
+        ]
+        applied = svc.apply_rule(
+            "b1", "r1", [{"column": "customer_id"}], "alice@x", tags={}
+        )
+        assert RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in applied.user_metadata
+        assert get_applied_column_pass_thresholds(applied.user_metadata) == {}
+
+    def test_applied_rule_out_from_domain_exposes_column_pass_thresholds(self):
+        """AppliedRuleOut.from_domain reads column_pass_thresholds from user_metadata."""
+        from databricks_labs_dqx_app.backend.registry_models import (
+            RESERVED_COLUMN_PASS_THRESHOLDS_KEY,
+            AppliedRule,
+        )
+        from databricks_labs_dqx_app.backend.models import AppliedRuleOut
+
+        applied = AppliedRule(
+            id="ar1",
+            binding_id="b1",
+            rule_id="r1",
+            column_mapping=[{"column": "customer_id"}],
+            user_metadata={RESERVED_COLUMN_PASS_THRESHOLDS_KEY: {"email": 90, "name": 75}},
+        )
+        out = AppliedRuleOut.from_domain(applied)
+        assert out.column_pass_thresholds == {"email": 90, "name": 75}
+
+    def test_applied_rule_out_from_domain_drops_invalid_values(self):
+        """Invalid threshold values are clamped or dropped via the accessor."""
+        from databricks_labs_dqx_app.backend.registry_models import (
+            RESERVED_COLUMN_PASS_THRESHOLDS_KEY,
+            AppliedRule,
+        )
+        from databricks_labs_dqx_app.backend.models import AppliedRuleOut
+
+        applied = AppliedRule(
+            id="ar1",
+            binding_id="b1",
+            rule_id="r1",
+            column_mapping=[{"column": "customer_id"}],
+            user_metadata={RESERVED_COLUMN_PASS_THRESHOLDS_KEY: {"email": 999, "name": "bad", "score": 50}},
+        )
+        out = AppliedRuleOut.from_domain(applied)
+        # 999 clamps to 100, "bad" is dropped, 50 is valid
+        assert out.column_pass_thresholds == {"email": 100, "score": 50}
+
+    def test_applied_rule_out_from_domain_empty_when_absent(self):
+        """When user_metadata has no column_pass_thresholds key the field defaults to {}."""
+        from databricks_labs_dqx_app.backend.registry_models import AppliedRule
+        from databricks_labs_dqx_app.backend.models import AppliedRuleOut
+
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[], user_metadata={}
+        )
+        out = AppliedRuleOut.from_domain(applied)
+        assert out.column_pass_thresholds == {}

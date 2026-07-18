@@ -318,6 +318,11 @@ export type AppliedRuleOutRowFilter = string | null;
  */
 export type AppliedRuleOutPassThreshold = number | null;
 
+/**
+ * Per-column minimum-pass-rate overrides ({column: pct 0-100}); read from user_metadata.
+ */
+export type AppliedRuleOutColumnPassThresholds = {[key: string]: number};
+
 export type AppliedRuleOutColumnMappingItem = {[key: string]: string};
 
 export type AppliedRuleOutUserMetadata = { [key: string]: unknown };
@@ -349,6 +354,8 @@ export interface AppliedRuleOut {
   row_filter?: AppliedRuleOutRowFilter;
   /** Per-rule minimum % of rows that must pass; None = no per-rule threshold. */
   pass_threshold?: AppliedRuleOutPassThreshold;
+  /** Per-column minimum-pass-rate overrides ({column: pct 0-100}); read from user_metadata. */
+  column_pass_thresholds?: AppliedRuleOutColumnPassThresholds;
   column_mapping?: AppliedRuleOutColumnMappingItem[];
   user_metadata?: AppliedRuleOutUserMetadata;
   mapping_hash?: AppliedRuleOutMappingHash;
@@ -1230,6 +1237,13 @@ export type DesiredAppliedRuleInPassThreshold = number | null;
  */
 export type DesiredAppliedRuleInTags = { [key: string]: unknown };
 
+export type DesiredAppliedRuleInColumnPassThresholdsAnyOf = {[key: string]: number};
+
+/**
+ * Per-column minimum-pass-rate overrides ({column: pct 0-100}); merged into user_metadata.
+ */
+export type DesiredAppliedRuleInColumnPassThresholds = DesiredAppliedRuleInColumnPassThresholdsAnyOf | null;
+
 /**
  * One entry in the full desired set of applications for ``saveAppliedRules``.
  */
@@ -1248,6 +1262,8 @@ export interface DesiredAppliedRuleIn {
   pass_threshold?: DesiredAppliedRuleInPassThreshold;
   /** Per-application free-text tags */
   tags?: DesiredAppliedRuleInTags;
+  /** Per-column minimum-pass-rate overrides ({column: pct 0-100}); merged into user_metadata. */
+  column_pass_thresholds?: DesiredAppliedRuleInColumnPassThresholds;
 }
 
 /**

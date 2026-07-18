@@ -16,6 +16,7 @@ from .registry_models import RuleDisplayStatus as RegistryRuleStatusDisplay
 from .registry_models import registry_display_status
 from .registry_models import AppliedRule as AppliedRuleDomain
 from .registry_models import ColumnMappingGroup
+from .registry_models import get_applied_column_pass_thresholds
 from .registry_models import MonitoredTable as MonitoredTableDomain
 from .registry_models import MonitoredTableStatus as MonitoredTableStatusDomain
 from .registry_models import ScheduleKind as RegistryScheduleKind
@@ -693,6 +694,10 @@ class AppliedRuleOut(BaseModel):
         default=None,
         description="Per-rule minimum % of rows that must pass; None = no per-rule threshold.",
     )
+    column_pass_thresholds: dict[str, int] = Field(
+        default_factory=dict,
+        description="Per-column minimum-pass-rate overrides ({column: pct 0-100}); read from user_metadata.",
+    )
     column_mapping: list[dict[str, str]] = Field(default_factory=list)
     user_metadata: dict[str, Any] = Field(default_factory=dict)
     mapping_hash: str | None = None
@@ -714,6 +719,7 @@ class AppliedRuleOut(BaseModel):
             severity_override=applied_rule.severity_override,
             row_filter=applied_rule.row_filter,
             pass_threshold=applied_rule.pass_threshold,
+            column_pass_thresholds=get_applied_column_pass_thresholds(applied_rule.user_metadata),
             column_mapping=applied_rule.column_mapping,
             user_metadata=applied_rule.user_metadata,
             mapping_hash=applied_rule.mapping_hash,
@@ -739,6 +745,7 @@ class AppliedRuleOut(BaseModel):
             severity_override=applied.severity_override,
             row_filter=applied.row_filter,
             pass_threshold=applied.pass_threshold,
+            column_pass_thresholds=get_applied_column_pass_thresholds(applied.user_metadata),
             column_mapping=applied.column_mapping,
             user_metadata=applied.user_metadata,
             mapping_hash=applied.mapping_hash,
@@ -804,6 +811,10 @@ class DesiredAppliedRuleIn(BaseModel):
         description="Per-rule minimum % of rows that must pass; None = no per-rule threshold.",
     )
     tags: dict[str, Any] = Field(default_factory=dict, description="Per-application free-text tags")
+    column_pass_thresholds: dict[str, int] | None = Field(
+        default=None,
+        description="Per-column minimum-pass-rate overrides ({column: pct 0-100}); merged into user_metadata.",
+    )
 
 
 class SaveAppliedRulesIn(BaseModel):
