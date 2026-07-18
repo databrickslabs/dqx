@@ -368,7 +368,14 @@
     "governedKeyError": "Não foi possível carregar as chaves de tag governadas.",
     "governedKeyEmpty": "Nenhuma chave de tag governada disponível.",
     "governedKeyValueCount_one": "{{count}} valor",
-    "governedKeyValueCount_other": "{{count}} valores"
+    "governedKeyValueCount_other": "{{count}} valores",
+    "defaultPassThresholdTitle": "Limite padrão de aprovação",
+    "defaultPassThresholdLabel": "Taxa mínima de aprovação",
+    "defaultPassThresholdHint": "As verificações emitem alertas quando menos do que essa % das linhas passam. Pode ser substituído por regra e por coluna.",
+    "defaultPassThresholdSaved": "Limite padrão de aprovação salvo.",
+    "failedSaveDefaultPassThreshold": "Falha ao salvar o limite padrão de aprovação.",
+    "defaultPassThresholdAdminOnlyHint": "Somente administradores podem alterar esta configuração.",
+    "kwDefaultPassThreshold": "limite aprovação aviso qualidade portão"
   },
   "discovery": {
     "breadcrumb": "Descoberta",

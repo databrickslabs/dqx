@@ -368,7 +368,14 @@
     "governedKeyError": "Impossibile caricare le chiavi di tag governate.",
     "governedKeyEmpty": "Nessuna chiave di tag governata disponibile.",
     "governedKeyValueCount_one": "{{count}} valore",
-    "governedKeyValueCount_other": "{{count}} valori"
+    "governedKeyValueCount_other": "{{count}} valori",
+    "defaultPassThresholdTitle": "Soglia di superamento predefinita",
+    "defaultPassThresholdLabel": "Tasso minimo di superamento",
+    "defaultPassThresholdHint": "I controlli emettono avvisi quando meno di questa % di righe supera il controllo. Sovrascrivibile per regola e per colonna.",
+    "defaultPassThresholdSaved": "Soglia di superamento predefinita salvata.",
+    "failedSaveDefaultPassThreshold": "Impossibile salvare la soglia di superamento predefinita.",
+    "defaultPassThresholdAdminOnlyHint": "Solo gli amministratori possono modificare questa impostazione.",
+    "kwDefaultPassThreshold": "soglia superamento avviso qualità gate"
   },
   "discovery": {
     "breadcrumb": "Esplorazione",

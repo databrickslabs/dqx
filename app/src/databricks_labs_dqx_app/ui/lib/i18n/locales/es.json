@@ -368,7 +368,14 @@
     "governedKeyError": "No se pudieron cargar las claves de etiqueta gobernadas.",
     "governedKeyEmpty": "No hay claves de etiqueta gobernadas disponibles.",
     "governedKeyValueCount_one": "{{count}} valor",
-    "governedKeyValueCount_other": "{{count}} valores"
+    "governedKeyValueCount_other": "{{count}} valores",
+    "defaultPassThresholdTitle": "Umbral de aprobación predeterminado",
+    "defaultPassThresholdLabel": "Tasa mínima de aprobación",
+    "defaultPassThresholdHint": "Las verificaciones emiten advertencias cuando menos de este % de filas pasan el control. Reemplazable por regla y por columna.",
+    "defaultPassThresholdSaved": "Umbral de aprobación predeterminado guardado.",
+    "failedSaveDefaultPassThreshold": "Error al guardar el umbral de aprobación predeterminado.",
+    "defaultPassThresholdAdminOnlyHint": "Solo los administradores pueden cambiar esta configuración.",
+    "kwDefaultPassThreshold": "umbral aprobación advertencia calidad puerta"
   },
   "discovery": {
     "breadcrumb": "Descubrimiento",
