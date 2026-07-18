@@ -128,8 +128,8 @@ function DiffLine({ cell }: { cell: DiffCell | null }) {
     <div
       className={cn(
         "w-full h-[1.125rem] leading-[1.125rem] whitespace-pre border-l-2",
-        cell.tag === "removed" && "bg-destructive/10 border-destructive/50",
-        cell.tag === "added" && "bg-emerald-500/10 border-emerald-500/50",
+        cell.tag === "removed" && "bg-red-500/20 border-red-500/60",
+        cell.tag === "added" && "bg-emerald-500/20 border-emerald-500/60",
         cell.tag === "equal" && "border-transparent",
       )}
     >

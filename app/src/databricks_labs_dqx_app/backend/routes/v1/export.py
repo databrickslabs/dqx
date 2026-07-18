@@ -51,12 +51,21 @@ def export_registry_rules(
     severity: Annotated[str | None, Query(description="Filter by the 'severity' tag")] = None,
     steward: Annotated[str | None, Query(description="Filter by steward")] = None,
     tag: Annotated[str | None, Query(description="Filter by presence of a free-text tag key")] = None,
+    rule_id: Annotated[
+        list[str] | None,
+        Query(description="Restrict export to this explicit set of rule ids (repeatable)"),
+    ] = None,
 ) -> ExportOut:
     """Export all (filtered) registry rules as a DQX check-list YAML."""
     try:
         return _to_out(
             svc.export_registry_rules(
-                status=status, dimension=dimension, severity=severity, steward=steward, tag=tag
+                status=status,
+                dimension=dimension,
+                severity=severity,
+                steward=steward,
+                tag=tag,
+                rule_ids=rule_id,
             )
         )
     except Exception as e:

@@ -13,6 +13,16 @@ type Props = {
 
 const UNIT_OPTIONS = ["minutes", "hours", "days", "weeks", "months", "years"];
 
+// Shared value-input styling so every input in this cell matches the
+// operator/column dropdowns beside it: h-8, monospace, xs. The base `Input`
+// component ships `md:text-sm`, which tailwind-merge KEEPS (it's a responsive
+// variant, a different modifier scope from the plain `text-xs` we add) — so on
+// desktop the inputs would render a size larger than the Select triggers
+// (whose plain `text-sm` IS fully overridden by `text-xs`). Pinning
+// `md:text-xs` closes that gap. `w-full min-w-0` lets the input fill — and grow
+// with — its grid track without overflowing it.
+const VALUE_INPUT_CLASS = "h-8 w-full min-w-0 font-mono text-xs md:text-xs";
+
 // Ported 1:1 from dqlake's ValueCell — the operator+family determine the
 // value-input shape (single/double/chip/interval/type-picker/none).
 export function ValueCell({ operator, family, value, onChange }: Props) {
@@ -20,7 +30,9 @@ export function ValueCell({ operator, family, value, onChange }: Props) {
   const shape = valueCellShape(operator, family);
 
   if (shape.kind === "none") {
-    return <div className="text-xs text-muted-foreground italic">—</div>;
+    // Operators like "is null" / "is not null" take no value — render an empty
+    // cell (no placeholder dash) so the row reads cleanly.
+    return <div aria-hidden />;
   }
 
   if (shape.kind === "single") {
@@ -29,7 +41,7 @@ export function ValueCell({ operator, family, value, onChange }: Props) {
         type={shape.type}
         value={value == null ? "" : String(value)}
         onChange={(e) => onChange(shape.type === "number" ? Number(e.target.value) : e.target.value)}
-        className="h-8 font-mono text-xs"
+        className={VALUE_INPUT_CLASS}
       />
     );
   }
@@ -42,18 +54,18 @@ export function ValueCell({ operator, family, value, onChange }: Props) {
       onChange(next);
     };
     return (
-      <div className="flex items-center gap-1">
+      <div className="flex w-full min-w-0 items-center gap-1">
         <Input
           value={lo == null ? "" : String(lo)}
           onChange={(e) => update(0, e.target.value)}
-          className="h-8 font-mono text-xs"
+          className={VALUE_INPUT_CLASS}
           placeholder={t("rulesRegistry.lowcodeMinPlaceholder")}
         />
         <span className="text-xs text-muted-foreground">…</span>
         <Input
           value={hi == null ? "" : String(hi)}
           onChange={(e) => update(1, e.target.value)}
-          className="h-8 font-mono text-xs"
+          className={VALUE_INPUT_CLASS}
           placeholder={t("rulesRegistry.lowcodeMaxPlaceholder")}
         />
       </div>
@@ -85,15 +97,15 @@ export function ValueCell({ operator, family, value, onChange }: Props) {
   if (shape.kind === "interval") {
     const obj = (typeof value === "object" && value !== null ? value : {}) as { number?: number; unit?: string };
     return (
-      <div className="flex items-center gap-1">
+      <div className="flex w-full min-w-0 items-center gap-1">
         <Input
           type="number"
           value={obj.number ?? ""}
           onChange={(e) => onChange({ number: Number(e.target.value), unit: obj.unit ?? "days" })}
-          className="h-8 w-20 font-mono text-xs"
+          className="h-8 w-20 min-w-0 font-mono text-xs md:text-xs"
         />
         <Select value={obj.unit ?? "days"} onValueChange={(v) => onChange({ number: obj.number ?? 0, unit: v })}>
-          <SelectTrigger className="h-8 w-24 text-xs">
+          <SelectTrigger className="h-8 w-24 font-mono text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -147,7 +159,7 @@ function ChipInput({ value, onChange }: { value: unknown; onChange: (v: unknown)
         commit(text);
       }}
       placeholder={t("rulesRegistry.lowcodeChipPlaceholder")}
-      className="h-8 font-mono text-xs"
+      className={VALUE_INPUT_CLASS}
     />
   );
 }

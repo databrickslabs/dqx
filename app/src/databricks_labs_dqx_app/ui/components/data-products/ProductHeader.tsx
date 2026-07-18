@@ -49,10 +49,10 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { CheckCircle2, Clock, History, Loader2, MessageSquare, MoreVertical, Play, Save, Send, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, FileDown, History, Loader2, MessageSquare, MoreVertical, Play, Save, Send, Trash2, XCircle } from "lucide-react";
 import { CommentsDialog } from "@/components/CommentThread";
-import { ExportYamlMenu } from "@/components/ExportYamlMenu";
-import { exportDataProduct } from "@/lib/api-custom";
+import { exportDataProduct, downloadExportFile } from "@/lib/api-custom";
+import type { ExportFormat } from "@/lib/api-custom";
 import { cn } from "@/lib/utils";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
 
@@ -311,6 +311,23 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [busyRun, setBusyRun] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  // Export this space's checks as DQX or ODCS YAML from the ⋮ menu (moved off
+  // a standalone header button). Mirrors ExportYamlMenu's fetch→download→toast.
+  const handleExport = async (format: ExportFormat) => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const res = await exportDataProduct(product.product_id, format);
+      downloadExportFile(res.data);
+      toast.success(t("exportYaml.success", { filename: res.data.filename }));
+    } catch (err) {
+      toast.error(extractApiError(err, t("exportYaml.failed")));
+    } finally {
+      setExporting(false);
+    }
+  };
   // Bridges the gap between a successful submit and the next 4s poll
   // catching the new RUNNING run set, so the button doesn't flash back to
   // "Run now" for a moment after submission.
@@ -544,12 +561,8 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
               </Button>
             ))}
 
-          <ExportYamlMenu
-            fetchDqx={() => exportDataProduct(product.product_id, "dqx")}
-            fetchOdcs={() => exportDataProduct(product.product_id, "odcs")}
-          />
-
-          {/* ⋮ menu — Runs (dqlake-exact, item 29), Run draft, Delete. */}
+          {/* ⋮ menu — Export (DQX / ODCS), Runs (dqlake-exact, item 29),
+              Run draft, Delete. Export moved here off a standalone button. */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button size="sm" variant="ghost" aria-label={t("dataProducts.actionsMenuLabel")}>
@@ -557,6 +570,29 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  void handleExport("dqx");
+                }}
+                disabled={exporting}
+                className="gap-2"
+              >
+                <FileDown className="h-3.5 w-3.5" />
+                {t("exportYaml.dqxOption")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  void handleExport("odcs");
+                }}
+                disabled={exporting}
+                className="gap-2"
+              >
+                <FileDown className="h-3.5 w-3.5" />
+                {t("exportYaml.odcsOption")}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               {/* The run action NOT shown as the primary button is demoted here
                   at the top of the ⋮ menu (item 59). Both save-then-run (draft)
                   and its disabled/tooltip conventions are preserved. */}

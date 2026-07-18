@@ -117,6 +117,17 @@ class RuleDefinition(BaseModel):
             "omitted entirely when None or empty."
         ),
     )
+    filter: str | None = Field(
+        default=None,
+        description=(
+            "Optional rule-level row filter (a SQL WHERE predicate), mirroring "
+            "DQRule.filter. Supports {{slot}} placeholders substituted at materialize "
+            "time. Validated for SQL safety on create/update. Threaded through create/"
+            "update and frozen into each dq_rule_versions snapshot as part of the "
+            "definition. Materialized as a top-level 'filter' key on the rendered "
+            "dq_quality_rules check when set; omitted entirely when None or empty."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

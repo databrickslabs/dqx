@@ -12,10 +12,11 @@ import {
   getDataProductsSortValue,
   getDataProductsSortConfig,
   type DataProductsSortKey,
+  type DataProductsTableSelection,
 } from "@/components/data-products/DataProductsTable";
 import { compareSortValues } from "@/components/data-table/sort";
 import { ExportYamlMenu } from "@/components/ExportYamlMenu";
-import { exportDataProduct, exportDataProducts } from "@/lib/api-custom";
+import { exportDataProduct } from "@/lib/api-custom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -37,7 +38,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, Boxes, CheckCircle2, Loader2, Play, Plus, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
+import { AlertCircle, Boxes, CheckCircle2, GitCompare, Loader2, Play, Plus, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
 import {
   useListDataProducts,
   useApproveDataProduct,
@@ -48,6 +49,10 @@ import {
   getGetDataProductQueryKey,
   type DataProductOut,
 } from "@/lib/api";
+import {
+  TableSpaceDiffDialog,
+  type TableSpaceDiffTarget,
+} from "@/components/drafts/ChangeDiffDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
   DQ_SCORE_BUCKETS,
@@ -205,6 +210,7 @@ function DataProductsPage() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<DataProductOut | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DataProductOut | null>(null);
+  const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
 
   const approveMutation = useApproveDataProduct();
   const rejectMutation = useRejectDataProduct();
@@ -218,6 +224,186 @@ function DataProductsPage() {
     },
     [queryClient],
   );
+
+  // Bulk-selection state — mirrors monitored-tables.index.tsx
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkRunOpen, setBulkRunOpen] = useState(false);
+  const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
+  const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
+  /** Product IDs eligible for selection — same gating as the row-level bar. */
+  const selectableIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of sorted) {
+      const isPending = p.status === "pending_approval";
+      const isModified = p.display_status === "modified";
+      if (
+        (perms.canRunRules && (p.runnable_count ?? 0) > 0) ||
+        (isPending && perms.canApproveRules) ||
+        (perms.canCreateRules && !isModified && !isPending)
+      ) {
+        ids.add(p.product_id);
+      }
+    }
+    return ids;
+  }, [sorted, perms]);
+
+  const selectedRows = useMemo(
+    () => sorted.filter((p) => selectedIds.has(p.product_id)),
+    [sorted, selectedIds],
+  );
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === selectableIds.size) return new Set();
+      return new Set(selectableIds);
+    });
+  }, [selectableIds]);
+
+  const tableSelection = useMemo<DataProductsTableSelection>(
+    () => ({
+      selectedIds,
+      selectableIds,
+      onToggle: toggleSelect,
+      onToggleAll: toggleSelectAll,
+    }),
+    [selectedIds, selectableIds, toggleSelect, toggleSelectAll],
+  );
+
+  /** Runs a bulk operation sequentially and shows success/partial toasts. */
+  const bulkAction = useCallback(
+    async (
+      productsToAct: DataProductOut[],
+      mutate: (productId: string) => Promise<unknown>,
+      successMsg: string,
+    ) => {
+      if (bulkBusy || productsToAct.length === 0) return;
+      setBulkBusy(true);
+      let ok = 0;
+      let fail = 0;
+      let lastDetail = "";
+      for (const p of productsToAct) {
+        try {
+          await mutate(p.product_id);
+          ok++;
+          invalidateAfterChange(p.product_id);
+        } catch (err: unknown) {
+          fail++;
+          const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+          if (detail) lastDetail = detail;
+        }
+      }
+      setBulkBusy(false);
+      setSelectedIds(new Set());
+      if (fail === 0) {
+        toast.success(t("dataProducts.bulkSucceeded", { count: ok, msg: successMsg }));
+      } else {
+        toast.warning(
+          t("dataProducts.bulkPartial", {
+            ok,
+            fail,
+            reason: lastDetail ? ` — ${lastDetail}` : "",
+          }),
+        );
+      }
+    },
+    [bulkBusy, invalidateAfterChange, t],
+  );
+
+  const confirmBulkRun = () => {
+    setBulkRunOpen(false);
+    const eligible = selectedRows.filter((p) => (p.runnable_count ?? 0) > 0 && perms.canRunRules);
+    bulkAction(
+      eligible,
+      (productId) => runMutation.mutateAsync({ productId, data: { source: "approved" } }),
+      t("dataProducts.bulkRunStarted"),
+    );
+  };
+
+  const confirmBulkApprove = () => {
+    setBulkApproveOpen(false);
+    const eligible = selectedRows.filter((p) => p.status === "pending_approval");
+    bulkAction(
+      eligible,
+      (productId) => approveMutation.mutateAsync({ productId }),
+      t("dataProducts.bulkApproved"),
+    );
+  };
+
+  const confirmBulkReject = () => {
+    setBulkRejectOpen(false);
+    const eligible = selectedRows.filter((p) => p.status === "pending_approval");
+    bulkAction(
+      eligible,
+      (productId) => rejectMutation.mutateAsync({ productId }),
+      t("dataProducts.bulkRejected"),
+    );
+  };
+
+  const confirmBulkDelete = () => {
+    setBulkDeleteOpen(false);
+    const eligible = selectedRows.filter(
+      (p) => perms.canCreateRules && p.display_status !== "modified" && p.status !== "pending_approval",
+    );
+    bulkAction(
+      eligible,
+      (productId) => deleteMutation.mutateAsync({ productId }),
+      t("dataProducts.bulkDeleted"),
+    );
+  };
+
+  const bulkToolbar =
+    selectedIds.size > 0 ? (
+      <div className="flex flex-wrap items-center gap-2 mb-3 p-2.5 rounded-lg bg-muted/60 border w-full">
+        <span className="text-sm font-medium mr-1">
+          {t("dataProducts.selectedCount", { count: selectedIds.size })}
+        </span>
+        {bulkBusy ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <>
+            {perms.canRunRules && selectedRows.some((p) => (p.runnable_count ?? 0) > 0) && (
+              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs" onClick={() => setBulkRunOpen(true)}>
+                <Play className="h-3 w-3" />
+                {t("dataProducts.bulkRun")}
+              </Button>
+            )}
+            {perms.canApproveRules && selectedRows.some((p) => p.status === "pending_approval") && (
+              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-emerald-600" onClick={() => setBulkApproveOpen(true)}>
+                <CheckCircle2 className="h-3 w-3" />
+                {t("dataProducts.bulkApprove")}
+              </Button>
+            )}
+            {perms.canApproveRules && selectedRows.some((p) => p.status === "pending_approval") && (
+              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-destructive" onClick={() => setBulkRejectOpen(true)}>
+                <XCircle className="h-3 w-3" />
+                {t("dataProducts.bulkReject")}
+              </Button>
+            )}
+            {perms.canCreateRules && selectedRows.some((p) => p.display_status !== "modified" && p.status !== "pending_approval") && (
+              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-destructive" onClick={() => setBulkDeleteOpen(true)}>
+                <Trash2 className="h-3 w-3" />
+                {t("dataProducts.bulkDelete")}
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto" onClick={() => setSelectedIds(new Set())}>
+              {t("dataProducts.clearSelection")}
+            </Button>
+          </>
+        )}
+      </div>
+    ) : null;
 
   // Shared runner for the row-level approve/reject/delete actions — mirrors
   // the Monitored Tables list page's `runRowAction`.
@@ -311,11 +497,8 @@ function DataProductsPage() {
             <p className="text-sm text-muted-foreground mt-1">{t("dataProducts.subtitle")}</p>
           </div>
           <div className="flex items-center gap-2">
-            <ExportYamlMenu
-              fetchDqx={() => exportDataProducts("dqx")}
-              fetchOdcs={() => exportDataProducts("odcs")}
-              size="default"
-            />
+            {/* Export moved to a per-row action (see renderActions) — a
+                contextual, per-space export, not an always-on header button. */}
             {perms.canCreateRules && (
               <Button onClick={() => navigate({ to: "/table-spaces/new" })} className="gap-2">
                 <Plus className="h-4 w-4" />
@@ -325,6 +508,7 @@ function DataProductsPage() {
           </div>
         </div>
 
+        {bulkToolbar}
         <DataProductsTable
           rows={paged}
           sortKey={sortKey}
@@ -332,13 +516,15 @@ function DataProductsPage() {
           onHeaderClick={handleHeaderClick}
           onRowClick={openProduct}
           pendingProductId={pendingId}
+          selection={tableSelection}
           renderActions={
-            // Export is a read, so the actions column is ALWAYS present (even
-            // for viewers) to host the per-row export menu; the approve /
-            // reject / run / delete buttons stay gated inside. Mirrors
-            // Monitored Tables overview's gating.
+            // Per-status action gating: approve/reject gated on canApproveRules;
+            // run gated on canRunRules; delete gated on canCreateRules and hidden
+            // when the row has pending changes (modified or pending_approval).
             (product) => (
                   <div className="flex items-center justify-end gap-1">
+                    {/* Per-space export (DQX / ODCS) — moved off the page
+                        header into this contextual row action. */}
                     <ExportYamlMenu
                       fetchDqx={() => exportDataProduct(product.product_id, "dqx")}
                       fetchOdcs={() => exportDataProduct(product.product_id, "odcs")}
@@ -393,7 +579,28 @@ function DataProductsPage() {
                         </Tooltip>
                       </>
                     )}
-                    {perms.canCreateRules && (
+                    {(product.display_status === "modified" || product.status === "pending_approval") && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 text-purple-600 dark:text-purple-400"
+                            aria-label={t("rulesDrafts.diff.viewChanges")}
+                            onClick={() =>
+                              setDiffTarget({
+                                productId: product.product_id,
+                                name: product.name,
+                              })
+                            }
+                          >
+                            <GitCompare className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("rulesDrafts.diff.viewChanges")}</TooltipContent>
+                      </Tooltip>
+                    )}
+                    {perms.canCreateRules && product.display_status !== "modified" && product.status !== "pending_approval" && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
@@ -516,6 +723,80 @@ function DataProductsPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction className={cn("bg-destructive text-white hover:bg-destructive/90")} onClick={confirmDelete}>
+              {t("dataProducts.actionDelete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <TableSpaceDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+
+      <AlertDialog open={bulkRunOpen} onOpenChange={setBulkRunOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("dataProducts.bulkRunTitle", {
+                count: selectedRows.filter((p) => (p.runnable_count ?? 0) > 0).length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("dataProducts.bulkRunBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkRun}>{t("dataProducts.runAction")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkApproveOpen} onOpenChange={setBulkApproveOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("dataProducts.bulkApproveTitle", {
+                count: selectedRows.filter((p) => p.status === "pending_approval").length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("dataProducts.bulkApproveBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkApprove}>{t("dataProducts.approveAction")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkRejectOpen} onOpenChange={setBulkRejectOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("dataProducts.bulkRejectTitle", {
+                count: selectedRows.filter((p) => p.status === "pending_approval").length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("dataProducts.bulkRejectBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction className={cn("bg-destructive text-white hover:bg-destructive/90")} onClick={confirmBulkReject}>
+              {t("dataProducts.rejectAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("dataProducts.bulkDeleteTitle", {
+                count: selectedRows.filter((p) => p.display_status !== "modified" && p.status !== "pending_approval").length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("dataProducts.bulkDeleteBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction className={cn("bg-destructive text-white hover:bg-destructive/90")} onClick={confirmBulkDelete}>
               {t("dataProducts.actionDelete")}
             </AlertDialogAction>
           </AlertDialogFooter>

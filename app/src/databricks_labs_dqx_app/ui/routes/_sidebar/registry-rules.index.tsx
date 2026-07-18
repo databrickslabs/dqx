@@ -32,6 +32,7 @@ import {
   Trash2,
   Loader2,
   Undo2,
+  GitCompare,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -55,10 +56,14 @@ import {
   useRevokeRegistryRule,
   type RegistryRuleOut,
 } from "@/lib/api";
+import {
+  RegistryRuleDiffDialog,
+  type RegistryDiffTarget,
+} from "@/components/drafts/ChangeDiffDialog";
 import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
 import type { User as UserType } from "@/lib/api";
-import { useLabelDefinitions, exportRegistryRules, exportRegistryRule } from "@/lib/api-custom";
+import { useLabelDefinitions, exportRegistryRules } from "@/lib/api-custom";
 import { ExportYamlMenu } from "@/components/ExportYamlMenu";
 import { LabelFilter, labelsMatchFilter, type LabelSelection } from "@/components/Labels";
 import { labelToken } from "@/lib/format-utils";
@@ -294,11 +299,13 @@ function RegistryRulesPage() {
 
   const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RegistryRuleOut | null>(null);
+  const [diffTarget, setDiffTarget] = useState<RegistryDiffTarget | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
   const [bulkDeprecateOpen, setBulkDeprecateOpen] = useState(false);
   const [bulkRevokeOpen, setBulkRevokeOpen] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   const isRuleAuthor = useCallback(
     (rule: RegistryRuleOut) => {
@@ -315,6 +322,17 @@ function RegistryRulesPage() {
     [perms.canApproveRules, perms.canCreateRules, isRuleAuthor],
   );
 
+  // Terminal-state rules (deprecated / rejected) are cleanup candidates: an
+  // author/approver can select them to export or delete. Mirrors the per-row
+  // delete gate (rejected → canCreateRules; deprecated → canApproveRules).
+  const canDeleteRule = useCallback(
+    (rule: RegistryRuleOut) =>
+      (rule.status === "rejected" && perms.canCreateRules) ||
+      (rule.status === "deprecated" && perms.canApproveRules) ||
+      (rule.status === "draft" && perms.canCreateRules),
+    [perms.canCreateRules, perms.canApproveRules],
+  );
+
   const selectableRuleIds = useMemo(() => {
     const ids = new Set<string>();
     for (const r of sortedRules) {
@@ -322,13 +340,14 @@ function RegistryRulesPage() {
       if (
         (r.status === "pending_approval" && perms.canApproveRules) ||
         (r.status === "approved" && perms.canApproveRules) ||
-        canRevokeRule(r)
+        canRevokeRule(r) ||
+        canDeleteRule(r)
       ) {
         ids.add(r.rule_id);
       }
     }
     return ids;
-  }, [sortedRules, perms.canApproveRules, canRevokeRule]);
+  }, [sortedRules, perms.canApproveRules, canRevokeRule, canDeleteRule]);
 
   const selectedRules = useMemo(
     () => sortedRules.filter((r) => selectedIds.has(r.rule_id)),
@@ -440,6 +459,16 @@ function RegistryRulesPage() {
     );
   };
 
+  const confirmBulkDelete = () => {
+    setBulkDeleteOpen(false);
+    const eligible = selectedRules.filter((r) => canDeleteRule(r));
+    bulkAction(
+      eligible,
+      (ruleId) => deleteMutation.mutateAsync({ ruleId }),
+      t("rulesRegistry.bulkDeleted"),
+    );
+  };
+
   const runAction = useCallback(
     (
       ruleId: string,
@@ -532,11 +561,6 @@ function RegistryRulesPage() {
       }
       return (
         <div className="flex items-center justify-end gap-1">
-          <ExportYamlMenu
-            fetchDqx={() => exportRegistryRule(rule.rule_id)}
-            variant="ghost"
-            iconOnly
-          />
           {rule.status === "draft" && perms.canCreateRules && (
             <>
               <Tooltip>
@@ -649,6 +673,29 @@ function RegistryRulesPage() {
               <TooltipContent>{t("rulesRegistry.actionUndeprecate")}</TooltipContent>
             </Tooltip>
           )}
+          {(rule.display_status === "modified" || rule.status === "pending_approval") && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 text-purple-600 dark:text-purple-400"
+                  aria-label={t("rulesDrafts.diff.viewChanges")}
+                  onClick={() =>
+                    setDiffTarget({
+                      ruleId: rule.rule_id,
+                      name: getTag(rule, RESERVED_NAME_KEY) || rule.rule_id,
+                      version: rule.version,
+                      definition: rule.definition,
+                    })
+                  }
+                >
+                  <GitCompare className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("rulesDrafts.diff.viewChanges")}</TooltipContent>
+            </Tooltip>
+          )}
           {rule.status === "rejected" && perms.canCreateRules && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -713,6 +760,25 @@ function RegistryRulesPage() {
               >
                 <Undo2 className="h-3 w-3" />
                 {t("rulesRegistry.bulkRevoke")}
+              </Button>
+            )}
+            {/* Export moved off the always-on header into this selection action
+                bar — it exports exactly the ticked rows (rule_id[] filter). */}
+            <ExportYamlMenu
+              fetchDqx={() => exportRegistryRules({ rule_id: [...selectedIds] })}
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+            />
+            {selectedRules.some((r) => canDeleteRule(r)) && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1 h-7 text-xs text-destructive"
+                onClick={() => setBulkDeleteOpen(true)}
+              >
+                <Trash2 className="h-3 w-3" />
+                {t("rulesRegistry.bulkDelete")}
               </Button>
             )}
             <Button
@@ -821,16 +887,8 @@ function RegistryRulesPage() {
             <p className="text-sm text-muted-foreground mt-1">{t("rulesRegistry.description")}</p>
           </div>
           <div className="flex items-center gap-2">
-            <ExportYamlMenu
-              fetchDqx={() =>
-                exportRegistryRules({
-                  dimension: dimensionFilter === ALL ? undefined : dimensionFilter,
-                  severity: severityFilter === ALL ? undefined : severityFilter,
-                  steward: stewardFilter === ALL ? undefined : stewardFilter,
-                })
-              }
-              size="default"
-            />
+            {/* Export lives in the selection action bar (exports the ticked
+                rows), not this always-on header. */}
             {perms.canCreateRules && (
               <>
                 <Button
@@ -955,6 +1013,30 @@ function RegistryRulesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("rulesRegistry.bulkDeleteTitle", {
+                count: selectedRules.filter((r) => canDeleteRule(r)).length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("rulesRegistry.bulkDeleteBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmBulkDelete}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {t("rulesRegistry.actionDelete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <RegistryRuleDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
     </FadeIn>
   );
 }

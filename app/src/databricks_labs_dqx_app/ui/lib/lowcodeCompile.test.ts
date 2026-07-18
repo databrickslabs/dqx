@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildSqlBody,
   compileAstToSql,
   compileJoinsToSql,
   compileLowcodeBody,
@@ -111,6 +112,41 @@ describe("operator SQL", () => {
     ["on or before", "2020-01-01", "{{c}} <= '2020-01-01'"],
     ["on or after", "2020-01-01", "{{c}} >= '2020-01-01'"],
     ["is in last", { number: 7, unit: "days" }, "{{c}} >= current_timestamp() - INTERVAL '7 days'"],
+    // Length
+    ["has length", 5, "length({{c}}) = 5"],
+    ["is longer than", 3, "length({{c}}) > 3"],
+    ["is shorter than", 8, "length({{c}}) < 8"],
+    ["length between", [2, 4], "length({{c}}) BETWEEN 2 AND 4"],
+    ["is not empty", null, "length(trim({{c}})) > 0"],
+    ["is empty", null, "length(trim({{c}})) = 0"],
+    // Text pattern / format
+    ["does not match regex", "^a$", "NOT ({{c}} RLIKE '^a$')"],
+    ["contains only digits", null, "{{c}} RLIKE '^[0-9]+$'"],
+    ["is uppercase", null, "{{c}} = upper({{c}})"],
+    ["is lowercase", null, "{{c}} = lower({{c}})"],
+    [
+      "is a valid uuid",
+      null,
+      "{{c}} RLIKE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'",
+    ],
+    [
+      "is a valid ipv4",
+      null,
+      "{{c}} RLIKE '^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])$'",
+    ],
+    // Numeric predicates
+    ["is positive", null, "{{c}} > 0"],
+    ["is negative", null, "{{c}} < 0"],
+    ["is non-negative", null, "{{c}} >= 0"],
+    ["is a whole number", null, "{{c}} = round({{c}})"],
+    ["is a multiple of", 5, "mod({{c}}, 5) = 0"],
+    // Temporal predicates
+    ["is in the future", null, "{{c}} > current_timestamp()"],
+    ["is in the past", null, "{{c}} < current_timestamp()"],
+    ["is today", null, "to_date({{c}}) = current_date()"],
+    // AI (Foundation Model)
+    ["has positive sentiment", null, "ai_analyze_sentiment({{c}}) = 'positive'"],
+    ["has negative sentiment", null, "ai_analyze_sentiment({{c}}) = 'negative'"],
   ];
 
   for (const [operator, value, expected] of OPERATOR_SQL) {
@@ -130,6 +166,13 @@ describe("operator SQL", () => {
     };
     expect(compileAstToSql(ast([agg]))).toBe("COUNT({{id}}) > 1");
   });
+
+  test("passes luhn check uses the built-in luhn_check with a normalized-digit length guard", () => {
+    const sql = compileAstToSql(ast([row({ column_ref: "card", operator: "passes luhn check", value: null })]));
+    // Non-digits are stripped (luhn_check returns false on any non-digit) and
+    // the length guard rejects empty input (which would trivially pass Luhn).
+    expect(sql).toBe("length(regexp_replace({{card}}, '[^0-9]', '')) > 0 AND luhn_check(regexp_replace({{card}}, '[^0-9]', ''))");
+  });
 });
 
 // Locks the type-dependent catalogue ported from dqlake (item 3): each family
@@ -138,8 +181,24 @@ describe("operator SQL", () => {
 // fails loudly rather than silently shipping an operator the compiler can't
 // emit SQL for.
 describe("OPERATORS_BY_FAMILY — ported dqlake catalogue", () => {
-  test("each family exposes exactly the dqlake operator set", () => {
-    expect(OPERATORS_BY_FAMILY.NUMERIC).toEqual(["between", "=", "!=", ">=", ">", "<=", "<", "in", "not in"]);
+  test("each family exposes exactly its operator set", () => {
+    expect(OPERATORS_BY_FAMILY.NUMERIC).toEqual([
+      "between",
+      "=",
+      "!=",
+      ">=",
+      ">",
+      "<=",
+      "<",
+      "in",
+      "not in",
+      "is positive",
+      "is negative",
+      "is non-negative",
+      "is a whole number",
+      "is a multiple of",
+      "passes luhn check",
+    ]);
     expect(OPERATORS_BY_FAMILY.TEXTUAL).toEqual([
       "equals",
       "not equals",
@@ -150,10 +209,25 @@ describe("OPERATORS_BY_FAMILY — ported dqlake catalogue", () => {
       "in",
       "not in",
       "matches regex",
+      "does not match regex",
+      "has length",
+      "is longer than",
+      "is shorter than",
+      "length between",
+      "is not empty",
+      "is empty",
+      "contains only digits",
+      "is uppercase",
+      "is lowercase",
+      "is a valid uuid",
+      "is a valid ipv4",
+      "passes luhn check",
       "has leading or trailing whitespace",
       "has no leading or trailing whitespace",
       "is a valid",
       "is not a valid",
+      "has positive sentiment",
+      "has negative sentiment",
     ]);
     expect(OPERATORS_BY_FAMILY.TEMPORAL).toEqual([
       "on or after",
@@ -162,19 +236,33 @@ describe("OPERATORS_BY_FAMILY — ported dqlake catalogue", () => {
       "before",
       "between",
       "is in last",
+      "is in the future",
+      "is in the past",
+      "is today",
       "=",
       "!=",
     ]);
     expect(OPERATORS_BY_FAMILY.BOOLEAN).toEqual(["is true", "is false"]);
-    expect(OPERATORS_BY_FAMILY.ANY).toEqual(["is null", "is not null", "=", "!=", "in", "not in"]);
+    expect(OPERATORS_BY_FAMILY.ANY).toEqual([
+      "is null",
+      "is not null",
+      "=",
+      "!=",
+      "in",
+      "not in",
+      "is not empty",
+      "is empty",
+    ]);
   });
 
   test("every catalogue operator compiles to non-empty SQL (no unhandled arm)", () => {
     const sampleValue = (op: string): unknown => {
-      if (op === "between") return [1, 2];
+      if (op === "between" || op === "length between") return [1, 2];
       if (op === "in" || op === "not in") return ["a"];
       if (op === "is in last") return { number: 1, unit: "days" };
       if (op === "is a valid" || op === "is not a valid") return "int";
+      if (op === "has length" || op === "is longer than" || op === "is shorter than" || op === "is a multiple of")
+        return 3;
       return "x";
     };
     const all = new Set(Object.values(OPERATORS_BY_FAMILY).flat());
@@ -317,5 +405,81 @@ describe("pruneStaleGroupByRefs", () => {
     const withJoinKey: LowcodeColumnRef[] = [...declared, col("orders.total")];
     const value = "{{region}}, orders.total";
     expect(pruneStaleGroupByRefs(value, withJoinKey)).toBe(value);
+  });
+});
+
+describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without corruption", () => {
+  const CROSS_TABLE_QUERY =
+    "SELECT {{customer_id}}, (NOT ({{amount}} > 0)) AS condition " +
+    "FROM {{input_view}} LEFT JOIN c.s.orders ON c.s.orders.cid = {{customer_id}}";
+
+  test("loaded cross-table rule, unedited resave -> stays sql_query (current text)", () => {
+    // No-edit resave reopens with sqlJoins=[] and the full SELECT in the editor.
+    // It must be persisted as sql_query, NOT flipped into { predicate: <SELECT> }.
+    const body = buildSqlBody({
+      sqlPredicate: CROSS_TABLE_QUERY,
+      sqlJoins: [],
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.sql_query).toBe(CROSS_TABLE_QUERY);
+    expect(body.predicate).toBeUndefined();
+  });
+
+  test("loaded cross-table rule, EDITED query text -> saves the edit AS sql_query (not sql_expression)", () => {
+    // The literal edit+resave case: the author tweaks the loaded SELECT. As long
+    // as the rule is still a loaded cross-table query, the edited text is saved
+    // as sql_query — never downgraded to a broken sql_expression.
+    const edited = CROSS_TABLE_QUERY.replace("> 0", "> 100");
+    const body = buildSqlBody({
+      sqlPredicate: edited,
+      sqlJoins: [],
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.sql_query).toBe(edited);
+    expect(body.predicate).toBeUndefined();
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("passthrough preserves merge_columns (row-level merge, not dataset-level)", () => {
+    const body = buildSqlBody({
+      sqlPredicate: CROSS_TABLE_QUERY,
+      sqlJoins: [],
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("passthrough without merge_columns stays dataset-level (no merge_columns key)", () => {
+    const q = "SELECT (NOT (COUNT(*) > 0)) AS condition FROM {{input_view}} CROSS JOIN c.s.dim";
+    const body = buildSqlBody({ sqlPredicate: q, sqlJoins: [], sqlQueryPassthrough: {} });
+    expect(body.sql_query).toBe(q);
+    expect(body.merge_columns).toBeUndefined();
+  });
+
+  test("joins re-declared -> recompiles a fresh sql_query from predicate + joins (passthrough ignored)", () => {
+    const joins: JoinAst[] = [
+      { join_type: "LEFT", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "customer_id" }] },
+    ];
+    const body = buildSqlBody({
+      sqlPredicate: "{{customer_id}} IS NOT NULL",
+      sqlJoins: joins,
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.sql_query).toBe(
+      "SELECT {{customer_id}}, (NOT ({{customer_id}} IS NOT NULL)) AS condition " +
+        "FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{customer_id}}",
+    );
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("no joins, no passthrough -> plain single-table { predicate }", () => {
+    const body = buildSqlBody({ sqlPredicate: "{{email}} IS NOT NULL", sqlJoins: [] });
+    expect(body).toEqual({ predicate: "{{email}} IS NOT NULL" });
+  });
+
+  test("no joins, null passthrough (type changed away) -> falls back to { predicate }", () => {
+    expect(buildSqlBody({ sqlPredicate: "x > 0", sqlJoins: [], sqlQueryPassthrough: null })).toEqual({
+      predicate: "x > 0",
+    });
   });
 });

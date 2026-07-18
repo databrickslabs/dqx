@@ -54,6 +54,7 @@ import {
   LineChart,
   Loader2,
   MoreVertical,
+  FileDown,
   Play,
   Plus,
   RefreshCw,
@@ -113,11 +114,12 @@ import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-inval
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import {
   exportMonitoredTable,
+  downloadExportFile,
   useLabelDefinitions,
   useListPendingApplications,
   useWorkspaceHost,
 } from "@/lib/api-custom";
-import { ExportYamlMenu } from "@/components/ExportYamlMenu";
+import type { ExportFormat } from "@/lib/api-custom";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { isRunStale, useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
@@ -380,6 +382,26 @@ function MonitoredTableDetailPage() {
   const deleteMutation = useDeleteMonitoredTable();
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  // Export this table's checks as DQX or ODCS YAML from the ⋮ menu (moved off
+  // a standalone header button). Mirrors ExportYamlMenu's fetch→download→toast.
+  const handleExport = useCallback(
+    async (format: ExportFormat) => {
+      if (exporting) return;
+      setExporting(true);
+      try {
+        const res = await exportMonitoredTable(bindingId, format);
+        downloadExportFile(res.data);
+        toast.success(t("exportYaml.success", { filename: res.data.filename }));
+      } catch (err) {
+        toast.error(extractApiError(err, t("exportYaml.failed")));
+      } finally {
+        setExporting(false);
+      }
+    },
+    [exporting, bindingId, t],
+  );
   const persistStagedRows = useCallback(
     () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
     [saveMutation, bindingId, stagedRows],
@@ -607,13 +629,9 @@ function MonitoredTableDetailPage() {
                 {...computeRunGating(baseline.length, stagedRows.length)}
               />
             )}
-            <ExportYamlMenu
-              fetchDqx={() => exportMonitoredTable(bindingId, "dqx")}
-              fetchOdcs={() => exportMonitoredTable(bindingId, "odcs")}
-            />
-            {/* ⋮ menu — "View in Runs History" (all roles) + Delete (editors
-                only). Schedule moved back to its own tab (P25 item 1 reverted
-                P23 item 13). */}
+            {/* ⋮ menu — Export (DQX / ODCS) + "View in Runs History" (all
+                roles) + Delete (editors only). Export moved here off a
+                standalone header button. */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -626,6 +644,23 @@ function MonitoredTableDetailPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => void handleExport("dqx")}
+                  disabled={exporting}
+                  className="gap-2"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                  {t("exportYaml.dqxOption")}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => void handleExport("odcs")}
+                  disabled={exporting}
+                  className="gap-2"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                  {t("exportYaml.odcsOption")}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={() =>
                     void navigate({ to: "/runs-history", search: { tableFqn: table.table_fqn } })
@@ -2218,13 +2253,9 @@ function ApplyRulesTab({
     setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, severity_override } : r)));
   };
 
-  // Per-rule WHERE filter + pass threshold — like severity/pin above, these are
-  // properties of the rule application (shared across all of a rule_id's staged
-  // rows), so update every row for that rule_id. Pure local staged mutation.
-  const handleRowFilterChange = (rule: AppliedRuleOut, value: string | null) => {
-    setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, row_filter: value } : r)));
-  };
-
+  // Per-rule pass threshold — like severity/pin above, this is a property of
+  // the rule application (shared across all of a rule_id's staged rows), so
+  // update every row for that rule_id. Pure local staged mutation.
   const handlePassThresholdChange = (rule: AppliedRuleOut, value: number | null) => {
     setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, pass_threshold: value } : r)));
   };
@@ -2417,7 +2448,6 @@ function ApplyRulesTab({
                 busy={false}
                 onPinChange={(v) => handlePinChange(rule, v)}
                 onSeverityChange={(v) => handleSeverityChange(rule, v)}
-                onRowFilterChange={(v) => handleRowFilterChange(rule, v)}
                 onPassThresholdChange={(v) => handlePassThresholdChange(rule, v)}
                 onRemove={() => setRemoveTarget(rule)}
                 onRemoveMapping={(groupIdx) => handleRemoveMappingGroup(rule.rule_id, groupIdx)}

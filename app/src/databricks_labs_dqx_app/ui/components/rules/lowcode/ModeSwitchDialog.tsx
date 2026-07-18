@@ -22,6 +22,38 @@ export type ModeSwitchDirection =
   | "NATIVE_TO_LOWCODE"
   | "NATIVE_TO_SQL";
 
+/** The three authoring modes a Rules Registry rule can be built in. */
+export type RegistryEditMode = "dqx_native" | "lowcode" | "sql";
+
+const DIRECTIONS: Record<string, ModeSwitchDirection> = {
+  "lowcode>sql": "LOWCODE_TO_SQL",
+  "lowcode>dqx_native": "LOWCODE_TO_NATIVE",
+  "sql>lowcode": "SQL_TO_LOWCODE",
+  "sql>dqx_native": "SQL_TO_NATIVE",
+  "dqx_native>lowcode": "NATIVE_TO_LOWCODE",
+  "dqx_native>sql": "NATIVE_TO_SQL",
+};
+
+/**
+ * The guarded-switch direction for a *from* -> *to* authoring-mode change, or
+ * `null` when there is nothing to guard — either the mode is unchanged, or the
+ * source mode holds no content the target can't preserve (*sourceHasContent*
+ * false), so the switch can proceed silently without a confirm dialog.
+ *
+ * Note: the SQL <-> Native / Low-Code <-> Native transitions always clear the
+ * target-incompatible body, so they're guarded whenever the source has
+ * content; Low-Code <-> SQL is guarded too because hand-edited SQL can't be
+ * rebuilt into structured conditions.
+ */
+export function modeSwitchDirection(
+  from: RegistryEditMode,
+  to: RegistryEditMode,
+  sourceHasContent: boolean,
+): ModeSwitchDirection | null {
+  if (from === to || !sourceHasContent) return null;
+  return DIRECTIONS[`${from}>${to}`] ?? null;
+}
+
 type Props = {
   open: boolean;
   direction: ModeSwitchDirection | null;

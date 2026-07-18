@@ -365,6 +365,141 @@ class TestRenderCheckMessageExpr:
         assert "message_expr" not in check
 
 
+class TestRenderCheckDefinitionFilter:
+    """Task 5: definition.filter is slot-substituted and set as check_dict['filter'].
+    The per-binding applied.row_filter is NO LONGER read."""
+
+    def test_definition_filter_slot_substituted(self):
+        """{{col_a}} in definition.filter with mapping {col_a: amount} -> 'amount > 0'."""
+        definition = RuleDefinition.model_validate({
+            "body": {"function": "is_not_null", "arguments": {"column": "{{col_a}}"}},
+            "slots": [{"name": "col_a", "family": "any", "position": 0, "cardinality": "one"}],
+            "filter": "{{col_a}} > 0",
+        })
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"col_a": "amount"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        assert check["filter"] == "amount > 0"
+
+    def test_definition_filter_absent_when_none(self):
+        """No filter on definition -> no 'filter' key in check_dict."""
+        definition = _is_not_null_definition()
+        assert definition.filter is None
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        assert "filter" not in check
+
+    def test_definition_filter_absent_when_empty_string(self):
+        """Empty string filter -> no 'filter' key in check_dict."""
+        definition = _is_not_null_definition()
+        definition.filter = ""
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        assert "filter" not in check
+
+    def test_row_filter_param_not_read(self):
+        """render_check no longer reads the row_filter param — passing it
+        must not produce a 'filter' key when definition.filter is None."""
+        definition = _is_not_null_definition()
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+            row_filter="old_filter_value IS NOT NULL",
+        )
+        assert "filter" not in check
+
+    def test_definition_filter_plain_string_no_slots(self):
+        """A filter with no slot placeholders is passed through unchanged."""
+        definition = RuleDefinition.model_validate({
+            "body": {"function": "is_not_null", "arguments": {"column": "{{column}}"}},
+            "slots": [{"name": "column", "family": "any", "position": 0}],
+            "filter": "region = 'US'",
+        })
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        assert check["filter"] == "region = 'US'"
+
+    def test_definition_filter_revalidated_after_slot_substitution(self):
+        """SECURITY: an injected column_mapping value that turns a safe filter
+        template into prohibited SQL after {{slot}} substitution must raise
+        UnsafeSqlQueryError.
+
+        The stored filter ``{{col_a}} > 0`` is safe (validated at rule
+        create/update time), but the applied rule's column_mapping value is
+        free-form and never sanitized. A malicious APPLY-holder can map the
+        slot to a value carrying a forbidden statement, so the SUBSTITUTED
+        filter must be re-validated with ``is_sql_query_safe`` — exactly as the
+        predicate/sql_query paths already do — before it reaches DQRule.filter.
+        """
+        definition = RuleDefinition.model_validate({
+            "body": {"function": "is_not_null", "arguments": {"column": "{{col_a}}"}},
+            "slots": [{"name": "col_a", "family": "any", "position": 0, "cardinality": "one"}],
+            "filter": "{{col_a}} > 0",
+        })
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        with pytest.raises(UnsafeSqlQueryError):
+            render_check(
+                mode="dqx_native",
+                version=version,
+                # Injected value: after substitution the filter becomes
+                # "amount); DROP TABLE dq_quality_rules; -- > 0" (contains DROP).
+                group={"col_a": "amount); DROP TABLE dq_quality_rules; --"},
+                effective_severity="Medium",
+                per_application_tags={},
+                registry_rule_id="r1",
+                registry_version=1,
+                applied_rule_id="ar1",
+                app_settings=_app_settings_stub(),
+            )
+
+
 class TestRenderCheckNativeNegate:
     """Item 11 — a native check's PASS/FAIL polarity injects ``negate``."""
 
@@ -1497,6 +1632,118 @@ class TestRenderCheckNativeCrossTable:
         assert check["check"]["arguments"]["ref_columns"] == ["id"]
         assert check["check"]["arguments"]["ref_table"] == "catalog.schema.customers"
         assert check["criticality"] == "error"
+
+
+class TestNativeArityBinding:
+    """Task 6: arity-aware column binding in the native materializer path (B3 backend).
+
+    For list-arity funcs (arg_key shared across multiple slots, e.g. is_unique's
+    ``columns``), ALL declared slots appear in function args EXCEPT those whose
+    ``{{slot}}`` placeholder is referenced in ``definition.filter`` (filter-only
+    columns).  For single-arity funcs (one slot per arg_key, e.g. is_not_null's
+    ``column``), extra slots that are only referenced in the filter never appear
+    in function args — the template already encodes this and the materializer
+    must not inject them.
+    """
+
+    @staticmethod
+    def _list_arity_definition(
+        slot_names: list[str],
+        filter_text: str | None = None,
+    ) -> RuleDefinition:
+        """is_unique-style definition: N slots all bound to the same ``columns`` list arg."""
+        slots = [
+            {
+                "name": s,
+                "family": "any",
+                "position": i,
+                "cardinality": "one",
+                "arg_key": "columns",
+            }
+            for i, s in enumerate(slot_names)
+        ]
+        # Template lists all slot placeholders — the materializer must strip
+        # filter-only ones from the rendered function arg.
+        arguments = {"columns": [f"{{{{{s}}}}}" for s in slot_names]}
+        defn: dict = {"body": {"function": "is_unique", "arguments": arguments}, "slots": slots, "parameters": []}
+        if filter_text is not None:
+            defn["filter"] = filter_text
+        return RuleDefinition.model_validate(defn)
+
+    @staticmethod
+    def _single_arity_definition(
+        first_slot: str,
+        extra_slot: str,
+        filter_text: str | None = None,
+    ) -> RuleDefinition:
+        """is_not_null-style definition: 2 declared slots, only the first in function args.
+
+        The template only references ``{{first_slot}}`` in body.arguments; the
+        extra slot exists solely for the advanced filter condition.
+        """
+        slots = [
+            {"name": first_slot, "family": "any", "position": 0, "cardinality": "one", "arg_key": "column"},
+            {"name": extra_slot, "family": "any", "position": 1, "cardinality": "one", "arg_key": "column"},
+        ]
+        arguments = {"column": f"{{{{{first_slot}}}}}"}
+        defn: dict = {
+            "body": {"function": "is_not_null", "arguments": arguments},
+            "slots": slots,
+            "parameters": [],
+        }
+        if filter_text is not None:
+            defn["filter"] = filter_text
+        return RuleDefinition.model_validate(defn)
+
+    def _render(self, definition: RuleDefinition, group: dict) -> dict:
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group=group,
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        return check
+
+    def test_list_arity_all_three_slots_in_function_args_when_no_filter(self):
+        """(a) 3 declared slots, none in filter → function args include all 3."""
+        definition = self._list_arity_definition(["col_1", "col_2", "col_3"])
+        check = self._render(definition, {"col_1": "a", "col_2": "b", "col_3": "c"})
+        assert check["check"]["arguments"]["columns"] == ["a", "b", "c"]
+
+    def test_list_arity_filter_referenced_slot_excluded_from_function_args(self):
+        """(b) 3 declared slots, col_3 referenced in definition.filter →
+        function args include only the other 2 (col_3 is filter-only)."""
+        definition = self._list_arity_definition(
+            ["col_1", "col_2", "col_3"],
+            filter_text="{{col_3}} > 100",
+        )
+        check = self._render(definition, {"col_1": "a", "col_2": "b", "col_3": "c"})
+        # Filter-only col_3 must NOT appear in function args.
+        assert check["check"]["arguments"]["columns"] == ["a", "b"]
+        # The filter itself IS rendered with col_3 substituted.
+        assert check["filter"] == "c > 100"
+
+    def test_single_arity_second_slot_absent_from_function_args(self):
+        """(c) Single-arity func, 2 declared slots → function arg = first slot only;
+        second slot is used only in the filter and must not appear in function args."""
+        definition = self._single_arity_definition(
+            "col_1",
+            "col_2",
+            filter_text="{{col_2}} IS NOT NULL",
+        )
+        check = self._render(definition, {"col_1": "amount", "col_2": "status"})
+        # Only the first slot's column in function args.
+        assert check["check"]["arguments"]["column"] == "amount"
+        assert "col_2" not in check["check"]["arguments"]
+        assert "status" not in str(check["check"]["arguments"])
+        # The filter is rendered with col_2 substituted.
+        assert check["filter"] == "status IS NOT NULL"
 
 
 def _extract_json_literal(sql_text: str) -> dict:

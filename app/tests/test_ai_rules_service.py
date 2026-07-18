@@ -16,7 +16,11 @@ from unittest.mock import MagicMock, create_autospec
 import pytest
 
 from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
-from databricks_labs_dqx_app.backend.services.ai_rules_service import AiRulesService, parse_rule_type_intent
+from databricks_labs_dqx_app.backend.services.ai_rules_service import (
+    AiRulesService,
+    parse_rule_type_intent,
+    prefers_basic_check,
+)
 
 
 def _service(gateway: MagicMock) -> AiRulesService:
@@ -387,6 +391,86 @@ class TestGenerateRuleLowcode:
         assert gateway.query.call_count == 2
 
 
+class TestPrefersBasicCheck:
+    """Pure signal parse: a close match to a named basic check -> True (else False)."""
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "values must be unique",
+            "the id column should be unique",
+            "no duplicate emails",
+            "flag duplicates in the order table",
+            "there should be no outliers in amount",
+            "detect anomalies in the metric",
+        ],
+    )
+    def test_close_basic_match(self, description: str):
+        assert prefers_basic_check(description) is True
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "amount must be positive",
+            "email must be a valid format",
+            "order date cannot be in the future",
+            "",
+        ],
+    )
+    def test_no_basic_match(self, description: str):
+        assert prefers_basic_check(description) is False
+
+
+class TestGenerateRulePrefersBasicCheck:
+    """A strong basic-check match tries dqx_native FIRST (B: prefer named basic check)."""
+
+    async def test_unique_description_goes_to_native_first(self):
+        # "unique" maps crisply onto is_unique — dqx_native is tried before
+        # low-code, so a valid basic check wins on the FIRST pass.
+        native = json.dumps(
+            {
+                "name": "ID unique",
+                "description": "id must be unique",
+                "definition": {"function": "is_unique", "arguments": {"columns": ["id"]}},
+            }
+        )
+        gateway = _gateway_returning(native)
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="the id column must be unique", user_email="a@x")
+
+        assert result["mode"] == "dqx_native"
+        # dqx_native tried first — no low-code pass ahead of it.
+        assert gateway.query.call_count == 1
+        assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:dqx_native"
+
+    async def test_basic_first_still_falls_through_to_lowcode(self):
+        # dqx_native is tried first for a "unique" prompt, but if it can't produce
+        # a valid basic check the cascade still falls through to low-code.
+        invalid_native = json.dumps({"definition": {"function": "not_a_real_check", "arguments": {}}})
+        gateway = _gateway_returning(invalid_native, _lowcode_proposal())
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="no duplicate amounts", user_email="a@x")
+
+        assert result["mode"] == "lowcode"
+        # dqx_native (invalid) -> lowcode (accepted).
+        assert gateway.query.call_count == 2
+        assert gateway.query.call_args_list[0].kwargs["purpose"] == "generate_rule:dqx_native"
+        assert gateway.query.call_args_list[1].kwargs["purpose"] == "generate_rule:lowcode"
+
+    async def test_non_basic_description_keeps_lowcode_first(self):
+        # No basic-check signal -> unchanged low-code-first cascade.
+        gateway = _gateway_returning(_lowcode_proposal())
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="amount must be positive", user_email="a@x")
+
+        assert result["mode"] == "lowcode"
+        assert gateway.query.call_count == 1
+        assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:lowcode"
+
+
 class TestParseRuleTypeIntent:
     """Pure intent parse (B2-140): explicit type -> that mode; else None."""
 
@@ -409,6 +493,10 @@ class TestParseRuleTypeIntent:
             "lowcode check please",
             "make a low code rule",
             "a lowcode rule that ensures amount > 0",
+            # New friendly name for the lowcode mode: "Custom Checks".
+            "a custom check for positive amounts",
+            "make a custom rule that ensures amount > 0",
+            "a custom condition for the order total",
         ],
     )
     def test_explicit_lowcode(self, description: str):
@@ -421,6 +509,9 @@ class TestParseRuleTypeIntent:
             "use a native check",
             "a built-in function to validate emails",
             "native function that checks not null",
+            # New friendly name for the dqx_native mode: "Basic Rules".
+            "a basic rule for null ids",
+            "make a basic check that validates emails",
         ],
     )
     def test_explicit_native(self, description: str):
@@ -491,6 +582,31 @@ class TestGenerateRuleExplicitType:
         # Only the SQL pass ran — no fallback to other modes.
         assert gateway.query.call_count == 1
         assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:sql"
+
+    async def test_friendly_custom_check_name_goes_straight_to_lowcode(self):
+        # "Custom Checks" is the user-facing name for the lowcode mode.
+        gateway = _gateway_returning(_lowcode_proposal())
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="a custom check for amount", user_email="a@x")
+
+        assert result["mode"] == "lowcode"
+        assert gateway.query.call_count == 1
+        assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:lowcode"
+
+    async def test_friendly_basic_rule_name_goes_straight_to_native(self):
+        # "Basic Rules" is the user-facing name for the dqx_native mode.
+        native = json.dumps(
+            {"name": "n", "description": "d", "definition": {"function": "is_not_null", "arguments": {"column": "id"}}}
+        )
+        gateway = _gateway_returning(native)
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="a basic rule for null id", user_email="a@x")
+
+        assert result["mode"] == "dqx_native"
+        assert gateway.query.call_count == 1
+        assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:dqx_native"
 
     async def test_no_explicit_type_still_cascades(self):
         # No type named -> unchanged lowcode -> dqx_native -> sql cascade.

@@ -182,6 +182,49 @@ _COLUMN_FAMILIES: dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Friendly labels
+# ---------------------------------------------------------------------------
+
+# Curated overrides for function names that don't title-case well.
+# Specifically the is_aggr_* family which should read "Is Aggregate …".
+_FRIENDLY_LABELS: dict[str, str] = {
+    "is_aggr_equal": "Is Aggregate Equal",
+    "is_aggr_not_equal": "Is Aggregate Not Equal",
+    "is_aggr_not_greater_than": "Is Aggregate Not Greater Than",
+    "is_aggr_not_less_than": "Is Aggregate Not Less Than",
+    "has_no_aggr_outliers": "Has No Aggregate Outliers",
+}
+
+# Tokens that should be upper-cased in generated labels (after title-casing).
+_ACRONYMS: tuple[tuple[str, str], ...] = (
+    ("Sql", "SQL"),
+    ("Ipv4", "IPv4"),
+    ("Ipv6", "IPv6"),
+    ("Ip", "IP"),
+    ("Json", "JSON"),
+    ("Pii", "PII"),
+    ("Url", "URL"),
+    ("Id", "ID"),
+)
+
+
+def _friendly_label(name: str) -> str:
+    """Return a human-readable label for a DQX check function name.
+
+    Checks the curated *_FRIENDLY_LABELS* override map first (for cases like
+    ``is_aggr_equal`` → "Is Aggregate Equal"). Falls back to title-casing
+    ``name.replace("_", " ")`` with an acronym fixup pass that upper-cases
+    well-known tokens (SQL, IP, JSON, PII, …).
+    """
+    if name in _FRIENDLY_LABELS:
+        return _FRIENDLY_LABELS[name]
+    label = name.replace("_", " ").title()
+    for mixed, upper in _ACRONYMS:
+        label = label.replace(mixed, upper)
+    return label
+
+
 def _family_for_column_param(fn_name: str) -> str:
     """Slot family a native check implies for its column argument(s).
 
@@ -396,6 +439,7 @@ def _introspect_check_functions() -> tuple[CheckFunctionDef, ...]:
         out.append(
             CheckFunctionDef(
                 name=name,
+                label=_friendly_label(name),
                 rule_type=rule_type,
                 category=_category_for(name),
                 doc=_first_doc_line(inspect.getdoc(func)),

@@ -2,7 +2,6 @@ import SidebarLayout from "@/components/layout/SidebarLayout";
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import {
-  ClipboardCheck,
   LineChart,
   History,
   BookOpen,
@@ -17,9 +16,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { useGlobalResultsEnabled } from "@/hooks/use-global-results-enabled";
-import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 
 export const Route = createFileRoute("/_sidebar")({
   component: () => <Layout />,
@@ -32,10 +31,6 @@ function Layout() {
   // (B2-20). Hide the nav item entirely until an admin enables it; per-object
   // MT/TS/RR results tabs are unaffected.
   const globalResultsEnabled = useGlobalResultsEnabled();
-  // When approvals are disabled app-wide there is no review queue, so the
-  // Review & Approve nav item (and its trailing divider) are hidden (B2-142).
-  const { mode: approvalsMode } = useApprovalsMode();
-  const approvalsEnabled = approvalsMode !== "disabled";
 
   // The old "Create Rules" expandable group (Single-table rules,
   // Cross-table rules, Profile & Generate) and the standalone "Active
@@ -44,12 +39,7 @@ function Layout() {
   // Monitored Tables. The underlying route files still exist (some as
   // redirects, some as still-reachable-by-URL pages) so old bookmarks
   // don't 404; see ``rules.single-table.tsx``, ``rules.create-sql.tsx``,
-  // ``rules.active.tsx``, and ``discovery.tsx``. Import Rules
-  // (``/rules/import``, plus the legacy ``/rules/from-contract``
-  // redirect) lives directly in the sidebar, immediately above Drafts
-  // & Review — it's a bulk-registry operation that feeds drafts
-  // awaiting approval, not a per-table authoring shortcut, so it no
-  // longer needs a Config-page detour.
+  // ``rules.active.tsx``, and ``discovery.tsx``.
 
   return (
     <SidebarLayout>
@@ -119,38 +109,12 @@ function Layout() {
               </SidebarMenuButton>
             </SidebarMenuItem>
 
-            {/* Divider before the review group — separates the build/apply
-                surfaces (Rules Registry, Monitored Tables, Table Spaces)
-                from the approval queue below (#11). */}
-            <hr className="my-2 border-sidebar-border" />
-
-            {/* Review & Approve — approvals for registry rules AND
-                per-table applications. Renamed from "Drafts & Review" (#11).
-                Import Rules used to sit just above this item; it now lives in
-                the username dropdown since it's a bulk-registry operation,
-                not a daily nav destination (see HeaderUserMenu).
-                Hidden — along with the divider that follows it — when
-                approvals are disabled app-wide (no review queue, B2-142). */}
-            {approvalsEnabled && (
-              <>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={location.pathname === "/rules/drafts"}
-                    tooltip={t("sidebar.reviewAndApprove")}
-                  >
-                    <Link to="/rules/drafts">
-                      <ClipboardCheck />
-                      <span>{t("sidebar.reviewAndApprove")}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-
-                {/* Divider before the observability group (Runs History,
-                    Results). */}
-                <hr className="my-2 border-sidebar-border" />
-              </>
-            )}
+            {/* Divider separating the authoring group (Rules / Tables /
+                Spaces) from the observability group (Runs History / Results).
+                mx-0 so it spans the same width as the full-width nav buttons
+                (both sit inside the group's p-2) instead of the default mx-2,
+                which pushed its right end past the buttons toward the edge. */}
+            <SidebarSeparator className="mx-0 w-full my-1" />
 
             {/* Runs History — visible to all */}
             <SidebarMenuItem>

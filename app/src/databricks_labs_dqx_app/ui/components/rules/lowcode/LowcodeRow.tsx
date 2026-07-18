@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,20 @@ type Props = {
   onChange: (next: AnyRow) => void;
   onDelete: () => void;
   readOnly?: boolean;
+  /** When provided (registry editor), render the operator cell via this callback
+   * instead of the standard OperatorDropdown — used to swap in the merged
+   * condition selector. Receives this row's family + operator getter/setter and
+   * whether it's the first row (row 0 hosts escalation/change-type; rows 2+ and
+   * aggregated rows are operators-only). Applies to both row and aggregated kinds. */
+  renderOperator?: (ctx: {
+    family: Family;
+    value: string;
+    onChange: (op: string) => void;
+    isFirst: boolean;
+  }) => ReactNode;
+  /** Whether this row can be deleted. `false` hides the X — used to keep at
+   * least one condition on the rule (a rule with zero conditions is invalid). */
+  canDelete?: boolean;
 };
 
 function familyOf(name: string, declared: LowcodeColumnRef[]): Family {
@@ -26,7 +41,7 @@ function familyOf(name: string, declared: LowcodeColumnRef[]): Family {
 
 // Ported 1:1 from dqlake's LowcodeRow — one condition row: IF anchor / AND-OR
 // pill, column (or aggregate) picker, operator dropdown, value cell, delete.
-export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, readOnly }: Props) {
+export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, readOnly, renderOperator, canDelete = true }: Props) {
   const { t } = useTranslation();
   const family: Family =
     row.kind === "row"
@@ -49,9 +64,12 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
         // `w-full` (DQX's is `w-fit`, which is what left the earlier build
         // looking ragged with controls pinned to the left of each track).
         "grid max-w-2xl gap-2 items-center py-1",
+        // Value track widened (1.4fr → 2.2fr) so the value input has room to
+        // grow with its content (long "in" lists, wide strings) instead of
+        // being clipped narrow; column/operator tracks keep their behaviour.
         readOnly
-          ? "grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.4fr)]"
-          : "grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.4fr)_28px]",
+          ? "grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,2.2fr)]"
+          : "grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,2.2fr)_28px]",
       )}
     >
       {isFirst ? (
@@ -81,7 +99,10 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
                 <button
                   key={c}
                   type="button"
-                  onClick={() => setCombinator(c)}
+                  // Clicking anywhere on the pill flips to the other value —
+                  // both segments toggle as one control, matching the
+                  // PASS/FAIL polarity switcher.
+                  onClick={() => setCombinator((row.combinator ?? "AND") === "AND" ? "OR" : "AND")}
                   className={cn(
                     "relative z-10 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-colors duration-200 ease-out",
                     on ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground",
@@ -124,14 +145,21 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
         />
       )}
 
-      <OperatorDropdown value={row.operator} family={family} onChange={setOperator} />
+      {renderOperator
+        ? renderOperator({ family, value: row.operator, onChange: setOperator, isFirst })
+        : <OperatorDropdown value={row.operator} family={family} onChange={setOperator} />}
       <ValueCell operator={row.operator} family={family} value={row.value} onChange={setValue} />
 
-      {!readOnly && (
-        <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={onDelete}>
-          <X className="h-4 w-4" />
-        </Button>
-      )}
+      {!readOnly &&
+        (canDelete ? (
+          <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={onDelete}>
+            <X className="h-4 w-4" />
+          </Button>
+        ) : (
+          // Keep the grid column so the row stays aligned, but no X — a rule
+          // must keep at least one condition.
+          <span aria-hidden className="h-8 w-8" />
+        ))}
     </div>
   );
 }

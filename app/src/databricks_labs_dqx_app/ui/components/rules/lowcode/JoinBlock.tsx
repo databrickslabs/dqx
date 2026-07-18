@@ -1,9 +1,10 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, X } from "lucide-react";
-import { CatalogBrowser } from "@/components/CatalogBrowser";
+import { ChevronDown, Plus, X } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { JoinTablePickerModal } from "@/components/rules/lowcode/JoinTablePickerModal";
 import { useGetTableColumns } from "@/lib/api";
 import type { JoinAst, JoinKeyAst, JoinType } from "@/lib/lowcodeAst";
 import type { LowcodeColumnRef } from "@/lib/lowcodeCompile";
@@ -32,12 +33,25 @@ type Props = {
 // TablePickerModal). Structure/interactions otherwise 1:1.
 export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) {
   const { t } = useTranslation();
+  // A freshly-added join has no target table yet — open the table picker
+  // immediately so "Add join" lands the user straight in the modal. Existing
+  // joins (target_table set) start closed. (Initial state only; JoinsBuilder
+  // keys each block, so a new block mounts with this fresh.)
+  const [pickerOpen, setPickerOpen] = useState(() => !join.target_table);
   const parts = (join.target_table || "").split(".");
   const [catalog, schema, table] = parts.length === 3 ? parts : ["", "", ""];
   const { data } = useGetTableColumns(catalog, schema, table, {
     query: { enabled: Boolean(catalog && schema && table) },
   });
   const joinedCols = useMemo(() => data?.data ?? [], [data]);
+  // The input side of a join key must be a declared `{{slot}}` (an INPUT column),
+  // never a column sourced from a joined-to table — that would be invalid SQL.
+  // Joined-table columns carry dotted names (e.g. "catalog.schema.table.col"),
+  // declared slots are bare (e.g. "email"), so exclude any dotted name here.
+  const columnRefOptions = useMemo(
+    () => declaredColumns.filter((c) => !c.name.includes(".")),
+    [declaredColumns],
+  );
 
   const updateKey = (i: number, key: JoinKeyAst) => {
     const next = join.keys.slice();
@@ -71,9 +85,27 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
             ))}
           </SelectContent>
         </Select>
-        <CatalogBrowser
-          value={join.target_table || undefined}
-          onChange={(fqn) => onChange({ ...join, target_table: fqn })}
+        {/* Selected table shows in a dropdown-style box (matching the JOIN-type
+            Select next to it); clicking anywhere on it re-opens the pre-seeded
+            table picker modal. Empty state shows the placeholder in the same box. */}
+        <button
+          type="button"
+          data-slot="select-trigger"
+          data-size="sm"
+          onClick={() => setPickerOpen(true)}
+          title={join.target_table || undefined}
+          className="border-input dark:bg-input/30 dark:hover:bg-input/50 flex h-8 w-full items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-1 font-mono text-xs whitespace-nowrap shadow-xs outline-none"
+        >
+          <span className={cn("truncate", join.target_table ? "text-foreground" : "text-muted-foreground")}>
+            {join.target_table || t("rulesRegistry.lowcodeJoinSelectTable")}
+          </span>
+          <ChevronDown className="size-4 opacity-50 shrink-0" />
+        </button>
+        <JoinTablePickerModal
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          value={join.target_table || ""}
+          onSelect={(fqn) => onChange({ ...join, target_table: fqn })}
         />
         {!isCross ? (
           <>
@@ -102,7 +134,7 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
                 <SelectValue placeholder={t("rulesRegistry.lowcodeColumnRefPlaceholder")} />
               </SelectTrigger>
               <SelectContent>
-                {declaredColumns.map((c) => (
+                {columnRefOptions.map((c) => (
                   <SelectItem key={c.name} value={c.name} className="font-mono text-xs">{`{{${c.name}}}`}</SelectItem>
                 ))}
               </SelectContent>
@@ -150,7 +182,7 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
                   <SelectValue placeholder={t("rulesRegistry.lowcodeColumnRefPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {declaredColumns.map((c) => (
+                  {columnRefOptions.map((c) => (
                     <SelectItem key={c.name} value={c.name} className="font-mono text-xs">{`{{${c.name}}}`}</SelectItem>
                   ))}
                 </SelectContent>

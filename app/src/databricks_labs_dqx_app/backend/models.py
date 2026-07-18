@@ -2279,6 +2279,7 @@ class CheckFunctionDef(BaseModel):
     """A DQX check function as advertised by the backend to the UI."""
 
     name: str = Field(description="Function name as registered in CHECK_FUNC_REGISTRY")
+    label: str = Field(description="Human-readable display name for the UI (e.g. 'Is Not Null')")
     rule_type: str = Field(description="'row' or 'dataset'")
     category: str = Field(
         description=(
