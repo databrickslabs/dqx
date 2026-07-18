@@ -5,6 +5,7 @@ import pytest
 import pyspark.sql.types as T
 from pyspark.sql import DataFrame
 
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.profiler.profile import DQProfile
 from databricks.labs.dqx.profiler.profile_builder import (
     PROFILE_BUILDER_REGISTRY,
@@ -570,3 +571,104 @@ def test_has_no_outliers_bounds_none_returns_none(mock_df):
     )
 
     assert profile is None
+
+
+# ---------------------------------------------------------------------------
+# make_has_no_outliers_profile — _is_has_no_outliers_enabled paths
+# ---------------------------------------------------------------------------
+
+
+def test_has_no_outliers_disabled_via_option_returns_none(mock_df):
+    profile = make_has_no_outliers_profile(
+        mock_df, "col", T.IntegerType(), {"count_non_null": 10}, {"has_no_outliers": False}
+    )
+    assert profile is None
+
+
+def test_has_no_outliers_column_in_allow_columns_returns_profile(mock_df):
+    mock_df.agg.return_value.collect.return_value = [[3.0]]
+    mock_df.select.return_value.agg.return_value.collect.return_value = [[1.0]]
+    mock_df.filter.return_value.count.return_value = 0
+
+    profile = make_has_no_outliers_profile(
+        mock_df,
+        "measurement",
+        T.IntegerType(),
+        {"count_non_null": 10},
+        {"has_no_outliers_allow_columns": ["measurement"], "outliers_ratio": 0.05},
+    )
+
+    assert profile is not None
+    assert profile.name == "has_no_outliers"
+    assert profile.column == "measurement"
+
+
+def test_has_no_outliers_column_not_in_allow_columns_returns_none(mock_df):
+    profile = make_has_no_outliers_profile(
+        mock_df,
+        "other_col",
+        T.IntegerType(),
+        {"count_non_null": 10},
+        {"has_no_outliers_allow_columns": ["measurement"], "outliers_ratio": 0.05},
+    )
+    assert profile is None
+
+
+def test_has_no_outliers_column_in_deny_columns_returns_none(mock_df):
+    profile = make_has_no_outliers_profile(
+        mock_df,
+        "measurement",
+        T.IntegerType(),
+        {"count_non_null": 10},
+        {"has_no_outliers_deny_columns": ["measurement"], "outliers_ratio": 0.05},
+    )
+    assert profile is None
+
+
+def test_has_no_outliers_column_not_in_deny_columns_returns_profile(mock_df):
+    mock_df.agg.return_value.collect.return_value = [[3.0]]
+    mock_df.select.return_value.agg.return_value.collect.return_value = [[1.0]]
+    mock_df.filter.return_value.count.return_value = 0
+
+    profile = make_has_no_outliers_profile(
+        mock_df,
+        "measurement",
+        T.IntegerType(),
+        {"count_non_null": 10},
+        {"has_no_outliers_deny_columns": ["other_col"], "outliers_ratio": 0.05},
+    )
+
+    assert profile is not None
+    assert profile.name == "has_no_outliers"
+    assert profile.column == "measurement"
+
+
+def test_has_no_outliers_both_allow_and_deny_columns_raises(mock_df):
+    with pytest.raises(InvalidParameterError):
+        make_has_no_outliers_profile(
+            mock_df,
+            "measurement",
+            T.IntegerType(),
+            {"count_non_null": 10},
+            {
+                "has_no_outliers_allow_columns": ["measurement"],
+                "has_no_outliers_deny_columns": ["other_col"],
+            },
+        )
+
+
+def test_has_no_outliers_filter_propagated(mock_df):
+    mock_df.agg.return_value.collect.return_value = [[3.0]]
+    mock_df.select.return_value.agg.return_value.collect.return_value = [[1.0]]
+    mock_df.filter.return_value.count.return_value = 0
+
+    profile = make_has_no_outliers_profile(
+        mock_df,
+        "col",
+        T.IntegerType(),
+        {"count_non_null": 10},
+        {"outliers_ratio": 0.05, "filter": "x > 0"},
+    )
+
+    assert profile is not None
+    assert profile.filter == "x > 0"

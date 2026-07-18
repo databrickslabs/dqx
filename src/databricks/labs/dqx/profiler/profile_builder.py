@@ -22,6 +22,9 @@ from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_REMOVE_OUTLIERS,
     PROFILE_OPTION_ROUND,
     PROFILE_OPTION_TRIM_STRINGS,
+    PROFILE_OPTION_HAS_NO_OUTLIERS,
+    PROFILE_OPTION_HAS_NO_OUTLIERS_ALLOW_COLUMNS,
+    PROFILE_OPTION_HAS_NO_OUTLIERS_DENY_COLUMNS,
 )
 
 # Type alias for annotations; use TEXT_TYPES for isinstance() checks.
@@ -326,6 +329,75 @@ def _remove_outliers(column_name: str, profiler_options: dict[str, Any]) -> bool
     if not outlier_columns:
         return True  # empty list means apply to all columns
     return column_name in outlier_columns
+
+
+def _is_has_no_outliers_enabled(column_name: str, profiler_options: dict[str, Any]) -> bool:
+    """
+    Checks if *has_no_outliers* profiling is enabled for given column.
+
+    Args:
+        column_name: Input column name
+        profiler_options: Configuration options for the DQProfiler
+
+    Returns:
+        True if *has_no_outliers* profile is enabled to this column, otherwise False.
+    """
+    return _is_profile_enabled(
+        column_name,
+        PROFILE_OPTION_HAS_NO_OUTLIERS,
+        PROFILE_OPTION_HAS_NO_OUTLIERS_ALLOW_COLUMNS,
+        PROFILE_OPTION_HAS_NO_OUTLIERS_DENY_COLUMNS,
+        profiler_options,
+    )
+
+
+def _is_profile_enabled(
+    column_name: str,
+    profile_enabled_option_name: str,
+    profile_allow_columns_option_name: str,
+    profile_deny_columns_option_name: str,
+    profiler_options: dict[str, Any],
+) -> bool:
+    """
+    Checks if profiler builder is enabled for the column in the configuration. Profiler can be enabled or disabled
+    for all columns via `profile_enabled_option_name` option, enabled for certain columns via
+    `profile_deny_columns_option_name` option or disabled for certain columns via `profile_deny_columns_option_name`
+    option, but enabled for all other columns.
+    Either `profile_allow_columns_option_name` or `profile_deny_columns_option_name` cna be specified. Otherwise,
+    `InvalidParameterError` will be raised.
+
+    Args:
+        column_name: Input column name
+        profile_enabled_option_name: name of the option to get flag identifying whether profiler builder is enabled
+        profile_allow_columns_option_name: name of the option to get list of columns for which profiler builder is enabled
+        profile_deny_columns_option_name: name of the option to get list of columns for which profiler builder is disabled
+        profiler_options: Configuration options for the DQProfiler
+
+    Returns:
+        True if outlier removal should be applied to this column, otherwise False.
+    Raises:
+        InvalidParameterError: if values for both `profile_allow_columns_option_name` and `profile_deny_columns_option_name`
+        are not provided.
+    """
+    profiler_enabled = profiler_options.get(profile_enabled_option_name, True)
+    if not profiler_enabled:
+        return False
+
+    allowed_columns = profiler_options.get(profile_allow_columns_option_name, [])
+    denied_columns = profiler_options.get(profile_deny_columns_option_name, [])
+
+    if not denied_columns and not allowed_columns:
+        return True
+
+    if allowed_columns and denied_columns:
+        raise InvalidParameterError(
+            f'Values for both `${profile_allow_columns_option_name}` and `${profile_deny_columns_option_name}` are provided in the configuration. Please provide only one of them.'
+        )
+
+    if allowed_columns and column_name not in allowed_columns:
+        return False
+
+    return column_name not in denied_columns
 
 
 def _make_min_max_profile_with_outlier_removal(
@@ -678,6 +750,7 @@ def make_has_no_outliers_profile(
     - The column type is numeric (integer, long, float, or double).
     - The DataFrame is non-empty.
     - The fraction of outliers (values outside *median* ± 3.5 × MAD) is below *outliers_ratio*.
+    - Profile generation is enabled at configuration level for all columns or given column.
 
     Args:
         df: The DataFrame to create the profile for.
@@ -690,6 +763,9 @@ def make_has_no_outliers_profile(
         A DQProfile if all conditions are met, otherwise None.
     """
     if not isinstance(column_type, T.NumericType):
+        return None
+
+    if not _is_has_no_outliers_enabled(column_name, profiler_options):
         return None
 
     total_non_null_count = profiler_metrics.get("count_non_null", 0)
@@ -711,7 +787,7 @@ def make_has_no_outliers_profile(
             name="has_no_outliers",
             description=f"Column {column_name} has {outliers_ratio * 100:.1f}% of outliers (allowed: {outliers_ratio_threshold * 100:.1f}%). Lower boundary - {lower_bound}, upper boundary - {upper_bound}.",
             column=column_name,
-            filter=None,
+            filter=profiler_options.get(PROFILE_OPTION_FILTER, None),
         )
 
     return None

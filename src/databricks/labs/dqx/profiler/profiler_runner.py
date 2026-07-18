@@ -26,6 +26,7 @@ from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_SAMPLE_BY_VALUES_LIMIT,
     PROFILE_OPTION_SAMPLE_FRACTION,
     PROFILE_OPTION_SAMPLE_SEED,
+    PROFILE_OPTION_OUTLIERS_RATIO,
 )
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.blueprint.installation import Installation
@@ -86,8 +87,13 @@ class ProfilerRunner:
         }
         if run_config.profiler_config.max_null_ratio is not None:
             options[PROFILE_OPTION_MAX_NULL_RATIO] = run_config.profiler_config.max_null_ratio
+
         if run_config.profiler_config.max_empty_ratio is not None:
             options[PROFILE_OPTION_MAX_EMPTY_RATIO] = run_config.profiler_config.max_empty_ratio
+
+        if run_config.profiler_config.outliers_ratio is not None:
+            options[PROFILE_OPTION_OUTLIERS_RATIO] = run_config.profiler_config.outliers_ratio
+
         summary_stats, profiles = self.profiler.profile(df, options=options)
         checks = generator.generate_dq_rules(profiles, criticality=run_config.profiler_config.criticality)
         logger.info(f"Using options: \n{run_config.profiler_config}")

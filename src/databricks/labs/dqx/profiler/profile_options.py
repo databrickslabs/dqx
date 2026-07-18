@@ -51,6 +51,15 @@ PROFILE_OPTION_LLM_PRIMARY_KEY_DETECTION = "llm_primary_key_detection"
 # Outlier ratio threshold; emit a *has_no_outliers* profile only when the outlier fraction is below this value.
 PROFILE_OPTION_OUTLIERS_RATIO = "outliers_ratio"
 
+# Whether generate *has_no_outliers* profile
+PROFILE_OPTION_HAS_NO_OUTLIERS = "has_no_outliers"
+
+# List of allowed columns to generate *has_no_outliers* profile for
+PROFILE_OPTION_HAS_NO_OUTLIERS_ALLOW_COLUMNS = "has_no_outliers_allow_columns"
+
+# List of denied columns to generate *has_no_outliers* profile for
+PROFILE_OPTION_HAS_NO_OUTLIERS_DENY_COLUMNS = "has_no_outliers_deny_columns"
+
 # Default values for all DQProfiler options.
 DEFAULT_PROFILE_OPTIONS: dict[str, None | bool | int | float | str | list[int] | list[float] | list[str]] = {
     PROFILE_OPTION_ROUND: True,
@@ -70,4 +79,7 @@ DEFAULT_PROFILE_OPTIONS: dict[str, None | bool | int | float | str | list[int] |
     PROFILE_OPTION_FILTER: None,
     PROFILE_OPTION_LLM_PRIMARY_KEY_DETECTION: True,
     PROFILE_OPTION_OUTLIERS_RATIO: 0.01,
+    PROFILE_OPTION_HAS_NO_OUTLIERS: True,
+    PROFILE_OPTION_HAS_NO_OUTLIERS_ALLOW_COLUMNS: [],
+    PROFILE_OPTION_HAS_NO_OUTLIERS_DENY_COLUMNS: [],
 }
