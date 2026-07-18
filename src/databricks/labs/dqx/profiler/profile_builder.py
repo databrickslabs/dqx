@@ -749,7 +749,7 @@ def make_has_no_outliers_profile(
     Creates a *has_no_outliers* profile using the same MAD method as the *has_no_outliers* check rule.
 
     A profile is returned when all the following conditions are met:
-    - The column type is numeric (integer, long, float, or double).
+    - The column type is child of `pyspark.sql.types.NumericType`.
     - The DataFrame is non-empty.
     - The fraction of outliers (values outside *median* ± 3.5 × MAD) is below *outliers_ratio*.
     - Profile generation is enabled at configuration level for all columns or given column.
