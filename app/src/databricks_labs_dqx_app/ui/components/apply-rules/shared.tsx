@@ -10,6 +10,16 @@ import type { LabelDefinition } from "@/lib/api-custom";
 export const RESERVED_NAME_KEY = "name";
 export const RESERVED_DIMENSION_KEY = "dimension";
 export const RESERVED_SEVERITY_KEY = "severity";
+export const RESERVED_PASS_THRESHOLD_KEY = "pass_threshold";
+
+/** Read a registry rule's default pass threshold from its user_metadata,
+ *  clamped to [0,100] (tolerating a stringified int), or null when unset. */
+export function getRulePassThreshold(rule: RegistryRuleOut): number | null {
+  const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
+  const v = md[RESERVED_PASS_THRESHOLD_KEY];
+  const n = typeof v === "number" ? v : typeof v === "string" ? parseInt(v, 10) : NaN;
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null;
+}
 
 export function getTag(rule: RegistryRuleOut, key: string): string {
   const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
@@ -181,6 +191,10 @@ export function newStagedRow(
     rule_name: getTag(rule, RESERVED_NAME_KEY) || null,
     rule_dimension: getTag(rule, RESERVED_DIMENSION_KEY) || null,
     rule_severity: getTag(rule, RESERVED_SEVERITY_KEY) || null,
+    // Seed the registry-rule default so a freshly-added rule's threshold pill
+    // shows the rule's own default (not just the admin default) before its
+    // first save — matches how rule_severity/rule_dimension are seeded above.
+    rule_pass_threshold: getRulePassThreshold(rule),
     // Fresh staged rows start with no per-column threshold overrides.
     column_pass_thresholds: {},
   };

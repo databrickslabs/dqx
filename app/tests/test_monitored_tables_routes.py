@@ -740,6 +740,46 @@ class TestSaveAppliedRules:
                 f"Expected key absent for thresholds={thresholds!r}"
             )
 
+    def test_clearing_column_pass_thresholds_drops_stale_key_from_prior_metadata(self):
+        """Regression: clearing every per-column override ("Use rule default") must remove
+        the stale reserved key even when the row's user_metadata (sent as `tags`) still
+        carries a previously-saved column_pass_thresholds map. The frontend sends
+        column_pass_thresholds=None but `tags` echoes the old user_metadata, so the route
+        must pop the reserved key before conditionally re-adding it."""
+        from databricks_labs_dqx_app.backend.registry_models import RESERVED_COLUMN_PASS_THRESHOLDS_KEY
+
+        svc = MagicMock()
+        applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "email"}])
+        svc.save_applied_rules.return_value = [applied]
+        svc.rule_display_tags.return_value = (None, None, None, None)
+        body = SaveAppliedRulesIn(
+            applications=[
+                DesiredAppliedRuleIn(
+                    rule_id="r1",
+                    column_mapping=[{"column": "email"}],
+                    # Cleared on the client → None, but the row's user_metadata still
+                    # carries the old map plus a genuine free-text tag.
+                    column_pass_thresholds=None,
+                    tags={RESERVED_COLUMN_PASS_THRESHOLDS_KEY: {"email": 90}, "team": "growth"},
+                )
+            ]
+        )
+        save_applied_rules(
+            "b1",
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+        )
+        (_binding_id, called_desired, _user_email), _kwargs = svc.save_applied_rules.call_args
+        assert RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in called_desired[0].tags, (
+            "Stale column_pass_thresholds must be dropped when the override is cleared"
+        )
+        # A real free-text tag alongside it must survive.
+        assert called_desired[0].tags["team"] == "growth"
+
 
 class TestRemoveAppliedRule:
     def test_remove_success(self):

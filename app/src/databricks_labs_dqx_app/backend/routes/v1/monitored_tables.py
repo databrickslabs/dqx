@@ -772,6 +772,13 @@ def save_applied_rules(
         desired = []
         for entry in body.applications:
             tags = dict(entry.tags)
+            # `entry.tags` is the row's full user_metadata (the frontend sends
+            # user_metadata as `tags`), which may still carry a stale
+            # column_pass_thresholds map from a prior save. Always drop the
+            # reserved key first, then re-add it only when the client sent a
+            # non-empty override — otherwise clearing every per-column override
+            # ("Use rule default") would silently leave the old map persisted.
+            tags.pop(RESERVED_COLUMN_PASS_THRESHOLDS_KEY, None)
             if entry.column_pass_thresholds:
                 tags[RESERVED_COLUMN_PASS_THRESHOLDS_KEY] = entry.column_pass_thresholds
             desired.append(
