@@ -12,8 +12,6 @@ import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical, Play, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,6 +32,7 @@ import { slotFamilyToLowcode, type LowcodeColumnRef } from "@/lib/lowcodeCompile
 import { buildVersionPinMenuModel } from "@/lib/version-pin-menu";
 import selector from "@/lib/selector";
 import { MappingChips } from "./MappingChips";
+import { ThresholdPill } from "./ThresholdPill";
 import { RESERVED_DESCRIPTION_KEY } from "@/components/RegistryRuleBadges";
 import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag } from "./shared";
 import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
@@ -516,6 +515,9 @@ interface RuleConfigCardProps {
   /** Per-rule minimum % of rows that must pass. `null` = no per-rule
    *  threshold. Pure local `stagedRows` mutation. */
   onPassThresholdChange: (value: number | null) => void;
+  /** Resolved default threshold for the pill placeholder: registry-rule
+   *  default ?? admin default. Computed by ApplyRulesTab per-rule. */
+  resolvedDefaultThreshold: number;
   onRemove: () => void;
   onJumpToColumn?: (colName: string) => void;
   /** Removes the mapping group (and its owning staged row) at this
@@ -557,6 +559,7 @@ export function RuleConfigCard({
   onPinChange,
   onSeverityChange,
   onPassThresholdChange,
+  resolvedDefaultThreshold,
   onRemove,
   onJumpToColumn,
   onRemoveMapping,
@@ -712,6 +715,12 @@ export function RuleConfigCard({
                 onSeverityChange={onSeverityChange}
                 readonly={!canEdit}
               />
+              <ThresholdPill
+                value={rule.pass_threshold ?? null}
+                effectiveDefault={resolvedDefaultThreshold}
+                onChange={onPassThresholdChange}
+                readonly={!canEdit}
+              />
             </>
           )}
         </div>
@@ -797,36 +806,6 @@ export function RuleConfigCard({
         <div className="overflow-hidden">
           <div className="border-t px-4 py-4 space-y-3">
             <RuleLogicDisclosure open={logicOpen} onToggle={() => setLogicOpen((p) => !p)} registryRule={registryRule} />
-            {/* Per-rule pass-threshold override. Edits the LOCAL staged row
-                (no network call); saved with the tab. */}
-            <div className="rounded-md border bg-muted/20 px-3 py-3">
-              <div className="space-y-1 sm:w-32">
-                <Label htmlFor={`rule-threshold-${rule.rule_id}`} className="text-xs">
-                  {t("monitoredTables.ruleThresholdLabel")}
-                </Label>
-                <Input
-                  id={`rule-threshold-${rule.rule_id}`}
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={rule.pass_threshold ?? ""}
-                  disabled={!canEdit || busy}
-                  placeholder={t("monitoredTables.ruleThresholdPlaceholder")}
-                  onChange={(e) => {
-                    const raw = e.target.value.trim();
-                    if (raw === "") {
-                      onPassThresholdChange(null);
-                      return;
-                    }
-                    const n = Number.parseInt(raw, 10);
-                    if (!Number.isNaN(n)) onPassThresholdChange(Math.max(0, Math.min(100, n)));
-                  }}
-                  className="h-8 text-xs"
-                />
-                <p className="text-[11px] text-muted-foreground">{t("monitoredTables.ruleThresholdHint")}</p>
-              </div>
-            </div>
             <MappingChips
               columnMapping={rule.column_mapping ?? []}
               slots={slots}

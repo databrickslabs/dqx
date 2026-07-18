@@ -92,6 +92,7 @@ import {
   usePreviewTableData,
   useQueryTableData,
   useGetSampleQuestions,
+  useGetDefaultPassThreshold,
   getListTagSuggestionsQueryOptions,
   type AppliedRuleOut,
   type ColumnOut,
@@ -2134,6 +2135,13 @@ function ApplyRulesTab({
     return m;
   }, [publishedRules]);
 
+  // Admin default threshold — used as the bottom of the precedence chain
+  // (rule_override ?? registry_default ?? admin_default) for the ThresholdPill
+  // placeholder. A non-admin user won't have write access to this setting but
+  // can always read it; the fallback (70) matches the compiled-in default.
+  const { data: defaultThresholdData } = useGetDefaultPassThreshold();
+  const adminDefaultThreshold = defaultThresholdData?.data?.default_pass_threshold ?? 70;
+
   // Applied governed tags per column — sourced from Unity Catalog
   // `information_schema.column_tags` via `get_table_tags`. Used to render
   // matched governed tag chips alongside column chips in both lenses.
@@ -2511,6 +2519,7 @@ function ApplyRulesTab({
                 onPinChange={(v) => handlePinChange(rule, v)}
                 onSeverityChange={(v) => handleSeverityChange(rule, v)}
                 onPassThresholdChange={(v) => handlePassThresholdChange(rule, v)}
+                resolvedDefaultThreshold={rule.rule_pass_threshold ?? adminDefaultThreshold}
                 onRemove={() => setRemoveTarget(rule)}
                 onRemoveMapping={(groupIdx) => handleRemoveMappingGroup(rule.rule_id, groupIdx)}
                 onChangeMapping={(groupIdx, slotName, colName) =>

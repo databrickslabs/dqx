@@ -339,6 +339,8 @@ export type AppliedRuleOutRuleDimension = string | null;
 
 export type AppliedRuleOutRuleSeverity = string | null;
 
+export type AppliedRuleOutRulePassThreshold = number | null;
+
 export type AppliedRuleOutRuleSource = string | null;
 
 /**
@@ -364,6 +366,7 @@ export interface AppliedRuleOut {
   rule_name?: AppliedRuleOutRuleName;
   rule_dimension?: AppliedRuleOutRuleDimension;
   rule_severity?: AppliedRuleOutRuleSeverity;
+  rule_pass_threshold?: AppliedRuleOutRulePassThreshold;
   rule_source?: AppliedRuleOutRuleSource;
 }
 

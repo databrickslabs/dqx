@@ -706,6 +706,7 @@ class AppliedRuleOut(BaseModel):
     rule_name: str | None = None
     rule_dimension: str | None = None
     rule_severity: str | None = None
+    rule_pass_threshold: int | None = None
     rule_source: str | None = None
 
     @classmethod
@@ -728,6 +729,7 @@ class AppliedRuleOut(BaseModel):
             rule_name=summary.rule_name,
             rule_dimension=summary.rule_dimension,
             rule_severity=summary.rule_severity,
+            rule_pass_threshold=summary.rule_pass_threshold,
             rule_source=summary.rule_source,
         )
 
