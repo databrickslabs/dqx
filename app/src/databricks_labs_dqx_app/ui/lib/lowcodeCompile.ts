@@ -165,6 +165,57 @@ function rowSql(left: string, operator: string, value: unknown): string {
   }
   if (op === "has leading or trailing whitespace") return `${left} != TRIM(${left})`;
   if (op === "has no leading or trailing whitespace") return `${left} = TRIM(${left})`;
+  // --- Length ------------------------------------------------------------
+  if (op === "has length") return `length(${left}) = ${quote(value)}`;
+  if (op === "is longer than") return `length(${left}) > ${quote(value)}`;
+  if (op === "is shorter than") return `length(${left}) < ${quote(value)}`;
+  if (op === "length between") {
+    const [lo, hi] = Array.isArray(value) ? (value as unknown[]) : [null, null];
+    return `length(${left}) BETWEEN ${quote(lo)} AND ${quote(hi)}`;
+  }
+  if (op === "is not empty") return `length(trim(${left})) > 0`;
+  if (op === "is empty") return `length(trim(${left})) = 0`;
+  // --- Text pattern / format --------------------------------------------
+  if (op === "does not match regex") return `NOT (${left} RLIKE ${quote(value)})`;
+  if (op === "contains only digits") return `${left} RLIKE '^[0-9]+$'`;
+  if (op === "is uppercase") return `${left} = upper(${left})`;
+  if (op === "is lowercase") return `${left} = lower(${left})`;
+  // The `\\.` in these TS literals emits a single backslash-dot (`\.`) into the
+  // SQL — the literal-dot RLIKE escape. These patterns are hardcoded (not user
+  // input), so they are NOT run through quote().
+  if (op === "is a valid email")
+    return `${left} RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'`;
+  if (op === "is a valid uuid")
+    return `${left} RLIKE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'`;
+  if (op === "is a valid ipv4")
+    return `${left} RLIKE '^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])$'`;
+  // --- Numeric predicates -----------------------------------------------
+  if (op === "is positive") return `${left} > 0`;
+  if (op === "is negative") return `${left} < 0`;
+  if (op === "is non-negative") return `${left} >= 0`;
+  if (op === "is a whole number") return `${left} = round(${left})`;
+  if (op === "is a multiple of") return `mod(${left}, ${quote(value)}) = 0`;
+  // --- Temporal predicates ----------------------------------------------
+  if (op === "is in the future") return `${left} > current_timestamp()`;
+  if (op === "is in the past") return `${left} < current_timestamp()`;
+  if (op === "is today") return `to_date(${left}) = current_date()`;
+  // --- AI (Foundation Model) checks — per-row cost + latency ------------
+  if (op === "has positive sentiment") return `ai_analyze_sentiment(${left}) = 'positive'`;
+  if (op === "has negative sentiment") return `ai_analyze_sentiment(${left}) = 'negative'`;
+  // --- Luhn checksum (credit cards / IMEI / national ids) ---------------
+  // Pure-SQL Luhn via higher-order functions: strip non-digits, build a
+  // 1-based digit array, reverse it, double every second digit (subtracting 9
+  // when >9), sum, and require divisibility by 10. The leading length guard is
+  // MANDATORY — sequence(1, 0) yields [1, 0] (step -1), not empty, so without
+  // it an all-non-digit input would corrupt the sum.
+  if (op === "passes luhn check") {
+    const digits = `regexp_replace(${left}, '[^0-9]', '')`;
+    return (
+      `length(${digits}) > 0 AND aggregate(transform(reverse(transform(sequence(1, length(${digits})), ` +
+      `i -> cast(substr(${digits}, i, 1) as int))), (d, i) -> if(i % 2 = 1, d * 2 - if(d * 2 > 9, 9, 0), d)), ` +
+      `0, (acc, x) -> acc + x) % 10 = 0`
+    );
+  }
   return "";
 }
 

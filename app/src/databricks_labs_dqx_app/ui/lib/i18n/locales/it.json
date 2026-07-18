@@ -1636,6 +1636,7 @@
     "lowcodeColumnPlaceholder": "colonna",
     "lowcodeAggregatePlaceholder": "aggregato",
     "lowcodeUniversalOperators": "Universale",
+    "lowcodeAiOperators": "Controlli IA (possono comportare costi)",
     "lowcodeTypeSpecific": "Specifico del tipo",
     "lowcodeMinPlaceholder": "min",
     "lowcodeMaxPlaceholder": "max",

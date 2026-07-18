@@ -88,7 +88,7 @@ import {
   slotFamilyToLowcode,
   type LowcodeColumnRef,
 } from "@/lib/lowcodeCompile";
-import { OPERATORS_BY_FAMILY, type Family as LowcodeFamily } from "@/lib/lowcodeOperators";
+import { OPERATORS_BY_FAMILY, AI_OPS, type Family as LowcodeFamily } from "@/lib/lowcodeOperators";
 import { EMPTY_LOWCODE_AST, isV2Ast, type AnyRow, type JoinAst, type LowcodeAstV2 } from "@/lib/lowcodeAst";
 import { cn } from "@/lib/utils";
 import selector from "@/lib/selector";
@@ -357,6 +357,11 @@ function ConditionSelector({
       BOOLEAN: t("rulesRegistry.slotFamilyBoolean"),
       ANY: t("rulesRegistry.slotFamilyAny"),
     };
+    // AI (Foundation Model) operators are hoisted out of the per-family lists
+    // into a single trailing "AI checks" group so their cost/latency is
+    // visually flagged rather than sitting inline with cheap builtins.
+    const noAi = (ops: string[]) => ops.filter((o) => !AI_OPS.has(o));
+    const aiOpsFor = (ops: string[]) => ops.filter((o) => AI_OPS.has(o));
     if (operatorFamily === "ANY") {
       // Universal operators first (no data-type implied → family null), then
       // every typed family's operators (deduped against the universal set),
@@ -365,24 +370,37 @@ function ConditionSelector({
       const universal = OPERATORS_BY_FAMILY.ANY;
       const universalSet = new Set(universal);
       const groups: { heading: string; ops: string[]; family: LowcodeFamily | null }[] = [
-        { heading: familyHeadings.ANY, ops: universal, family: null },
+        { heading: familyHeadings.ANY, ops: noAi(universal), family: null },
       ];
+      const ai: string[] = [];
       for (const fam of ["NUMERIC", "TEXTUAL", "TEMPORAL", "BOOLEAN"] as const) {
-        const ops = OPERATORS_BY_FAMILY[fam].filter((o) => !universalSet.has(o));
+        const famAll = OPERATORS_BY_FAMILY[fam].filter((o) => !universalSet.has(o));
+        const ops = noAi(famAll);
+        ai.push(...aiOpsFor(famAll));
         if (ops.length > 0) groups.push({ heading: familyHeadings[fam], ops, family: fam });
+      }
+      if (ai.length > 0) {
+        // TEXTUAL so picking one types an untyped column as text (sentiment
+        // functions take strings).
+        groups.push({ heading: t("rulesRegistry.lowcodeAiOperators"), ops: ai, family: "TEXTUAL" });
       }
       return groups;
     }
     // Column already typed → its family's operators + a Universal group; no
     // family change on pick.
-    const familyOps = OPERATORS_BY_FAMILY[operatorFamily] ?? OPERATORS_BY_FAMILY.ANY;
-    const familySet = new Set(familyOps);
-    const universalOps = OPERATORS_BY_FAMILY.ANY.filter((o) => !familySet.has(o));
+    const familyAll = OPERATORS_BY_FAMILY[operatorFamily] ?? OPERATORS_BY_FAMILY.ANY;
+    const familyOps = noAi(familyAll);
+    const familySet = new Set(familyAll);
+    const universalOps = noAi(OPERATORS_BY_FAMILY.ANY.filter((o) => !familySet.has(o)));
     const groups: { heading: string; ops: string[]; family: LowcodeFamily | null }[] = [
       { heading: familyHeadings[operatorFamily], ops: familyOps, family: null },
     ];
     if (universalOps.length > 0) {
       groups.push({ heading: t("rulesRegistry.lowcodeUniversalOperators"), ops: universalOps, family: null });
+    }
+    const aiOps = aiOpsFor(familyAll);
+    if (aiOps.length > 0) {
+      groups.push({ heading: t("rulesRegistry.lowcodeAiOperators"), ops: aiOps, family: null });
     }
     return groups;
   }, [operatorFamily, t]);

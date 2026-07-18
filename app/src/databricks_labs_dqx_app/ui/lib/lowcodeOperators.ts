@@ -37,8 +37,29 @@ export const VALIDITY_SQL_TYPE: Record<string, string> = Object.fromEntries(
 // Order within each family mirrors what a Data Quality steward reaches for
 // first. Universal operators (is null / is not null, generic equality) live
 // in ANY only and are not duplicated into every family.
+// Operators that invoke a Databricks AI (Foundation Model) SQL function —
+// real per-row cost + latency, and only available on AI-Functions-enabled
+// workspaces. Grouped + flagged separately in the operator dropdown.
+export const AI_OPS = new Set(["has positive sentiment", "has negative sentiment"]);
+
 export const OPERATORS_BY_FAMILY: Record<Family, string[]> = {
-  NUMERIC: ["between", "=", "!=", ">=", ">", "<=", "<", "in", "not in"],
+  NUMERIC: [
+    "between",
+    "=",
+    "!=",
+    ">=",
+    ">",
+    "<=",
+    "<",
+    "in",
+    "not in",
+    "is positive",
+    "is negative",
+    "is non-negative",
+    "is a whole number",
+    "is a multiple of",
+    "passes luhn check",
+  ],
   TEXTUAL: [
     "equals",
     "not equals",
@@ -49,13 +70,41 @@ export const OPERATORS_BY_FAMILY: Record<Family, string[]> = {
     "in",
     "not in",
     "matches regex",
+    "does not match regex",
+    "has length",
+    "is longer than",
+    "is shorter than",
+    "length between",
+    "is not empty",
+    "is empty",
+    "contains only digits",
+    "is uppercase",
+    "is lowercase",
+    "is a valid email",
+    "is a valid uuid",
+    "is a valid ipv4",
+    "passes luhn check",
     "has leading or trailing whitespace",
     "has no leading or trailing whitespace",
     ...VALIDITY_OPS,
+    "has positive sentiment",
+    "has negative sentiment",
   ],
-  TEMPORAL: ["on or after", "on or before", "after", "before", "between", "is in last", "=", "!="],
+  TEMPORAL: [
+    "on or after",
+    "on or before",
+    "after",
+    "before",
+    "between",
+    "is in last",
+    "is in the future",
+    "is in the past",
+    "is today",
+    "=",
+    "!=",
+  ],
   BOOLEAN: ["is true", "is false"],
-  ANY: ["is null", "is not null", "=", "!=", "in", "not in"],
+  ANY: ["is null", "is not null", "=", "!=", "in", "not in", "is not empty", "is empty"],
 };
 
 // Ordered by how often a DQ steward reaches for them.
@@ -152,15 +201,41 @@ const NONE_OPS = new Set([
   "is false",
   "has leading or trailing whitespace",
   "has no leading or trailing whitespace",
+  // Valueless validators / predicates added to the catalog — each is a
+  // self-contained SQL test against the column alone (no operand).
+  "is not empty",
+  "is empty",
+  "contains only digits",
+  "is uppercase",
+  "is lowercase",
+  "is a valid email",
+  "is a valid uuid",
+  "is a valid ipv4",
+  "passes luhn check",
+  "is positive",
+  "is negative",
+  "is non-negative",
+  "is a whole number",
+  "is in the future",
+  "is in the past",
+  "is today",
+  "has positive sentiment",
+  "has negative sentiment",
 ]);
 const TYPE_PICKER_OPS = new Set(VALIDITY_OPS);
+
+// Operators whose operand is a NUMBER even though the column is TEXTUAL
+// (length comparisons, multiple-of). Without this they'd fall through to the
+// TEXTUAL text-input default and offer a text box for a numeric threshold.
+const NUMBER_VALUE_OPS = new Set(["has length", "is longer than", "is shorter than", "is a multiple of"]);
 
 export function valueCellShape(operator: string, family: Family): ValueCellShape {
   if (NONE_OPS.has(operator)) return { kind: "none" };
   if (TYPE_PICKER_OPS.has(operator)) return { kind: "type-picker" };
-  if (operator === "between") return { kind: "double" };
+  if (operator === "between" || operator === "length between") return { kind: "double" };
   if (operator === "in" || operator === "not in") return { kind: "chip" };
   if (operator === "is in last") return { kind: "interval" };
+  if (NUMBER_VALUE_OPS.has(operator)) return { kind: "single", type: "number" };
   if (family === "NUMERIC") return { kind: "single", type: "number" };
   if (family === "TEMPORAL") return { kind: "single", type: "date" };
   return { kind: "single", type: "text" };
