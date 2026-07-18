@@ -402,3 +402,40 @@ class TestTagAutoApply:
         assert kwargs["value_cols"]["setting_value"] == "true"
         sql_executor_mock.query.return_value = [["true"]]
         assert svc.get_tag_auto_apply() is True
+
+
+class TestDefaultPassThreshold:
+    """``default_pass_threshold`` — org-wide minimum pass-rate default; 70 when unset."""
+
+    def test_default_pass_threshold_defaults_to_70(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []
+        assert svc.get_default_pass_threshold() == 70
+
+    def test_save_and_get_default_pass_threshold(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        svc.save_default_pass_threshold(85, user_email="a@x")
+        sql_executor_mock.query.return_value = [["85"]]
+        assert svc.get_default_pass_threshold() == 85
+
+    def test_save_persists_under_expected_key(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        svc.save_default_pass_threshold(60, user_email="admin@x")
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["key_cols"] == {"setting_key": "default_pass_threshold"}
+        assert kwargs["value_cols"]["setting_value"] == "60"
+
+    def test_value_clamped_to_100_on_get(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["150"]]
+        assert svc.get_default_pass_threshold() == 100
+
+    def test_value_clamped_to_0_on_get(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["-10"]]
+        assert svc.get_default_pass_threshold() == 0
+
+    def test_garbage_value_returns_default(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["not-a-number"]]
+        assert svc.get_default_pass_threshold() == 70

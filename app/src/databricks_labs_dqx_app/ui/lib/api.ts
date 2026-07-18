@@ -1152,6 +1152,23 @@ export interface DataProductRunSubmissionOut {
   binding_version?: DataProductRunSubmissionOutBindingVersion;
 }
 
+export interface DefaultPassThresholdIn {
+  /**
+   * Org-wide default minimum pass rate (%); checks warn when pass rate drops below this.
+   * @minimum 0
+   * @maximum 100
+   */
+  default_pass_threshold: number;
+}
+
+/**
+ * Effective default pass threshold + the compiled default for the UI.
+ */
+export interface DefaultPassThresholdOut {
+  default_pass_threshold: number;
+  default_pass_threshold_default?: number;
+}
+
 /**
  * Current state of the long-running demo-content seed job.
  */
@@ -6308,6 +6325,216 @@ export const useSaveDraftRunSampleLimit = <TError = AxiosError<HTTPValidationErr
       > => {
 
       const mutationOptions = getSaveDraftRunSampleLimitMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Return the current default pass threshold (admin only).
+ * @summary Get Default Pass Threshold
+ */
+export const getDefaultPassThreshold = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DefaultPassThresholdOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/config/default-pass-threshold`,options
+    );
+  }
+
+
+
+
+export const getGetDefaultPassThresholdQueryKey = () => {
+    return [
+    `/api/v1/config/default-pass-threshold`
+    ] as const;
+    }
+
+    
+export const getGetDefaultPassThresholdQueryOptions = <TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDefaultPassThresholdQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDefaultPassThreshold>>> = ({ signal }) => getDefaultPassThreshold({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDefaultPassThresholdQueryResult = NonNullable<Awaited<ReturnType<typeof getDefaultPassThreshold>>>
+export type GetDefaultPassThresholdQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetDefaultPassThreshold<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDefaultPassThreshold>>,
+          TError,
+          Awaited<ReturnType<typeof getDefaultPassThreshold>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDefaultPassThreshold<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDefaultPassThreshold>>,
+          TError,
+          Awaited<ReturnType<typeof getDefaultPassThreshold>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDefaultPassThreshold<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Default Pass Threshold
+ */
+
+export function useGetDefaultPassThreshold<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDefaultPassThresholdQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetDefaultPassThresholdSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDefaultPassThresholdQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDefaultPassThreshold>>> = ({ signal }) => getDefaultPassThreshold({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDefaultPassThresholdSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getDefaultPassThreshold>>>
+export type GetDefaultPassThresholdSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetDefaultPassThresholdSuspense<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDefaultPassThresholdSuspense<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDefaultPassThresholdSuspense<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Default Pass Threshold
+ */
+
+export function useGetDefaultPassThresholdSuspense<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDefaultPassThresholdSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Update the default pass threshold (admin only).
+ * @summary Save Default Pass Threshold
+ */
+export const saveDefaultPassThreshold = (
+    defaultPassThresholdIn: DefaultPassThresholdIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DefaultPassThresholdOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/default-pass-threshold`,
+      defaultPassThresholdIn,options
+    );
+  }
+
+
+
+export const getSaveDefaultPassThresholdMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveDefaultPassThreshold>>, TError,{data: DefaultPassThresholdIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveDefaultPassThreshold>>, TError,{data: DefaultPassThresholdIn}, TContext> => {
+
+const mutationKey = ['saveDefaultPassThreshold'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveDefaultPassThreshold>>, {data: DefaultPassThresholdIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveDefaultPassThreshold(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveDefaultPassThresholdMutationResult = NonNullable<Awaited<ReturnType<typeof saveDefaultPassThreshold>>>
+    export type SaveDefaultPassThresholdMutationBody = DefaultPassThresholdIn
+    export type SaveDefaultPassThresholdMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Default Pass Threshold
+ */
+export const useSaveDefaultPassThreshold = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveDefaultPassThreshold>>, TError,{data: DefaultPassThresholdIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveDefaultPassThreshold>>,
+        TError,
+        {data: DefaultPassThresholdIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveDefaultPassThresholdMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

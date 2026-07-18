@@ -28,6 +28,7 @@ from databricks_labs_dqx_app.backend.models import (
     RunConfigOut,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    DEFAULT_PASS_THRESHOLD_DEFAULT,
     DRAFT_RUN_SAMPLE_LIMIT_DEFAULT,
     AppSettingsService,
 )
@@ -467,6 +468,60 @@ def save_draft_run_sample_limit(
     svc.save_draft_run_sample_limit(body.draft_run_sample_limit, user_email=email)
     logger.info("Saved draft_run_sample_limit=%d", body.draft_run_sample_limit)
     return get_draft_run_sample_limit(svc)
+
+
+# ---------------------------------------------------------------------------
+# Default pass threshold — org-wide minimum pass rate (%) below which a
+# check warns. Resolution order: per-column → per-rule → registry default →
+# this admin default (compiled fallback 70).
+# ---------------------------------------------------------------------------
+
+
+class DefaultPassThresholdOut(BaseModel):
+    """Effective default pass threshold + the compiled default for the UI."""
+
+    default_pass_threshold: int
+    default_pass_threshold_default: int = DEFAULT_PASS_THRESHOLD_DEFAULT
+
+
+class DefaultPassThresholdIn(BaseModel):
+    default_pass_threshold: int = Field(
+        ge=0,
+        le=100,
+        description="Org-wide default minimum pass rate (%); checks warn when pass rate drops below this.",
+    )
+
+
+@router.get(
+    "/default-pass-threshold",
+    response_model=DefaultPassThresholdOut,
+    operation_id="getDefaultPassThreshold",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def get_default_pass_threshold(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> DefaultPassThresholdOut:
+    """Return the current default pass threshold (admin only)."""
+    return DefaultPassThresholdOut(
+        default_pass_threshold=svc.get_default_pass_threshold(),
+    )
+
+
+@router.put(
+    "/default-pass-threshold",
+    response_model=DefaultPassThresholdOut,
+    operation_id="saveDefaultPassThreshold",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_default_pass_threshold(
+    body: DefaultPassThresholdIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> DefaultPassThresholdOut:
+    """Update the default pass threshold (admin only)."""
+    svc.save_default_pass_threshold(body.default_pass_threshold, user_email=email)
+    logger.info("Saved default_pass_threshold=%d", body.default_pass_threshold)
+    return get_default_pass_threshold(svc)
 
 
 # ---------------------------------------------------------------------------

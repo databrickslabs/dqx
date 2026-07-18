@@ -19,6 +19,11 @@ _CONFIG_KEY = "workspace_config"
 # the ``/config/draft-run-sample-limit`` admin endpoints.
 DRAFT_RUN_SAMPLE_LIMIT_DEFAULT = 1000
 
+# Compiled-in fallback for the ``default_pass_threshold`` setting — the
+# org-wide minimum pass rate (%) below which a check warns. Shared by
+# the breach evaluator (results service) and the admin settings endpoint.
+DEFAULT_PASS_THRESHOLD_DEFAULT = 70
+
 # Module-level adapter so we pay the type-tree walk once at import time
 # rather than on every ``get_config`` call. ``TypeAdapter`` is Pydantic's
 # public v2 surface for validating non-BaseModel types against a target
@@ -810,6 +815,31 @@ class AppSettingsService:
         """Persist the per-user hourly AI call cap. Returns the saved value."""
         self.save_setting(self._AI_RATE_LIMIT_KEY, str(int(limit)), user_email=user_email)
         return int(limit)
+
+    # ------------------------------------------------------------------
+    # Pass-threshold setting — org-wide default minimum pass rate (%).
+    # Resolution order: per-column override → per-rule override →
+    # registry-rule default → this admin default (compiled fallback 70).
+    # ------------------------------------------------------------------
+
+    _DEFAULT_PASS_THRESHOLD_KEY = "default_pass_threshold"
+
+    def get_default_pass_threshold(self) -> int:
+        """Org-wide default minimum pass rate (%) below which a check warns.
+
+        Returns the compiled default (70) when unset or unparseable. Clamped to
+        [0, 100] defensively so a hand-edited row can never escape the range.
+        """
+        value = self._get_int_setting(self._DEFAULT_PASS_THRESHOLD_KEY)
+        if value is None:
+            return DEFAULT_PASS_THRESHOLD_DEFAULT
+        return max(0, min(100, value))
+
+    def save_default_pass_threshold(self, value: int, *, user_email: str | None = None) -> int:
+        """Persist the org-wide default pass threshold. Returns the clamped value."""
+        clamped = max(0, min(100, int(value)))
+        self.save_setting(self._DEFAULT_PASS_THRESHOLD_KEY, str(clamped), user_email=user_email)
+        return clamped
 
     # ------------------------------------------------------------------
     # Vector Search / embeddings settings — Rules Registry Phase 4B/4C,
