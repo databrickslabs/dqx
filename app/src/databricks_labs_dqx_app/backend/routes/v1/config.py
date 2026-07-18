@@ -481,7 +481,7 @@ class DefaultPassThresholdOut(BaseModel):
     """Effective default pass threshold + the compiled default for the UI."""
 
     default_pass_threshold: int
-    default_pass_threshold_default: int = DEFAULT_PASS_THRESHOLD_DEFAULT
+    default_pass_threshold_default: int
 
 
 class DefaultPassThresholdIn(BaseModel):
@@ -504,6 +504,7 @@ def get_default_pass_threshold(
     """Return the current default pass threshold (admin only)."""
     return DefaultPassThresholdOut(
         default_pass_threshold=svc.get_default_pass_threshold(),
+        default_pass_threshold_default=DEFAULT_PASS_THRESHOLD_DEFAULT,
     )
 
 

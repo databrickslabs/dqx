@@ -1166,7 +1166,7 @@ export interface DefaultPassThresholdIn {
  */
 export interface DefaultPassThresholdOut {
   default_pass_threshold: number;
-  default_pass_threshold_default?: number;
+  default_pass_threshold_default: number;
 }
 
 /**
