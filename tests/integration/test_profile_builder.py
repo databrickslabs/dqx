@@ -121,6 +121,21 @@ def test_make_has_no_outliers_profile_outliers_above_threshold(spark, col_type, 
     assert profile is None
 
 
+def test_make_has_no_outliers_profile_bounds_equal(spark):
+    """No profile when all values are identical.
+
+    MAD = 0 when every value equals the median, so lower_bound == upper_bound == median.
+    The function detects this and returns None to avoid a degenerate rule that would flag
+    every value as an outlier.
+    """
+    data = [(5,), (5,), (5,), (5,), (5,)]
+    df = spark.createDataFrame(data, T.StructType([T.StructField("col", T.IntegerType())]))
+    profiler_metrics = {"count_non_null": len(data)}
+    profiler_options = {"outliers_ratio": 0.1}
+    profile = make_has_no_outliers_profile(df, "col", T.IntegerType(), profiler_metrics, profiler_options)
+    assert profile is None
+
+
 @pytest.mark.parametrize(
     "col_type",
     [

@@ -770,14 +770,19 @@ def make_has_no_outliers_profile(
 
     total_non_null_count = profiler_metrics.get("count_non_null", 0)
     if total_non_null_count == 0:
+        logger.info("Column `%s` has no not null values. Skipping `has_no_outliers` profile generation", column_name)
         return None
 
     bounds = calculate_median_absolute_deviation_bounds(df, column_name)
     if bounds is None:
+        logger.info("MAD bounds were not calculated for column `%s. Skipping `has_no_outliers` profile generation", column_name)
         return None
 
     lower_bound, upper_bound = bounds
     outliers_count = df.filter((F.col(column_name) < lower_bound) | (F.col(column_name) > upper_bound)).count()
+    if lower_bound == upper_bound:
+        logger.info("MAD bounds are equal for column `%s`. All values are equal in the distribution. Skipping profile generation.", column_name)
+        return None
 
     outliers_ratio = float(outliers_count) / total_non_null_count
     outliers_ratio_threshold = profiler_options.get(PROFILE_OPTION_OUTLIERS_RATIO, 0.01)
