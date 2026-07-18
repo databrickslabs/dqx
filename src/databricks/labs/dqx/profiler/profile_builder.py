@@ -361,25 +361,26 @@ def _is_profile_enabled(
     profiler_options: dict[str, Any],
 ) -> bool:
     """
-    Checks if profiler builder is enabled for the column in the configuration. Profiler can be enabled or disabled
-    for all columns via `profile_enabled_option_name` option, enabled for certain columns via
-    `profile_deny_columns_option_name` option or disabled for certain columns via `profile_deny_columns_option_name`
-    option, but enabled for all other columns.
-    Either `profile_allow_columns_option_name` or `profile_deny_columns_option_name` cna be specified. Otherwise,
-    `InvalidParameterError` will be raised.
+    Checks if a profiler builder is enabled for the given column.
+
+    The builder can be switched on or off for all columns via *profile_enabled_option_name*.
+    When enabled globally, *profile_allow_columns_option_name* restricts it to a specific set of
+    columns, while *profile_deny_columns_option_name* excludes specific columns and applies the
+    builder to all others. The two lists are mutually exclusive.
 
     Args:
-        column_name: Input column name
-        profile_enabled_option_name: name of the option to get flag identifying whether profiler builder is enabled
-        profile_allow_columns_option_name: name of the option to get list of columns for which profiler builder is enabled
-        profile_deny_columns_option_name: name of the option to get list of columns for which profiler builder is disabled
-        profiler_options: Configuration options for the DQProfiler
+        column_name: Input column name.
+        profile_enabled_option_name: Option key whose value is a bool controlling global enablement.
+        profile_allow_columns_option_name: Option key whose value is a list of columns to include.
+        profile_deny_columns_option_name: Option key whose value is a list of columns to exclude.
+        profiler_options: Configuration options for the DQProfiler.
 
     Returns:
-        True if outlier removal should be applied to this column, otherwise False.
+        True if the profiler builder should run for this column, otherwise False.
+
     Raises:
-        InvalidParameterError: if values for both `profile_allow_columns_option_name` and `profile_deny_columns_option_name`
-        are not provided.
+        InvalidParameterError: if both *profile_allow_columns_option_name* and
+            *profile_deny_columns_option_name* are provided at the same time.
     """
     profiler_enabled = profiler_options.get(profile_enabled_option_name, True)
     if not profiler_enabled:
@@ -393,7 +394,7 @@ def _is_profile_enabled(
 
     if allowed_columns and denied_columns:
         raise InvalidParameterError(
-            f'Values for both `${profile_allow_columns_option_name}` and `${profile_deny_columns_option_name}` are provided in the configuration. Please provide only one of them.'
+            f"Values for both '{profile_allow_columns_option_name}' and '{profile_deny_columns_option_name}' are provided in the configuration. Please provide only one of them."
         )
 
     if allowed_columns and column_name not in allowed_columns:
@@ -772,31 +773,36 @@ def make_has_no_outliers_profile(
 
     total_non_null_count = profiler_metrics.get("count_non_null", 0)
     if total_non_null_count == 0:
-        logger.info("Column `%s` has no not null values. Skipping `has_no_outliers` profile generation", column_name)
+        logger.info(f"Column '{column_name}' has no non-null values. Skipping `has_no_outliers` profile generation")
         return None
 
     bounds = calculate_median_absolute_deviation_bounds(df, column_name)
     if bounds is None:
-        logger.info("MAD bounds were not calculated for column `%s. Skipping `has_no_outliers` profile generation", column_name)
+        logger.info(
+            f"MAD bounds were not calculated for column '{column_name}'. Skipping `has_no_outliers` profile generation"
+        )
         return None
 
     lower_bound, upper_bound = bounds
-    bellow_lower_bound_expr = F.col(column_name) < get_limit_expr(lower_bound)
+    below_lower_bound_expr = F.col(column_name) < get_limit_expr(lower_bound)
     above_upper_bound_expr = F.col(column_name) > get_limit_expr(upper_bound)
-    outside_bounds_expr = bellow_lower_bound_expr | above_upper_bound_expr
+    outside_bounds_expr = below_lower_bound_expr | above_upper_bound_expr
     outliers_count = df.filter(outside_bounds_expr).count()
 
     if lower_bound == upper_bound:
-        logger.info("MAD bounds are equal for column `%s`. All values are equal in the distribution. Skipping profile generation.", column_name)
+        logger.info(
+            f"MAD bounds are equal for column '{column_name}'. All values are equal in the distribution. Skipping profile generation."
+        )
         return None
 
     outliers_ratio = float(outliers_count) / total_non_null_count
-    outliers_ratio_threshold = profiler_options.get(PROFILE_OPTION_OUTLIERS_RATIO, 0.01)
+    outliers_ratio_threshold = profiler_options[PROFILE_OPTION_OUTLIERS_RATIO]
 
+    safe_column_name = column_name.replace("\n", " ").replace("\r", " ")
     if outliers_ratio < outliers_ratio_threshold:
         return DQProfile(
             name="has_no_outliers",
-            description=f"Column {column_name} has {outliers_ratio * 100:.1f}% of outliers (allowed: {outliers_ratio_threshold * 100:.1f}%). Lower boundary - {lower_bound}, upper boundary - {upper_bound}.",
+            description=f"Column {safe_column_name} has {outliers_ratio * 100:.1f}% of outliers (allowed: {outliers_ratio_threshold * 100:.1f}%). Lower boundary - {lower_bound}, upper boundary - {upper_bound}.",
             column=column_name,
             filter=profiler_options.get(PROFILE_OPTION_FILTER, None),
         )

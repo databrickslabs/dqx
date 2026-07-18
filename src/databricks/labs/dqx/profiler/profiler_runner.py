@@ -144,6 +144,8 @@ class ProfilerRunner:
             pattern_options[PROFILE_OPTION_MAX_NULL_RATIO] = run_config.profiler_config.max_null_ratio
         if run_config.profiler_config.max_empty_ratio is not None:
             pattern_options[PROFILE_OPTION_MAX_EMPTY_RATIO] = run_config.profiler_config.max_empty_ratio
+        if run_config.profiler_config.outliers_ratio is not None:
+            pattern_options[PROFILE_OPTION_OUTLIERS_RATIO] = run_config.profiler_config.outliers_ratio
         options = [{"table": "*", "options": pattern_options}]
         logger.info(f"Using options: \n{options}")
 

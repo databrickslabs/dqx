@@ -453,11 +453,12 @@ class DQGenerator(DQEngineBase):
         Args:
             column: The name of the column to check.
             criticality: The criticality of the rule as "warn" or "error" (default is "error").
-            params: Additional parameters (unused; reserved for future use).
+            params: Additional parameters (unused; left for compatibility with other functions).
 
         Returns:
             A dictionary representing the data quality rule.
         """
+        params = params or {}
         return {
             "check": {
                 "function": "has_no_outliers",
