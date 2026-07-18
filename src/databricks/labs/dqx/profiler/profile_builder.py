@@ -7,6 +7,8 @@ from typing import Any
 
 from pyspark.sql import DataFrame
 from pyspark.sql import types as T, functions as F
+
+from databricks.labs.dqx.check_funcs import get_limit_expr
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileBuilder
 from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
@@ -779,7 +781,11 @@ def make_has_no_outliers_profile(
         return None
 
     lower_bound, upper_bound = bounds
-    outliers_count = df.filter((F.col(column_name) < lower_bound) | (F.col(column_name) > upper_bound)).count()
+    bellow_lower_bound_expr = F.col(column_name) < get_limit_expr(lower_bound)
+    above_upper_bound_expr = F.col(column_name) > get_limit_expr(upper_bound)
+    outside_bounds_expr = bellow_lower_bound_expr | above_upper_bound_expr
+    outliers_count = df.filter(outside_bounds_expr).count()
+
     if lower_bound == upper_bound:
         logger.info("MAD bounds are equal for column `%s`. All values are equal in the distribution. Skipping profile generation.", column_name)
         return None
