@@ -1,3 +1,5 @@
+import decimal
+
 import pyspark.sql.types as T
 import pytest
 
@@ -6,7 +8,15 @@ from databricks.labs.dqx.profiler.profile_builder import make_has_no_outliers_pr
 
 @pytest.mark.parametrize(
     "col_type",
-    [(T.ByteType()), (T.IntegerType()), (T.LongType()), (T.ShortType()), (T.FloatType()), (T.DoubleType())],
+    [
+        (T.ByteType()),
+        (T.IntegerType()),
+        (T.LongType()),
+        (T.ShortType()),
+        (T.FloatType()),
+        (T.DoubleType()),
+        (T.DecimalType(10, 2)),
+    ],
 )
 def test_make_has_no_outliers_profile_empty_data_frame(spark, col_type):
     """No profile when count_non_null is zero (early-exit path)."""
@@ -39,6 +49,22 @@ def test_make_has_no_outliers_profile_bounds_none(spark):
         (T.ShortType(), [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,), (10,), (1000,)]),
         (T.FloatType(), [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,), (10,), (1000,)]),
         (T.DoubleType(), [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,), (10,), (1000,)]),
+        (
+            T.DecimalType(10, 2),
+            [
+                (decimal.Decimal("1"),),
+                (decimal.Decimal("2"),),
+                (decimal.Decimal("3"),),
+                (decimal.Decimal("4"),),
+                (decimal.Decimal("5"),),
+                (decimal.Decimal("6"),),
+                (decimal.Decimal("7"),),
+                (decimal.Decimal("8"),),
+                (decimal.Decimal("9"),),
+                (decimal.Decimal("10"),),
+                (decimal.Decimal("1000"),),
+            ],
+        ),
     ],
 )
 def test_make_has_no_outliers_profile_outliers_below_threshold(spark, col_type, data):
@@ -66,6 +92,18 @@ def test_make_has_no_outliers_profile_outliers_below_threshold(spark, col_type, 
         (T.ShortType(), [(1,), (2,), (3,), (4,), (100,), (200,), (300,)]),
         (T.FloatType(), [(1,), (2,), (3,), (4,), (100,), (200,), (300,)]),
         (T.DoubleType(), [(1,), (2,), (3,), (4,), (100,), (200,), (300,)]),
+        (
+            T.DecimalType(10, 2),
+            [
+                (decimal.Decimal("1"),),
+                (decimal.Decimal("2"),),
+                (decimal.Decimal("3"),),
+                (decimal.Decimal("4"),),
+                (decimal.Decimal("100"),),
+                (decimal.Decimal("200"),),
+                (decimal.Decimal("300"),),
+            ],
+        ),
     ],
 )
 def test_make_has_no_outliers_profile_outliers_above_threshold(spark, col_type, data):
@@ -92,6 +130,7 @@ def test_make_has_no_outliers_profile_outliers_above_threshold(spark, col_type, 
         (T.ShortType()),
         (T.FloatType()),
         (T.DoubleType()),
+        (T.DecimalType(10, 2)),
     ],
 )
 def test_make_has_no_outliers_profile_outliers_null_values(spark, col_type):
