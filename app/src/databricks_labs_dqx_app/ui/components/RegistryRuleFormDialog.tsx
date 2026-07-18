@@ -357,50 +357,34 @@ function ConditionSelector({
       BOOLEAN: t("rulesRegistry.slotFamilyBoolean"),
       ANY: t("rulesRegistry.slotFamilyAny"),
     };
-    // AI (Foundation Model) operators are hoisted out of the per-family lists
-    // into a single trailing "AI checks" group so their cost/latency is
-    // visually flagged rather than sitting inline with cheap builtins.
-    const noAi = (ops: string[]) => ops.filter((o) => !AI_OPS.has(o));
-    const aiOpsFor = (ops: string[]) => ops.filter((o) => AI_OPS.has(o));
     if (operatorFamily === "ANY") {
       // Universal operators first (no data-type implied → family null), then
       // every typed family's operators (deduped against the universal set),
       // each under its data-type heading. Picking from a typed group
-      // auto-assigns that data type to the column.
+      // auto-assigns that data type to the column. AI (Foundation Model)
+      // operators stay in their family group — they're distinguished by a
+      // purple label + AI icon at the item level, not a separate section.
       const universal = OPERATORS_BY_FAMILY.ANY;
       const universalSet = new Set(universal);
       const groups: { heading: string; ops: string[]; family: LowcodeFamily | null }[] = [
-        { heading: familyHeadings.ANY, ops: noAi(universal), family: null },
+        { heading: familyHeadings.ANY, ops: universal, family: null },
       ];
-      const ai: string[] = [];
       for (const fam of ["NUMERIC", "TEXTUAL", "TEMPORAL", "BOOLEAN"] as const) {
-        const famAll = OPERATORS_BY_FAMILY[fam].filter((o) => !universalSet.has(o));
-        const ops = noAi(famAll);
-        ai.push(...aiOpsFor(famAll));
+        const ops = OPERATORS_BY_FAMILY[fam].filter((o) => !universalSet.has(o));
         if (ops.length > 0) groups.push({ heading: familyHeadings[fam], ops, family: fam });
-      }
-      if (ai.length > 0) {
-        // TEXTUAL so picking one types an untyped column as text (sentiment
-        // functions take strings).
-        groups.push({ heading: t("rulesRegistry.lowcodeAiOperators"), ops: ai, family: "TEXTUAL" });
       }
       return groups;
     }
     // Column already typed → its family's operators + a Universal group; no
     // family change on pick.
-    const familyAll = OPERATORS_BY_FAMILY[operatorFamily] ?? OPERATORS_BY_FAMILY.ANY;
-    const familyOps = noAi(familyAll);
-    const familySet = new Set(familyAll);
-    const universalOps = noAi(OPERATORS_BY_FAMILY.ANY.filter((o) => !familySet.has(o)));
+    const familyOps = OPERATORS_BY_FAMILY[operatorFamily] ?? OPERATORS_BY_FAMILY.ANY;
+    const familySet = new Set(familyOps);
+    const universalOps = OPERATORS_BY_FAMILY.ANY.filter((o) => !familySet.has(o));
     const groups: { heading: string; ops: string[]; family: LowcodeFamily | null }[] = [
       { heading: familyHeadings[operatorFamily], ops: familyOps, family: null },
     ];
     if (universalOps.length > 0) {
       groups.push({ heading: t("rulesRegistry.lowcodeUniversalOperators"), ops: universalOps, family: null });
-    }
-    const aiOps = aiOpsFor(familyAll);
-    if (aiOps.length > 0) {
-      groups.push({ heading: t("rulesRegistry.lowcodeAiOperators"), ops: aiOps, family: null });
     }
     return groups;
   }, [operatorFamily, t]);
@@ -696,21 +680,32 @@ function ConditionSelector({
                   }
                   return filtered.map(({ heading, ops, family }) => (
                     <CommandGroup key={heading} heading={heading} className={COMMAND_GROUP_HEADING_CLASS}>
-                      {ops.map((op) => (
-                        <CommandItem
-                          key={op}
-                          value={op}
-                          onSelect={() => {
-                            // Picking from a typed group while the column is "any"
-                            // auto-assigns that data type to the anchor column.
-                            onSelect({ type: "lowcode", operator: op, operatorFamily: family ?? undefined });
-                            setOpen(false);
-                          }}
-                          className="text-xs font-mono"
-                        >
-                          {op}
-                        </CommandItem>
-                      ))}
+                      {ops.map((op) => {
+                        // AI (Foundation Model) operators stay in their family
+                        // group but read as AI: a purple label + Sparkles icon,
+                        // flagging the per-row cost/latency without a separate
+                        // section.
+                        const isAi = AI_OPS.has(op);
+                        return (
+                          <CommandItem
+                            key={op}
+                            value={op}
+                            onSelect={() => {
+                              // Picking from a typed group while the column is "any"
+                              // auto-assigns that data type to the anchor column.
+                              onSelect({ type: "lowcode", operator: op, operatorFamily: family ?? undefined });
+                              setOpen(false);
+                            }}
+                            className={cn(
+                              "text-xs font-mono",
+                              isAi && "text-purple-600 dark:text-purple-400",
+                            )}
+                          >
+                            {isAi && <Sparkles className="mr-1.5 h-3 w-3 shrink-0" />}
+                            {op}
+                          </CommandItem>
+                        );
+                      })}
                     </CommandGroup>
                   ));
                 })()}

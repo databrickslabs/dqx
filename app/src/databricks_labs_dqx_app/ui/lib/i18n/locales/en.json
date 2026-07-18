@@ -1636,7 +1636,6 @@
     "lowcodeColumnPlaceholder": "column",
     "lowcodeAggregatePlaceholder": "aggregate",
     "lowcodeUniversalOperators": "Universal",
-    "lowcodeAiOperators": "AI checks (may incur cost)",
     "lowcodeTypeSpecific": "Type-specific",
     "lowcodeMinPlaceholder": "min",
     "lowcodeMaxPlaceholder": "max",

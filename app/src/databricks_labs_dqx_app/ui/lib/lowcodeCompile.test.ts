@@ -168,16 +168,11 @@ describe("operator SQL", () => {
     expect(compileAstToSql(ast([agg]))).toBe("COUNT({{id}}) > 1");
   });
 
-  test("passes luhn check compiles the full pure-SQL checksum with the mandatory length guard", () => {
+  test("passes luhn check uses the built-in luhn_check with a normalized-digit length guard", () => {
     const sql = compileAstToSql(ast([row({ column_ref: "card", operator: "passes luhn check", value: null })]));
-    // Digits are stripped once and reused; the leading length guard prevents
-    // sequence(1, 0) -> [1, 0] from corrupting the sum on non-digit input.
-    expect(sql).toBe(
-      "length(regexp_replace({{card}}, '[^0-9]', '')) > 0 AND " +
-        "aggregate(transform(reverse(transform(sequence(1, length(regexp_replace({{card}}, '[^0-9]', ''))), " +
-        "i -> cast(substr(regexp_replace({{card}}, '[^0-9]', ''), i, 1) as int))), " +
-        "(d, i) -> if(i % 2 = 1, d * 2 - if(d * 2 > 9, 9, 0), d)), 0, (acc, x) -> acc + x) % 10 = 0",
-    );
+    // Non-digits are stripped (luhn_check returns false on any non-digit) and
+    // the length guard rejects empty input (which would trivially pass Luhn).
+    expect(sql).toBe("length(regexp_replace({{card}}, '[^0-9]', '')) > 0 AND luhn_check(regexp_replace({{card}}, '[^0-9]', ''))");
   });
 });
 

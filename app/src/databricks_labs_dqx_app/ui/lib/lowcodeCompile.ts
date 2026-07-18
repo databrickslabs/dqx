@@ -203,18 +203,14 @@ function rowSql(left: string, operator: string, value: unknown): string {
   if (op === "has positive sentiment") return `ai_analyze_sentiment(${left}) = 'positive'`;
   if (op === "has negative sentiment") return `ai_analyze_sentiment(${left}) = 'negative'`;
   // --- Luhn checksum (credit cards / IMEI / national ids) ---------------
-  // Pure-SQL Luhn via higher-order functions: strip non-digits, build a
-  // 1-based digit array, reverse it, double every second digit (subtracting 9
-  // when >9), sum, and require divisibility by 10. The leading length guard is
-  // MANDATORY — sequence(1, 0) yields [1, 0] (step -1), not empty, so without
-  // it an all-non-digit input would corrupt the sum.
+  // Databricks has a built-in luhn_check(numStr) -> BOOLEAN (DBR 13.3+). It
+  // returns false for ANY non-digit character, so normalize formatted inputs
+  // (spaces/dashes) first. The leading length guard is MANDATORY: an empty
+  // digit string (all-non-digit or empty input) trivially passes Luhn, so
+  // without it such rows would be wrongly marked valid.
   if (op === "passes luhn check") {
     const digits = `regexp_replace(${left}, '[^0-9]', '')`;
-    return (
-      `length(${digits}) > 0 AND aggregate(transform(reverse(transform(sequence(1, length(${digits})), ` +
-      `i -> cast(substr(${digits}, i, 1) as int))), (d, i) -> if(i % 2 = 1, d * 2 - if(d * 2 > 9, 9, 0), d)), ` +
-      `0, (acc, x) -> acc + x) % 10 = 0`
-    );
+    return `length(${digits}) > 0 AND luhn_check(${digits})`;
   }
   return "";
 }
