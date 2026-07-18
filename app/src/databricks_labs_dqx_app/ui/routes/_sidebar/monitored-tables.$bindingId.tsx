@@ -48,6 +48,7 @@ import {
   Columns3,
   Database,
   ExternalLink,
+  GitCompare,
   History,
   Info,
   KeyRound,
@@ -63,6 +64,7 @@ import {
   Send,
   Sparkles,
   Trash2,
+  Undo2,
   X,
   XCircle,
 } from "lucide-react";
@@ -79,6 +81,7 @@ import {
   useSubmitMonitoredTable,
   useApproveMonitoredTable,
   useRejectMonitoredTable,
+  useRevertMonitoredTable,
   useSaveAppliedRules,
   useListRegistryRules,
   useGetTableColumns,
@@ -135,6 +138,10 @@ import { AiSuggestionDialog, type SuggestRulesState } from "@/components/apply-r
 import { suggestionKey } from "@/components/apply-rules/ai-suggestion-utils";
 import { RuleConfigCard, computeStatus } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
+import {
+  MonitoredTableDiffDialog,
+  type MonitoredTableDiffTarget,
+} from "@/components/drafts/ChangeDiffDialog";
 import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 import {
   RESERVED_SEVERITY_KEY,
@@ -379,10 +386,14 @@ function MonitoredTableDetailPage() {
   const submitMutation = useSubmitMonitoredTable();
   const approveMutation = useApproveMonitoredTable();
   const rejectMutation = useRejectMonitoredTable();
+  const revertMutation = useRevertMonitoredTable();
   const deleteMutation = useDeleteMonitoredTable();
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  // View-changes diff dialog target — mirrors the overview row's GitCompare
+  // action so the same review affordance is available on the detail banner.
+  const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
 
   // Export this table's checks as DQX or ODCS YAML from the ⋮ menu (moved off
   // a standalone header button). Mirrors ExportYamlMenu's fetch→download→toast.
@@ -493,6 +504,20 @@ function MonitoredTableDetailPage() {
     );
   };
 
+  // Withdraw a pending submission back to draft — the author's counterpart to
+  // submit (reject is the approver's decision). Leaves no rejected audit trail.
+  const handleRevert = () => {
+    revertMutation.mutateAsync({ bindingId }).then(
+      () => {
+        toast.success(t("monitoredTables.toastReverted"));
+        invalidateLifecycleQueries();
+      },
+      (err: unknown) => {
+        toast.error(extractApiError(err, t("monitoredTables.toastRevertFailed")), { duration: 6000 });
+      },
+    );
+  };
+
   // Delete the binding, then leave for the list. `justSavedRef` bypasses the
   // unsaved-changes nav guard — staged edits on a just-deleted binding aren't
   // worth a "discard changes?" prompt.
@@ -519,6 +544,7 @@ function MonitoredTableDetailPage() {
     submitMutation.isPending ||
     approveMutation.isPending ||
     rejectMutation.isPending ||
+    revertMutation.isPending ||
     deleteMutation.isPending;
 
   // Nothing to resubmit: Save-as-draft is already disabled (no staged
@@ -706,38 +732,72 @@ function MonitoredTableDetailPage() {
                   </p>
                 )}
               </div>
-              {perms.canApproveRules && (
-                <div className="flex items-center gap-2 ml-auto shrink-0">
+              <div className="flex items-center gap-2 ml-auto shrink-0">
+                {/* View changes — read-only diff of the pending vs. last-approved
+                    check set, matching the overview row's GitCompare action. */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={lifecycleBusy}
+                  onClick={() =>
+                    setDiffTarget({ bindingId, name: table.table_fqn, version: table.version ?? 0 })
+                  }
+                  className="gap-1.5 h-7 text-xs text-purple-700 border-purple-300 hover:bg-purple-50 dark:text-purple-300 dark:border-purple-700 dark:hover:bg-purple-950"
+                >
+                  <GitCompare className="h-3.5 w-3.5" />
+                  {t("rulesDrafts.diff.viewChanges")}
+                </Button>
+                {/* Revert — the author withdraws their own pending submission
+                    back to draft (authors-and-above; backend enforces owner). */}
+                {perms.canCreateRules && (
                   <Button
                     variant="outline"
                     size="sm"
                     disabled={lifecycleBusy}
-                    onClick={handleApprove}
-                    className="gap-1.5 h-7 text-xs text-emerald-700 border-emerald-400 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950"
+                    onClick={handleRevert}
+                    className="gap-1.5 h-7 text-xs text-amber-700 border-amber-400 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900"
                   >
-                    {approveMutation.isPending ? (
+                    {revertMutation.isPending ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
-                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      <Undo2 className="h-3.5 w-3.5" />
                     )}
-                    {t("monitoredTables.approveAction")}
+                    {t("monitoredTables.revertAction")}
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={lifecycleBusy}
-                    onClick={() => setRejectConfirmOpen(true)}
-                    className="gap-1.5 h-7 text-xs text-red-700 border-red-400 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
-                  >
-                    {rejectMutation.isPending ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <XCircle className="h-3.5 w-3.5" />
-                    )}
-                    {t("monitoredTables.rejectAction")}
-                  </Button>
-                </div>
-              )}
+                )}
+                {perms.canApproveRules && (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={lifecycleBusy}
+                      onClick={handleApprove}
+                      className="gap-1.5 h-7 text-xs text-emerald-700 border-emerald-400 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950"
+                    >
+                      {approveMutation.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      )}
+                      {t("monitoredTables.approveAction")}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={lifecycleBusy}
+                      onClick={() => setRejectConfirmOpen(true)}
+                      className="gap-1.5 h-7 text-xs text-red-700 border-red-400 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
+                    >
+                      {rejectMutation.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <XCircle className="h-3.5 w-3.5" />
+                      )}
+                      {t("monitoredTables.rejectAction")}
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -764,6 +824,8 @@ function MonitoredTableDetailPage() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           {/* Tab order (P23 item 14): About, Permissions first (View Data

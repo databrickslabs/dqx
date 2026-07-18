@@ -298,11 +298,20 @@ class ExportService:
         catalog: str | None = None,
         schema: str | None = None,
         name: str | None = None,
+        binding_ids: list[str] | None = None,
     ) -> ExportResult:
-        """Export all (filtered) monitored tables' checks as DQX or ODCS YAML."""
+        """Export all (filtered) monitored tables' checks as DQX or ODCS YAML.
+
+        ``binding_ids``, when given, restricts the export to that explicit set —
+        the selection action bar passes exactly the ticked rows, mirroring
+        ``export_registry_rules(rule_ids=...)``.
+        """
         summaries = self._monitored_tables.list_monitored_tables(
             status=status, steward=steward, catalog=catalog, schema=schema, name=name
         )
+        if binding_ids is not None:
+            wanted = set(binding_ids)
+            summaries = [s for s in summaries if s.table.binding_id in wanted]
         per_table: list[tuple[str, list[dict[str, Any]]]] = [
             (s.table.table_fqn, self._render_binding(s.table.binding_id)) for s in summaries
         ]
@@ -346,9 +355,19 @@ class ExportService:
             format="dqx",
         )
 
-    def export_data_products(self, fmt: ExportFormat) -> ExportResult:
-        """Export every table space's member checks as DQX or ODCS YAML."""
+    def export_data_products(
+        self, fmt: ExportFormat, *, product_ids: list[str] | None = None
+    ) -> ExportResult:
+        """Export every (filtered) table space's member checks as DQX or ODCS YAML.
+
+        ``product_ids``, when given, restricts the export to that explicit set —
+        the selection action bar passes exactly the ticked rows, mirroring
+        ``export_registry_rules(rule_ids=...)``.
+        """
         products = self._data_products.list_products()
+        if product_ids is not None:
+            wanted = set(product_ids)
+            products = [d for d in products if d.product.product_id in wanted]
         per_table: list[tuple[str, list[dict[str, Any]]]] = []
         for detail in products:
             for member in detail.members:

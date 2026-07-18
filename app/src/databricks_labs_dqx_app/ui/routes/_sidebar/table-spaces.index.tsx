@@ -16,7 +16,7 @@ import {
 } from "@/components/data-products/DataProductsTable";
 import { compareSortValues } from "@/components/data-table/sort";
 import { ExportYamlMenu } from "@/components/ExportYamlMenu";
-import { exportDataProduct } from "@/lib/api-custom";
+import { exportDataProducts } from "@/lib/api-custom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -38,11 +38,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, Boxes, CheckCircle2, GitCompare, Loader2, Play, Plus, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
+import { AlertCircle, Boxes, CheckCircle2, GitCompare, Loader2, Play, Plus, RotateCcw, Search, Trash2, Undo2, XCircle } from "lucide-react";
 import {
   useListDataProducts,
   useApproveDataProduct,
   useRejectDataProduct,
+  useRevertDataProduct,
   useDeleteDataProduct,
   useRunDataProduct,
   getListDataProductsQueryKey,
@@ -214,6 +215,7 @@ function DataProductsPage() {
 
   const approveMutation = useApproveDataProduct();
   const rejectMutation = useRejectDataProduct();
+  const revertMutation = useRevertDataProduct();
   const deleteMutation = useDeleteDataProduct();
   const runMutation = useRunDataProduct();
 
@@ -397,6 +399,16 @@ function DataProductsPage() {
                 {t("dataProducts.bulkDelete")}
               </Button>
             )}
+            {/* Export lives in the selection action bar (exports exactly the
+                ticked rows via the product_id[] filter), mirroring the Rules
+                overview — not a per-row action. */}
+            <ExportYamlMenu
+              fetchDqx={() => exportDataProducts({ format: "dqx", product_id: [...selectedIds] })}
+              fetchOdcs={() => exportDataProducts({ format: "odcs", product_id: [...selectedIds] })}
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+            />
             <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto" onClick={() => setSelectedIds(new Set())}>
               {t("dataProducts.clearSelection")}
             </Button>
@@ -430,6 +442,16 @@ function DataProductsPage() {
       () => approveMutation.mutateAsync({ productId: product.product_id }),
       t("dataProducts.toastApproved"),
       t("dataProducts.toastApproveFailed"),
+    );
+
+  // Revert (withdraw to draft) — the author's counterpart to submit. Unlike
+  // reject it leaves no rejected trail, so it fires directly (no confirm).
+  const handleRevert = (product: DataProductOut) =>
+    runRowAction(
+      product.product_id,
+      () => revertMutation.mutateAsync({ productId: product.product_id }),
+      t("dataProducts.toastReverted"),
+      t("dataProducts.toastRevertFailed"),
     );
 
   // Run the approved snapshot (item 76). Gated to spaces with at least one
@@ -497,8 +519,8 @@ function DataProductsPage() {
             <p className="text-sm text-muted-foreground mt-1">{t("dataProducts.subtitle")}</p>
           </div>
           <div className="flex items-center gap-2">
-            {/* Export moved to a per-row action (see renderActions) — a
-                contextual, per-space export, not an always-on header button. */}
+            {/* Export lives in the selection action bar (bulkToolbar) — select
+                rows to export exactly those, mirroring the Rules overview. */}
             {perms.canCreateRules && (
               <Button onClick={() => navigate({ to: "/table-spaces/new" })} className="gap-2">
                 <Plus className="h-4 w-4" />
@@ -523,14 +545,6 @@ function DataProductsPage() {
             // when the row has pending changes (modified or pending_approval).
             (product) => (
                   <div className="flex items-center justify-end gap-1">
-                    {/* Per-space export (DQX / ODCS) — moved off the page
-                        header into this contextual row action. */}
-                    <ExportYamlMenu
-                      fetchDqx={() => exportDataProduct(product.product_id, "dqx")}
-                      fetchOdcs={() => exportDataProduct(product.product_id, "odcs")}
-                      variant="ghost"
-                      iconOnly
-                    />
                     {perms.canRunRules && (product.runnable_count ?? 0) > 0 && (
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -598,6 +612,25 @@ function DataProductsPage() {
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>{t("rulesDrafts.diff.viewChanges")}</TooltipContent>
+                      </Tooltip>
+                    )}
+                    {/* Revert (withdraw to draft) — authors can pull a pending
+                        submission back to keep editing. Mirrors the Rules
+                        overview's Undo2 revoke action. */}
+                    {perms.canCreateRules && product.status === "pending_approval" && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 text-amber-600 dark:text-amber-400"
+                            aria-label={t("dataProducts.revertAction")}
+                            onClick={() => handleRevert(product)}
+                          >
+                            <Undo2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("dataProducts.revertAction")}</TooltipContent>
                       </Tooltip>
                     )}
                     {perms.canCreateRules && product.display_status !== "modified" && product.status !== "pending_approval" && (

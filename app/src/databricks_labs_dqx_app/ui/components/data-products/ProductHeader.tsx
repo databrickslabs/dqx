@@ -20,6 +20,7 @@ import {
   useRunDataProduct,
   useApproveDataProduct,
   useRejectDataProduct,
+  useRevertDataProduct,
   useApproveMonitoredTable,
   useRejectMonitoredTable,
   RunDataProductInSource,
@@ -49,8 +50,9 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { CheckCircle2, Clock, FileDown, History, Loader2, MessageSquare, MoreVertical, Play, Save, Send, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, FileDown, GitCompare, History, Loader2, MessageSquare, MoreVertical, Play, Save, Send, Trash2, Undo2, XCircle } from "lucide-react";
 import { CommentsDialog } from "@/components/CommentThread";
+import { TableSpaceDiffDialog, type TableSpaceDiffTarget } from "@/components/drafts/ChangeDiffDialog";
 import { exportDataProduct, downloadExportFile } from "@/lib/api-custom";
 import type { ExportFormat } from "@/lib/api-custom";
 import { cn } from "@/lib/utils";
@@ -306,10 +308,12 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const deleteMut = useDeleteDataProduct({ mutation: { onError: () => {} } });
   const approveMut = useApproveDataProduct({ mutation: { onError: () => {} } });
   const rejectMut = useRejectDataProduct({ mutation: { onError: () => {} } });
+  const revertMut = useRevertDataProduct({ mutation: { onError: () => {} } });
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
   const [busyRun, setBusyRun] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -366,7 +370,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const staleDraftRun = isRunStale(product.last_run_at, product.updated_at);
   const needsDraftRun = requireDraftRun && (!product.last_run_at || staleDraftRun);
   const isPending = product.status === "pending_approval";
-  const lifecycleBusy = approveMut.isPending || rejectMut.isPending || editState.submitPending;
+  const lifecycleBusy = approveMut.isPending || rejectMut.isPending || revertMut.isPending || editState.submitPending;
 
   const runnableCount = product.runnable_count ?? 0;
 
@@ -396,6 +400,18 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
       invalidateLifecycle();
     } catch (e) {
       toast.error(extractApiError(e, t("dataProducts.toastRejectFailed")), { duration: 6000 });
+    }
+  };
+
+  // Withdraw a pending submission back to draft — the author's counterpart to
+  // submit (reject is the approver's decision). Leaves no rejected audit trail.
+  const handleRevert = async () => {
+    try {
+      await revertMut.mutateAsync({ productId: product.product_id });
+      toast.success(t("dataProducts.toastReverted"));
+      invalidateLifecycle();
+    } catch (e) {
+      toast.error(extractApiError(e, t("dataProducts.toastRevertFailed")), { duration: 6000 });
     }
   };
 
@@ -687,30 +703,58 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                 </p>
               )}
             </div>
-            {canApprove && (
-              <div className="flex items-center gap-2 ml-auto shrink-0">
+            <div className="flex items-center gap-2 ml-auto shrink-0">
+              {/* View changes — read-only diff of the space's proposed member
+                  set, matching the overview row's GitCompare action. */}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={lifecycleBusy}
+                onClick={() => setDiffTarget({ productId: product.product_id, name: product.name })}
+                className="gap-1.5 h-7 text-xs text-purple-700 border-purple-300 hover:bg-purple-50 dark:text-purple-300 dark:border-purple-700 dark:hover:bg-purple-950"
+              >
+                <GitCompare className="h-3.5 w-3.5" />
+                {t("rulesDrafts.diff.viewChanges")}
+              </Button>
+              {/* Revert — the author withdraws their own pending submission back
+                  to draft (authors-and-above; backend enforces the transition). */}
+              {canEdit && (
                 <Button
                   variant="outline"
                   size="sm"
                   disabled={lifecycleBusy}
-                  onClick={() => void handleApprove()}
-                  className="gap-1.5 h-7 text-xs text-emerald-700 border-emerald-400 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950"
+                  onClick={() => void handleRevert()}
+                  className="gap-1.5 h-7 text-xs text-amber-700 border-amber-400 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900"
                 >
-                  {approveMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                  {t("dataProducts.approveAction")}
+                  {revertMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
+                  {t("dataProducts.revertAction")}
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={lifecycleBusy}
-                  onClick={() => setRejectOpen(true)}
-                  className="gap-1.5 h-7 text-xs text-red-700 border-red-400 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
-                >
-                  {rejectMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
-                  {t("dataProducts.rejectAction")}
-                </Button>
-              </div>
-            )}
+              )}
+              {canApprove && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={lifecycleBusy}
+                    onClick={() => void handleApprove()}
+                    className="gap-1.5 h-7 text-xs text-emerald-700 border-emerald-400 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950"
+                  >
+                    {approveMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                    {t("dataProducts.approveAction")}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={lifecycleBusy}
+                    onClick={() => setRejectOpen(true)}
+                    className="gap-1.5 h-7 text-xs text-red-700 border-red-400 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
+                  >
+                    {rejectMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
+                    {t("dataProducts.rejectAction")}
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -760,6 +804,8 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <TableSpaceDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
       <CommentsDialog
         entityType="data_product"

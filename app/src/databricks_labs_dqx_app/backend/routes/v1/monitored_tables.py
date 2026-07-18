@@ -1263,6 +1263,63 @@ def reject_monitored_table(
         raise HTTPException(status_code=500, detail=f"Failed to reject monitored table: {e}")
 
 
+@router.post(
+    "/{binding_id}/revert",
+    response_model=MonitoredTableReviewOut,
+    operation_id="revertMonitoredTable",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def revert_monitored_table(
+    binding_id: str,
+    monitored_tables_svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> MonitoredTableReviewOut:
+    """Withdraw a pending submission — walk the binding back to ``draft``.
+
+    The counterpart to submit: an author who submitted a binding for review can
+    pull it back to keep editing before an approver acts, without a reject
+    (which is the approver's decision and leaves a ``rejected`` audit trail).
+    Every ``pending_approval`` check mapped to the binding is walked back to
+    ``draft`` (a legal per-rule transition), then the binding itself flips to
+    ``draft``.
+
+    Only a binding currently ``pending_approval`` can be reverted — 409
+    otherwise. Gated to authors-and-above; the front end only surfaces it to
+    the submission's owner (or an approver), matching the per-rule revoke.
+    """
+    try:
+        detail = monitored_tables_svc.get(binding_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"Monitored table not found: {binding_id}")
+        if detail.table.status != "pending_approval":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot revert monitored table {binding_id}: status is "
+                    f"'{detail.table.status}', expected 'pending_approval'"
+                ),
+            )
+        user_email = _current_user_email(obo_ws)
+        reverted = _transition_binding_checks(
+            monitored_tables_svc,
+            rules_catalog,
+            binding_id,
+            from_status="pending_approval",
+            to_status="draft",
+            user_email=user_email,
+        )
+        table = monitored_tables_svc.set_status(binding_id, "draft", user_email)
+        return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=reverted)
+    except HTTPException:
+        raise
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to revert monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to revert monitored table: {e}")
+
+
 # ------------------------------------------------------------------
 # AI mapping suggester (Phase 4C — design spec §8)
 # ------------------------------------------------------------------

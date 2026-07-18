@@ -27,10 +27,11 @@ export const STICKY_ACTIONS_CELL_CLASS =
 /**
  * Shared width (px) for the pinned Actions column, kept in one place so all
  * three overview tables (RulesTable, MonitoredTablesTable, DataProductsTable)
- * stay consistent (item B2-43). The widest row state shows 6 ghost icon
- * buttons (Export + Run + Approve + Reject + ViewChanges + Delete) on
- * Monitored Tables and Table Spaces pending-approval rows with runnables:
- * 6 × 28px (`h-7 w-7`) + 5 × 4px (`gap-1`) + 2 × 8px cell padding (`p-2`)
- * = 204px of content. 208 leaves ~4px of slack.
+ * stay consistent (item B2-43). The widest row state shows 5 ghost icon
+ * buttons (Run + Approve + Reject + ViewChanges + Revert) on Monitored Tables
+ * and Table Spaces pending-approval rows with runnables — Export moved to the
+ * selection action bar and Delete is hidden while pending:
+ * 5 × 28px (`h-7 w-7`) + 4 × 4px (`gap-1`) + 2 × 8px cell padding (`p-2`)
+ * = 172px of content. 208 leaves comfortable slack.
  */
 export const ACTIONS_COL_WIDTH = 208;

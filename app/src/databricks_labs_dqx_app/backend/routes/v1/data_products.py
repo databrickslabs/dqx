@@ -502,6 +502,38 @@ def reject_data_product(
         raise HTTPException(status_code=500, detail=f"Failed to reject data product: {e}")
 
 
+@router.post(
+    "/{product_id}/revert",
+    response_model=DataProductOut,
+    operation_id="revertDataProduct",
+    # Submit's counterpart — gated to authors-and-above, not approvers-only.
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def revert_data_product(
+    product_id: str,
+    svc: Annotated[DataProductService, Depends(get_data_product_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> DataProductOut:
+    """Withdraw a pending submission — ``pending_approval`` -> ``draft``.
+
+    Lets an author pull their own space back to keep editing before an approver
+    acts. 409 if the space is not ``pending_approval``.
+    """
+    try:
+        user_email = _current_user_email(obo_ws)
+        svc.revert(product_id, user_email)
+        detail = svc.get(product_id)
+        assert detail is not None  # just reverted it
+        return DataProductOut.from_domain(detail)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except InvalidStatusTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to revert data product {product_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to revert data product: {e}")
+
+
 # ------------------------------------------------------------------
 # Run
 # ------------------------------------------------------------------
