@@ -17,7 +17,7 @@ import {
 import { compareSortValues } from "@/components/data-table/sort";
 import { AddMonitoredTableModal } from "@/components/monitored-tables/AddMonitoredTableModal";
 import { ExportYamlMenu } from "@/components/ExportYamlMenu";
-import { exportMonitoredTable } from "@/lib/api-custom";
+import { exportMonitoredTables } from "@/lib/api-custom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -39,12 +39,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, CheckCircle2, GitCompare, Loader2, Play, Plus, RotateCcw, Search, Table2, Trash2, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, GitCompare, Loader2, Play, Plus, RotateCcw, Search, Table2, Trash2, Undo2, XCircle } from "lucide-react";
 import {
   useListMonitoredTables,
   useDeleteMonitoredTable,
   useApproveMonitoredTable,
   useRejectMonitoredTable,
+  useRevertMonitoredTable,
   useRunMonitoredTable,
   type MonitoredTableSummaryOut,
 } from "@/lib/api";
@@ -243,6 +244,7 @@ function MonitoredTablesPage() {
   const deleteMutation = useDeleteMonitoredTable();
   const approveMutation = useApproveMonitoredTable();
   const rejectMutation = useRejectMonitoredTable();
+  const revertMutation = useRevertMonitoredTable();
   const runMutation = useRunMonitoredTable();
   const [rejectTarget, setRejectTarget] = useState<MonitoredTableSummaryOut | null>(null);
 
@@ -422,6 +424,16 @@ function MonitoredTablesPage() {
                 {t("monitoredTables.bulkDelete")}
               </Button>
             )}
+            {/* Export lives in the selection action bar (exports exactly the
+                ticked rows via the binding_id[] filter), mirroring the Rules
+                overview — not a per-row action. */}
+            <ExportYamlMenu
+              fetchDqx={() => exportMonitoredTables({ format: "dqx", binding_id: [...selectedIds] })}
+              fetchOdcs={() => exportMonitoredTables({ format: "odcs", binding_id: [...selectedIds] })}
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+            />
             <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto" onClick={() => setSelectedIds(new Set())}>
               {t("monitoredTables.clearSelection")}
             </Button>
@@ -455,6 +467,16 @@ function MonitoredTablesPage() {
       () => approveMutation.mutateAsync({ bindingId: summary.table.binding_id }),
       t("monitoredTables.toastApproved"),
       t("monitoredTables.toastApproveFailed"),
+    );
+
+  // Revert (withdraw to draft) — the author's counterpart to submit. Unlike
+  // reject it leaves no rejected trail, so it fires directly (no confirm).
+  const handleRevert = (summary: MonitoredTableSummaryOut) =>
+    runRowAction(
+      summary.table.binding_id,
+      () => revertMutation.mutateAsync({ bindingId: summary.table.binding_id }),
+      t("monitoredTables.toastReverted"),
+      t("monitoredTables.toastRevertFailed"),
     );
 
   // Run the approved snapshot (item 76). Gated to tables that have an
@@ -520,8 +542,8 @@ function MonitoredTablesPage() {
             <p className="text-sm text-muted-foreground mt-1">{t("monitoredTables.subtitle")}</p>
           </div>
           <div className="flex items-center gap-2">
-            {/* Export moved to a per-row action (see renderActions) — it's a
-                contextual, per-table export, not an always-on header button. */}
+            {/* Export lives in the selection action bar (bulkToolbar) — select
+                rows to export exactly those, mirroring the Rules overview. */}
             {perms.canCreateRules && (
               <Button onClick={() => setAddOpen(true)} className="gap-2">
                 <Plus className="h-4 w-4" />
@@ -606,14 +628,6 @@ function MonitoredTablesPage() {
             // when the row has a pending approval. Mirrors registry-rules.index.tsx.
             (summary) => (
                   <div className="flex items-center justify-end gap-1">
-                    {/* Per-table export (DQX / ODCS) — moved off the page
-                        header into this contextual row action. */}
-                    <ExportYamlMenu
-                      fetchDqx={() => exportMonitoredTable(summary.table.binding_id, "dqx")}
-                      fetchOdcs={() => exportMonitoredTable(summary.table.binding_id, "odcs")}
-                      variant="ghost"
-                      iconOnly
-                    />
                     {perms.canRunRules && (summary.table.version ?? 0) > 0 && (
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -682,6 +696,25 @@ function MonitoredTablesPage() {
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>{t("rulesDrafts.diff.viewChanges")}</TooltipContent>
+                      </Tooltip>
+                    )}
+                    {/* Revert (withdraw to draft) — authors can pull a pending
+                        submission back to keep editing. Mirrors the Rules
+                        overview's Undo2 revoke action. */}
+                    {perms.canCreateRules && summary.table.status === "pending_approval" && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 text-amber-600 dark:text-amber-400"
+                            aria-label={t("monitoredTables.revertAction")}
+                            onClick={() => handleRevert(summary)}
+                          >
+                            <Undo2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("monitoredTables.revertAction")}</TooltipContent>
                       </Tooltip>
                     )}
                     {perms.canCreateRules && summary.table.status !== "pending_approval" && (

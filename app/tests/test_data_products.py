@@ -876,6 +876,28 @@ class TestReject:
             service.reject("missing", "bob@x")
 
 
+class TestRevert:
+    def test_revert_pending_to_draft_without_version_bump(self, service, sql):
+        sql.query.return_value = [_product_row(product_id="p1", status="pending_approval", version="2")]
+        product = service.revert("p1", "bob@x")
+        assert product.status == "draft"
+        assert product.version == 2  # unchanged — revert only withdraws
+        update_sql = sql.execute.call_args[0][0]
+        assert "status = 'draft'" in update_sql
+        assert "version =" not in update_sql
+
+    def test_revert_non_pending_raises_409(self, service, sql):
+        sql.query.return_value = [_product_row(product_id="p1", status="approved", version="1")]
+        with pytest.raises(InvalidStatusTransitionError):
+            service.revert("p1", "bob@x")
+        sql.execute.assert_not_called()
+
+    def test_revert_missing_raises(self, service, sql):
+        sql.query.return_value = []
+        with pytest.raises(LookupError):
+            service.revert("missing", "bob@x")
+
+
 class TestRun:
     def test_draft_source_runs_never_approved_members_instead_of_skipping(
         self, service, sql, monitored_tables, run_set_service, binding_run_service

@@ -544,6 +544,27 @@ class DataProductService:
             )
         return self._set_status(product_id, "rejected", updated_by, _prefetched=product)
 
+    def revert(self, product_id: str, updated_by: str) -> DataProduct:
+        """Withdraw a pending submission: ``pending_approval`` -> ``draft``.
+
+        The counterpart to :meth:`submit` — an author pulls their own pending
+        space back to keep editing, without a reject (the approver's decision,
+        which leaves a ``rejected`` trail). Guards against reverting a
+        non-pending space out of band.
+
+        Raises:
+            LookupError: *product_id* does not exist.
+            InvalidStatusTransitionError: the space is not ``pending_approval`` (HTTP 409).
+        """
+        product = self._fetch_product(product_id)
+        if product is None:
+            raise LookupError(f"Data product not found: {product_id}")
+        if product.status != "pending_approval":
+            raise InvalidStatusTransitionError(
+                f"Cannot revert Table Space {product_id}: status is '{product.status}', expected 'pending_approval'"
+            )
+        return self._set_status(product_id, "draft", updated_by, _prefetched=product)
+
     def _set_status(
         self, product_id: str, status: str, updated_by: str, _prefetched: DataProduct | None = None
     ) -> DataProduct:

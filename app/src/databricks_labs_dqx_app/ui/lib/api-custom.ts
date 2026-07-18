@@ -1493,6 +1493,16 @@ export interface MonitoredTableExportParams {
   catalog?: string | null;
   schema?: string | null;
   name?: string | null;
+  /** Restrict export to this explicit set of binding ids (serialized as repeated
+   * `binding_id` query params) — used by the overview's selection action bar. */
+  binding_id?: string[];
+}
+
+export interface DataProductExportParams {
+  format?: ExportFormat;
+  /** Restrict export to this explicit set of product ids (serialized as repeated
+   * `product_id` query params) — used by the overview's selection action bar. */
+  product_id?: string[];
 }
 
 export const exportRegistryRules = (
@@ -1524,10 +1534,10 @@ export const exportMonitoredTable = (
   });
 
 export const exportDataProducts = (
-  format: ExportFormat,
+  params?: DataProductExportParams,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<ExportOut>> =>
-  axios.default.get(`/api/v1/export/data-products`, { ...options, params: { format } });
+  axios.default.get(`/api/v1/export/data-products`, { ...options, params });
 
 export const exportDataProduct = (
   productId: string,

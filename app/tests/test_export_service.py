@@ -249,6 +249,19 @@ class TestExportMonitoredTable:
         contract = yaml.safe_load(result.content)
         assert [e["physicalName"] for e in contract["schema"]] == ["c.s.t1", "c.s.t2"]
 
+    def test_export_tables_binding_ids_restricts_selection(self, services):
+        # The overview selection action bar exports exactly the ticked rows:
+        # binding_ids post-filters the listed summaries to that explicit set.
+        svc, _registry, materializer, monitored_tables, _dp = services
+        monitored_tables.list_monitored_tables.return_value = [
+            MonitoredTableSummary(table=MonitoredTable(binding_id="b1", table_fqn="c.s.t1", version=1)),
+            MonitoredTableSummary(table=MonitoredTable(binding_id="b2", table_fqn="c.s.t2", version=1)),
+        ]
+        materializer.render_binding_checks.return_value = []
+        result = svc.export_monitored_tables("odcs", binding_ids=["b2"])
+        contract = yaml.safe_load(result.content)
+        assert [e["physicalName"] for e in contract["schema"]] == ["c.s.t2"]
+
 
 class TestExportDataProduct:
     def _detail(self):
@@ -297,3 +310,34 @@ class TestExportDataProduct:
         data_products.get.return_value = None
         with pytest.raises(ExportError):
             svc.export_data_product("nope", "dqx")
+
+    def _detail_for(self, product_id, name, table_fqn):
+        return DataProductDetail(
+            product=DataProduct(product_id=product_id, name=name),
+            members=[
+                DataProductMemberDetail(
+                    id=f"m-{product_id}",
+                    binding_id=f"b-{product_id}",
+                    table_fqn=table_fqn,
+                    binding_status="approved",
+                    binding_version=1,
+                    pinned_version=None,
+                    rules_count=1,
+                    checks_count=1,
+                    runnable=True,
+                ),
+            ],
+        )
+
+    def test_export_products_product_ids_restricts_selection(self, services):
+        # The overview selection action bar exports exactly the ticked rows:
+        # product_ids post-filters the listed products to that explicit set.
+        svc, _registry, materializer, _mt, data_products = services
+        data_products.list_products.return_value = [
+            self._detail_for("p1", "Sales space", "c.s.orders"),
+            self._detail_for("p2", "Ops space", "c.s.events"),
+        ]
+        materializer.render_binding_checks.return_value = []
+        result = svc.export_data_products("odcs", product_ids=["p2"])
+        contract = yaml.safe_load(result.content)
+        assert [e["physicalName"] for e in contract["schema"]] == ["c.s.events"]

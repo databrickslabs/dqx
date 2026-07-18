@@ -114,12 +114,22 @@ def export_monitored_tables(
     catalog: Annotated[str | None, Query(description="Filter by catalog")] = None,
     schema: Annotated[str | None, Query(description="Filter by schema")] = None,
     name: Annotated[str | None, Query(description="Filter by table name")] = None,
+    binding_id: Annotated[
+        list[str] | None,
+        Query(description="Restrict export to these binding ids (selection action bar)"),
+    ] = None,
 ) -> ExportOut:
     """Export all (filtered) monitored tables' checks as DQX or ODCS YAML."""
     try:
         return _to_out(
             svc.export_monitored_tables(
-                format, status=status, steward=steward, catalog=catalog, schema=schema, name=name
+                format,
+                status=status,
+                steward=steward,
+                catalog=catalog,
+                schema=schema,
+                name=name,
+                binding_ids=binding_id,
             )
         )
     except Exception as e:
@@ -164,10 +174,14 @@ def export_monitored_table(
 def export_data_products(
     svc: Annotated[ExportService, Depends(get_export_service)],
     format: _FormatQuery = "dqx",
+    product_id: Annotated[
+        list[str] | None,
+        Query(description="Restrict export to these product ids (selection action bar)"),
+    ] = None,
 ) -> ExportOut:
-    """Export every table space's member checks as DQX or ODCS YAML."""
+    """Export every (filtered) table space's member checks as DQX or ODCS YAML."""
     try:
-        return _to_out(svc.export_data_products(format))
+        return _to_out(svc.export_data_products(format, product_ids=product_id))
     except Exception as e:
         logger.error(f"Failed to export table spaces: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to export table spaces.")

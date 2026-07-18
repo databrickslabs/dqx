@@ -4664,6 +4664,10 @@ schema?: string | null;
  * Filter by table name
  */
 name?: string | null;
+/**
+ * Restrict export to these binding ids (selection action bar)
+ */
+binding_id?: string[] | null;
 };
 
 export type ExportMonitoredTablesFormat = typeof ExportMonitoredTablesFormat[keyof typeof ExportMonitoredTablesFormat];
@@ -4696,6 +4700,10 @@ export type ExportDataProductsParams = {
  * Export format: 'dqx' or 'odcs'.
  */
 format?: ExportDataProductsFormat;
+/**
+ * Restrict export to these product ids (selection action bar)
+ */
+product_id?: string[] | null;
 };
 
 export type ExportDataProductsFormat = typeof ExportDataProductsFormat[keyof typeof ExportDataProductsFormat];
@@ -15802,6 +15810,79 @@ export const useRejectMonitoredTable = <TError = AxiosError<HTTPValidationError>
     }
     
 /**
+ * Withdraw a pending submission — walk the binding back to ``draft``.
+
+The counterpart to submit: an author who submitted a binding for review can
+pull it back to keep editing before an approver acts, without a reject
+(which is the approver's decision and leaves a ``rejected`` audit trail).
+Every ``pending_approval`` check mapped to the binding is walked back to
+``draft`` (a legal per-rule transition), then the binding itself flips to
+``draft``.
+
+Only a binding currently ``pending_approval`` can be reverted — 409
+otherwise. Gated to authors-and-above; the front end only surfaces it to
+the submission's owner (or an approver), matching the per-rule revoke.
+ * @summary Revert Monitored Table
+ */
+export const revertMonitoredTable = (
+    bindingId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableReviewOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/monitored-tables/${bindingId}/revert`,undefined,options
+    );
+  }
+
+
+
+export const getRevertMonitoredTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revertMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof revertMonitoredTable>>, TError,{bindingId: string}, TContext> => {
+
+const mutationKey = ['revertMonitoredTable'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revertMonitoredTable>>, {bindingId: string}> = (props) => {
+          const {bindingId} = props ?? {};
+
+          return  revertMonitoredTable(bindingId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RevertMonitoredTableMutationResult = NonNullable<Awaited<ReturnType<typeof revertMonitoredTable>>>
+    
+    export type RevertMonitoredTableMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Revert Monitored Table
+ */
+export const useRevertMonitoredTable = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revertMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof revertMonitoredTable>>,
+        TError,
+        {bindingId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRevertMonitoredTableMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * Suggest published registry rules (with a complete column mapping) for a monitored table.
 
 Always returns HTTP 200 with ``available=False`` + a ``reason`` for every
@@ -23123,6 +23204,71 @@ export const useRejectDataProduct = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
+ * Withdraw a pending submission — ``pending_approval`` -> ``draft``.
+
+Lets an author pull their own space back to keep editing before an approver
+acts. 409 if the space is not ``pending_approval``.
+ * @summary Revert Data Product
+ */
+export const revertDataProduct = (
+    productId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DataProductOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/data-products/${productId}/revert`,undefined,options
+    );
+  }
+
+
+
+export const getRevertDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revertDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof revertDataProduct>>, TError,{productId: string}, TContext> => {
+
+const mutationKey = ['revertDataProduct'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revertDataProduct>>, {productId: string}> = (props) => {
+          const {productId} = props ?? {};
+
+          return  revertDataProduct(productId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RevertDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof revertDataProduct>>>
+    
+    export type RevertDataProductMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Revert Data Product
+ */
+export const useRevertDataProduct = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revertDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof revertDataProduct>>,
+        TError,
+        {productId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRevertDataProductMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * Run every runnable member of a data product through a shared run set.
  * @summary Run Data Product
  */
@@ -23793,7 +23939,7 @@ export function useExportMonitoredTableSuspense<TData = Awaited<ReturnType<typeo
 
 
 /**
- * Export every table space's member checks as DQX or ODCS YAML.
+ * Export every (filtered) table space's member checks as DQX or ODCS YAML.
  * @summary Export Data Products
  */
 export const exportDataProducts = (
