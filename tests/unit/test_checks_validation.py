@@ -543,3 +543,65 @@ def test_validate_checks_without_variables_fails_on_placeholders():
         "'check': {'function': 'is_not_null', 'arguments': {'column': 'b'}}}"
     )
     assert status.errors[0] == expected_error
+
+
+def test_bool_argument_accepted_for_int_and_int_union_params():
+    # A bool is a subclass of int, so the pre-migration isinstance validator accepted it wherever
+    # int was valid. Strict pydantic rejects bool-for-int; the bool carve-out restores acceptance
+    # so a stored check carrying a true/false literal on an integer parameter still loads.
+    def scalar_int(column, arg1: int = 1):
+        return col(column).isin(arg1)
+
+    def int_union(column, arg1: int | str = 1):
+        return col(column).isin(arg1)
+
+    checks = [
+        {"criticality": "warn", "check": {"function": "scalar_int", "arguments": {"column": "x", "arg1": True}}},
+        {"criticality": "warn", "check": {"function": "int_union", "arguments": {"column": "x", "arg1": False}}},
+    ]
+    custom_check_functions = {"scalar_int": scalar_int, "int_union": int_union}
+    status = DQEngine.validate_checks(checks, custom_check_functions)
+    assert not status.has_errors, status
+
+
+def test_bool_accepted_for_scalar_int_and_list_int_consistently():
+    # Scalar int and list[int] must agree: both accept a bool via the same _matches_type path
+    # (previously scalar used strict TypeAdapter -> rejected, list used isinstance -> accepted).
+    def scalar_int(column, arg1: int = 1):
+        return col(column).isin(arg1)
+
+    def bare_list_int(arg1: list[int]):
+        return col("x").isin(arg1)
+
+    checks = [
+        {"criticality": "warn", "check": {"function": "scalar_int", "arguments": {"column": "x", "arg1": True}}},
+        {"criticality": "warn", "check": {"function": "bare_list_int", "arguments": {"arg1": [True, 2]}}},
+    ]
+    custom_check_functions = {"scalar_int": scalar_int, "bare_list_int": bare_list_int}
+    status = DQEngine.validate_checks(checks, custom_check_functions)
+    assert not status.has_errors, status
+
+
+def test_string_still_rejected_for_int_param():
+    # Strict validation is retained: the bool carve-out must not re-open lax coercion such as
+    # a stringy "5" passing an int parameter.
+    def scalar_int(column, arg1: int = 1):
+        return col(column).isin(arg1)
+
+    checks = [{"criticality": "warn", "check": {"function": "scalar_int", "arguments": {"column": "x", "arg1": "5"}}}]
+    status = DQEngine.validate_checks(checks, {"scalar_int": scalar_int})
+    assert "Argument 'arg1' should be of type 'int' for function 'scalar_int' in the 'arguments' block" in str(status)
+
+
+def test_unhashable_annotation_stays_lenient():
+    # An unhashable parameter annotation makes the lru_cache-keyed _type_adapter raise TypeError
+    # before a schema is built; that must fall back to the lenient "treated as satisfied" path
+    # rather than crashing validation.
+    def custom(column, arg1=1):
+        return col(column).isin(arg1)
+
+    custom.__annotations__ = {"arg1": [int]}  # a list is unhashable -> TypeError from the cache key
+
+    checks = [{"criticality": "warn", "check": {"function": "custom", "arguments": {"column": "x", "arg1": 1}}}]
+    status = DQEngine.validate_checks(checks, {"custom": custom})
+    assert not status.has_errors, status

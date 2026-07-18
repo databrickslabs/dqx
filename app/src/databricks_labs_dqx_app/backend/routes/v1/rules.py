@@ -184,7 +184,7 @@ def save_rules(
             entry = svc.update_rule(body.rule_id, body.checks, user_email)
             return [_entry_to_out(entry)]
 
-        entries = svc.save(body.table_fqn, body.checks, user_email, source=body.source)
+        entries = svc.save(body.table_fqn, body.checks, user_email, source=body.source.value)
         return [_entry_to_out(e) for e in entries]
     except HTTPException:
         raise
@@ -213,7 +213,7 @@ def batch_save_rules(
     failed: list[dict[str, str]] = []
     for fqn in body.table_fqns:
         try:
-            entries = svc.save(fqn, body.checks, user_email, source=body.source)
+            entries = svc.save(fqn, body.checks, user_email, source=body.source.value)
             saved.extend([_entry_to_out(e) for e in entries])
         except Exception as e:
             logger.error(f"Failed to save rules for {fqn}: {e}", exc_info=True)
