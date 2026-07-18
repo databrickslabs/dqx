@@ -2167,6 +2167,8 @@
     "thresholdPopoverTitle": "Soglia di avviso",
     "thresholdPopoverHint": "Avvisa quando meno di questa % di righe supera questo controllo. Vuoto = usa valore predefinito ({{pct}}%).",
     "thresholdResetToDefault": "Usa predefinito",
+    "columnThresholdPopoverHint": "Avvisa quando meno di questa % di righe supera questa regola per questa colonna. Vuoto = usa la soglia della regola ({{pct}}%).",
+    "columnThresholdResetToDefault": "Usa predefinito della regola",
     "scheduleCrossTitle": "Pianificata anche dagli spazi",
     "scheduleCrossDescription": "Questa tabella appartiene agli spazi seguenti, le cui pianificazioni eseguono anche i suoi controlli. Qualsiasi pianificazione impostata qui viene eseguita in aggiunta a quelle.",
     "scheduleCrossManage": "Gestisci",

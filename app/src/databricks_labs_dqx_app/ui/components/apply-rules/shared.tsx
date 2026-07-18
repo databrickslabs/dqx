@@ -181,7 +181,33 @@ export function newStagedRow(
     rule_name: getTag(rule, RESERVED_NAME_KEY) || null,
     rule_dimension: getTag(rule, RESERVED_DIMENSION_KEY) || null,
     rule_severity: getTag(rule, RESERVED_SEVERITY_KEY) || null,
+    // Fresh staged rows start with no per-column threshold overrides.
+    column_pass_thresholds: {},
   };
+}
+
+/** Merge per-column threshold overrides from every row in a rule_id group into
+ *  one `{col: pct}` map. Later rows win on key conflict (last-write wins, which
+ *  is harmless since all rows for a rule_id share the same overrides in normal
+ *  use). Returns `undefined` (not an empty object) when no overrides exist so
+ *  the field round-trips as absent rather than `{}`, matching the API contract.
+ *
+ *  Correctness: `0` is a valid threshold (never breach). Only `undefined` map
+ *  values (missing keys) indicate "no override" — never use truthiness. */
+export function mergeColumnThresholds(
+  rows: AppliedRuleOut[],
+): Record<string, number> | undefined {
+  const merged: Record<string, number> = {};
+  let hasAny = false;
+  for (const row of rows) {
+    const map = row.column_pass_thresholds;
+    if (!map) continue;
+    for (const [col, pct] of Object.entries(map)) {
+      merged[col] = pct;
+      hasAny = true;
+    }
+  }
+  return hasAny ? merged : undefined;
 }
 
 /** Turn the flat staged row list into the FULL desired-set payload for
@@ -201,6 +227,10 @@ export function buildDesiredApplications(stagedRows: AppliedRuleOut[]): DesiredA
       // Per-rule overrides live on the rule (all of a rule_id's rows share one
       // value), so read them off the first row like pin/severity above.
       pass_threshold: first?.pass_threshold ?? null,
+      // Per-column threshold overrides — merge across all rows for this
+      // rule_id; returns undefined when there are no overrides so the field
+      // is absent in the payload rather than an empty object.
+      column_pass_thresholds: mergeColumnThresholds(rows) ?? null,
       tags: (first?.user_metadata ?? {}) as Record<string, unknown>,
     };
   });
@@ -215,16 +245,25 @@ export function buildDesiredApplications(stagedRows: AppliedRuleOut[]): DesiredA
  *  "dirty" positive. */
 export function desiredApplicationsKey(stagedRows: AppliedRuleOut[]): string {
   const normalized = buildDesiredApplications(stagedRows)
-    .map((application) => ({
-      rule_id: application.rule_id,
-      column_mapping: (application.column_mapping ?? [])
-        .map((group) => JSON.stringify(Object.fromEntries(Object.entries(group).sort())))
-        .sort(),
-      pinned_version: application.pinned_version ?? null,
-      severity_override: application.severity_override ?? null,
-      pass_threshold: application.pass_threshold ?? null,
-      tags: JSON.stringify(Object.fromEntries(Object.entries(application.tags ?? {}).sort())),
-    }))
+    .map((application) => {
+      // Stable serialization of per-column threshold map — sort keys so
+      // insertion order never produces a false "dirty" positive.
+      const colThresholds = application.column_pass_thresholds;
+      const colThresholdsStr = colThresholds
+        ? JSON.stringify(Object.fromEntries(Object.entries(colThresholds).sort()))
+        : null;
+      return {
+        rule_id: application.rule_id,
+        column_mapping: (application.column_mapping ?? [])
+          .map((group) => JSON.stringify(Object.fromEntries(Object.entries(group).sort())))
+          .sort(),
+        pinned_version: application.pinned_version ?? null,
+        severity_override: application.severity_override ?? null,
+        pass_threshold: application.pass_threshold ?? null,
+        column_pass_thresholds: colThresholdsStr,
+        tags: JSON.stringify(Object.fromEntries(Object.entries(application.tags ?? {}).sort())),
+      };
+    })
     .sort((a, b) => a.rule_id.localeCompare(b.rule_id));
   return JSON.stringify(normalized);
 }

@@ -2330,6 +2330,25 @@ function ApplyRulesTab({
     setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, pass_threshold: value } : r)));
   };
 
+  // Per-column threshold override — update every staged row for the given
+  // rule_id, merging the new column value into each row's column_pass_thresholds
+  // map. `value === null` deletes the key (revert to rule default); `value === 0`
+  // is a real threshold and must be stored, not deleted. Uses === null strictly.
+  const handleColumnThresholdChange = (ruleId: string, column: string, value: number | null) => {
+    setStagedRows((prev) =>
+      prev.map((r) => {
+        if (r.rule_id !== ruleId) return r;
+        const existing = r.column_pass_thresholds ?? {};
+        if (value === null) {
+          // Remove the column key — spread and delete immutably.
+          const { [column]: _removed, ...rest } = existing;
+          return { ...r, column_pass_thresholds: rest };
+        }
+        return { ...r, column_pass_thresholds: { ...existing, [column]: value } };
+      }),
+    );
+  };
+
   return (
     <div className="space-y-4 pt-4">
       {/* Table unreachable via Unity Catalog — mirrors dqlake's AppliedRulesList
@@ -2576,6 +2595,8 @@ function ApplyRulesTab({
           onAddRule={(column) => openAddDialog(column)}
           columnTags={Object.keys(columnTags).length > 0 ? columnTags : undefined}
           ruleSlotTagsById={ruleSlotTagsById.size > 0 ? ruleSlotTagsById : undefined}
+          adminDefault={adminDefaultThreshold}
+          onColumnThresholdChange={handleColumnThresholdChange}
           onJumpToRule={(ruleId) => {
             setFilter("all");
             setSearch("");

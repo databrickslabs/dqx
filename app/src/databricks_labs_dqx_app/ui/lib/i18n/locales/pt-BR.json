@@ -2167,6 +2167,8 @@
     "thresholdPopoverTitle": "Limite de alerta",
     "thresholdPopoverHint": "Alertar quando menos desta % de linhas passarem nesta verificação. Em branco = usar padrão ({{pct}}%).",
     "thresholdResetToDefault": "Usar padrão",
+    "columnThresholdPopoverHint": "Alertar quando menos desta % de linhas passarem nesta regra para esta coluna. Em branco = usar o limite da regra ({{pct}}%).",
+    "columnThresholdResetToDefault": "Usar padrão da regra",
     "scheduleCrossTitle": "Também agendada por espaços",
     "scheduleCrossDescription": "Esta tabela pertence aos espaços abaixo, cujos agendamentos também executam suas verificações. Qualquer agendamento definido aqui é executado além desses.",
     "scheduleCrossManage": "Gerenciar",

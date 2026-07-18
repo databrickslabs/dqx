@@ -2167,6 +2167,8 @@
     "thresholdPopoverTitle": "Warning threshold",
     "thresholdPopoverHint": "Warn when fewer than this % of rows pass this check. Blank = use default ({{pct}}%).",
     "thresholdResetToDefault": "Use default",
+    "columnThresholdPopoverHint": "Warn when fewer than this % of rows pass this rule for this column. Blank = use the rule's threshold ({{pct}}%).",
+    "columnThresholdResetToDefault": "Use rule default",
     "scheduleCrossTitle": "Also scheduled by spaces",
     "scheduleCrossDescription": "This table belongs to the space(s) below, whose schedules run its checks too. Any schedule you set here runs in addition to those.",
     "scheduleCrossManage": "Manage",

@@ -2167,6 +2167,8 @@
     "thresholdPopoverTitle": "Umbral de advertencia",
     "thresholdPopoverHint": "Advertir cuando menos de este % de filas pasen esta verificación. En blanco = usar predeterminado ({{pct}}%).",
     "thresholdResetToDefault": "Usar predeterminado",
+    "columnThresholdPopoverHint": "Advertir cuando menos de este % de filas pasen esta regla para esta columna. En blanco = usar el umbral de la regla ({{pct}}%).",
+    "columnThresholdResetToDefault": "Usar predeterminado de la regla",
     "scheduleCrossTitle": "También programada por espacios",
     "scheduleCrossDescription": "Esta tabla pertenece a los espacios siguientes, cuyas programaciones también ejecutan sus controles. Cualquier programación que definas aquí se ejecuta además de esas.",
     "scheduleCrossManage": "Gestionar",

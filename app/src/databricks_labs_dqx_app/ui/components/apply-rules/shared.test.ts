@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { RegistryRuleOut } from "@/lib/api";
-import { computeRunGating, newStagedRow } from "./shared";
+import type { AppliedRuleOut, RegistryRuleOut } from "@/lib/api";
+import { buildDesiredApplications, computeRunGating, mergeColumnThresholds, newStagedRow } from "./shared";
 
 // Minimal RegistryRuleOut for newStagedRow — only rule_id, version, and
 // user_metadata (reserved name/dimension/severity tags) are read.
@@ -32,6 +32,122 @@ describe("newStagedRow pin seeding", () => {
     expect(row.rule_id).toBe("r1");
     expect(row.rule_name).toBe("Not Null");
     expect(row.rule_severity).toBe("High");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergeColumnThresholds
+// ---------------------------------------------------------------------------
+
+// Minimal AppliedRuleOut factory — only the fields mergeColumnThresholds reads.
+function fakeRow(
+  ruleId: string,
+  colThresholds?: Record<string, number>,
+): AppliedRuleOut {
+  return {
+    id: ruleId,
+    binding_id: "b1",
+    rule_id: ruleId,
+    column_mapping: [],
+    column_pass_thresholds: colThresholds,
+  } as unknown as AppliedRuleOut;
+}
+
+describe("mergeColumnThresholds", () => {
+  test("returns undefined when no rows have overrides", () => {
+    expect(mergeColumnThresholds([fakeRow("r1"), fakeRow("r1", {})])).toBeUndefined();
+  });
+
+  test("returns the single column's threshold", () => {
+    const result = mergeColumnThresholds([fakeRow("r1", { email: 90 })]);
+    expect(result).toEqual({ email: 90 });
+  });
+
+  test("0 is a valid threshold — stored, not treated as absent", () => {
+    const result = mergeColumnThresholds([fakeRow("r1", { col: 0 })]);
+    expect(result).toEqual({ col: 0 });
+  });
+
+  test("merges multiple rows — later rows win on key conflict", () => {
+    const result = mergeColumnThresholds([
+      fakeRow("r1", { email: 80, name: 70 }),
+      fakeRow("r1", { email: 95 }),
+    ]);
+    expect(result).toEqual({ email: 95, name: 70 });
+  });
+
+  test("returns undefined when rows list is empty", () => {
+    expect(mergeColumnThresholds([])).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildDesiredApplications — column_pass_thresholds round-trip
+// ---------------------------------------------------------------------------
+
+describe("buildDesiredApplications column_pass_thresholds", () => {
+  test("carries column_pass_thresholds into the payload", () => {
+    const rows: AppliedRuleOut[] = [
+      {
+        id: "row1",
+        binding_id: "b1",
+        rule_id: "r1",
+        pinned_version: null,
+        severity_override: null,
+        pass_threshold: null,
+        column_pass_thresholds: { email: 90 },
+        column_mapping: [{ col: "email" }],
+        user_metadata: {},
+        mapping_hash: null,
+        created_by: null,
+        created_at: null,
+      } as unknown as AppliedRuleOut,
+    ];
+    const payload = buildDesiredApplications(rows);
+    expect(payload[0]?.column_pass_thresholds).toEqual({ email: 90 });
+  });
+
+  test("column_pass_thresholds is null (not {}) when no overrides exist", () => {
+    const rows: AppliedRuleOut[] = [
+      {
+        id: "row1",
+        binding_id: "b1",
+        rule_id: "r1",
+        pinned_version: null,
+        severity_override: null,
+        pass_threshold: null,
+        column_pass_thresholds: {},
+        column_mapping: [{ col: "email" }],
+        user_metadata: {},
+        mapping_hash: null,
+        created_by: null,
+        created_at: null,
+      } as unknown as AppliedRuleOut,
+    ];
+    const payload = buildDesiredApplications(rows);
+    // Empty map → mergeColumnThresholds returns undefined → null in payload
+    expect(payload[0]?.column_pass_thresholds).toBeNull();
+  });
+
+  test("value 0 persists as 0 in the payload (not dropped)", () => {
+    const rows: AppliedRuleOut[] = [
+      {
+        id: "row1",
+        binding_id: "b1",
+        rule_id: "r1",
+        pinned_version: null,
+        severity_override: null,
+        pass_threshold: null,
+        column_pass_thresholds: { col: 0 },
+        column_mapping: [{ col: "col" }],
+        user_metadata: {},
+        mapping_hash: null,
+        created_by: null,
+        created_at: null,
+      } as unknown as AppliedRuleOut,
+    ];
+    const payload = buildDesiredApplications(rows);
+    expect(payload[0]?.column_pass_thresholds).toEqual({ col: 0 });
   });
 });
 

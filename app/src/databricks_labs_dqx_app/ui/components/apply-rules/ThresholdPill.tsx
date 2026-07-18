@@ -24,9 +24,13 @@ export interface ThresholdPillProps {
   effectiveDefault: number;
   onChange: (v: number | null) => void;
   readonly?: boolean;
+  /** Override the popover hint text (defaults to the per-rule i18n string). */
+  hintOverride?: string;
+  /** Override the "reset to default" button label (defaults to per-rule label). */
+  resetLabelOverride?: string;
 }
 
-export function ThresholdPill({ value, effectiveDefault, onChange, readonly = false }: ThresholdPillProps) {
+export function ThresholdPill({ value, effectiveDefault, onChange, readonly = false, hintOverride, resetLabelOverride }: ThresholdPillProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   // Local draft string so the input stays editable without forcing an int on
@@ -105,7 +109,7 @@ export function ThresholdPill({ value, effectiveDefault, onChange, readonly = fa
       >
         <p className="text-xs font-medium">{t("monitoredTables.thresholdPopoverTitle")}</p>
         <p className="text-[11px] text-muted-foreground">
-          {t("monitoredTables.thresholdPopoverHint", { pct: effectiveDefault })}
+          {hintOverride ?? t("monitoredTables.thresholdPopoverHint", { pct: effectiveDefault })}
         </p>
         <Input
           type="number"
@@ -139,7 +143,7 @@ export function ThresholdPill({ value, effectiveDefault, onChange, readonly = fa
             setOpen(false);
           }}
         >
-          {t("monitoredTables.thresholdResetToDefault")}
+          {resetLabelOverride ?? t("monitoredTables.thresholdResetToDefault")}
         </Button>
       </PopoverContent>
     </Popover>
