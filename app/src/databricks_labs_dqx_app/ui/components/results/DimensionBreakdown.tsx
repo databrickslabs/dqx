@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { CollapseRegion } from "./CollapseRegion";
+import { BreachIcon } from "./BreachIcon";
 
 /**
  * Client-side page slice for the breakdown table. Without *pageSize* the
@@ -76,6 +77,11 @@ export type BreakdownRow = {
   rule_count?: number | null;
   check_count?: number | null;
   total_tests?: number | null;
+  /** True when any child check in this group has a threshold breach. */
+  breached?: boolean;
+  /** Criticality of the breach (worst child): "error" | "warn" | null.
+   *  Accepts the raw API string; BreachIcon renders nothing for non-"error"/"warn" values. */
+  breach_criticality?: string | null;
 };
 
 type SortKey =
@@ -341,6 +347,9 @@ export function DimensionBreakdown({
                           )}
                           {renderLabel?.(r.label, facetValue) ?? (
                             <TruncatedText text={r.label} className="min-w-0" />
+                          )}
+                          {r.breached && (
+                            <BreachIcon criticality={r.breach_criticality} />
                           )}
                           {rowLink?.(r.label)}
                         </span>

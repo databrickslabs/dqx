@@ -5,9 +5,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { ChevronDown, History } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { BreachIcon } from "./BreachIcon";
 
 export type Run = {
   run_id: string;
@@ -16,6 +18,12 @@ export type Run = {
   /** Run provenance ('draft' | 'published'); only present in Published+Draft
    *  mode. When 'draft' the label is tagged with `draftMarker`. */
   run_mode?: string | null;
+  /** True when this run has at least one threshold breach. */
+  breached?: boolean;
+  /** Criticality of the worst breach: "error" | "warn" | null.
+   *  The wider string type matches the API payload; BreachIcon handles
+   *  non-"error"/"warn" values by rendering nothing. */
+  breach_criticality?: string | null;
 };
 
 /**
@@ -96,21 +104,26 @@ export function RunPicker({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-[14rem]">
-        {runs.map((run, i) => {
-          const isLatest = i === 0;
-          // Selecting the latest run routes through the `null` ("latest") path
-          // so the trigger reads "Latest" and the data uses the latest branch.
-          const isSelected = isLatest ? isLatestSelected : run.run_id === value;
-          return (
-            <DropdownMenuItem
-              key={run.run_id}
-              onSelect={() => onChange(isLatest ? null : run.run_id)}
-              className={cn("font-mono text-xs", isSelected && "bg-muted")}
-            >
-              {formatRun(run, draftMarker)}
-            </DropdownMenuItem>
-          );
-        })}
+        <TooltipProvider delayDuration={200}>
+          {runs.map((run, i) => {
+            const isLatest = i === 0;
+            // Selecting the latest run routes through the `null` ("latest") path
+            // so the trigger reads "Latest" and the data uses the latest branch.
+            const isSelected = isLatest ? isLatestSelected : run.run_id === value;
+            return (
+              <DropdownMenuItem
+                key={run.run_id}
+                onSelect={() => onChange(isLatest ? null : run.run_id)}
+                className={cn("font-mono text-xs gap-1.5", isSelected && "bg-muted")}
+              >
+                <span className="flex-1">{formatRun(run, draftMarker)}</span>
+                {run.breached && (
+                  <BreachIcon criticality={run.breach_criticality} />
+                )}
+              </DropdownMenuItem>
+            );
+          })}
+        </TooltipProvider>
       </DropdownMenuContent>
     </DropdownMenu>
   );

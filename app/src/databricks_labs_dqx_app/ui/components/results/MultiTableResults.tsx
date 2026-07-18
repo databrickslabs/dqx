@@ -493,6 +493,8 @@ export function MultiTableResultsSection({
       rule_count: g.rule_count ?? null,
       check_count: g.check_count ?? null,
       total_tests: g.total_tests ?? null,
+      breached: g.breached ?? false,
+      breach_criticality: g.breach_criticality ?? null,
     }));
 
   // Registry order for the By dimension / By severity default sort: dimensions
@@ -607,6 +609,16 @@ export function MultiTableResultsSection({
   const tableColorMap = buildTableColorMap(trends?.trend_by_table);
   const overallPoints = computeOverallPoints(trends?.trend);
 
+  // Breach markers for the overall trend chart: one entry per breaching point
+  // on the entity-level `trend` (the overall average). Null/non-"error"/"warn"
+  // criticalities are filtered out so only real breaches render a marker.
+  const overallBreachMarkers = (trends?.trend ?? []).flatMap((p) => {
+    if (!p.breached) return [];
+    const crit = p.breach_criticality;
+    if (crit !== "error" && crit !== "warn") return [];
+    return [{ run_date: String(p.run_date ?? ""), criticality: crit as "error" | "warn" }];
+  });
+
   // Series keys are the ENGLISH canonical names — the chart's ordering/legend
   // logic pins on ["Rules","Checks","Tests","Rows"]; do not translate them here.
   const rulesChecksTestsSeries = toCountSeries(trends?.trend_counts, [
@@ -688,6 +700,7 @@ export function MultiTableResultsSection({
               overall={overallPoints}
               overallLabel={t("resultsUi.averageSeries")}
               title={t("resultsUi.averageDqScoreTitle")}
+              breachMarkers={overallBreachMarkers}
             />
           </ChartFrame>
           <div className="grid gap-6 md:grid-cols-2">

@@ -661,6 +661,7 @@ export function ScoreTrendChart({
   collapsed,
   onToggleCollapse,
   animate = false,
+  breachMarkers,
   versionMarkers,
 }: {
   data?: Array<TrendRow>;
@@ -696,6 +697,11 @@ export function ScoreTrendChart({
   /** When true, animate the overall-score line drawing in left→right on mount
    *  (recharts' native reveal). Used by the homepage. */
   animate?: boolean;
+  /** Optional breach markers: one entry per run where the threshold was breached.
+   *  Each entry renders a subtle coloured vertical rule on the time axis,
+   *  colored amber ("warn") or red ("error") by criticality.
+   *  Only the overall-score trend chart in MultiTableResults passes these. */
+  breachMarkers?: Array<{ run_date: string; criticality: "error" | "warn" }>;
   /** Optional subtle vertical markers at the runs where the monitored-table
    *  binding version incremented (#65). Each `run_date` is matched to its `ts`
    *  on the time axis; `label` is the pre-formatted tag (e.g. "v2"). Only the
@@ -1538,6 +1544,39 @@ export function ScoreTrendChart({
               {overallMode && !hidden.has(overallLabel) && (
                 <OverallLayer points={overall ?? []} />
               )}
+              {/* Breach markers: a subtle coloured vertical rule at each run where
+                  the pass rate fell below the configured threshold. Amber for
+                  warn-criticality breaches, red for error-criticality. */}
+              {(breachMarkers ?? []).map((m) => {
+                const x = Date.parse(m.run_date);
+                if (!Number.isFinite(x)) return null;
+                const stroke =
+                  m.criticality === "error"
+                    ? "var(--destructive)"
+                    : "oklch(0.769 0.188 70.08)"; /* amber-500 */
+                return (
+                  <ReferenceLine
+                    key={`bm-${m.run_date}`}
+                    x={x}
+                    stroke={stroke}
+                    strokeDasharray="2 3"
+                    strokeOpacity={0.7}
+                    ifOverflow="hidden"
+                    label={{
+                      // A compact ⚠ glyph rather than the full sentence: the
+                      // SVG label sits inline on the marker at a tiny size, so
+                      // the long "This run has a threshold breach" string was
+                      // truncated to a few unreadable characters. The glyph
+                      // reads at a glance; the run-picker row carries the
+                      // full-text tooltip for the same run.
+                      value: "⚠",
+                      position: "insideTopRight",
+                      fontSize: 12,
+                      fill: stroke,
+                    }}
+                  />
+                );
+              })}
               {/* Subtle version-increment markers (#65): a dashed vertical rule
                   with a small "v{n}" tag at each run where the binding version
                   bumped. Clipped when the run falls outside the zoom window. */}

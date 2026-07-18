@@ -2622,7 +2622,9 @@
     "invalidSamplesTitle": "Campioni non validi",
     "pickTableForColumns": "Scegli una tabella per vedere le colonne",
     "noColumnsForTable": "Nessuna colonna per questa tabella.",
-    "invalidSamplesUnavailable": "I campioni non validi non possono essere mostrati per questa tabella."
+    "invalidSamplesUnavailable": "I campioni non validi non possono essere mostrati per questa tabella.",
+    "breachWarnTooltip": "Avviso: tasso di superamento sotto la soglia",
+    "breachErrorTooltip": "Errore: tasso di superamento sotto la soglia"
   },
   "genie": {
     "iconTitle": "Databricks Genie",
