@@ -16,6 +16,10 @@ type Props = {
   declaredColumns: PredicateEditorDeclaredColumn[];
   placeholder?: string;
   disabled?: boolean;
+  /** When true, the editor starts one line tall and grows with its content
+   * instead of being fixed at the default 132px. Used for the row-filter field
+   * (a short WHERE clause) so it isn't a big empty box by default. */
+  autoHeight?: boolean;
 };
 
 /**
@@ -27,7 +31,7 @@ type Props = {
  * guard (`validateSqlPredicate`) stays a separate check layered on top by the
  * caller.
  */
-export function PredicateEditor({ value, onChange, declaredColumns, placeholder, disabled }: Props) {
+export function PredicateEditor({ value, onChange, declaredColumns, placeholder, disabled, autoHeight }: Props) {
   const { t } = useTranslation();
   // Item 14: the editor was hard-locked to CodeMirror's default light theme
   // regardless of the app's own dark mode. `@uiw/react-codemirror` always
@@ -99,9 +103,11 @@ export function PredicateEditor({ value, onChange, declaredColumns, placeholder,
       EditorView.theme({
         "&": { fontSize: "13px" },
         ".cm-content": { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
-        ".cm-scroller": { minHeight: "132px" },
+        // Fixed-height editors reserve a comfortable 132px min; auto-height
+        // ones start at a single line and grow with their content.
+        ".cm-scroller": { minHeight: autoHeight ? "auto" : "132px" },
       }),
-    [],
+    [autoHeight],
   );
 
   return (
@@ -109,7 +115,9 @@ export function PredicateEditor({ value, onChange, declaredColumns, placeholder,
       value={value}
       onChange={onChange}
       editable={!disabled}
-      height="132px"
+      // Auto-height: let CodeMirror size to its content (grows as lines are
+      // added); otherwise pin the default 132px box.
+      height={autoHeight ? undefined : "132px"}
       placeholder={placeholder}
       theme={resolvedTheme}
       extensions={[sql(), unknownRefLinter, slotCompletion, fontSizeTheme, EditorView.lineWrapping]}

@@ -4633,6 +4633,10 @@ steward?: string | null;
  * Filter by presence of a free-text tag key
  */
 tag?: string | null;
+/**
+ * Restrict export to this explicit set of rule ids (repeatable)
+ */
+rule_id?: string[] | null;
 };
 
 export type ExportMonitoredTablesParams = {

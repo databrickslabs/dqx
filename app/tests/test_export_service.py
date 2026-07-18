@@ -173,6 +173,14 @@ class TestExportRegistry:
         loaded = yaml.safe_load(result.content)
         assert len(loaded) == 2
 
+    def test_export_forwards_rule_ids_selection(self, services):
+        svc, registry, *_ = services
+        registry.list_rules.return_value = [_native_rule()]
+        svc.export_registry_rules(rule_ids=["r1", "r2"])
+        # The overview selection action bar exports exactly the ticked rows —
+        # the explicit id set must reach the registry filter.
+        assert registry.list_rules.call_args.kwargs["rule_ids"] == ["r1", "r2"]
+
     def test_export_single_rule_uses_name_in_filename(self, services):
         svc, registry, *_ = services
         registry.get_rule_with_version.return_value = (_native_rule(name="Email Valid"), None)

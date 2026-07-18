@@ -99,7 +99,10 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
                 <button
                   key={c}
                   type="button"
-                  onClick={() => setCombinator(c)}
+                  // Clicking anywhere on the pill flips to the other value —
+                  // both segments toggle as one control, matching the
+                  // PASS/FAIL polarity switcher.
+                  onClick={() => setCombinator((row.combinator ?? "AND") === "AND" ? "OR" : "AND")}
                   className={cn(
                     "relative z-10 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-colors duration-200 ease-out",
                     on ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground",

@@ -63,7 +63,8 @@ import {
 import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
 import type { User as UserType } from "@/lib/api";
-import { useLabelDefinitions } from "@/lib/api-custom";
+import { useLabelDefinitions, exportRegistryRules } from "@/lib/api-custom";
+import { ExportYamlMenu } from "@/components/ExportYamlMenu";
 import { LabelFilter, labelsMatchFilter, type LabelSelection } from "@/components/Labels";
 import { labelToken } from "@/lib/format-utils";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -738,6 +739,14 @@ function RegistryRulesPage() {
                 {t("rulesRegistry.bulkRevoke")}
               </Button>
             )}
+            {/* Export moved off the always-on header into this selection action
+                bar — it exports exactly the ticked rows (rule_id[] filter). */}
+            <ExportYamlMenu
+              fetchDqx={() => exportRegistryRules({ rule_id: [...selectedIds] })}
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+            />
             <Button
               size="sm"
               variant="ghost"
@@ -844,8 +853,8 @@ function RegistryRulesPage() {
             <p className="text-sm text-muted-foreground mt-1">{t("rulesRegistry.description")}</p>
           </div>
           <div className="flex items-center gap-2">
-            {/* Export moved to a contextual action (per-selection / row menu) —
-                removed from the always-on overview header. */}
+            {/* Export lives in the selection action bar (exports the ticked
+                rows), not this always-on header. */}
             {perms.canCreateRules && (
               <>
                 <Button

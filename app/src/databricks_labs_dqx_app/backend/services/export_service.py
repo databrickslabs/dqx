@@ -222,10 +222,21 @@ class ExportService:
         severity: str | None = None,
         steward: str | None = None,
         tag: str | None = None,
+        rule_ids: list[str] | None = None,
     ) -> ExportResult:
-        """Export all (filtered) registry rules as a DQX check-list YAML."""
+        """Export all (filtered) registry rules as a DQX check-list YAML.
+
+        ``rule_ids``, when given, restricts the export to that explicit set —
+        used by the overview's selection action bar to export only the ticked
+        rows. Combines with the other filters (all are AND-ed).
+        """
         rules = self._registry.list_rules(
-            status=status, dimension=dimension, severity=severity, steward=steward, tag=tag
+            status=status,
+            dimension=dimension,
+            severity=severity,
+            steward=steward,
+            tag=tag,
+            rule_ids=rule_ids,
         )
         checks = [registry_rule_to_check_dict(rule, self._app_settings) for rule in rules]
         return ExportResult(

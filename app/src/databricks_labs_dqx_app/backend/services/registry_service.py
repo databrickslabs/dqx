@@ -120,13 +120,16 @@ class RegistryService:
         severity: str | None = None,
         steward: str | None = None,
         tag: str | None = None,
+        rule_ids: list[str] | None = None,
     ) -> list[RegistryRule]:
         """List registry rules, optionally filtered.
 
         ``status`` and ``steward`` are pushed down into SQL; ``dimension``,
-        ``severity``, and ``tag`` filter over ``user_metadata`` in Python
-        (it's a JSON blob, not a column), matching how
-        :class:`RulesCatalogService` handles free-text metadata.
+        ``severity``, ``tag``, and ``rule_ids`` filter in Python (``dimension`` /
+        ``severity`` / ``tag`` live in the ``user_metadata`` JSON blob rather
+        than columns, matching how :class:`RulesCatalogService` handles
+        free-text metadata; ``rule_ids`` narrows to an explicit selection —
+        e.g. exporting the rows a user ticked in the overview table).
         """
         clauses: list[str] = []
         if status:
@@ -145,6 +148,9 @@ class RegistryService:
             rules = [r for r in rules if get_rule_severity(r.user_metadata) == severity]
         if tag:
             rules = [r for r in rules if tag in r.user_metadata]
+        if rule_ids is not None:
+            wanted = set(rule_ids)
+            rules = [r for r in rules if r.rule_id in wanted]
         self._attach_modified(rules)
         return rules
 

@@ -659,6 +659,17 @@ class TestListAndGet:
         result = svc.list_rules(dimension="Validity")
         assert [r.rule_id for r in result] == ["a"]
 
+    def test_list_filters_by_rule_ids_in_python(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        a = RegistryRule(rule_id="a", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        b = RegistryRule(rule_id="b", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        c = RegistryRule(rule_id="c", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        # First query: the list; second: the modified-snapshot batch (empty).
+        sql.query.side_effect = [[_row_for(a), _row_for(b), _row_for(c)], []]
+        result = svc.list_rules(rule_ids=["a", "c"])
+        assert {r.rule_id for r in result} == {"a", "c"}
+
     def test_get_rule_returns_none_when_missing(self, svc, sql):
         sql.query.return_value = []
         assert svc.get_rule("missing") is None

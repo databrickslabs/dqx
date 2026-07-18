@@ -3536,6 +3536,7 @@ export function RegistryRuleFormDialog({
                 declaredColumns={sqlSlots}
                 placeholder={t("rulesRegistry.filterPlaceholder")}
                 disabled={readOnly}
+                autoHeight
               />
             </div>
           </AdvancedDisclosure>
