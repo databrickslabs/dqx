@@ -773,7 +773,11 @@ function SectionHeader({
   return (
     <div className="flex items-center justify-between gap-3">
       <div className="flex items-center gap-1.5">
-        <h2 className="text-sm font-semibold leading-none">{children}</h2>
+        {/* Match the About field <Label>s and the Permissions "Steward" header
+            (text-sm font-medium leading-none) so the section headers read
+            consistently across all three tabs — Implementation was heavier
+            (font-semibold), which stood out. */}
+        <h2 className="text-sm font-medium leading-none">{children}</h2>
         {tooltip && <HelpTooltip text={tooltip} />}
       </div>
       {action}
