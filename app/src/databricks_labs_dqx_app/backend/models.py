@@ -1879,6 +1879,8 @@ class GroupRowOut(BaseModel):
     rule_count: int | None = None
     check_count: int | None = None
     total_tests: int | None = None
+    breached: bool = False
+    breach_criticality: str | None = None
 
 
 class TrendPointOut(BaseModel):
@@ -1906,6 +1908,8 @@ class TrendPointOut(BaseModel):
     total_tests: int | None = None
     version: int | None = None
     is_draft: bool = False
+    breached: bool = False
+    breach_criticality: str | None = None
 
 
 class TrendCountPointOut(BaseModel):
@@ -1970,6 +1974,8 @@ class RunRowOut(BaseModel):
     failed_tests: int | None = None
     total_tests: int | None = None
     run_mode: str | None = None
+    breached: bool = False
+    breach_criticality: str | None = None
 
 
 class RunsOut(BaseModel):

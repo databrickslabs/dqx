@@ -48,6 +48,9 @@ def make_row(
     columns: tuple[str, ...] = (),
     rule_id: str | None = None,
     run_mode: str | None = None,
+    error_count: int = 0,
+    warning_count: int = 0,
+    criticality: str | None = None,
 ) -> CheckResultRow:
     return CheckResultRow(
         table_fqn=fqn,
@@ -61,6 +64,9 @@ def make_row(
         columns=columns,
         rule_id=rule_id,
         run_mode=run_mode,
+        error_count=error_count,
+        warning_count=warning_count,
+        criticality=criticality,
     )
 
 
@@ -1265,3 +1271,134 @@ class TestByRuleRowsRuleName:
         ]
         groups = _by_rule_rows(rows)
         assert groups[0].label == "a_is_null"
+
+
+class TestBreach:
+    """Per-check breach evaluation + criticality-aware group/run/trend roll-ups.
+
+    A check breaches when its pass rate (``1 - failed/total``) falls below
+    the resolved threshold. Breaches roll up into every drill-down group
+    ("any child breached"), carrying the worst breaching child's DQX
+    criticality (error beats warn). A fixed resolver keeps these tests
+    DB-free.
+    """
+
+    @staticmethod
+    def _resolver(threshold: int):
+        return lambda _row: threshold
+
+    def test_check_below_threshold_breaches_group(self):
+        # 20 failed / 100 -> 80% pass < 90 threshold -> breach.
+        rows = [make_row(check="c1", failed=20, total=100, error_count=20, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is True
+        assert out.by_rule[0].breach_criticality == "error"
+
+    def test_check_at_or_above_threshold_does_not_breach(self):
+        # 10 failed / 100 -> 90% pass, threshold 90 -> pass_rate*100 == threshold, NOT < -> no breach.
+        rows = [make_row(check="c1", failed=10, total=100, error_count=10, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is False
+        assert out.by_rule[0].breach_criticality is None
+
+    def test_exact_tie_does_not_breach_small_counts(self):
+        # 8 failed / 10 -> 20% pass EXACTLY meets a 20 threshold; strict-< means
+        # NOT a breach. Float math ((1 - 8/10)*100 = 19.999...) would wrongly
+        # breach — this pins the integer-arithmetic fix on the small counts
+        # sample-limited draft runs produce.
+        rows = [make_row(check="c1", failed=8, total=10, error_count=8, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(20))
+        assert out.by_rule[0].breached is False
+        assert out.by_rule[0].breach_criticality is None
+
+    def test_just_below_tie_breaches_small_counts(self):
+        # 9 failed / 10 -> 10% pass < 20 threshold -> breach.
+        rows = [make_row(check="c1", failed=9, total=10, error_count=9, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(20))
+        assert out.by_rule[0].breached is True
+        assert out.by_rule[0].breach_criticality == "error"
+
+    def test_warn_criticality_breach_yields_warn(self):
+        rows = [make_row(check="c1", failed=20, total=100, warning_count=20, criticality="warn")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is True
+        assert out.by_rule[0].breach_criticality == "warn"
+
+    def test_none_criticality_defaults_to_error(self):
+        # A check with no criticality attribution defaults to DQX's "error".
+        rows = [make_row(check="c1", failed=20, total=100, error_count=20, criticality=None)]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is True
+        assert out.by_rule[0].breach_criticality == "error"
+
+    def test_mixed_error_and_warn_breaches_yield_error(self):
+        # Two checks share a dimension; one breaches as warn, one as error.
+        rows = [
+            make_row(check="c1", failed=20, total=100, warning_count=20, criticality="warn", dimension="Completeness"),
+            make_row(check="c2", failed=20, total=100, error_count=20, criticality="error", dimension="Completeness"),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_dimension[0].breached is True
+        assert out.by_dimension[0].breach_criticality == "error"
+
+    def test_clean_group_not_breached(self):
+        rows = [
+            make_row(check="c1", failed=0, total=100, criticality="error"),
+            make_row(check="c2", failed=5, total=100, criticality="error"),  # 95% >= 90
+        ]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is False
+        assert out.by_rule[0].breach_criticality is None
+
+    def test_total_zero_never_breaches(self):
+        rows = [make_row(check="c1", failed=0, total=0, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is False
+        assert out.by_rule[0].breach_criticality is None
+
+    def test_total_none_never_breaches(self):
+        rows = [make_row(check="c1", failed=0, total=None, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is False
+        assert out.by_rule[0].breach_criticality is None
+
+    def test_by_column_breach_uses_per_column_threshold_after_explosion(self):
+        # One check maps two columns; on the by-column path the resolver keys
+        # off the EXPLODED single-column row so each column is evaluated with
+        # its own threshold. (Other axes call the resolver with the full row,
+        # so the resolver must tolerate a multi-column row too.)
+        seen_by_column: list[int] = []
+
+        def resolver(row: CheckResultRow) -> int:
+            if len(row.columns) == 1:
+                seen_by_column.append(len(row.columns))
+                return 95 if row.columns[0] == "strict_col" else 50
+            return 0  # multi-column rows (other axes) — never breach here
+
+        rows = [
+            make_row(
+                check="c1", failed=20, total=100, error_count=20, criticality="error", columns=("strict_col", "lax_col")
+            ),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=resolver)
+        by_col = {g.label: g for g in out.by_column}
+        # 80% pass: breaches under 95 (strict_col) but not under 50 (lax_col).
+        assert by_col["strict_col"].breached is True
+        assert by_col["strict_col"].breach_criticality == "error"
+        assert by_col["lax_col"].breached is False
+        assert seen_by_column  # the exploded single-column path was exercised
+
+    def test_run_and_trend_points_carry_breach(self):
+        rows = [
+            make_row(check="c1", failed=20, total=100, error_count=20, criticality="error", run_date="2026-07-01 00:00:00"),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="tables", resolve_threshold=self._resolver(90))
+        assert out.trend[0].breached is True
+        assert out.trend[0].breach_criticality == "error"
+
+    def test_default_resolver_never_breaches(self):
+        # No resolver passed -> backward-compatible: breach fields stay falsy.
+        rows = [make_row(check="c1", failed=99, total=100, error_count=99, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.by_rule[0].breached is False
+        assert out.by_rule[0].breach_criticality is None

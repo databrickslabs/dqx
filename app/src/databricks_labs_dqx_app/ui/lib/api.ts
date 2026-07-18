@@ -1774,6 +1774,8 @@ export type GroupRowOutCheckCount = number | null;
 
 export type GroupRowOutTotalTests = number | null;
 
+export type GroupRowOutBreachCriticality = string | null;
+
 /**
  * One breakdown row (by dimension / severity / rule / column / table).
 
@@ -1798,6 +1800,8 @@ export interface GroupRowOut {
   rule_count?: GroupRowOutRuleCount;
   check_count?: GroupRowOutCheckCount;
   total_tests?: GroupRowOutTotalTests;
+  breached?: boolean;
+  breach_criticality?: GroupRowOutBreachCriticality;
 }
 
 export interface HTTPValidationError {
@@ -3400,6 +3404,8 @@ export type RunRowOutTotalTests = number | null;
 
 export type RunRowOutRunMode = string | null;
 
+export type RunRowOutBreachCriticality = string | null;
+
 /**
  * One run's rollup for the run picker (newest first).
 
@@ -3416,6 +3422,8 @@ export interface RunRowOut {
   failed_tests?: RunRowOutFailedTests;
   total_tests?: RunRowOutTotalTests;
   run_mode?: RunRowOutRunMode;
+  breached?: boolean;
+  breach_criticality?: RunRowOutBreachCriticality;
 }
 
 export type RunSetDetailOutProductId = string | null;
@@ -3995,6 +4003,8 @@ export type TrendPointOutTotalTests = number | null;
 
 export type TrendPointOutVersion = number | null;
 
+export type TrendPointOutBreachCriticality = string | null;
+
 /**
  * One over-time point; *series* is set on grouped trends only.
 
@@ -4020,6 +4030,8 @@ export interface TrendPointOut {
   total_tests?: TrendPointOutTotalTests;
   version?: TrendPointOutVersion;
   is_draft?: boolean;
+  breached?: boolean;
+  breach_criticality?: TrendPointOutBreachCriticality;
 }
 
 export type UpdateDataProductInName = string | null;
@@ -20252,7 +20264,8 @@ export function useGetRuleResultsSuspense<TData = Awaited<ReturnType<typeof getR
 Rolled up per RUN BATCH (``dq_run_set_members`` join): concurrent
 member runs of one Table-Space "Run now" collapse to a single picker
 entry, so the picker offers coherent product-level batches rather than
-per-member-table runs.
+per-member-table runs. Each batch is stamped with a threshold-breach
+badge (worst member run's breach).
  * @summary Get Product Results Runs
  */
 export const getProductResultsRuns = (
@@ -20771,7 +20784,8 @@ export function useGetDqResultsFailedRowsSuspense<TData = Awaited<ReturnType<typ
 
 Accepts either a three-part table FQN or a monitored-table binding id
 (resolved to its bound table). Draft runs are excluded unless
-*include_drafts*.
+*include_drafts*. Each run is stamped with a threshold-breach badge
+computed from its per-check rows.
  * @summary Get Dq Results Runs
  */
 export const getDqResultsRuns = (

@@ -34,6 +34,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_monitored_table_service,
     get_obo_ws,
     get_preview_sql_executor,
+    get_registry_service,
     get_run_set_service,
     get_score_cache_service,
     get_sp_sql_executor,
@@ -49,6 +50,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
     DataProductService,
 )
 from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
+from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableDetail,
@@ -92,6 +94,16 @@ def monitored_tables_mock() -> MagicMock:
 def apply_rules_mock() -> MagicMock:
     mock = create_autospec(ApplyRulesService, instance=True)
     mock.list_bindings_for_rule.return_value = []
+    mock.list_applied.return_value = []
+    return mock
+
+
+@pytest.fixture
+def registry_mock() -> MagicMock:
+    """Registry service — no rules resolved by default (no registry-default
+    thresholds, so breach resolution falls back to the admin default)."""
+    mock = create_autospec(RegistryService, instance=True)
+    mock.get_rules_many.return_value = {}
     return mock
 
 
@@ -106,6 +118,7 @@ def data_products_mock() -> MagicMock:
 def app_settings_mock() -> MagicMock:
     mock = create_autospec(AppSettingsService, instance=True)
     mock.get_label_definitions.return_value = []
+    mock.get_default_pass_threshold.return_value = 70
     return mock
 
 
@@ -157,6 +170,7 @@ def client(
     sql_mock,
     monitored_tables_mock,
     apply_rules_mock,
+    registry_mock,
     data_products_mock,
     app_settings_mock,
     obo_sql_mock,
@@ -177,6 +191,7 @@ def client(
     app.dependency_overrides[get_user_email] = lambda: USER_EMAIL
     app.dependency_overrides[get_monitored_table_service] = lambda: monitored_tables_mock
     app.dependency_overrides[get_apply_rules_service] = lambda: apply_rules_mock
+    app.dependency_overrides[get_registry_service] = lambda: registry_mock
     app.dependency_overrides[get_data_product_service] = lambda: data_products_mock
     app.dependency_overrides[get_app_settings_service] = lambda: app_settings_mock
     app.dependency_overrides[get_preview_sql_executor] = lambda: obo_sql_mock
@@ -451,8 +466,9 @@ class TestTableResults:
         # Catalog/schema are backtick-quoted (hyphenated-catalog support).
         assert f"`{app_config.catalog}`.`{app_config.schema_name}`.{SHAPING_VIEW_NAME}" in stmt
         assert f"'{FQN}'" in stmt
-        # The as-of-run attribution columns ride along on the same query.
-        assert "severity, dimension, registry_rule_id" in stmt
+        # The as-of-run attribution columns ride along on the same query
+        # (criticality now included for threshold-breach evaluation).
+        assert "severity, dimension, criticality, registry_rule_id" in stmt
         assert "to_json(columns) AS columns_json" in stmt
 
     def test_run_id_filter_is_pushed_into_sql(self, client, sql_mock):
@@ -561,6 +577,8 @@ class TestRuns:
             "failed_tests": 20,
             "total_tests": 100,
             "run_mode": "published",
+            "breached": False,
+            "breach_criticality": None,
         }
         stmt = sql_mock.query_dicts.call_args[0][0]
         assert f"`{app_config.catalog}`.`{app_config.schema_name}`.{METRIC_VIEW_NAME}" in stmt
