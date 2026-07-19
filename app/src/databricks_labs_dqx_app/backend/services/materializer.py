@@ -75,10 +75,13 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RuleParameter,
     RuleSlot,
     RuleVersion,
+    get_applied_column_pass_thresholds,
     get_rule_dimension,
     get_rule_name,
+    get_rule_pass_threshold,
     get_rule_severity,
     resolve_criticality,
+    resolve_pass_threshold,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
@@ -389,10 +392,23 @@ def render_check(
         applied_rule_id=applied_rule_id,
     )
 
-    # Per-applied-rule ``pass_threshold`` is carried on the check's user_metadata
-    # (stored/surfaced now; run-time enforcement wired later — store_display).
-    if pass_threshold is not None:
-        user_metadata = {**user_metadata, "pass_threshold": str(pass_threshold)}
+    # Resolve and always-emit the effective pass threshold (per-column →
+    # per-rule → registry-rule default → admin default) so the check's
+    # user_metadata always carries a concrete value for breach evaluation.
+    # When the feature is disabled, emit nothing (breach eval is skipped
+    # server-side by passing resolve_threshold=None in dq_results.py).
+    if app_settings.get_pass_threshold_enabled():
+        cols = _mapped_columns(group, definition.slots)
+        col_map = get_applied_column_pass_thresholds(per_application_tags)
+        overrides = [col_map[c] for c in cols if c in col_map]
+        column_override = max(overrides) if overrides else None
+        effective = resolve_pass_threshold(
+            column_override=column_override,
+            rule_override=pass_threshold,
+            registry_default=get_rule_pass_threshold(version.user_metadata) if version else None,
+            admin_default=app_settings.get_default_pass_threshold(),
+        )
+        user_metadata = {**user_metadata, "pass_threshold": str(effective)}
 
     check_dict: dict[str, Any] = {
         "criticality": resolve_criticality(effective_severity, app_settings),

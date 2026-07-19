@@ -1402,3 +1402,12 @@ class TestBreach:
         out = compute_entity_results(rows, ResultFacets())
         assert out.by_rule[0].breached is False
         assert out.by_rule[0].breach_criticality is None
+
+    def test_disabled_resolver_none_no_breach_even_with_failing_checks(self):
+        # Simulates the server-side disable path: dq_results.py passes
+        # resolve_threshold=None when pass_threshold_enabled is False.
+        # Even a 99%-failed check must produce no breach fields.
+        rows = [make_row(check="c1", failed=99, total=100, error_count=99, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=None)
+        assert out.by_rule[0].breached is False
+        assert out.by_rule[0].breach_criticality is None

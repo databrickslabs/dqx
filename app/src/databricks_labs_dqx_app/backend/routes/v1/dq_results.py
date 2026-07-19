@@ -471,6 +471,8 @@ def _table_breach_by_run(
         for binding_id in dict.fromkeys(binding_by_fqn.values()):
             if binding_id:
                 applied.extend(apply_rules.list_applied(binding_id))
+        if not app_settings.get_pass_threshold_enabled():
+            return {}
         rule_overrides, column_overrides = _applied_threshold_overrides(applied)
         resolver = _build_threshold_resolver(
             admin_default=app_settings.get_default_pass_threshold(),
@@ -793,9 +795,13 @@ def get_global_results(
     # Org-wide scope: no single per-binding threshold applies, so the chain
     # degenerates to registry-default -> admin-default (see plan Task 4 — a
     # deliberate controller decision, not a per-binding join).
-    resolver = _build_threshold_resolver(
-        admin_default=app_settings.get_default_pass_threshold(),
-        registry_defaults=_registry_defaults(registry, _rule_ids_of(rows, asof_rows)),
+    resolver = (
+        _build_threshold_resolver(
+            admin_default=app_settings.get_default_pass_threshold(),
+            registry_defaults=_registry_defaults(registry, _rule_ids_of(rows, asof_rows)),
+        )
+        if app_settings.get_pass_threshold_enabled()
+        else None
     )
     return compute_entity_results(
         rows,
@@ -900,11 +906,15 @@ def get_rule_results(
     # Scoped resolver: the rule's applications carry the per-rule and
     # per-column overrides (folded across every binding, strictest wins).
     rule_overrides, column_overrides = _applied_threshold_overrides(applications)
-    resolver = _build_threshold_resolver(
-        admin_default=app_settings.get_default_pass_threshold(),
-        registry_defaults=_registry_defaults(registry, {rule_id} | _rule_ids_of(rows, asof_rows)),
-        rule_overrides=rule_overrides,
-        column_overrides=column_overrides,
+    resolver = (
+        _build_threshold_resolver(
+            admin_default=app_settings.get_default_pass_threshold(),
+            registry_defaults=_registry_defaults(registry, {rule_id} | _rule_ids_of(rows, asof_rows)),
+            rule_overrides=rule_overrides,
+            column_overrides=column_overrides,
+        )
+        if app_settings.get_pass_threshold_enabled()
+        else None
     )
     return compute_entity_results(
         rows,
@@ -1054,11 +1064,15 @@ def get_product_results(
         logger.exception(f"Failed to compute results for product {product_id}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     rule_overrides, column_overrides = _applied_threshold_overrides(member_applied)
-    resolver = _build_threshold_resolver(
-        admin_default=app_settings.get_default_pass_threshold(),
-        registry_defaults=_registry_defaults(registry, _rule_ids_of(rows, asof_rows)),
-        rule_overrides=rule_overrides,
-        column_overrides=column_overrides,
+    resolver = (
+        _build_threshold_resolver(
+            admin_default=app_settings.get_default_pass_threshold(),
+            registry_defaults=_registry_defaults(registry, _rule_ids_of(rows, asof_rows)),
+            rule_overrides=rule_overrides,
+            column_overrides=column_overrides,
+        )
+        if app_settings.get_pass_threshold_enabled()
+        else None
     )
     return compute_entity_results(
         rows,
@@ -1356,11 +1370,15 @@ def get_table_results(
         logger.exception(f"Failed to compute results for {table_fqn}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     rule_overrides, column_overrides = _applied_threshold_overrides(applied)
-    resolver = _build_threshold_resolver(
-        admin_default=app_settings.get_default_pass_threshold(),
-        registry_defaults=_registry_defaults(registry, _rule_ids_of(rows)),
-        rule_overrides=rule_overrides,
-        column_overrides=column_overrides,
+    resolver = (
+        _build_threshold_resolver(
+            admin_default=app_settings.get_default_pass_threshold(),
+            registry_defaults=_registry_defaults(registry, _rule_ids_of(rows)),
+            rule_overrides=rule_overrides,
+            column_overrides=column_overrides,
+        )
+        if app_settings.get_pass_threshold_enabled()
+        else None
     )
     result = compute_entity_results(
         rows,
