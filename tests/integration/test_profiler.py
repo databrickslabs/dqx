@@ -1754,7 +1754,7 @@ def test_profile_with_dataset_filter(spark, ws):
             column='cost',
             description='Column cost has 0.0% of outliers (allowed: 1.0%). Lower boundary - -25.0, upper boundary - 325.0.',
             parameters=None,
-            filter=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         ),
         DQProfile(
             name="is_not_null",
