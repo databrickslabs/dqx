@@ -5905,7 +5905,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
-        "col_email: string"
+        "col_email: string, col_ssn: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -5925,6 +5925,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "123-45-6789",
             ],
             [
                 "val2",
@@ -5942,6 +5943,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "223-45-6789",
             ],
             [
                 "val3",
@@ -5959,6 +5961,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "323-45-6789",
             ],
         ],
         schema,
@@ -6000,6 +6003,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "123-45-6789",
                 None,
                 None,
             ],
@@ -6019,6 +6023,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "223-45-6789",
                 None,
                 None,
             ],
@@ -6038,6 +6043,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "323-45-6789",
                 None,
                 None,
             ],
@@ -6192,7 +6198,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
-        "col_email: string"
+        "col_email: string, col_ssn: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -6212,6 +6218,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "123-45-6789",
             ],
             [
                 "val2",
@@ -6229,6 +6236,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "223-45-6789",
             ],
             [
                 "val3",
@@ -6246,6 +6254,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "323-45-6789",
             ],
         ],
         schema,
@@ -6275,6 +6284,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "123-45-6789",
                 None,
                 None,
             ],
@@ -6294,6 +6304,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "223-45-6789",
                 None,
                 None,
             ],
@@ -6313,6 +6324,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "323-45-6789",
                 None,
                 None,
             ],

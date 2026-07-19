@@ -95,6 +95,19 @@ class DQPattern(Enum):
         rf"$"
     )
 
+    # US Social Security Number AAA-GG-SSSS: the separator (hyphen, single space, or
+    # none) must be consistent via backreference \1. Excludes invalid ranges - area
+    # 000/666/9xx (9xx covers ITINs), group 00, serial 0000. Anchored, fixed-width; ReDoS-safe.
+    SSN_US = r"^(?!000|666|9\d{2})\d{3}([- ]?)(?!00)\d{2}\1(?!0000)\d{4}$"
+
+
+# ISO 3166 alpha-2 country code -> SSN / national-id validation pattern. Extension
+# point for additional countries: add a new DQPattern member and map its ISO 3166
+# alpha-2 code here.
+_NATIONAL_ID_PATTERNS_BY_COUNTRY: dict[str, DQPattern] = {
+    "US": DQPattern.SSN_US,
+}
+
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
     """Helper function to create a condition column.
@@ -1015,6 +1028,50 @@ def is_valid_email(column: str | Column) -> Column:
         Column object for condition
     """
     return _matches_pattern(column, DQPattern.EMAIL_ADDRESS)
+
+
+@register_rule("row")
+def is_valid_national_id(column: str | Column, country: str = "US") -> Column:
+    """Checks whether the values in the input column are valid national identification
+    numbers (for example, US Social Security Numbers) for the given country.
+
+    Validation is limited to *format* and *number ranges*; it does not verify that a
+    number was actually issued.
+
+    Supported countries are keyed by ISO 3166 alpha-2 code. Currently only *US* is
+    supported: the *AAA-GG-SSSS* form is required, where the separators may be all
+    hyphens, all single spaces, or omitted entirely (e.g. *123-45-6789*, *123 45 6789*
+    or *123456789*), but must be used consistently. Structurally invalid ranges are
+    rejected (area *000*, *666* and *900-999* - the latter covering ITINs; group *00*;
+    serial *0000*).
+
+    Null values will pass the check with no violation reported.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        country: ISO 3166 alpha-2 country code selecting the validation pattern (default: *US*)
+
+    Returns:
+        Column object for condition
+
+    Raises:
+        MissingParameterError: if *country* is None.
+        InvalidParameterError: if *country* is not a string, or is not a supported country code.
+    """
+    if country is None:
+        raise MissingParameterError("'country' is not provided.")
+
+    if not isinstance(country, str):
+        raise InvalidParameterError(f"'country' must be a string, got {type(country)} instead.")
+
+    normalized_country = country.upper()
+    pattern = _NATIONAL_ID_PATTERNS_BY_COUNTRY.get(normalized_country)
+    if pattern is None:
+        supported = ", ".join(sorted(_NATIONAL_ID_PATTERNS_BY_COUNTRY))
+        raise InvalidParameterError(
+            f"Unsupported country code for national ID validation: '{country}'. Supported: [{supported}]."
+        )
+    return _matches_pattern(column, pattern)
 
 
 @register_rule("row")
