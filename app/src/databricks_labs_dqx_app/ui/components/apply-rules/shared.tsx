@@ -4,8 +4,9 @@
 // conventions instead of re-deriving them.
 
 import { Badge } from "@/components/ui/badge";
-import type { AppliedRuleOut, AppliedRuleOutColumnMappingItem, DesiredAppliedRuleIn, RegistryRuleOut } from "@/lib/api";
+import type { AppliedRuleOut, AppliedRuleOutColumnMappingItem, DesiredAppliedRuleIn, RegistryRuleOut, RuleSlot } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
+import type { ColumnFamily } from "./ColumnPicker";
 
 export const RESERVED_NAME_KEY = "name";
 export const RESERVED_DIMENSION_KEY = "dimension";
@@ -313,6 +314,26 @@ export function computeRunGating(baselineCount: number, stagedCount: number): Ru
     runNowHasRules: baselineCount > 0,
     runDraftHasRules: stagedCount > 0,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Slot selection helper — used by AddRulesDialog when a rule is added from
+// the by-column lens's per-column "+ Add rule" CTA. Given the rule's slot
+// list and the clicked column's family, returns the best slot name to bind
+// that column to: prefer a slot whose family matches (or is "any"), else
+// fall back to the first slot. Returns null when there are no slots (the
+// rule has no column arguments and needs no mapping).
+// ---------------------------------------------------------------------------
+
+/** Pick the slot name to bind a column to when adding a rule from the
+ *  by-column view. Returns the name of the first slot whose family matches
+ *  `columnFamily` (or whose family is "any"), falling back to the first slot
+ *  regardless of family, or null when no slots exist. */
+export function pickSlotForColumn(slots: RuleSlot[], columnFamily: ColumnFamily): string | null {
+  if (slots.length === 0) return null;
+  // Prefer the first slot whose family is compatible (exact match or "any").
+  const match = slots.find((s) => s.family === columnFamily || s.family === "any");
+  return (match ?? slots[0]).name;
 }
 
 export function TagBadge({ label, color }: { label: string; color?: string }) {

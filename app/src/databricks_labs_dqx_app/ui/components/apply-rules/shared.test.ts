@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { AppliedRuleOut, RegistryRuleOut } from "@/lib/api";
-import { buildDesiredApplications, computeRunGating, mergeColumnThresholds, newStagedRow } from "./shared";
+import type { AppliedRuleOut, RegistryRuleOut, RuleSlot } from "@/lib/api";
+import { buildDesiredApplications, computeRunGating, mergeColumnThresholds, newStagedRow, pickSlotForColumn } from "./shared";
 
 // Minimal RegistryRuleOut for newStagedRow — only rule_id, version, and
 // user_metadata (reserved name/dimension/severity tags) are read.
@@ -148,6 +148,44 @@ describe("buildDesiredApplications column_pass_thresholds", () => {
     ];
     const payload = buildDesiredApplications(rows);
     expect(payload[0]?.column_pass_thresholds).toEqual({ col: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pickSlotForColumn
+// ---------------------------------------------------------------------------
+
+function fakeSlot(name: string, family: RuleSlot["family"]): RuleSlot {
+  return { name, family, position: 0 } as RuleSlot;
+}
+
+describe("pickSlotForColumn", () => {
+  test("returns null when slots is empty", () => {
+    expect(pickSlotForColumn([], "numeric")).toBeNull();
+  });
+
+  test("returns the first slot when only one slot exists (any family)", () => {
+    expect(pickSlotForColumn([fakeSlot("col", "any")], "numeric")).toBe("col");
+  });
+
+  test("prefers slot whose family matches the column family", () => {
+    const slots = [fakeSlot("col1", "text"), fakeSlot("col2", "numeric")];
+    expect(pickSlotForColumn(slots, "numeric")).toBe("col2");
+  });
+
+  test("treats 'any' family slot as compatible with any column family", () => {
+    const slots = [fakeSlot("col1", "text"), fakeSlot("col2", "any")];
+    expect(pickSlotForColumn(slots, "numeric")).toBe("col2");
+  });
+
+  test("falls back to first slot when no slot matches", () => {
+    const slots = [fakeSlot("col1", "text"), fakeSlot("col2", "temporal")];
+    expect(pickSlotForColumn(slots, "numeric")).toBe("col1");
+  });
+
+  test("match wins over first-slot fallback when match is not first", () => {
+    const slots = [fakeSlot("col1", "temporal"), fakeSlot("col2", "boolean"), fakeSlot("col3", "numeric")];
+    expect(pickSlotForColumn(slots, "numeric")).toBe("col3");
   });
 });
 

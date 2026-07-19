@@ -2240,15 +2240,24 @@ function ApplyRulesTab({
   };
 
   // Every add path (AddRulesDialog, AiSuggestionDialog) hands up a batch of
-  // brand-new locally-staged rows — append them and jump straight to their
-  // mapping UI in the by-rule lens, mirroring the old "auto-expand after
-  // apply" behaviour but with zero network round-trips.
+  // brand-new locally-staged rows. When the add came from a column CTA
+  // (addColumnContext is non-null), stay in the by-column lens and expand
+  // the target column so the newly-mapped rule appears inline; otherwise
+  // jump to the by-rule lens and auto-expand the new rule cards for mapping.
   const stageNewRows = (rows: AppliedRuleOut[]) => {
     setStagedRows((prev) => [...prev, ...rows]);
     setFilter("all");
     setSearch("");
-    setLens("by-rule");
-    setExpandRuleIds(rows.map((r) => r.rule_id));
+    if (addColumnContext) {
+      // Origin was a column CTA — stay in by-column and show the column.
+      setLens("by-column");
+      setOpenColumnName(addColumnContext.name);
+    } else {
+      // Origin was the header "+ Add rule" button or AI suggestion — go to
+      // by-rule and auto-expand the newly-staged cards for mapping.
+      setLens("by-rule");
+      setExpandRuleIds(rows.map((r) => r.rule_id));
+    }
   };
 
   const confirmRemove = () => {
@@ -2601,6 +2610,7 @@ function ApplyRulesTab({
           ruleSlotTagsById={ruleSlotTagsById.size > 0 ? ruleSlotTagsById : undefined}
           adminDefault={adminDefaultThreshold}
           onColumnThresholdChange={handleColumnThresholdChange}
+          thresholdEnabled={thresholdEnabled}
           onJumpToRule={(ruleId) => {
             setFilter("all");
             setSearch("");

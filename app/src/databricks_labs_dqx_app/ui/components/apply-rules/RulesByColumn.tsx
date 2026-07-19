@@ -78,6 +78,9 @@ interface RulesByColumnProps {
   /** Called when the user edits a per-column threshold in the pill popover.
    *  `value === null` means "clear the override" (revert to rule default). */
   onColumnThresholdChange?: (ruleId: string, column: string, value: number | null) => void;
+  /** Whether the pass-threshold feature is enabled. When false, per-column
+   *  threshold pills are hidden. Defaults to true (fail-open). */
+  thresholdEnabled?: boolean;
 }
 
 function useRulesByColumn(
@@ -173,9 +176,10 @@ interface ColumnCardProps {
   onAddRule?: (column: ColumnRef) => void;
   onJumpToRule?: (ruleId: string) => void;
   onColumnThresholdChange?: (ruleId: string, column: string, value: number | null) => void;
+  thresholdEnabled?: boolean;
 }
 
-function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddRule, onJumpToRule, onColumnThresholdChange }: ColumnCardProps) {
+function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddRule, onJumpToRule, onColumnThresholdChange, thresholdEnabled = true }: ColumnCardProps) {
   const { t } = useTranslation();
   return (
     <div id={`column-card-${column.name}`} className="rounded-lg border bg-card text-card-foreground">
@@ -225,37 +229,44 @@ function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddR
                   )}
                 />
                 <span className="text-sm font-medium truncate flex-1">{entry.ruleName}</span>
-                {entry.matchedTags.length > 0 && (
-                  <span className="flex items-center gap-1 shrink-0">
-                    {entry.matchedTags.map((tag) => (
-                      <Badge
-                        key={tag}
-                        variant="secondary"
-                        className="text-[10px] font-mono px-1.5 py-0 h-auto opacity-75"
-                      >
-                        {tag}
-                      </Badge>
-                    ))}
-                  </span>
-                )}
-                {/* Per-column threshold pill — stopPropagation so clicking
-                    the pill/popover doesn't trigger the row's onJumpToRule.
-                    Mirror how SeverityDropdown stops propagation in
-                    RuleConfigCard. */}
-                <span
-                  onClick={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
-                  className="shrink-0"
-                >
-                  <ThresholdPill
-                    value={entry.columnThreshold}
-                    effectiveDefault={entry.effectiveDefault}
-                    onChange={(v) => onColumnThresholdChange?.(entry.ruleId, column.name, v)}
-                    readonly={!canEdit}
-                    hintOverride={t("monitoredTables.columnThresholdPopoverHint", { pct: entry.effectiveDefault })}
-                  />
+                {/* Trailing group: tags + pill + slot — ml-auto pushes the
+                    whole group to the right edge so pills line up across
+                    all rows regardless of name length. */}
+                <span className="flex items-center gap-1.5 shrink-0 ml-auto">
+                  {entry.matchedTags.length > 0 && (
+                    <span className="flex items-center gap-1">
+                      {entry.matchedTags.map((tag) => (
+                        <Badge
+                          key={tag}
+                          variant="secondary"
+                          className="text-[10px] font-mono px-1.5 py-0 h-auto opacity-75"
+                        >
+                          {tag}
+                        </Badge>
+                      ))}
+                    </span>
+                  )}
+                  {/* Per-column threshold pill — stopPropagation so clicking
+                      the pill/popover doesn't trigger the row's onJumpToRule.
+                      Mirror how SeverityDropdown stops propagation in
+                      RuleConfigCard. Hidden when the threshold feature is
+                      disabled. */}
+                  {thresholdEnabled && (
+                    <span
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <ThresholdPill
+                        value={entry.columnThreshold}
+                        effectiveDefault={entry.effectiveDefault}
+                        onChange={(v) => onColumnThresholdChange?.(entry.ruleId, column.name, v)}
+                        readonly={!canEdit}
+                        hintOverride={t("monitoredTables.columnThresholdPopoverHint", { pct: entry.effectiveDefault })}
+                      />
+                    </span>
+                  )}
+                  <span className="font-mono text-xs text-muted-foreground">{`{{${entry.slot}}}`}</span>
                 </span>
-                <span className="font-mono text-xs text-muted-foreground shrink-0">{`{{${entry.slot}}}`}</span>
               </button>
             ))}
 
@@ -292,6 +303,7 @@ export function RulesByColumn({
   ruleSlotTagsById,
   adminDefault,
   onColumnThresholdChange,
+  thresholdEnabled = true,
 }: RulesByColumnProps) {
   const { t } = useTranslation();
   const rulesByColumn = useRulesByColumn(appliedRules, columnTags, ruleSlotTagsById, adminDefault);
@@ -384,6 +396,7 @@ export function RulesByColumn({
             onAddRule={onAddRule}
             onJumpToRule={onJumpToRule}
             onColumnThresholdChange={onColumnThresholdChange}
+            thresholdEnabled={thresholdEnabled}
           />
         );
       })}

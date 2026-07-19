@@ -30,7 +30,7 @@ import type { LabelDefinition } from "@/lib/api-custom";
 import { useDefaultAutoUpgrade } from "@/hooks/use-default-auto-upgrade";
 import { RulesPicker } from "./RulesPicker";
 import type { ColumnRef } from "./RulesByColumn";
-import { newStagedRow } from "./shared";
+import { newStagedRow, pickSlotForColumn } from "./shared";
 
 interface AddRulesDialogProps {
   open: boolean;
@@ -111,12 +111,22 @@ export function AddRulesDialog({
   const handleAdd = () => {
     if (selectedRules.length === 0) return;
     const rows = selectedRules.map((rule) => {
-      const hasSlots = (rule.definition.slots ?? []).length > 0;
-      // Rules with no slots need no mapping and are staged immediately
-      // complete with a single empty mapping group. Slotted rules are
-      // staged with an empty column_mapping so the by-rule card can
-      // complete the mapping afterward.
-      const columnMapping = hasSlots ? [] : [{}];
+      const slots = rule.definition.slots ?? [];
+      const hasSlots = slots.length > 0;
+      // When the dialog was opened from a column CTA and the rule has slots,
+      // pre-map the target column into the best matching slot so the rule
+      // appears under that column in the by-column lens immediately. For
+      // non-slotted rules keep the single empty mapping group (no column
+      // argument needed). When there is no initialColumn context, slotted
+      // rules are staged with an empty column_mapping for the by-rule card
+      // to complete.
+      let columnMapping: Record<string, string>[];
+      if (hasSlots && initialColumn) {
+        const slotName = pickSlotForColumn(slots, initialColumn.family);
+        columnMapping = slotName ? [{ [slotName]: initialColumn.name }] : [];
+      } else {
+        columnMapping = hasSlots ? [] : [{}];
+      }
       return newStagedRow(bindingId, rule, columnMapping, defaultAutoUpgrade);
     });
     onAdd(rows);
