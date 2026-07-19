@@ -1,18 +1,17 @@
 // ThresholdPill — a reusable ⚠ <pct>% pill that opens a popover with a
-// number input + "Use default" button. Mirrors the SeverityDropdown badge-
-// trigger pattern in RuleConfigCard.tsx so both controls look identical.
+// number input. Mirrors the SeverityDropdown badge-trigger pattern in
+// RuleConfigCard.tsx so both controls look identical.
 //
 // Props:
 //   value           — current per-rule/per-column override (null = no override)
-//   effectiveDefault — resolved default to show as placeholder when value is null
-//   onChange         — called with the new value (null = clear override)
+//   effectiveDefault — resolved default to display when value is null
+//   onChange         — called with the new value (number, always non-null)
 //   readonly        — when true renders a non-interactive badge
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -26,11 +25,9 @@ export interface ThresholdPillProps {
   readonly?: boolean;
   /** Override the popover hint text (defaults to the per-rule i18n string). */
   hintOverride?: string;
-  /** Override the "reset to default" button label (defaults to per-rule label). */
-  resetLabelOverride?: string;
 }
 
-export function ThresholdPill({ value, effectiveDefault, onChange, readonly = false, hintOverride, resetLabelOverride }: ThresholdPillProps) {
+export function ThresholdPill({ value, effectiveDefault, onChange, readonly = false, hintOverride }: ThresholdPillProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   // Local draft string so the input stays editable without forcing an int on
@@ -62,14 +59,11 @@ export function ThresholdPill({ value, effectiveDefault, onChange, readonly = fa
 
   const commitDraft = (raw: string) => {
     const trimmed = raw.trim();
-    if (trimmed === "") {
-      onChange(null);
-      return;
-    }
     const n = Number.parseInt(trimmed, 10);
     if (!Number.isNaN(n)) {
       onChange(Math.max(0, Math.min(100, n)));
     }
+    // empty or non-numeric → no-op, retain current value
   };
 
   return (
@@ -78,7 +72,7 @@ export function ThresholdPill({ value, effectiveDefault, onChange, readonly = fa
       onOpenChange={(nextOpen) => {
         if (nextOpen) {
           // Seed the draft from the current value when opening
-          setDraft(value !== null ? String(value) : "");
+          setDraft(String(value ?? effectiveDefault));
         }
         setOpen(nextOpen);
       }}
@@ -122,7 +116,7 @@ export function ThresholdPill({ value, effectiveDefault, onChange, readonly = fa
           onChange={(e) => setDraft(e.target.value)}
           onBlur={(e) => {
             commitDraft(e.target.value);
-            setDraft(value !== null ? String(value) : "");
+            setDraft(String(value ?? effectiveDefault));
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -134,17 +128,6 @@ export function ThresholdPill({ value, effectiveDefault, onChange, readonly = fa
             }
           }}
         />
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full text-xs"
-          onClick={() => {
-            onChange(null);
-            setOpen(false);
-          }}
-        >
-          {resetLabelOverride ?? t("monitoredTables.thresholdResetToDefault")}
-        </Button>
       </PopoverContent>
     </Popover>
   );

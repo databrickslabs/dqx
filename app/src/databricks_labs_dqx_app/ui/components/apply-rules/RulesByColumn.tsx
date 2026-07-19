@@ -253,7 +253,6 @@ function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddR
                     onChange={(v) => onColumnThresholdChange?.(entry.ruleId, column.name, v)}
                     readonly={!canEdit}
                     hintOverride={t("monitoredTables.columnThresholdPopoverHint", { pct: entry.effectiveDefault })}
-                    resetLabelOverride={t("monitoredTables.columnThresholdResetToDefault")}
                   />
                 </span>
                 <span className="font-mono text-xs text-muted-foreground shrink-0">{`{{${entry.slot}}}`}</span>
