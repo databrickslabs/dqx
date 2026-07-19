@@ -155,6 +155,8 @@ import {
 } from "@/lib/registry-rule-conversion";
 import { RegistryRuleFormJsonDialog } from "@/components/registry-rules/RegistryRuleFormJsonDialog";
 import { SqlAiAssistMenu } from "@/components/rules/SqlAiAssistMenu";
+import { useDefaultPassThreshold } from "@/hooks/use-default-pass-threshold";
+import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
@@ -1812,6 +1814,10 @@ export function RegistryRuleFormDialog({
     [onJsonDialogOpenChange],
   );
 
+  // Pass-threshold feature flag + workspace default (for monospace placeholder).
+  const thresholdEnabled = usePassThresholdEnabled();
+  const defaultThreshold = useDefaultPassThreshold();
+
   // AI — Build-with-AI (full-form generate) + per-field suggest.
   const aiAvailability = useAiAvailability();
   const [aiDescription, setAiDescription] = useState("");
@@ -2909,40 +2915,6 @@ export function RegistryRuleFormDialog({
         </div>
       </div>
 
-      <AdvancedDisclosure
-        label={t("rulesRegistry.advancedSectionLabel")}
-        defaultOpen={passThreshold !== null}
-      >
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-1.5">
-            <Label className="text-xs">{t("rulesRegistry.defaultPassThresholdLabel")}</Label>
-            <HelpTooltip text={t("rulesRegistry.defaultPassThresholdHint")} />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Input
-              type="number"
-              min={0}
-              max={100}
-              step={1}
-              className="h-8 w-28 text-xs"
-              placeholder={t("rulesRegistry.defaultPassThresholdPlaceholder")}
-              disabled={readOnly}
-              value={passThreshold ?? ""}
-              onChange={(e) => {
-                const raw = e.target.value;
-                if (raw === "") {
-                  setPassThreshold(null);
-                } else {
-                  const n = parseInt(raw, 10);
-                  if (Number.isFinite(n)) setPassThreshold(Math.max(0, Math.min(100, n)));
-                }
-              }}
-            />
-            <span className="text-xs text-muted-foreground">%</span>
-          </div>
-        </div>
-      </AdvancedDisclosure>
-
       <LabelsEditor
         value={tags}
         onChange={setTags}
@@ -3711,6 +3683,41 @@ export function RegistryRuleFormDialog({
             <PredicatePolaritySwitch value={polarity} onChange={setPolarity} disabled={readOnly} />
           </div>
         </div>
+      )}
+      {thresholdEnabled && (
+        <AdvancedDisclosure
+          label={t("rulesRegistry.advancedSectionLabel")}
+          defaultOpen={passThreshold !== null}
+        >
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <Label className="text-xs">{t("rulesRegistry.defaultPassThresholdLabel")}</Label>
+              <HelpTooltip text={t("rulesRegistry.defaultPassThresholdHint")} />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                className="h-8 w-28 text-xs font-mono"
+                placeholder={String(defaultThreshold)}
+                disabled={readOnly}
+                value={passThreshold ?? ""}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === "") {
+                    setPassThreshold(null);
+                  } else {
+                    const n = parseInt(raw, 10);
+                    if (Number.isFinite(n)) setPassThreshold(Math.max(0, Math.min(100, n)));
+                  }
+                }}
+              />
+              <span className="text-xs text-muted-foreground">%</span>
+            </div>
+          </div>
+        </AdvancedDisclosure>
       )}
     </div>
   );

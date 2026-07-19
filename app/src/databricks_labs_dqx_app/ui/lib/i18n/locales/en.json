@@ -1606,7 +1606,6 @@
     "selectSeverity": "Select a severity…",
     "defaultPassThresholdLabel": "Default pass threshold",
     "defaultPassThresholdHint": "Optional. Checks from this rule warn when fewer than this % of rows pass, unless overridden when applied. Leave blank to use the workspace default.",
-    "defaultPassThresholdPlaceholder": "Workspace default",
     "tagsLabel": "Tags",
     "saveDraft": "Save as draft",
     "saveAndSubmit": "Save & submit",

@@ -1606,7 +1606,6 @@
     "selectSeverity": "Selecione uma severidade…",
     "defaultPassThresholdLabel": "Limite de aprovação padrão",
     "defaultPassThresholdHint": "Opcional. Verificações desta regra emitem alertas quando menos do que essa % de linhas passa, exceto se sobrescrito ao aplicar. Deixe em branco para usar o padrão do workspace.",
-    "defaultPassThresholdPlaceholder": "Padrão do workspace",
     "tagsLabel": "Tags",
     "saveDraft": "Salvar como rascunho",
     "saveAndSubmit": "Salvar e enviar",

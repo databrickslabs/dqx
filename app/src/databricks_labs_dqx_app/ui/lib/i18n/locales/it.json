@@ -1606,7 +1606,6 @@
     "selectSeverity": "Seleziona una gravità…",
     "defaultPassThresholdLabel": "Soglia di superamento predefinita",
     "defaultPassThresholdHint": "Facoltativo. Le verifiche di questa regola emettono avvisi quando meno di questa % di righe supera il controllo, salvo override all'applicazione. Lascia vuoto per usare il valore predefinito del workspace.",
-    "defaultPassThresholdPlaceholder": "Predefinito del workspace",
     "tagsLabel": "Tag",
     "saveDraft": "Salva come bozza",
     "saveAndSubmit": "Salva e invia",
