@@ -358,7 +358,7 @@ def test_profiler_non_default_profile_options(spark, ws):
             column='t1',
             description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
             parameters=None,
-            filter=None,
+            filter="t1 > 0",
         ),
         DQProfile(
             name="is_not_empty",  # Column t2 contains null values
