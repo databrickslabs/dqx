@@ -796,7 +796,9 @@ def make_has_no_outliers_profile(
     outliers_count = df.filter(outside_bounds_expr).count()
 
     outliers_ratio = float(outliers_count) / total_non_null_count
-    outliers_ratio_threshold = profiler_options[PROFILE_OPTION_OUTLIERS_RATIO]
+    outliers_ratio_threshold = profiler_options.get(
+        PROFILE_OPTION_OUTLIERS_RATIO, DEFAULT_PROFILE_OPTIONS[PROFILE_OPTION_OUTLIERS_RATIO]
+    )
 
     safe_column_name = column_name.replace("\n", " ").replace("\r", " ")
     if outliers_ratio < outliers_ratio_threshold:
