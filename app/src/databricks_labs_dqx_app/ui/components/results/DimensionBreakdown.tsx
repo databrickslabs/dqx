@@ -133,6 +133,7 @@ export function DimensionBreakdown({
   pageSize,
   rowLink,
   renderLabel,
+  breachEnabled = true,
 }: {
   title: string;
   rows: Array<BreakdownRow>;
@@ -185,6 +186,9 @@ export function DimensionBreakdown({
    *  back to it. The returned node MUST stopPropagation on click so the name
    *  navigates while a click elsewhere on the row still toggles the facet. */
   renderLabel?: (label: string, value: string | null) => React.ReactNode;
+  /** When false, breach warning icons are hidden (pass-threshold feature is
+   *  disabled globally). Defaults to true (fail-open). */
+  breachEnabled?: boolean;
 }) {
   const { t } = useTranslation();
   const [sort, setSort] = useState<SortState>(null);
@@ -348,7 +352,7 @@ export function DimensionBreakdown({
                           {renderLabel?.(r.label, facetValue) ?? (
                             <TruncatedText text={r.label} className="min-w-0" />
                           )}
-                          {r.breached && (
+                          {breachEnabled && r.breached && (
                             <BreachIcon criticality={r.breach_criticality} />
                           )}
                           {rowLink?.(r.label)}

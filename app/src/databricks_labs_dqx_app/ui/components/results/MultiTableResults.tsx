@@ -46,6 +46,7 @@ import {
   type Facet,
   type MultiFilters,
 } from "@/components/monitored-tables/BindingResultsTab";
+import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 
 // The multi-table results composition, extracted from the reviewed
 // `components/data-products/ProductResultsTab.tsx` (itself a 1:1 port of
@@ -315,6 +316,10 @@ export function MultiTableResultsSection({
   asOfBatch,
 }: MultiTableResultsSectionProps) {
   const { t } = useTranslation();
+  // Belt-and-suspenders: the backend returns no breaches when the feature is
+  // disabled (Task 2), but we also hide all breach UI client-side to avoid
+  // any stale-cache flash when the setting was recently changed.
+  const thresholdEnabled = usePassThresholdEnabled();
   // Published-only surfaces (hideRunMode) never send `include_drafts`,
   // regardless of the controlled prop — the dropdown that would flip it is
   // suppressed, so this just hard-guards the query params too.
@@ -612,12 +617,15 @@ export function MultiTableResultsSection({
   // Breach markers for the overall trend chart: one entry per breaching point
   // on the entity-level `trend` (the overall average). Null/non-"error"/"warn"
   // criticalities are filtered out so only real breaches render a marker.
-  const overallBreachMarkers = (trends?.trend ?? []).flatMap((p) => {
-    if (!p.breached) return [];
-    const crit = p.breach_criticality;
-    if (crit !== "error" && crit !== "warn") return [];
-    return [{ run_date: String(p.run_date ?? ""), criticality: crit as "error" | "warn" }];
-  });
+  // Suppressed entirely when the pass-threshold feature is disabled.
+  const overallBreachMarkers = thresholdEnabled
+    ? (trends?.trend ?? []).flatMap((p) => {
+        if (!p.breached) return [];
+        const crit = p.breach_criticality;
+        if (crit !== "error" && crit !== "warn") return [];
+        return [{ run_date: String(p.run_date ?? ""), criticality: crit as "error" | "warn" }];
+      })
+    : [];
 
   // Series keys are the ENGLISH canonical names — the chart's ordering/legend
   // logic pins on ["Rules","Checks","Tests","Rows"]; do not translate them here.
@@ -780,6 +788,7 @@ export function MultiTableResultsSection({
               colorMap={dimColors}
               selected={filters.dimension}
               onSelect={(label) => onRowToggle("dimension", label)}
+              breachEnabled={thresholdEnabled}
             />
             <DimensionBreakdown
               title={t("resultsUi.bySeverityTitle")}
@@ -790,6 +799,7 @@ export function MultiTableResultsSection({
               colorMap={sevColors}
               selected={filters.severity}
               onSelect={(label) => onRowToggle("severity", label)}
+              breachEnabled={thresholdEnabled}
             />
             {!hideRuleBreakdown && (
               <div className="md:col-span-2" data-testid="breakdown-by-rule">
@@ -807,6 +817,7 @@ export function MultiTableResultsSection({
                   collapsed={!ruleColOpen}
                   onToggleCollapse={() => setRuleColOpen((o) => !o)}
                   pageSize={8}
+                  breachEnabled={thresholdEnabled}
                   // The rule NAME navigates to that registry rule's detail
                   // (only for rows with a genuine registry rule_id); clicking
                   // elsewhere on the row still toggles the rule facet — the
@@ -843,6 +854,7 @@ export function MultiTableResultsSection({
                 selected={selectedTable ? [selectedTable] : []}
                 onSelect={onTableSelect}
                 pageSize={8}
+                breachEnabled={thresholdEnabled}
                 // The table NAME navigates to that monitored table's Results
                 // tab (rows with a binding); clicking elsewhere on the row
                 // still drives the invalid-samples selection / table facet —
@@ -882,6 +894,7 @@ export function MultiTableResultsSection({
                 onSelect={(label) => onRowToggle("column", label)}
                 collapsed={!ruleColOpen}
                 onToggleCollapse={() => setRuleColOpen((o) => !o)}
+                breachEnabled={thresholdEnabled}
               />
             </div>
           </div>

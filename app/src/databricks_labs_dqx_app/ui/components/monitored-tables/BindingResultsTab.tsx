@@ -24,6 +24,7 @@ import {
 } from "@/lib/api";
 import selector from "@/lib/selector";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
+import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 import { GenieChatProvider } from "@/components/results/AskGenieButton";
 import { ScoreBox } from "@/components/results/ScoreBox";
 import { RunPicker } from "@/components/results/RunPicker";
@@ -362,6 +363,7 @@ function ResultsBody({
   runInProgress?: boolean;
 }) {
   const { t } = useTranslation();
+  const thresholdEnabled = usePassThresholdEnabled();
   const [filters, setFilters] = useState<MultiFilters>(EMPTY_FILTERS);
   // Run mode: "Published only" (default) or "Published + Draft". Per-surface
   // state — every dq-results query on THIS tab gets `include_drafts` from it
@@ -723,6 +725,7 @@ function ResultsBody({
             runs={runs}
             value={filters.runId ?? null}
             onChange={(id) => setFilters((f) => ({ ...f, runId: id }))}
+            breachEnabled={thresholdEnabled}
           />
         </div>
         <div className="sm:pr-2">
@@ -832,6 +835,7 @@ function ResultsBody({
               colorMap={dimColors}
               selected={filters.dimension}
               onSelect={(label) => onRowToggle("dimension", label)}
+              breachEnabled={thresholdEnabled}
             />
             <DimensionBreakdown
               title={t("resultsUi.bySeverityTitle")}
@@ -842,6 +846,7 @@ function ResultsBody({
               colorMap={sevColors}
               selected={filters.severity}
               onSelect={(label) => onRowToggle("severity", label)}
+              breachEnabled={thresholdEnabled}
             />
             <DimensionBreakdown
               title={t("resultsUi.byRuleTitle")}
@@ -857,6 +862,7 @@ function ResultsBody({
               collapsed={!ruleColOpen}
               onToggleCollapse={() => setRuleColOpen((o) => !o)}
               pageSize={8}
+              breachEnabled={thresholdEnabled}
               headerRight={
                 <FacetSearch
                   label={t("resultsUi.facetRule")}
@@ -876,6 +882,7 @@ function ResultsBody({
               onSelect={(label) => onRowToggle("column", label)}
               collapsed={!ruleColOpen}
               onToggleCollapse={() => setRuleColOpen((o) => !o)}
+              breachEnabled={thresholdEnabled}
               headerRight={
                 <FacetSearch
                   label={t("resultsUi.facetColumn")}

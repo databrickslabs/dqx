@@ -74,10 +74,14 @@ export function RunPicker({
   runs,
   value,
   onChange,
+  breachEnabled = true,
 }: {
   runs: Run[];
   value: string | null;
   onChange: (runId: string | null) => void;
+  /** When false, breach warning icons are hidden (pass-threshold feature is
+   *  disabled globally). Defaults to true (fail-open). */
+  breachEnabled?: boolean;
 }) {
   const { t } = useTranslation();
   const draftMarker = t("resultsUi.draftRunMarker");
@@ -117,7 +121,7 @@ export function RunPicker({
                 className={cn("font-mono text-xs gap-1.5", isSelected && "bg-muted")}
               >
                 <span className="flex-1">{formatRun(run, draftMarker)}</span>
-                {run.breached && (
+                {breachEnabled && run.breached && (
                   <BreachIcon criticality={run.breach_criticality} />
                 )}
               </DropdownMenuItem>
