@@ -842,6 +842,28 @@ class AppSettingsService:
         return clamped
 
     # ------------------------------------------------------------------
+    # Pass-threshold feature toggle — master switch. When False, the UI
+    # hides all threshold controls and the materializer emits no threshold
+    # metadata; breach evaluation is also disabled server-side.
+    # ------------------------------------------------------------------
+
+    _PASS_THRESHOLD_ENABLED_KEY = "pass_threshold_enabled"
+
+    def get_pass_threshold_enabled(self) -> bool:
+        """Master switch for the pass-threshold feature (default ON).
+
+        Returns *True* when the setting has never been persisted (``raw is
+        None``) so the feature is enabled by default across all deployments.
+        """
+        raw = self.get_setting(self._PASS_THRESHOLD_ENABLED_KEY)
+        return raw is None or raw.strip().lower() == "true"
+
+    def save_pass_threshold_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the pass-threshold feature toggle. Returns the saved value."""
+        self.save_setting(self._PASS_THRESHOLD_ENABLED_KEY, "true" if enabled else "false", user_email=user_email)
+        return enabled
+
+    # ------------------------------------------------------------------
     # Vector Search / embeddings settings — Rules Registry Phase 4B/4C,
     # auto-derived since Phase 8B. The admin UI only exposes the AI
     # enable toggle + serving-endpoint dropdown; the rule-mapping

@@ -3229,6 +3229,10 @@ export type RulesRegistrySettingsInDefaultAutoUpgrade = boolean | null;
 
 export type RulesRegistrySettingsInTagAutoApply = boolean | null;
 
+export type RulesRegistrySettingsInDefaultPassThreshold = number | null;
+
+export type RulesRegistrySettingsInPassThresholdEnabled = boolean | null;
+
 /**
  * Update payload — omitted fields are left unchanged.
  */
@@ -3236,6 +3240,8 @@ export interface RulesRegistrySettingsIn {
   auto_upgrade_without_approval?: RulesRegistrySettingsInAutoUpgradeWithoutApproval;
   default_auto_upgrade?: RulesRegistrySettingsInDefaultAutoUpgrade;
   tag_auto_apply?: RulesRegistrySettingsInTagAutoApply;
+  default_pass_threshold?: RulesRegistrySettingsInDefaultPassThreshold;
+  pass_threshold_enabled?: RulesRegistrySettingsInPassThresholdEnabled;
 }
 
 /**
@@ -3248,6 +3254,10 @@ export interface RulesRegistrySettingsOut {
   default_auto_upgrade: boolean;
   /** Tag-mapping apply behaviour: eagerly auto-attach tag-mapped rules across monitored tables (True) vs. only surface them as suggestions (False, default). */
   tag_auto_apply: boolean;
+  /** Org-wide default minimum pass rate (%) below which a check warns. Overridable per rule and per column. Clamped to [0, 100]. */
+  default_pass_threshold: number;
+  /** Master switch for the pass-threshold feature. When False, all threshold UI is hidden and breach evaluation is disabled server-side. Default True. */
+  pass_threshold_enabled: boolean;
 }
 
 export type RunConfigInputConfig = InputConfig | null;
