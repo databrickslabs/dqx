@@ -24,6 +24,7 @@ from databricks.labs.dqx.check_funcs import (
     foreign_key,
     is_valid_ipv4_address,
     is_valid_email,
+    has_valid_string_case,
     is_ipv4_address_in_cidr,
     is_not_less_than,
     is_not_greater_than,
@@ -53,6 +54,35 @@ from databricks.labs.dqx.checks_serializer import (
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidParameterError
 
 SCHEMA = "a: int, b: int, c: int"
+
+
+def test_has_valid_string_case_rule_round_trip():
+    rule = DQRowRule(
+        criticality="warn",
+        check_func=has_valid_string_case,
+        column="a",
+        check_func_kwargs={"case": "lower"},
+    )
+    expected_metadata = [
+        {
+            "name": "a_has_invalid_lower_string_case",
+            "criticality": "warn",
+            "check": {
+                "function": "has_valid_string_case",
+                "arguments": {"column": "a", "case": "lower"},
+            },
+        }
+    ]
+
+    assert serialize_checks([rule]) == expected_metadata
+
+    deserialized_rules = deserialize_checks(expected_metadata)
+    assert len(deserialized_rules) == 1
+    deserialized_rule = deserialized_rules[0]
+    assert deserialized_rule.name == "a_has_invalid_lower_string_case"
+    assert deserialized_rule.check_func is has_valid_string_case
+    assert deserialized_rule.column == "a"
+    assert deserialized_rule.check_func_kwargs == {"case": "lower"}
 
 
 def test_get_for_each_rules():

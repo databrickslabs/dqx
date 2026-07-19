@@ -86,7 +86,7 @@ Full reference: <https://databrickslabs.github.io/dqx/docs/reference/quality_che
 
 ## Fallback: custom SQL
 
-**Search `check_funcs` first** — the built-ins cover null/empty, range, set membership, regex, referential, aggregate, uniqueness, schema, freshness, comparison, and outlier cases with typed error messages and tested edge handling. Drop down to SQL only when no built-in fits.
+**Search `check_funcs` first** - the built-ins cover null/empty, string case, range, set membership, regex, referential, aggregate, uniqueness, schema, freshness, comparison, and outlier cases with typed error messages and tested edge handling. Use `has_valid_string_case` for `upper`, `lower`, `title`, or `sentence` string-case validation. Drop down to SQL only when no built-in fits.
 
 - `sql_expression` — **row-level** SQL boolean expression. Use when one row's validity depends on its own columns.
 - `sql_query` — **dataset-level** SQL query against `{{ input_view }}`. Use for cross-row aggregates, joins to reference DataFrames, or anything needing `GROUP BY`. Queries are validated by `is_sql_query_safe()` — read-only `SELECT`, no DDL/DML.
