@@ -92,7 +92,6 @@ import {
   usePreviewTableData,
   useQueryTableData,
   useGetSampleQuestions,
-  useGetDefaultPassThreshold,
   getListTagSuggestionsQueryOptions,
   type AppliedRuleOut,
   type ColumnOut,
@@ -130,6 +129,7 @@ import { useMonitoredTableRunActivity } from "@/hooks/use-monitored-table-run-ac
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
+import { useDefaultPassThreshold } from "@/hooks/use-default-pass-threshold";
 import { formatDateShort } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
@@ -2117,8 +2117,10 @@ function ApplyRulesTab({
   // (rule_override ?? registry_default ?? admin_default) for the ThresholdPill
   // placeholder. A non-admin user won't have write access to this setting but
   // can always read it; the fallback (70) matches the compiled-in default.
-  const { data: defaultThresholdData } = useGetDefaultPassThreshold();
-  const adminDefaultThreshold = defaultThresholdData?.data?.default_pass_threshold ?? 70;
+  // Read the workspace default from the VIEWER+ rules-registry settings hook —
+  // NOT the ADMIN-only getDefaultPassThreshold endpoint, which 403s for
+  // RULE_AUTHOR/RULE_APPROVER editors and would make the pill show a stale 70.
+  const adminDefaultThreshold = useDefaultPassThreshold();
   // Feature gate — when disabled by admin, hide all threshold UI (pills).
   const thresholdEnabled = usePassThresholdEnabled();
 
