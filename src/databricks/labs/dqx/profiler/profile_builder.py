@@ -27,6 +27,7 @@ from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_HAS_NO_OUTLIERS,
     PROFILE_OPTION_HAS_NO_OUTLIERS_ALLOW_COLUMNS,
     PROFILE_OPTION_HAS_NO_OUTLIERS_DENY_COLUMNS,
+    DEFAULT_PROFILE_OPTIONS,
 )
 
 # Type alias for annotations; use TEXT_TYPES for isinstance() checks.

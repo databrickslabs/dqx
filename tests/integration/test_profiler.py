@@ -1966,6 +1966,13 @@ def test_profiler_with_pk_detection(spark, ws):
             description="Real min/max values were used",
             parameters={"max": 5, "min": 1},
         ),
+        DQProfile(
+            name='has_no_outliers',
+            column='order_id',
+            description='Column order_id has 0.0% of outliers (allowed: 1.0%). Lower boundary - -0.5, upper boundary - 6.5.',
+            parameters=None,
+            filter=None,
+        ),
         DQProfile(name="is_not_null", column="customer_id", description=None, parameters=None),
         DQProfile(
             name="min_max",
@@ -1973,12 +1980,26 @@ def test_profiler_with_pk_detection(spark, ws):
             description="Real min/max values were used",
             parameters={"max": 102, "min": 100},
         ),
+        DQProfile(
+            name='has_no_outliers',
+            column='customer_id',
+            description='Column customer_id has 0.0% of outliers (allowed: 1.0%). Lower boundary - 97.5, upper boundary - 104.5.',
+            parameters=None,
+            filter=None,
+        ),
         DQProfile(name="is_not_null", column="amount", description=None, parameters=None),
         DQProfile(
             name="min_max",
             column="amount",
             description="Real min/max values were used",
             parameters={"max": 90, "min": 45},
+        ),
+        DQProfile(
+            name='has_no_outliers',
+            column='amount',
+            description='Column amount has 0.0% of outliers (allowed: 1.0%). Lower boundary - 7.5, upper boundary - 112.5.',
+            parameters=None,
+            filter=None,
         ),
         DQProfile(name="is_not_null_or_empty", column="status", description=None, parameters={"trim_strings": True}),
         DQProfile(
