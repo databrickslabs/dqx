@@ -5,7 +5,9 @@
     "dqxOption": "YAML de DQX",
     "odcsOption": "Contrato de datos (ODCS)",
     "success": "Se exportó {{filename}}",
-    "failed": "Error al exportar."
+    "failed": "Error al exportar.",
+    "modalTitle": "Exportar",
+    "modalDescription": "Elige un formato para exportar."
   },
   "schedule": {
     "kindLabel": "Qué ejecuta esta programación",

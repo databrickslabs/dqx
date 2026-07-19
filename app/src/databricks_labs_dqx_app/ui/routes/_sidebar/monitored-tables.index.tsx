@@ -16,7 +16,7 @@ import {
 } from "@/components/monitored-tables/MonitoredTablesTable";
 import { compareSortValues } from "@/components/data-table/sort";
 import { AddMonitoredTableModal } from "@/components/monitored-tables/AddMonitoredTableModal";
-import { ExportYamlMenu } from "@/components/ExportYamlMenu";
+import { ExportDialog } from "@/components/ExportDialog";
 import { exportMonitoredTables } from "@/lib/api-custom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -255,6 +255,7 @@ function MonitoredTablesPage() {
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
   const [bulkRunOpen, setBulkRunOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   /** Binding IDs eligible for selection: the same gating as the row-level
    *  action bar — runnable (version > 0, canRunRules), approvable /
@@ -427,12 +428,19 @@ function MonitoredTablesPage() {
             {/* Export lives in the selection action bar (exports exactly the
                 ticked rows via the binding_id[] filter), mirroring the Rules
                 overview — not a per-row action. */}
-            <ExportYamlMenu
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1 h-7 text-xs"
+              onClick={() => setExportOpen(true)}
+            >
+              {t("exportYaml.button")}
+            </Button>
+            <ExportDialog
+              open={exportOpen}
+              onOpenChange={setExportOpen}
               fetchDqx={() => exportMonitoredTables({ format: "dqx", binding_id: [...selectedIds] })}
               fetchOdcs={() => exportMonitoredTables({ format: "odcs", binding_id: [...selectedIds] })}
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
             />
             <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto" onClick={() => setSelectedIds(new Set())}>
               {t("monitoredTables.clearSelection")}

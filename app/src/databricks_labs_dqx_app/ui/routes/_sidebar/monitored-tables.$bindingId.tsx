@@ -47,6 +47,7 @@ import {
   Clock,
   Columns3,
   Database,
+  Download,
   ExternalLink,
   GitCompare,
   History,
@@ -55,7 +56,6 @@ import {
   LineChart,
   Loader2,
   MoreVertical,
-  FileDown,
   Play,
   Plus,
   RefreshCw,
@@ -118,12 +118,11 @@ import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-inval
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import {
   exportMonitoredTable,
-  downloadExportFile,
   useLabelDefinitions,
   useListPendingApplications,
   useWorkspaceHost,
 } from "@/lib/api-custom";
-import type { ExportFormat } from "@/lib/api-custom";
+import { ExportDialog } from "@/components/ExportDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { isRunStale, useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
@@ -392,29 +391,10 @@ function MonitoredTableDetailPage() {
   const deleteMutation = useDeleteMonitoredTable();
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [exporting, setExporting] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   // View-changes diff dialog target — mirrors the overview row's GitCompare
   // action so the same review affordance is available on the detail banner.
   const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
-
-  // Export this table's checks as DQX or ODCS YAML from the ⋮ menu (moved off
-  // a standalone header button). Mirrors ExportYamlMenu's fetch→download→toast.
-  const handleExport = useCallback(
-    async (format: ExportFormat) => {
-      if (exporting) return;
-      setExporting(true);
-      try {
-        const res = await exportMonitoredTable(bindingId, format);
-        downloadExportFile(res.data);
-        toast.success(t("exportYaml.success", { filename: res.data.filename }));
-      } catch (err) {
-        toast.error(extractApiError(err, t("exportYaml.failed")));
-      } finally {
-        setExporting(false);
-      }
-    },
-    [exporting, bindingId, t],
-  );
   const persistStagedRows = useCallback(
     () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
     [saveMutation, bindingId, stagedRows],
@@ -673,20 +653,11 @@ function MonitoredTableDetailPage() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
-                  onClick={() => void handleExport("dqx")}
-                  disabled={exporting}
+                  onClick={() => setExportOpen(true)}
                   className="gap-2"
                 >
-                  <FileDown className="h-3.5 w-3.5" />
-                  {t("exportYaml.dqxOption")}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => void handleExport("odcs")}
-                  disabled={exporting}
-                  className="gap-2"
-                >
-                  <FileDown className="h-3.5 w-3.5" />
-                  {t("exportYaml.odcsOption")}
+                  <Download className="h-3.5 w-3.5" />
+                  {t("exportYaml.button")}…
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -710,6 +681,12 @@ function MonitoredTableDetailPage() {
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+            <ExportDialog
+              open={exportOpen}
+              onOpenChange={setExportOpen}
+              fetchDqx={() => exportMonitoredTable(bindingId, "dqx")}
+              fetchOdcs={() => exportMonitoredTable(bindingId, "odcs")}
+            />
           </div>
         </div>
 

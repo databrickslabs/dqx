@@ -15,7 +15,7 @@ import {
   type DataProductsTableSelection,
 } from "@/components/data-products/DataProductsTable";
 import { compareSortValues } from "@/components/data-table/sort";
-import { ExportYamlMenu } from "@/components/ExportYamlMenu";
+import { ExportDialog } from "@/components/ExportDialog";
 import { exportDataProducts } from "@/lib/api-custom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -234,6 +234,7 @@ function DataProductsPage() {
   const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   /** Product IDs eligible for selection — same gating as the row-level bar. */
   const selectableIds = useMemo(() => {
@@ -402,12 +403,19 @@ function DataProductsPage() {
             {/* Export lives in the selection action bar (exports exactly the
                 ticked rows via the product_id[] filter), mirroring the Rules
                 overview — not a per-row action. */}
-            <ExportYamlMenu
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1 h-7 text-xs"
+              onClick={() => setExportOpen(true)}
+            >
+              {t("exportYaml.button")}
+            </Button>
+            <ExportDialog
+              open={exportOpen}
+              onOpenChange={setExportOpen}
               fetchDqx={() => exportDataProducts({ format: "dqx", product_id: [...selectedIds] })}
               fetchOdcs={() => exportDataProducts({ format: "odcs", product_id: [...selectedIds] })}
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
             />
             <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto" onClick={() => setSelectedIds(new Set())}>
               {t("dataProducts.clearSelection")}

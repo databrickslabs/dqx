@@ -28,6 +28,7 @@ import {
   AlertCircle,
   Braces,
   CheckCircle2,
+  Download,
   Loader2,
   MessageSquare,
   MoreVertical,
@@ -50,7 +51,7 @@ import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
 import type { User as UserType } from "@/lib/api";
 import { useLabelDefinitions, exportRegistryRule } from "@/lib/api-custom";
-import { ExportYamlMenu } from "@/components/ExportYamlMenu";
+import { ExportDialog } from "@/components/ExportDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import {
@@ -132,6 +133,7 @@ function RegistryRuleDetailPage() {
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [applyModalOpen, setApplyModalOpen] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   // Read-only view / "save as new draft" clone dialog (rule isn't editable
   // in place — see `RegistryRuleJsonDialog`).
   const [jsonDialogOpen, setJsonDialogOpen] = useState(false);
@@ -306,7 +308,6 @@ function RegistryRuleDetailPage() {
   // is deep in its edit state); these route-owned controls just join them.
   const headerActions = (
     <>
-      <ExportYamlMenu fetchDqx={() => exportRegistryRule(ruleId)} className="h-8" />
       {canApproveReject && (
         <>
           <Button
@@ -374,6 +375,10 @@ function RegistryRuleDetailPage() {
                 {t("rulesRegistry.actionApplyToTables")}
               </DropdownMenuItem>
             )}
+            <DropdownMenuItem onClick={() => setExportOpen(true)} className="gap-2">
+              <Download className="h-3.5 w-3.5" />
+              {t("exportYaml.button")}…
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={handleOpenJsonDialog} className="gap-2">
               <Braces className="h-3.5 w-3.5" />
               {t("rulesRegistry.actionViewJson")}
@@ -395,6 +400,11 @@ function RegistryRuleDetailPage() {
           </DropdownMenuContent>
         </DropdownMenu>
       )}
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        fetchDqx={() => exportRegistryRule(ruleId)}
+      />
     </>
   );
 

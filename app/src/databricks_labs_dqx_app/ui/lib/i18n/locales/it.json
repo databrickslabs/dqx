@@ -5,7 +5,9 @@
     "dqxOption": "YAML DQX",
     "odcsOption": "Contratto dati (ODCS)",
     "success": "Esportato {{filename}}",
-    "failed": "Esportazione non riuscita."
+    "failed": "Esportazione non riuscita.",
+    "modalTitle": "Esporta",
+    "modalDescription": "Scegli un formato per l'esportazione."
   },
   "schedule": {
     "kindLabel": "Cosa esegue questa pianificazione",
