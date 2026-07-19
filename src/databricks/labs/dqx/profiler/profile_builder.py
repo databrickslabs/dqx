@@ -784,16 +784,16 @@ def make_has_no_outliers_profile(
         return None
 
     lower_bound, upper_bound = bounds
-    below_lower_bound_expr = F.col(column_name) < get_limit_expr(lower_bound)
-    above_upper_bound_expr = F.col(column_name) > get_limit_expr(upper_bound)
-    outside_bounds_expr = below_lower_bound_expr | above_upper_bound_expr
-    outliers_count = df.filter(outside_bounds_expr).count()
-
     if lower_bound == upper_bound:
         logger.info(
             f"MAD bounds are equal for column '{column_name}'. All values are equal in the distribution. Skipping profile generation."
         )
         return None
+
+    below_lower_bound_expr = F.col(column_name) < get_limit_expr(lower_bound)
+    above_upper_bound_expr = F.col(column_name) > get_limit_expr(upper_bound)
+    outside_bounds_expr = below_lower_bound_expr | above_upper_bound_expr
+    outliers_count = df.filter(outside_bounds_expr).count()
 
     outliers_ratio = float(outliers_count) / total_non_null_count
     outliers_ratio_threshold = profiler_options[PROFILE_OPTION_OUTLIERS_RATIO]
