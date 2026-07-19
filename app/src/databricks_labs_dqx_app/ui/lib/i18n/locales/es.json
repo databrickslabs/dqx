@@ -243,6 +243,10 @@
     "autoUpgradeWithoutApprovalHint": "Reaprueba automáticamente las reglas republicadas para las tablas que ya las siguen. Desactívalo para enviar los cambios a revisión. Las tablas fijadas nunca se ven afectadas.",
     "tagAutoApplyLabel": "Aplicar reglas automáticamente por etiqueta",
     "tagAutoApplyHint": "Cuando está activado, las reglas con asignaciones de etiquetas se aplican automáticamente a cada tabla monitorizada cuyas columnas tengan etiquetas de Unity Catalog coincidentes. Cuando está desactivado, las coincidencias de etiquetas se ofrecen como sugerencias.",
+    "rulesRegistryPassThresholdEnabledLabel": "Puertas de calidad por umbral de aprobación",
+    "rulesRegistryPassThresholdEnabledHint": "Cuando está activado, las verificaciones emiten advertencias cuando menos de un % definido de filas pasan. Desactívalo para ocultar todos los controles de umbral.",
+    "rulesRegistryDefaultPassThresholdLabel": "Umbral de aprobación predeterminado",
+    "rulesRegistryDefaultPassThresholdHint": "Las verificaciones emiten advertencias cuando menos de este % de filas pasan el control. Reemplazable por regla y por columna.",
     "rulesRegistrySettingsSaved": "Configuración del Registro de reglas guardada.",
     "rulesRegistrySettingsFailedSave": "Error al guardar la configuración del Registro de reglas.",
     "rulesRegistrySettingsAdminOnlyHint": "Solo los administradores pueden cambiar esta configuración.",
@@ -368,14 +372,7 @@
     "governedKeyError": "No se pudieron cargar las claves de etiqueta gobernadas.",
     "governedKeyEmpty": "No hay claves de etiqueta gobernadas disponibles.",
     "governedKeyValueCount_one": "{{count}} valor",
-    "governedKeyValueCount_other": "{{count}} valores",
-    "defaultPassThresholdTitle": "Umbral de aprobación predeterminado",
-    "defaultPassThresholdLabel": "Tasa mínima de aprobación",
-    "defaultPassThresholdHint": "Las verificaciones emiten advertencias cuando menos de este % de filas pasan el control. Reemplazable por regla y por columna.",
-    "defaultPassThresholdSaved": "Umbral de aprobación predeterminado guardado.",
-    "failedSaveDefaultPassThreshold": "Error al guardar el umbral de aprobación predeterminado.",
-    "defaultPassThresholdAdminOnlyHint": "Solo los administradores pueden cambiar esta configuración.",
-    "kwDefaultPassThreshold": "umbral aprobación advertencia calidad puerta"
+    "governedKeyValueCount_other": "{{count}} valores"
   },
   "discovery": {
     "breadcrumb": "Descubrimiento",

@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, AlertTriangle, CheckCircle2, Clock, Cpu, Database, ExternalLink, FlaskConical, Gauge, Globe, KeyRound, LineChart, Loader2, Lock, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, X, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Clock, Cpu, Database, ExternalLink, FlaskConical, Globe, KeyRound, LineChart, Loader2, Lock, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, X, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -78,9 +78,6 @@ import {
   useGetDraftRunSampleLimit,
   useSaveDraftRunSampleLimit,
   getGetDraftRunSampleLimitQueryKey,
-  useGetDefaultPassThreshold,
-  useSaveDefaultPassThreshold,
-  getGetDefaultPassThresholdQueryKey,
   useDeployDemoContent,
   useDemoContentStatus,
   getDemoContentStatusQueryKey,
@@ -1290,97 +1287,6 @@ function DraftRunSampleLimitSettings() {
   );
 }
 
-function DefaultPassThresholdSettings() {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const { data: resp, isLoading } = useGetDefaultPassThreshold();
-  const settings = resp?.data;
-  const saveMutation = useSaveDefaultPassThreshold();
-  const { data: role } = useCurrentUserRoleSuspense();
-  const isAdmin = role?.data?.role === "admin";
-
-  const [value, setValue] = useState(80);
-  const [hydrated, setHydrated] = useState(false);
-
-  useEffect(() => {
-    if (settings && !hydrated) {
-      setValue(settings.default_pass_threshold);
-      setHydrated(true);
-    }
-  }, [settings, hydrated]);
-
-  const handleSave = useCallback((v: number) => {
-    const clamped = Math.min(100, Math.max(0, Math.round(v)));
-    saveMutation.mutate(
-      { data: { default_pass_threshold: clamped } },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetDefaultPassThresholdQueryKey() });
-          toast.success(t("config.defaultPassThresholdSaved"));
-        },
-        onError: (err: unknown) => {
-          const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveDefaultPassThreshold"));
-        },
-      },
-    );
-  }, [saveMutation, queryClient, t]);
-
-  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    const parsed = parseInt(e.target.value, 10);
-    const clamped = isNaN(parsed) ? value : Math.min(100, Math.max(0, parsed));
-    setValue(clamped);
-    handleSave(clamped);
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const parsed = parseInt(e.target.value, 10);
-    if (!isNaN(parsed)) {
-      const clamped = Math.min(100, Math.max(0, parsed));
-      setValue(clamped);
-      handleSave(clamped);
-    }
-  };
-
-  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Gauge className="h-5 w-5" />
-          {t("config.defaultPassThresholdTitle")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center justify-between rounded-md border p-3">
-          <div className="space-y-0.5 pr-4">
-            <Label className="text-sm">{t("config.defaultPassThresholdLabel")}</Label>
-            <p className="text-xs text-muted-foreground">{t("config.defaultPassThresholdHint")}</p>
-          </div>
-          <div className="flex items-center gap-1 shrink-0">
-            <Input
-              type="number"
-              min={0}
-              max={100}
-              step={1}
-              value={value}
-              onChange={handleChange}
-              onBlur={handleBlur}
-              disabled={!isAdmin || saveMutation.isPending}
-              className="w-20 text-right"
-            />
-            <span className="text-sm text-muted-foreground">%</span>
-          </div>
-        </div>
-        {!isAdmin && (
-          <span className="text-xs text-muted-foreground">{t("config.defaultPassThresholdAdminOnlyHint")}</span>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Run review statuses — admin-managed catalogue surfaced as the per-run
 // review dropdown (Runs detail page) and as a filter on the Runs History
@@ -2084,6 +1990,17 @@ function RulesRegistrySettingsCard() {
 
   const settings = data?.data;
 
+  // Local state for the threshold number input — hydrate once from server data.
+  const [thresholdValue, setThresholdValue] = useState(70);
+  const [thresholdHydrated, setThresholdHydrated] = useState(false);
+
+  useEffect(() => {
+    if (settings && !thresholdHydrated) {
+      setThresholdValue(settings.default_pass_threshold);
+      setThresholdHydrated(true);
+    }
+  }, [settings, thresholdHydrated]);
+
   if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
 
   const save = (payload: RulesRegistrySettingsIn) => {
@@ -2100,6 +2017,22 @@ function RulesRegistrySettingsCard() {
         },
       },
     );
+  };
+
+  const handleThresholdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const parsed = parseInt(e.target.value, 10);
+    if (!isNaN(parsed)) {
+      const clamped = Math.min(100, Math.max(0, parsed));
+      setThresholdValue(clamped);
+      save({ default_pass_threshold: clamped });
+    }
+  };
+
+  const handleThresholdBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    const parsed = parseInt(e.target.value, 10);
+    const clamped = isNaN(parsed) ? thresholdValue : Math.min(100, Math.max(0, parsed));
+    setThresholdValue(clamped);
+    save({ default_pass_threshold: clamped });
   };
 
   return (
@@ -2147,6 +2080,45 @@ function RulesRegistrySettingsCard() {
             onCheckedChange={(checked) => save({ tag_auto_apply: checked })}
             disabled={!isAdmin || saveMutation.isPending}
           />
+        </div>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="pass-threshold-enabled" className="text-sm">
+              {t("config.rulesRegistryPassThresholdEnabledLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.rulesRegistryPassThresholdEnabledHint")}</p>
+          </div>
+          <Switch
+            id="pass-threshold-enabled"
+            checked={settings.pass_threshold_enabled}
+            onCheckedChange={(checked) => save({ pass_threshold_enabled: checked })}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="default-pass-threshold" className="text-sm">
+              {t("config.rulesRegistryDefaultPassThresholdLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.rulesRegistryDefaultPassThresholdHint")}</p>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <Input
+              id="default-pass-threshold"
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              value={thresholdValue}
+              onChange={handleThresholdChange}
+              onBlur={handleThresholdBlur}
+              disabled={!isAdmin || saveMutation.isPending || !settings.pass_threshold_enabled}
+              className="w-20 text-right"
+            />
+            <span className="text-sm text-muted-foreground">%</span>
+          </div>
         </div>
 
         {!isAdmin && (
@@ -3020,7 +2992,6 @@ function ConfigPage() {
       { id: "permissions", tab: "entitlements", title: t("config.permissionsDefaultInheritTitle"), keywords: t("config.kwPermissions"), render: () => <PermissionsSettingsCard /> },
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
       { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
-      { id: "default-pass-threshold", tab: "governance", title: t("config.defaultPassThresholdTitle"), keywords: t("config.kwDefaultPassThreshold"), render: () => <DefaultPassThresholdSettings /> },
       { id: "deployDemo", tab: "danger", title: t("config.demoTitle"), keywords: t("config.kwDemo"), render: () => <DeployDemoCard /> },
       { id: "resetDatabase", tab: "danger", title: t("config.resetDbTitle"), keywords: t("config.kwDanger"), render: () => <DangerZoneCard /> },
     ],

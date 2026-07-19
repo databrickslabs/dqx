@@ -243,6 +243,10 @@
     "autoUpgradeWithoutApprovalHint": "Riapprova automaticamente le regole ripubblicate per le tabelle che le seguono già. Disattiva per inviare le modifiche a revisione. Le tabelle fissate non sono mai interessate.",
     "tagAutoApplyLabel": "Applica automaticamente le regole per tag",
     "tagAutoApplyHint": "Se attivo, le regole con mappature di tag vengono applicate automaticamente a ogni tabella monitorata le cui colonne portano tag Unity Catalog corrispondenti. Se disattivo, le corrispondenze di tag vengono proposte come suggerimenti.",
+    "rulesRegistryPassThresholdEnabledLabel": "Gate di qualità con soglia di superamento",
+    "rulesRegistryPassThresholdEnabledHint": "Se attivo, i controlli emettono avvisi quando meno di una % definita di righe supera il controllo. Disattiva per nascondere tutti i controlli di soglia.",
+    "rulesRegistryDefaultPassThresholdLabel": "Soglia di superamento predefinita",
+    "rulesRegistryDefaultPassThresholdHint": "I controlli emettono avvisi quando meno di questa % di righe supera il controllo. Sovrascrivibile per regola e per colonna.",
     "rulesRegistrySettingsSaved": "Impostazioni del Registro regole salvate.",
     "rulesRegistrySettingsFailedSave": "Impossibile salvare le impostazioni del Registro regole.",
     "rulesRegistrySettingsAdminOnlyHint": "Solo gli amministratori possono modificare queste impostazioni.",
@@ -368,14 +372,7 @@
     "governedKeyError": "Impossibile caricare le chiavi di tag governate.",
     "governedKeyEmpty": "Nessuna chiave di tag governata disponibile.",
     "governedKeyValueCount_one": "{{count}} valore",
-    "governedKeyValueCount_other": "{{count}} valori",
-    "defaultPassThresholdTitle": "Soglia di superamento predefinita",
-    "defaultPassThresholdLabel": "Tasso minimo di superamento",
-    "defaultPassThresholdHint": "I controlli emettono avvisi quando meno di questa % di righe supera il controllo. Sovrascrivibile per regola e per colonna.",
-    "defaultPassThresholdSaved": "Soglia di superamento predefinita salvata.",
-    "failedSaveDefaultPassThreshold": "Impossibile salvare la soglia di superamento predefinita.",
-    "defaultPassThresholdAdminOnlyHint": "Solo gli amministratori possono modificare questa impostazione.",
-    "kwDefaultPassThreshold": "soglia superamento avviso qualità gate"
+    "governedKeyValueCount_other": "{{count}} valori"
   },
   "discovery": {
     "breadcrumb": "Esplorazione",

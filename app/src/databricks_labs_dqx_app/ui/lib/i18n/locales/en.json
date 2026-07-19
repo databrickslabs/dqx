@@ -243,6 +243,10 @@
     "autoUpgradeWithoutApprovalHint": "Automatically approve changes to tables when rule versions are upgraded",
     "tagAutoApplyLabel": "Auto-apply rules by tag",
     "tagAutoApplyHint": "When on, automatically apply rules matching Unity Catalog tags of the column in question. When off, offer these rules as suggestions instead",
+    "rulesRegistryPassThresholdEnabledLabel": "Pass-threshold quality gates",
+    "rulesRegistryPassThresholdEnabledHint": "When on, checks warn when fewer than a set % of rows pass. Turn off to hide all threshold controls.",
+    "rulesRegistryDefaultPassThresholdLabel": "Default pass threshold",
+    "rulesRegistryDefaultPassThresholdHint": "Checks warn when fewer than this % of rows pass. Overridable per rule and per column.",
     "rulesRegistrySettingsSaved": "Rules Registry settings saved.",
     "rulesRegistrySettingsFailedSave": "Failed to save Rules Registry settings.",
     "rulesRegistrySettingsAdminOnlyHint": "Only admins can change these settings.",
@@ -368,14 +372,7 @@
     "governedKeyError": "Could not load governed tag keys.",
     "governedKeyEmpty": "No governed tag keys available.",
     "governedKeyValueCount_one": "{{count}} value",
-    "governedKeyValueCount_other": "{{count}} values",
-    "defaultPassThresholdTitle": "Default pass threshold",
-    "defaultPassThresholdLabel": "Minimum pass rate",
-    "defaultPassThresholdHint": "Checks warn when fewer than this % of rows pass. Overridable per rule and per column.",
-    "defaultPassThresholdSaved": "Default pass threshold saved.",
-    "failedSaveDefaultPassThreshold": "Failed to save default pass threshold.",
-    "defaultPassThresholdAdminOnlyHint": "Only admins can change this setting.",
-    "kwDefaultPassThreshold": "threshold pass warning quality gate"
+    "governedKeyValueCount_other": "{{count}} values"
   },
   "discovery": {
     "breadcrumb": "Discovery",
