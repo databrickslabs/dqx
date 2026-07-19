@@ -2160,6 +2160,8 @@
     "scheduleToastSaved": "Agendamento salvo.",
     "scheduleToastSaveFailed": "Falha ao salvar o agendamento.",
     "thresholdPillLabel": "Alertar < {{pct}}%",
+    "thresholdPillMixed": "Misto",
+    "thresholdPillMixedAria": "Limite de aviso: misto — as substituições por coluna diferem do padrão da regra",
     "thresholdPillAria": "Limite de alerta: alertar quando menos de {{pct}}% das linhas passarem",
     "thresholdPopoverTitle": "Limite de alerta",
     "thresholdPopoverHint": "Alertar quando menos desta % de linhas passarem nesta verificação.",

@@ -25,9 +25,13 @@ export interface ThresholdPillProps {
   readonly?: boolean;
   /** Override the popover hint text (defaults to the per-rule i18n string). */
   hintOverride?: string;
+  /** When true, the pill label shows "Mixed" instead of a specific percentage,
+   *  indicating that per-column overrides differ from the effective rule value.
+   *  The popover still edits the rule-level value normally. */
+  mixed?: boolean;
 }
 
-export function ThresholdPill({ value, effectiveDefault, onChange, readonly = false, hintOverride }: ThresholdPillProps) {
+export function ThresholdPill({ value, effectiveDefault, onChange, readonly = false, hintOverride, mixed = false }: ThresholdPillProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   // Local draft string so the input stays editable without forcing an int on
@@ -36,12 +40,21 @@ export function ThresholdPill({ value, effectiveDefault, onChange, readonly = fa
 
   const displayed = value ?? effectiveDefault;
   const isOverridden = value !== null;
+  // Screen readers hear "Mixed …" when per-column overrides diverge, matching
+  // the visible label instead of announcing a single rule-level percentage.
+  const ariaLabel = mixed
+    ? t("monitoredTables.thresholdPillMixedAria")
+    : t("monitoredTables.thresholdPillAria", { pct: displayed });
 
   const badgeContent = (
     <>
       <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" aria-hidden />
-      <span>{t("monitoredTables.thresholdPillLabel", { pct: displayed })}</span>
-      {isOverridden && <span className="text-muted-foreground ml-0.5">*</span>}
+      {mixed ? (
+        <span>{t("monitoredTables.thresholdPillMixed")}</span>
+      ) : (
+        <span>{t("monitoredTables.thresholdPillLabel", { pct: displayed })}</span>
+      )}
+      {(isOverridden || mixed) && <span className="text-muted-foreground ml-0.5">*</span>}
     </>
   );
 
@@ -50,7 +63,7 @@ export function ThresholdPill({ value, effectiveDefault, onChange, readonly = fa
       <Badge
         variant="outline"
         className={cn("text-[10px] gap-1 px-1.5 py-0.5 shrink-0", !isOverridden && "text-muted-foreground")}
-        aria-label={t("monitoredTables.thresholdPillAria", { pct: displayed })}
+        aria-label={ariaLabel}
       >
         {badgeContent}
       </Badge>
@@ -81,7 +94,7 @@ export function ThresholdPill({ value, effectiveDefault, onChange, readonly = fa
         <button
           type="button"
           onClick={(e) => e.stopPropagation()}
-          aria-label={t("monitoredTables.thresholdPillAria", { pct: displayed })}
+          aria-label={ariaLabel}
           className="focus:outline-none"
         >
           <Badge

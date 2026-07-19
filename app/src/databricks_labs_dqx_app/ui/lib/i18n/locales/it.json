@@ -2160,6 +2160,8 @@
     "scheduleToastSaved": "Pianificazione salvata.",
     "scheduleToastSaveFailed": "Impossibile salvare la pianificazione.",
     "thresholdPillLabel": "Avviso < {{pct}}%",
+    "thresholdPillMixed": "Misto",
+    "thresholdPillMixedAria": "Soglia di avviso: mista — le sostituzioni per colonna differiscono dal valore predefinito della regola",
     "thresholdPillAria": "Soglia di avviso: avvisa quando meno del {{pct}}% delle righe supera",
     "thresholdPopoverTitle": "Soglia di avviso",
     "thresholdPopoverHint": "Avvisa quando meno di questa % di righe supera questo controllo.",

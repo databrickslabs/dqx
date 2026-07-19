@@ -2160,6 +2160,8 @@
     "scheduleToastSaved": "Schedule saved.",
     "scheduleToastSaveFailed": "Failed to save schedule.",
     "thresholdPillLabel": "Warn < {{pct}}%",
+    "thresholdPillMixed": "Mixed",
+    "thresholdPillMixedAria": "Warning threshold: mixed — per-column overrides differ from the rule default",
     "thresholdPillAria": "Warning threshold: warn when fewer than {{pct}}% of rows pass",
     "thresholdPopoverTitle": "Warning threshold",
     "thresholdPopoverHint": "Warn when fewer than this % of rows pass this check.",

@@ -543,6 +543,8 @@ interface RuleConfigCardProps {
    *  From `useGetTableTags`. When provided, matched governed tag chips are
    *  shown alongside each column chip in the mapping display. */
   columnTags?: Record<string, string[]>;
+  /** When false, the ThresholdPill is hidden (feature disabled by admin). */
+  thresholdEnabled?: boolean;
 }
 
 export function RuleConfigCard({
@@ -568,6 +570,7 @@ export function RuleConfigCard({
   columns,
   forceOpen,
   columnTags,
+  thresholdEnabled = true,
 }: RuleConfigCardProps) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(Boolean(forceOpen));
@@ -715,12 +718,20 @@ export function RuleConfigCard({
                 onSeverityChange={onSeverityChange}
                 readonly={!canEdit}
               />
-              <ThresholdPill
-                value={rule.pass_threshold ?? null}
-                effectiveDefault={resolvedDefaultThreshold}
-                onChange={onPassThresholdChange}
-                readonly={!canEdit}
-              />
+              {thresholdEnabled && (() => {
+                const effectiveRuleThreshold = rule.pass_threshold ?? resolvedDefaultThreshold;
+                const columnOverrides = Object.values(rule.column_pass_thresholds ?? {});
+                const mixed = columnOverrides.some((v) => v !== effectiveRuleThreshold);
+                return (
+                  <ThresholdPill
+                    value={rule.pass_threshold ?? null}
+                    effectiveDefault={resolvedDefaultThreshold}
+                    onChange={onPassThresholdChange}
+                    readonly={!canEdit}
+                    mixed={mixed}
+                  />
+                );
+              })()}
             </>
           )}
         </div>

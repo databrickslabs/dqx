@@ -2160,6 +2160,8 @@
     "scheduleToastSaved": "Programación guardada.",
     "scheduleToastSaveFailed": "No se pudo guardar la programación.",
     "thresholdPillLabel": "Advertir < {{pct}}%",
+    "thresholdPillMixed": "Mixto",
+    "thresholdPillMixedAria": "Umbral de advertencia: mixto — las anulaciones por columna difieren del valor predeterminado de la regla",
     "thresholdPillAria": "Umbral de advertencia: advertir cuando menos del {{pct}}% de las filas pasen",
     "thresholdPopoverTitle": "Umbral de advertencia",
     "thresholdPopoverHint": "Advertir cuando menos de este % de filas pasen esta verificación.",

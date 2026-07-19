@@ -130,6 +130,7 @@ import { isRunStale, useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-
 import { useMonitoredTableRunActivity } from "@/hooks/use-monitored-table-run-activity";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
+import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 import { formatDateShort } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
@@ -2141,6 +2142,8 @@ function ApplyRulesTab({
   // can always read it; the fallback (70) matches the compiled-in default.
   const { data: defaultThresholdData } = useGetDefaultPassThreshold();
   const adminDefaultThreshold = defaultThresholdData?.data?.default_pass_threshold ?? 70;
+  // Feature gate — when disabled by admin, hide all threshold UI (pills).
+  const thresholdEnabled = usePassThresholdEnabled();
 
   // Applied governed tags per column — sourced from Unity Catalog
   // `information_schema.column_tags` via `get_table_tags`. Used to render
@@ -2539,6 +2542,7 @@ function ApplyRulesTab({
                 onSeverityChange={(v) => handleSeverityChange(rule, v)}
                 onPassThresholdChange={(v) => handlePassThresholdChange(rule, v)}
                 resolvedDefaultThreshold={rule.rule_pass_threshold ?? adminDefaultThreshold}
+                thresholdEnabled={thresholdEnabled}
                 onRemove={() => setRemoveTarget(rule)}
                 onRemoveMapping={(groupIdx) => handleRemoveMappingGroup(rule.rule_id, groupIdx)}
                 onChangeMapping={(groupIdx, slotName, colName) =>
