@@ -1,5 +1,7 @@
 """Unit tests for rule fingerprinting, replacement, expansion, and serialization alignment."""
 
+from collections.abc import Iterator
+from enum import Enum
 import re
 
 import pytest
@@ -29,6 +31,29 @@ def test_compute_rule_fingerprint_same_rule_same_fingerprint():
     fp2 = compute_rule_fingerprint(check)
     assert fp1 == fp2
     assert _hex_sha256_pattern().match(fp1)
+
+
+def test_compute_rule_fingerprint_set_arguments_order_independent():
+    """Set arguments with mixed nested values produce the same fingerprint in any iteration order."""
+
+    class NestedValue(Enum):
+        DICT = {"nested": [1, "1"]}
+
+    class IterationOrderedSet(set[object]):
+        def __init__(self, values: list[object]) -> None:
+            super().__init__(values)
+            self.iteration_order = values
+
+        def __iter__(self) -> Iterator[object]:
+            return iter(self.iteration_order)
+
+    values: list[object] = [NestedValue.DICT, 1, "1", ("pair", 2), frozenset({3, "3"})]
+    check = {"check": {"function": "is_in_list", "arguments": {"allowed": IterationOrderedSet(values)}}}
+    reversed_check = {
+        "check": {"function": "is_in_list", "arguments": {"allowed": IterationOrderedSet(list(reversed(values)))}}
+    }
+
+    assert compute_rule_fingerprint(check) == compute_rule_fingerprint(reversed_check)
 
 
 def test_compute_rule_set_fingerprint_by_metadata_same_set_same_fingerprint():

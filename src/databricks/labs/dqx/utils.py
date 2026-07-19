@@ -189,8 +189,8 @@ def normalize_bound_args(val: Any, allow_simple_expressions_only: bool = True) -
     """
     Normalize a value or collection of values for consistent processing.
 
-    Handles primitives, dates, Decimal, and column-like objects. Lists, tuples, and sets are
-    recursively normalized with type preserved.
+    Handles primitives, dates, Decimal, and column-like objects. Collections are recursively
+    normalized, preserving list and tuple order while canonicalizing set and frozenset order.
 
     For Decimal values, uses a special JSON-serializable format to preserve type information
     for round-trip deserialization.
@@ -211,7 +211,11 @@ def normalize_bound_args(val: Any, allow_simple_expressions_only: bool = True) -
     if val is None:
         return None
 
-    if isinstance(val, (list, tuple, set, frozenset)):
+    if isinstance(val, (set, frozenset)):
+        normalized = [normalize_bound_args(v, allow_simple_expressions_only) for v in val]
+        return sorted(normalized, key=lambda item: json.dumps(item, sort_keys=True, default=str))
+
+    if isinstance(val, (list, tuple)):
         return [normalize_bound_args(v, allow_simple_expressions_only) for v in val]
 
     if isinstance(val, dict):
