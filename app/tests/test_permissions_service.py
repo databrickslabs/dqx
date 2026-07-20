@@ -311,6 +311,42 @@ def test_set_grant_owner_empty_materializes_revoked_row(mock_sql, app_settings_m
     assert "INSERT INTO dq_object_grants " in executed
 
 
+def test_display_name_spoof_does_not_affect_owner_enforcement(svc, fake):
+    # Security regression: a grant to a *different* principal (Mallory) whose
+    # free-text SCIM display name is set to the owner's email must NOT be treated
+    # as an owner grant at enforcement time. Otherwise Mallory could spoof the
+    # display name to (a) suppress the owner's implicit ALL PRIVILEGES and
+    # (b) leak Mallory's own privileges to the owner via the email matcher.
+    fake.owners["r1"] = "olivia@x.com"
+    # Admin grants Mallory MODIFY, keyed by Mallory's SCIM id; her editable
+    # display name happens to equal Olivia's email.
+    fake.add_grant("registry_rule", "r1", "mallory-scim-id", "MODIFY", principal_name="olivia@x.com")
+
+    # (a) Olivia's implicit ALL PRIVILEGES is NOT suppressed by Mallory's grant.
+    olivia_eff = svc.effective_privileges(
+        "registry_rule", "r1", principal_ids=set(), owner_email="olivia@x.com", principal_email="olivia@x.com"
+    )
+    assert {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY}.issubset(olivia_eff)
+
+    # Olivia still manages grants implicitly (not gated off by the name-match).
+    assert svc.can_manage_grants(
+        "registry_rule",
+        "r1",
+        role=UserRole.RULE_AUTHOR,
+        principal_ids=set(),
+        owner_email="olivia@x.com",
+        principal_email="olivia@x.com",
+    )
+
+    # (b) Mallory's grant does NOT leak to Olivia via the email matcher beyond
+    # what she already holds as owner — and, conversely, a *non-owner* caller
+    # whose email equals the display name inherits nothing from Mallory's grant.
+    stranger_eff = svc.effective_privileges(
+        "registry_rule", "r1", principal_ids=set(), owner_email=None, principal_email="olivia@x.com"
+    )
+    assert Privilege.MODIFY not in stranger_eff
+
+
 def test_author_cannot_modify_without_grant(svc):
     # RULE_AUTHOR, no grant, not owner -> MODIFY denied (feature gates MODIFY).
     with pytest.raises(HTTPException) as exc:

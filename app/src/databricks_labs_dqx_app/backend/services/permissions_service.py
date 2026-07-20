@@ -177,7 +177,11 @@ class PermissionsService:
         # non-materialized row. Suppress it when an explicit grant already
         # targets the owner (that stored row is authoritative — don't double-list).
         owner_email = self.get_object_owner(object_type, object_id)
-        if owner_email and not self._owner_has_explicit_grant(owner_email, direct):
+        # Display-only suppression: also tolerate a name match here so the
+        # synthetic owner row isn't double-listed next to an explicit grant that
+        # carries the owner email as its display name. This is cosmetic and must
+        # not influence enforcement (which keys on the verified principal id).
+        if owner_email and not self._owner_has_display_grant(owner_email, direct):
             result.insert(0, self._default_owner_grant(object_type, object_id, owner_email))
         for parent_type, parent_id in self._parent_refs(object_type, object_id):
             for g in self.list_grants(parent_type.value, parent_id):
@@ -261,10 +265,36 @@ class PermissionsService:
 
     @staticmethod
     def _grant_targets_email(grant: ObjectGrant, email: str) -> bool:
-        """True when a stored grant is keyed on ``email`` (by principal id or name).
+        """ENFORCEMENT matcher — True when a grant is keyed on ``email`` by VERIFIED id.
 
-        A stored grant may key a principal by SCIM id or carry the email as its
-        principal id/name; match either (case-insensitively).
+        Matches on ``principal_id`` ONLY (case-insensitively). The owner marker
+        and any legacy owner grant are always stored keyed by
+        ``principal_id = owner_email`` (see :meth:`set_grant` — both the
+        revoke/empty-marker and narrow paths send the email as the principal id),
+        so id matching still finds them.
+
+        Deliberately does NOT match ``principal_name``: that is the free-text SCIM
+        display name (:mod:`backend.routes.v1.principals`), which some workspace
+        SCIM configs let a principal edit. Treating it as an identity key is a
+        spoofing surface — a principal who sets their display name to the owner's
+        email could otherwise suppress the owner's implicit privileges or inherit
+        the owner's access. Cosmetic display-row suppression that still tolerates
+        name matches lives in :meth:`_grant_matches_email_for_display` and never
+        feeds an enforcement decision.
+        """
+        target = email.strip().lower()
+        return (grant.principal_id or "").strip().lower() == target
+
+    @staticmethod
+    def _grant_matches_email_for_display(grant: ObjectGrant, email: str) -> bool:
+        """DISPLAY-ONLY matcher — True when a grant is keyed on ``email`` by id OR name.
+
+        Used solely to decide whether to render the synthetic owner default row
+        (avoid double-listing when an explicit grant carries the owner email as
+        its display name). This is a cosmetic, presentation-layer choice and must
+        NEVER gate an enforcement decision — for that use
+        :meth:`_grant_targets_email`, which keys off the verified principal id
+        only.
         """
         target = email.strip().lower()
         return (grant.principal_id or "").strip().lower() == target or (
@@ -273,15 +303,27 @@ class PermissionsService:
 
     @classmethod
     def _owner_has_explicit_grant(cls, owner_email: str, direct: list[ObjectGrant]) -> bool:
-        """True when a stored grant already targets the owner (by id or name).
+        """ENFORCEMENT — True when a stored grant targets the owner by VERIFIED id.
 
-        A stored grant may key the owner by SCIM id or carry the owner's email
-        as its principal id/name; match either (case-insensitively) so the
-        synthetic owner row is suppressed — and the owner's implicit privileges
-        are overridden — whenever an authoritative stored grant for the owner
-        already exists (including an empty "revoked" marker).
+        Matches only on ``principal_id`` (see :meth:`_grant_targets_email`). Gates
+        whether the owner's implicit ``ALL_PRIVILEGES`` and implicit
+        manage-grants capability are suppressed, so it must key off the verified
+        identity, never the mutable display name. The owner marker (empty
+        "revoked" row) and any narrowing grant are always id-keyed on the owner
+        email, so id matching still detects them.
         """
         return any(cls._grant_targets_email(g, owner_email) for g in direct)
+
+    @classmethod
+    def _owner_has_display_grant(cls, owner_email: str, direct: list[ObjectGrant]) -> bool:
+        """DISPLAY-ONLY — True when a stored grant targets the owner by id OR name.
+
+        Used to suppress the synthetic owner default row so it isn't double-listed
+        alongside an explicit grant that carries the owner email as its id or
+        display name. Cosmetic only — never an enforcement decision (see
+        :meth:`_owner_has_explicit_grant` for that).
+        """
+        return any(cls._grant_matches_email_for_display(g, owner_email) for g in direct)
 
     def _principal_targets_owner(
         self, object_type: str, object_id: str, principal_id: str, principal_name: str | None
