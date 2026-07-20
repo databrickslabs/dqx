@@ -25,6 +25,7 @@ from databricks.sdk.service.iam import ComplexValue, Group
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
+    get_obo_ws,
     get_sp_ws,
     get_user_role,
 )
@@ -53,11 +54,13 @@ def _make_sp_ws(
     """
     ws = create_autospec(WorkspaceClient, instance=True)
 
-    # SCIM groups.list — return "admins" group when queried
+    # SCIM: groups.list resolves the "admins" group id (attributes="id"), then
+    # groups.get(id) returns its members — mirroring the endpoint, which no
+    # longer relies on groups.list populating the `members` sub-attribute.
     if admins_members is not None:
         members = [ComplexValue(display=display, value=value) for display, value in admins_members]
-        admins_group = Group(display_name="admins", members=members)
-        ws.groups.list.return_value = iter([admins_group])
+        ws.groups.list.return_value = iter([Group(id="admins-id", display_name="admins")])
+        ws.groups.get.return_value = Group(id="admins-id", display_name="admins", members=members)
     else:
         # No admins group found
         ws.groups.list.return_value = iter([])
@@ -78,6 +81,10 @@ def _build_client(sp_ws: MagicMock) -> TestClient:
 
     app = FastAPI()
     app.include_router(router, prefix="/api/v1/roles")
+    # The endpoint runs the admin caller (OBO) first, SP as fallback. Point both
+    # overrides at the same mock so a single spec-bound client drives the test;
+    # the OBO path succeeds so the SP fallback is not exercised here.
+    app.dependency_overrides[get_obo_ws] = lambda: sp_ws
     app.dependency_overrides[get_sp_ws] = lambda: sp_ws
     app.dependency_overrides[get_user_role] = lambda: UserRole.ADMIN
     return TestClient(app, raise_server_exceptions=True)
