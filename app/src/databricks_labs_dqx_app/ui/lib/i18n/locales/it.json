@@ -2167,6 +2167,7 @@
     "thresholdPillAria": "Soglia di avviso: avvisa quando meno del {{pct}}% delle righe supera",
     "thresholdPopoverTitle": "Soglia di avviso",
     "thresholdPopoverHint": "Avvisa quando meno di questa % di righe supera questo controllo.",
+    "thresholdMixedPopoverTitle": "Soglie per colonna",
     "columnThresholdPopoverHint": "Avvisa quando meno di questa % di righe supera questa regola per questa colonna.",
     "scheduleCrossTitle": "Pianificata anche dagli spazi",
     "scheduleCrossDescription": "Questa tabella appartiene agli spazi seguenti, le cui pianificazioni eseguono anche i suoi controlli. Qualsiasi pianificazione impostata qui viene eseguita in aggiunta a quelle.",

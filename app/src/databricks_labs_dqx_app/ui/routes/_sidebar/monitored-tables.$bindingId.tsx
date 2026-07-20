@@ -2529,6 +2529,7 @@ function ApplyRulesTab({
                 onPinChange={(v) => handlePinChange(rule, v)}
                 onSeverityChange={(v) => handleSeverityChange(rule, v)}
                 onPassThresholdChange={(v) => handlePassThresholdChange(rule, v)}
+                onColumnThresholdChange={(column, value) => handleColumnThresholdChange(rule.rule_id, column, value)}
                 resolvedDefaultThreshold={rule.rule_pass_threshold ?? adminDefaultThreshold}
                 thresholdEnabled={thresholdEnabled}
                 onRemove={() => setRemoveTarget(rule)}

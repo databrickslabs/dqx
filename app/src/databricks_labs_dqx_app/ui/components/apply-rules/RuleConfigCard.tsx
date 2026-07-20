@@ -36,7 +36,7 @@ import selector from "@/lib/selector";
 import { MappingChips } from "./MappingChips";
 import { ThresholdPill } from "./ThresholdPill";
 import { RESERVED_DESCRIPTION_KEY } from "@/components/RegistryRuleBadges";
-import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag } from "./shared";
+import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag, getUsedColumnsForRule } from "./shared";
 import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 
 // ---------------------------------------------------------------------------
@@ -523,6 +523,9 @@ interface RuleConfigCardProps {
   /** Per-rule minimum % of rows that must pass. `null` = no per-rule
    *  threshold. Pure local `stagedRows` mutation. */
   onPassThresholdChange: (value: number | null) => void;
+  /** Per-column threshold override from the by-rule lens. Called when the user
+   *  edits an individual column's threshold inside the Mixed pill popover. */
+  onColumnThresholdChange?: (column: string, value: number | null) => void;
   /** Resolved default threshold for the pill placeholder: registry-rule
    *  default ?? admin default. Computed by ApplyRulesTab per-rule. */
   resolvedDefaultThreshold: number;
@@ -569,6 +572,7 @@ export function RuleConfigCard({
   onPinChange,
   onSeverityChange,
   onPassThresholdChange,
+  onColumnThresholdChange,
   resolvedDefaultThreshold,
   onRemove,
   onJumpToColumn,
@@ -730,6 +734,11 @@ export function RuleConfigCard({
                 const effectiveRuleThreshold = rule.pass_threshold ?? resolvedDefaultThreshold;
                 const columnOverrides = Object.values(rule.column_pass_thresholds ?? {});
                 const mixed = columnOverrides.some((v) => v !== effectiveRuleThreshold);
+                const usedColumns = getUsedColumnsForRule(rule);
+                const columnEntries = usedColumns.map((name) => ({
+                  name,
+                  value: rule.column_pass_thresholds?.[name] ?? null,
+                }));
                 return (
                   <ThresholdPill
                     value={rule.pass_threshold ?? null}
@@ -737,6 +746,9 @@ export function RuleConfigCard({
                     onChange={onPassThresholdChange}
                     readonly={!canEdit}
                     mixed={mixed}
+                    columns={columnEntries}
+                    columnEffectiveDefault={effectiveRuleThreshold}
+                    onColumnChange={onColumnThresholdChange}
                   />
                 );
               })()}

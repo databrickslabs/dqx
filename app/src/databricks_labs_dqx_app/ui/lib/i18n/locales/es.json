@@ -2167,6 +2167,7 @@
     "thresholdPillAria": "Umbral de advertencia: advertir cuando menos del {{pct}}% de las filas pasen",
     "thresholdPopoverTitle": "Umbral de advertencia",
     "thresholdPopoverHint": "Advertir cuando menos de este % de filas pasen esta verificación.",
+    "thresholdMixedPopoverTitle": "Umbrales por columna",
     "columnThresholdPopoverHint": "Advertir cuando menos de este % de filas pasen esta regla para esta columna.",
     "scheduleCrossTitle": "También programada por espacios",
     "scheduleCrossDescription": "Esta tabla pertenece a los espacios siguientes, cuyas programaciones también ejecutan sus controles. Cualquier programación que definas aquí se ejecuta además de esas.",

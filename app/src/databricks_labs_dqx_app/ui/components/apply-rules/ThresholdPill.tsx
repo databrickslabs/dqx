@@ -7,6 +7,11 @@
 //   effectiveDefault — resolved default to display when value is null
 //   onChange         — called with the new value (number, always non-null)
 //   readonly        — when true renders a non-interactive badge
+//
+// Per-column mode (mixed):
+//   columns              — list of mapped columns + each column's current override
+//   columnEffectiveDefault — the effective default to show as placeholder per column
+//   onColumnChange       — called with (columnName, newValue) for per-column edits
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -15,6 +20,11 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+
+export interface ThresholdPillColumnEntry {
+  name: string;
+  value: number | null;
+}
 
 export interface ThresholdPillProps {
   /** Explicit per-rule/per-column override, or null when following default. */
@@ -27,32 +37,58 @@ export interface ThresholdPillProps {
   hintOverride?: string;
   /** When true, the pill label shows "Mixed" instead of a specific percentage,
    *  indicating that per-column overrides differ from the effective rule value.
-   *  The popover still edits the rule-level value normally. */
+   *  When columns + onColumnChange are provided, the popover renders per-column
+   *  inputs instead of the single rule-level input. */
   mixed?: boolean;
+  /** Per-column editor mode: list of mapped columns and their current override values.
+   *  When provided alongside mixed=true, the popover shows one input per column. */
+  columns?: ThresholdPillColumnEntry[];
+  /** The effective default for each per-column input placeholder (the rule-level
+   *  effective threshold: per-rule override ?? admin default). */
+  columnEffectiveDefault?: number;
+  /** Called when the user edits a single column's threshold in per-column mode. */
+  onColumnChange?: (column: string, value: number | null) => void;
 }
 
-export function ThresholdPill({ value, effectiveDefault, onChange, readonly = false, hintOverride, mixed = false }: ThresholdPillProps) {
+export function ThresholdPill({
+  value,
+  effectiveDefault,
+  onChange,
+  readonly = false,
+  hintOverride,
+  mixed = false,
+  columns,
+  columnEffectiveDefault,
+  onColumnChange,
+}: ThresholdPillProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  // Local draft string so the input stays editable without forcing an int on
-  // every keystroke — committed on blur/Enter.
+  // Local draft string for the single-value mode — committed on blur/Enter.
   const [draft, setDraft] = useState<string>("");
+  // Per-column draft map for mixed mode — keyed by column name.
+  const [columnDrafts, setColumnDrafts] = useState<Record<string, string>>({});
 
   const displayed = value ?? effectiveDefault;
   const isOverridden = value !== null;
+
+  // Per-column mode: mixed + columns provided + onColumnChange wired
+  const isPerColumnMode = mixed && columns !== undefined && columns.length > 0 && onColumnChange !== undefined;
+
   // Screen readers hear "Mixed …" when per-column overrides diverge, matching
   // the visible label instead of announcing a single rule-level percentage.
   const ariaLabel = mixed
     ? t("monitoredTables.thresholdPillMixedAria")
     : t("monitoredTables.thresholdPillAria", { pct: displayed });
 
+  // min-w-[8rem] is wide enough for "Warn < 100%" (the longest label) so the
+  // pill doesn't shrink when switching to the shorter "Mixed" label (Bug 6).
   const badgeContent = (
     <>
       <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" aria-hidden />
       {mixed ? (
-        <span>{t("monitoredTables.thresholdPillMixed")}</span>
+        <span className="min-w-[3.5rem] text-center">{t("monitoredTables.thresholdPillMixed")}</span>
       ) : (
-        <span>{t("monitoredTables.thresholdPillLabel", { pct: displayed })}</span>
+        <span className="min-w-[3.5rem] text-center">{t("monitoredTables.thresholdPillLabel", { pct: displayed })}</span>
       )}
       {(isOverridden || mixed) && <span className="text-muted-foreground ml-0.5">*</span>}
     </>
@@ -79,13 +115,33 @@ export function ThresholdPill({ value, effectiveDefault, onChange, readonly = fa
     // empty or non-numeric → no-op, retain current value
   };
 
+  const commitColumnDraft = (column: string, raw: string) => {
+    const trimmed = raw.trim();
+    const n = Number.parseInt(trimmed, 10);
+    if (!Number.isNaN(n)) {
+      onColumnChange!(column, Math.max(0, Math.min(100, n)));
+    }
+    // empty or non-numeric → no-op, retain current column value
+  };
+
+  const colDefault = columnEffectiveDefault ?? effectiveDefault;
+
   return (
     <Popover
       open={open}
       onOpenChange={(nextOpen) => {
         if (nextOpen) {
-          // Seed the draft from the current value when opening
-          setDraft(String(value ?? effectiveDefault));
+          if (isPerColumnMode) {
+            // Seed per-column drafts from current column values when opening
+            const drafts: Record<string, string> = {};
+            for (const col of columns!) {
+              drafts[col.name] = String(col.value ?? colDefault);
+            }
+            setColumnDrafts(drafts);
+          } else {
+            // Seed the draft from the current value when opening
+            setDraft(String(value ?? effectiveDefault));
+          }
         }
         setOpen(nextOpen);
       }}
@@ -109,39 +165,81 @@ export function ThresholdPill({ value, effectiveDefault, onChange, readonly = fa
           </Badge>
         </button>
       </PopoverTrigger>
-      <PopoverContent
-        className="w-56 p-3 space-y-3"
-        align="end"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <p className="text-xs font-medium">{t("monitoredTables.thresholdPopoverTitle")}</p>
-        <p className="text-[11px] text-muted-foreground">
-          {hintOverride ?? t("monitoredTables.thresholdPopoverHint", { pct: effectiveDefault })}
-        </p>
-        <Input
-          type="number"
-          min={0}
-          max={100}
-          step={1}
-          value={draft}
-          placeholder={String(effectiveDefault)}
-          className="h-8 text-xs"
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={(e) => {
-            commitDraft(e.target.value);
-            setDraft(String(value ?? effectiveDefault));
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              commitDraft(draft);
-              setOpen(false);
-            }
-            if (e.key === "Escape") {
-              setOpen(false);
-            }
-          }}
-        />
-      </PopoverContent>
+      {isPerColumnMode ? (
+        <PopoverContent
+          className="w-64 p-3 space-y-3"
+          align="end"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="text-xs font-medium">{t("monitoredTables.thresholdMixedPopoverTitle")}</p>
+          <div className="space-y-2">
+            {columns!.map((col) => (
+              <div key={col.name} className="flex items-center gap-2">
+                <span className="text-[11px] text-muted-foreground flex-1 min-w-0 truncate" title={col.name}>
+                  {col.name}
+                </span>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={columnDrafts[col.name] ?? String(col.value ?? colDefault)}
+                  placeholder={String(colDefault)}
+                  className="h-7 text-xs w-20 shrink-0"
+                  onChange={(e) => setColumnDrafts((prev) => ({ ...prev, [col.name]: e.target.value }))}
+                  onBlur={(e) => {
+                    commitColumnDraft(col.name, e.target.value);
+                    setColumnDrafts((prev) => ({ ...prev, [col.name]: String(col.value ?? colDefault) }));
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      commitColumnDraft(col.name, columnDrafts[col.name] ?? "");
+                      setOpen(false);
+                    }
+                    if (e.key === "Escape") {
+                      setOpen(false);
+                    }
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        </PopoverContent>
+      ) : (
+        <PopoverContent
+          className="w-56 p-3 space-y-3"
+          align="end"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="text-xs font-medium">{t("monitoredTables.thresholdPopoverTitle")}</p>
+          <p className="text-[11px] text-muted-foreground">
+            {hintOverride ?? t("monitoredTables.thresholdPopoverHint", { pct: effectiveDefault })}
+          </p>
+          <Input
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            value={draft}
+            placeholder={String(effectiveDefault)}
+            className="h-8 text-xs"
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={(e) => {
+              commitDraft(e.target.value);
+              setDraft(String(value ?? effectiveDefault));
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                commitDraft(draft);
+                setOpen(false);
+              }
+              if (e.key === "Escape") {
+                setOpen(false);
+              }
+            }}
+          />
+        </PopoverContent>
+      )}
     </Popover>
   );
 }
