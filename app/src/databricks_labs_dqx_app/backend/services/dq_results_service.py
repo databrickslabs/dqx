@@ -144,6 +144,12 @@ class CheckResultRow:
     error_count: int = 0
     warning_count: int = 0
     criticality: str | None = None
+    # The effective pass threshold (%) FROZEN into the run's checks_json at
+    # materialization time (user_metadata['pass_threshold']). When present it
+    # is the immutable source of truth for this run's breach verdict — a later
+    # admin/rule/registry setting change can never re-judge it. None for legacy
+    # runs predating the stamp, which fall back to the live resolver chain.
+    pass_threshold: int | None = None
 
 
 @dataclass(frozen=True)
@@ -212,6 +218,7 @@ def parse_check_rows(raw_rows: list[dict[str, str | None]]) -> list[CheckResultR
                 error_count=error_count,
                 warning_count=warning_count,
                 criticality=row.get("criticality"),
+                pass_threshold=safe_int(row.get("pass_threshold")),
             )
         )
     return out

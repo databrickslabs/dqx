@@ -24,9 +24,11 @@ from datetime import datetime
 import pytest
 
 from databricks_labs_dqx_app.backend.models import TrendPointOut
+from databricks_labs_dqx_app.backend.routes.v1.dq_results import _build_threshold_resolver
 from databricks_labs_dqx_app.backend.services.dq_results_service import (
     CheckResultRow,
     ResultFacets,
+    _breach_criticality,
     _by_rule_rows,
     annotate_trend_versions,
     compute_entity_results,
@@ -51,6 +53,7 @@ def make_row(
     error_count: int = 0,
     warning_count: int = 0,
     criticality: str | None = None,
+    pass_threshold: int | None = None,
 ) -> CheckResultRow:
     return CheckResultRow(
         table_fqn=fqn,
@@ -67,6 +70,7 @@ def make_row(
         error_count=error_count,
         warning_count=warning_count,
         criticality=criticality,
+        pass_threshold=pass_threshold,
     )
 
 
@@ -185,6 +189,43 @@ class TestParseCheckRows:
         assert rows[0].dimension is None
         assert rows[0].rule_id is None
         assert rows[0].columns == ()
+
+    def test_parses_frozen_pass_threshold_as_int(self):
+        # The per-run frozen threshold arrives as a string from the
+        # Statement Execution API; parse tolerates str -> int.
+        rows = parse_check_rows(
+            [
+                {
+                    "input_location": FQN,
+                    "run_id": "r1",
+                    "run_date": "d",
+                    "check_name": "c1",
+                    "error_count": "0",
+                    "warning_count": "0",
+                    "input_row_count": "10",
+                    "pass_threshold": "90",
+                }
+            ]
+        )
+        assert rows[0].pass_threshold == 90
+
+    def test_absent_pass_threshold_is_none(self):
+        # Legacy runs predating the stamp carry no pass_threshold column value.
+        rows = parse_check_rows(
+            [
+                {
+                    "input_location": FQN,
+                    "run_id": "r1",
+                    "run_date": "d",
+                    "check_name": "c1",
+                    "error_count": "0",
+                    "warning_count": "0",
+                    "input_row_count": "10",
+                    "pass_threshold": None,
+                }
+            ]
+        )
+        assert rows[0].pass_threshold is None
 
     def test_malformed_columns_json_degrades_to_empty(self):
         rows = parse_check_rows(
@@ -1411,3 +1452,80 @@ class TestBreach:
         out = compute_entity_results(rows, ResultFacets(), resolve_threshold=None)
         assert out.by_rule[0].breached is False
         assert out.by_rule[0].breach_criticality is None
+
+
+class TestFrozenThreshold:
+    """The per-run frozen ``pass_threshold`` is the source of truth for a
+    breach verdict — changing the live admin/rule/registry settings must
+    NEVER re-judge a stamped run. Legacy (unstamped) runs fall back to the
+    live precedence chain, preserving today's behaviour.
+    """
+
+    def test_frozen_row_threshold_wins_over_live_admin_default(self):
+        # A run stamped with pass_threshold=90. The resolver is built with a
+        # DIFFERENT live admin default (50). The frozen 90 must be used.
+        resolve = _build_threshold_resolver(
+            admin_default=50,
+            registry_defaults={},
+        )
+        # 15 failed / 100 -> 85% pass. Breaches under 90 (frozen), NOT under 50.
+        stamped = make_row(check="c1", failed=15, total=100, error_count=15, criticality="error", pass_threshold=90)
+        assert resolve(stamped) == 90
+        assert _breach_criticality(stamped, resolve(stamped)) == "error"
+
+    def test_frozen_row_threshold_below_pass_rate_does_not_breach(self):
+        # Same 85%-passing run stamped at 80: 85% >= 80 -> no breach, even
+        # though the live admin default (90) would breach it.
+        resolve = _build_threshold_resolver(
+            admin_default=90,
+            registry_defaults={},
+        )
+        stamped = make_row(check="c1", failed=15, total=100, error_count=15, criticality="error", pass_threshold=80)
+        assert resolve(stamped) == 80
+        assert _breach_criticality(stamped, resolve(stamped)) is None
+
+    def test_frozen_wins_even_over_column_and_rule_overrides(self):
+        # Live overrides (per-column 30, per-rule 40) and registry 60 all lose
+        # to the run's frozen 90 — the stamped verdict is immutable.
+        resolve = _build_threshold_resolver(
+            admin_default=50,
+            registry_defaults={"rule-1": 60},
+            rule_overrides={"rule-1": 40},
+            column_overrides={"rule-1": {"amount": 30}},
+        )
+        stamped = make_row(
+            check="c1",
+            failed=15,
+            total=100,
+            error_count=15,
+            criticality="error",
+            rule_id="rule-1",
+            columns=("amount",),
+            pass_threshold=90,
+        )
+        assert resolve(stamped) == 90
+        assert _breach_criticality(stamped, resolve(stamped)) == "error"
+
+    def test_legacy_unstamped_row_falls_back_to_live_chain(self):
+        # pass_threshold=None -> the resolver computes from the live
+        # precedence chain (per-column -> per-rule -> registry -> admin).
+        resolve = _build_threshold_resolver(
+            admin_default=90,
+            registry_defaults={},
+        )
+        legacy = make_row(check="c1", failed=15, total=100, error_count=15, criticality="error", pass_threshold=None)
+        assert resolve(legacy) == 90
+        assert _breach_criticality(legacy, resolve(legacy)) == "error"
+
+    def test_legacy_fallback_respects_rule_override(self):
+        # No frozen value -> the live per-rule override still applies.
+        resolve = _build_threshold_resolver(
+            admin_default=90,
+            registry_defaults={},
+            rule_overrides={"rule-1": 80},
+        )
+        legacy = make_row(
+            check="c1", failed=15, total=100, error_count=15, criticality="error", rule_id="rule-1", pass_threshold=None
+        )
+        assert resolve(legacy) == 80
+        assert _breach_criticality(legacy, resolve(legacy)) is None

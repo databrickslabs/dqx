@@ -200,7 +200,8 @@ def _fetch_check_rows(
         f"check_name, error_count, warning_count, input_row_count, run_mode, "
         # As-of-run attribution baked into the view rows (frozen
         # checks_json payload — see score_view_service).
-        f"severity, dimension, criticality, registry_rule_id, rule_name, to_json(columns) AS columns_json "
+        f"severity, dimension, criticality, registry_rule_id, rule_name, pass_threshold, "
+        f"to_json(columns) AS columns_json "
         f"FROM {view} "  # noqa: S608
         f"{where}"
         f"ORDER BY run_time"
@@ -241,7 +242,8 @@ def _fetch_asof_check_rows(
     stmt = (
         f"SELECT input_location, run_id, CAST(as_of_time AS STRING) AS run_date, "
         f"check_name, error_count, warning_count, input_row_count, run_mode, "
-        f"severity, dimension, criticality, registry_rule_id, rule_name, to_json(columns) AS columns_json "
+        f"severity, dimension, criticality, registry_rule_id, rule_name, pass_threshold, "
+        f"to_json(columns) AS columns_json "
         f"FROM {view} "  # noqa: S608
         f"WHERE {' AND '.join(conds)} "
         f"ORDER BY as_of_time"
@@ -407,6 +409,14 @@ def _build_threshold_resolver(
     column_overrides = column_overrides or {}
 
     def resolve(row: CheckResultRow) -> int:
+        # The per-run frozen threshold wins outright: the runner resolved the
+        # effective threshold at materialization time and stamped it into the
+        # run's checks_json, so a stamped run's breach verdict is immutable —
+        # changing the live admin/rule/registry setting never re-judges it.
+        if row.pass_threshold is not None:
+            return row.pass_threshold
+        # Legacy runs predating the stamp: fall back to the live precedence
+        # chain (per-column -> per-rule -> registry -> admin).
         rid = row.rule_id or ""
         col_map = column_overrides.get(rid, {})
         col_candidates = [col_map[col] for col in row.columns if col in col_map]
