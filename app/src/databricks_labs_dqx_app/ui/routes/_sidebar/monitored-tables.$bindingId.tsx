@@ -2360,7 +2360,7 @@ function ApplyRulesTab({
             {/* Explicit "?" trigger (mirrors dqlake's ScoreBox help icon and
                 the app's own HelpTooltip pattern) instead of relying on the
                 text itself being hoverable — item 26. */}
-            <HelpTooltip text={t("monitoredTables.checksViaRulesTooltip")} />
+            <HelpTooltip text={t("monitoredTables.checksViaRulesTooltip")} rich />
           </div>
         )}
 
