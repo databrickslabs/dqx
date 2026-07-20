@@ -360,24 +360,29 @@ export function getDataProductsSortConfig(key: DataProductsSortKey): SortColumnC
   return { dir: def.defaultSortDir ?? "asc", nullsFirst: def.nullsFirst ?? false };
 }
 
+// Column order mirrors MonitoredTablesTable's DEFAULT_ORDER convention:
+// identity → description (hidden) → count metrics → dqScore → version →
+// lastRun → steward → status → Spaces-only trailing columns (schedule).
+// `tables` (member-table count) has no Tables analog and leads the count
+// group as the most Spaces-specific metric. `owner` has no Spaces analog
+// and is omitted. `schedule` (Spaces-only, hidden) trails at the end.
 const DEFAULT_ORDER: DataProductsSortKey[] = [
   "name",
   "description",
-  "status",
-  "version",
-  "steward",
   "tables",
   "rules",
   "checks",
   "dqScore",
+  "version",
   "lastRun",
+  "steward",
+  "status",
   "schedule",
 ];
 
-// v2: added the DQ Score column (visible by default) — bumping the key
-// slots it into its DEFAULT_ORDER position for users with a stored v1
-// layout (the dqlake `dqlake.products.layout.vN` convention).
-const LS_KEY_LAYOUT = "dqx.products.layout.v2";
+// v3: column order aligned with MonitoredTablesTable (item 51) — bumping
+// the key resets the stored layout so users see the updated defaults.
+const LS_KEY_LAYOUT = "dqx.products.layout.v3";
 
 /** Selection state for bulk operations — mirrors `RulesTableSelection` from
  *  `RulesTable.tsx`. The id field is `product_id`. */
