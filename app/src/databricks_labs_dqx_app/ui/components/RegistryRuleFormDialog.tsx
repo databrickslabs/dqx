@@ -44,7 +44,6 @@ import {
   ArrowLeft,
   ArrowRight,
   ChevronDown,
-  Combine,
   LineChart,
   FlaskConical,
   History as HistoryIcon,
@@ -53,7 +52,6 @@ import {
   Send,
   Shield,
   Sparkles,
-  Table2,
   Wrench,
   X,
 } from "lucide-react";
@@ -622,51 +620,6 @@ function ConditionSelector({
                     <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
                   </span>
                 </CommandItem>
-                {/* Labelled shortcuts into the ONE SQL editor. Single- vs
-                    cross-table SQL differ only by whether the author writes
-                    JOINs — there's a single `sql` mode — so both divert to
-                    onSelect({ type: "sql" }); they exist purely for
-                    discoverability (item 40). */}
-                <CommandItem
-                  value="__sql_single_table__"
-                  keywords={["sql", "single", "table"]}
-                  onSelect={() => {
-                    onSelect({ type: "sql" });
-                    setOpen(false);
-                  }}
-                  className="items-start gap-2 text-xs"
-                >
-                  <Table2 className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 flex items-center justify-between gap-2">
-                    <span>
-                      <span className="font-semibold">{t("rulesRegistry.coreSqlSingleTable")}</span>
-                      <span className="block text-[10px] text-muted-foreground">
-                        {t("rulesRegistry.coreSqlSingleTableDesc")}
-                      </span>
-                    </span>
-                    <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  </span>
-                </CommandItem>
-                <CommandItem
-                  value="__sql_cross_table__"
-                  keywords={["sql", "cross", "table", "join"]}
-                  onSelect={() => {
-                    onSelect({ type: "sql" });
-                    setOpen(false);
-                  }}
-                  className="items-start gap-2 text-xs"
-                >
-                  <Combine className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 flex items-center justify-between gap-2">
-                    <span>
-                      <span className="font-semibold">{t("rulesRegistry.coreSqlCrossTable")}</span>
-                      <span className="block text-[10px] text-muted-foreground">
-                        {t("rulesRegistry.coreSqlCrossTableDesc")}
-                      </span>
-                    </span>
-                    <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  </span>
-                </CommandItem>
               </CommandGroup>
             )}
 
@@ -685,6 +638,45 @@ function ConditionSelector({
                 <CommandEmpty>
                   <span className="text-xs text-muted-foreground">{t("rulesRegistry.noMatches")}</span>
                 </CommandEmpty>
+                {/* SQL checks live INSIDE Basic Checks (not at the root), styled
+                    like the native checks below. Single- vs cross-table SQL
+                    differ only by whether the author writes JOINs — there is a
+                    single `sql` mode — so both divert to onSelect({ type: "sql" }).
+                    Purely for discoverability (item 40). */}
+                <CommandGroup heading={t("rulesRegistry.coreSql")} className={COMMAND_GROUP_HEADING_CLASS}>
+                  <CommandItem
+                    value="__sql_single_table__"
+                    keywords={["sql", "single", "table"]}
+                    onSelect={() => {
+                      onSelect({ type: "sql" });
+                      setOpen(false);
+                    }}
+                    className="items-start gap-2 text-xs"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="font-medium">{t("rulesRegistry.coreSqlSingleTable")}</span>
+                      <span className="block text-[10px] text-muted-foreground truncate">
+                        {t("rulesRegistry.coreSqlSingleTableDesc")}
+                      </span>
+                    </span>
+                  </CommandItem>
+                  <CommandItem
+                    value="__sql_cross_table__"
+                    keywords={["sql", "cross", "table", "join"]}
+                    onSelect={() => {
+                      onSelect({ type: "sql" });
+                      setOpen(false);
+                    }}
+                    className="items-start gap-2 text-xs"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="font-medium">{t("rulesRegistry.coreSqlCrossTable")}</span>
+                      <span className="block text-[10px] text-muted-foreground truncate">
+                        {t("rulesRegistry.coreSqlCrossTableDesc")}
+                      </span>
+                    </span>
+                  </CommandItem>
+                </CommandGroup>
                 {grouped.map(([category, fns]) => (
                   <CommandGroup key={category} heading={category} className={COMMAND_GROUP_HEADING_CLASS}>
                     {fns.map((fn) => (
