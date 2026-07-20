@@ -172,6 +172,10 @@ export function ThresholdPill({
           className="w-64 p-3 space-y-3"
           align="end"
           onClick={(e) => e.stopPropagation()}
+          // Don't auto-focus (and thus select-all) the first column's input on
+          // open — the popover should read as a calm list, not land mid-edit
+          // with a highlighted value.
+          onOpenAutoFocus={(e) => e.preventDefault()}
         >
           <p className="text-xs font-medium">{t("monitoredTables.thresholdMixedPopoverTitle")}</p>
           <div className="space-y-2">
