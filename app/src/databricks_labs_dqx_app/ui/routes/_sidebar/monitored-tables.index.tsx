@@ -432,12 +432,6 @@ function MonitoredTablesPage() {
         <FileDown className="h-3 w-3" />
         {t("exportYaml.button")}
       </Button>
-      <ExportDialog
-        open={exportOpen}
-        onOpenChange={setExportOpen}
-        fetchDqx={() => exportMonitoredTables({ format: "dqx", binding_id: [...selectedIds] })}
-        fetchOdcs={() => exportMonitoredTables({ format: "odcs", binding_id: [...selectedIds] })}
-      />
       {perms.canCreateRules && selectedRows.some((r) => r.table.status !== "pending_approval") && (
         <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-destructive" onClick={() => setBulkDeleteOpen(true)}>
           <Trash2 className="h-3 w-3" />
@@ -561,6 +555,15 @@ function MonitoredTablesPage() {
         {/* Bare table — no Card wrapper, matching the Rules Registry list.
             The filter row is passed as `toolbarExtra` so it renders inline
             with the Edit Columns button rather than on its own row. */}
+        {/* ExportDialog lives outside BulkActionBar so it stays mounted even
+            when selection drops to 0 (BulkActionBar returns null when count≤0,
+            which would abruptly unmount a dialog opened while deselecting). */}
+        <ExportDialog
+          open={exportOpen}
+          onOpenChange={setExportOpen}
+          fetchDqx={() => exportMonitoredTables({ format: "dqx", binding_id: [...selectedIds] })}
+          fetchOdcs={() => exportMonitoredTables({ format: "odcs", binding_id: [...selectedIds] })}
+        />
         <div className="relative">
           {bulkToolbar}
           <MonitoredTablesTable

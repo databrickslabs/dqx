@@ -32,8 +32,10 @@ interface BulkActionBarProps {
  */
 export function BulkActionBar({ count, label, busy, onClear, clearLabel, children }: BulkActionBarProps) {
   if (count <= 0) return null;
+  // min-h matches the filter toolbar row height (h-8 controls + py-2 = ~48px)
+  // so the overlay can never clip into the column headers if spacing changes.
   return (
-    <div className="absolute inset-x-0 top-0 z-10 flex flex-wrap items-center gap-2 rounded-lg border bg-muted p-2.5">
+    <div className="absolute inset-x-0 top-0 z-10 flex flex-wrap items-center gap-2 rounded-lg border bg-muted py-2 px-2.5 min-h-[48px]">
       <span className="text-sm font-medium mr-1">{label}</span>
       {busy ? (
         <Loader2 className="h-4 w-4 animate-spin" />

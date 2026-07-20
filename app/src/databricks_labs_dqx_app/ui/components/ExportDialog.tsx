@@ -45,6 +45,11 @@ export function ExportDialog({ open, onOpenChange, fetchDqx, fetchOdcs, title }:
   const [busy, setBusy] = useState(false);
   const singleFormat = !fetchOdcs;
 
+  // Guard ref for single-format auto-run — reset only after the request
+  // settles so a mid-flight open→close→reopen sequence can't fire a second
+  // download (resetting on !open would clear the guard while still in flight).
+  const autoRunning = useRef(false);
+
   const run = useCallback(
     async (fetcher: ExportFetcher) => {
       setBusy(true);
@@ -58,6 +63,7 @@ export function ExportDialog({ open, onOpenChange, fetchDqx, fetchOdcs, title }:
         onOpenChange(false);
       } finally {
         setBusy(false);
+        autoRunning.current = false;
       }
     },
     [onOpenChange, t],
@@ -66,14 +72,11 @@ export function ExportDialog({ open, onOpenChange, fetchDqx, fetchOdcs, title }:
   // Single-format surfaces have no choice to make, so "opening" the dialog
   // just triggers the download. We guard with a ref so a re-render while the
   // request is in flight doesn't fire a second download.
-  const autoRunning = useRef(false);
   useEffect(() => {
     if (!singleFormat) return;
     if (open && !autoRunning.current) {
       autoRunning.current = true;
       void run(fetchDqx);
-    } else if (!open) {
-      autoRunning.current = false;
     }
   }, [open, singleFormat, run, fetchDqx]);
 

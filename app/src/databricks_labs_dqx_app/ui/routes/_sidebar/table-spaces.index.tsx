@@ -407,12 +407,6 @@ function DataProductsPage() {
         <FileDown className="h-3 w-3" />
         {t("exportYaml.button")}
       </Button>
-      <ExportDialog
-        open={exportOpen}
-        onOpenChange={setExportOpen}
-        fetchDqx={() => exportDataProducts({ format: "dqx", product_id: [...selectedIds] })}
-        fetchOdcs={() => exportDataProducts({ format: "odcs", product_id: [...selectedIds] })}
-      />
       {perms.canCreateRules && selectedRows.some((p) => p.display_status !== "modified" && p.status !== "pending_approval") && (
         <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-destructive" onClick={() => setBulkDeleteOpen(true)}>
           <Trash2 className="h-3 w-3" />
@@ -535,6 +529,15 @@ function DataProductsPage() {
           </div>
         </div>
 
+        {/* ExportDialog lives outside BulkActionBar so it stays mounted even
+            when selection drops to 0 (BulkActionBar returns null when count≤0,
+            which would abruptly unmount a dialog opened while deselecting). */}
+        <ExportDialog
+          open={exportOpen}
+          onOpenChange={setExportOpen}
+          fetchDqx={() => exportDataProducts({ format: "dqx", product_id: [...selectedIds] })}
+          fetchOdcs={() => exportDataProducts({ format: "odcs", product_id: [...selectedIds] })}
+        />
         <div className="relative">
           {bulkToolbar}
           <DataProductsTable

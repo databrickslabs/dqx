@@ -800,11 +800,6 @@ function RegistryRulesPage() {
         <FileDown className="h-3 w-3" />
         {t("exportYaml.button")}
       </Button>
-      <ExportDialog
-        open={exportOpen}
-        onOpenChange={setExportOpen}
-        fetchDqx={() => exportRegistryRules({ rule_id: [...selectedIds] })}
-      />
       {selectedRules.some((r) => canDeleteRule(r)) && (
         <Button
           size="sm"
@@ -939,6 +934,14 @@ function RegistryRulesPage() {
           <Skeleton className="h-64 w-full" />
         ) : (
           <>
+            {/* ExportDialog lives outside BulkActionBar so it stays mounted even
+                when selection drops to 0 (BulkActionBar returns null when count≤0,
+                which would abruptly unmount a dialog opened while deselecting). */}
+            <ExportDialog
+              open={exportOpen}
+              onOpenChange={setExportOpen}
+              fetchDqx={() => exportRegistryRules({ rule_id: [...selectedIds] })}
+            />
             <div className="relative">
               {bulkToolbar}
               <RulesTable
