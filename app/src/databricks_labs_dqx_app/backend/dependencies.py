@@ -855,14 +855,18 @@ async def get_data_product_service(
     binding_run_service: Annotated[BindingRunService, Depends(get_binding_run_service)],
     version_service: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    materializer: Annotated[Materializer, Depends(get_materializer)],
 ) -> DataProductService:
     """Create a DataProductService routed at the OLTP executor.
 
-    Reuses the monitored-table listing (for per-member rules/checks counts
-    and live status), the run-set service (for the shared run set + last-run
-    lookups), ``BindingRunService`` (for per-member run submission), and the
-    version service (so version-pinned members report their frozen snapshot's
-    counts rather than the binding's live counts).
+    Reuses the monitored-table listing (for per-member rules count and live
+    status), the run-set service (for the shared run set + last-run lookups),
+    ``BindingRunService`` (for per-member run submission), the version service
+    (so version-pinned members report their frozen snapshot's counts rather
+    than the binding's live counts), and the ``Materializer`` (so an unpinned
+    member's ``# Checks`` reflects the checks its applied rules actually expand
+    to — non-zero even for a freshly-saved draft space, matching the
+    monitored-tables overview).
     """
     return DataProductService(
         sql=sql,
@@ -871,6 +875,7 @@ async def get_data_product_service(
         binding_run_service=binding_run_service,
         version_service=version_service,
         app_settings=app_settings,
+        materializer=materializer,
     )
 
 
