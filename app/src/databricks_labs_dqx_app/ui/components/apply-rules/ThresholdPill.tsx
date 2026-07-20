@@ -69,7 +69,11 @@ export function ThresholdPill({
   const [columnDrafts, setColumnDrafts] = useState<Record<string, string>>({});
 
   const displayed = value ?? effectiveDefault;
-  const isOverridden = value !== null;
+  // Only a value that actually DIFFERS from the effective default counts as an
+  // override for the "*" marker: an explicit value equal to the default reads
+  // as "following the default", so flagging it with "*" is misleading (the pill
+  // then shows e.g. "< 70% *" identical to the un-flagged default).
+  const isOverridden = value !== null && value !== effectiveDefault;
 
   // Per-column mode: mixed + columns provided + onColumnChange wired
   const isPerColumnMode = mixed && columns !== undefined && columns.length > 0 && onColumnChange !== undefined;
@@ -92,7 +96,9 @@ export function ThresholdPill({
           ? t("monitoredTables.thresholdPillMixed")
           : t("monitoredTables.thresholdPillLabel", { pct: displayed })}
       </span>
-      {(isOverridden || mixed) && <span className="text-muted-foreground ml-0.5">*</span>}
+      {/* Fixed-width "*" slot (always present, empty when not overridden) so the
+          pill width doesn't jump when the marker appears/disappears. */}
+      <span className="w-2 text-center text-muted-foreground">{isOverridden || mixed ? "*" : ""}</span>
     </>
   );
 
