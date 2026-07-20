@@ -50,7 +50,7 @@ from databricks_labs_dqx_app.backend.services.tag_mapping_service import family_
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TOP_K = 8
+DEFAULT_TOP_K = 20  # Per-column retrieval unions per column; cap = max(top_k, top_k*3) in _retrieve_per_column
 
 # Human-readable reasons for the genuine "available, but nothing to show"
 # outcomes. Kept as constants so the exact wording is asserted by tests and
@@ -429,6 +429,12 @@ class RuleSuggester:
             # Multi-slot completeness: mapping keys must exactly equal the rule's slot names.
             expected_slots = {slot.name for slot in rule.definition.slots}
             if set(mapping.keys()) != expected_slots:
+                continue
+
+            # Reject same-column multi-slot mappings: two or more distinct slot keys bound to the
+            # same column value (e.g. {"start_ts": "order_ts", "end_ts": "order_ts"}) are always
+            # wrong for a comparison/range rule and indicate the LLM forced a rule onto one column.
+            if len(set(mapping.values())) < len(mapping):
                 continue
 
             mapping_typed: ColumnMappingGroup = {str(k): str(v) for k, v in mapping.items()}
