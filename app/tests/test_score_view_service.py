@@ -109,6 +109,13 @@ class TestAttributionViewDdl:
         assert "user_metadata['dimension'] AS dimension" in ddl
         assert "user_metadata['registry_rule_id'] AS registry_rule_id" in ddl
 
+    def test_extracts_frozen_pass_threshold_as_int(self, svc):
+        # The resolved effective threshold is frozen per-run into
+        # user_metadata['pass_threshold'] by the materializer — extract it
+        # as an INT (NULL when absent, e.g. legacy runs).
+        ddl = svc.attribution_view_ddl()
+        assert "TRY_CAST(user_metadata['pass_threshold'] AS INT) AS pass_threshold" in ddl
+
     def test_columns_stay_an_array_merging_column_and_columns(self, svc):
         # A single-column check renders arguments.column, a multi-column
         # one arguments.columns — the view exposes ONE array column.
@@ -208,6 +215,11 @@ class TestShapingViewDdl:
     def test_shaping_view_carries_rule_name(self, svc):
         assert "a.rule_name" in svc.shaping_view_ddl()
 
+    def test_shaping_view_carries_frozen_pass_threshold(self, svc):
+        # The per-run frozen threshold flows through so breach eval reads it
+        # instead of recomputing from live settings.
+        assert "a.pass_threshold" in svc.shaping_view_ddl()
+
     def test_reads_run_provenance_tags_from_the_run_level_metadata_map(self, svc):
         # dq_metrics is long-format: the run-level user_metadata map repeats
         # per metric row, so MAX over the grouped rows picks it from any row.
@@ -304,6 +316,10 @@ class TestAsofViewDdl:
 
     def test_asof_view_carries_rule_name(self, svc):
         assert "c.rule_name" in svc.asof_view_ddl()
+
+    def test_asof_view_carries_frozen_pass_threshold(self, svc):
+        # Trend/as-of breach eval must read the same frozen threshold.
+        assert "c.pass_threshold" in svc.asof_view_ddl()
 
     def test_null_run_times_never_enter_the_expansion(self, svc):
         assert "WHERE run_time IS NOT NULL" in svc.asof_view_ddl()

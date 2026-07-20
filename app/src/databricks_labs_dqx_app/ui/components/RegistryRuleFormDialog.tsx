@@ -155,11 +155,14 @@ import {
 } from "@/lib/registry-rule-conversion";
 import { RegistryRuleFormJsonDialog } from "@/components/registry-rules/RegistryRuleFormJsonDialog";
 import { SqlAiAssistMenu } from "@/components/rules/SqlAiAssistMenu";
+import { useDefaultPassThreshold } from "@/hooks/use-default-pass-threshold";
+import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
 const RESERVED_DIMENSION_KEY = "dimension";
 const RESERVED_SEVERITY_KEY = "severity";
+const RESERVED_PASS_THRESHOLD_KEY = "pass_threshold";
 
 type RegistryMode = "dqx_native" | "lowcode" | "sql";
 
@@ -1538,6 +1541,7 @@ interface RuleEditSnapshot {
   description: string;
   dimension: string;
   severity: string;
+  passThreshold: number | null;
   steward: string;
   tags: Record<string, string>;
   mode: RegistryMode;
@@ -1563,9 +1567,14 @@ interface RuleEditSnapshot {
 function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
   const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
   const asString = (k: string) => (typeof md[k] === "string" ? (md[k] as string) : "");
+  const asIntOrNull = (k: string): number | null => {
+    const v = md[k];
+    const n = typeof v === "number" ? v : typeof v === "string" ? parseInt(v, 10) : NaN;
+    return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null;
+  };
   const tags: Record<string, string> = {};
   for (const [k, v] of Object.entries(md)) {
-    if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY) continue;
+    if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
     if (typeof v === "string") tags[k] = v;
   }
   const isNative = rule.mode === "dqx_native";
@@ -1588,6 +1597,7 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
     description: asString(RESERVED_DESCRIPTION_KEY),
     dimension: asString(RESERVED_DIMENSION_KEY),
     severity: asString(RESERVED_SEVERITY_KEY),
+    passThreshold: asIntOrNull(RESERVED_PASS_THRESHOLD_KEY),
     steward: rule.steward ?? "",
     tags,
     mode: rule.mode,
@@ -1633,6 +1643,7 @@ const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   description: "",
   dimension: "",
   severity: "",
+  passThreshold: null,
   steward: "",
   tags: {},
   mode: "lowcode",
@@ -1777,6 +1788,7 @@ export function RegistryRuleFormDialog({
   const [description, setDescription] = useState("");
   const [dimension, setDimension] = useState<string>("");
   const [severity, setSeverity] = useState<string>("");
+  const [passThreshold, setPassThreshold] = useState<number | null>(null);
   const [tags, setTags] = useState<Record<string, string>>({});
   const [steward, setSteward] = useState("");
   const [nameError, setNameError] = useState<string | null>(null);
@@ -1801,6 +1813,10 @@ export function RegistryRuleFormDialog({
     },
     [onJsonDialogOpenChange],
   );
+
+  // Pass-threshold feature flag + workspace default (for monospace placeholder).
+  const thresholdEnabled = usePassThresholdEnabled();
+  const defaultThreshold = useDefaultPassThreshold();
 
   // AI — Build-with-AI (full-form generate) + per-field suggest.
   const aiAvailability = useAiAvailability();
@@ -1838,10 +1854,16 @@ export function RegistryRuleFormDialog({
 
     const md = (sourceRule?.user_metadata ?? {}) as Record<string, unknown>;
     const asString = (k: string) => (typeof md[k] === "string" ? (md[k] as string) : "");
+    const asIntOrNull = (k: string): number | null => {
+      const v = md[k];
+      const n = typeof v === "number" ? v : typeof v === "string" ? parseInt(v, 10) : NaN;
+      return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null;
+    };
     setName(asString(RESERVED_NAME_KEY));
     setDescription(asString(RESERVED_DESCRIPTION_KEY));
     setDimension(asString(RESERVED_DIMENSION_KEY));
     setSeverity(asString(RESERVED_SEVERITY_KEY));
+    setPassThreshold(asIntOrNull(RESERVED_PASS_THRESHOLD_KEY));
     setSteward(sourceRule?.steward ?? "");
     setNameError(null);
     setErrorMessage(sourceRule?.definition?.error_message ?? "");
@@ -1859,7 +1881,7 @@ export function RegistryRuleFormDialog({
     setPendingNativeSlots(null);
     const freeTags: Record<string, string> = {};
     for (const [k, v] of Object.entries(md)) {
-      if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY) continue;
+      if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
       if (typeof v === "string") freeTags[k] = v;
     }
     setTags(freeTags);
@@ -2072,6 +2094,7 @@ export function RegistryRuleFormDialog({
     description,
     dimension,
     severity,
+    passThreshold,
     steward,
     tags,
     mode,
@@ -2341,6 +2364,7 @@ export function RegistryRuleFormDialog({
     if (description.trim()) md[RESERVED_DESCRIPTION_KEY] = description.trim();
     if (dimension) md[RESERVED_DIMENSION_KEY] = dimension;
     if (severity) md[RESERVED_SEVERITY_KEY] = severity;
+    if (passThreshold !== null) md[RESERVED_PASS_THRESHOLD_KEY] = passThreshold;
     // apply-on-tag: persist the slot -> tags map, pruning any orphan entry that
     // no longer references a declared slot (e.g. a slot the author removed or
     // renamed) so the stored `slot_tags` never keys off a non-existent slot.
@@ -2397,9 +2421,14 @@ export function RegistryRuleFormDialog({
     setDescription(md[RESERVED_DESCRIPTION_KEY] ?? "");
     setDimension(md[RESERVED_DIMENSION_KEY] ?? "");
     setSeverity(md[RESERVED_SEVERITY_KEY] ?? "");
+    {
+      const rawPt = md[RESERVED_PASS_THRESHOLD_KEY];
+      const n = typeof rawPt === "string" ? parseInt(rawPt, 10) : NaN;
+      setPassThreshold(Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null);
+    }
     const freeTags: Record<string, string> = {};
     for (const [k, v] of Object.entries(md)) {
-      if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY) continue;
+      if (k === RESERVED_NAME_KEY || k === RESERVED_DESCRIPTION_KEY || k === RESERVED_DIMENSION_KEY || k === RESERVED_SEVERITY_KEY || k === RESERVED_PASS_THRESHOLD_KEY) continue;
       freeTags[k] = v;
     }
     setTags(freeTags);
@@ -3219,6 +3248,45 @@ export function RegistryRuleFormDialog({
     setModeSwitch({ direction, choice });
   };
 
+  // Threshold field — rendered inside each per-mode Advanced disclosure so
+  // there is exactly ONE Advanced section per Implementation mode (lowcode /
+  // dqx_native / sql) containing both that mode's content AND the threshold
+  // input.  Gated on `thresholdEnabled` so it vanishes when the feature flag
+  // is off.  The JSX move is display-only; all round-trip touch points
+  // (snapshotFromRule, PRISTINE, buildUserMetadata, currentSnapshot,
+  // hydration effect, applyParsedToForm) reference `passThreshold` /
+  // `RESERVED_PASS_THRESHOLD_KEY` directly and are unaffected.
+  const thresholdField = thresholdEnabled ? (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <Label className="text-xs">{t("rulesRegistry.defaultPassThresholdLabel")}</Label>
+        <HelpTooltip text={t("rulesRegistry.defaultPassThresholdHint")} />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Input
+          type="number"
+          min={0}
+          max={100}
+          step={1}
+          className="h-8 w-28 text-xs font-mono"
+          placeholder={String(defaultThreshold)}
+          disabled={readOnly}
+          value={passThreshold ?? ""}
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (raw === "") {
+              setPassThreshold(null);
+            } else {
+              const n = parseInt(raw, 10);
+              if (Number.isFinite(n)) setPassThreshold(Math.max(0, Math.min(100, n)));
+            }
+          }}
+        />
+        <span className="text-xs text-muted-foreground">%</span>
+      </div>
+    </div>
+  ) : null;
+
   const implementationTabContent = (
     // `w-full` pins this tab's content to the tab strip's stable width
     // regardless of which mode's fields it's currently rendering (DQX
@@ -3383,7 +3451,7 @@ export function RegistryRuleFormDialog({
               the IF condition's inputs, not the row-level outcome below it. */}
           <AdvancedDisclosure
             label={t("rulesRegistry.advancedSectionLabel")}
-            defaultOpen={!!groupBy || !!filter || lowcodeAst.joins.length > 0}
+            defaultOpen={!!groupBy || !!filter || lowcodeAst.joins.length > 0 || passThreshold !== null}
           >
             {/* Joins come first: they widen the set of columns available to
                 the condition (and to group-by below) by pulling in
@@ -3420,6 +3488,7 @@ export function RegistryRuleFormDialog({
                 readOnly={readOnly}
               />
             </div>
+            {thresholdField}
           </AdvancedDisclosure>
           <div className="flex flex-wrap items-center gap-3">
             <FramingWord>{t("rulesRegistry.thenTheRow")}</FramingWord>
@@ -3554,7 +3623,7 @@ export function RegistryRuleFormDialog({
               built visually with the same low-code row controls. */}
           <AdvancedDisclosure
             label={t("rulesRegistry.advancedSectionLabel")}
-            defaultOpen={!!filter}
+            defaultOpen={!!filter || passThreshold !== null}
           >
             <div className="space-y-1.5">
               <Label className="text-xs">{t("rulesRegistry.filterLabel")}</Label>
@@ -3565,6 +3634,7 @@ export function RegistryRuleFormDialog({
                 readOnly={readOnly}
               />
             </div>
+            {thresholdField}
           </AdvancedDisclosure>
         </div>
       )}
@@ -3631,7 +3701,7 @@ export function RegistryRuleFormDialog({
               in the predicate editor (round-tripped via buildSqlBody's
               sql_query passthrough). No structured joins card here. Advanced in
               SQL mode is just the row filter. */}
-          <AdvancedDisclosure label={t("rulesRegistry.advancedSectionLabel")} defaultOpen={!!filter}>
+          <AdvancedDisclosure label={t("rulesRegistry.advancedSectionLabel")} defaultOpen={!!filter || passThreshold !== null}>
             {/* Row filter — a SQL WHERE predicate applied before the rule
                 condition. In SQL mode this uses the SAME code editor as the
                 predicate (slot autocomplete + linting), not a plain input —
@@ -3648,6 +3718,7 @@ export function RegistryRuleFormDialog({
                 autoHeight
               />
             </div>
+            {thresholdField}
           </AdvancedDisclosure>
           <div className="flex flex-wrap items-center gap-3">
             <FramingWord>{t("rulesRegistry.thenTheRow")}</FramingWord>

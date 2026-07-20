@@ -21,6 +21,7 @@ import {
   MultiTableResultsSection,
   type UseEntityResults,
 } from "@/components/results/MultiTableResults";
+import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 
 // Ported from dqlake's `components/products/ProductResultsTab.tsx` (the spec —
 // keep structure/section order/interactions aligned with it). The tab body is
@@ -108,6 +109,7 @@ export function ProductResultsTab({ productId }: { productId: string }) {
 
 function ResultsBody({ productId }: { productId: string }) {
   const { t } = useTranslation();
+  const thresholdEnabled = usePassThresholdEnabled();
 
   // The product (with members) supplies the member FQNs for the Genie chat
   // scope below, and its version tells us whether it has ever been approved.
@@ -187,6 +189,7 @@ function ResultsBody({ productId }: { productId: string }) {
               runs={productRunPickerRuns(runs)}
               value={selectedBatch}
               onChange={setSelectedBatch}
+              breachEnabled={thresholdEnabled}
             />
           }
           asOfBatch={selectedBatch}

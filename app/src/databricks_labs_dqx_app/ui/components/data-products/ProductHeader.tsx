@@ -50,11 +50,11 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { CheckCircle2, Clock, FileDown, GitCompare, History, Loader2, MessageSquare, MoreVertical, Play, Save, Send, Trash2, Undo2, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, Download, GitCompare, History, Loader2, MessageSquare, MoreVertical, Play, Save, Send, Trash2, Undo2, XCircle } from "lucide-react";
 import { CommentsDialog } from "@/components/CommentThread";
 import { TableSpaceDiffDialog, type TableSpaceDiffTarget } from "@/components/drafts/ChangeDiffDialog";
-import { exportDataProduct, downloadExportFile } from "@/lib/api-custom";
-import type { ExportFormat } from "@/lib/api-custom";
+import { exportDataProduct } from "@/lib/api-custom";
+import { ExportDialog } from "@/components/ExportDialog";
 import { cn } from "@/lib/utils";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
 
@@ -315,23 +315,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
   const [busyRun, setBusyRun] = useState(false);
-  const [exporting, setExporting] = useState(false);
-
-  // Export this space's checks as DQX or ODCS YAML from the ⋮ menu (moved off
-  // a standalone header button). Mirrors ExportYamlMenu's fetch→download→toast.
-  const handleExport = async (format: ExportFormat) => {
-    if (exporting) return;
-    setExporting(true);
-    try {
-      const res = await exportDataProduct(product.product_id, format);
-      downloadExportFile(res.data);
-      toast.success(t("exportYaml.success", { filename: res.data.filename }));
-    } catch (err) {
-      toast.error(extractApiError(err, t("exportYaml.failed")));
-    } finally {
-      setExporting(false);
-    }
-  };
+  const [exportOpen, setExportOpen] = useState(false);
   // Bridges the gap between a successful submit and the next 4s poll
   // catching the new RUNNING run set, so the button doesn't flash back to
   // "Run now" for a moment after submission.
@@ -589,24 +573,12 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
               <DropdownMenuItem
                 onSelect={(e) => {
                   e.preventDefault();
-                  void handleExport("dqx");
+                  setExportOpen(true);
                 }}
-                disabled={exporting}
                 className="gap-2"
               >
-                <FileDown className="h-3.5 w-3.5" />
-                {t("exportYaml.dqxOption")}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  void handleExport("odcs");
-                }}
-                disabled={exporting}
-                className="gap-2"
-              >
-                <FileDown className="h-3.5 w-3.5" />
-                {t("exportYaml.odcsOption")}
+                <Download className="h-3.5 w-3.5" />
+                {t("exportYaml.button")}…
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               {/* The run action NOT shown as the primary button is demoted here
@@ -677,6 +649,12 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+          <ExportDialog
+            open={exportOpen}
+            onOpenChange={setExportOpen}
+            fetchDqx={() => exportDataProduct(product.product_id, "dqx")}
+            fetchOdcs={() => exportDataProduct(product.product_id, "odcs")}
+          />
         </div>
       </div>
 

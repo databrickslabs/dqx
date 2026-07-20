@@ -73,7 +73,7 @@ from databricks_labs_dqx_app.backend.models import (
     SuggestRulesOut,
     TagSuggestionsOut,
 )
-from databricks_labs_dqx_app.backend.registry_models import MonitoredTable, get_rule_name
+from databricks_labs_dqx_app.backend.registry_models import MonitoredTable, get_rule_name, RESERVED_COLUMN_PASS_THRESHOLDS_KEY
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     ApplyRulesService,
     DesiredAppliedRule,
@@ -769,18 +769,29 @@ def save_applied_rules(
         principal_email=user_email,
     )
     try:
-        desired = [
-            DesiredAppliedRule(
-                rule_id=entry.rule_id,
-                column_mapping=entry.column_mapping,
-                pinned_version=entry.pinned_version,
-                severity_override=entry.severity_override,
-                row_filter=entry.row_filter,
-                pass_threshold=entry.pass_threshold,
-                tags=entry.tags,
+        desired = []
+        for entry in body.applications:
+            tags = dict(entry.tags)
+            # `entry.tags` is the row's full user_metadata (the frontend sends
+            # user_metadata as `tags`), which may still carry a stale
+            # column_pass_thresholds map from a prior save. Always drop the
+            # reserved key first, then re-add it only when the client sent a
+            # non-empty override — otherwise clearing every per-column override
+            # ("Use rule default") would silently leave the old map persisted.
+            tags.pop(RESERVED_COLUMN_PASS_THRESHOLDS_KEY, None)
+            if entry.column_pass_thresholds:
+                tags[RESERVED_COLUMN_PASS_THRESHOLDS_KEY] = entry.column_pass_thresholds
+            desired.append(
+                DesiredAppliedRule(
+                    rule_id=entry.rule_id,
+                    column_mapping=entry.column_mapping,
+                    pinned_version=entry.pinned_version,
+                    severity_override=entry.severity_override,
+                    row_filter=entry.row_filter,
+                    pass_threshold=entry.pass_threshold,
+                    tags=tags,
+                )
             )
-            for entry in body.applications
-        ]
         applied = svc.save_applied_rules(binding_id, desired, user_email)
         # Return the ENRICHED shape (rule_name/dimension/severity populated),
         # matching how the GET builds ``applied_rules`` via

@@ -470,6 +470,9 @@ RESERVED_MAPPED_COLUMNS_KEY = "mapped_columns"
 ORIGIN_KEY = "origin"
 ORIGIN_TAG_AUTO = "tag_auto"
 
+RESERVED_PASS_THRESHOLD_KEY = "pass_threshold"
+RESERVED_COLUMN_PASS_THRESHOLDS_KEY = "column_pass_thresholds"
+
 RESERVED_RULE_METADATA_KEYS: frozenset[str] = frozenset(
     {
         RESERVED_NAME_KEY,
@@ -477,6 +480,10 @@ RESERVED_RULE_METADATA_KEYS: frozenset[str] = frozenset(
         RESERVED_DIMENSION_KEY,
         RESERVED_SEVERITY_KEY,
         RESERVED_SLOT_TAGS_KEY,
+        # Registry-rule default pass threshold — reserved so it is never treated
+        # as a free-text tag. (``column_pass_thresholds`` is an APPLIED-rule key,
+        # not a registry-rule key, so it deliberately does NOT belong here.)
+        RESERVED_PASS_THRESHOLD_KEY,
     }
 )
 
@@ -569,6 +576,46 @@ def get_rule_dimension(user_metadata: dict[str, Any]) -> str | None:
 def get_rule_severity(user_metadata: dict[str, Any]) -> str | None:
     """Read the reserved ``severity`` tag."""
     return get_reserved_tag(user_metadata, RESERVED_SEVERITY_KEY)
+
+
+def _coerce_threshold(value: object) -> int | None:
+    """Parse a stored threshold to a clamped int in [0, 100], or None if invalid."""
+    try:
+        return max(0, min(100, int(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def get_rule_pass_threshold(user_metadata: dict[str, Any]) -> int | None:
+    """Registry-rule default minimum pass rate (%), or None if unset."""
+    return _coerce_threshold(user_metadata.get(RESERVED_PASS_THRESHOLD_KEY))
+
+
+def get_applied_column_pass_thresholds(user_metadata: dict[str, Any]) -> dict[str, int]:
+    """Per-column threshold overrides on an applied rule ({column: pct}). Invalid entries dropped."""
+    raw = user_metadata.get(RESERVED_COLUMN_PASS_THRESHOLDS_KEY)
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, int] = {}
+    for col, val in raw.items():
+        coerced = _coerce_threshold(val)
+        if coerced is not None:
+            out[str(col)] = coerced
+    return out
+
+
+def resolve_pass_threshold(
+    *,
+    column_override: int | None,
+    rule_override: int | None,
+    registry_default: int | None,
+    admin_default: int,
+) -> int:
+    """First non-null of (column, rule, registry) else the admin default. See plan Global Constraints."""
+    for candidate in (column_override, rule_override, registry_default):
+        if candidate is not None:
+            return candidate
+    return admin_default
 
 
 # UI-facing status union: every raw lifecycle status plus the derived

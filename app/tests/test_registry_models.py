@@ -18,7 +18,10 @@ from databricks_labs_dqx_app.backend.registry_models import (
     ORIGIN_TAG_AUTO,
     RESERVED_RULE_METADATA_KEYS,
     RESERVED_SLOT_TAGS_KEY,
+    get_applied_column_pass_thresholds,
+    get_rule_pass_threshold,
     get_slot_tags,
+    resolve_pass_threshold,
     set_slot_tags,
 )
 
@@ -279,6 +282,7 @@ class TestReservedTagHelpers:
             "dimension",
             "severity",
             "slot_tags",
+            "pass_threshold",
         }
 
     def test_getters_return_none_when_absent(self, module):
@@ -489,3 +493,31 @@ class TestRunSetMember:
     def test_accepts_binding_version(self, RunSetMember):
         member = RunSetMember(run_set_id="rs1", run_id="run1", binding_id="b1", binding_version=4)
         assert member.binding_version == 4
+
+
+# ---------------------------------------------------------------------------
+# Pass-threshold helpers (Task 2)
+# ---------------------------------------------------------------------------
+
+
+def test_get_rule_pass_threshold_reads_reserved_key():
+    assert get_rule_pass_threshold({"pass_threshold": 80}) == 80
+    assert get_rule_pass_threshold({"pass_threshold": "80"}) == 80  # tolerate string
+    assert get_rule_pass_threshold({}) is None
+    assert get_rule_pass_threshold({"pass_threshold": 999}) == 100  # clamp
+    assert get_rule_pass_threshold({"pass_threshold": "bad"}) is None
+
+
+def test_get_applied_column_pass_thresholds():
+    assert get_applied_column_pass_thresholds({"column_pass_thresholds": {"a": 90, "b": 50}}) == {"a": 90, "b": 50}
+    assert get_applied_column_pass_thresholds({}) == {}
+    assert get_applied_column_pass_thresholds({"column_pass_thresholds": {"a": 999, "b": "bad"}}) == {"a": 100}  # clamp + drop bad
+
+
+def test_resolve_pass_threshold_precedence():
+    assert resolve_pass_threshold(column_override=95, rule_override=80, registry_default=60, admin_default=70) == 95
+    assert resolve_pass_threshold(column_override=None, rule_override=80, registry_default=60, admin_default=70) == 80
+    assert resolve_pass_threshold(column_override=None, rule_override=None, registry_default=60, admin_default=70) == 60
+    assert resolve_pass_threshold(column_override=None, rule_override=None, registry_default=None, admin_default=70) == 70
+    # zero is a real value, not "unset"
+    assert resolve_pass_threshold(column_override=0, rule_override=80, registry_default=60, admin_default=70) == 0

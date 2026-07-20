@@ -276,7 +276,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
   source: {
     labelKey: "rulesRegistry.colSource",
     toggleable: true,
-    defaultVisible: true,
+    defaultVisible: false,
     defaultWidth: 100,
     sortable: true,
     renderHeader: (label) => label,

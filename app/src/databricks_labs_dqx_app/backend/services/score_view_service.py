@@ -207,6 +207,11 @@ class ScoreViewService:
             "  user_metadata['dimension'] AS dimension,\n"
             "  user_metadata['registry_rule_id'] AS registry_rule_id,\n"
             "  user_metadata['name'] AS rule_name,\n"
+            # The resolved effective pass threshold the runner FROZE per-run
+            # into user_metadata at materialization time — breach eval reads
+            # this frozen value so a later admin/rule setting change never
+            # re-judges a past run. NULL for legacy runs predating the stamp.
+            "  TRY_CAST(user_metadata['pass_threshold'] AS INT) AS pass_threshold,\n"
             "  COALESCE(\n"
             "    arg_columns,\n"
             "    CASE WHEN arg_column IS NOT NULL THEN array(arg_column) END,\n"
@@ -317,6 +322,7 @@ class ScoreViewService:
             "  a.dimension,\n"
             "  a.registry_rule_id,\n"
             "  a.rule_name,\n"
+            "  a.pass_threshold,\n"
             "  a.columns\n"
             "FROM exploded e\n"
             f"LEFT JOIN {self.attribution_view_fqn_quoted} a\n"
@@ -407,6 +413,7 @@ class ScoreViewService:
             "  c.dimension,\n"
             "  c.registry_rule_id,\n"
             "  c.rule_name,\n"
+            "  c.pass_threshold,\n"
             "  c.columns\n"
             "FROM asof a\n"
             f"JOIN {v} c\n"

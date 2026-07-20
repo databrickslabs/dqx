@@ -115,9 +115,6 @@ variables:
           value: "${var.lakebase_endpoint}"
         - name: "DQX_LAKEBASE_DATABASE_NAME"
           value: "${var.lakebase_database_name}"
-        # Starter Insights dashboard; admins can override at runtime via Configuration.
-        - name: "DQX_DEFAULT_DASHBOARD_ID"
-          value: "${resources.dashboards.dqx_quality_overview.id}"
         # Registered app slug (unique-per-workspace name the app is registered under).
         # Used by the privileged-principals endpoint to look up CAN_MANAGE holders.
         - name: "DQX_APP_NAME"
@@ -343,20 +340,6 @@ resources:
         bypassrls: true
       membership_roles:
         - DATABRICKS_SUPERUSER
-
-  dashboards:
-    dqx_quality_overview:
-      display_name: "[${bundle.target}] DQX Quality Overview"
-      file_path: ./dashboards/dqx_quality_overview.lvdash.json
-      warehouse_id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
-      dataset_catalog: ${var.catalog_name}
-      dataset_schema: ${var.schema_name}
-      embed_credentials: true
-      # Workspace-scoped ACL — see the app/warehouse permissions note; use the
-      # workspace-local ``users`` group, not account-level ``account users``.
-      permissions:
-        - level: CAN_READ
-          group_name: "users"
 
   jobs:
     dqx_task_runner:

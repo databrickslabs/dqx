@@ -318,6 +318,11 @@ export type AppliedRuleOutRowFilter = string | null;
  */
 export type AppliedRuleOutPassThreshold = number | null;
 
+/**
+ * Per-column minimum-pass-rate overrides ({column: pct 0-100}); read from user_metadata.
+ */
+export type AppliedRuleOutColumnPassThresholds = {[key: string]: number};
+
 export type AppliedRuleOutColumnMappingItem = {[key: string]: string};
 
 export type AppliedRuleOutUserMetadata = { [key: string]: unknown };
@@ -334,6 +339,8 @@ export type AppliedRuleOutRuleDimension = string | null;
 
 export type AppliedRuleOutRuleSeverity = string | null;
 
+export type AppliedRuleOutRulePassThreshold = number | null;
+
 export type AppliedRuleOutRuleSource = string | null;
 
 /**
@@ -349,6 +356,8 @@ export interface AppliedRuleOut {
   row_filter?: AppliedRuleOutRowFilter;
   /** Per-rule minimum % of rows that must pass; None = no per-rule threshold. */
   pass_threshold?: AppliedRuleOutPassThreshold;
+  /** Per-column minimum-pass-rate overrides ({column: pct 0-100}); read from user_metadata. */
+  column_pass_thresholds?: AppliedRuleOutColumnPassThresholds;
   column_mapping?: AppliedRuleOutColumnMappingItem[];
   user_metadata?: AppliedRuleOutUserMetadata;
   mapping_hash?: AppliedRuleOutMappingHash;
@@ -357,6 +366,7 @@ export interface AppliedRuleOut {
   rule_name?: AppliedRuleOutRuleName;
   rule_dimension?: AppliedRuleOutRuleDimension;
   rule_severity?: AppliedRuleOutRuleSeverity;
+  rule_pass_threshold?: AppliedRuleOutRulePassThreshold;
   rule_source?: AppliedRuleOutRuleSource;
 }
 
@@ -1152,6 +1162,23 @@ export interface DataProductRunSubmissionOut {
   binding_version?: DataProductRunSubmissionOutBindingVersion;
 }
 
+export interface DefaultPassThresholdIn {
+  /**
+   * Org-wide default minimum pass rate (%); checks warn when pass rate drops below this.
+   * @minimum 0
+   * @maximum 100
+   */
+  default_pass_threshold: number;
+}
+
+/**
+ * Effective default pass threshold + the compiled default for the UI.
+ */
+export interface DefaultPassThresholdOut {
+  default_pass_threshold: number;
+  default_pass_threshold_default: number;
+}
+
 /**
  * Current state of the long-running demo-content seed job.
  */
@@ -1213,6 +1240,13 @@ export type DesiredAppliedRuleInPassThreshold = number | null;
  */
 export type DesiredAppliedRuleInTags = { [key: string]: unknown };
 
+export type DesiredAppliedRuleInColumnPassThresholdsAnyOf = {[key: string]: number};
+
+/**
+ * Per-column minimum-pass-rate overrides ({column: pct 0-100}); merged into user_metadata.
+ */
+export type DesiredAppliedRuleInColumnPassThresholds = DesiredAppliedRuleInColumnPassThresholdsAnyOf | null;
+
 /**
  * One entry in the full desired set of applications for ``saveAppliedRules``.
  */
@@ -1231,6 +1265,8 @@ export interface DesiredAppliedRuleIn {
   pass_threshold?: DesiredAppliedRuleInPassThreshold;
   /** Per-application free-text tags */
   tags?: DesiredAppliedRuleInTags;
+  /** Per-column minimum-pass-rate overrides ({column: pct 0-100}); merged into user_metadata. */
+  column_pass_thresholds?: DesiredAppliedRuleInColumnPassThresholds;
 }
 
 /**
@@ -1741,6 +1777,8 @@ export type GroupRowOutCheckCount = number | null;
 
 export type GroupRowOutTotalTests = number | null;
 
+export type GroupRowOutBreachCriticality = string | null;
+
 /**
  * One breakdown row (by dimension / severity / rule / column / table).
 
@@ -1765,6 +1803,8 @@ export interface GroupRowOut {
   rule_count?: GroupRowOutRuleCount;
   check_count?: GroupRowOutCheckCount;
   total_tests?: GroupRowOutTotalTests;
+  breached?: boolean;
+  breach_criticality?: GroupRowOutBreachCriticality;
 }
 
 export interface HTTPValidationError {
@@ -3189,6 +3229,10 @@ export type RulesRegistrySettingsInDefaultAutoUpgrade = boolean | null;
 
 export type RulesRegistrySettingsInTagAutoApply = boolean | null;
 
+export type RulesRegistrySettingsInDefaultPassThreshold = number | null;
+
+export type RulesRegistrySettingsInPassThresholdEnabled = boolean | null;
+
 /**
  * Update payload — omitted fields are left unchanged.
  */
@@ -3196,6 +3240,8 @@ export interface RulesRegistrySettingsIn {
   auto_upgrade_without_approval?: RulesRegistrySettingsInAutoUpgradeWithoutApproval;
   default_auto_upgrade?: RulesRegistrySettingsInDefaultAutoUpgrade;
   tag_auto_apply?: RulesRegistrySettingsInTagAutoApply;
+  default_pass_threshold?: RulesRegistrySettingsInDefaultPassThreshold;
+  pass_threshold_enabled?: RulesRegistrySettingsInPassThresholdEnabled;
 }
 
 /**
@@ -3208,6 +3254,10 @@ export interface RulesRegistrySettingsOut {
   default_auto_upgrade: boolean;
   /** Tag-mapping apply behaviour: eagerly auto-attach tag-mapped rules across monitored tables (True) vs. only surface them as suggestions (False, default). */
   tag_auto_apply: boolean;
+  /** Org-wide default minimum pass rate (%) below which a check warns. Overridable per rule and per column. Clamped to [0, 100]. */
+  default_pass_threshold: number;
+  /** Master switch for the pass-threshold feature. When False, all threshold UI is hidden and breach evaluation is disabled server-side. Default True. */
+  pass_threshold_enabled: boolean;
 }
 
 export type RunConfigInputConfig = InputConfig | null;
@@ -3367,6 +3417,8 @@ export type RunRowOutTotalTests = number | null;
 
 export type RunRowOutRunMode = string | null;
 
+export type RunRowOutBreachCriticality = string | null;
+
 /**
  * One run's rollup for the run picker (newest first).
 
@@ -3383,6 +3435,8 @@ export interface RunRowOut {
   failed_tests?: RunRowOutFailedTests;
   total_tests?: RunRowOutTotalTests;
   run_mode?: RunRowOutRunMode;
+  breached?: boolean;
+  breach_criticality?: RunRowOutBreachCriticality;
 }
 
 export type RunSetDetailOutProductId = string | null;
@@ -3962,6 +4016,8 @@ export type TrendPointOutTotalTests = number | null;
 
 export type TrendPointOutVersion = number | null;
 
+export type TrendPointOutBreachCriticality = string | null;
+
 /**
  * One over-time point; *series* is set on grouped trends only.
 
@@ -3987,6 +4043,8 @@ export interface TrendPointOut {
   total_tests?: TrendPointOutTotalTests;
   version?: TrendPointOutVersion;
   is_draft?: boolean;
+  breached?: boolean;
+  breach_criticality?: TrendPointOutBreachCriticality;
 }
 
 export type UpdateDataProductInName = string | null;
@@ -6308,6 +6366,216 @@ export const useSaveDraftRunSampleLimit = <TError = AxiosError<HTTPValidationErr
       > => {
 
       const mutationOptions = getSaveDraftRunSampleLimitMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Return the current default pass threshold (admin only).
+ * @summary Get Default Pass Threshold
+ */
+export const getDefaultPassThreshold = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DefaultPassThresholdOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/config/default-pass-threshold`,options
+    );
+  }
+
+
+
+
+export const getGetDefaultPassThresholdQueryKey = () => {
+    return [
+    `/api/v1/config/default-pass-threshold`
+    ] as const;
+    }
+
+    
+export const getGetDefaultPassThresholdQueryOptions = <TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDefaultPassThresholdQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDefaultPassThreshold>>> = ({ signal }) => getDefaultPassThreshold({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDefaultPassThresholdQueryResult = NonNullable<Awaited<ReturnType<typeof getDefaultPassThreshold>>>
+export type GetDefaultPassThresholdQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetDefaultPassThreshold<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDefaultPassThreshold>>,
+          TError,
+          Awaited<ReturnType<typeof getDefaultPassThreshold>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDefaultPassThreshold<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDefaultPassThreshold>>,
+          TError,
+          Awaited<ReturnType<typeof getDefaultPassThreshold>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDefaultPassThreshold<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Default Pass Threshold
+ */
+
+export function useGetDefaultPassThreshold<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDefaultPassThresholdQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetDefaultPassThresholdSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDefaultPassThresholdQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDefaultPassThreshold>>> = ({ signal }) => getDefaultPassThreshold({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDefaultPassThresholdSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getDefaultPassThreshold>>>
+export type GetDefaultPassThresholdSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetDefaultPassThresholdSuspense<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDefaultPassThresholdSuspense<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDefaultPassThresholdSuspense<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Default Pass Threshold
+ */
+
+export function useGetDefaultPassThresholdSuspense<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDefaultPassThresholdSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Update the default pass threshold (admin only).
+ * @summary Save Default Pass Threshold
+ */
+export const saveDefaultPassThreshold = (
+    defaultPassThresholdIn: DefaultPassThresholdIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DefaultPassThresholdOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/default-pass-threshold`,
+      defaultPassThresholdIn,options
+    );
+  }
+
+
+
+export const getSaveDefaultPassThresholdMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveDefaultPassThreshold>>, TError,{data: DefaultPassThresholdIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveDefaultPassThreshold>>, TError,{data: DefaultPassThresholdIn}, TContext> => {
+
+const mutationKey = ['saveDefaultPassThreshold'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveDefaultPassThreshold>>, {data: DefaultPassThresholdIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveDefaultPassThreshold(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveDefaultPassThresholdMutationResult = NonNullable<Awaited<ReturnType<typeof saveDefaultPassThreshold>>>
+    export type SaveDefaultPassThresholdMutationBody = DefaultPassThresholdIn
+    export type SaveDefaultPassThresholdMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Default Pass Threshold
+ */
+export const useSaveDefaultPassThreshold = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveDefaultPassThreshold>>, TError,{data: DefaultPassThresholdIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveDefaultPassThreshold>>,
+        TError,
+        {data: DefaultPassThresholdIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveDefaultPassThresholdMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
@@ -20009,7 +20277,8 @@ export function useGetRuleResultsSuspense<TData = Awaited<ReturnType<typeof getR
 Rolled up per RUN BATCH (``dq_run_set_members`` join): concurrent
 member runs of one Table-Space "Run now" collapse to a single picker
 entry, so the picker offers coherent product-level batches rather than
-per-member-table runs.
+per-member-table runs. Each batch is stamped with a threshold-breach
+badge (worst member run's breach).
  * @summary Get Product Results Runs
  */
 export const getProductResultsRuns = (
@@ -20528,7 +20797,8 @@ export function useGetDqResultsFailedRowsSuspense<TData = Awaited<ReturnType<typ
 
 Accepts either a three-part table FQN or a monitored-table binding id
 (resolved to its bound table). Draft runs are excluded unless
-*include_drafts*.
+*include_drafts*. Each run is stamped with a threshold-breach badge
+computed from its per-check rows.
  * @summary Get Dq Results Runs
  */
 export const getDqResultsRuns = (

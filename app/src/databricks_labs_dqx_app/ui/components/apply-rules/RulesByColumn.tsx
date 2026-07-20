@@ -22,6 +22,7 @@ import { useGetTableColumns, type AppliedRuleOut, type ColumnOut } from "@/lib/a
 import { computeMatchedTagsForSlot } from "@/lib/registry-rule-conversion";
 import { familyForType, type ColumnFamily } from "./ColumnPicker";
 import { paletteAt } from "./MappingChips";
+import { ThresholdPill } from "./ThresholdPill";
 
 // Client-side page size for the by-column lens — column rows are compact
 // (single-line headers), so a screenful holds more than the taller by-rule
@@ -40,6 +41,10 @@ interface RuleEntry {
   mappingIndex: number;
   /** Governed tags that matched (slot suggestion ∩ column tags). Empty = no match. */
   matchedTags: string[];
+  /** This column's per-column threshold override for this rule, or null if not set. */
+  columnThreshold: number | null;
+  /** Resolved effective default for this column+rule: rule.pass_threshold ?? rule.rule_pass_threshold ?? adminDefault. */
+  effectiveDefault: number;
 }
 
 interface RulesByColumnProps {
@@ -67,12 +72,22 @@ interface RulesByColumnProps {
    *  Each value is `{slotName: [tag, ...]}` parsed from `user_metadata.slot_tags`.
    *  Used alongside `columnTags` to show matched tag chips inline. */
   ruleSlotTagsById?: Map<string, Record<string, string[]>>;
+  /** Admin-level default pass threshold — used as the fallback when neither
+   *  a per-rule nor registry-rule threshold is set. */
+  adminDefault: number;
+  /** Called when the user edits a per-column threshold in the pill popover.
+   *  `value === null` means "clear the override" (revert to rule default). */
+  onColumnThresholdChange?: (ruleId: string, column: string, value: number | null) => void;
+  /** Whether the pass-threshold feature is enabled. When false, per-column
+   *  threshold pills are hidden. Defaults to true (fail-open). */
+  thresholdEnabled?: boolean;
 }
 
 function useRulesByColumn(
   appliedRules: AppliedRuleOut[],
   columnTags: Record<string, string[]> | undefined,
   ruleSlotTagsById: Map<string, Record<string, string[]>> | undefined,
+  adminDefault: number,
 ): Map<string, RuleEntry[]> {
   return useMemo(() => {
     const map = new Map<string, RuleEntry[]>();
@@ -85,6 +100,9 @@ function useRulesByColumn(
     for (const rule of appliedRules) {
       const ruleName = rule.rule_name || rule.rule_id;
       const slotTags = ruleSlotTagsById?.get(rule.rule_id) ?? {};
+      // Effective default for this rule's per-column pill: per-rule override
+      // ?? registry-rule default ?? admin default. Matches Task 4's resolver.
+      const effectiveDefault = rule.pass_threshold ?? rule.rule_pass_threshold ?? adminDefault;
       (rule.column_mapping ?? []).forEach((group) => {
         const mappingIndex = nextIndexByRuleId.get(rule.rule_id) ?? 0;
         nextIndexByRuleId.set(rule.rule_id, mappingIndex + 1);
@@ -98,13 +116,15 @@ function useRulesByColumn(
           // the clicked column's mapping group came from.
           const matchedTags =
             columnTags ? computeMatchedTagsForSlot(slotTags, columnTags, slot, column) : [];
-          list.push({ ruleId: rule.rule_id, ruleName, slot, mappingIndex, matchedTags });
+          // Per-column threshold override for this specific column, or null.
+          const columnThreshold = rule.column_pass_thresholds?.[column] ?? null;
+          list.push({ ruleId: rule.rule_id, ruleName, slot, mappingIndex, matchedTags, columnThreshold, effectiveDefault });
           map.set(column, list);
         }
       });
     }
     return map;
-  }, [appliedRules, columnTags, ruleSlotTagsById]);
+  }, [appliedRules, columnTags, ruleSlotTagsById, adminDefault]);
 }
 
 function FamilyBadge({ family }: { family: ColumnFamily }) {
@@ -155,9 +175,11 @@ interface ColumnCardProps {
   canEdit: boolean;
   onAddRule?: (column: ColumnRef) => void;
   onJumpToRule?: (ruleId: string) => void;
+  onColumnThresholdChange?: (ruleId: string, column: string, value: number | null) => void;
+  thresholdEnabled?: boolean;
 }
 
-function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddRule, onJumpToRule }: ColumnCardProps) {
+function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddRule, onJumpToRule, onColumnThresholdChange, thresholdEnabled = true }: ColumnCardProps) {
   const { t } = useTranslation();
   return (
     <div id={`column-card-${column.name}`} className="rounded-lg border bg-card text-card-foreground">
@@ -207,20 +229,47 @@ function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddR
                   )}
                 />
                 <span className="text-sm font-medium truncate flex-1">{entry.ruleName}</span>
-                {entry.matchedTags.length > 0 && (
-                  <span className="flex items-center gap-1 shrink-0">
-                    {entry.matchedTags.map((tag) => (
-                      <Badge
-                        key={tag}
-                        variant="secondary"
-                        className="text-[10px] font-mono px-1.5 py-0 h-auto opacity-75"
-                      >
-                        {tag}
-                      </Badge>
-                    ))}
-                  </span>
-                )}
-                <span className="font-mono text-xs text-muted-foreground shrink-0">{`{{${entry.slot}}}`}</span>
+                {/* Trailing group: tags + pill + slot — ml-auto pushes the
+                    whole group to the right edge so pills line up across
+                    all rows regardless of name length. */}
+                <span className="flex items-center gap-1.5 shrink-0 ml-auto">
+                  {entry.matchedTags.length > 0 && (
+                    <span className="flex items-center gap-1">
+                      {entry.matchedTags.map((tag) => (
+                        <Badge
+                          key={tag}
+                          variant="secondary"
+                          className="text-[10px] font-mono px-1.5 py-0 h-auto opacity-75"
+                        >
+                          {tag}
+                        </Badge>
+                      ))}
+                    </span>
+                  )}
+                  {/* Per-column threshold pill — stopPropagation so clicking
+                      the pill/popover doesn't trigger the row's onJumpToRule.
+                      Mirror how SeverityDropdown stops propagation in
+                      RuleConfigCard. Hidden when the threshold feature is
+                      disabled. */}
+                  {thresholdEnabled && (
+                    <span
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <ThresholdPill
+                        value={entry.columnThreshold}
+                        effectiveDefault={entry.effectiveDefault}
+                        onChange={(v) => onColumnThresholdChange?.(entry.ruleId, column.name, v)}
+                        readonly={!canEdit}
+                        hintOverride={t("monitoredTables.columnThresholdPopoverHint", { pct: entry.effectiveDefault })}
+                      />
+                    </span>
+                  )}
+                  {/* Fixed-width, left-aligned slot label so the variable
+                      slot-name length ({{value}} vs {{key}}) doesn't shift the
+                      pill's x-position — pills line up across every row. */}
+                  <span className="font-mono text-xs text-muted-foreground min-w-[4rem] text-left shrink-0">{`{{${entry.slot}}}`}</span>
+                </span>
               </button>
             ))}
 
@@ -255,9 +304,12 @@ export function RulesByColumn({
   onOpenColumnChange,
   columnTags,
   ruleSlotTagsById,
+  adminDefault,
+  onColumnThresholdChange,
+  thresholdEnabled = true,
 }: RulesByColumnProps) {
   const { t } = useTranslation();
-  const rulesByColumn = useRulesByColumn(appliedRules, columnTags, ruleSlotTagsById);
+  const rulesByColumn = useRulesByColumn(appliedRules, columnTags, ruleSlotTagsById, adminDefault);
   const [internalOpenColumn, setInternalOpenColumn] = useState<string | null>(null);
   // 1-indexed page (item 51). Reset to the first page whenever the search
   // narrows the column set so it can't strand the view on an empty page.
@@ -346,6 +398,8 @@ export function RulesByColumn({
             canEdit={canEdit}
             onAddRule={onAddRule}
             onJumpToRule={onJumpToRule}
+            onColumnThresholdChange={onColumnThresholdChange}
+            thresholdEnabled={thresholdEnabled}
           />
         );
       })}

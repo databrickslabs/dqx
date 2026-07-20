@@ -355,12 +355,22 @@ class MonitoredTableVersionService:
         column_mapping = ref.get("column_mapping")
         registry_version = ref.get("registry_version")
         user_metadata = ref.get("user_metadata")
+        # Per-rule pass_threshold MUST round-trip through the snapshot: an
+        # approved-version run re-renders from this ref, and the materializer
+        # resolves the frozen effective threshold from ``applied.pass_threshold``.
+        # Dropping it here (or truthy-checking it) makes the resolver fall
+        # through to the admin default — so a rule set to 0% ("never warn")
+        # would silently be re-frozen at the admin default on every approved
+        # run. ``0`` is a real value, so preserve it with ``isinstance(int)``,
+        # never truthiness. Legacy snapshots predating this key carry None.
+        pass_threshold = ref.get("pass_threshold")
         return AppliedRule(
             id=ref.get("applied_rule_id"),
             binding_id=binding_id,
             rule_id=str(ref.get("rule_id", "")),
             pinned_version=int(registry_version) if isinstance(registry_version, int) else None,
             severity_override=ref.get("severity_override"),
+            pass_threshold=pass_threshold if isinstance(pass_threshold, int) else None,
             column_mapping=column_mapping if isinstance(column_mapping, list) else [],
             user_metadata=user_metadata if isinstance(user_metadata, dict) else {},
         )
@@ -432,6 +442,7 @@ class MonitoredTableVersionService:
                     "rule_id": ar.rule_id,
                     "registry_version": registry_version,
                     "severity_override": ar.severity_override,
+                    "pass_threshold": ar.pass_threshold,
                     "column_mapping": ar.column_mapping,
                     "user_metadata": ar.user_metadata,
                 }

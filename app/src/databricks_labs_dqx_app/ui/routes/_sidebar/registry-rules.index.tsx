@@ -64,7 +64,7 @@ import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
 import type { User as UserType } from "@/lib/api";
 import { useLabelDefinitions, exportRegistryRules } from "@/lib/api-custom";
-import { ExportYamlMenu } from "@/components/ExportYamlMenu";
+import { ExportDialog } from "@/components/ExportDialog";
 import { LabelFilter, labelsMatchFilter, type LabelSelection } from "@/components/Labels";
 import { labelToken } from "@/lib/format-utils";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -306,6 +306,7 @@ function RegistryRulesPage() {
   const [bulkDeprecateOpen, setBulkDeprecateOpen] = useState(false);
   const [bulkRevokeOpen, setBulkRevokeOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const isRuleAuthor = useCallback(
     (rule: RegistryRuleOut) => {
@@ -764,11 +765,18 @@ function RegistryRulesPage() {
             )}
             {/* Export moved off the always-on header into this selection action
                 bar — it exports exactly the ticked rows (rule_id[] filter). */}
-            <ExportYamlMenu
-              fetchDqx={() => exportRegistryRules({ rule_id: [...selectedIds] })}
-              variant="outline"
+            <Button
               size="sm"
-              className="h-7 text-xs"
+              variant="outline"
+              className="gap-1 h-7 text-xs"
+              onClick={() => setExportOpen(true)}
+            >
+              {t("exportYaml.button")}
+            </Button>
+            <ExportDialog
+              open={exportOpen}
+              onOpenChange={setExportOpen}
+              fetchDqx={() => exportRegistryRules({ rule_id: [...selectedIds] })}
             />
             {selectedRules.some((r) => canDeleteRule(r)) && (
               <Button

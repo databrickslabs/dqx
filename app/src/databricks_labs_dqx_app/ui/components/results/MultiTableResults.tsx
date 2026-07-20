@@ -46,6 +46,7 @@ import {
   type Facet,
   type MultiFilters,
 } from "@/components/monitored-tables/BindingResultsTab";
+import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 
 // The multi-table results composition, extracted from the reviewed
 // `components/data-products/ProductResultsTab.tsx` (itself a 1:1 port of
@@ -315,6 +316,10 @@ export function MultiTableResultsSection({
   asOfBatch,
 }: MultiTableResultsSectionProps) {
   const { t } = useTranslation();
+  // Belt-and-suspenders: the backend returns no breaches when the feature is
+  // disabled (Task 2), but we also hide all breach UI client-side to avoid
+  // any stale-cache flash when the setting was recently changed.
+  const thresholdEnabled = usePassThresholdEnabled();
   // Published-only surfaces (hideRunMode) never send `include_drafts`,
   // regardless of the controlled prop — the dropdown that would flip it is
   // suppressed, so this just hard-guards the query params too.
@@ -493,6 +498,8 @@ export function MultiTableResultsSection({
       rule_count: g.rule_count ?? null,
       check_count: g.check_count ?? null,
       total_tests: g.total_tests ?? null,
+      breached: g.breached ?? false,
+      breach_criticality: g.breach_criticality ?? null,
     }));
 
   // Registry order for the By dimension / By severity default sort: dimensions
@@ -542,6 +549,18 @@ export function MultiTableResultsSection({
   const dimFacet = buildFacet(results?.by_dimension, baseResults?.by_dimension);
   const sevFacet = buildFacet(results?.by_severity, baseResults?.by_severity);
   const ruleFacet = buildFacet(results?.by_rule, baseResults?.by_rule);
+
+  // Rule name → breach criticality for the failing-records cell hover's ⚠.
+  // Keyed by the by_rule row label (what failures carry as rule_name); only
+  // breached rows contribute; suppressed when the threshold feature is off.
+  const breachedRuleCriticality: Record<string, string> = {};
+  if (thresholdEnabled) {
+    for (const r of [...(baseResults?.by_rule ?? []), ...(results?.by_rule ?? [])]) {
+      if (r.breached && r.label && (r.breach_criticality === "error" || r.breach_criticality === "warn")) {
+        breachedRuleCriticality[r.label] = r.breach_criticality;
+      }
+    }
+  }
   // By column rows come from the selected table (empty until picked).
   const tableColRows = selectedTable
     ? toRows(tableColumnsQuery.data?.data?.by_column)
@@ -607,6 +626,28 @@ export function MultiTableResultsSection({
   const tableColorMap = buildTableColorMap(trends?.trend_by_table);
   const overallPoints = computeOverallPoints(trends?.trend);
 
+  // Breach markers for the overall trend chart: one entry per breaching point
+  // on the entity-level `trend` (the overall average). Null/non-"error"/"warn"
+  // criticalities are filtered out so only real breaches render a marker.
+  // Suppressed entirely when the pass-threshold feature is disabled.
+  const overallBreachMarkers = thresholdEnabled
+    ? (trends?.trend ?? []).flatMap((p) => {
+        if (!p.breached) return [];
+        const crit = p.breach_criticality;
+        if (crit !== "error" && crit !== "warn") return [];
+        // score = the point's 0–100 y-value (pass_rate * 100) so the ⚠ icon
+        // anchors to the trend line at that run, matching how the series plots.
+        const rate = toNum(p.pass_rate);
+        return [
+          {
+            run_date: String(p.run_date ?? ""),
+            criticality: crit as "error" | "warn",
+            score: rate == null ? null : rate * 100,
+          },
+        ];
+      })
+    : [];
+
   // Series keys are the ENGLISH canonical names — the chart's ordering/legend
   // logic pins on ["Rules","Checks","Tests","Rows"]; do not translate them here.
   const rulesChecksTestsSeries = toCountSeries(trends?.trend_counts, [
@@ -646,6 +687,7 @@ export function MultiTableResultsSection({
       totalTests={totalTests}
       info={COUNT_INFO}
       label={scoreLabel(accessibleTableCount)}
+      breachCriticality={thresholdEnabled ? lastTrend?.breach_criticality : null}
     />
   );
 
@@ -688,6 +730,7 @@ export function MultiTableResultsSection({
               overall={overallPoints}
               overallLabel={t("resultsUi.averageSeries")}
               title={t("resultsUi.averageDqScoreTitle")}
+              breachMarkers={overallBreachMarkers}
             />
           </ChartFrame>
           <div className="grid gap-6 md:grid-cols-2">
@@ -767,6 +810,7 @@ export function MultiTableResultsSection({
               colorMap={dimColors}
               selected={filters.dimension}
               onSelect={(label) => onRowToggle("dimension", label)}
+              breachEnabled={thresholdEnabled}
             />
             <DimensionBreakdown
               title={t("resultsUi.bySeverityTitle")}
@@ -777,6 +821,7 @@ export function MultiTableResultsSection({
               colorMap={sevColors}
               selected={filters.severity}
               onSelect={(label) => onRowToggle("severity", label)}
+              breachEnabled={thresholdEnabled}
             />
             {!hideRuleBreakdown && (
               <div className="md:col-span-2" data-testid="breakdown-by-rule">
@@ -794,6 +839,7 @@ export function MultiTableResultsSection({
                   collapsed={!ruleColOpen}
                   onToggleCollapse={() => setRuleColOpen((o) => !o)}
                   pageSize={8}
+                  breachEnabled={thresholdEnabled}
                   // The rule NAME navigates to that registry rule's detail
                   // (only for rows with a genuine registry rule_id); clicking
                   // elsewhere on the row still toggles the rule facet — the
@@ -830,6 +876,7 @@ export function MultiTableResultsSection({
                 selected={selectedTable ? [selectedTable] : []}
                 onSelect={onTableSelect}
                 pageSize={8}
+                breachEnabled={thresholdEnabled}
                 // The table NAME navigates to that monitored table's Results
                 // tab (rows with a binding); clicking elsewhere on the row
                 // still drives the invalid-samples selection / table facet —
@@ -869,6 +916,7 @@ export function MultiTableResultsSection({
                 onSelect={(label) => onRowToggle("column", label)}
                 collapsed={!ruleColOpen}
                 onToggleCollapse={() => setRuleColOpen((o) => !o)}
+                breachEnabled={thresholdEnabled}
               />
             </div>
           </div>
@@ -922,6 +970,7 @@ export function MultiTableResultsSection({
                     severityColors={sevColors}
                     severityRanks={sevRanks}
                     dimensionColors={dimColors}
+                    breachedRuleCriticality={breachedRuleCriticality}
                   />
                 )}
               </CollapseRegion>

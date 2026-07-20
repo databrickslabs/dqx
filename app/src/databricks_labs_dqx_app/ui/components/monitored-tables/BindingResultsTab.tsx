@@ -24,6 +24,7 @@ import {
 } from "@/lib/api";
 import selector from "@/lib/selector";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
+import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 import { GenieChatProvider } from "@/components/results/AskGenieButton";
 import { ScoreBox } from "@/components/results/ScoreBox";
 import { RunPicker } from "@/components/results/RunPicker";
@@ -362,6 +363,7 @@ function ResultsBody({
   runInProgress?: boolean;
 }) {
   const { t } = useTranslation();
+  const thresholdEnabled = usePassThresholdEnabled();
   const [filters, setFilters] = useState<MultiFilters>(EMPTY_FILTERS);
   // Run mode: "Published only" (default) or "Published + Draft". Per-surface
   // state — every dq-results query on THIS tab gets `include_drafts` from it
@@ -482,6 +484,21 @@ function ResultsBody({
     by_rule: baseTable?.by_rule ?? [],
     by_column: baseTable?.by_column ?? [],
   };
+  // Rule name → breach criticality, for the failing-records cell hover's ⚠.
+  // Keyed by the by_rule row LABEL (the display rule name), which is what the
+  // failures carry as rule_name. Only breached rows contribute; suppressed when
+  // the threshold feature is off. Built from the base (unfiltered) rows so the
+  // hover reflects each rule's own breach regardless of the active drilldown
+  // filter.
+  const breachedRuleCriticality: Record<string, string> = {};
+  if (thresholdEnabled) {
+    for (const r of base.by_rule) {
+      if (r.breached && r.label && (r.breach_criticality === "error" || r.breach_criticality === "warn")) {
+        breachedRuleCriticality[r.label] = r.breach_criticality;
+      }
+    }
+  }
+
   const hasActiveFilter =
     filters.dimension.length > 0 ||
     filters.severity.length > 0 ||
@@ -545,6 +562,14 @@ function ResultsBody({
       rule_count: g.rule_count ?? null,
       check_count: g.check_count ?? null,
       total_tests: g.total_tests ?? null,
+      // Carry the per-row breach flag + criticality through so DimensionBreakdown
+      // can render the BreachIcon on each breached facet row (by dimension /
+      // severity / rule / column). Omitting these — as this mapper previously
+      // did — left r.breached undefined, so the icon never rendered on the
+      // single-table results page even though the API stamps them on every
+      // GroupRowOut. Mirrors MultiTableResults' toRows.
+      breached: g.breached ?? false,
+      breach_criticality: g.breach_criticality ?? null,
     }));
 
   // Build the rows + muted-label set for one facet box.
@@ -656,6 +681,25 @@ function ResultsBody({
     }
   }
 
+  // Breach markers on the single-table overall trend: a ⚠ icon at each run whose
+  // pass rate breached its (frozen per-run) threshold. score = pass_rate * 100
+  // so the icon anchors to the plotted point. Suppressed when the feature is off.
+  const breachMarkers = thresholdEnabled
+    ? (trend?.trend ?? []).flatMap((p) => {
+        if (!p.breached) return [];
+        const crit = p.breach_criticality;
+        if (crit !== "error" && crit !== "warn") return [];
+        const rate = toNum(p.pass_rate);
+        return [
+          {
+            run_date: String(p.run_date ?? ""),
+            criticality: crit as "error" | "warn",
+            score: rate == null ? null : rate * 100,
+          },
+        ];
+      })
+    : [];
+
   // Rule chips may carry a registry rule_id as their value — show the
   // matching by_rule row's (newest-run) label instead of the opaque id.
   const ruleChipRows = [...base.by_rule, ...filtered.by_rule];
@@ -723,6 +767,7 @@ function ResultsBody({
             runs={runs}
             value={filters.runId ?? null}
             onChange={(id) => setFilters((f) => ({ ...f, runId: id }))}
+            breachEnabled={thresholdEnabled}
           />
         </div>
         <div className="sm:pr-2">
@@ -735,6 +780,7 @@ function ResultsBody({
               totalTests={totalTests}
               trend={scoreTrend}
               info={COUNT_INFO}
+              breachCriticality={thresholdEnabled ? selectedRun?.breach_criticality : null}
             />
           )}
         </div>
@@ -764,6 +810,7 @@ function ResultsBody({
               data={toTrend(trend?.trend)}
               title={t("resultsUi.overallDqScoreTitle")}
               versionMarkers={versionMarkers}
+              breachMarkers={breachMarkers}
             />
           </ChartFrame>
           <div className="grid gap-6 md:grid-cols-2">
@@ -832,6 +879,7 @@ function ResultsBody({
               colorMap={dimColors}
               selected={filters.dimension}
               onSelect={(label) => onRowToggle("dimension", label)}
+              breachEnabled={thresholdEnabled}
             />
             <DimensionBreakdown
               title={t("resultsUi.bySeverityTitle")}
@@ -842,6 +890,7 @@ function ResultsBody({
               colorMap={sevColors}
               selected={filters.severity}
               onSelect={(label) => onRowToggle("severity", label)}
+              breachEnabled={thresholdEnabled}
             />
             <DimensionBreakdown
               title={t("resultsUi.byRuleTitle")}
@@ -857,6 +906,7 @@ function ResultsBody({
               collapsed={!ruleColOpen}
               onToggleCollapse={() => setRuleColOpen((o) => !o)}
               pageSize={8}
+              breachEnabled={thresholdEnabled}
               headerRight={
                 <FacetSearch
                   label={t("resultsUi.facetRule")}
@@ -876,6 +926,7 @@ function ResultsBody({
               onSelect={(label) => onRowToggle("column", label)}
               collapsed={!ruleColOpen}
               onToggleCollapse={() => setRuleColOpen((o) => !o)}
+              breachEnabled={thresholdEnabled}
               headerRight={
                 <FacetSearch
                   label={t("resultsUi.facetColumn")}
@@ -927,6 +978,7 @@ function ResultsBody({
                   severityColors={sevColors}
                   severityRanks={sevRanks}
                   dimensionColors={dimColors}
+                  breachedRuleCriticality={breachedRuleCriticality}
                 />
               )}
             </CollapseRegion>

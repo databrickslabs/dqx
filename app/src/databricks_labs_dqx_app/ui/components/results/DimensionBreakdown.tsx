@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { CollapseRegion } from "./CollapseRegion";
+import { BreachIcon } from "./BreachIcon";
 
 /**
  * Client-side page slice for the breakdown table. Without *pageSize* the
@@ -76,6 +77,11 @@ export type BreakdownRow = {
   rule_count?: number | null;
   check_count?: number | null;
   total_tests?: number | null;
+  /** True when any child check in this group has a threshold breach. */
+  breached?: boolean;
+  /** Criticality of the breach (worst child): "error" | "warn" | null.
+   *  Accepts the raw API string; BreachIcon renders nothing for non-"error"/"warn" values. */
+  breach_criticality?: string | null;
 };
 
 type SortKey =
@@ -127,6 +133,7 @@ export function DimensionBreakdown({
   pageSize,
   rowLink,
   renderLabel,
+  breachEnabled = true,
 }: {
   title: string;
   rows: Array<BreakdownRow>;
@@ -179,6 +186,9 @@ export function DimensionBreakdown({
    *  back to it. The returned node MUST stopPropagation on click so the name
    *  navigates while a click elsewhere on the row still toggles the facet. */
   renderLabel?: (label: string, value: string | null) => React.ReactNode;
+  /** When false, breach warning icons are hidden (pass-threshold feature is
+   *  disabled globally). Defaults to true (fail-open). */
+  breachEnabled?: boolean;
 }) {
   const { t } = useTranslation();
   const [sort, setSort] = useState<SortState>(null);
@@ -341,6 +351,9 @@ export function DimensionBreakdown({
                           )}
                           {renderLabel?.(r.label, facetValue) ?? (
                             <TruncatedText text={r.label} className="min-w-0" />
+                          )}
+                          {breachEnabled && r.breached && (
+                            <BreachIcon criticality={r.breach_criticality} />
                           )}
                           {rowLink?.(r.label)}
                         </span>

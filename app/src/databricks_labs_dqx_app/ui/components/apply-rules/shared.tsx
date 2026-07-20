@@ -4,12 +4,23 @@
 // conventions instead of re-deriving them.
 
 import { Badge } from "@/components/ui/badge";
-import type { AppliedRuleOut, AppliedRuleOutColumnMappingItem, DesiredAppliedRuleIn, RegistryRuleOut } from "@/lib/api";
+import type { AppliedRuleOut, AppliedRuleOutColumnMappingItem, DesiredAppliedRuleIn, RegistryRuleOut, RuleSlot } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
+import type { ColumnFamily } from "./ColumnPicker";
 
 export const RESERVED_NAME_KEY = "name";
 export const RESERVED_DIMENSION_KEY = "dimension";
 export const RESERVED_SEVERITY_KEY = "severity";
+export const RESERVED_PASS_THRESHOLD_KEY = "pass_threshold";
+
+/** Read a registry rule's default pass threshold from its user_metadata,
+ *  clamped to [0,100] (tolerating a stringified int), or null when unset. */
+export function getRulePassThreshold(rule: RegistryRuleOut): number | null {
+  const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
+  const v = md[RESERVED_PASS_THRESHOLD_KEY];
+  const n = typeof v === "number" ? v : typeof v === "string" ? parseInt(v, 10) : NaN;
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null;
+}
 
 export function getTag(rule: RegistryRuleOut, key: string): string {
   const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
@@ -181,7 +192,37 @@ export function newStagedRow(
     rule_name: getTag(rule, RESERVED_NAME_KEY) || null,
     rule_dimension: getTag(rule, RESERVED_DIMENSION_KEY) || null,
     rule_severity: getTag(rule, RESERVED_SEVERITY_KEY) || null,
+    // Seed the registry-rule default so a freshly-added rule's threshold pill
+    // shows the rule's own default (not just the admin default) before its
+    // first save — matches how rule_severity/rule_dimension are seeded above.
+    rule_pass_threshold: getRulePassThreshold(rule),
+    // Fresh staged rows start with no per-column threshold overrides.
+    column_pass_thresholds: {},
   };
+}
+
+/** Merge per-column threshold overrides from every row in a rule_id group into
+ *  one `{col: pct}` map. Later rows win on key conflict (last-write wins, which
+ *  is harmless since all rows for a rule_id share the same overrides in normal
+ *  use). Returns `undefined` (not an empty object) when no overrides exist so
+ *  the field round-trips as absent rather than `{}`, matching the API contract.
+ *
+ *  Correctness: `0` is a valid threshold (never breach). Only `undefined` map
+ *  values (missing keys) indicate "no override" — never use truthiness. */
+export function mergeColumnThresholds(
+  rows: AppliedRuleOut[],
+): Record<string, number> | undefined {
+  const merged: Record<string, number> = {};
+  let hasAny = false;
+  for (const row of rows) {
+    const map = row.column_pass_thresholds;
+    if (!map) continue;
+    for (const [col, pct] of Object.entries(map)) {
+      merged[col] = pct;
+      hasAny = true;
+    }
+  }
+  return hasAny ? merged : undefined;
 }
 
 /** Turn the flat staged row list into the FULL desired-set payload for
@@ -201,6 +242,10 @@ export function buildDesiredApplications(stagedRows: AppliedRuleOut[]): DesiredA
       // Per-rule overrides live on the rule (all of a rule_id's rows share one
       // value), so read them off the first row like pin/severity above.
       pass_threshold: first?.pass_threshold ?? null,
+      // Per-column threshold overrides — merge across all rows for this
+      // rule_id; returns undefined when there are no overrides so the field
+      // is absent in the payload rather than an empty object.
+      column_pass_thresholds: mergeColumnThresholds(rows) ?? null,
       tags: (first?.user_metadata ?? {}) as Record<string, unknown>,
     };
   });
@@ -215,16 +260,25 @@ export function buildDesiredApplications(stagedRows: AppliedRuleOut[]): DesiredA
  *  "dirty" positive. */
 export function desiredApplicationsKey(stagedRows: AppliedRuleOut[]): string {
   const normalized = buildDesiredApplications(stagedRows)
-    .map((application) => ({
-      rule_id: application.rule_id,
-      column_mapping: (application.column_mapping ?? [])
-        .map((group) => JSON.stringify(Object.fromEntries(Object.entries(group).sort())))
-        .sort(),
-      pinned_version: application.pinned_version ?? null,
-      severity_override: application.severity_override ?? null,
-      pass_threshold: application.pass_threshold ?? null,
-      tags: JSON.stringify(Object.fromEntries(Object.entries(application.tags ?? {}).sort())),
-    }))
+    .map((application) => {
+      // Stable serialization of per-column threshold map — sort keys so
+      // insertion order never produces a false "dirty" positive.
+      const colThresholds = application.column_pass_thresholds;
+      const colThresholdsStr = colThresholds
+        ? JSON.stringify(Object.fromEntries(Object.entries(colThresholds).sort()))
+        : null;
+      return {
+        rule_id: application.rule_id,
+        column_mapping: (application.column_mapping ?? [])
+          .map((group) => JSON.stringify(Object.fromEntries(Object.entries(group).sort())))
+          .sort(),
+        pinned_version: application.pinned_version ?? null,
+        severity_override: application.severity_override ?? null,
+        pass_threshold: application.pass_threshold ?? null,
+        column_pass_thresholds: colThresholdsStr,
+        tags: JSON.stringify(Object.fromEntries(Object.entries(application.tags ?? {}).sort())),
+      };
+    })
     .sort((a, b) => a.rule_id.localeCompare(b.rule_id));
   return JSON.stringify(normalized);
 }
@@ -260,6 +314,26 @@ export function computeRunGating(baselineCount: number, stagedCount: number): Ru
     runNowHasRules: baselineCount > 0,
     runDraftHasRules: stagedCount > 0,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Slot selection helper — used by AddRulesDialog when a rule is added from
+// the by-column lens's per-column "+ Add rule" CTA. Given the rule's slot
+// list and the clicked column's family, returns the best slot name to bind
+// that column to: prefer a slot whose family matches (or is "any"), else
+// fall back to the first slot. Returns null when there are no slots (the
+// rule has no column arguments and needs no mapping).
+// ---------------------------------------------------------------------------
+
+/** Pick the slot name to bind a column to when adding a rule from the
+ *  by-column view. Returns the name of the first slot whose family matches
+ *  `columnFamily` (or whose family is "any"), falling back to the first slot
+ *  regardless of family, or null when no slots exist. */
+export function pickSlotForColumn(slots: RuleSlot[], columnFamily: ColumnFamily): string | null {
+  if (slots.length === 0) return null;
+  // Prefer the first slot whose family is compatible (exact match or "any").
+  const match = slots.find((s) => s.family === columnFamily || s.family === "any");
+  return (match ?? slots[0]).name;
 }
 
 export function TagBadge({ label, color }: { label: string; color?: string }) {

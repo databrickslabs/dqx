@@ -2,7 +2,7 @@ import type * as React from "react";
 import { useEffect, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { useTranslation } from "react-i18next";
-import { ArrowDown, ArrowUp, CircleHelp } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, CircleHelp } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -58,6 +58,7 @@ export function ScoreBox({
   trend,
   info,
   label,
+  breachCriticality,
 }: {
   passRate: number | null;
   failedTests: number;
@@ -72,6 +73,9 @@ export function ScoreBox({
   /** When set, a muted help "?" icon follows the "X failed of Y tests"
    *  subtitle; hovering it shows this content in a tooltip. */
   info?: React.ReactNode;
+  /** When "error"/"warn", a ⚠ icon renders before the percentage to flag that
+   *  this run's pass rate breached its threshold. Any other value = no icon. */
+  breachCriticality?: string | null;
 }) {
   const { t } = useTranslation();
   const reduce = useReducedMotion();
@@ -96,6 +100,21 @@ export function ScoreBox({
         {label ?? t("resultsUi.overallScoreLabel")}
       </div>
       <div className="flex items-center justify-center gap-1.5 leading-none">
+        {/* ⚠ before the percentage when this run breached its threshold. Solid
+            white with a dark drop-shadow so it stays high-contrast on any
+            score-box background colour (the amber/red tint washes out on the
+            red end of the ramp). */}
+        {(breachCriticality === "error" || breachCriticality === "warn") && (
+          <AlertTriangle
+            className="h-7 w-7 shrink-0"
+            style={{ color: "#ffffff", filter: "drop-shadow(0 1px 1.5px rgba(0,0,0,0.55))" }}
+            aria-label={
+              breachCriticality === "error"
+                ? t("resultsUi.breachErrorTooltip")
+                : t("resultsUi.breachWarnTooltip")
+            }
+          />
+        )}
         {/* Fade + scale the big number in on mount (skipped for reduced-motion).
             tabular-nums keeps the width stable while the digits tick up. */}
         <motion.span

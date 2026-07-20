@@ -12,8 +12,6 @@ import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical, Play, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -29,13 +27,16 @@ import type { LabelDefinition } from "@/lib/api-custom";
 import { paramValueToRaw } from "@/lib/registry-rule-conversion";
 import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
 import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
+import { FilterBuilder } from "@/components/rules/lowcode/FilterBuilder";
+import { GroupByField } from "@/components/rules/lowcode/GroupByField";
 import { isV2Ast } from "@/lib/lowcodeAst";
 import { slotFamilyToLowcode, type LowcodeColumnRef } from "@/lib/lowcodeCompile";
 import { buildVersionPinMenuModel } from "@/lib/version-pin-menu";
 import selector from "@/lib/selector";
 import { MappingChips } from "./MappingChips";
+import { ThresholdPill } from "./ThresholdPill";
 import { RESERVED_DESCRIPTION_KEY } from "@/components/RegistryRuleBadges";
-import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag } from "./shared";
+import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag, getUsedColumnsForRule } from "./shared";
 import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 
 // ---------------------------------------------------------------------------
@@ -113,20 +114,16 @@ function LowcodeLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   const body = (registryRule.definition.body ?? {}) as Record<string, unknown>;
   const ast = body.lowcode_ast;
   const groupBy = typeof body.group_by === "string" ? body.group_by : "";
-  const compiled = typeof body.sql_query === "string" ? body.sql_query : typeof body.predicate === "string" ? body.predicate : "";
+  const filterAst = isV2Ast(body.filter_ast) ? body.filter_ast : null;
   const declaredColumns: LowcodeColumnRef[] = (registryRule.definition.slots ?? []).map((s) => ({
     name: s.name,
     family: slotFamilyToLowcode(s.family),
   }));
 
   if (!isV2Ast(ast)) {
-    // No stored AST (e.g. legacy/hand-crafted lowcode body) — fall back to
-    // the compiled SQL text so the disclosure is never empty.
-    return compiled ? (
-      <pre className="font-mono text-xs whitespace-pre-wrap rounded bg-muted/40 p-3 overflow-x-auto">{compiled}</pre>
-    ) : (
-      <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>
-    );
+    // No stored AST (e.g. legacy/hand-crafted lowcode body) — show unavailable
+    // rather than leaking raw compiled SQL to the Apply Rules view.
+    return <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>;
   }
 
   return (
@@ -140,15 +137,20 @@ function LowcodeLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
           <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
             {t("rulesRegistry.lowcodeGroupByLabel")}
           </div>
-          <code className="block font-mono text-xs rounded bg-muted/40 p-2 overflow-x-auto">{groupBy}</code>
+          <GroupByField
+            value={groupBy}
+            onChange={() => {}}
+            declaredColumns={declaredColumns.filter((c) => !c.name.includes("."))}
+            disabled
+          />
         </div>
       )}
-      {compiled && (
+      {filterAst && (
         <div className="space-y-1">
           <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-            {t("monitoredTables.ruleLogicCompiledSql")}
+            {t("rulesRegistry.lowcodeFilterLabel")}
           </div>
-          <pre className="font-mono text-xs whitespace-pre-wrap rounded bg-muted/40 p-3 overflow-x-auto">{compiled}</pre>
+          <FilterBuilder ast={filterAst} onChange={() => {}} declaredColumns={declaredColumns} readOnly />
         </div>
       )}
     </div>
@@ -159,7 +161,6 @@ function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   const { t } = useTranslation();
   const body = (registryRule.definition.body ?? {}) as Record<string, unknown>;
   const fn = typeof body.function === "string" ? body.function : undefined;
-  const args = body.arguments;
   const sql = typeof body.sql_query === "string" ? body.sql_query : undefined;
   const predicate = typeof body.predicate === "string" ? body.predicate : undefined;
   const parameters = registryRule.definition.parameters ?? [];
@@ -179,7 +180,13 @@ function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
     return <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>;
   }
 
-  const text = sql ?? predicate ?? `${fnLabel}(${args ? JSON.stringify(args) : ""})`;
+  // Bug 1 fix: show just the friendly function label — no args JSON dump.
+  // Parameters are already rendered separately by RuleParametersView below.
+  // Bug 2 fix: for sql/predicate-only rules, show a neutral label rather than
+  // leaking the compiled SQL predicate or query into this view.
+  const text = fn
+    ? (fnLabel ?? fn)
+    : t("monitoredTables.ruleLogicCustomSql");
 
   return (
     <div className="space-y-3">
@@ -516,6 +523,12 @@ interface RuleConfigCardProps {
   /** Per-rule minimum % of rows that must pass. `null` = no per-rule
    *  threshold. Pure local `stagedRows` mutation. */
   onPassThresholdChange: (value: number | null) => void;
+  /** Per-column threshold override from the by-rule lens. Called when the user
+   *  edits an individual column's threshold inside the Mixed pill popover. */
+  onColumnThresholdChange?: (column: string, value: number | null) => void;
+  /** Resolved default threshold for the pill placeholder: registry-rule
+   *  default ?? admin default. Computed by ApplyRulesTab per-rule. */
+  resolvedDefaultThreshold: number;
   onRemove: () => void;
   onJumpToColumn?: (colName: string) => void;
   /** Removes the mapping group (and its owning staged row) at this
@@ -541,6 +554,8 @@ interface RuleConfigCardProps {
    *  From `useGetTableTags`. When provided, matched governed tag chips are
    *  shown alongside each column chip in the mapping display. */
   columnTags?: Record<string, string[]>;
+  /** When false, the ThresholdPill is hidden (feature disabled by admin). */
+  thresholdEnabled?: boolean;
 }
 
 export function RuleConfigCard({
@@ -557,6 +572,8 @@ export function RuleConfigCard({
   onPinChange,
   onSeverityChange,
   onPassThresholdChange,
+  onColumnThresholdChange,
+  resolvedDefaultThreshold,
   onRemove,
   onJumpToColumn,
   onRemoveMapping,
@@ -565,6 +582,7 @@ export function RuleConfigCard({
   columns,
   forceOpen,
   columnTags,
+  thresholdEnabled = true,
 }: RuleConfigCardProps) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(Boolean(forceOpen));
@@ -712,6 +730,48 @@ export function RuleConfigCard({
                 onSeverityChange={onSeverityChange}
                 readonly={!canEdit}
               />
+              {thresholdEnabled && (() => {
+                const effectiveRuleThreshold = rule.pass_threshold ?? resolvedDefaultThreshold;
+                const columnOverrides = Object.values(rule.column_pass_thresholds ?? {});
+                const usedColumns = getUsedColumnsForRule(rule);
+                // "Mixed" only makes sense with 2+ mapped columns whose per-column
+                // overrides diverge. A single-column rule has exactly one check,
+                // so its lone column override IS the rule's effective threshold —
+                // never "Mixed".
+                const mixed = usedColumns.length >= 2 && columnOverrides.some((v) => v !== effectiveRuleThreshold);
+                const columnEntries = usedColumns.map((name) => ({
+                  name,
+                  value: rule.column_pass_thresholds?.[name] ?? null,
+                }));
+                // For a single-column rule, collapse the per-column override into
+                // the rule-level pill: show that column's override as the value,
+                // and (when a by-column override already exists) route edits back
+                // to it so we don't create a divergent rule-level value the
+                // materializer would ignore (column override wins there).
+                const singleColumn = usedColumns.length === 1 ? usedColumns[0] : null;
+                const singleColumnOverride = singleColumn
+                  ? (rule.column_pass_thresholds?.[singleColumn] ?? null)
+                  : null;
+                const pillValue = singleColumn
+                  ? (singleColumnOverride ?? rule.pass_threshold ?? null)
+                  : (rule.pass_threshold ?? null);
+                const pillOnChange =
+                  singleColumn && singleColumnOverride !== null && onColumnThresholdChange
+                    ? (v: number | null) => onColumnThresholdChange(singleColumn, v)
+                    : onPassThresholdChange;
+                return (
+                  <ThresholdPill
+                    value={pillValue}
+                    effectiveDefault={resolvedDefaultThreshold}
+                    onChange={pillOnChange}
+                    readonly={!canEdit}
+                    mixed={mixed}
+                    columns={columnEntries}
+                    columnEffectiveDefault={effectiveRuleThreshold}
+                    onColumnChange={onColumnThresholdChange}
+                  />
+                );
+              })()}
             </>
           )}
         </div>
@@ -797,36 +857,6 @@ export function RuleConfigCard({
         <div className="overflow-hidden">
           <div className="border-t px-4 py-4 space-y-3">
             <RuleLogicDisclosure open={logicOpen} onToggle={() => setLogicOpen((p) => !p)} registryRule={registryRule} />
-            {/* Per-rule pass-threshold override. Edits the LOCAL staged row
-                (no network call); saved with the tab. */}
-            <div className="rounded-md border bg-muted/20 px-3 py-3">
-              <div className="space-y-1 sm:w-32">
-                <Label htmlFor={`rule-threshold-${rule.rule_id}`} className="text-xs">
-                  {t("monitoredTables.ruleThresholdLabel")}
-                </Label>
-                <Input
-                  id={`rule-threshold-${rule.rule_id}`}
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={rule.pass_threshold ?? ""}
-                  disabled={!canEdit || busy}
-                  placeholder={t("monitoredTables.ruleThresholdPlaceholder")}
-                  onChange={(e) => {
-                    const raw = e.target.value.trim();
-                    if (raw === "") {
-                      onPassThresholdChange(null);
-                      return;
-                    }
-                    const n = Number.parseInt(raw, 10);
-                    if (!Number.isNaN(n)) onPassThresholdChange(Math.max(0, Math.min(100, n)));
-                  }}
-                  className="h-8 text-xs"
-                />
-                <p className="text-[11px] text-muted-foreground">{t("monitoredTables.ruleThresholdHint")}</p>
-              </div>
-            </div>
             <MappingChips
               columnMapping={rule.column_mapping ?? []}
               slots={slots}

@@ -52,9 +52,14 @@ def _app_settings_stub() -> AppSettingsService:
 
     No stored label definitions, so severity -> criticality resolution uses
     the built-in defaults (``registry_models.SEVERITY_TO_CRITICALITY``).
+    Pass-threshold feature is enabled with the default admin threshold (70)
+    so existing tests that don't care about thresholds still get a concrete
+    value rather than a MagicMock sentinel.
     """
     mock = create_autospec(AppSettingsService, instance=True)
     mock.get_label_definitions.return_value = []
+    mock.get_pass_threshold_enabled.return_value = True
+    mock.get_default_pass_threshold.return_value = 70
     return mock
 
 
@@ -1099,6 +1104,8 @@ def app_settings():
     mock = create_autospec(AppSettingsService, instance=True)
     mock.get_auto_upgrade_without_approval.return_value = False
     mock.get_label_definitions.return_value = []
+    mock.get_pass_threshold_enabled.return_value = True
+    mock.get_default_pass_threshold.return_value = 70
     return mock
 
 
@@ -2027,3 +2034,102 @@ class TestRenderBindingChecksCountsMany:
         registry.get_versions_many.return_value = {}
         counts = materializer.render_binding_checks_counts_many([("b1", "cat.schema.t1")])
         assert counts == {"b1": 0}
+
+
+# ---------------------------------------------------------------------------
+# render_check — pass-threshold resolution
+# ---------------------------------------------------------------------------
+
+
+def _app_settings_with_threshold(*, enabled: bool = True, default: int = 70) -> AppSettingsService:
+    """AppSettingsService stub with configurable threshold settings."""
+    mock = create_autospec(AppSettingsService, instance=True)
+    mock.get_label_definitions.return_value = []
+    mock.get_pass_threshold_enabled.return_value = enabled
+    mock.get_default_pass_threshold.return_value = default
+    return mock
+
+
+class TestRenderCheckPassThreshold:
+    """render_check always emits the resolved effective threshold when enabled;
+    emits nothing when the feature is disabled."""
+
+    def _version(self, registry_default: int | None = None) -> RuleVersion:
+        user_metadata: dict = {}
+        if registry_default is not None:
+            from databricks_labs_dqx_app.backend.registry_models import RESERVED_PASS_THRESHOLD_KEY
+
+            user_metadata[RESERVED_PASS_THRESHOLD_KEY] = registry_default
+        return RuleVersion(
+            rule_id="r1",
+            version=1,
+            definition=_is_not_null_definition(),
+            user_metadata=user_metadata,
+        )
+
+    def _render(
+        self,
+        *,
+        app_settings: AppSettingsService,
+        pass_threshold: int | None = None,
+        per_application_tags: dict | None = None,
+        version: "RuleVersion | None" = None,
+    ) -> dict:
+        v = version or self._version()
+        check, _ = render_check(
+            mode="dqx_native",
+            version=v,
+            group={"column": "col1"},
+            effective_severity="Medium",
+            per_application_tags=per_application_tags or {},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=app_settings,
+            pass_threshold=pass_threshold,
+        )
+        return check
+
+    def test_enabled_no_overrides_emits_admin_default(self):
+        """Enabled + no per-rule/column/registry override → admin default."""
+        app_settings = _app_settings_with_threshold(enabled=True, default=70)
+        check = self._render(app_settings=app_settings)
+        assert check["user_metadata"]["pass_threshold"] == "70"
+
+    def test_enabled_per_rule_override_wins_over_admin_default(self):
+        """Enabled + per-rule override → that value (not admin default)."""
+        app_settings = _app_settings_with_threshold(enabled=True, default=70)
+        check = self._render(app_settings=app_settings, pass_threshold=85)
+        assert check["user_metadata"]["pass_threshold"] == "85"
+
+    def test_enabled_registry_default_wins_over_admin_default(self):
+        """Enabled + registry-rule default, no per-rule/column → registry value."""
+        app_settings = _app_settings_with_threshold(enabled=True, default=70)
+        v = self._version(registry_default=60)
+        check = self._render(app_settings=app_settings, version=v)
+        assert check["user_metadata"]["pass_threshold"] == "60"
+
+    def test_enabled_per_column_override_wins_over_per_rule(self):
+        """Enabled + per-column override on the group's column → that value (strictest)."""
+        from databricks_labs_dqx_app.backend.registry_models import RESERVED_COLUMN_PASS_THRESHOLDS_KEY
+
+        app_settings = _app_settings_with_threshold(enabled=True, default=70)
+        per_application_tags = {RESERVED_COLUMN_PASS_THRESHOLDS_KEY: {"col1": 95}}
+        check = self._render(
+            app_settings=app_settings,
+            pass_threshold=80,  # per-rule override, overridden by per-column
+            per_application_tags=per_application_tags,
+        )
+        assert check["user_metadata"]["pass_threshold"] == "95"
+
+    def test_disabled_pass_threshold_absent_from_user_metadata(self):
+        """Feature disabled → pass_threshold key must NOT appear in user_metadata."""
+        app_settings = _app_settings_with_threshold(enabled=False, default=70)
+        check = self._render(app_settings=app_settings, pass_threshold=85)
+        assert "pass_threshold" not in check["user_metadata"]
+
+    def test_enabled_zero_threshold_emits_zero(self):
+        """Zero is a real threshold value — must NOT be treated as falsy."""
+        app_settings = _app_settings_with_threshold(enabled=True, default=0)
+        check = self._render(app_settings=app_settings)
+        assert check["user_metadata"]["pass_threshold"] == "0"

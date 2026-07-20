@@ -47,6 +47,7 @@ import {
   Clock,
   Columns3,
   Database,
+  Download,
   ExternalLink,
   GitCompare,
   History,
@@ -55,7 +56,6 @@ import {
   LineChart,
   Loader2,
   MoreVertical,
-  FileDown,
   Play,
   Plus,
   RefreshCw,
@@ -117,18 +117,19 @@ import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-inval
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import {
   exportMonitoredTable,
-  downloadExportFile,
   useLabelDefinitions,
   useListPendingApplications,
   useWorkspaceHost,
 } from "@/lib/api-custom";
-import type { ExportFormat } from "@/lib/api-custom";
+import { ExportDialog } from "@/components/ExportDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { isRunStale, useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
 import { useMonitoredTableRunActivity } from "@/hooks/use-monitored-table-run-activity";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
+import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
+import { useDefaultPassThreshold } from "@/hooks/use-default-pass-threshold";
 import { formatDateShort } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
@@ -390,29 +391,10 @@ function MonitoredTableDetailPage() {
   const deleteMutation = useDeleteMonitoredTable();
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [exporting, setExporting] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   // View-changes diff dialog target — mirrors the overview row's GitCompare
   // action so the same review affordance is available on the detail banner.
   const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
-
-  // Export this table's checks as DQX or ODCS YAML from the ⋮ menu (moved off
-  // a standalone header button). Mirrors ExportYamlMenu's fetch→download→toast.
-  const handleExport = useCallback(
-    async (format: ExportFormat) => {
-      if (exporting) return;
-      setExporting(true);
-      try {
-        const res = await exportMonitoredTable(bindingId, format);
-        downloadExportFile(res.data);
-        toast.success(t("exportYaml.success", { filename: res.data.filename }));
-      } catch (err) {
-        toast.error(extractApiError(err, t("exportYaml.failed")));
-      } finally {
-        setExporting(false);
-      }
-    },
-    [exporting, bindingId, t],
-  );
   const persistStagedRows = useCallback(
     () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
     [saveMutation, bindingId, stagedRows],
@@ -671,20 +653,11 @@ function MonitoredTableDetailPage() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
-                  onClick={() => void handleExport("dqx")}
-                  disabled={exporting}
+                  onClick={() => setExportOpen(true)}
                   className="gap-2"
                 >
-                  <FileDown className="h-3.5 w-3.5" />
-                  {t("exportYaml.dqxOption")}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => void handleExport("odcs")}
-                  disabled={exporting}
-                  className="gap-2"
-                >
-                  <FileDown className="h-3.5 w-3.5" />
-                  {t("exportYaml.odcsOption")}
+                  <Download className="h-3.5 w-3.5" />
+                  {t("exportYaml.button")}…
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -708,6 +681,12 @@ function MonitoredTableDetailPage() {
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+            <ExportDialog
+              open={exportOpen}
+              onOpenChange={setExportOpen}
+              fetchDqx={() => exportMonitoredTable(bindingId, "dqx")}
+              fetchOdcs={() => exportMonitoredTable(bindingId, "odcs")}
+            />
           </div>
         </div>
 
@@ -2134,6 +2113,17 @@ function ApplyRulesTab({
     return m;
   }, [publishedRules]);
 
+  // Admin default threshold — used as the bottom of the precedence chain
+  // (rule_override ?? registry_default ?? admin_default) for the ThresholdPill
+  // placeholder. A non-admin user won't have write access to this setting but
+  // can always read it; the fallback (70) matches the compiled-in default.
+  // Read the workspace default from the VIEWER+ rules-registry settings hook —
+  // NOT the ADMIN-only getDefaultPassThreshold endpoint, which 403s for
+  // RULE_AUTHOR/RULE_APPROVER editors and would make the pill show a stale 70.
+  const adminDefaultThreshold = useDefaultPassThreshold();
+  // Feature gate — when disabled by admin, hide all threshold UI (pills).
+  const thresholdEnabled = usePassThresholdEnabled();
+
   // Applied governed tags per column — sourced from Unity Catalog
   // `information_schema.column_tags` via `get_table_tags`. Used to render
   // matched governed tag chips alongside column chips in both lenses.
@@ -2229,15 +2219,24 @@ function ApplyRulesTab({
   };
 
   // Every add path (AddRulesDialog, AiSuggestionDialog) hands up a batch of
-  // brand-new locally-staged rows — append them and jump straight to their
-  // mapping UI in the by-rule lens, mirroring the old "auto-expand after
-  // apply" behaviour but with zero network round-trips.
+  // brand-new locally-staged rows. When the add came from a column CTA
+  // (addColumnContext is non-null), stay in the by-column lens and expand
+  // the target column so the newly-mapped rule appears inline; otherwise
+  // jump to the by-rule lens and auto-expand the new rule cards for mapping.
   const stageNewRows = (rows: AppliedRuleOut[]) => {
     setStagedRows((prev) => [...prev, ...rows]);
     setFilter("all");
     setSearch("");
-    setLens("by-rule");
-    setExpandRuleIds(rows.map((r) => r.rule_id));
+    if (addColumnContext) {
+      // Origin was a column CTA — stay in by-column and show the column.
+      setLens("by-column");
+      setOpenColumnName(addColumnContext.name);
+    } else {
+      // Origin was the header "+ Add rule" button or AI suggestion — go to
+      // by-rule and auto-expand the newly-staged cards for mapping.
+      setLens("by-rule");
+      setExpandRuleIds(rows.map((r) => r.rule_id));
+    }
   };
 
   const confirmRemove = () => {
@@ -2320,6 +2319,25 @@ function ApplyRulesTab({
   // update every row for that rule_id. Pure local staged mutation.
   const handlePassThresholdChange = (rule: AppliedRuleOut, value: number | null) => {
     setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, pass_threshold: value } : r)));
+  };
+
+  // Per-column threshold override — update every staged row for the given
+  // rule_id, merging the new column value into each row's column_pass_thresholds
+  // map. `value === null` deletes the key (revert to rule default); `value === 0`
+  // is a real threshold and must be stored, not deleted. Uses === null strictly.
+  const handleColumnThresholdChange = (ruleId: string, column: string, value: number | null) => {
+    setStagedRows((prev) =>
+      prev.map((r) => {
+        if (r.rule_id !== ruleId) return r;
+        const existing = r.column_pass_thresholds ?? {};
+        if (value === null) {
+          // Remove the column key — spread and delete immutably.
+          const { [column]: _removed, ...rest } = existing;
+          return { ...r, column_pass_thresholds: rest };
+        }
+        return { ...r, column_pass_thresholds: { ...existing, [column]: value } };
+      }),
+    );
   };
 
   return (
@@ -2511,6 +2529,9 @@ function ApplyRulesTab({
                 onPinChange={(v) => handlePinChange(rule, v)}
                 onSeverityChange={(v) => handleSeverityChange(rule, v)}
                 onPassThresholdChange={(v) => handlePassThresholdChange(rule, v)}
+                onColumnThresholdChange={(column, value) => handleColumnThresholdChange(rule.rule_id, column, value)}
+                resolvedDefaultThreshold={rule.rule_pass_threshold ?? adminDefaultThreshold}
+                thresholdEnabled={thresholdEnabled}
                 onRemove={() => setRemoveTarget(rule)}
                 onRemoveMapping={(groupIdx) => handleRemoveMappingGroup(rule.rule_id, groupIdx)}
                 onChangeMapping={(groupIdx, slotName, colName) =>
@@ -2567,6 +2588,9 @@ function ApplyRulesTab({
           onAddRule={(column) => openAddDialog(column)}
           columnTags={Object.keys(columnTags).length > 0 ? columnTags : undefined}
           ruleSlotTagsById={ruleSlotTagsById.size > 0 ? ruleSlotTagsById : undefined}
+          adminDefault={adminDefaultThreshold}
+          onColumnThresholdChange={handleColumnThresholdChange}
+          thresholdEnabled={thresholdEnabled}
           onJumpToRule={(ruleId) => {
             setFilter("all");
             setSearch("");

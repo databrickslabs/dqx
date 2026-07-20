@@ -2063,6 +2063,125 @@ function RulesRegistrySettingsCard() {
   );
 }
 
+// Pass-threshold quality gates — its own settings card (split out of the Rules
+// Registry card so the warn-when-<X%-pass gate is discoverable on its own).
+// Shares the same GET/SAVE endpoint as the registry settings; the two fields
+// (pass_threshold_enabled, default_pass_threshold) are independent columns, so
+// a partial PATCH of just these keys is safe.
+function PassThresholdSettingsCard() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useGetRulesRegistrySettings();
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveRulesRegistrySettings();
+  const { isAdmin } = usePermissions();
+
+  const settings = data?.data;
+
+  // Local state for the threshold number input — hydrate once from server data.
+  const [thresholdValue, setThresholdValue] = useState(70);
+  const [thresholdHydrated, setThresholdHydrated] = useState(false);
+
+  useEffect(() => {
+    if (settings && !thresholdHydrated) {
+      setThresholdValue(settings.default_pass_threshold);
+      setThresholdHydrated(true);
+    }
+  }, [settings, thresholdHydrated]);
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  const save = (payload: RulesRegistrySettingsIn) => {
+    saveMutation.mutate(
+      { data: payload },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetRulesRegistrySettingsQueryKey() });
+          toast.success(t("config.rulesRegistrySettingsSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.rulesRegistrySettingsFailedSave"));
+        },
+      },
+    );
+  };
+
+  const handleThresholdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const parsed = parseInt(e.target.value, 10);
+    if (!isNaN(parsed)) {
+      const clamped = Math.min(100, Math.max(0, parsed));
+      setThresholdValue(clamped);
+      save({ default_pass_threshold: clamped });
+    }
+  };
+
+  const handleThresholdBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    const parsed = parseInt(e.target.value, 10);
+    const clamped = isNaN(parsed) ? thresholdValue : Math.min(100, Math.max(0, parsed));
+    setThresholdValue(clamped);
+    save({ default_pass_threshold: clamped });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <AlertTriangle className="h-5 w-5" />
+          {t("config.passThresholdSettingsTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.passThresholdSettingsDescription")}
+        </p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="pass-threshold-enabled" className="text-sm">
+              {t("config.rulesRegistryPassThresholdEnabledLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.rulesRegistryPassThresholdEnabledHint")}</p>
+          </div>
+          <Switch
+            id="pass-threshold-enabled"
+            checked={settings.pass_threshold_enabled}
+            onCheckedChange={(checked) => save({ pass_threshold_enabled: checked })}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="default-pass-threshold" className="text-sm">
+              {t("config.rulesRegistryDefaultPassThresholdLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.rulesRegistryDefaultPassThresholdHint")}</p>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <Input
+              id="default-pass-threshold"
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              value={thresholdValue}
+              onChange={handleThresholdChange}
+              onBlur={handleThresholdBlur}
+              disabled={!isAdmin || saveMutation.isPending || !settings.pass_threshold_enabled}
+              className="w-20 text-right"
+            />
+            <span className="text-sm text-muted-foreground">%</span>
+          </div>
+        </div>
+
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.rulesRegistrySettingsAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Approvals mode (#94) — the app-wide submit→approve gate. A 3-state select:
 // enabled (author submits, approver approves), auto_bypass (submit auto-approves
@@ -2919,6 +3038,7 @@ function ConfigPage() {
       { id: "ai", tab: "ai", title: t("config.aiSettingsTitle"), keywords: t("config.kwAi"), render: () => <AiSettingsCard /> },
       { id: "labels", tab: "tags", title: t("config.labelsTitle"), keywords: t("config.kwLabels"), render: () => <LabelDefinitionsSettings /> },
       { id: "rulesRegistry", tab: "governance", title: t("config.rulesRegistrySettingsTitle"), keywords: t("config.kwRulesRegistry"), render: () => <RulesRegistrySettingsCard /> },
+      { id: "passThreshold", tab: "governance", title: t("config.passThresholdSettingsTitle"), keywords: t("config.kwPassThreshold"), render: () => <PassThresholdSettingsCard /> },
       { id: "approvalsMode", tab: "governance", title: t("config.approvalsModeTitle"), keywords: t("config.kwApprovalsMode"), render: () => <ApprovalsModeCard /> },
       { id: "requireDraftRun", tab: "governance", title: t("config.requireDraftRunTitle"), keywords: t("config.kwRequireDraftRun"), render: () => <RequireDraftRunSettingsCard /> },
       { id: "retention", tab: "governance", title: t("config.retentionTitle"), keywords: t("config.kwRetention"), render: () => <RetentionSettings /> },

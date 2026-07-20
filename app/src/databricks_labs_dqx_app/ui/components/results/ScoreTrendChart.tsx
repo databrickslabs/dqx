@@ -9,6 +9,7 @@ import {
   Legend,
   Line,
   ReferenceArea,
+  ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -661,6 +662,7 @@ export function ScoreTrendChart({
   collapsed,
   onToggleCollapse,
   animate = false,
+  breachMarkers,
   versionMarkers,
 }: {
   data?: Array<TrendRow>;
@@ -696,6 +698,13 @@ export function ScoreTrendChart({
   /** When true, animate the overall-score line drawing in left→right on mount
    *  (recharts' native reveal). Used by the homepage. */
   animate?: boolean;
+  /** Optional breach markers: one entry per run where the threshold was breached.
+   *  Each entry renders a small ⚠ icon AT that run's data point (amber "warn" /
+   *  red "error"), sitting alongside the point like the version tags — no
+   *  vertical rule. ``score`` is the point's 0–100 y-value (pass_rate * 100) so
+   *  the icon anchors to the trend line; omit it to skip the marker.
+   *  Only the overall-score trend chart in MultiTableResults passes these. */
+  breachMarkers?: Array<{ run_date: string; criticality: "error" | "warn"; score?: number | null }>;
   /** Optional subtle vertical markers at the runs where the monitored-table
    *  binding version incremented (#65). Each `run_date` is matched to its `ts`
    *  on the time axis; `label` is the pre-formatted tag (e.g. "v2"). Only the
@@ -1538,6 +1547,44 @@ export function ScoreTrendChart({
               {overallMode && !hidden.has(overallLabel) && (
                 <OverallLayer points={overall ?? []} />
               )}
+              {/* Breach markers: a small ⚠ glyph anchored AT each breaching run's
+                  data point (alongside the point, like the version tags) —
+                  amber for warn-criticality, red for error. No vertical rule.
+                  The glyph reads at a glance; the run-picker row carries the
+                  full-text tooltip for the same run. Skipped when the point has
+                  no score (can't anchor to the line). */}
+              {(breachMarkers ?? []).map((m) => {
+                const x = Date.parse(m.run_date);
+                if (!Number.isFinite(x) || m.score == null || !Number.isFinite(m.score)) return null;
+                const fill =
+                  m.criticality === "error"
+                    ? "var(--destructive)"
+                    : "oklch(0.70 0.19 60)"; /* deeper amber — more contrast on the plot */
+                return (
+                  <ReferenceDot
+                    key={`bm-${m.run_date}`}
+                    x={x}
+                    y={m.score}
+                    r={0}
+                    ifOverflow="hidden"
+                    // r=0 + no fill/stroke: the dot itself is invisible; only the
+                    // ⚠ label renders. A larger glyph + extra `offset`/`dy` lift
+                    // it clear of the data point so it doesn't collide with the
+                    // marker or trend line.
+                    fill="none"
+                    stroke="none"
+                    label={{
+                      value: "⚠",
+                      position: "top",
+                      offset: 12,
+                      dy: -4,
+                      fontSize: 16,
+                      fontWeight: 700,
+                      fill,
+                    }}
+                  />
+                );
+              })}
               {/* Subtle version-increment markers (#65): a dashed vertical rule
                   with a small "v{n}" tag at each run where the binding version
                   bumped. Clipped when the run falls outside the zoom window. */}
