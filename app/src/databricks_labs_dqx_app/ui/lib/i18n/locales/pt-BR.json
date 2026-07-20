@@ -2523,7 +2523,7 @@
     "defaultNote": "(padrão)",
     "defaultGrantHint": "Por padrão, o grupo de usuários do workspace pode visualizar e aplicar este objeto. Restrinja ou revogue para limitar o acesso.",
     "ownerNote": "(proprietário)",
-    "ownerGrantHint": "O criador é proprietário deste objeto e tem acesso total por padrão. Isso é concedido automaticamente e não pode ser alterado aqui.",
+    "ownerGrantHint": "O criador é proprietário deste objeto e tem acesso total por padrão. Você pode restringir ou revogar; administradores e aprovadores do espaço de trabalho mantêm o acesso de qualquer forma.",
     "addPermission": "Adicionar permissão",
     "grantPermission": "Conceder permissão",
     "editPermission": "Editar permissão",

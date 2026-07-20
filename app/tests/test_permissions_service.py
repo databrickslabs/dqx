@@ -204,6 +204,113 @@ def test_owner_default_does_not_change_effective_privileges(svc, fake):
     assert Privilege.MODIFY not in eff
 
 
+def test_owner_privileges_revocable_via_empty_marker(svc, fake):
+    # Item 50: a grant-manager can revoke the owner's auto-granted full access
+    # by materializing an explicit empty-privilege row keyed on the owner email.
+    # The resolver then stops falling back to the implicit ALL PRIVILEGES.
+    fake.owners["r1"] = "creator@x.com"
+    fake.add_grant("registry_rule", "r1", "creator@x.com", "", principal_name="creator@x.com")
+    eff = svc.effective_privileges(
+        "registry_rule", "r1", principal_ids=set(), owner_email="creator@x.com", principal_email="creator@x.com"
+    )
+    # Explicit empty marker wins over the implicit owner full grant; the object
+    # also has no users-group row here so only the users-group default remains.
+    assert Privilege.MODIFY not in eff
+
+
+def test_owner_privileges_narrowable_via_explicit_grant(svc, fake):
+    # A narrowed explicit owner grant (SELECT only) overrides the implicit full grant.
+    fake.owners["r1"] = "creator@x.com"
+    fake.add_grant("registry_rule", "r1", "creator@x.com", "SELECT", principal_name="creator@x.com")
+    eff = svc.effective_privileges(
+        "registry_rule", "r1", principal_ids=set(), owner_email="creator@x.com", principal_email="creator@x.com"
+    )
+    assert Privilege.SELECT in eff
+    assert Privilege.MODIFY not in eff
+
+
+def test_owner_full_access_implicit_without_explicit_grant(svc, fake):
+    # With no explicit owner row, the owner still holds ALL PRIVILEGES implicitly.
+    fake.owners["r1"] = "creator@x.com"
+    eff = svc.effective_privileges(
+        "registry_rule", "r1", principal_ids=set(), owner_email="creator@x.com", principal_email="creator@x.com"
+    )
+    assert {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY}.issubset(eff)
+
+
+def test_admin_backstop_survives_owner_revoke(svc, fake):
+    # Even with the owner revoked, an ADMIN (workspace-admin backstop) keeps
+    # full access — the object can never be orphaned.
+    fake.owners["r1"] = "creator@x.com"
+    fake.add_grant("registry_rule", "r1", "creator@x.com", "", principal_name="creator@x.com")
+    assert svc.has_privilege(
+        "registry_rule",
+        "r1",
+        Privilege.MODIFY,
+        role=UserRole.ADMIN,
+        principal_ids=set(),
+        owner_email="creator@x.com",
+        principal_email="creator@x.com",
+    )
+
+
+def test_owner_manage_revoked_when_explicit_owner_grant_exists(svc, fake):
+    # Once the owner has an explicit (revoked) grant, their implicit manage
+    # capability is gone too — otherwise revoke would be cosmetic (they could
+    # re-grant). Admins/approvers still manage via the role bypass.
+    fake.owners["r1"] = "creator@x.com"
+    fake.add_grant("registry_rule", "r1", "creator@x.com", "", principal_name="creator@x.com")
+    assert not svc.can_manage_grants(
+        "registry_rule",
+        "r1",
+        role=UserRole.RULE_AUTHOR,
+        principal_ids=set(),
+        owner_email="creator@x.com",
+        principal_email="creator@x.com",
+    )
+    # Admin backstop retains manage.
+    assert svc.can_manage_grants(
+        "registry_rule",
+        "r1",
+        role=UserRole.ADMIN,
+        principal_ids=set(),
+        owner_email="creator@x.com",
+        principal_email="creator@x.com",
+    )
+
+
+def test_owner_manage_implicit_without_explicit_grant(svc, fake):
+    # Owner manages implicitly while no explicit owner row exists.
+    fake.owners["r1"] = "creator@x.com"
+    assert svc.can_manage_grants(
+        "registry_rule",
+        "r1",
+        role=UserRole.RULE_AUTHOR,
+        principal_ids=set(),
+        owner_email="creator@x.com",
+        principal_email="creator@x.com",
+    )
+
+
+def test_set_grant_owner_empty_materializes_revoked_row(mock_sql, app_settings_mock):
+    # Item 50 write path: an empty-privilege grant for the owner INSERTs an
+    # explicit "revoked" marker (parity with the users-group case), not a delete.
+    mock_sql.query.return_value = [["owner@x.com"]]  # get_object_owner -> owner
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    svc.set_grant(
+        "registry_rule",
+        "r1",
+        "owner@x.com",
+        principal_type="user",
+        principal_name="owner@x.com",
+        privileges=set(),
+        inherit=False,
+        grantor="admin@x.com",
+    )
+    executed = " ".join(str(c.args[0]) for c in mock_sql.execute.call_args_list)
+    assert "INSERT INTO dq_object_grants " in executed
+
+
 def test_author_cannot_modify_without_grant(svc):
     # RULE_AUTHOR, no grant, not owner -> MODIFY denied (feature gates MODIFY).
     with pytest.raises(HTTPException) as exc:

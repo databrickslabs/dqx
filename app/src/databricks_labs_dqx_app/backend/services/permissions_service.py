@@ -260,21 +260,44 @@ class PermissionsService:
         )
 
     @staticmethod
-    def _owner_has_explicit_grant(owner_email: str, direct: list[ObjectGrant]) -> bool:
+    def _grant_targets_email(grant: ObjectGrant, email: str) -> bool:
+        """True when a stored grant is keyed on ``email`` (by principal id or name).
+
+        A stored grant may key a principal by SCIM id or carry the email as its
+        principal id/name; match either (case-insensitively).
+        """
+        target = email.strip().lower()
+        return (grant.principal_id or "").strip().lower() == target or (
+            grant.principal_name or ""
+        ).strip().lower() == target
+
+    @classmethod
+    def _owner_has_explicit_grant(cls, owner_email: str, direct: list[ObjectGrant]) -> bool:
         """True when a stored grant already targets the owner (by id or name).
 
         A stored grant may key the owner by SCIM id or carry the owner's email
         as its principal id/name; match either (case-insensitively) so the
-        synthetic owner row is suppressed whenever an authoritative stored grant
-        for the owner already exists.
+        synthetic owner row is suppressed — and the owner's implicit privileges
+        are overridden — whenever an authoritative stored grant for the owner
+        already exists (including an empty "revoked" marker).
         """
+        return any(cls._grant_targets_email(g, owner_email) for g in direct)
+
+    def _principal_targets_owner(
+        self, object_type: str, object_id: str, principal_id: str, principal_name: str | None
+    ) -> bool:
+        """True when a grant for (``principal_id``/``principal_name``) targets the owner.
+
+        Used by :meth:`set_grant` to decide whether an empty-privilege grant
+        should materialize a "revoked" marker row (owner/users-group semantics)
+        rather than delete-to-implicit-default. Matches the owner by SCIM id or
+        by the owner's email carried as the principal id/name.
+        """
+        owner_email = self.get_object_owner(object_type, object_id)
+        if not owner_email:
+            return False
         target = owner_email.strip().lower()
-        for grant in direct:
-            if (grant.principal_id or "").strip().lower() == target:
-                return True
-            if (grant.principal_name or "").strip().lower() == target:
-                return True
-        return False
+        return (principal_id or "").strip().lower() == target or (principal_name or "").strip().lower() == target
 
     def _parent_refs(self, object_type: str, object_id: str) -> list[tuple[ObjectType, str]]:
         """Resolve the parent objects a child inherits grants from.
@@ -347,7 +370,12 @@ class PermissionsService:
         grants matching the caller's principal set (the users-group grant
         matches every caller), and inherited grants (``inherit=True``) on parent
         objects. The object creator (``owner_email``) is treated as holding all
-        privileges.
+        privileges *implicitly* — unless an explicit stored grant targets the
+        owner, in which case that stored row is authoritative (the owner's
+        auto-granted access is revocable: a grant-manager may narrow it, or
+        materialize an empty "revoked" marker to strip it entirely). Workspace
+        admins / approvers still bypass object grants at the :meth:`has_privilege`
+        boundary, so a revoked owner never orphans the object.
 
         The users-group default is per-object: if the object has *no* stored
         users-group row it contributes :data:`DEFAULT_USERS_GROUP_PRIVILEGES`;
@@ -366,16 +394,30 @@ class PermissionsService:
         Returns:
             The set of concrete privileges the caller effectively holds.
         """
-        if owner_email and principal_email and owner_email.strip().lower() == principal_email.strip().lower():
-            return expand_privileges({Privilege.ALL_PRIVILEGES})
-
         def _matches(grant: ObjectGrant) -> bool:
             # The users-group grant applies to everyone; other grants match the
-            # caller's resolved principal set (own id + group ids/names).
-            return is_users_group(grant.principal_id) or grant.principal_id in principal_ids
+            # caller's resolved principal set (own id + group ids/names) or a
+            # grant keyed on the caller's own email (e.g. an explicit owner grant,
+            # which is stored keyed on the owner email, not their SCIM id).
+            if is_users_group(grant.principal_id) or grant.principal_id in principal_ids:
+                return True
+            return bool(principal_email) and self._grant_targets_email(grant, principal_email or "")
 
         priv: set[Privilege] = set()
         direct = self.list_grants(object_type, object_id)
+
+        # The creator holds ALL PRIVILEGES implicitly — but only while no explicit
+        # stored grant targets the owner. Once a grant-manager materializes an
+        # owner grant (to narrow the owner's access or revoke it with an empty
+        # marker), that stored row is authoritative and the implicit full grant
+        # no longer applies. The caller-is-owner check therefore yields to an
+        # explicit owner row rather than short-circuiting unconditionally.
+        caller_is_owner = bool(
+            owner_email and principal_email and owner_email.strip().lower() == principal_email.strip().lower()
+        )
+        if caller_is_owner and not (owner_email and self._owner_has_explicit_grant(owner_email, direct)):
+            return expand_privileges({Privilege.ALL_PRIVILEGES})
+
         has_users_group_row = any(is_users_group(g.principal_id) for g in direct)
         for grant in direct:
             if _matches(grant):
@@ -484,11 +526,19 @@ class PermissionsService:
         Granting/revoking requires ownership or an admin/approver role — like
         UC, holding ALL PRIVILEGES on an object does NOT by itself let you
         re-grant it (MANAGE is separate).
+
+        The owner's *implicit* manage capability is revocable: once an explicit
+        stored grant targets the owner (a narrowing, or an empty "revoked"
+        marker), the owner no longer manages grants implicitly — consistent with
+        :meth:`effective_privileges`, where the explicit owner row overrides the
+        implicit full grant. Workspace admins / approvers (:data:`_ROLE_BYPASS`)
+        always retain manage, so an object can never be orphaned.
         """
         if role in _ROLE_BYPASS:
             return True
         if owner_email and principal_email and owner_email.strip().lower() == principal_email.strip().lower():
-            return True
+            direct = self.list_grants(object_type, object_id)
+            return not self._owner_has_explicit_grant(owner_email, direct)
         return False
 
     def can_edit_and_approve(
@@ -554,16 +604,21 @@ class PermissionsService:
 
         Empty privilege set: for a normal principal this is equivalent to
         :meth:`remove_grant` (the row is deleted). For the workspace users
-        group it instead materializes an explicit empty-privilege row — the
-        per-object "revoked" marker that suppresses the implicit default (so
-        the object no longer falls back to SELECT + APPLY for everyone).
+        group — and for the object owner — it instead materializes an explicit
+        empty-privilege row — the per-object "revoked" marker that suppresses
+        the implicit default (so the object no longer falls back to SELECT +
+        APPLY for everyone, or, for the owner, to the implicit ALL PRIVILEGES).
+        Materializing the owner marker is what makes the owner's auto-granted
+        full access revocable; workspace admins/approvers still bypass object
+        grants, so the object never becomes orphaned.
         """
         self._validate_object_id(object_id)
         self._reject_reserved_principal(principal_id)
         self._validate_enums(object_type, principal_type)
         norm = normalize_privileges(privileges)
         users_group = is_users_group(principal_id)
-        if not norm and not users_group:
+        targets_owner = self._principal_targets_owner(object_type, object_id, principal_id, principal_name)
+        if not norm and not users_group and not targets_owner:
             self.remove_grant(object_type, object_id, principal_id, actor=grantor)
             return ObjectGrant(
                 object_type=object_type,
