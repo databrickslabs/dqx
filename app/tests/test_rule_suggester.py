@@ -38,7 +38,9 @@ from databricks_labs_dqx_app.backend.services.rule_suggester import (
     _NO_CLEAN_MAPPING_REASON,
     _NO_MATCH_REASON,
     _NO_PUBLISHED_RULES_REASON,
+    ColumnMeta,
     RuleSuggester,
+    _stats_for,
 )
 
 
@@ -599,3 +601,137 @@ class TestTopKAndSameColumnGuard:
 
         assert len(result.suggestions) == 1
         assert result.suggestions[0].column_mapping == {"column": "a"}
+
+
+class TestStatsFor:
+    """Unit tests for the _stats_for helper that extracts per-column profiling stats."""
+
+    def test_none_profile_returns_all_none(self):
+        result = _stats_for(None, "col")
+        assert result == {"count": None, "count_null": None, "count_non_null": None, "count_distinct": None, "min": None, "max": None}
+
+    def test_missing_column_returns_all_none(self):
+        profile = _profile({"other_col": {"count": 10}})
+        result = _stats_for(profile, "col")
+        assert result == {"count": None, "count_null": None, "count_non_null": None, "count_distinct": None, "min": None, "max": None}
+
+    def test_non_dict_column_entry_returns_all_none(self):
+        profile = _profile({"col": "not_a_dict"})
+        result = _stats_for(profile, "col")
+        assert result == {"count": None, "count_null": None, "count_non_null": None, "count_distinct": None, "min": None, "max": None}
+
+    def test_full_stats_are_extracted(self):
+        profile = _profile({"id": {"count": 100, "count_null": 0, "count_distinct": 100, "min": 1, "max": 100}})
+        result = _stats_for(profile, "id")
+        assert result["count"] == 100
+        assert result["count_null"] == 0
+        assert result["count_distinct"] == 100
+        assert result["min"] == "1"
+        assert result["max"] == "100"
+
+    def test_partial_stats_fills_missing_keys_with_none(self):
+        profile = _profile({"col": {"count": 50, "count_null": 5}})
+        result = _stats_for(profile, "col")
+        assert result["count"] == 50
+        assert result["count_null"] == 5
+        assert result["count_distinct"] is None
+        assert result["min"] is None
+        assert result["max"] is None
+
+    def test_min_max_coerced_to_str(self):
+        profile = _profile({"amount": {"min": 0.5, "max": 999.99}})
+        result = _stats_for(profile, "amount")
+        assert result["min"] == "0.5"
+        assert result["max"] == "999.99"
+
+
+class TestStatsMerge:
+    """Tests that _resolve_columns merges profiling stats onto ColumnMeta for both UC and profile-fallback paths."""
+
+    async def test_profile_fallback_path_merges_stats(self, monitored_tables, registry, apply_rules):
+        """When UC returns no columns, profile-fallback path must populate stat fields."""
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile(
+            {"id": {"count": 100, "count_null": 0, "count_distinct": 100}}
+        )
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": []})
+        discovery = _discovery()  # returns no UC columns → profile fallback
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway, discovery)
+
+        await suggester.suggest("b1", "user@x")
+
+        _, kwargs = gateway.query.call_args
+        user_prompt = kwargs["messages"][1]["content"]
+        payload = json.loads(user_prompt)
+        id_col = next((c for c in payload["columns"] if c["name"] == "id"), None)
+        assert id_col is not None, "column 'id' should appear in judge payload"
+        assert id_col["count"] == 100
+        assert id_col["count_null"] == 0
+        assert id_col["count_distinct"] == 100
+
+    async def test_uc_path_merges_stats(self, monitored_tables, registry, apply_rules):
+        """When UC columns are returned, stats from the profile should still be merged."""
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile(
+            {"email": {"count": 200, "count_null": 3, "count_distinct": 195}}
+        )
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": []})
+        discovery = _discovery([_column("email", "STRING")])
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway, discovery)
+
+        await suggester.suggest("b1", "user@x")
+
+        _, kwargs = gateway.query.call_args
+        user_prompt = kwargs["messages"][1]["content"]
+        payload = json.loads(user_prompt)
+        email_col = next((c for c in payload["columns"] if c["name"] == "email"), None)
+        assert email_col is not None, "column 'email' should appear in judge payload"
+        assert email_col["count"] == 200
+        assert email_col["count_null"] == 3
+        assert email_col["count_distinct"] == 195
+
+    async def test_none_stat_fields_omitted_from_judge_payload(self, monitored_tables, registry, apply_rules):
+        """Stat fields that are None must not appear in the judge payload (keep prompt compact)."""
+        monitored_tables.get.return_value = _binding_detail()
+        # Profile column present but empty stats dict — all stat fields remain None.
+        monitored_tables.get_latest_profile.return_value = _profile({"col": {}})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": []})
+        discovery = _discovery()
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway, discovery)
+
+        await suggester.suggest("b1", "user@x")
+
+        _, kwargs = gateway.query.call_args
+        user_prompt = kwargs["messages"][1]["content"]
+        payload = json.loads(user_prompt)
+        col = next((c for c in payload["columns"] if c["name"] == "col"), None)
+        assert col is not None
+        # None-valued stat keys must be absent from the serialised payload.
+        for stat_key in ("count", "count_null", "count_distinct", "min", "max"):
+            assert stat_key not in col, f"key '{stat_key}' should be omitted when None"
+
+
+class TestColumnMetaStatFields:
+    """ColumnMeta stat fields default to None and accept the expected types."""
+
+    def test_defaults_are_all_none(self):
+        col = ColumnMeta(name="x")
+        assert col.count is None
+        assert col.count_null is None
+        assert col.count_distinct is None
+        assert col.min is None
+        assert col.max is None
+
+    def test_stat_fields_can_be_set(self):
+        col = ColumnMeta(name="x", count=100, count_null=0, count_distinct=100, min="1", max="100")
+        assert col.count == 100
+        assert col.count_null == 0
+        assert col.count_distinct == 100
+        assert col.min == "1"
+        assert col.max == "100"
