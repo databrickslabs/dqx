@@ -61,21 +61,18 @@ _NO_CLEAN_MAPPING_REASON = "Found related rules, but none mapped cleanly to this
 
 _JUDGE_SYSTEM_PROMPT = (
     "You are a precise data-quality rule mapping assistant. Given a table's columns (each with a name, "
-    "type, family, optional comment, and optional profiling stats) and a list of candidate published rules "
-    "(each with input slots that declare a family), suggest which rules apply to which columns. Be "
-    "conservative: propose only mappings that genuinely fit — reject most candidates, and return an empty "
-    "list when nothing clearly fits.\n"
-    "Use the provided profiling stats as evidence, not column names alone:\n"
-    "- Propose a not-null / is-present check for a column when its 'count_null' is 0 (or very close to 0 "
-    "relative to 'count') AND the column is semantically required (identifier, amount, status, timestamp, "
-    "name, email — not an optional or nullable-by-design field).\n"
-    "- Propose a uniqueness check for a column when 'count_distinct' equals 'count_non_null' (or 'count') "
-    "AND the column clearly identifies a row (named id, *_id, key, *_key, email, username, or similar) — "
-    "numeric family alone is NOT sufficient evidence.\n"
-    "- Propose a range or bounds rule ONLY when BOTH the column's semantics AND its name/comment match the "
-    "rule's intent. A numeric family alone is NOT sufficient: do NOT map 'Amount is not negative' or "
-    "'Discount 0–100' onto a column such as 'postal_zip_code', 'zip', 'phone', or any other column whose "
-    "name or comment indicates a code, identifier, or non-quantitative numeric value. When in doubt, reject.\n"
+    "type, family, and optional comment) and a list of candidate published rules (each with input slots that "
+    "declare a family), suggest which rules apply to which columns. Favour precision, but do NOT be so "
+    "conservative that you omit obviously-correct mappings: propose EVERY mapping that genuinely fits, and "
+    "return an empty list only when nothing fits at all.\n"
+    "Apply universal data-integrity checks broadly, not narrowly. A single-slot 'any'-family rule that checks "
+    "for null/emptiness/presence (e.g. 'Not Null Check', 'Value is present') fits EVERY column that should "
+    "always be populated — at minimum every identifier/key column (names ending in _id, _key, or named id/"
+    "key/code) and every column a reasonable analyst would consider required (amounts, statuses, timestamps, "
+    "names, emails). Emit a separate entry for each such column. A uniqueness rule (e.g. 'Key is unique', "
+    "'Unique values in target column') fits every column that identifies a row — primary keys and natural "
+    "keys (columns named id, *_id, key, *_key, or clearly unique like email/username/code). Suggest these "
+    "universal checks even when the column is domain-specific; a not-null check on order_id is correct.\n"
     "Every slot of a multi-slot rule MUST be filled with a distinct existing column before you suggest it — "
     "never suggest a partial mapping that leaves a slot empty; if you cannot fill all of a rule's slots well, "
     "reject that rule. Only suggest a rule when it is a good structural AND semantic match: a slot's family "
@@ -106,40 +103,6 @@ _JUDGE_SYSTEM_PROMPT = (
 )
 
 
-def _stats_for(profile: LatestProfile | None, column_name: str) -> dict[str, int | str | None]:
-    """Extract per-column profiling stats from *profile* for *column_name*.
-
-    Returns a dict suitable for ``**``-unpacking into :class:`ColumnMeta`.
-    All values default to ``None`` when the profile is absent, the column is
-    not present in the summary, or a key is missing from its stats dict.
-    ``min`` and ``max`` are coerced to ``str`` because they may arrive as
-    numeric or date objects but are only ever rendered into text prompts.
-    """
-    empty = {
-        "count": None,
-        "count_null": None,
-        "count_non_null": None,
-        "count_distinct": None,
-        "min": None,
-        "max": None,
-    }
-    if profile is None:
-        return dict(empty)
-    raw = profile.summary.get(column_name) if isinstance(profile.summary, dict) else None
-    if not isinstance(raw, dict):
-        return dict(empty)
-    mn = raw.get("min")
-    mx = raw.get("max")
-    return {
-        "count": raw.get("count"),
-        "count_null": raw.get("count_null"),
-        "count_non_null": raw.get("count_non_null"),
-        "count_distinct": raw.get("count_distinct"),
-        "min": str(mn) if mn is not None else None,
-        "max": str(mx) if mx is not None else None,
-    }
-
-
 @dataclass
 class ColumnMeta:
     """One resolved target-table column the suggester matches rules against.
@@ -147,23 +110,12 @@ class ColumnMeta:
     ``type`` is the raw Unity Catalog type name and ``family`` is its
     registry slot-family classification (see :func:`_family_for_type`); both
     are empty/``"any"`` when the column list falls back to profile names.
-
-    The optional stat fields are populated from ``LatestProfile.summary`` when
-    a profiling run exists for the table. They are forwarded to the LLM judge
-    so it can ground not-null / uniqueness decisions in evidence rather than
-    column names alone.
     """
 
     name: str
     type: str = ""
     family: str = "any"
     comment: str | None = None
-    count: int | None = None
-    count_null: int | None = None
-    count_non_null: int | None = None
-    count_distinct: int | None = None
-    min: str | None = None
-    max: str | None = None
 
 
 @dataclass
@@ -301,10 +253,6 @@ class RuleSuggester:
         profile's column names — the previous behaviour, which silently
         produced zero columns (and therefore zero suggestions) for any table
         without a prior profiling run. Best-effort: never raises.
-
-        In both paths, per-column profiling stats from ``profile.summary`` are
-        merged onto each ``ColumnMeta`` so the LLM judge receives statistical
-        evidence for not-null / uniqueness decisions.
         """
         parts = table_fqn.split(".")
         uc_columns: list[TableColumn] = []
@@ -320,15 +268,11 @@ class RuleSuggester:
                     type=column.type_name,
                     family=_family_for_type(column.type_name),
                     comment=column.comment,
-                    **_stats_for(profile, column.name),
                 )
                 for column in uc_columns
                 if column.name
             ]
-        return [
-            ColumnMeta(name=name, **_stats_for(profile, name))
-            for name in self._profile_columns(profile)
-        ]
+        return [ColumnMeta(name=name) for name in self._profile_columns(profile)]
 
     @staticmethod
     def _profile_columns(profile: LatestProfile | None) -> list[str]:
@@ -431,20 +375,10 @@ class RuleSuggester:
             }
             for rule in candidate_rules
         ]
-        columns_payload = []
-        for column in columns:
-            col_dict: dict[str, Any] = {
-                "name": column.name,
-                "type": column.type,
-                "family": column.family,
-                "comment": column.comment,
-            }
-            # Include profiling stats when present — omit None keys to keep the prompt compact.
-            for stat_key in ("count", "count_null", "count_non_null", "count_distinct", "min", "max"):
-                val = getattr(column, stat_key)
-                if val is not None:
-                    col_dict[stat_key] = val
-            columns_payload.append(col_dict)
+        columns_payload = [
+            {"name": column.name, "type": column.type, "family": column.family, "comment": column.comment}
+            for column in columns
+        ]
         user_prompt = json.dumps(
             {"table": table_fqn, "columns": columns_payload, "candidate_rules": candidates_payload},
             sort_keys=True,
