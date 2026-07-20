@@ -733,17 +733,37 @@ export function RuleConfigCard({
               {thresholdEnabled && (() => {
                 const effectiveRuleThreshold = rule.pass_threshold ?? resolvedDefaultThreshold;
                 const columnOverrides = Object.values(rule.column_pass_thresholds ?? {});
-                const mixed = columnOverrides.some((v) => v !== effectiveRuleThreshold);
                 const usedColumns = getUsedColumnsForRule(rule);
+                // "Mixed" only makes sense with 2+ mapped columns whose per-column
+                // overrides diverge. A single-column rule has exactly one check,
+                // so its lone column override IS the rule's effective threshold —
+                // never "Mixed".
+                const mixed = usedColumns.length >= 2 && columnOverrides.some((v) => v !== effectiveRuleThreshold);
                 const columnEntries = usedColumns.map((name) => ({
                   name,
                   value: rule.column_pass_thresholds?.[name] ?? null,
                 }));
+                // For a single-column rule, collapse the per-column override into
+                // the rule-level pill: show that column's override as the value,
+                // and (when a by-column override already exists) route edits back
+                // to it so we don't create a divergent rule-level value the
+                // materializer would ignore (column override wins there).
+                const singleColumn = usedColumns.length === 1 ? usedColumns[0] : null;
+                const singleColumnOverride = singleColumn
+                  ? (rule.column_pass_thresholds?.[singleColumn] ?? null)
+                  : null;
+                const pillValue = singleColumn
+                  ? (singleColumnOverride ?? rule.pass_threshold ?? null)
+                  : (rule.pass_threshold ?? null);
+                const pillOnChange =
+                  singleColumn && singleColumnOverride !== null && onColumnThresholdChange
+                    ? (v: number | null) => onColumnThresholdChange(singleColumn, v)
+                    : onPassThresholdChange;
                 return (
                   <ThresholdPill
-                    value={rule.pass_threshold ?? null}
+                    value={pillValue}
                     effectiveDefault={resolvedDefaultThreshold}
-                    onChange={onPassThresholdChange}
+                    onChange={pillOnChange}
                     readonly={!canEdit}
                     mixed={mixed}
                     columns={columnEntries}
