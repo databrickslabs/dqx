@@ -2168,7 +2168,7 @@ function PassThresholdSettingsCard() {
               onChange={handleThresholdChange}
               onBlur={handleThresholdBlur}
               disabled={!isAdmin || saveMutation.isPending || !settings.pass_threshold_enabled}
-              className="w-20 text-right"
+              className="h-8 w-20 text-right"
             />
             <span className="text-sm text-muted-foreground">%</span>
           </div>
@@ -2272,11 +2272,9 @@ function ApprovalsModeCard() {
             <Label htmlFor="approvals-mode" className="text-sm">
               {t("config.approvalsModeLabel")}
             </Label>
-            {mode !== "enabled" && (
-              <p className="text-[11px] text-muted-foreground">
-                {t(`config.approvalsMode_${mode}_hint`)}
-              </p>
-            )}
+            <p className="text-[11px] text-muted-foreground">
+              {t(`config.approvalsMode_${mode}_hint`)}
+            </p>
           </div>
           <Select value={mode} onValueChange={save} disabled={!isAdmin || saveMutation.isPending}>
             <SelectTrigger id="approvals-mode" className="h-8 w-52 text-xs">

@@ -1174,7 +1174,7 @@ class RulesRegistrySettingsOut(BaseModel):
 
     auto_upgrade_without_approval: bool = Field(
         description="Re-approval behaviour: silently re-approve a following application's "
-        "re-rendered check (True) vs. send it back to pending_approval (False, default)."
+        "re-rendered check (True, default) vs. send it back to pending_approval (False)."
     )
     default_auto_upgrade: bool = Field(
         description="Attach-time default pin for new applications/members: follow latest "

@@ -263,9 +263,9 @@ class AppSettingsService:
     _AUTO_UPGRADE_WITHOUT_APPROVAL_KEY = "auto_upgrade_without_approval"
 
     def get_auto_upgrade_without_approval(self) -> bool:
-        """Return the configured auto-upgrade behaviour; defaults to ``False`` (Behaviour B) when unset."""
+        """Return the configured auto-upgrade behaviour; defaults to ``True`` (Behaviour A) when unset."""
         raw = self.get_setting(self._AUTO_UPGRADE_WITHOUT_APPROVAL_KEY)
-        return raw is not None and raw.strip().lower() == "true"
+        return raw is None or raw.strip().lower() == "true"
 
     def save_auto_upgrade_without_approval(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Persist the auto-upgrade-without-approval setting. Returns the saved value."""
