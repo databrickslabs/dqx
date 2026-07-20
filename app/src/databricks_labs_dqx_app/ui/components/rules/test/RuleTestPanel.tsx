@@ -313,12 +313,12 @@ export function RuleTestPanel({
           test button (not off to the side in the header) — it's the natural
           step: fill the grid with AI-generated rows, then run. */}
       {mode === "adhoc" && (
-        <AiDisabledTooltip disabled={!ai.available} label={ai.reason ?? t("ruleTest.aiDisabled")} className="w-full">
-          <Button variant="outline" size="sm" onClick={onGenerate} disabled={!ai.available || generating} className="w-full">
+        <AiDisabledTooltip disabled={!ai.available} label={ai.reason ?? t("ruleTest.aiDisabled")}>
+          <Button variant="outline" onClick={onGenerate} disabled={!ai.available || generating}>
             {generating ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
             ) : (
-              <Sparkles className="mr-1.5 h-3.5 w-3.5" stroke={AI_GRADIENT_URL} />
+              <Sparkles className="mr-1.5 h-4 w-4" stroke={AI_GRADIENT_URL} />
             )}
             {t("ruleTest.generateData")}
           </Button>

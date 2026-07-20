@@ -2,9 +2,11 @@ import { describe, expect, test } from "bun:test";
 import type { AppliedRuleOut, RegistryRuleOut, RuleSlot } from "@/lib/api";
 import {
   buildDesiredApplications,
+  compatibleRulesForColumn,
   computeRunGating,
   desiredApplicationsKey,
   getRuleIdsForColumn,
+  isRuleCompatibleWithColumn,
   mergeColumnThresholds,
   newStagedRow,
   pickSlotForColumn,
@@ -194,6 +196,50 @@ describe("pickSlotForColumn", () => {
   test("match wins over first-slot fallback when match is not first", () => {
     const slots = [fakeSlot("col1", "temporal"), fakeSlot("col2", "boolean"), fakeSlot("col3", "numeric")];
     expect(pickSlotForColumn(slots, "numeric")).toBe("col3");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isRuleCompatibleWithColumn / compatibleRulesForColumn — item 52
+// (by-column data-type compatibility filter)
+// ---------------------------------------------------------------------------
+
+function ruleWithSlots(id: string, slots: RuleSlot[]): RegistryRuleOut {
+  return { rule_id: id, version: 1, definition: { slots } } as unknown as RegistryRuleOut;
+}
+
+describe("isRuleCompatibleWithColumn", () => {
+  test("compatible when a slot family exactly matches the column family", () => {
+    expect(isRuleCompatibleWithColumn(ruleWithSlots("r", [fakeSlot("c", "numeric")]), "numeric")).toBe(true);
+  });
+
+  test("incompatible when no slot family matches the column family", () => {
+    expect(isRuleCompatibleWithColumn(ruleWithSlots("r", [fakeSlot("c", "text")]), "numeric")).toBe(false);
+  });
+
+  test("an 'any'-family slot is compatible with any column family", () => {
+    expect(isRuleCompatibleWithColumn(ruleWithSlots("r", [fakeSlot("c", "any")]), "numeric")).toBe(true);
+  });
+
+  test("an 'any'-family column is compatible with any slot", () => {
+    expect(isRuleCompatibleWithColumn(ruleWithSlots("r", [fakeSlot("c", "text")]), "any")).toBe(true);
+  });
+
+  test("rules with no column slots (dataset-level / SQL) are NOT column-applicable", () => {
+    expect(isRuleCompatibleWithColumn(ruleWithSlots("r", []), "numeric")).toBe(false);
+  });
+});
+
+describe("compatibleRulesForColumn", () => {
+  test("keeps only rules with a slot compatible with the column family", () => {
+    const rules = [
+      ruleWithSlots("num", [fakeSlot("c", "numeric")]),
+      ruleWithSlots("txt", [fakeSlot("c", "text")]),
+      ruleWithSlots("any", [fakeSlot("c", "any")]),
+      ruleWithSlots("dataset", []),
+    ];
+    const ids = compatibleRulesForColumn(rules, "numeric").map((r) => r.rule_id);
+    expect(ids).toEqual(["num", "any"]);
   });
 });
 

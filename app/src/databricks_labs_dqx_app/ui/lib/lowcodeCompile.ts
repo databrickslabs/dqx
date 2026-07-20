@@ -1,5 +1,6 @@
 import type { AnyRow, JoinAst, LowcodeAstV2 } from "./lowcodeAst";
 import { VALIDITY_SQL_TYPE, type Family } from "./lowcodeOperators";
+import { stripSqlLineComments } from "./sqlComments";
 import type { RuleSlotFamily } from "@/lib/api";
 
 // Client-side compilation of a low-code AST to SQL. Ported from dqlake's
@@ -479,5 +480,35 @@ export function buildSqlBody(params: {
     }
     return body;
   }
+  // Item 55: a SQL rule authored with a JOIN (per the predicate placeholder's
+  // "LEFT JOIN catalog.schema.table a ON a.column = {{region}}" hint) must
+  // become a cross-table `sql_query` check, NOT a bare `sql_expression` — the
+  // latter can't run a join. Detect it on the comment-stripped text so a `--`
+  // note can't trip the scan, then:
+  //   • a full `SELECT … FROM … JOIN …` is already a query → persist as-is;
+  //   • a bare boolean predicate followed by JOIN clause(s) is wrapped into a
+  //     dataset-level query `SELECT (NOT (<pred>)) AS condition FROM
+  //     {{input_view}} <joins>` (same NOT-condition convention as the
+  //     structured-joins branch above; no merge_columns — raw JOIN text has no
+  //     pickable input-side key, so the check applies dataset-wide).
+  const scan = stripSqlLineComments(pred).trim();
+  if (/^select\b/i.test(scan)) {
+    return { sql_query: pred };
+  }
+  const joinMatch = SQL_JOIN_RE.exec(scan);
+  if (joinMatch) {
+    const boolExpr = scan.slice(0, joinMatch.index).trim();
+    const joinClause = scan.slice(joinMatch.index).trim();
+    if (boolExpr) {
+      return { sql_query: `SELECT (NOT (${boolExpr})) AS condition FROM {{input_view}} ${joinClause}` };
+    }
+  }
   return { predicate: pred };
 }
+
+/** Matches a JOIN clause introducer (typed forms + bare `JOIN`) as a whole
+ *  word, used to detect that a SQL predicate is really a cross-table query
+ *  (item 55). Bare `JOIN` is included since it's valid SQL (defaults to INNER);
+ *  a plain boolean predicate practically never contains the standalone token. */
+const SQL_JOIN_RE =
+  /\b(?:inner|left(?:\s+(?:outer|semi|anti))?|right(?:\s+outer)?|full(?:\s+outer)?|cross)\s+join\b|\bjoin\b/i;

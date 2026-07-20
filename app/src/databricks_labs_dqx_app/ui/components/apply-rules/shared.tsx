@@ -392,6 +392,29 @@ export function pickSlotForColumn(slots: RuleSlot[], columnFamily: ColumnFamily)
   return (match ?? slots[0]).name;
 }
 
+/** True when a rule can be applied to a column of the given family — i.e. it
+ *  has at least one column slot whose family is compatible (exact match, or an
+ *  "any"-family slot, or the column itself is untyped "any"). Rules with no
+ *  slots (dataset-level / SQL checks that take no column argument) are NOT
+ *  column-applicable, so they're excluded from the by-column picker. Mirrors
+ *  the slot↔column family rule used by `columnsForSlot` / `pickSlotForColumn`,
+ *  reinstating the by-column data-type compatibility filter. */
+export function isRuleCompatibleWithColumn(rule: RegistryRuleOut, columnFamily: ColumnFamily): boolean {
+  const slots = rule.definition?.slots ?? [];
+  if (slots.length === 0) return false;
+  return slots.some((s) => s.family === "any" || columnFamily === "any" || s.family === columnFamily);
+}
+
+/** Filter published rules to those applicable to a column of `columnFamily`
+ *  (see `isRuleCompatibleWithColumn`). Used by AddRulesDialog when opened from
+ *  a per-column "+ Add rule" CTA so only compatible-type rules are selectable. */
+export function compatibleRulesForColumn(
+  rules: RegistryRuleOut[],
+  columnFamily: ColumnFamily,
+): RegistryRuleOut[] {
+  return rules.filter((r) => isRuleCompatibleWithColumn(r, columnFamily));
+}
+
 export function TagBadge({ label, color }: { label: string; color?: string }) {
   if (!label) return null;
   return (

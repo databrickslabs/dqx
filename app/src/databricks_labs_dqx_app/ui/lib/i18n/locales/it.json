@@ -2004,7 +2004,7 @@
     "checksCount_other": "{{count}} controlli",
     "viaRulesCount_one": "tramite {{count}} regola",
     "viaRulesCount_other": "tramite {{count}} regole",
-    "checksViaRulesTooltip": "Una regola è una logica riutilizzabile. Un controllo è quando una regola viene applicata a una colonna o a un insieme di colonne. Un test è quando un controllo viene eseguito su una riga di dati.",
+    "checksViaRulesTooltip": "Una <b>regola</b> è una logica riutilizzabile. Un <b>controllo</b> è quando una regola viene applicata a una colonna o a un insieme di colonne. Un <b>test</b> è quando un controllo viene eseguito su una riga di dati.",
     "filterAll": "Tutte",
     "filterNeedsAttention": "Richiede attenzione",
     "searchRulesAndColumnsPlaceholder": "Filtra colonne e regole…",

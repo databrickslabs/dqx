@@ -483,4 +483,43 @@ describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without cor
     });
   });
 
+  // Item 55: a SQL predicate authored WITH a join must become a runnable
+  // sql_query, not a bare predicate (which the backend renders as an
+  // unrunnable sql_expression).
+  test("bare boolean predicate + JOIN clause -> wraps into a dataset-level sql_query", () => {
+    const body = buildSqlBody({
+      sqlPredicate: "{{region}} IS NOT NULL\nLEFT JOIN c.s.dim a ON a.region = {{region}}",
+      sqlJoins: [],
+    });
+    expect(body.sql_query).toBe(
+      "SELECT (NOT ({{region}} IS NOT NULL)) AS condition FROM {{input_view}} LEFT JOIN c.s.dim a ON a.region = {{region}}",
+    );
+    expect(body.predicate).toBeUndefined();
+  });
+
+  test("a full SELECT … JOIN is persisted as sql_query as-is", () => {
+    const q = "SELECT (NOT (x > 0)) AS condition FROM {{input_view}} INNER JOIN c.s.d d ON d.k = {{k}}";
+    expect(buildSqlBody({ sqlPredicate: q, sqlJoins: [] })).toEqual({ sql_query: q });
+  });
+
+  test("bare 'JOIN' (defaults to INNER) is detected", () => {
+    const body = buildSqlBody({
+      sqlPredicate: "{{id}} IS NOT NULL JOIN c.s.d d ON d.id = {{id}}",
+      sqlJoins: [],
+    });
+    expect(body.sql_query).toContain("FROM {{input_view}} JOIN c.s.d d ON d.id = {{id}}");
+  });
+
+  test("a plain predicate with no join stays a { predicate } (sql_expression)", () => {
+    expect(buildSqlBody({ sqlPredicate: "{{amount}} > 0 AND {{amount}} < 1e9", sqlJoins: [] })).toEqual({
+      predicate: "{{amount}} > 0 AND {{amount}} < 1e9",
+    });
+  });
+
+  test("a '-- join ...' comment does NOT trip join detection", () => {
+    expect(buildSqlBody({ sqlPredicate: "{{a}} > 0 -- consider a join here", sqlJoins: [] })).toEqual({
+      predicate: "{{a}} > 0 -- consider a join here",
+    });
+  });
+
 });
