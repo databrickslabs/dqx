@@ -1970,7 +1970,6 @@
     "defaultLabel": "(padrão)",
     "moreOptionsLabel": "Mais opções",
     "deselectRuleMenuItem": "Desmarcar regra",
-    "toastRunRuleStarted": "Execução da regra iniciada.",
     "collapseLabel": "Recolher",
     "expandLabel": "Expandir",
     "pinFollowLatestVersioned": "Seguir a mais recente (v{{version}})",

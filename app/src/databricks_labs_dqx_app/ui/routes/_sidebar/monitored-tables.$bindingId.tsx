@@ -342,7 +342,10 @@ function MonitoredTableDetailPage() {
     }
   }, [bindingId, appliedRules]);
 
-  const isDirty = desiredApplicationsKey(stagedRows) !== desiredApplicationsKey(baseline);
+  const adminDefaultThreshold = useDefaultPassThreshold();
+  const isDirty =
+    desiredApplicationsKey(stagedRows, adminDefaultThreshold) !==
+    desiredApplicationsKey(baseline, adminDefaultThreshold);
 
   // Bypasses the nav guard right after a successful save/submit/approve so an
   // in-flight invalidate+refetch (which briefly leaves the page mid-settle)
@@ -2168,10 +2171,22 @@ function ApplyRulesTab({
   // Jump to the page holding the first auto-expanded card so a rule freshly
   // staged (appended to the end) or targeted by a by-column "jump to rule"
   // is actually on-screen, not hidden behind pagination.
+  //
+  // One-shot: this must fire only on a GENUINELY NEW expand request (a new
+  // "+ Add rule" batch or a by-column "jump to rule"), not on every
+  // `visibleMergedRules` recompute. `visibleMergedRules` changes identity on
+  // every staged edit, so without this guard any later mutation (edit mapping,
+  // change severity/threshold, type in search) would re-fire and snap
+  // `openRuleId` back to the auto-expanded card, collapsing whatever the user
+  // had manually opened. We consume each `expandRuleIds` value once by
+  // remembering the last one we acted on.
+  const consumedExpandRef = useRef<string[] | null>(null);
   useEffect(() => {
     if (expandRuleIds.length === 0) return;
+    if (consumedExpandRef.current === expandRuleIds) return;
     const idx = visibleMergedRules.findIndex((r) => expandRuleIds.includes(r.rule_id));
     if (idx >= 0) {
+      consumedExpandRef.current = expandRuleIds;
       setRulePage(Math.floor(idx / RULE_PAGE_SIZE) + 1);
       // Single-open accordion (item 26): honour the auto-expand request by
       // opening the target card (and closing any other) instead of leaving

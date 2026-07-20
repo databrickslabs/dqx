@@ -111,14 +111,15 @@ export function ThresholdPill({
     );
   }
 
-  // Only accept a live keystroke that keeps the field within 0–100 (item 37a):
-  // reject out-of-range or non-numeric input at entry time instead of letting
-  // the user type e.g. 999 and snapping it back on commit. Empty string is
-  // allowed so the field can be cleared and retyped.
+  // Only accept a live keystroke that keeps the field a whole number within
+  // 0–100 (item 37a): reject out-of-range, non-numeric, or fractional input at
+  // entry time instead of letting the user type e.g. 999 or 70.5 and truncating
+  // it on commit (commitDraft uses parseInt). Empty string is allowed so the
+  // field can be cleared and retyped.
   const inRangeDraft = (raw: string): string | null => {
     if (raw === "") return "";
     const n = Number(raw);
-    if (Number.isNaN(n) || n < 0 || n > 100) return null;
+    if (Number.isNaN(n) || !Number.isInteger(n) || n < 0 || n > 100) return null;
     return raw;
   };
 
@@ -126,11 +127,13 @@ export function ThresholdPill({
     const trimmed = raw.trim();
     const n = Number.parseInt(trimmed, 10);
     if (!Number.isNaN(n)) {
-      const clamped = Math.max(0, Math.min(100, n));
-      // Committing the effective default is a no-op override: emit null
-      // ("follow default") so it doesn't dirty the editor (item 33) and
-      // matches the pill's "* only when it differs from default" semantics.
-      onChange(clamped === effectiveDefault ? null : clamped);
+      // Always emit the explicit value the user entered — never silently
+      // rewrite an entered-default to null ("follow default"), which would
+      // clobber an explicit last-saved override. Dirty detection normalizes
+      // "explicit value == effective default" and "null" as equal in
+      // desiredApplicationsKey (item 33), so re-entering the default still
+      // doesn't mark the editor dirty.
+      onChange(Math.max(0, Math.min(100, n)));
     }
     // empty or non-numeric → no-op, retain current value
   };
@@ -141,10 +144,9 @@ export function ThresholdPill({
     const trimmed = raw.trim();
     const n = Number.parseInt(trimmed, 10);
     if (!Number.isNaN(n)) {
-      const clamped = Math.max(0, Math.min(100, n));
-      // Same no-op guard as commitDraft: a per-column value equal to the
-      // column's effective default clears the override (item 33).
-      onColumnChange!(column, clamped === colDefault ? null : clamped);
+      // Same as commitDraft: emit the explicit per-column value; the dirty key
+      // treats a column threshold equal to its effective default as no override.
+      onColumnChange!(column, Math.max(0, Math.min(100, n)));
     }
     // empty or non-numeric → no-op, retain current column value
   };
