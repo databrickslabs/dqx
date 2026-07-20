@@ -84,21 +84,18 @@ export function ThresholdPill({
     ? t("monitoredTables.thresholdPillMixedAria")
     : t("monitoredTables.thresholdPillAria", { pct: displayed });
 
-  // The label span carries a fixed min-width sized to the widest label
-  // ("< 100%" / "Mixed") so the pill stays the SAME width whether it shows a
-  // percentage or "Mixed" (no shrink on state change), and the text is
-  // left-aligned so a row of pills lines up on the left edge.
+  // Left-aligned label that hugs its content (item 5): no min-width reserve,
+  // and the override "*" marker only occupies space when present, so the pill
+  // is as narrow as its text ("< 70%") rather than padded to a fixed width.
   const badgeContent = (
     <>
       <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" aria-hidden />
-      <span className="min-w-[3rem] text-left">
+      <span className="text-left">
         {mixed
           ? t("monitoredTables.thresholdPillMixed")
           : t("monitoredTables.thresholdPillLabel", { pct: displayed })}
       </span>
-      {/* Fixed-width "*" slot (always present, empty when not overridden) so the
-          pill width doesn't jump when the marker appears/disappears. */}
-      <span className="w-2 text-center text-muted-foreground">{isOverridden || mixed ? "*" : ""}</span>
+      {(isOverridden || mixed) && <span className="text-muted-foreground">*</span>}
     </>
   );
 
@@ -114,25 +111,43 @@ export function ThresholdPill({
     );
   }
 
+  // Only accept a live keystroke that keeps the field within 0–100 (item 37a):
+  // reject out-of-range or non-numeric input at entry time instead of letting
+  // the user type e.g. 999 and snapping it back on commit. Empty string is
+  // allowed so the field can be cleared and retyped.
+  const inRangeDraft = (raw: string): string | null => {
+    if (raw === "") return "";
+    const n = Number(raw);
+    if (Number.isNaN(n) || n < 0 || n > 100) return null;
+    return raw;
+  };
+
   const commitDraft = (raw: string) => {
     const trimmed = raw.trim();
     const n = Number.parseInt(trimmed, 10);
     if (!Number.isNaN(n)) {
-      onChange(Math.max(0, Math.min(100, n)));
+      const clamped = Math.max(0, Math.min(100, n));
+      // Committing the effective default is a no-op override: emit null
+      // ("follow default") so it doesn't dirty the editor (item 33) and
+      // matches the pill's "* only when it differs from default" semantics.
+      onChange(clamped === effectiveDefault ? null : clamped);
     }
     // empty or non-numeric → no-op, retain current value
   };
+
+  const colDefault = columnEffectiveDefault ?? effectiveDefault;
 
   const commitColumnDraft = (column: string, raw: string) => {
     const trimmed = raw.trim();
     const n = Number.parseInt(trimmed, 10);
     if (!Number.isNaN(n)) {
-      onColumnChange!(column, Math.max(0, Math.min(100, n)));
+      const clamped = Math.max(0, Math.min(100, n));
+      // Same no-op guard as commitDraft: a per-column value equal to the
+      // column's effective default clears the override (item 33).
+      onColumnChange!(column, clamped === colDefault ? null : clamped);
     }
     // empty or non-numeric → no-op, retain current column value
   };
-
-  const colDefault = columnEffectiveDefault ?? effectiveDefault;
 
   return (
     <Popover
@@ -199,7 +214,11 @@ export function ThresholdPill({
                     value={columnDrafts[col.name] ?? String(col.value ?? colDefault)}
                     placeholder={String(colDefault)}
                     className="h-7 text-xs w-20 pr-6"
-                    onChange={(e) => setColumnDrafts((prev) => ({ ...prev, [col.name]: e.target.value }))}
+                    onChange={(e) => {
+                      const next = inRangeDraft(e.target.value);
+                      if (next === null) return;
+                      setColumnDrafts((prev) => ({ ...prev, [col.name]: next }));
+                    }}
                     onBlur={(e) => {
                       commitColumnDraft(col.name, e.target.value);
                       setColumnDrafts((prev) => ({ ...prev, [col.name]: String(col.value ?? colDefault) }));
@@ -227,6 +246,10 @@ export function ThresholdPill({
           className="w-56 p-3 space-y-3"
           align="end"
           onClick={(e) => e.stopPropagation()}
+          // Don't auto-focus (and select-all) the input on open (item 37b) —
+          // the popover should open calm, not land mid-edit with the value
+          // highlighted. Mirrors the per-column popover above.
+          onOpenAutoFocus={(e) => e.preventDefault()}
         >
           <p className="text-xs font-medium">{t("monitoredTables.thresholdPopoverTitle")}</p>
           <p className="text-[11px] text-muted-foreground">
@@ -241,7 +264,11 @@ export function ThresholdPill({
               value={draft}
               placeholder={String(effectiveDefault)}
               className="h-8 text-xs pr-6"
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                const next = inRangeDraft(e.target.value);
+                if (next === null) return;
+                setDraft(next);
+              }}
               onBlur={(e) => {
                 commitDraft(e.target.value);
                 setDraft(String(value ?? effectiveDefault));
