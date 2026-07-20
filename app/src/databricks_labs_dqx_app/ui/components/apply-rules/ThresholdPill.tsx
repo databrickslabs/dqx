@@ -80,16 +80,17 @@ export function ThresholdPill({
     ? t("monitoredTables.thresholdPillMixedAria")
     : t("monitoredTables.thresholdPillAria", { pct: displayed });
 
-  // min-w-[8rem] is wide enough for "Warn < 100%" (the longest label) so the
-  // pill doesn't shrink when switching to the shorter "Mixed" label (Bug 6).
+  // The label span carries a fixed min-width sized to the widest label
+  // ("Warn < 100%") so the pill stays the SAME width whether it shows a
+  // percentage or the shorter "Mixed" (Bug 6 — no shrink on state change).
   const badgeContent = (
     <>
       <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" aria-hidden />
-      {mixed ? (
-        <span className="min-w-[3.5rem] text-center">{t("monitoredTables.thresholdPillMixed")}</span>
-      ) : (
-        <span className="min-w-[3.5rem] text-center">{t("monitoredTables.thresholdPillLabel", { pct: displayed })}</span>
-      )}
+      <span className="min-w-[5.5rem] text-center">
+        {mixed
+          ? t("monitoredTables.thresholdPillMixed")
+          : t("monitoredTables.thresholdPillLabel", { pct: displayed })}
+      </span>
       {(isOverridden || mixed) && <span className="text-muted-foreground ml-0.5">*</span>}
     </>
   );
