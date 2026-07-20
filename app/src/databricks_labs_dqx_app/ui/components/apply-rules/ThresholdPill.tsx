@@ -81,12 +81,13 @@ export function ThresholdPill({
     : t("monitoredTables.thresholdPillAria", { pct: displayed });
 
   // The label span carries a fixed min-width sized to the widest label
-  // ("Warn < 100%") so the pill stays the SAME width whether it shows a
-  // percentage or the shorter "Mixed" (Bug 6 — no shrink on state change).
+  // ("< 100%" / "Mixed") so the pill stays the SAME width whether it shows a
+  // percentage or "Mixed" (no shrink on state change), and the text is
+  // left-aligned so a row of pills lines up on the left edge.
   const badgeContent = (
     <>
       <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" aria-hidden />
-      <span className="min-w-[5.5rem] text-center">
+      <span className="min-w-[3rem] text-left">
         {mixed
           ? t("monitoredTables.thresholdPillMixed")
           : t("monitoredTables.thresholdPillLabel", { pct: displayed })}
@@ -179,29 +180,34 @@ export function ThresholdPill({
                 <span className="text-[11px] text-muted-foreground flex-1 min-w-0 truncate" title={col.name}>
                   {col.name}
                 </span>
-                <Input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={columnDrafts[col.name] ?? String(col.value ?? colDefault)}
-                  placeholder={String(colDefault)}
-                  className="h-7 text-xs w-20 shrink-0"
-                  onChange={(e) => setColumnDrafts((prev) => ({ ...prev, [col.name]: e.target.value }))}
-                  onBlur={(e) => {
-                    commitColumnDraft(col.name, e.target.value);
-                    setColumnDrafts((prev) => ({ ...prev, [col.name]: String(col.value ?? colDefault) }));
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      commitColumnDraft(col.name, columnDrafts[col.name] ?? "");
-                      setOpen(false);
-                    }
-                    if (e.key === "Escape") {
-                      setOpen(false);
-                    }
-                  }}
-                />
+                <div className="relative w-20 shrink-0">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={columnDrafts[col.name] ?? String(col.value ?? colDefault)}
+                    placeholder={String(colDefault)}
+                    className="h-7 text-xs w-20 pr-6"
+                    onChange={(e) => setColumnDrafts((prev) => ({ ...prev, [col.name]: e.target.value }))}
+                    onBlur={(e) => {
+                      commitColumnDraft(col.name, e.target.value);
+                      setColumnDrafts((prev) => ({ ...prev, [col.name]: String(col.value ?? colDefault) }));
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        commitColumnDraft(col.name, columnDrafts[col.name] ?? "");
+                        setOpen(false);
+                      }
+                      if (e.key === "Escape") {
+                        setOpen(false);
+                      }
+                    }}
+                  />
+                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                    %
+                  </span>
+                </div>
               </div>
             ))}
           </div>
@@ -216,29 +222,34 @@ export function ThresholdPill({
           <p className="text-[11px] text-muted-foreground">
             {hintOverride ?? t("monitoredTables.thresholdPopoverHint", { pct: effectiveDefault })}
           </p>
-          <Input
-            type="number"
-            min={0}
-            max={100}
-            step={1}
-            value={draft}
-            placeholder={String(effectiveDefault)}
-            className="h-8 text-xs"
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={(e) => {
-              commitDraft(e.target.value);
-              setDraft(String(value ?? effectiveDefault));
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                commitDraft(draft);
-                setOpen(false);
-              }
-              if (e.key === "Escape") {
-                setOpen(false);
-              }
-            }}
-          />
+          <div className="relative">
+            <Input
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              value={draft}
+              placeholder={String(effectiveDefault)}
+              className="h-8 text-xs pr-6"
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={(e) => {
+                commitDraft(e.target.value);
+                setDraft(String(value ?? effectiveDefault));
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  commitDraft(draft);
+                  setOpen(false);
+                }
+                if (e.key === "Escape") {
+                  setOpen(false);
+                }
+              }}
+            />
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+              %
+            </span>
+          </div>
         </PopoverContent>
       )}
     </Popover>

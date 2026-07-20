@@ -9,6 +9,7 @@ import {
   Legend,
   Line,
   ReferenceArea,
+  ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -698,10 +699,12 @@ export function ScoreTrendChart({
    *  (recharts' native reveal). Used by the homepage. */
   animate?: boolean;
   /** Optional breach markers: one entry per run where the threshold was breached.
-   *  Each entry renders a subtle coloured vertical rule on the time axis,
-   *  colored amber ("warn") or red ("error") by criticality.
+   *  Each entry renders a small ⚠ icon AT that run's data point (amber "warn" /
+   *  red "error"), sitting alongside the point like the version tags — no
+   *  vertical rule. ``score`` is the point's 0–100 y-value (pass_rate * 100) so
+   *  the icon anchors to the trend line; omit it to skip the marker.
    *  Only the overall-score trend chart in MultiTableResults passes these. */
-  breachMarkers?: Array<{ run_date: string; criticality: "error" | "warn" }>;
+  breachMarkers?: Array<{ run_date: string; criticality: "error" | "warn"; score?: number | null }>;
   /** Optional subtle vertical markers at the runs where the monitored-table
    *  binding version incremented (#65). Each `run_date` is matched to its `ts`
    *  on the time axis; `label` is the pre-formatted tag (e.g. "v2"). Only the
@@ -1544,35 +1547,35 @@ export function ScoreTrendChart({
               {overallMode && !hidden.has(overallLabel) && (
                 <OverallLayer points={overall ?? []} />
               )}
-              {/* Breach markers: a subtle coloured vertical rule at each run where
-                  the pass rate fell below the configured threshold. Amber for
-                  warn-criticality breaches, red for error-criticality. */}
+              {/* Breach markers: a small ⚠ glyph anchored AT each breaching run's
+                  data point (alongside the point, like the version tags) —
+                  amber for warn-criticality, red for error. No vertical rule.
+                  The glyph reads at a glance; the run-picker row carries the
+                  full-text tooltip for the same run. Skipped when the point has
+                  no score (can't anchor to the line). */}
               {(breachMarkers ?? []).map((m) => {
                 const x = Date.parse(m.run_date);
-                if (!Number.isFinite(x)) return null;
-                const stroke =
+                if (!Number.isFinite(x) || m.score == null || !Number.isFinite(m.score)) return null;
+                const fill =
                   m.criticality === "error"
                     ? "var(--destructive)"
                     : "oklch(0.769 0.188 70.08)"; /* amber-500 */
                 return (
-                  <ReferenceLine
+                  <ReferenceDot
                     key={`bm-${m.run_date}`}
                     x={x}
-                    stroke={stroke}
-                    strokeDasharray="2 3"
-                    strokeOpacity={0.7}
+                    y={m.score}
+                    r={0}
                     ifOverflow="hidden"
+                    // r=0 + no fill/stroke: the dot itself is invisible; only the
+                    // ⚠ label renders, sitting just above the trend point.
+                    fill="none"
+                    stroke="none"
                     label={{
-                      // A compact ⚠ glyph rather than the full sentence: the
-                      // SVG label sits inline on the marker at a tiny size, so
-                      // the long "This run has a threshold breach" string was
-                      // truncated to a few unreadable characters. The glyph
-                      // reads at a glance; the run-picker row carries the
-                      // full-text tooltip for the same run.
                       value: "⚠",
-                      position: "insideTopRight",
+                      position: "top",
                       fontSize: 12,
-                      fill: stroke,
+                      fill,
                     }}
                   />
                 );

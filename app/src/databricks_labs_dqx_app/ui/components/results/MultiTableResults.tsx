@@ -549,6 +549,18 @@ export function MultiTableResultsSection({
   const dimFacet = buildFacet(results?.by_dimension, baseResults?.by_dimension);
   const sevFacet = buildFacet(results?.by_severity, baseResults?.by_severity);
   const ruleFacet = buildFacet(results?.by_rule, baseResults?.by_rule);
+
+  // Rule name → breach criticality for the failing-records cell hover's ⚠.
+  // Keyed by the by_rule row label (what failures carry as rule_name); only
+  // breached rows contribute; suppressed when the threshold feature is off.
+  const breachedRuleCriticality: Record<string, string> = {};
+  if (thresholdEnabled) {
+    for (const r of [...(baseResults?.by_rule ?? []), ...(results?.by_rule ?? [])]) {
+      if (r.breached && r.label && (r.breach_criticality === "error" || r.breach_criticality === "warn")) {
+        breachedRuleCriticality[r.label] = r.breach_criticality;
+      }
+    }
+  }
   // By column rows come from the selected table (empty until picked).
   const tableColRows = selectedTable
     ? toRows(tableColumnsQuery.data?.data?.by_column)
@@ -623,7 +635,16 @@ export function MultiTableResultsSection({
         if (!p.breached) return [];
         const crit = p.breach_criticality;
         if (crit !== "error" && crit !== "warn") return [];
-        return [{ run_date: String(p.run_date ?? ""), criticality: crit as "error" | "warn" }];
+        // score = the point's 0–100 y-value (pass_rate * 100) so the ⚠ icon
+        // anchors to the trend line at that run, matching how the series plots.
+        const rate = toNum(p.pass_rate);
+        return [
+          {
+            run_date: String(p.run_date ?? ""),
+            criticality: crit as "error" | "warn",
+            score: rate == null ? null : rate * 100,
+          },
+        ];
       })
     : [];
 
@@ -948,6 +969,7 @@ export function MultiTableResultsSection({
                     severityColors={sevColors}
                     severityRanks={sevRanks}
                     dimensionColors={dimColors}
+                    breachedRuleCriticality={breachedRuleCriticality}
                   />
                 )}
               </CollapseRegion>

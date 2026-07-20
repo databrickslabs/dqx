@@ -1990,6 +1990,93 @@ function RulesRegistrySettingsCard() {
 
   const settings = data?.data;
 
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  const save = (payload: RulesRegistrySettingsIn) => {
+    saveMutation.mutate(
+      { data: payload },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetRulesRegistrySettingsQueryKey() });
+          toast.success(t("config.rulesRegistrySettingsSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.rulesRegistrySettingsFailedSave"));
+        },
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5" />
+          {t("config.rulesRegistrySettingsTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.rulesRegistrySettingsDescription")}
+        </p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="default-auto-upgrade" className="text-sm">
+              {t("config.defaultAutoUpgradeLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">
+              {settings.default_auto_upgrade
+                ? t("config.defaultAutoUpgradeHint")
+                : t("config.defaultAutoUpgradeHintOff")}
+            </p>
+          </div>
+          <Switch
+            id="default-auto-upgrade"
+            checked={settings.default_auto_upgrade}
+            onCheckedChange={(checked) => save({ default_auto_upgrade: checked })}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="tag-auto-apply" className="text-sm">
+              {t("config.tagAutoApplyLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.tagAutoApplyHint")}</p>
+          </div>
+          <Switch
+            id="tag-auto-apply"
+            checked={settings.tag_auto_apply}
+            onCheckedChange={(checked) => save({ tag_auto_apply: checked })}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.rulesRegistrySettingsAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Pass-threshold quality gates — its own settings card (split out of the Rules
+// Registry card so the warn-when-<X%-pass gate is discoverable on its own).
+// Shares the same GET/SAVE endpoint as the registry settings; the two fields
+// (pass_threshold_enabled, default_pass_threshold) are independent columns, so
+// a partial PATCH of just these keys is safe.
+function PassThresholdSettingsCard() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useGetRulesRegistrySettings();
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveRulesRegistrySettings();
+  const { isAdmin } = usePermissions();
+
+  const settings = data?.data;
+
   // Local state for the threshold number input — hydrate once from server data.
   const [thresholdValue, setThresholdValue] = useState(70);
   const [thresholdHydrated, setThresholdHydrated] = useState(false);
@@ -2039,48 +2126,14 @@ function RulesRegistrySettingsCard() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5" />
-          {t("config.rulesRegistrySettingsTitle")}
+          <AlertTriangle className="h-5 w-5" />
+          {t("config.passThresholdSettingsTitle")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          {t("config.rulesRegistrySettingsDescription")}
+          {t("config.passThresholdSettingsDescription")}
         </p>
-
-        <div className="flex items-center justify-between rounded-md border p-3">
-          <div className="space-y-0.5 pr-4">
-            <Label htmlFor="default-auto-upgrade" className="text-sm">
-              {t("config.defaultAutoUpgradeLabel")}
-            </Label>
-            <p className="text-[11px] text-muted-foreground">
-              {settings.default_auto_upgrade
-                ? t("config.defaultAutoUpgradeHint")
-                : t("config.defaultAutoUpgradeHintOff")}
-            </p>
-          </div>
-          <Switch
-            id="default-auto-upgrade"
-            checked={settings.default_auto_upgrade}
-            onCheckedChange={(checked) => save({ default_auto_upgrade: checked })}
-            disabled={!isAdmin || saveMutation.isPending}
-          />
-        </div>
-
-        <div className="flex items-center justify-between rounded-md border p-3">
-          <div className="space-y-0.5 pr-4">
-            <Label htmlFor="tag-auto-apply" className="text-sm">
-              {t("config.tagAutoApplyLabel")}
-            </Label>
-            <p className="text-[11px] text-muted-foreground">{t("config.tagAutoApplyHint")}</p>
-          </div>
-          <Switch
-            id="tag-auto-apply"
-            checked={settings.tag_auto_apply}
-            onCheckedChange={(checked) => save({ tag_auto_apply: checked })}
-            disabled={!isAdmin || saveMutation.isPending}
-          />
-        </div>
 
         <div className="flex items-center justify-between rounded-md border p-3">
           <div className="space-y-0.5 pr-4">
@@ -2985,6 +3038,7 @@ function ConfigPage() {
       { id: "ai", tab: "ai", title: t("config.aiSettingsTitle"), keywords: t("config.kwAi"), render: () => <AiSettingsCard /> },
       { id: "labels", tab: "tags", title: t("config.labelsTitle"), keywords: t("config.kwLabels"), render: () => <LabelDefinitionsSettings /> },
       { id: "rulesRegistry", tab: "governance", title: t("config.rulesRegistrySettingsTitle"), keywords: t("config.kwRulesRegistry"), render: () => <RulesRegistrySettingsCard /> },
+      { id: "passThreshold", tab: "governance", title: t("config.passThresholdSettingsTitle"), keywords: t("config.kwPassThreshold"), render: () => <PassThresholdSettingsCard /> },
       { id: "approvalsMode", tab: "governance", title: t("config.approvalsModeTitle"), keywords: t("config.kwApprovalsMode"), render: () => <ApprovalsModeCard /> },
       { id: "requireDraftRun", tab: "governance", title: t("config.requireDraftRunTitle"), keywords: t("config.kwRequireDraftRun"), render: () => <RequireDraftRunSettingsCard /> },
       { id: "retention", tab: "governance", title: t("config.retentionTitle"), keywords: t("config.kwRetention"), render: () => <RetentionSettings /> },

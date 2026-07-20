@@ -265,7 +265,10 @@ function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddR
                       />
                     </span>
                   )}
-                  <span className="font-mono text-xs text-muted-foreground">{`{{${entry.slot}}}`}</span>
+                  {/* Fixed-width, left-aligned slot label so the variable
+                      slot-name length ({{value}} vs {{key}}) doesn't shift the
+                      pill's x-position — pills line up across every row. */}
+                  <span className="font-mono text-xs text-muted-foreground min-w-[4rem] text-left shrink-0">{`{{${entry.slot}}}`}</span>
                 </span>
               </button>
             ))}

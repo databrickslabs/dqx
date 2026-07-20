@@ -484,6 +484,21 @@ function ResultsBody({
     by_rule: baseTable?.by_rule ?? [],
     by_column: baseTable?.by_column ?? [],
   };
+  // Rule name → breach criticality, for the failing-records cell hover's ⚠.
+  // Keyed by the by_rule row LABEL (the display rule name), which is what the
+  // failures carry as rule_name. Only breached rows contribute; suppressed when
+  // the threshold feature is off. Built from the base (unfiltered) rows so the
+  // hover reflects each rule's own breach regardless of the active drilldown
+  // filter.
+  const breachedRuleCriticality: Record<string, string> = {};
+  if (thresholdEnabled) {
+    for (const r of base.by_rule) {
+      if (r.breached && r.label && (r.breach_criticality === "error" || r.breach_criticality === "warn")) {
+        breachedRuleCriticality[r.label] = r.breach_criticality;
+      }
+    }
+  }
+
   const hasActiveFilter =
     filters.dimension.length > 0 ||
     filters.severity.length > 0 ||
@@ -547,6 +562,14 @@ function ResultsBody({
       rule_count: g.rule_count ?? null,
       check_count: g.check_count ?? null,
       total_tests: g.total_tests ?? null,
+      // Carry the per-row breach flag + criticality through so DimensionBreakdown
+      // can render the BreachIcon on each breached facet row (by dimension /
+      // severity / rule / column). Omitting these — as this mapper previously
+      // did — left r.breached undefined, so the icon never rendered on the
+      // single-table results page even though the API stamps them on every
+      // GroupRowOut. Mirrors MultiTableResults' toRows.
+      breached: g.breached ?? false,
+      breach_criticality: g.breach_criticality ?? null,
     }));
 
   // Build the rows + muted-label set for one facet box.
@@ -658,6 +681,25 @@ function ResultsBody({
     }
   }
 
+  // Breach markers on the single-table overall trend: a ⚠ icon at each run whose
+  // pass rate breached its (frozen per-run) threshold. score = pass_rate * 100
+  // so the icon anchors to the plotted point. Suppressed when the feature is off.
+  const breachMarkers = thresholdEnabled
+    ? (trend?.trend ?? []).flatMap((p) => {
+        if (!p.breached) return [];
+        const crit = p.breach_criticality;
+        if (crit !== "error" && crit !== "warn") return [];
+        const rate = toNum(p.pass_rate);
+        return [
+          {
+            run_date: String(p.run_date ?? ""),
+            criticality: crit as "error" | "warn",
+            score: rate == null ? null : rate * 100,
+          },
+        ];
+      })
+    : [];
+
   // Rule chips may carry a registry rule_id as their value — show the
   // matching by_rule row's (newest-run) label instead of the opaque id.
   const ruleChipRows = [...base.by_rule, ...filtered.by_rule];
@@ -767,6 +809,7 @@ function ResultsBody({
               data={toTrend(trend?.trend)}
               title={t("resultsUi.overallDqScoreTitle")}
               versionMarkers={versionMarkers}
+              breachMarkers={breachMarkers}
             />
           </ChartFrame>
           <div className="grid gap-6 md:grid-cols-2">
@@ -934,6 +977,7 @@ function ResultsBody({
                   severityColors={sevColors}
                   severityRanks={sevRanks}
                   dimensionColors={dimColors}
+                  breachedRuleCriticality={breachedRuleCriticality}
                 />
               )}
             </CollapseRegion>
