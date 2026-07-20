@@ -150,6 +150,7 @@ import {
   computeRunGating,
   desiredApplicationsKey,
   extractApiError,
+  getRuleIdsForColumn,
   groupAppliedRulesByRuleId,
   mergeRuleRowGroup,
   nextLocalRowId,
@@ -2057,6 +2058,14 @@ function ApplyRulesTab({
   // these checked + disabled so they can't be applied twice (B2-115).
   const appliedRuleIds = useMemo(() => new Set(stagedRows.map((r) => r.rule_id)), [stagedRows]);
 
+  // When the dialog is opened from a specific column's "+ Add rule" CTA, only
+  // disable rules that are ALREADY mapped to that column — so a rule applied to
+  // column A is still selectable when adding to column B (item 4).
+  const appliedRuleIdsForDialog = useMemo(
+    () => (addColumnContext ? getRuleIdsForColumn(stagedRows, addColumnContext.name) : appliedRuleIds),
+    [stagedRows, addColumnContext, appliedRuleIds],
+  );
+
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
   const severityValues = useMemo(
@@ -2604,7 +2613,7 @@ function ApplyRulesTab({
         bindingId={bindingId}
         publishedRules={publishedRules}
         labelDefinitions={labelDefinitions}
-        appliedRuleIds={appliedRuleIds}
+        appliedRuleIds={appliedRuleIdsForDialog}
         onAdd={stageNewRows}
         onApplied={() => {}}
         initialColumn={addColumnContext}

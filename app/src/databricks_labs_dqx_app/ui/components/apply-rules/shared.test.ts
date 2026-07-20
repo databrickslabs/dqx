@@ -4,6 +4,7 @@ import {
   buildDesiredApplications,
   computeRunGating,
   desiredApplicationsKey,
+  getRuleIdsForColumn,
   mergeColumnThresholds,
   newStagedRow,
   pickSlotForColumn,
@@ -193,6 +194,61 @@ describe("pickSlotForColumn", () => {
   test("match wins over first-slot fallback when match is not first", () => {
     const slots = [fakeSlot("col1", "temporal"), fakeSlot("col2", "boolean"), fakeSlot("col3", "numeric")];
     expect(pickSlotForColumn(slots, "numeric")).toBe("col3");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getRuleIdsForColumn — item 4 (column-aware selectability)
+// ---------------------------------------------------------------------------
+
+describe("getRuleIdsForColumn", () => {
+  function mappedRow(ruleId: string, mapping: Record<string, string>[]): AppliedRuleOut {
+    return {
+      id: ruleId,
+      binding_id: "b1",
+      rule_id: ruleId,
+      column_mapping: mapping,
+      column_pass_thresholds: null,
+    } as unknown as AppliedRuleOut;
+  }
+
+  test("returns rule id when it is mapped to the target column", () => {
+    const rows = [mappedRow("r1", [{ col: "email" }])];
+    expect(getRuleIdsForColumn(rows, "email")).toEqual(new Set(["r1"]));
+  });
+
+  test("does NOT return rule id mapped to a different column (item 4 core invariant)", () => {
+    const rows = [mappedRow("r1", [{ col: "email" }])];
+    // rule r1 is on column "email" but we're asking about "name"
+    expect(getRuleIdsForColumn(rows, "name")).toEqual(new Set());
+  });
+
+  test("rule on column A is not in set for column B, but same rule applied to B is in set for B", () => {
+    const rows = [
+      mappedRow("r1", [{ col: "email" }]),
+      mappedRow("r2", [{ col: "email" }, { col: "name" }]),
+    ];
+    // r1 only on email → not in set for "name"
+    // r2 has mapping to "name" → is in set for "name"
+    const forName = getRuleIdsForColumn(rows, "name");
+    expect(forName.has("r1")).toBe(false);
+    expect(forName.has("r2")).toBe(true);
+  });
+
+  test("handles multi-value comma-joined slot values", () => {
+    const rows = [mappedRow("r1", [{ col: "email,name" }])];
+    expect(getRuleIdsForColumn(rows, "email")).toEqual(new Set(["r1"]));
+    expect(getRuleIdsForColumn(rows, "name")).toEqual(new Set(["r1"]));
+    expect(getRuleIdsForColumn(rows, "other")).toEqual(new Set());
+  });
+
+  test("returns empty set when no rows are mapped to the column", () => {
+    const rows = [mappedRow("r1", [{ col: "email" }]), mappedRow("r2", [{}])];
+    expect(getRuleIdsForColumn(rows, "unrelated")).toEqual(new Set());
+  });
+
+  test("returns empty set for empty rows list", () => {
+    expect(getRuleIdsForColumn([], "email")).toEqual(new Set());
   });
 });
 

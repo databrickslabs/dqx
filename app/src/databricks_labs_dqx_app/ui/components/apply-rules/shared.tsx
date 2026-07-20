@@ -358,6 +358,29 @@ export function computeRunGating(baselineCount: number, stagedCount: number): Ru
 // rule has no column arguments and needs no mapping).
 // ---------------------------------------------------------------------------
 
+/** Rule ids already mapped to a specific column across all staged rows.
+ *  Used by the by-column Add Rule dialog to compute a column-scoped
+ *  "already applied" set: a rule applied to column A is not disabled when
+ *  adding to column B — only rules that ALREADY target that exact column are
+ *  locked (item 4). Multi-value slot values (comma-joined) are parsed the
+ *  same way as `getUsedColumnsForRule` above. */
+export function getRuleIdsForColumn(rows: AppliedRuleOut[], columnName: string): Set<string> {
+  const result = new Set<string>();
+  for (const row of rows) {
+    for (const group of row.column_mapping ?? []) {
+      for (const value of Object.values(group)) {
+        if (!value) continue;
+        for (const col of value.split(",")) {
+          if (col.trim() === columnName) {
+            result.add(row.rule_id);
+          }
+        }
+      }
+    }
+  }
+  return result;
+}
+
 /** Pick the slot name to bind a column to when adding a rule from the
  *  by-column view. Returns the name of the first slot whose family matches
  *  `columnFamily` (or whose family is "any"), falling back to the first slot
