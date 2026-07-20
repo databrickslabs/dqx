@@ -3248,6 +3248,45 @@ export function RegistryRuleFormDialog({
     setModeSwitch({ direction, choice });
   };
 
+  // Threshold field — rendered inside each per-mode Advanced disclosure so
+  // there is exactly ONE Advanced section per Implementation mode (lowcode /
+  // dqx_native / sql) containing both that mode's content AND the threshold
+  // input.  Gated on `thresholdEnabled` so it vanishes when the feature flag
+  // is off.  The JSX move is display-only; all round-trip touch points
+  // (snapshotFromRule, PRISTINE, buildUserMetadata, currentSnapshot,
+  // hydration effect, applyParsedToForm) reference `passThreshold` /
+  // `RESERVED_PASS_THRESHOLD_KEY` directly and are unaffected.
+  const thresholdField = thresholdEnabled ? (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <Label className="text-xs">{t("rulesRegistry.defaultPassThresholdLabel")}</Label>
+        <HelpTooltip text={t("rulesRegistry.defaultPassThresholdHint")} />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Input
+          type="number"
+          min={0}
+          max={100}
+          step={1}
+          className="h-8 w-28 text-xs font-mono"
+          placeholder={String(defaultThreshold)}
+          disabled={readOnly}
+          value={passThreshold ?? ""}
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (raw === "") {
+              setPassThreshold(null);
+            } else {
+              const n = parseInt(raw, 10);
+              if (Number.isFinite(n)) setPassThreshold(Math.max(0, Math.min(100, n)));
+            }
+          }}
+        />
+        <span className="text-xs text-muted-foreground">%</span>
+      </div>
+    </div>
+  ) : null;
+
   const implementationTabContent = (
     // `w-full` pins this tab's content to the tab strip's stable width
     // regardless of which mode's fields it's currently rendering (DQX
@@ -3412,7 +3451,7 @@ export function RegistryRuleFormDialog({
               the IF condition's inputs, not the row-level outcome below it. */}
           <AdvancedDisclosure
             label={t("rulesRegistry.advancedSectionLabel")}
-            defaultOpen={!!groupBy || !!filter || lowcodeAst.joins.length > 0}
+            defaultOpen={!!groupBy || !!filter || lowcodeAst.joins.length > 0 || passThreshold !== null}
           >
             {/* Joins come first: they widen the set of columns available to
                 the condition (and to group-by below) by pulling in
@@ -3449,6 +3488,7 @@ export function RegistryRuleFormDialog({
                 readOnly={readOnly}
               />
             </div>
+            {thresholdField}
           </AdvancedDisclosure>
           <div className="flex flex-wrap items-center gap-3">
             <FramingWord>{t("rulesRegistry.thenTheRow")}</FramingWord>
@@ -3583,7 +3623,7 @@ export function RegistryRuleFormDialog({
               built visually with the same low-code row controls. */}
           <AdvancedDisclosure
             label={t("rulesRegistry.advancedSectionLabel")}
-            defaultOpen={!!filter}
+            defaultOpen={!!filter || passThreshold !== null}
           >
             <div className="space-y-1.5">
               <Label className="text-xs">{t("rulesRegistry.filterLabel")}</Label>
@@ -3594,6 +3634,7 @@ export function RegistryRuleFormDialog({
                 readOnly={readOnly}
               />
             </div>
+            {thresholdField}
           </AdvancedDisclosure>
         </div>
       )}
@@ -3660,7 +3701,7 @@ export function RegistryRuleFormDialog({
               in the predicate editor (round-tripped via buildSqlBody's
               sql_query passthrough). No structured joins card here. Advanced in
               SQL mode is just the row filter. */}
-          <AdvancedDisclosure label={t("rulesRegistry.advancedSectionLabel")} defaultOpen={!!filter}>
+          <AdvancedDisclosure label={t("rulesRegistry.advancedSectionLabel")} defaultOpen={!!filter || passThreshold !== null}>
             {/* Row filter — a SQL WHERE predicate applied before the rule
                 condition. In SQL mode this uses the SAME code editor as the
                 predicate (slot autocomplete + linting), not a plain input —
@@ -3677,47 +3718,13 @@ export function RegistryRuleFormDialog({
                 autoHeight
               />
             </div>
+            {thresholdField}
           </AdvancedDisclosure>
           <div className="flex flex-wrap items-center gap-3">
             <FramingWord>{t("rulesRegistry.thenTheRow")}</FramingWord>
             <PredicatePolaritySwitch value={polarity} onChange={setPolarity} disabled={readOnly} />
           </div>
         </div>
-      )}
-      {thresholdEnabled && (
-        <AdvancedDisclosure
-          label={t("rulesRegistry.advancedSectionLabel")}
-          defaultOpen={passThreshold !== null}
-        >
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5">
-              <Label className="text-xs">{t("rulesRegistry.defaultPassThresholdLabel")}</Label>
-              <HelpTooltip text={t("rulesRegistry.defaultPassThresholdHint")} />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                className="h-8 w-28 text-xs font-mono"
-                placeholder={String(defaultThreshold)}
-                disabled={readOnly}
-                value={passThreshold ?? ""}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  if (raw === "") {
-                    setPassThreshold(null);
-                  } else {
-                    const n = parseInt(raw, 10);
-                    if (Number.isFinite(n)) setPassThreshold(Math.max(0, Math.min(100, n)));
-                  }
-                }}
-              />
-              <span className="text-xs text-muted-foreground">%</span>
-            </div>
-          </div>
-        </AdvancedDisclosure>
       )}
     </div>
   );
