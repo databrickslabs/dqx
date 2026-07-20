@@ -44,6 +44,7 @@ import {
   ArrowLeft,
   ArrowRight,
   ChevronDown,
+  Combine,
   LineChart,
   FlaskConical,
   History as HistoryIcon,
@@ -52,6 +53,7 @@ import {
   Send,
   Shield,
   Sparkles,
+  Table2,
   Wrench,
   X,
 } from "lucide-react";
@@ -614,6 +616,51 @@ function ConditionSelector({
                       <span className="font-semibold">{t("rulesRegistry.coreSql")}</span>
                       <span className="block text-[10px] text-muted-foreground">
                         {t("rulesRegistry.coreSqlDesc")}
+                      </span>
+                    </span>
+                    <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  </span>
+                </CommandItem>
+                {/* Labelled shortcuts into the ONE SQL editor. Single- vs
+                    cross-table SQL differ only by whether the author writes
+                    JOINs — there's a single `sql` mode — so both divert to
+                    onSelect({ type: "sql" }); they exist purely for
+                    discoverability (item 40). */}
+                <CommandItem
+                  value="__sql_single_table__"
+                  keywords={["sql", "single", "table"]}
+                  onSelect={() => {
+                    onSelect({ type: "sql" });
+                    setOpen(false);
+                  }}
+                  className="items-start gap-2 text-xs"
+                >
+                  <Table2 className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 flex items-center justify-between gap-2">
+                    <span>
+                      <span className="font-semibold">{t("rulesRegistry.coreSqlSingleTable")}</span>
+                      <span className="block text-[10px] text-muted-foreground">
+                        {t("rulesRegistry.coreSqlSingleTableDesc")}
+                      </span>
+                    </span>
+                    <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  </span>
+                </CommandItem>
+                <CommandItem
+                  value="__sql_cross_table__"
+                  keywords={["sql", "cross", "table", "join"]}
+                  onSelect={() => {
+                    onSelect({ type: "sql" });
+                    setOpen(false);
+                  }}
+                  className="items-start gap-2 text-xs"
+                >
+                  <Combine className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 flex items-center justify-between gap-2">
+                    <span>
+                      <span className="font-semibold">{t("rulesRegistry.coreSqlCrossTable")}</span>
+                      <span className="block text-[10px] text-muted-foreground">
+                        {t("rulesRegistry.coreSqlCrossTableDesc")}
                       </span>
                     </span>
                     <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
@@ -1554,6 +1601,8 @@ interface RuleEditSnapshot {
   /** Joins declared in the SQL editor — derived body type (predicate vs sql_query)
    * is computed from join presence at save time rather than stored as a flag. */
   sqlJoins: JoinAst[];
+  /** Raw JOIN clause(s) from the SQL Advanced "Joins" code box. */
+  sqlJoinsText: string;
   sqlSlots: RuleSlot[];
   nativeSlots: RuleSlot[];
   /** apply-on-tag: per-slot `class.*` tag map (slot name -> tags). Hydrated
@@ -1609,6 +1658,7 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
     sqlPredicate,
     // Joins are not round-trippable from stored sql_query — always start empty.
     sqlJoins: [],
+    sqlJoinsText: "",
     sqlSlots: isNative ? [] : (rule.definition?.slots ?? []),
     nativeSlots: isNative ? (rule.definition?.slots ?? []) : [],
     slotTags: slotTagsFromUserMetadata(md),
@@ -1654,6 +1704,7 @@ const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   paramRawValues: {},
   sqlPredicate: "",
   sqlJoins: [],
+  sqlJoinsText: "",
   sqlSlots: [seededFirstSlot()],
   nativeSlots: [],
   slotTags: {},
@@ -1727,6 +1778,14 @@ export function RegistryRuleFormDialog({
    * one or more joins = cross-table SQL (sql_query) — derived at save time via
    * compileJoinsToSql, no separate body-type flag needed. */
   const [sqlJoins, setSqlJoins] = useState<JoinAst[]>([]);
+  /** Raw JOIN clause(s) authored via the SQL Advanced "Joins" code box, e.g.
+   * `LEFT JOIN {{ref}} r ON r.id = {{id}}`. When present (and the predicate is a
+   * bare boolean expression, not already a full SELECT), it composes a
+   * cross-table `sql_query` at save time — see buildDefinition's SQL branch.
+   * Raw JOIN text can't be decomposed back into this box, so it resets empty on
+   * load (the loaded query's joins live inline in the predicate editor); this
+   * mirrors the round-trip limitation already documented for structured joins. */
+  const [sqlJoinsText, setSqlJoinsText] = useState("");
   const [sqlSlots, setSqlSlots] = useState<RuleSlot[]>([]);
   // Low-Code authoring state (shares `sqlSlots` for its "Columns used"
   // placeholders — the row/aggregate pickers bind to the same declared
@@ -1942,6 +2001,7 @@ export function RegistryRuleFormDialog({
           setSqlPredicate(typeof body.predicate === "string" ? body.predicate : "");
         }
         setSqlJoins([]);
+        setSqlJoinsText("");
         setSqlSlots(sourceRule.definition?.slots ?? []);
         setFunctionName("");
         setParamRawValues({});
@@ -1965,6 +2025,7 @@ export function RegistryRuleFormDialog({
       setParamRawValues({});
       setSqlPredicate("");
       setSqlJoins([]);
+      setSqlJoinsText("");
       setSqlSlots([seededFirstSlot()]);
       setNativeSlots([]);
       setLowcodeAst(EMPTY_LOWCODE_AST);
@@ -2105,6 +2166,7 @@ export function RegistryRuleFormDialog({
     paramRawValues,
     sqlPredicate,
     sqlJoins,
+    sqlJoinsText,
     sqlSlots,
     nativeSlots,
     slotTags,
@@ -2207,6 +2269,7 @@ export function RegistryRuleFormDialog({
       return sqlSlots.filter((s) => {
         if (sqlPredicate.includes(`{{${s.name}}}`)) return false;
         if (joinRefs.has(s.name)) return false;
+        if (sqlJoinsText.includes(`{{${s.name}}}`)) return false;
         if (filter.includes(`{{${s.name}}}`)) return false;
         return true;
       });
@@ -2238,7 +2301,7 @@ export function RegistryRuleFormDialog({
       });
     }
     return [];
-  }, [mode, functionName, nativeSlots, selectedFn, sqlSlots, sqlPredicate, sqlJoins, lowcodeAst, groupBy, filter]);
+  }, [mode, functionName, nativeSlots, selectedFn, sqlSlots, sqlPredicate, sqlJoins, sqlJoinsText, lowcodeAst, groupBy, filter]);
 
   const structurallyValid =
     mode === "dqx_native"
@@ -2317,6 +2380,7 @@ export function RegistryRuleFormDialog({
         sqlPredicate,
         sqlJoins,
         sqlQueryPassthrough: loadedSqlQueryRef.current,
+        sqlJoinsText,
       });
       return {
         body: sqlBody as Record<string, unknown>,
@@ -3048,6 +3112,35 @@ export function RegistryRuleFormDialog({
     setFilter(compileAstToSql(next));
   };
 
+  // Operator cell for the row-filter builder rows. A filter row is never the
+  // rule-type anchor (the rule type is fixed by the time the filter is edited),
+  // so every row — including the first — uses the operators-only searchable
+  // ConditionSelector keyed to that row's own column family, mirroring the main
+  // low-code builder's secondary-row picker. This replaces the old
+  // non-searchable OperatorDropdown fallback.
+  const renderFilterOperator = ({
+    family,
+    value,
+    onChange,
+  }: {
+    family: LowcodeFamily;
+    value: string;
+    onChange: (op: string) => void;
+    isFirst: boolean;
+  }) => (
+    <ConditionSelector
+      checkFunctions={checkFunctions}
+      currentSlots={currentSlots}
+      operatorFamily={family}
+      onSelect={(choice) => {
+        if (choice.operator) onChange(choice.operator);
+      }}
+      disabled={readOnly}
+      currentLabel={value || t("rulesRegistry.lowcodeOperatorPlaceholder")}
+      operatorsOnly
+    />
+  );
+
   // The low-code family of the ANCHOR column (the first declared slot) — drives
   // which monospace operators the merged selector's Condition Builder drill-in
   // offers. Falls back to ANY when nothing is declared yet.
@@ -3173,6 +3266,7 @@ export function RegistryRuleFormDialog({
       if (mode === "dqx_native") {
         setSqlPredicate("");
         setSqlJoins([]);
+        setSqlJoinsText("");
       }
       setMode("sql");
       setModeSwitch(null);
@@ -3486,6 +3580,7 @@ export function RegistryRuleFormDialog({
                 onChange={handleFilterAstChange}
                 declaredColumns={filterColumns}
                 readOnly={readOnly}
+                renderOperator={renderFilterOperator}
               />
             </div>
             {thresholdField}
@@ -3632,6 +3727,7 @@ export function RegistryRuleFormDialog({
                 onChange={handleFilterAstChange}
                 declaredColumns={filterColumns}
                 readOnly={readOnly}
+                renderOperator={renderFilterOperator}
               />
             </div>
             {thresholdField}
@@ -3696,12 +3792,33 @@ export function RegistryRuleFormDialog({
               </p>
             )}
           </div>
-          {/* SQL mode authors joins INLINE in the code editor above — a
-              cross-table check is written as a full `SELECT … FROM … JOIN …`
-              in the predicate editor (round-tripped via buildSqlBody's
-              sql_query passthrough). No structured joins card here. Advanced in
-              SQL mode is just the row filter. */}
-          <AdvancedDisclosure label={t("rulesRegistry.advancedSectionLabel")} defaultOpen={!!filter || passThreshold !== null}>
+          {/* Advanced in SQL mode holds a JOINS code box and a ROW FILTER code
+              box, both authored in the same slot-aware SQL editor as the
+              predicate. Authors may still write a full `SELECT … FROM … JOIN …`
+              inline in the predicate editor (round-tripped via buildSqlBody's
+              sql_query passthrough); the Joins box is the structured
+              alternative — a bare boolean predicate plus JOIN clause(s) folds
+              into a dataset-level cross-table sql_query at save time (see
+              buildSqlBody). NOTE (round-trip limitation): raw JOIN text can't be
+              decomposed back out of a stored sql_query, so this box always
+              reopens empty when editing a saved rule — the loaded query's joins
+              live inline in the predicate editor. Mirrors the existing
+              structured-joins limitation; do not "fix" by parsing SQL. */}
+          <AdvancedDisclosure
+            label={t("rulesRegistry.advancedSectionLabel")}
+            defaultOpen={!!filter || !!sqlJoinsText || passThreshold !== null}
+          >
+            <div className="space-y-1.5">
+              <Label className="text-xs">{t("rulesRegistry.lowcodeJoinsLabel")}</Label>
+              <PredicateEditor
+                value={sqlJoinsText}
+                onChange={setSqlJoinsText}
+                declaredColumns={sqlSlots}
+                placeholder={t("rulesRegistry.sqlJoinsPlaceholder")}
+                disabled={readOnly}
+                autoHeight
+              />
+            </div>
             {/* Row filter — a SQL WHERE predicate applied before the rule
                 condition. In SQL mode this uses the SAME code editor as the
                 predicate (slot autocomplete + linting), not a plain input —

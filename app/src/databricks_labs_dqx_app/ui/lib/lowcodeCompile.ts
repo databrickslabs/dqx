@@ -453,10 +453,21 @@ export function buildSqlBody(params: {
   sqlPredicate: string;
   sqlJoins: JoinAst[];
   sqlQueryPassthrough?: { merge_columns?: string[] } | null;
+  /** Raw JOIN clause(s) authored in the SQL Advanced "Joins" code box, e.g.
+   * `LEFT JOIN {{ref}} r ON r.id = {{id}}`. When present (and there are no
+   * structured `sqlJoins` and the editor is NOT holding a loaded cross-table
+   * `sql_query`), the bare boolean predicate is folded into a dataset-level
+   * cross-table `sql_query`:
+   *   `SELECT (NOT (<pred>)) AS condition FROM {{input_view}} <rawJoins>`.
+   * Dataset-level (no `merge_columns`) because raw JOIN text can't be
+   * decomposed into input-side merge keys — every row shares the check result.
+   * Structured `sqlJoins` (with pickable keys) take precedence when both exist. */
+  sqlJoinsText?: string;
 }): CompiledLowcodeBody {
-  const { sqlPredicate, sqlJoins, sqlQueryPassthrough } = params;
+  const { sqlPredicate, sqlJoins, sqlQueryPassthrough, sqlJoinsText } = params;
   const joinsSql = compileJoinsToSql(sqlJoins);
   const pred = sqlPredicate.trim();
+  const rawJoins = (sqlJoinsText ?? "").trim();
   if (joinsSql) {
     const failCond = `NOT (${pred})`;
     const from = `{{input_view}} ${joinsSql}`;
@@ -478,6 +489,14 @@ export function buildSqlBody(params: {
       body.merge_columns = sqlQueryPassthrough.merge_columns;
     }
     return body;
+  }
+  if (rawJoins && pred) {
+    // Raw JOIN text from the Advanced "Joins" code box: fold the bare boolean
+    // predicate into a dataset-level cross-table sql_query. No merge_columns —
+    // raw JOIN SQL yields no pickable input-side key, so the check applies
+    // uniformly to every row (dataset-level semantics per the DQX sql_query
+    // check). Authors needing row-level merge write the full SELECT inline.
+    return { sql_query: `SELECT (NOT (${pred})) AS condition FROM {{input_view}} ${rawJoins}` };
   }
   return { predicate: pred };
 }

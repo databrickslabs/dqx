@@ -482,4 +482,37 @@ describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without cor
       predicate: "x > 0",
     });
   });
+
+  test("raw joins text -> folds predicate into a dataset-level cross-table sql_query (no merge_columns)", () => {
+    const body = buildSqlBody({
+      sqlPredicate: "{{id}} IS NOT NULL",
+      sqlJoins: [],
+      sqlJoinsText: "LEFT JOIN c.s.dim r ON r.id = {{id}}",
+    });
+    expect(body.sql_query).toBe(
+      "SELECT (NOT ({{id}} IS NOT NULL)) AS condition FROM {{input_view}} LEFT JOIN c.s.dim r ON r.id = {{id}}",
+    );
+    expect(body.merge_columns).toBeUndefined();
+    expect(body.predicate).toBeUndefined();
+  });
+
+  test("raw joins text ignored when structured joins present (structured wins)", () => {
+    const joins: JoinAst[] = [
+      { join_type: "LEFT", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "customer_id" }] },
+    ];
+    const body = buildSqlBody({
+      sqlPredicate: "{{customer_id}} IS NOT NULL",
+      sqlJoins: joins,
+      sqlJoinsText: "INNER JOIN other o ON o.x = {{customer_id}}",
+    });
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+    expect(body.sql_query).toContain("LEFT JOIN c.s.dim ON c.s.dim.id = {{customer_id}}");
+    expect(body.sql_query).not.toContain("INNER JOIN other");
+  });
+
+  test("empty raw joins text -> plain single-table { predicate }", () => {
+    expect(buildSqlBody({ sqlPredicate: "x > 0", sqlJoins: [], sqlJoinsText: "   " })).toEqual({
+      predicate: "x > 0",
+    });
+  });
 });
