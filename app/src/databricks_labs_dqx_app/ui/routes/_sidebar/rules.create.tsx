@@ -61,8 +61,8 @@ function CreateRulesLanding() {
         <div className="space-y-2">
           <PageBreadcrumb items={[]} page={t("rulesCreate.breadcrumb")} />
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">{t("rulesCreate.title")}</h1>
-            <p className="text-muted-foreground">
+            <h1 className="text-2xl font-semibold tracking-tight">{t("rulesCreate.title")}</h1>
+            <p className="text-sm text-muted-foreground mt-1">
               {t("rulesCreate.subtitle")}
             </p>
           </div>
