@@ -106,6 +106,9 @@ function GlobalResultsContent() {
             // Global all-tables Results is published-only: a draft toggle
             // across the org-wide table universe is not a coherent selection.
             hideRunMode
+            // Item 35: top-level facet dropdowns (Tables / Dimensions /
+            // Severities / Rules) just below the overall score card.
+            showTopLevelFilters
             onBaseByTable={preverifyByTable}
             // No runPickerSlot: the picker is omitted (see the module
             // comment); the Average line is the server's as-of series over

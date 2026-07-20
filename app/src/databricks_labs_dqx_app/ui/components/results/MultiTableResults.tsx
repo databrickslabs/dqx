@@ -25,6 +25,7 @@ import { CollapseRegion } from "@/components/results/CollapseRegion";
 import { ScoreTrendChart, type OverallStep } from "@/components/results/ScoreTrendChart";
 import { DimensionBreakdown, TruncatedText } from "@/components/results/DimensionBreakdown";
 import { FilterChips } from "@/components/results/FilterChips";
+import { ResultsFacetFilter, type FacetFilterOption } from "@/components/results/ResultsFacetFilters";
 import { FailingRecordsTable } from "@/components/results/FailingRecordsTable";
 import { DownloadFailedRecordsMenu } from "@/components/results/DownloadFailedRecordsMenu";
 import {
@@ -294,6 +295,14 @@ export interface MultiTableResultsSectionProps {
    *  omitted = newest (no cap). Only the table-space tab supplies it (it
    *  owns the RunPicker); the global and rule surfaces omit it. */
   asOfBatch?: string | null;
+  /** Item 35: when true, a row of top-level facet dropdowns (Tables /
+   *  Dimensions / Severities / Rules / Columns) renders just below the score
+   *  card, letting the viewer filter the whole surface without hunting through
+   *  the breakdown boxes. Only the Global Results page passes this — the
+   *  per-object surfaces keep their scope implicit. The dropdown options are
+   *  derived from the BASE (unfiltered) breakdown rows so the choice list is
+   *  the full facet universe regardless of the active filter. */
+  showTopLevelFilters?: boolean;
 }
 
 /**
@@ -314,6 +323,7 @@ export function MultiTableResultsSection({
   onBaseByTable,
   reviewStatusRunId,
   asOfBatch,
+  showTopLevelFilters,
 }: MultiTableResultsSectionProps) {
   const { t } = useTranslation();
   // Belt-and-suspenders: the backend returns no breaches when the feature is
@@ -584,6 +594,60 @@ export function MultiTableResultsSection({
       })),
   );
 
+  // Item 35: option lists for the top-level Global Results filter dropdowns.
+  // Derived from the BASE (unfiltered) breakdown rows so the choice universe
+  // is the full facet set regardless of the active filter. Tables carry the
+  // FQN as value but display the friendly (last-segment) name; rules key on
+  // their registry rule identity (rule_id when present) and display the label.
+  // Deduped + sorted by display label for a stable, scannable list.
+  const dedupeSortOptions = (opts: FacetFilterOption[]): FacetFilterOption[] => {
+    const byValue = new Map<string, FacetFilterOption>();
+    for (const o of opts) {
+      if (o.value && !byValue.has(o.value)) byValue.set(o.value, o);
+    }
+    return [...byValue.values()].sort((a, b) => a.label.localeCompare(b.label));
+  };
+  const tableFilterOptions = dedupeSortOptions(
+    (baseResults?.by_table ?? [])
+      .map((g) => g.label)
+      .filter((l): l is string => l != null)
+      .map((fqn) => ({ value: fqn, label: friendlyTableName(fqn) })),
+  );
+  const dimensionFilterOptions = dedupeSortOptions(
+    (baseResults?.by_dimension ?? [])
+      .map((g) => g.label)
+      .filter((l): l is string => l != null)
+      .map((label) => ({ value: label, label })),
+  );
+  const severityFilterOptions = dedupeSortOptions(
+    (baseResults?.by_severity ?? [])
+      .map((g) => g.label)
+      .filter((l): l is string => l != null)
+      .map((label) => ({ value: label, label })),
+  );
+  const ruleFilterOptions = dedupeSortOptions(
+    (baseResults?.by_rule ?? [])
+      .map((g) => {
+        const value = ruleFacetValue(g);
+        if (value == null) return null;
+        return { value, label: g.label ?? value };
+      })
+      .filter((o): o is FacetFilterOption => o != null),
+  );
+
+  // Setting the Tables dropdown drives the `table` facet directly (multi-select
+  // filter). It intentionally does NOT touch `selectedTable` — that single
+  // selection (from a By-table row click) still owns the invalid-samples /
+  // By-column drilldown; picking multiple tables here just scopes the shared
+  // breakdowns/trends. Clearing the dropdown to empty also clears any lingering
+  // single selection so the two never disagree.
+  const onTableFilterChange = (values: string[]) => {
+    setFilters((f) => ({ ...f, table: values }));
+    if (values.length === 0) setSelectedTable(null);
+  };
+  const onFacetFilterChange = (facet: Facet, values: string[]) =>
+    setFilters((f) => ({ ...f, [facet]: values }));
+
   const onRemoveChip = (key: string) => {
     const [facet, value] = key.split(/:(.+)/) as [Facet, string];
     // The table facet mirrors the invalid-samples selection — removing its
@@ -708,6 +772,58 @@ export function MultiTableResultsSection({
         </div>
         <div className="sm:pr-2">{scoreBox}</div>
       </FadeIn>
+
+      {/* Item 35: top-level facet dropdowns just below the overall score card
+          (Global Results only). They set the same facet filters the breakdown
+          rows toggle, so they re-scope every trend + breakdown box. Styled to
+          match the overview filter bubbles (shared FILTER_TRIGGER_CLASS). The
+          active-chip row below the drilldown still mirrors the selection, so a
+          filter set here is also removable there. Column is intentionally
+          absent — columns are table-specific (only populated once a single
+          table is selected), so there is no cross-table column universe to
+          offer here. */}
+      {showTopLevelFilters && (
+        <FadeIn delay={0.04}>
+          <div className="flex flex-wrap items-center gap-2">
+            <ResultsFacetFilter
+              allLabel={t("resultsUi.filterAllTables")}
+              options={tableFilterOptions}
+              selected={filters.table}
+              onChange={onTableFilterChange}
+              searchPlaceholder={t("resultsUi.filterSearchTables")}
+              emptyText={t("resultsUi.filterNoTables")}
+              ariaLabel={t("resultsUi.filterAllTables")}
+            />
+            <ResultsFacetFilter
+              allLabel={t("resultsUi.filterAllDimensions")}
+              options={dimensionFilterOptions}
+              selected={filters.dimension}
+              onChange={(v) => onFacetFilterChange("dimension", v)}
+              searchPlaceholder={t("resultsUi.filterSearchDimensions")}
+              emptyText={t("resultsUi.filterNoDimensions")}
+              ariaLabel={t("resultsUi.filterAllDimensions")}
+            />
+            <ResultsFacetFilter
+              allLabel={t("resultsUi.filterAllSeverities")}
+              options={severityFilterOptions}
+              selected={filters.severity}
+              onChange={(v) => onFacetFilterChange("severity", v)}
+              searchPlaceholder={t("resultsUi.filterSearchSeverities")}
+              emptyText={t("resultsUi.filterNoSeverities")}
+              ariaLabel={t("resultsUi.filterAllSeverities")}
+            />
+            <ResultsFacetFilter
+              allLabel={t("resultsUi.filterAllRules")}
+              options={ruleFilterOptions}
+              selected={filters.rule}
+              onChange={(v) => onFacetFilterChange("rule", v)}
+              searchPlaceholder={t("resultsUi.filterSearchRules")}
+              emptyText={t("resultsUi.filterNoRules")}
+              ariaLabel={t("resultsUi.filterAllRules")}
+            />
+          </div>
+        </FadeIn>
+      )}
 
       {/* B2-8: the pinned run's review status in its own full-width
           INTERACTABLE card between the score and the over-time trend (the

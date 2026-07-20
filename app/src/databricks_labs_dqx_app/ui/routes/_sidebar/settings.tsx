@@ -2460,9 +2460,12 @@ function GlobalResultsSettingsCard() {
 
   if (isLoading || !data) return <Skeleton className="h-40 w-full" />;
 
-  const save = (enabled: boolean) => {
+  // Each toggle is saved independently — the PUT body only carries the field
+  // that changed (the backend leaves the other untouched), so flipping one
+  // never clobbers the other's value.
+  const save = (patch: { global_results_enabled?: boolean; rules_results_tab_enabled?: boolean }) => {
     saveMutation.mutate(
-      { data: { global_results_enabled: enabled } },
+      { data: patch },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetGlobalResultsSettingsQueryKey() });
@@ -2495,7 +2498,24 @@ function GlobalResultsSettingsCard() {
           <Switch
             id="global-results-enabled"
             checked={data.global_results_enabled}
-            onCheckedChange={(checked) => save(checked)}
+            onCheckedChange={(checked) => save({ global_results_enabled: checked })}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        {/* Item 35: separate admin toggle for the per-rule Results tab (OFF by
+            default), distinct from the app-wide global Results surface above. */}
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="rules-results-tab-enabled" className="text-sm">
+              {t("config.rulesResultsTabLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.rulesResultsTabHint")}</p>
+          </div>
+          <Switch
+            id="rules-results-tab-enabled"
+            checked={data.rules_results_tab_enabled}
+            onCheckedChange={(checked) => save({ rules_results_tab_enabled: checked })}
             disabled={!isAdmin || saveMutation.isPending}
           />
         </div>

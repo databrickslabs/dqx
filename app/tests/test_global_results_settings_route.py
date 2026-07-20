@@ -47,6 +47,11 @@ class TestGetGlobalResultsSettings:
 
         assert result.global_results_enabled is False
 
+    def test_rules_results_tab_defaults_to_disabled_when_unset(self, svc):
+        result = get_global_results_settings(svc)
+
+        assert result.rules_results_tab_enabled is False
+
 
 class TestSaveGlobalResultsSettings:
     def test_enable_round_trips(self, svc, sql_executor_mock):
@@ -69,3 +74,30 @@ class TestSaveGlobalResultsSettings:
 
         assert result.global_results_enabled is False
         assert get_global_results_settings(svc).global_results_enabled is False
+
+    def test_rules_results_tab_round_trips(self, svc, sql_executor_mock):
+        _wire_stateful_store(sql_executor_mock)
+
+        result = save_global_results_settings(
+            GlobalResultsSettingsIn(rules_results_tab_enabled=True), svc, "admin@x"
+        )
+
+        assert result.rules_results_tab_enabled is True
+        assert get_global_results_settings(svc).rules_results_tab_enabled is True
+
+    def test_toggles_are_independent(self, svc, sql_executor_mock):
+        _wire_stateful_store(sql_executor_mock)
+
+        # Enable only the rules tab; the global surface stays at its default.
+        after_rules = save_global_results_settings(
+            GlobalResultsSettingsIn(rules_results_tab_enabled=True), svc, "admin@x"
+        )
+        assert after_rules.rules_results_tab_enabled is True
+        assert after_rules.global_results_enabled is False
+
+        # Enabling the global surface must not clobber the rules-tab value.
+        after_global = save_global_results_settings(
+            GlobalResultsSettingsIn(global_results_enabled=True), svc, "admin@x"
+        )
+        assert after_global.global_results_enabled is True
+        assert after_global.rules_results_tab_enabled is True

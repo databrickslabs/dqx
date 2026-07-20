@@ -159,6 +159,7 @@ import { RegistryRuleFormJsonDialog } from "@/components/registry-rules/Registry
 import { SqlAiAssistMenu } from "@/components/rules/SqlAiAssistMenu";
 import { useDefaultPassThreshold } from "@/hooks/use-default-pass-threshold";
 import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
+import { useRulesResultsTabEnabled } from "@/hooks/use-global-results-enabled";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
@@ -2143,6 +2144,11 @@ export function RegistryRuleFormDialog({
   // score hasn't loaded yet — the tooltip only shows for the definitive
   // "not applied anywhere" / fetch-error states.
   const resultsDisabled = !sourceRule || ruleScore === undefined || resultsNotApplied;
+  // Item 35: the per-rule Results tab is admin-gated and OFF by default. When
+  // the admin hasn't opted in, the trigger + its content (and its leading
+  // divider) are hidden entirely — the trailing observability group collapses
+  // to just Test / History, matching the tables/spaces tab strips.
+  const rulesResultsTabEnabled = useRulesResultsTabEnabled();
 
   // -- Dirty (unsaved-changes) tracking -------------------------------------
   // Editing an existing rule diffs against the last-persisted rule (mirrors
@@ -4070,6 +4076,60 @@ export function RegistryRuleFormDialog({
               <Wrench className="h-3.5 w-3.5" />
               {t("rulesRegistry.tabImplementation")}
             </TabsTrigger>
+            {/* Item 35: Results now sits at the TRAILING position of the
+                left/observability group (after Implementation) with its own
+                divider — the same relative placement Monitored Tables and
+                Table Spaces use (last left-aligned tab, LineChart icon),
+                rather than the old trailing-of-the-right-group spot. The tab
+                is admin-gated (rulesResultsTabEnabled) and OFF by default, so
+                the divider + trigger only render once an admin opts in.
+                Results is still only meaningful once the rule is applied to at
+                least one monitored table (applied_to_count > 0); until then
+                the trigger is disabled with an explanatory tooltip. The
+                wrapping <span> is the tooltip trigger because the disabled
+                button itself swallows pointer events. */}
+            {rulesResultsTabEnabled && (
+              <>
+                <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
+                {resultsNotApplied || resultsScoreError ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        tabIndex={0}
+                        className={cn(
+                          "inline-flex h-full",
+                          resultsScoreError ? "cursor-pointer" : "cursor-not-allowed",
+                        )}
+                        aria-disabled="true"
+                        // On a fetch error the wrapper doubles as the retry
+                        // affordance (the disabled trigger swallows clicks).
+                        onClick={resultsScoreError ? () => void ruleScoreQuery.refetch() : undefined}
+                      >
+                        <TabsTrigger value="results" className="gap-1.5" disabled aria-disabled="true">
+                          <LineChart className="h-3.5 w-3.5" />
+                          {t("rulesRegistry.tabResults")}
+                        </TabsTrigger>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      {resultsScoreError
+                        ? t("rulesRegistry.resultsScoreErrorTooltip")
+                        : t("rulesRegistry.resultsNotAppliedTooltip")}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <TabsTrigger
+                    value="results"
+                    className="gap-1.5"
+                    disabled={resultsDisabled}
+                    aria-disabled={resultsDisabled}
+                  >
+                    <LineChart className="h-3.5 w-3.5" />
+                    {t("rulesRegistry.tabResults")}
+                  </TabsTrigger>
+                )}
+              </>
+            )}
           </TabsList>
           <TabsList>
             <TabsTrigger value="test" className="gap-1.5">
@@ -4080,55 +4140,6 @@ export function RegistryRuleFormDialog({
               <HistoryIcon className="h-3.5 w-3.5" />
               {t("rulesRegistry.tabHistory")}
             </TabsTrigger>
-            {/* Muted vertical rule separating Test / History from Results —
-                the same divider MT/TS use, which RR was missing (item 25).
-                Kept OUTSIDE the Results trigger's disabled/enabled conditional
-                below so it renders in both states, and it doubles as item 77's
-                "Results sits in its own group" placement. */}
-            <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
-            {/* Results is only meaningful once the rule is applied to at
-                least one monitored table (applied_to_count > 0). Until then
-                the trigger is disabled; the tooltip explains why for the
-                definitive not-applied state. The wrapping <span> is the
-                tooltip trigger because the disabled button itself swallows
-                pointer events (`disabled:pointer-events-none`). */}
-            {resultsNotApplied || resultsScoreError ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span
-                    tabIndex={0}
-                    className={cn(
-                      "inline-flex h-full",
-                      resultsScoreError ? "cursor-pointer" : "cursor-not-allowed",
-                    )}
-                    aria-disabled="true"
-                    // On a fetch error the wrapper doubles as the retry
-                    // affordance (the disabled trigger swallows clicks).
-                    onClick={resultsScoreError ? () => void ruleScoreQuery.refetch() : undefined}
-                  >
-                    <TabsTrigger value="results" className="gap-1.5" disabled aria-disabled="true">
-                      <LineChart className="h-3.5 w-3.5" />
-                      {t("rulesRegistry.tabResults")}
-                    </TabsTrigger>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  {resultsScoreError
-                    ? t("rulesRegistry.resultsScoreErrorTooltip")
-                    : t("rulesRegistry.resultsNotAppliedTooltip")}
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <TabsTrigger
-                value="results"
-                className="gap-1.5"
-                disabled={resultsDisabled}
-                aria-disabled={resultsDisabled}
-              >
-                <LineChart className="h-3.5 w-3.5" />
-                {t("rulesRegistry.tabResults")}
-              </TabsTrigger>
-            )}
           </TabsList>
         </div>
         <TabsContent value="about" className="pt-4">{aboutTabContent}</TabsContent>
@@ -4136,9 +4147,11 @@ export function RegistryRuleFormDialog({
         <TabsContent value="implementation" className="pt-4">{implementationTabContent}</TabsContent>
         <TabsContent value="test" className="pt-4">{testTabContent}</TabsContent>
         <TabsContent value="history" className="pt-4">{historyTabContent}</TabsContent>
-        <TabsContent value="results" className="pt-4">
-          {sourceRule && <RuleResultsTab ruleId={sourceRule.rule_id} />}
-        </TabsContent>
+        {rulesResultsTabEnabled && (
+          <TabsContent value="results" className="pt-4">
+            {sourceRule && <RuleResultsTab ruleId={sourceRule.rule_id} />}
+          </TabsContent>
+        )}
       </Tabs>
       {jsonDialogOpen && !readOnly && (
         <RegistryRuleFormJsonDialog
