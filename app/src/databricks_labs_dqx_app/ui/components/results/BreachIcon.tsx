@@ -37,14 +37,17 @@ export function BreachIcon({
         <span
           className={cn(
             "inline-flex shrink-0 items-center",
+            // Higher-contrast fills, especially in dark mode: a brighter
+            // red/amber in dark and a deeper shade in light, plus a heavier
+            // stroke so the small triangle reads clearly against tinted rows.
             isError
-              ? "text-destructive"
-              : "text-amber-500 dark:text-amber-400",
+              ? "text-red-600 dark:text-red-400"
+              : "text-amber-600 dark:text-amber-300",
             className,
           )}
           aria-label={tooltip}
         >
-          <AlertTriangle className="h-3.5 w-3.5" />
+          <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.5} />
         </span>
       </TooltipTrigger>
       <TooltipContent side="top">{tooltip}</TooltipContent>

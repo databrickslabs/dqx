@@ -2626,8 +2626,8 @@
     "pickTableForColumns": "Escolha uma tabela para ver as colunas",
     "noColumnsForTable": "Nenhuma coluna para esta tabela.",
     "invalidSamplesUnavailable": "As amostras inválidas não podem ser exibidas para esta tabela.",
-    "breachWarnTooltip": "Aviso: taxa de aprovação abaixo do limite",
-    "breachErrorTooltip": "Erro: taxa de aprovação abaixo do limite"
+    "breachWarnTooltip": "Taxa de aprovação abaixo do limite",
+    "breachErrorTooltip": "Taxa de aprovação abaixo do limite"
   },
   "genie": {
     "iconTitle": "Databricks Genie",

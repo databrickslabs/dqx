@@ -1559,7 +1559,7 @@ export function ScoreTrendChart({
                 const fill =
                   m.criticality === "error"
                     ? "var(--destructive)"
-                    : "oklch(0.769 0.188 70.08)"; /* amber-500 */
+                    : "oklch(0.70 0.19 60)"; /* deeper amber — more contrast on the plot */
                 return (
                   <ReferenceDot
                     key={`bm-${m.run_date}`}
@@ -1568,13 +1568,18 @@ export function ScoreTrendChart({
                     r={0}
                     ifOverflow="hidden"
                     // r=0 + no fill/stroke: the dot itself is invisible; only the
-                    // ⚠ label renders, sitting just above the trend point.
+                    // ⚠ label renders. A larger glyph + extra `offset`/`dy` lift
+                    // it clear of the data point so it doesn't collide with the
+                    // marker or trend line.
                     fill="none"
                     stroke="none"
                     label={{
                       value: "⚠",
                       position: "top",
-                      fontSize: 12,
+                      offset: 12,
+                      dy: -4,
+                      fontSize: 16,
+                      fontWeight: 700,
                       fill,
                     }}
                   />

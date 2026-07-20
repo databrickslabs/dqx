@@ -687,6 +687,7 @@ export function MultiTableResultsSection({
       totalTests={totalTests}
       info={COUNT_INFO}
       label={scoreLabel(accessibleTableCount)}
+      breachCriticality={thresholdEnabled ? lastTrend?.breach_criticality : null}
     />
   );
 

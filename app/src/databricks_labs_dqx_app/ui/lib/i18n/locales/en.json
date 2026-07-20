@@ -2626,8 +2626,8 @@
     "pickTableForColumns": "Pick a table to view columns",
     "noColumnsForTable": "No columns for this table.",
     "invalidSamplesUnavailable": "Invalid samples can't be shown for this table.",
-    "breachWarnTooltip": "Warning: pass rate below threshold",
-    "breachErrorTooltip": "Error: pass rate below threshold"
+    "breachWarnTooltip": "Pass rate below threshold",
+    "breachErrorTooltip": "Pass rate below threshold"
   },
   "genie": {
     "iconTitle": "Databricks Genie",

@@ -2626,8 +2626,8 @@
     "pickTableForColumns": "Elige una tabla para ver las columnas",
     "noColumnsForTable": "No hay columnas para esta tabla.",
     "invalidSamplesUnavailable": "Las muestras inválidas no pueden mostrarse para esta tabla.",
-    "breachWarnTooltip": "Advertencia: tasa de aprobación por debajo del umbral",
-    "breachErrorTooltip": "Error: tasa de aprobación por debajo del umbral"
+    "breachWarnTooltip": "Tasa de aprobación por debajo del umbral",
+    "breachErrorTooltip": "Tasa de aprobación por debajo del umbral"
   },
   "genie": {
     "iconTitle": "Databricks Genie",

@@ -780,6 +780,7 @@ function ResultsBody({
               totalTests={totalTests}
               trend={scoreTrend}
               info={COUNT_INFO}
+              breachCriticality={thresholdEnabled ? selectedRun?.breach_criticality : null}
             />
           )}
         </div>
