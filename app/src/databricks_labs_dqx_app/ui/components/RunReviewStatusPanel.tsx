@@ -17,6 +17,7 @@
  *   line answers 95% of questions and the panel sits inside an already
  *   expanded run row.
  */
+import type * as React from "react";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -57,9 +58,11 @@ import { reviewStatusBadgeStyle } from "@/routes/_sidebar/settings";
 
 interface RunReviewStatusPanelProps {
   runId: string;
+  /** Optional element rendered at the trailing end of the picker row. */
+  trailingAction?: React.ReactNode;
 }
 
-export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
+export function RunReviewStatusPanel({ runId, trailingAction }: RunReviewStatusPanelProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -221,6 +224,8 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
             {t("runReviewPanel.revert")}
           </Button>
         )}
+
+        {trailingAction}
 
         {/* Inline "who & when" line — only meaningful for an explicit
             value. The default is virtual so updated_by/updated_at are

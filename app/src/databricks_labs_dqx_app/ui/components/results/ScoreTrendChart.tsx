@@ -1204,6 +1204,10 @@ export function ScoreTrendChart({
               // gesture survives the pointer leaving the plot and commits only
               // on mouseup — never on mouseleave).
               onMouseDown={startGesture}
+              // Double-click resets zoom when a zoom is active. Guard with
+              // zoomed/yZoomed so a double-click on an unzoomed chart is a
+              // harmless no-op and never starts a spurious drag.
+              onDoubleClick={() => { if (zoomed || yZoomed) resetZoom(); }}
               style={
                 dragging
                   ? { cursor: "crosshair", userSelect: "none" }
