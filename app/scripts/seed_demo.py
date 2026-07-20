@@ -318,6 +318,8 @@ def main() -> int:
         status=status,
         reset_service=reset_service,
         embeddings=embeddings,
+        job_service=job_service,
+        profiler_view=sp_view,
         catalog=catalog,
     )
 

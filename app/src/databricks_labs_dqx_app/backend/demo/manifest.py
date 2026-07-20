@@ -530,9 +530,38 @@ RULES: tuple[RuleSpec, ...] = (
         author_kind="ai_assisted",
         slot_tags={"code": ("class.credit_card",)},
     ),
+    # ----------------------------------------------------------------------- #
+    # Submitted-but-not-approved SHOWCASE rule — seeded via create -> submit
+    # ONLY (never approved, never embedded, never bound to a column), so it
+    # lands in the Review & Approve queue awaiting a human decision. Referenced
+    # by no binding below, so it stays an UNMAPPED library draft. Keyed in
+    # ``PENDING_APPROVAL_RULE_KEYS`` so the seed orchestrator branches it.
+    # ----------------------------------------------------------------------- #
+    RuleSpec(
+        key="ssn_format",
+        name="Valid social security number",
+        description="Social security number matches the NNN-NN-NNNN format.",
+        dimension="Validity",
+        severity="Medium",
+        mode="dqx_native",
+        body={"function": "regex_match", "arguments": {"column": "{{ssn}}"}},
+        slots=(SlotSpec("ssn", "text", arg_key="column"),),
+        parameters=(ParamSpec("regex", "regex", r"^\d{3}-\d{2}-\d{4}$"),),
+        author_kind="human",
+    ),
 )
 
 RULES_BY_KEY: dict[str, RuleSpec] = {r.key: r for r in RULES}
+
+# Rule keys seeded as submitted-for-approval only: the seed orchestrator
+# creates + submits them (so they sit in the Review & Approve / drafts queue
+# awaiting a human decision) but NEVER auto-approves, embeds, or binds them.
+# Referenced by no binding, so they stay UNMAPPED library drafts.
+PENDING_APPROVAL_RULE_KEYS: frozenset[str] = frozenset({"ssn_format"})
+
+# Source table the demo runs the profiler against so the Profile page shows a
+# real ``dq_profiling_results`` row (see ``DemoSeedService._run_profiling``).
+PROFILE_DEMO_TABLE = "customers"
 
 
 # --------------------------------------------------------------------------- #
