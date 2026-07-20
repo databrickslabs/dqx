@@ -101,13 +101,13 @@ export function ScoreBox({
       </div>
       <div className="flex items-center justify-center gap-1.5 leading-none">
         {/* ⚠ before the percentage when this run breached its threshold. Solid
-            white with a dark drop-shadow so it stays high-contrast on any
-            score-box background colour (the amber/red tint washes out on the
-            red end of the ramp). */}
+            white (no drop-shadow) so it stays high-contrast on any score-box
+            background colour. Sized to the big number and bottom-aligned so its
+            base sits on the percentage's baseline rather than floating high. */}
         {(breachCriticality === "error" || breachCriticality === "warn") && (
           <AlertTriangle
-            className="h-7 w-7 shrink-0"
-            style={{ color: "#ffffff", filter: "drop-shadow(0 1px 1.5px rgba(0,0,0,0.55))" }}
+            className="h-8 w-8 shrink-0 self-end mb-0.5"
+            style={{ color: "#ffffff" }}
             aria-label={
               breachCriticality === "error"
                 ? t("resultsUi.breachErrorTooltip")

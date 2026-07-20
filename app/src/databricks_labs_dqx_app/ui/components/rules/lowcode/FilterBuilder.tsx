@@ -1,9 +1,11 @@
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { LowcodeRow } from "./LowcodeRow";
 import type { AnyRow, LowcodeAstV2 } from "@/lib/lowcodeAst";
 import type { LowcodeColumnRef } from "@/lib/lowcodeCompile";
+import type { Family } from "@/lib/lowcodeOperators";
 
 type Props = {
   /** The filter's condition-row AST (rows only — a filter is a plain WHERE
@@ -12,6 +14,15 @@ type Props = {
   onChange: (next: LowcodeAstV2) => void;
   declaredColumns: LowcodeColumnRef[];
   readOnly?: boolean;
+  /** Renders the operator cell for each filter row via the registry editor's
+   * searchable condition selector (operators-only). When omitted, rows fall
+   * back to the standard OperatorDropdown. Mirrors {@link LowcodeBuilder}. */
+  renderOperator?: (ctx: {
+    family: Family;
+    value: string;
+    onChange: (op: string) => void;
+    isFirst: boolean;
+  }) => ReactNode;
 };
 
 function defaultColumnRef(declared: LowcodeColumnRef[]): string {
@@ -29,7 +40,7 @@ function defaultColumnRef(declared: LowcodeColumnRef[]): string {
  * Unlike the main condition builder, a filter is OPTIONAL: it starts empty (no
  * seeded row), every row is deletable, and there are no aggregated conditions.
  */
-export function FilterBuilder({ ast, onChange, declaredColumns, readOnly }: Props) {
+export function FilterBuilder({ ast, onChange, declaredColumns, readOnly, renderOperator }: Props) {
   const { t } = useTranslation();
 
   const addRow = () => {
@@ -70,6 +81,7 @@ export function FilterBuilder({ ast, onChange, declaredColumns, readOnly }: Prop
           onChange={(r) => updateRow(i, r)}
           onDelete={() => deleteRow(i)}
           readOnly={readOnly}
+          renderOperator={renderOperator}
         />
       ))}
       {!readOnly && (

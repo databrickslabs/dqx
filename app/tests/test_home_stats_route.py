@@ -229,6 +229,7 @@ class TestCountMethods:
             binding_run_service=MagicMock(),
             version_service=MagicMock(),
             app_settings=MagicMock(),
+            materializer=MagicMock(),
         )
         assert service.count() == 3
         stmt = sql.query.call_args[0][0]

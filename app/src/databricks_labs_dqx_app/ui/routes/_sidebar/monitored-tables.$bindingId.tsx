@@ -55,6 +55,7 @@ import {
   KeyRound,
   LineChart,
   Loader2,
+  MessageSquare,
   MoreVertical,
   Play,
   Plus,
@@ -112,7 +113,7 @@ import {
 import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
-import { CommentThread } from "@/components/CommentThread";
+import { CommentsDialog } from "@/components/CommentThread";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import {
@@ -150,6 +151,7 @@ import {
   computeRunGating,
   desiredApplicationsKey,
   extractApiError,
+  getRuleIdsForColumn,
   groupAppliedRulesByRuleId,
   mergeRuleRowGroup,
   nextLocalRowId,
@@ -342,36 +344,11 @@ function MonitoredTableDetailPage() {
     }
   }, [bindingId, appliedRules]);
 
-  const isDirty = desiredApplicationsKey(stagedRows) !== desiredApplicationsKey(baseline);
+  const adminDefaultThreshold = useDefaultPassThreshold();
+  const isDirty =
+    desiredApplicationsKey(stagedRows, adminDefaultThreshold) !==
+    desiredApplicationsKey(baseline, adminDefaultThreshold);
 
-  const runRuleMutation = useRunMonitoredTable();
-  const [runningRuleId, setRunningRuleId] = useState<string | null>(null);
-  const handleRunRule = useCallback(
-    (ruleId: string) => {
-      const source = table.status === "approved" && !isDirty ? "approved" : "draft";
-      setRunningRuleId(ruleId);
-      runRuleMutation.mutate(
-        { bindingId, data: { source, rule_ids: [ruleId] } },
-        {
-          onSuccess: (resp) => {
-            runActivity.registerRun(resp.data.run_set_id);
-            toast.success(t("monitoredTables.toastRunRuleStarted"), {
-              action: {
-                label: t("monitoredTables.toastRunStartedViewAction"),
-                onClick: () =>
-                  void navigate({ to: "/runs-history", search: { runSetId: resp.data.run_set_id } }),
-              },
-            });
-          },
-          onError: (err: unknown) => {
-            toast.error(extractApiError(err, t("monitoredTables.toastRunFailed")), { duration: 6000 });
-          },
-          onSettled: () => setRunningRuleId(null),
-        },
-      );
-    },
-    [bindingId, isDirty, navigate, runActivity, runRuleMutation, t, table.status],
-  );
   // Bypasses the nav guard right after a successful save/submit/approve so an
   // in-flight invalidate+refetch (which briefly leaves the page mid-settle)
   // can't fire a spurious "unsaved changes" prompt when the user JUST saved
@@ -392,6 +369,7 @@ function MonitoredTableDetailPage() {
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
   // View-changes diff dialog target — mirrors the overview row's GitCompare
   // action so the same review affordance is available on the detail banner.
   const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
@@ -669,15 +647,22 @@ function MonitoredTableDetailPage() {
                   <History className="h-3.5 w-3.5" />
                   {t("runsHistory.menuViewRuns")}
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setCommentsOpen(true)} className="gap-2">
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  {t("monitoredTables.actionComments")}
+                </DropdownMenuItem>
                 {perms.canCreateRules && (
-                  <DropdownMenuItem
-                    onClick={() => setDeleteConfirmOpen(true)}
-                    variant="destructive"
-                    className="gap-2"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    {t("monitoredTables.actionDelete")}
-                  </DropdownMenuItem>
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setDeleteConfirmOpen(true)}
+                      variant="destructive"
+                      className="gap-2"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {t("monitoredTables.actionDelete")}
+                    </DropdownMenuItem>
+                  </>
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
@@ -851,7 +836,7 @@ function MonitoredTableDetailPage() {
           </div>
 
           <TabsContent value="about">
-            <AboutTab bindingId={bindingId} table={table} onColumnClick={handleColumnDeepLink} />
+            <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
           </TabsContent>
 
           {/* pt-4 matches the other tabs' top spacing (About/Schedule own it internally). */}
@@ -876,11 +861,6 @@ function MonitoredTableDetailPage() {
               stagedRows={stagedRows}
               setStagedRows={setStagedRows}
               canEdit={perms.canCreateRules}
-              canRunRules={perms.canRunRules}
-              isDirty={isDirty}
-              runInProgress={runActivity.hasActive || runRuleMutation.isPending}
-              runningRuleId={runningRuleId}
-              onRunRule={handleRunRule}
               initialJumpColumn={pendingColumnJump}
               onJumpColumnConsumed={() => setPendingColumnJump(null)}
             />
@@ -930,6 +910,13 @@ function MonitoredTableDetailPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <CommentsDialog
+        entityType="monitored_table"
+        entityId={bindingId}
+        open={commentsOpen}
+        onOpenChange={setCommentsOpen}
+      />
 
       <AlertDialog open={blocker.status === "blocked"}>
         <AlertDialogContent>
@@ -1271,11 +1258,9 @@ function ColumnTagsCell({ tags }: { tags: string[] }) {
 }
 
 function AboutTab({
-  bindingId,
   table,
   onColumnClick,
 }: {
-  bindingId: string;
   table: MonitoredTableOut;
   /** Deep-links to the Apply Rules "by column" lens, expanded to that
    *  column (item 1) — reuses the jump+expand handoff already wired
@@ -1508,13 +1493,6 @@ function AboutTab({
         <ViewDataTab tableFqn={table.table_fqn} />
       </section>
 
-      {/* Table-level notes (steward context, ownership, general discussion)
-          live here in About — moved off the header ⋮ menu. Run-specific
-          discussion instead lives with the run on the Results tab. */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold">{t("monitoredTables.commentsSectionTitle")}</h2>
-        <CommentThread entityType="monitored_table" entityId={bindingId} />
-      </section>
     </div>
   );
 }
@@ -1876,11 +1854,6 @@ function ApplyRulesTab({
   stagedRows,
   setStagedRows,
   canEdit,
-  canRunRules,
-  isDirty,
-  runInProgress,
-  runningRuleId,
-  onRunRule,
   initialJumpColumn,
   onJumpColumnConsumed,
 }: {
@@ -1895,11 +1868,6 @@ function ApplyRulesTab({
   stagedRows: AppliedRuleOut[];
   setStagedRows: (updater: (prev: AppliedRuleOut[]) => AppliedRuleOut[]) => void;
   canEdit: boolean;
-  canRunRules: boolean;
-  isDirty: boolean;
-  runInProgress: boolean;
-  runningRuleId: string | null;
-  onRunRule: (ruleId: string) => void;
   /** Column to land on when this tab is entered via the About-tab schema
    *  row's "deep link" (item 1 / P19-F chip-jump handoff, reused across
    *  tabs) — opens the by-column lens straight to that column's card. Radix
@@ -1921,6 +1889,10 @@ function ApplyRulesTab({
   // AddRulesDialog stages new rule(s), so the target card(s) auto-expand in
   // the by-rule lens instead of just scrolling into view.
   const [expandRuleIds, setExpandRuleIds] = useState<string[]>([]);
+  // Single-open accordion for the by-rule lens (item 26): exactly one card is
+  // expanded at a time, so opening one closes the others. Mirrors the
+  // by-column lens's `openColumnName`.
+  const [openRuleId, setOpenRuleId] = useState<string | null>(null);
   // 1-indexed page for the by-rule lens (item 51). Reset on search/filter
   // change below; jumped to the target rule's page when a card is
   // auto-expanded (after staging or a by-column "jump to rule").
@@ -2093,6 +2065,14 @@ function ApplyRulesTab({
   // these checked + disabled so they can't be applied twice (B2-115).
   const appliedRuleIds = useMemo(() => new Set(stagedRows.map((r) => r.rule_id)), [stagedRows]);
 
+  // When the dialog is opened from a specific column's "+ Add rule" CTA, only
+  // disable rules that are ALREADY mapped to that column — so a rule applied to
+  // column A is still selectable when adding to column B (item 4).
+  const appliedRuleIdsForDialog = useMemo(
+    () => (addColumnContext ? getRuleIdsForColumn(stagedRows, addColumnContext.name) : appliedRuleIds),
+    [stagedRows, addColumnContext, appliedRuleIds],
+  );
+
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
   const severityValues = useMemo(
@@ -2207,10 +2187,28 @@ function ApplyRulesTab({
   // Jump to the page holding the first auto-expanded card so a rule freshly
   // staged (appended to the end) or targeted by a by-column "jump to rule"
   // is actually on-screen, not hidden behind pagination.
+  //
+  // One-shot: this must fire only on a GENUINELY NEW expand request (a new
+  // "+ Add rule" batch or a by-column "jump to rule"), not on every
+  // `visibleMergedRules` recompute. `visibleMergedRules` changes identity on
+  // every staged edit, so without this guard any later mutation (edit mapping,
+  // change severity/threshold, type in search) would re-fire and snap
+  // `openRuleId` back to the auto-expanded card, collapsing whatever the user
+  // had manually opened. We consume each `expandRuleIds` value once by
+  // remembering the last one we acted on.
+  const consumedExpandRef = useRef<string[] | null>(null);
   useEffect(() => {
     if (expandRuleIds.length === 0) return;
+    if (consumedExpandRef.current === expandRuleIds) return;
     const idx = visibleMergedRules.findIndex((r) => expandRuleIds.includes(r.rule_id));
-    if (idx >= 0) setRulePage(Math.floor(idx / RULE_PAGE_SIZE) + 1);
+    if (idx >= 0) {
+      consumedExpandRef.current = expandRuleIds;
+      setRulePage(Math.floor(idx / RULE_PAGE_SIZE) + 1);
+      // Single-open accordion (item 26): honour the auto-expand request by
+      // opening the target card (and closing any other) instead of leaving
+      // the accordion collapsed after a stage / by-column jump.
+      setOpenRuleId(visibleMergedRules[idx].rule_id);
+    }
   }, [expandRuleIds, visibleMergedRules]);
 
   const openAddDialog = (column?: ColumnRef) => {
@@ -2521,10 +2519,6 @@ function ApplyRulesTab({
                 labelDefinitions={labelDefinitions}
                 severityValues={severityValues}
                 canEdit={canEdit}
-                canRunRule={canRunRules}
-                runRuleBusy={runInProgress || runningRuleId === rule.rule_id}
-                runRuleDisabled={isDirty || runInProgress}
-                onRunRule={() => onRunRule(rule.rule_id)}
                 busy={false}
                 onPinChange={(v) => handlePinChange(rule, v)}
                 onSeverityChange={(v) => handleSeverityChange(rule, v)}
@@ -2539,6 +2533,8 @@ function ApplyRulesTab({
                 }
                 onAddMapping={(group) => handleAddMapping(rule.rule_id, group)}
                 columns={columns}
+                isOpen={openRuleId === rule.rule_id}
+                onToggle={() => setOpenRuleId((prev) => (prev === rule.rule_id ? null : rule.rule_id))}
                 forceOpen={expandRuleIds.includes(rule.rule_id)}
                 columnTags={Object.keys(columnTags).length > 0 ? columnTags : undefined}
                 onJumpToColumn={(colName) => {
@@ -2624,7 +2620,7 @@ function ApplyRulesTab({
         bindingId={bindingId}
         publishedRules={publishedRules}
         labelDefinitions={labelDefinitions}
-        appliedRuleIds={appliedRuleIds}
+        appliedRuleIds={appliedRuleIdsForDialog}
         onAdd={stageNewRows}
         onApplied={() => {}}
         initialColumn={addColumnContext}

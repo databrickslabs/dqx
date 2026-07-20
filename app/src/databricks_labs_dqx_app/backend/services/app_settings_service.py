@@ -263,9 +263,9 @@ class AppSettingsService:
     _AUTO_UPGRADE_WITHOUT_APPROVAL_KEY = "auto_upgrade_without_approval"
 
     def get_auto_upgrade_without_approval(self) -> bool:
-        """Return the configured auto-upgrade behaviour; defaults to ``False`` (Behaviour B) when unset."""
+        """Return the configured auto-upgrade behaviour; defaults to ``True`` (Behaviour A) when unset."""
         raw = self.get_setting(self._AUTO_UPGRADE_WITHOUT_APPROVAL_KEY)
-        return raw is not None and raw.strip().lower() == "true"
+        return raw is None or raw.strip().lower() == "true"
 
     def save_auto_upgrade_without_approval(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Persist the auto-upgrade-without-approval setting. Returns the saved value."""
@@ -426,6 +426,28 @@ class AppSettingsService:
     def save_global_results_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Persist the global-Results-tab setting. Returns the saved value."""
         self.save_setting(self._GLOBAL_RESULTS_ENABLED_KEY, "true" if enabled else "false", user_email=user_email)
+        return enabled
+
+    # ------------------------------------------------------------------
+    # Rules Results tab (item 35) — whether the per-rule "Results" tab is
+    # surfaced inside the Rules Registry rule dialog. Distinct from
+    # ``global_results_enabled`` above (that gates the app-wide, all-tables
+    # Results SURFACE + its sidebar entry); this gates only the Results TAB on
+    # an individual rule. OFF by default — a fresh deploy hides the rule
+    # Results tab until an admin explicitly opts in. Only an explicit
+    # ``"true"`` reads as on; an unset or any other value reads as off.
+    # ------------------------------------------------------------------
+
+    _RULES_RESULTS_TAB_ENABLED_KEY = "rules_results_tab_enabled"
+
+    def get_rules_results_tab_enabled(self) -> bool:
+        """Return whether the per-rule Results tab is enabled; defaults to ``False`` (off) when unset."""
+        raw = self.get_setting(self._RULES_RESULTS_TAB_ENABLED_KEY)
+        return raw is not None and raw.strip().lower() == "true"
+
+    def save_rules_results_tab_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the rules-Results-tab setting. Returns the saved value."""
+        self.save_setting(self._RULES_RESULTS_TAB_ENABLED_KEY, "true" if enabled else "false", user_email=user_email)
         return enabled
 
     # ------------------------------------------------------------------

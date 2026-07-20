@@ -17,7 +17,15 @@ sequence a human hand-approval performs (so the audit trail is identical):
 * **Rules** — the genuine ``RegistryService.create_rule -> submit -> approve``
   publish path (respecting each rule's real mode/polarity/author_kind), which
   lands the rule at ``status="approved"``, ``version==1``. An already-approved
-  rule with the same fingerprint is reused for idempotency.
+  rule with the same fingerprint is reused for idempotency. The one exception is
+  a rule keyed in :data:`~.manifest.PENDING_APPROVAL_RULE_KEYS`, which is
+  created + submitted ONLY (never approved, embedded, or bound) so it sits in
+  the Review & Approve queue as an UNMAPPED draft awaiting a human decision.
+
+Between datagen and rules the seed also runs one **profiling** phase: a real
+profiler Job over a demo source table (see :meth:`_run_profiling`), so the
+Profile page shows a genuine ``dq_profiling_results`` row. It is best-effort —
+skipped (logged) when no Job/warehouse is available and never fails the seed.
 * **Bindings** — after :meth:`ApplyRulesService.save_applied_rules`, the same
   sequence the approve route runs: materialize the binding, transition its
   materialized checks ``draft -> pending_approval -> approved`` (reusing the
@@ -45,6 +53,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
+from uuid import uuid4
 
 from databricks.sdk import WorkspaceClient
 
@@ -80,6 +89,7 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRu
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.database_reset_service import DatabaseResetService
+from databricks_labs_dqx_app.backend.services.job_service import JobService
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     DuplicateMonitoredTableError,
@@ -90,6 +100,7 @@ from databricks_labs_dqx_app.backend.services.registry_service import RegistrySe
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
+from databricks_labs_dqx_app.backend.services.view_service import ViewService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_object_fqn
 
@@ -119,6 +130,15 @@ _TERMINAL_RUN_STATES = ("SUCCESS", "FAILED", "CANCELED")
 # by seconds, not minutes.
 _METRICS_TIMEOUT_SECONDS = 300
 _METRICS_POLL_SECONDS = 5
+# How long to wait for the demo profiler Job to write its terminal
+# ``dq_profiling_results`` row. Profiling one demo table is quick, but the
+# serverless Job cold-starts, so this is a generous ceiling. Best-effort: on
+# timeout the seed logs and continues (a missing profile row never fails the
+# ~30min seed).
+_PROFILE_TIMEOUT_SECONDS = 900
+_PROFILE_POLL_SECONDS = 10
+# Rows the demo profiler samples from its source table.
+_PROFILE_SAMPLE_LIMIT = 50_000
 
 
 @dataclass
@@ -163,6 +183,8 @@ class DemoSeedService:
         reset_service: DatabaseResetService | None = None,
         embeddings: RuleEmbeddingsService | None = None,
         tagging_sql: SqlExecutor | None = None,
+        job_service: JobService | None = None,
+        profiler_view: ViewService | None = None,
         catalog: str = "dqx",
     ) -> None:
         self._demo_sql = demo_sql
@@ -181,6 +203,12 @@ class DemoSeedService:
         self._status = status
         self._reset_service = reset_service
         self._embeddings = embeddings
+        # Optional profiler collaborators. When both are present the seed runs a
+        # real profiler Job on a demo table so the Profile page shows genuine
+        # ``dq_profiling_results`` output; when either is None (minimal test
+        # graph / no compute) the profiling phase is a logged no-op.
+        self._job_service = job_service
+        self._profiler_view = profiler_view
         # Optional caller (OBO) SqlExecutor used ONLY for governed-tag
         # assignment. Assigning a governed class.* tag needs ASSIGN on the tag
         # policy, which the app SP typically lacks but the admin who triggered
@@ -192,6 +220,9 @@ class DemoSeedService:
         self._catalog = catalog
         self._schema = manifest.SOURCE_SCHEMA
         self._started_at = ""
+        # (binding_id, version) freeze events in creation order — populated by
+        # :meth:`_approve_binding`, drained by :meth:`_redate_version_freezes`.
+        self._freeze_log: list[tuple[str, int]] = []
 
     def set_tagging_sql(self, sql: SqlExecutor | None) -> None:
         """Set the (OBO) SqlExecutor used for governed-tag assignment.
@@ -238,6 +269,9 @@ class DemoSeedService:
 
             self._set_status("running", "datagen", "Generating source tables", user_email)
             self._build_source_data()
+
+            self._set_status("running", "profile", "Profiling a demo source table", user_email)
+            self._run_profiling(user_email)
 
             self._set_status("running", "rules", "Publishing reusable rule set", user_email)
             rule_map = self._build_rules(user_email)
@@ -348,6 +382,108 @@ class DemoSeedService:
         tagging_sql.execute(f"SET TAG ON COLUMN {column_fqn} {tag_key}")  # noqa: S608 (manifest constants)
 
     # ------------------------------------------------------------------
+    # Phase: profiling
+    # ------------------------------------------------------------------
+
+    def _run_profiling(self, user_email: str) -> str | None:
+        """Run the real profiler on one demo table so the Profile page shows output.
+
+        Replicates the ``POST /profiler/run`` route server-side (with SP
+        collaborators): create a temp view over the demo table, submit the
+        profiler Job, record the RUNNING placeholder, then poll
+        ``dq_profiling_results`` until the runner writes a terminal row — so the
+        demo produces a genuine profiling result rendered identically to a
+        hand-triggered run. The temp view is dropped once terminal.
+
+        Best-effort by design: profiling needs a configured Job and warehouse
+        that may be absent in a CLI / test / no-compute seed context, and a
+        profiler hiccup must never abort the ~30min seed. Any failure — missing
+        collaborators, submit error, timeout — is logged and skipped; the happy
+        path (Job + view service present, Job succeeds) writes a real result.
+
+        Returns:
+            The app-level ``run_id`` of the submitted profiler run, or ``None``
+            when profiling was skipped or failed.
+        """
+        if self._job_service is None or self._profiler_view is None:
+            logger.info("Demo profiling skipped: no job service / view service configured")
+            return None
+
+        table_fqn = self._table_fqn(manifest.PROFILE_DEMO_TABLE)
+        run_id = uuid4().hex[:16]
+        view_fqn: str | None = None
+        try:
+            view_fqn = self._profiler_view.create_view(table_fqn, sample_limit=_PROFILE_SAMPLE_LIMIT)
+            config = {
+                "sample_limit": _PROFILE_SAMPLE_LIMIT,
+                "source_table_fqn": table_fqn,
+                "columns": None,
+                "profile_options": None,
+            }
+            job_run_id = self._job_service.submit_run(
+                task_type="profile",
+                view_fqn=view_fqn,
+                config=config,
+                run_id=run_id,
+                requesting_user=user_email,
+            )
+            self._job_service.record_run_started(
+                table=self._app_sql.fqn("dq_profiling_results"),
+                run_id=run_id,
+                requesting_user=user_email,
+                source_table_fqn=table_fqn,
+                view_fqn=view_fqn,
+                sample_limit=_PROFILE_SAMPLE_LIMIT,
+                job_run_id=job_run_id,
+            )
+            status = self._wait_for_profile(run_id)
+            if status == "SUCCESS":
+                logger.info("Demo profiling of %s completed (run_id=%s)", table_fqn, self._sanitize(run_id))
+            else:
+                logger.warning(
+                    "Demo profiling of %s did not succeed (status=%s, run_id=%s)",
+                    self._sanitize(table_fqn),
+                    self._sanitize(str(status)),
+                    self._sanitize(run_id),
+                )
+            return run_id
+        except Exception as exc:
+            # Broad except by design (see the BLE001 policy block in
+            # pyproject.toml): profiling is a best-effort showcase phase, so ANY
+            # failure — missing Job/warehouse, submit error, timeout — is logged
+            # and skipped rather than aborting the ~30min seed.
+            logger.warning("Demo profiling skipped for %s: %s", self._sanitize(table_fqn), self._sanitize(str(exc)))
+            return run_id
+        finally:
+            if view_fqn is not None:
+                try:
+                    self._profiler_view.drop_view(view_fqn)
+                except Exception:  # noqa: BLE001
+                    logger.warning("Failed to drop demo profiler view %s", self._sanitize(view_fqn))
+
+    def _wait_for_profile(self, run_id: str) -> str | None:
+        """Poll ``dq_profiling_results`` until the profiler run reaches a terminal row.
+
+        The runner overwrites the app-written RUNNING placeholder with a terminal
+        (``SUCCESS`` / ``FAILED``) row once the Job finishes; this reads that
+        non-RUNNING status. Returns the terminal status, or ``None`` when the
+        bounded deadline elapses first (the caller logs that best-effort).
+        """
+        results_fqn = self._app_sql.fqn("dq_profiling_results")
+        deadline = time.monotonic() + _PROFILE_TIMEOUT_SECONDS
+        while True:
+            rows = self._app_sql.query_dicts(
+                f"SELECT status FROM {results_fqn} "  # noqa: S608
+                f"WHERE run_id = '{escape_sql_string(run_id)}' AND status <> 'RUNNING' LIMIT 1"
+            )
+            status = rows[0].get("status") if rows else None
+            if status:
+                return status
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(_PROFILE_POLL_SECONDS)
+
+    # ------------------------------------------------------------------
     # Phase: rules
     # ------------------------------------------------------------------
 
@@ -362,12 +498,23 @@ class DemoSeedService:
         stored as ``dqx_native`` and later materialize to ``function: ''`` — a
         runtime "function '' is not defined" failure.)
 
+        One exception: a spec keyed in
+        :data:`~.manifest.PENDING_APPROVAL_RULE_KEYS` is created + submitted ONLY
+        (never approved, never embedded), so it lands in the Review & Approve
+        queue awaiting a human decision. It is referenced by no binding, so it
+        stays an UNMAPPED library draft. Its rule_id is deliberately kept OUT of
+        the returned ``rule_map`` so no binding can ever map it (bindings only
+        resolve rule keys present in the map — see :meth:`_desired_rules`).
+
         Idempotent by structural fingerprint: an already-approved rule with the
         same definition is reused rather than re-created (the seed re-runs, and
         ``wipe_first`` resets, but this stays safe either way).
         """
         rule_map: dict[str, str] = {}
         for spec in manifest.RULES:
+            if spec.key in manifest.PENDING_APPROVAL_RULE_KEYS:
+                self._submit_pending_rule(spec, user_email)
+                continue
             definition = self._definition_for(spec)
             existing = self._registry.find_approved_rule_for_definition(definition)
             if existing is not None:
@@ -390,6 +537,40 @@ class DemoSeedService:
             self._embed_rule(approved)
             logger.info("Demo rule '%s' -> %s (created)", spec.key, approved.rule_id)
         return rule_map
+
+    def _submit_pending_rule(self, spec: RuleSpec, user_email: str) -> None:
+        """Create + submit one rule so it awaits approval, unapproved and unmapped.
+
+        Drives ``create_rule -> submit`` ONLY (no ``approve``, no
+        :meth:`_embed_rule`), leaving the rule at ``status="pending_approval"``
+        so it appears in the Review & Approve / drafts queue. The rule_id is not
+        returned, so no binding can map it — it stays an UNMAPPED library draft
+        that demonstrates the pending-approval flow.
+
+        Idempotent on re-seed: a no-wipe redeploy would otherwise mint a
+        duplicate pending draft each run. If an active (draft/pending/approved)
+        rule with the same structural fingerprint already exists, skip creation.
+        """
+        definition = self._definition_for(spec)
+        fingerprint = self._registry.compute_definition_fingerprint(
+            cast(RuleMode, spec.mode),
+            definition,
+            cast(Polarity, spec.polarity) if spec.polarity is not None else None,
+        )
+        if self._registry.get_active_rule_by_fingerprint(fingerprint) is not None:
+            logger.info("Demo pending rule '%s' already present, skipping", spec.key)
+            return
+        rule, _warning = self._registry.create_rule(
+            mode=cast(RuleMode, spec.mode),
+            definition=definition,
+            user_email=user_email,
+            polarity=cast(Polarity, spec.polarity) if spec.polarity is not None else None,
+            author_kind=cast(AuthorKind, spec.author_kind),
+            user_metadata=self._metadata_for(spec),
+            source="demo",
+        )
+        self._registry.submit(rule.rule_id, user_email)
+        logger.info("Demo rule '%s' -> %s (submitted for approval, unmapped)", spec.key, rule.rule_id)
 
     def _embed_rule(self, rule: RegistryRule) -> None:
         """Embed an approved rule into the Vector Search corpus (best-effort).
@@ -516,13 +697,18 @@ class DemoSeedService:
             desired.append(DesiredAppliedRule(rule_id=rule_id, column_mapping=column_mapping))
         return desired
 
-    def _approve_binding(self, binding_id: str, user_email: str) -> None:
+    def _approve_binding(self, binding_id: str, user_email: str) -> int:
         """Drive a binding's materialized checks to ``approved`` and freeze a version.
 
         Replicates the exact approve-route sequence (materialize, transition
         ``draft -> pending_approval -> approved``, set binding status, freeze)
         so the audit trail is identical to a hand-approval and the binding is
         genuinely approved — not reliant on any approvals-mode auto-publish.
+
+        Returns:
+            The new (bumped) version integer frozen for the binding. The caller
+            re-dates that freeze's ``created_at`` into the trend window so the
+            results-over-time version markers land mid-timeline.
         """
         # Imported lazily: ``routes.v1`` imports this module (via ``admin.py``),
         # so a module-level import here forms a circular import when this module
@@ -547,7 +733,14 @@ class DemoSeedService:
             user_email=user_email,
         )
         self._monitored_tables.set_status(binding_id, "approved", user_email)
-        self._version_service.freeze_new_version(binding_id, user_email)
+        version = self._version_service.freeze_new_version(binding_id, user_email)
+        # Record the freeze in creation order so the weekly trend can re-date each
+        # binding's freeze ``created_at`` into the historical window (see
+        # :meth:`_redate_version_freezes`). Freezes are written at seed-time
+        # "now"; left unmoved they all sit after every back-dated run and the
+        # results-over-time version markers never appear.
+        self._freeze_log.append((binding_id, version))
+        return version
 
     # ------------------------------------------------------------------
     # Phase: data products
@@ -880,7 +1073,56 @@ class DemoSeedService:
         # strips (see the cutoff rationale above).
         self._score_cache.refresh_all_for_tables(sorted(self._table_fqns()))
         self._delete_history_after(cutoff)
+        # Back-date every version freeze into the trend window so the
+        # results-over-time version markers land mid-timeline instead of all at
+        # seed-time "now" (where they would sit after every re-dated run and
+        # resolve every point to version 0 — no markers). Done last, once every
+        # freeze (build + weekly re-approvals) has been logged.
+        self._redate_version_freezes(now, weeks)
         return trend_points
+
+    def _redate_version_freezes(self, now: datetime, weeks: int) -> None:
+        """Spread each binding's version freezes across the trend window.
+
+        A binding accrues several freezes during the seed (v1 at build, v2 at
+        week 0, plus one per rule-lifecycle change week), all written at
+        seed-time "now". ``annotate_trend_versions`` stamps each trend point with
+        the highest version whose freeze is at/-before the run instant, so
+        freezes clustered at "now" (after every back-dated run) leave every point
+        at version 0 and the chart shows no version markers.
+
+        This distributes a binding's F freezes over F strictly-increasing
+        instants spanning ``[first-week instant, last-week instant)`` in version
+        order, so successive versions become active across the timeline and a
+        marker appears at each version's first appearance (v1 included). Only
+        genuinely-frozen ``(binding_id, version)`` rows are re-dated — no fake
+        versions are fabricated.
+        """
+        if weeks <= 0 or not self._freeze_log:
+            return
+        by_binding: dict[str, list[int]] = {}
+        for binding_id, version in self._freeze_log:
+            # freeze_new_version returns a concrete int in production; guard so a
+            # non-int (only possible under a mocked version service in tests)
+            # never reaches the ``int()`` cast in the SQL builder.
+            if isinstance(version, bool) or not isinstance(version, int):
+                continue
+            by_binding.setdefault(binding_id, []).append(version)
+        if not by_binding:
+            return
+        first = self._week_instant(now, 0, weeks)
+        last = self._week_instant(now, weeks - 1, weeks)
+        span = last - first
+        versions_fqn = self._oltp.fqn("dq_monitored_table_versions")
+        for binding_id, versions in by_binding.items():
+            ordered = sorted(set(versions))
+            count = len(ordered)
+            for index, version in enumerate(ordered):
+                # index/count keeps the last freeze strictly before ``last`` so
+                # the final week's run still resolves to the top version.
+                instant = first + (span * index) // count if count else first
+                target_iso = redate.iso(instant)
+                self._oltp.execute(redate.build_redate_versions_sql(versions_fqn, binding_id, version, target_iso))
 
     def _tighten_card_rule(self, rule_map: dict[str, str], user_email: str) -> None:
         """Edit + re-approve the card-validation rule to a new version at TIGHTEN_WEEK.

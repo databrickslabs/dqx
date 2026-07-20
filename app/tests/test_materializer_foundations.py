@@ -137,10 +137,10 @@ class TestAutoUpgradeWithoutApprovalSetting:
     def svc(self, sql_executor_mock):
         return AppSettingsService(sql_executor_mock), sql_executor_mock
 
-    def test_defaults_to_false_when_unset(self, svc):
+    def test_defaults_to_true_when_unset(self, svc):
         s, sql = svc
         sql.query.return_value = []
-        assert s.get_auto_upgrade_without_approval() is False
+        assert s.get_auto_upgrade_without_approval() is True
 
     def test_round_trips_true(self, svc):
         s, sql = svc

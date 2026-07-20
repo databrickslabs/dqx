@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical, Play, RotateCcw } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -180,13 +180,13 @@ function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
     return <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>;
   }
 
-  // Bug 1 fix: show just the friendly function label — no args JSON dump.
-  // Parameters are already rendered separately by RuleParametersView below.
-  // Bug 2 fix: for sql/predicate-only rules, show a neutral label rather than
-  // leaking the compiled SQL predicate or query into this view.
-  const text = fn
-    ? (fnLabel ?? fn)
-    : t("monitoredTables.ruleLogicCustomSql");
+  // For DQX-native (function-based) checks, show just the friendly function
+  // label — no args JSON dump; parameters are rendered separately by
+  // RuleParametersView below. For SQL/predicate rules, show the user-authored
+  // SQL (item 27) so the actual logic is visible in the disclosure, falling
+  // back to a neutral label only when no SQL body is stored.
+  const sqlBody = sql ?? predicate;
+  const text = fn ? (fnLabel ?? fn) : (sqlBody ?? t("monitoredTables.ruleLogicCustomSql"));
 
   return (
     <div className="space-y-3">
@@ -511,11 +511,6 @@ interface RuleConfigCardProps {
   labelDefinitions: LabelDefinition[];
   severityValues: string[];
   canEdit: boolean;
-  /** RUNNER-gated: show "Run this rule" in the card menu. */
-  canRunRule?: boolean;
-  runRuleBusy?: boolean;
-  runRuleDisabled?: boolean;
-  onRunRule?: () => void;
   busy: boolean;
   /** `null` = follow latest; a number = pin to that published version. */
   onPinChange: (version: number | null) => void;
@@ -546,9 +541,18 @@ interface RuleConfigCardProps {
   /** The table's real columns, threaded down to the inline mapping form's
    *  and editable chips' column pickers. */
   columns: ColumnOut[];
+  /** Controlled open state — the by-rule lens owns a single `openRuleId`
+   *  (single-open accordion, item 26), so exactly one card is expanded at a
+   *  time and opening one closes the others. */
+  isOpen: boolean;
+  /** Toggle the card's open state. Header click and chevron both call this;
+   *  nested interactive controls stopPropagation so they don't toggle. */
+  onToggle: () => void;
   /** Optional expand override — set by the by-column lens's "jump to rule"
-   *  action, or right after a fresh "Add rules" apply, so the target card
-   *  opens automatically instead of requiring an extra click. */
+   *  action, or right after a fresh "Add rules" apply. Drives the
+   *  "start the first mapping group" flow so a freshly-staged rule lands on
+   *  its column picker; the open state itself is now controlled via
+   *  `isOpen`/`onToggle`. */
   forceOpen?: boolean;
   /** Applied governed tags per column for the table, keyed by column name.
    *  From `useGetTableTags`. When provided, matched governed tag chips are
@@ -564,10 +568,6 @@ export function RuleConfigCard({
   labelDefinitions,
   severityValues,
   canEdit,
-  canRunRule,
-  runRuleBusy,
-  runRuleDisabled,
-  onRunRule,
   busy,
   onPinChange,
   onSeverityChange,
@@ -580,12 +580,13 @@ export function RuleConfigCard({
   onChangeMapping,
   onAddMapping,
   columns,
+  isOpen,
+  onToggle,
   forceOpen,
   columnTags,
   thresholdEnabled = true,
 }: RuleConfigCardProps) {
   const { t } = useTranslation();
-  const [isOpen, setIsOpen] = useState(Boolean(forceOpen));
   const [logicOpen, setLogicOpen] = useState(false);
   // `null` = no "add mapping group" flow in progress; an object (possibly
   // `{}`) = one is, with the values picked so far keyed by slot name. See
@@ -608,16 +609,13 @@ export function RuleConfigCard({
 
   // The by-column lens's "jump to rule" action, and a freshly-staged rule
   // right after "Add rules", re-render this card with forceOpen=true (see
-  // monitored-tables.$bindingId.tsx) — keep it in sync if it flips after
-  // mount instead of only honoring it at initial state. When the rule has
-  // no mapping groups yet, also start the "add mapping group" flow so the
-  // user lands directly on the first slot's column picker instead of
-  // needing an extra click on "+ Apply to another column".
+  // monitored-tables.$bindingId.tsx). The parent already opens the card by
+  // pointing `openRuleId` at it; this effect only handles the extra step of
+  // starting the "add mapping group" flow when the rule has no mapping groups
+  // yet, so the user lands directly on the first slot's column picker instead
+  // of needing an extra click on "+ Apply to another column".
   useEffect(() => {
-    if (forceOpen) {
-      setIsOpen(true);
-      if (needsFirstMapping) setPendingGroup({});
-    }
+    if (forceOpen && needsFirstMapping) setPendingGroup({});
   }, [forceOpen, needsFirstMapping]);
 
   // Folds a newly-picked slot value into the in-progress group. Once every
@@ -653,7 +651,7 @@ export function RuleConfigCard({
       <div className="flex items-center gap-3 px-4 py-3 hover:bg-muted/40">
         <button
           type="button"
-          onClick={() => setIsOpen((p) => !p)}
+          onClick={onToggle}
           className="flex items-center gap-3 flex-1 min-w-0 text-left"
           aria-expanded={isOpen}
         >
@@ -789,58 +787,19 @@ export function RuleConfigCard({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-              {canRunRule && onRunRule && (
-                <DropdownMenuItem
-                  className="gap-2"
-                  disabled={runRuleDisabled || runRuleBusy}
-                  onClick={onRunRule}
-                >
-                  {runRuleBusy ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Play className="h-3.5 w-3.5" />
-                  )}
-                  {t("monitoredTables.runThisRuleMenuItem")}
-                </DropdownMenuItem>
-              )}
+              {/* "Run this rule" removed from the by-rule apply lens (item 36):
+                  running a single rule belongs to the header Run action, not
+                  this per-rule mapping menu. */}
               <DropdownMenuItem variant="destructive" className="gap-2" onClick={onRemove}>
-                {t("monitoredTables.removeRuleFromMonitorMenuItem")}
+                {t("monitoredTables.deselectRuleMenuItem")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
 
-        {!canEdit && canRunRule && onRunRule && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="shrink-0">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRunRule();
-                  }}
-                  disabled={runRuleDisabled || runRuleBusy}
-                  className="shrink-0 focus:outline-none text-muted-foreground hover:text-foreground disabled:opacity-50"
-                  aria-label={t("monitoredTables.runThisRuleMenuItem")}
-                >
-                  {runRuleBusy ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Play className="h-4 w-4" />
-                  )}
-                </button>
-              </span>
-            </TooltipTrigger>
-            {runRuleDisabled && (
-              <TooltipContent>{t("monitoredTables.runThisRuleDisabledDirtyHint")}</TooltipContent>
-            )}
-          </Tooltip>
-        )}
-
         <button
           type="button"
-          onClick={() => setIsOpen((p) => !p)}
+          onClick={onToggle}
           className="shrink-0 focus:outline-none"
           aria-label={isOpen ? t("monitoredTables.collapseLabel") : t("monitoredTables.expandLabel")}
         >

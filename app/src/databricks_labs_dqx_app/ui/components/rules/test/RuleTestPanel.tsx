@@ -68,13 +68,23 @@ function WarehouseWaitTooltip({ show, label, children }: { show: boolean; label:
   );
 }
 
-function AiDisabledTooltip({ disabled, label, children }: { disabled: boolean; label: string; children: React.ReactNode }) {
+function AiDisabledTooltip({
+  disabled,
+  label,
+  children,
+  className,
+}: {
+  disabled: boolean;
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   if (!disabled) return <>{children}</>;
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className="inline-flex">{children}</span>
+          <span className={cn("inline-flex", className)}>{children}</span>
         </TooltipTrigger>
         <TooltipContent>{label}</TooltipContent>
       </Tooltip>
@@ -303,8 +313,8 @@ export function RuleTestPanel({
           test button (not off to the side in the header) — it's the natural
           step: fill the grid with AI-generated rows, then run. */}
       {mode === "adhoc" && (
-        <AiDisabledTooltip disabled={!ai.available} label={ai.reason ?? t("ruleTest.aiDisabled")}>
-          <Button variant="outline" size="sm" onClick={onGenerate} disabled={!ai.available || generating}>
+        <AiDisabledTooltip disabled={!ai.available} label={ai.reason ?? t("ruleTest.aiDisabled")} className="w-full">
+          <Button variant="outline" size="sm" onClick={onGenerate} disabled={!ai.available || generating} className="w-full">
             {generating ? (
               <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
             ) : (

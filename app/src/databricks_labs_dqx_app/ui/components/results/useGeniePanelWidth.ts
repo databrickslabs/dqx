@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // deviation: the localStorage key is renamed dqlake.* -> dqxStudio.*.
 
 const STORAGE_KEY = "dqxStudio.genie.panelWidth";
-const DEFAULT_WIDTH = 448; // matches the prior sm:max-w-md
+const DEFAULT_WIDTH = 640; // wider by default so Ask Genie has room for tables/charts
 const MIN_WIDTH = 360;
 const MAX_WIDTH = 1100;
 

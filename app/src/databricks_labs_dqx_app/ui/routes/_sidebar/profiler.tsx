@@ -1,4 +1,4 @@
-import { createFileRoute, Navigate } from "@tanstack/react-router";
+import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 import { formatDateTime as formatDate } from "@/lib/format-utils";
 import { useState, useCallback, useEffect, useRef, useMemo, Suspense, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -2123,6 +2123,11 @@ function ProfileResults({
               {t("profiler.generatedRules", { count: allRules.length })}
             </h4>
             <div className="flex items-center gap-2">
+              {added && (
+                <Button size="sm" variant="default" className="gap-1.5" asChild>
+                  <Link to="/rules/drafts">{t("profiler.viewInDrafts")}</Link>
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant={added ? "outline" : "default"}

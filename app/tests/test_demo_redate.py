@@ -5,6 +5,7 @@ from databricks_labs_dqx_app.backend.demo import redate as r
 M = "dqx.dqx_studio.dq_metrics"
 RUNS = "dqx.dqx_studio.dq_validation_runs"
 H = "dqx.dqx_studio.dq_score_history"
+V = "dqx.dqx_studio.dq_monitored_table_versions"
 
 
 def test_iso_formats_utc():
@@ -42,6 +43,31 @@ def test_redate_runs_default_duration_is_positive():
 def test_redate_runs_run_id_is_escaped_against_injection():
     sql = r.build_redate_runs_sql(RUNS, "a'b", "2026-05-01 09:30:00")
     assert "'a''b'" in sql  # ANSI doubled-quote escaping
+
+
+def test_redate_versions_targets_binding_and_version_and_casts_timestamp():
+    # Item 2: freeze created_at is written at seed-time "now"; it must be
+    # re-dated into the trend window (keyed on binding_id + version) so
+    # annotate_trend_versions resolves increasing versions mid-timeline and the
+    # results-over-time version markers appear.
+    sql = r.build_redate_versions_sql(V, "b-abc", 2, "2026-05-01 09:30:00")
+    assert sql.startswith("UPDATE")
+    assert V in sql and "created_at" in sql
+    assert "created_at = CAST('2026-05-01 09:30:00' AS TIMESTAMP)" in sql
+    assert "binding_id = 'b-abc'" in sql
+    assert "version = 2" in sql
+
+
+def test_redate_versions_binding_id_is_escaped_against_injection():
+    sql = r.build_redate_versions_sql(V, "a'b", 1, "2026-05-01 09:30:00")
+    assert "'a''b'" in sql  # ANSI doubled-quote escaping
+
+
+def test_redate_versions_version_is_coerced_to_int():
+    # the version is interpolated verbatim after an int() cast, so a non-int
+    # string can never smuggle SQL through the version slot
+    sql = r.build_redate_versions_sql(V, "b1", 3, "2026-05-01 09:30:00")
+    assert "version = 3" in sql
 
 
 def test_delete_metrics_targets_run_id():

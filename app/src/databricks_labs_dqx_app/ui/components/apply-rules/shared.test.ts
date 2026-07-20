@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { AppliedRuleOut, RegistryRuleOut, RuleSlot } from "@/lib/api";
-import { buildDesiredApplications, computeRunGating, mergeColumnThresholds, newStagedRow, pickSlotForColumn } from "./shared";
+import {
+  buildDesiredApplications,
+  computeRunGating,
+  desiredApplicationsKey,
+  getRuleIdsForColumn,
+  mergeColumnThresholds,
+  newStagedRow,
+  pickSlotForColumn,
+} from "./shared";
 
 // Minimal RegistryRuleOut for newStagedRow — only rule_id, version, and
 // user_metadata (reserved name/dimension/severity tags) are read.
@@ -189,6 +197,61 @@ describe("pickSlotForColumn", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// getRuleIdsForColumn — item 4 (column-aware selectability)
+// ---------------------------------------------------------------------------
+
+describe("getRuleIdsForColumn", () => {
+  function mappedRow(ruleId: string, mapping: Record<string, string>[]): AppliedRuleOut {
+    return {
+      id: ruleId,
+      binding_id: "b1",
+      rule_id: ruleId,
+      column_mapping: mapping,
+      column_pass_thresholds: null,
+    } as unknown as AppliedRuleOut;
+  }
+
+  test("returns rule id when it is mapped to the target column", () => {
+    const rows = [mappedRow("r1", [{ col: "email" }])];
+    expect(getRuleIdsForColumn(rows, "email")).toEqual(new Set(["r1"]));
+  });
+
+  test("does NOT return rule id mapped to a different column (item 4 core invariant)", () => {
+    const rows = [mappedRow("r1", [{ col: "email" }])];
+    // rule r1 is on column "email" but we're asking about "name"
+    expect(getRuleIdsForColumn(rows, "name")).toEqual(new Set());
+  });
+
+  test("rule on column A is not in set for column B, but same rule applied to B is in set for B", () => {
+    const rows = [
+      mappedRow("r1", [{ col: "email" }]),
+      mappedRow("r2", [{ col: "email" }, { col: "name" }]),
+    ];
+    // r1 only on email → not in set for "name"
+    // r2 has mapping to "name" → is in set for "name"
+    const forName = getRuleIdsForColumn(rows, "name");
+    expect(forName.has("r1")).toBe(false);
+    expect(forName.has("r2")).toBe(true);
+  });
+
+  test("handles multi-value comma-joined slot values", () => {
+    const rows = [mappedRow("r1", [{ col: "email,name" }])];
+    expect(getRuleIdsForColumn(rows, "email")).toEqual(new Set(["r1"]));
+    expect(getRuleIdsForColumn(rows, "name")).toEqual(new Set(["r1"]));
+    expect(getRuleIdsForColumn(rows, "other")).toEqual(new Set());
+  });
+
+  test("returns empty set when no rows are mapped to the column", () => {
+    const rows = [mappedRow("r1", [{ col: "email" }]), mappedRow("r2", [{}])];
+    expect(getRuleIdsForColumn(rows, "unrelated")).toEqual(new Set());
+  });
+
+  test("returns empty set for empty rows list", () => {
+    expect(getRuleIdsForColumn([], "email")).toEqual(new Set());
+  });
+});
+
 // P23-F fix: "Run now" executes the last-persisted (approved) snapshot and
 // must gate on the baseline count; "Run draft" executes the local staged
 // edit buffer and must gate on the staged count. These must never be
@@ -228,5 +291,95 @@ describe("computeRunGating", () => {
   test("dirty + staged rules present: Run draft rules-gate reports enabled regardless of baseline", () => {
     const gating = computeRunGating(1, 2); // baseline=1 rule, staged diverged to 2 rules
     expect(gating.runDraftHasRules).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// desiredApplicationsKey — threshold dirty-detection (item 33)
+//
+// Invariant: (i) re-entering the same saved value (explicit override OR
+// null-follow-default) is NOT dirty; (ii) a genuine change IS dirty; (iii)
+// an explicit override equal to the effective default and null-follow-default
+// normalize to the same key so saving can't silently downgrade the override.
+// ---------------------------------------------------------------------------
+
+function thresholdRow(
+  overrides: Partial<AppliedRuleOut>,
+): AppliedRuleOut {
+  return {
+    id: "row1",
+    binding_id: "b1",
+    rule_id: "r1",
+    pinned_version: null,
+    severity_override: null,
+    pass_threshold: null,
+    column_pass_thresholds: null,
+    column_mapping: [{ col: "email" }],
+    user_metadata: {},
+    mapping_hash: null,
+    created_by: null,
+    created_at: null,
+    rule_pass_threshold: null,
+    ...overrides,
+  } as unknown as AppliedRuleOut;
+}
+
+describe("desiredApplicationsKey threshold dirty-detection", () => {
+  const ADMIN_DEFAULT = 70;
+
+  test("explicit per-rule override equal to effective default equals null-follow-default", () => {
+    const baseline = [thresholdRow({ pass_threshold: 70 })]; // saved explicit 70 (== admin default)
+    const followDefault = [thresholdRow({ pass_threshold: null })];
+    expect(desiredApplicationsKey(baseline, ADMIN_DEFAULT)).toBe(
+      desiredApplicationsKey(followDefault, ADMIN_DEFAULT),
+    );
+  });
+
+  test("re-entering the saved-override-equal-to-default value is NOT dirty", () => {
+    // Saved value was explicit 70; committing 70 again keeps pass_threshold=70.
+    const baseline = [thresholdRow({ pass_threshold: 70 })];
+    const reentered = [thresholdRow({ pass_threshold: 70 })];
+    expect(desiredApplicationsKey(reentered, ADMIN_DEFAULT)).toBe(
+      desiredApplicationsKey(baseline, ADMIN_DEFAULT),
+    );
+  });
+
+  test("a genuine change to a different value IS dirty", () => {
+    const baseline = [thresholdRow({ pass_threshold: 70 })];
+    const changed = [thresholdRow({ pass_threshold: 85 })];
+    expect(desiredApplicationsKey(changed, ADMIN_DEFAULT)).not.toBe(
+      desiredApplicationsKey(baseline, ADMIN_DEFAULT),
+    );
+  });
+
+  test("uses the rule's registry default over the admin default when present", () => {
+    // Rule default 90; explicit override 90 should read as follow-default.
+    const explicit = [thresholdRow({ rule_pass_threshold: 90, pass_threshold: 90 })];
+    const followDefault = [thresholdRow({ rule_pass_threshold: 90, pass_threshold: null })];
+    expect(desiredApplicationsKey(explicit, ADMIN_DEFAULT)).toBe(
+      desiredApplicationsKey(followDefault, ADMIN_DEFAULT),
+    );
+    // ...but 70 (the admin default, not the rule default) is a real override → dirty.
+    const realOverride = [thresholdRow({ rule_pass_threshold: 90, pass_threshold: 70 })];
+    expect(desiredApplicationsKey(realOverride, ADMIN_DEFAULT)).not.toBe(
+      desiredApplicationsKey(followDefault, ADMIN_DEFAULT),
+    );
+  });
+
+  test("per-column override equal to the effective default is not dirty vs no override", () => {
+    // Effective column default = admin default 70 (no per-rule override).
+    const withColOverride = [thresholdRow({ column_pass_thresholds: { email: 70 } })];
+    const noOverride = [thresholdRow({ column_pass_thresholds: null })];
+    expect(desiredApplicationsKey(withColOverride, ADMIN_DEFAULT)).toBe(
+      desiredApplicationsKey(noOverride, ADMIN_DEFAULT),
+    );
+  });
+
+  test("per-column override differing from the effective default IS dirty", () => {
+    const withColOverride = [thresholdRow({ column_pass_thresholds: { email: 55 } })];
+    const noOverride = [thresholdRow({ column_pass_thresholds: null })];
+    expect(desiredApplicationsKey(withColOverride, ADMIN_DEFAULT)).not.toBe(
+      desiredApplicationsKey(noOverride, ADMIN_DEFAULT),
+    );
   });
 });

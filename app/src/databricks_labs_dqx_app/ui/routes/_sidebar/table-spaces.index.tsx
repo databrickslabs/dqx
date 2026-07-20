@@ -38,7 +38,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, Boxes, CheckCircle2, GitCompare, Loader2, Play, Plus, RotateCcw, Search, Trash2, Undo2, XCircle } from "lucide-react";
+import { AlertCircle, Boxes, CheckCircle2, FileDown, GitCompare, Loader2, Play, Plus, RotateCcw, Search, Trash2, Undo2, XCircle } from "lucide-react";
 import {
   useListDataProducts,
   useApproveDataProduct,
@@ -62,6 +62,7 @@ import {
   matchesDqScoreBucket,
 } from "@/components/data-table/filter-bar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
+import { BulkActionBar } from "@/components/data-table/BulkActionBar";
 import { cn } from "@/lib/utils";
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -366,64 +367,54 @@ function DataProductsPage() {
     );
   };
 
-  const bulkToolbar =
-    selectedIds.size > 0 ? (
-      <div className="flex flex-wrap items-center gap-2 mb-3 p-2.5 rounded-lg bg-muted/60 border w-full">
-        <span className="text-sm font-medium mr-1">
-          {t("dataProducts.selectedCount", { count: selectedIds.size })}
-        </span>
-        {bulkBusy ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <>
-            {perms.canRunRules && selectedRows.some((p) => (p.runnable_count ?? 0) > 0) && (
-              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs" onClick={() => setBulkRunOpen(true)}>
-                <Play className="h-3 w-3" />
-                {t("dataProducts.bulkRun")}
-              </Button>
-            )}
-            {perms.canApproveRules && selectedRows.some((p) => p.status === "pending_approval") && (
-              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-emerald-600" onClick={() => setBulkApproveOpen(true)}>
-                <CheckCircle2 className="h-3 w-3" />
-                {t("dataProducts.bulkApprove")}
-              </Button>
-            )}
-            {perms.canApproveRules && selectedRows.some((p) => p.status === "pending_approval") && (
-              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-destructive" onClick={() => setBulkRejectOpen(true)}>
-                <XCircle className="h-3 w-3" />
-                {t("dataProducts.bulkReject")}
-              </Button>
-            )}
-            {perms.canCreateRules && selectedRows.some((p) => p.display_status !== "modified" && p.status !== "pending_approval") && (
-              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-destructive" onClick={() => setBulkDeleteOpen(true)}>
-                <Trash2 className="h-3 w-3" />
-                {t("dataProducts.bulkDelete")}
-              </Button>
-            )}
-            {/* Export lives in the selection action bar (exports exactly the
-                ticked rows via the product_id[] filter), mirroring the Rules
-                overview — not a per-row action. */}
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1 h-7 text-xs"
-              onClick={() => setExportOpen(true)}
-            >
-              {t("exportYaml.button")}
-            </Button>
-            <ExportDialog
-              open={exportOpen}
-              onOpenChange={setExportOpen}
-              fetchDqx={() => exportDataProducts({ format: "dqx", product_id: [...selectedIds] })}
-              fetchOdcs={() => exportDataProducts({ format: "odcs", product_id: [...selectedIds] })}
-            />
-            <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto" onClick={() => setSelectedIds(new Set())}>
-              {t("dataProducts.clearSelection")}
-            </Button>
-          </>
-        )}
-      </div>
-    ) : null;
+  // Canonical action order across all three overviews (bug-bash-v4 item 14):
+  // Run → Approve → Reject → Export → Delete → Clear.
+  const bulkToolbar = (
+    <BulkActionBar
+      count={selectedIds.size}
+      label={t("dataProducts.selectedCount", { count: selectedIds.size })}
+      busy={bulkBusy}
+      onClear={() => setSelectedIds(new Set())}
+      clearLabel={t("dataProducts.clearSelection")}
+    >
+      {perms.canRunRules && selectedRows.some((p) => (p.runnable_count ?? 0) > 0) && (
+        <Button size="sm" variant="outline" className="gap-1 h-7 text-xs" onClick={() => setBulkRunOpen(true)}>
+          <Play className="h-3 w-3" />
+          {t("dataProducts.bulkRun")}
+        </Button>
+      )}
+      {perms.canApproveRules && selectedRows.some((p) => p.status === "pending_approval") && (
+        <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-emerald-600" onClick={() => setBulkApproveOpen(true)}>
+          <CheckCircle2 className="h-3 w-3" />
+          {t("dataProducts.bulkApprove")}
+        </Button>
+      )}
+      {perms.canApproveRules && selectedRows.some((p) => p.status === "pending_approval") && (
+        <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-destructive" onClick={() => setBulkRejectOpen(true)}>
+          <XCircle className="h-3 w-3" />
+          {t("dataProducts.bulkReject")}
+        </Button>
+      )}
+      {/* Export lives in the selection action bar (exports exactly the
+          ticked rows via the product_id[] filter), mirroring the Rules
+          overview — not a per-row action. */}
+      <Button
+        size="sm"
+        variant="outline"
+        className="gap-1 h-7 text-xs"
+        onClick={() => setExportOpen(true)}
+      >
+        <FileDown className="h-3 w-3" />
+        {t("exportYaml.button")}
+      </Button>
+      {perms.canCreateRules && selectedRows.some((p) => p.display_status !== "modified" && p.status !== "pending_approval") && (
+        <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-destructive" onClick={() => setBulkDeleteOpen(true)}>
+          <Trash2 className="h-3 w-3" />
+          {t("dataProducts.bulkDelete")}
+        </Button>
+      )}
+    </BulkActionBar>
+  );
 
   // Shared runner for the row-level approve/reject/delete actions — mirrors
   // the Monitored Tables list page's `runRowAction`.
@@ -538,8 +529,18 @@ function DataProductsPage() {
           </div>
         </div>
 
-        {bulkToolbar}
-        <DataProductsTable
+        {/* ExportDialog lives outside BulkActionBar so it stays mounted even
+            when selection drops to 0 (BulkActionBar returns null when count≤0,
+            which would abruptly unmount a dialog opened while deselecting). */}
+        <ExportDialog
+          open={exportOpen}
+          onOpenChange={setExportOpen}
+          fetchDqx={() => exportDataProducts({ format: "dqx", product_id: [...selectedIds] })}
+          fetchOdcs={() => exportDataProducts({ format: "odcs", product_id: [...selectedIds] })}
+        />
+        <div className="relative">
+          {bulkToolbar}
+          <DataProductsTable
           rows={paged}
           sortKey={sortKey}
           sortDir={sortDir}
@@ -729,7 +730,8 @@ function DataProductsPage() {
               </div>
             )
           }
-        />
+          />
+        </div>
 
         {filtered.length > 0 && (
           <Pagination page={page} totalItems={filtered.length} pageSize={PAGE_SIZE} onPageChange={setPage} />

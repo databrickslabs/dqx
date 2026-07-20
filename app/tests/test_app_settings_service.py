@@ -184,6 +184,40 @@ class TestGlobalResultsEnabled:
         assert svc.get_global_results_enabled() is True
 
 
+class TestRulesResultsTabEnabled:
+    """Per-rule Results tab gating (item 35) — OFF by default; explicit opt-in only."""
+
+    def test_defaults_to_false_when_unset(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []
+
+        assert svc.get_rules_results_tab_enabled() is False
+
+    def test_explicit_true_reads_on(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["true"]]
+
+        assert svc.get_rules_results_tab_enabled() is True
+
+    def test_non_true_value_reads_off(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["false"]]
+
+        assert svc.get_rules_results_tab_enabled() is False
+
+    def test_save_and_read_round_trips(self, settings_service):
+        svc, sql_executor_mock = settings_service
+
+        svc.save_rules_results_tab_enabled(True, user_email="admin@x")
+
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["key_cols"] == {"setting_key": "rules_results_tab_enabled"}
+        assert kwargs["value_cols"]["setting_value"] == "true"
+
+        sql_executor_mock.query.return_value = [["true"]]
+        assert svc.get_rules_results_tab_enabled() is True
+
+
 class TestVectorSearchSettings:
     """Vector Search / embeddings settings (Rules Registry Phase 4B/4C, auto-derived since 8B).
 

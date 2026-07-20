@@ -1713,19 +1713,29 @@ export interface GenieVerifyEntitlementsOut {
   results?: GenieVerifyEntitlementsOutResults;
 }
 
+export type GlobalResultsSettingsInGlobalResultsEnabled = boolean | null;
+
+export type GlobalResultsSettingsInRulesResultsTabEnabled = boolean | null;
+
 /**
- * Update payload for the global-Results-tab gating setting.
+ * Update payload for the global-Results-tab gating settings.
+
+Both fields are optional so a caller can flip just one toggle without
+having to echo the other's current value back.
  */
 export interface GlobalResultsSettingsIn {
-  global_results_enabled: boolean;
+  global_results_enabled?: GlobalResultsSettingsInGlobalResultsEnabled;
+  rules_results_tab_enabled?: GlobalResultsSettingsInRulesResultsTabEnabled;
 }
 
 /**
- * Effective global-Results-tab gating setting.
+ * Effective global-Results-tab gating settings.
  */
 export interface GlobalResultsSettingsOut {
   /** Whether the app-wide, all-tables Results surface (nav item + homepage overall-score explainer) is enabled. Defaults to False (hidden). */
   global_results_enabled: boolean;
+  /** Whether the per-rule Results tab is shown inside the Rules Registry rule dialog. Distinct from global_results_enabled. Defaults to False (hidden). */
+  rules_results_tab_enabled?: boolean;
 }
 
 /**
@@ -2770,6 +2780,11 @@ export interface RegistryRuleOut {
   display_status: RegistryRuleOutDisplayStatus;
 }
 
+/**
+ * Authoring mode frozen at publish time (dqx_native/lowcode/sql). Exposed so a version's diff renders its frozen check JSON as-of-the-version rather than relying on the live rule's (admin-mutable) mode. ``None`` only for legacy snapshots written before mode was frozen — consumers fall back to the live rule's mode for those.
+ */
+export type RegistryRuleVersionOutMode = 'dqx_native' | 'lowcode' | 'sql' | null;
+
 export type RegistryRuleVersionOutPolarity = 'pass' | 'fail' | null;
 
 export type RegistryRuleVersionOutUserMetadata = { [key: string]: unknown };
@@ -2784,6 +2799,8 @@ export type RegistryRuleVersionOutCreatedAt = string | null;
 export interface RegistryRuleVersionOut {
   rule_id: string;
   version: number;
+  /** Authoring mode frozen at publish time (dqx_native/lowcode/sql). Exposed so a version's diff renders its frozen check JSON as-of-the-version rather than relying on the live rule's (admin-mutable) mode. ``None`` only for legacy snapshots written before mode was frozen — consumers fall back to the live rule's mode for those. */
+  mode?: RegistryRuleVersionOutMode;
   definition: RuleDefinition;
   polarity?: RegistryRuleVersionOutPolarity;
   user_metadata?: RegistryRuleVersionOutUserMetadata;
@@ -3248,7 +3265,7 @@ export interface RulesRegistrySettingsIn {
  * Effective Rules Registry governance settings.
  */
 export interface RulesRegistrySettingsOut {
-  /** Re-approval behaviour: silently re-approve a following application's re-rendered check (True) vs. send it back to pending_approval (False, default). */
+  /** Re-approval behaviour: silently re-approve a following application's re-rendered check (True, default) vs. send it back to pending_approval (False). */
   auto_upgrade_without_approval: boolean;
   /** Attach-time default pin for new applications/members: follow latest (True, default) vs. pin to the current version (False). */
   default_auto_upgrade: boolean;
@@ -8192,7 +8209,8 @@ export const useSaveApprovalsMode = <TError = AxiosError<HTTPValidationError>,
 
 Available to any authenticated user — the sidebar and homepage both read
 it to decide whether to surface the global Results nav item and the
-overall-score "?" explainer.
+overall-score "?" explainer, and the rule dialog reads it to decide
+whether to surface the per-rule Results tab.
  * @summary Get Global Results Settings
  */
 export const getGlobalResultsSettings = (
@@ -8339,7 +8357,10 @@ export function useGetGlobalResultsSettingsSuspense<TData = Awaited<ReturnType<t
 
 
 /**
- * Enable or disable the global Results tab (admin only).
+ * Enable or disable the global Results tab and/or the per-rule Results tab (admin only).
+
+Each toggle is updated only when its field is present in the body, so a
+caller can flip one without echoing the other's current value.
  * @summary Save Global Results Settings
  */
 export const saveGlobalResultsSettings = (

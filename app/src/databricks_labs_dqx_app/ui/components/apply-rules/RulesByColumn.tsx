@@ -246,13 +246,15 @@ function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddR
                       ))}
                     </span>
                   )}
-                  {/* Per-column threshold pill — stopPropagation so clicking
-                      the pill/popover doesn't trigger the row's onJumpToRule.
-                      Mirror how SeverityDropdown stops propagation in
-                      RuleConfigCard. Hidden when the threshold feature is
-                      disabled. */}
+                  {/* Per-column threshold pill — fixed-width container so the
+                      pill column aligns vertically down the list regardless of
+                      whether a rule has an override ("< 70%*") or not ("< 70%").
+                      stopPropagation prevents the row's onJumpToRule from firing
+                      when the user interacts with the pill popover. Hidden when
+                      the threshold feature is disabled. */}
                   {thresholdEnabled && (
                     <span
+                      className="min-w-[5.5rem] flex justify-start shrink-0"
                       onClick={(e) => e.stopPropagation()}
                       onKeyDown={(e) => e.stopPropagation()}
                     >

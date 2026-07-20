@@ -47,10 +47,10 @@ class TestGetRulesRegistrySettings:
     def test_returns_defaults_when_unset(self, svc):
         result = get_rules_registry_settings(svc)
 
-        # auto_upgrade_without_approval defaults False (Behaviour B);
-        # default_auto_upgrade defaults True (follow latest) — the two
-        # settings have deliberately different defaults.
-        assert result.auto_upgrade_without_approval is False
+        # auto_upgrade_without_approval defaults True (Behaviour A) — unset
+        # means auto-approve; explicit "false" opts out.
+        # default_auto_upgrade defaults True (follow latest).
+        assert result.auto_upgrade_without_approval is True
         assert result.default_auto_upgrade is True
 
     def test_tag_auto_apply_defaults_false(self, svc):
@@ -71,8 +71,8 @@ class TestSaveRulesRegistrySettings:
         )
 
         assert result.default_auto_upgrade is False
-        # auto_upgrade_without_approval untouched — still its default.
-        assert result.auto_upgrade_without_approval is False
+        # auto_upgrade_without_approval untouched — still its default (True).
+        assert result.auto_upgrade_without_approval is True
         assert sql_executor_mock.upsert.call_count == 1
 
     def test_saves_auto_upgrade_without_approval_independently(self, svc, sql_executor_mock):
@@ -105,7 +105,7 @@ class TestSaveRulesRegistrySettings:
             RulesRegistrySettingsIn(tag_auto_apply=True), svc, "admin@x"
         )
         assert result.tag_auto_apply is True
-        assert result.auto_upgrade_without_approval is False
+        assert result.auto_upgrade_without_approval is True
         assert result.default_auto_upgrade is True
         assert sql_executor_mock.upsert.call_count == 1
 

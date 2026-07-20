@@ -482,4 +482,5 @@ describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without cor
       predicate: "x > 0",
     });
   });
+
 });

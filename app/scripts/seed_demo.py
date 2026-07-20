@@ -299,6 +299,7 @@ def main() -> int:
         binding_run_service=binding_run,
         version_service=version_service,
         app_settings=app_settings,
+        materializer=materializer,
     )
 
     svc = DemoSeedService(
@@ -318,6 +319,8 @@ def main() -> int:
         status=status,
         reset_service=reset_service,
         embeddings=embeddings,
+        job_service=job_service,
+        profiler_view=sp_view,
         catalog=catalog,
     )
 

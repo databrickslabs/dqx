@@ -3,7 +3,7 @@ import type * as React from "react";
 import { QueryErrorResetBoundary, keepPreviousData } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { Trans, useTranslation } from "react-i18next";
-import { ChevronDown, Loader2, Search } from "lucide-react";
+import { ChevronDown, Loader2, MessageSquare, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,7 +30,8 @@ import { ScoreBox } from "@/components/results/ScoreBox";
 import { RunPicker } from "@/components/results/RunPicker";
 import { RunModeSelect, includeDraftsParam } from "@/components/results/RunModeSelect";
 import { RunReviewStatusPanel } from "@/components/RunReviewStatusPanel";
-import { CommentThread } from "@/components/CommentThread";
+import { CommentsDialog } from "@/components/CommentThread";
+import { useListComments } from "@/lib/api-custom";
 import { RunInProgressBanner } from "@/components/results/RunInProgressBanner";
 import { CollapsibleSection } from "@/components/results/CollapsibleSection";
 import { CollapseRegion } from "@/components/results/CollapseRegion";
@@ -382,6 +383,7 @@ function ResultsBody({
   const [colSearch, setColSearch] = useState("");
   // Shared collapse state — each boolean drives BOTH members of a pair so the
   // chevron on either one toggles them together.
+  const [showComments, setShowComments] = useState(false);
   const [scoreBreakdownOpen, setScoreBreakdownOpen] = useState(true);
   const [countChartsOpen, setCountChartsOpen] = useState(false);
   const [ruleColOpen, setRuleColOpen] = useState(true);
@@ -422,6 +424,13 @@ function ResultsBody({
   );
   const latestRunId = runs[0]?.run_id;
   const effectiveRunId = filters.runId ?? latestRunId;
+  // Comment count badge for the run comments trigger (items 8+29).
+  const { data: runCommentsResp } = useListComments(
+    "run",
+    effectiveRunId ?? "",
+    { query: { enabled: Boolean(effectiveRunId) } },
+  );
+  const runCommentCount = runCommentsResp?.data?.length ?? 0;
   // Failed-records run scope: the picked run, or omitted for "Latest" (the
   // backend resolves the latest run — records are per-run, never stacked).
   const failedRowsRunId = failedRowsRunParam(filters.runId, latestRunId);
@@ -662,22 +671,25 @@ function ResultsBody({
     { key: "failed_records", label: "Rows" },
   ]);
 
-  // #65: mark the runs where the binding version incremented vs the previous
-  // point. The overall trend is sorted ascending by run; a point carries the
-  // version active as-of its run (backend-stamped), so a strict increase is a
-  // new approval. Kept subtle and only on this single-table overall trend.
+  // #65: mark the run where each binding version FIRST becomes active. The
+  // overall trend is sorted ascending by run; a point carries the version
+  // active as-of its run (backend-stamped). Emitting a marker at the first
+  // appearance of every distinct version — not only on increases from a prior
+  // non-null version — means v1 (a table's first approval) gets a marker too,
+  // not just v2+. Version 0 is the pre-freeze baseline ("before any approval"),
+  // so it never earns a marker. Kept subtle and only on this single-table trend.
   const versionMarkers: Array<{ run_date: string; label: string }> = [];
   {
-    let prevVersion: number | null = null;
+    const seen = new Set<number>();
     for (const point of trend?.trend ?? []) {
       const version = point.version ?? null;
-      if (version != null && prevVersion != null && version > prevVersion && point.run_date) {
-        versionMarkers.push({
-          run_date: String(point.run_date),
-          label: t("resultsUi.versionMarker", { version }),
-        });
-      }
-      if (version != null) prevVersion = version;
+      if (version == null || version < 1 || !point.run_date) continue;
+      if (seen.has(version)) continue;
+      seen.add(version);
+      versionMarkers.push({
+        run_date: String(point.run_date),
+        label: t("resultsUi.versionMarker", { version }),
+      });
     }
   }
 
@@ -795,11 +807,31 @@ function ResultsBody({
           Runs History's expanded rows — so the steward can set the review
           status and discuss the run without leaving the page. */}
       {effectiveRunId && (
-        <div className="space-y-4 rounded-lg border bg-card p-4">
-          <RunReviewStatusPanel runId={effectiveRunId} />
-          <div className="border-t pt-4">
-            <CommentThread entityType="run" entityId={effectiveRunId} />
-          </div>
+        <div className="rounded-lg border bg-card p-4">
+          <RunReviewStatusPanel
+            runId={effectiveRunId}
+            trailingAction={
+              <button
+                type="button"
+                onClick={() => setShowComments(true)}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors ml-auto"
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                {t("commentThread.showComments")} {t("commentThread.commentsSuffix")}
+                {runCommentCount > 0 && (
+                  <span className="rounded-full bg-muted px-1.5 py-px text-[10px] font-medium">
+                    {runCommentCount}
+                  </span>
+                )}
+              </button>
+            }
+          />
+          <CommentsDialog
+            entityType="run"
+            entityId={effectiveRunId}
+            open={showComments}
+            onOpenChange={setShowComments}
+          />
         </div>
       )}
 

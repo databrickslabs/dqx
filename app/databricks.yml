@@ -68,8 +68,10 @@ variables:
     description: "Lakebase endpoint min compute units (floor 0.5; cannot be 0)."
     default: 0.5
   lakebase_max_cu:
-    description: "Lakebase endpoint max compute units (>= min)."
-    default: 1
+    description: "Lakebase endpoint max compute units (>= min). Raised to 4 to give
+      the endpoint more headroom under concurrent load; min stays 0.5 so scale-to-zero
+      idle cost is unchanged."
+    default: 4
   lakebase_suspend_timeout:
     description: >
       Idle duration after which the Lakebase endpoint scales to zero (suspends).

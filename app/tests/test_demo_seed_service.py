@@ -53,6 +53,11 @@ def _svc(**over):
     return DemoSeedService(**deps), deps
 
 
+def _mapped_rule_keys() -> set[str]:
+    """Rule keys that land in the build_rules map (all except pending-approval)."""
+    return {spec.key for spec in manifest.RULES if spec.key not in manifest.PENDING_APPROVAL_RULE_KEYS}
+
+
 def _use_create_path(deps, rule_id: str = "r1") -> None:
     """Configure the registry mock so _build_rules takes the genuine create path.
 
@@ -62,6 +67,9 @@ def _use_create_path(deps, rule_id: str = "r1") -> None:
     returns the published rule.
     """
     deps["registry"].find_approved_rule_for_definition.return_value = None
+    # Pending rules dedupe on structural fingerprint (idempotent re-seed guard);
+    # None means "no existing active rule", so the create path runs.
+    deps["registry"].get_active_rule_by_fingerprint.return_value = None
     deps["registry"].create_rule.return_value = (MagicMock(rule_id=rule_id), None)
     deps["registry"].submit.return_value = MagicMock(rule_id=rule_id)
     deps["registry"].approve.return_value = MagicMock(rule_id=rule_id, version=2)
@@ -75,10 +83,12 @@ def test_run_creates_all_rules_and_writes_terminal_status():
     deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
     # short-circuit the wait+validate+weekly loop via a 0-week run for the unit test
     svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
-    # every manifest rule created + published via the genuine path
+    # every manifest rule is created + submitted, but the pending-approval
+    # rule(s) are NOT approved — they stay awaiting a human decision.
+    approved_count = len(manifest.RULES) - len(manifest.PENDING_APPROVAL_RULE_KEYS)
     assert deps["registry"].create_rule.call_count == len(manifest.RULES)
     assert deps["registry"].submit.call_count == len(manifest.RULES)
-    assert deps["registry"].approve.call_count == len(manifest.RULES)
+    assert deps["registry"].approve.call_count == approved_count
     # profiler-suggestion primitive is NOT used (it hardcodes dqx_native)
     assert not deps["registry"].match_or_create_approved_rule.called
     # terminal status written
@@ -163,9 +173,16 @@ def test_build_rules_is_idempotent_when_rule_already_approved():
     # An already-approved rule with the same fingerprint is reused, never re-created.
     svc, deps = _svc()
     deps["registry"].find_approved_rule_for_definition.return_value = MagicMock(rule_id="existing")
+    # no pre-existing pending twin, so the pending rule still takes the create path.
+    deps["registry"].get_active_rule_by_fingerprint.return_value = None
+    # the pending-approval rule always takes the create path, so create_rule
+    # must still return a (rule, warning) tuple.
+    deps["registry"].create_rule.return_value = (MagicMock(rule_id="pending"), None)
     rule_map = svc._build_rules("admin@example.com")
-    assert not deps["registry"].create_rule.called
-    assert set(rule_map) == {spec.key for spec in manifest.RULES}
+    # the pending-approval rule always takes the create+submit path (it has no
+    # approved twin to reuse), so create_rule IS called for it.
+    assert deps["registry"].create_rule.call_count == len(manifest.PENDING_APPROVAL_RULE_KEYS)
+    assert set(rule_map) == _mapped_rule_keys()
     assert all(rid == "existing" for rid in rule_map.values())
 
 
@@ -180,8 +197,10 @@ def test_build_rules_embeds_each_created_rule_for_suggestions():
 
     svc._build_rules("admin@example.com")
 
-    # one embed per manifest rule, each with the approved rule object
-    assert embeddings.embed_and_store.call_count == len(manifest.RULES)
+    # one embed per APPROVED manifest rule — the pending-approval rule(s) are
+    # never approved, so they are never embedded into the suggestion corpus.
+    embedded_count = len(manifest.RULES) - len(manifest.PENDING_APPROVAL_RULE_KEYS)
+    assert embeddings.embed_and_store.call_count == embedded_count
 
 
 def test_build_rules_embeds_reused_rules_too():
@@ -190,10 +209,32 @@ def test_build_rules_embeds_reused_rules_too():
     embeddings = MagicMock()
     svc, deps = _svc(embeddings=embeddings)
     deps["registry"].find_approved_rule_for_definition.return_value = MagicMock(rule_id="existing")
+    deps["registry"].get_active_rule_by_fingerprint.return_value = None
+    # the pending-approval rule takes the create path even when others are reused.
+    deps["registry"].create_rule.return_value = (MagicMock(rule_id="pending"), None)
 
     svc._build_rules("admin@example.com")
 
-    assert embeddings.embed_and_store.call_count == len(manifest.RULES)
+    embedded_count = len(manifest.RULES) - len(manifest.PENDING_APPROVAL_RULE_KEYS)
+    assert embeddings.embed_and_store.call_count == embedded_count
+
+
+def test_pending_approval_rule_is_idempotent_when_already_present():
+    # A no-wipe re-seed must NOT mint a duplicate pending draft: if an active
+    # (draft/pending/approved) rule with the same fingerprint already exists,
+    # the pending rule is skipped (create_rule not called for it).
+    svc, deps = _svc()
+    deps["registry"].find_approved_rule_for_definition.return_value = None
+    # An existing active rule with the pending rule's fingerprint is found.
+    deps["registry"].get_active_rule_by_fingerprint.return_value = MagicMock(rule_id="existing-pending")
+    deps["registry"].create_rule.return_value = (MagicMock(rule_id="r1"), None)
+
+    svc._build_rules("admin@example.com")
+
+    # create_rule is called for every APPROVED manifest rule, but NOT for the
+    # pending one (it was found via fingerprint and skipped).
+    approved_count = len(manifest.RULES) - len(manifest.PENDING_APPROVAL_RULE_KEYS)
+    assert deps["registry"].create_rule.call_count == approved_count
 
 
 def test_build_rules_survives_embed_failure():
@@ -205,7 +246,7 @@ def test_build_rules_survives_embed_failure():
     _use_create_path(deps)
 
     rule_map = svc._build_rules("admin@example.com")  # must not raise
-    assert set(rule_map) == {spec.key for spec in manifest.RULES}
+    assert set(rule_map) == _mapped_rule_keys()
 
 
 def test_build_rules_without_embeddings_service_is_a_noop():
@@ -214,7 +255,7 @@ def test_build_rules_without_embeddings_service_is_a_noop():
     svc, deps = _svc()  # no embeddings passed
     _use_create_path(deps)
     rule_map = svc._build_rules("admin@example.com")
-    assert set(rule_map) == {spec.key for spec in manifest.RULES}
+    assert set(rule_map) == _mapped_rule_keys()
 
 
 def test_wipe_first_calls_reset_service():
@@ -631,6 +672,42 @@ def test_weekly_trend_tightens_card_rule_at_tighten_week():
     # update_draft is only called by the tighten path (bindings use apply_rules)
     assert deps["registry"].update_draft.called
     assert deps["registry"].update_draft.call_args.args[0] == "card-rid"
+
+
+def test_redate_version_freezes_spreads_freezes_across_trend_window():
+    # Item 2: version freezes are written at seed-time "now"; left unmoved they
+    # all sit AFTER every back-dated run, so annotate_trend_versions resolves
+    # every trend point to version 0 and the results-over-time version markers
+    # never appear. _redate_version_freezes must re-date each binding's freezes
+    # into the trend window (strictly increasing, in version order) so version
+    # bumps land mid-timeline and each version's first appearance gets a marker.
+    svc, deps = _svc()
+    deps["oltp"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+    now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc)
+    weeks = 4
+    # two bindings, each with two real freezes (v1 at build, v2 at week 0)
+    svc._freeze_log = [("b-orders", 1), ("b-orders", 2), ("b-customers", 1), ("b-customers", 2)]
+
+    svc._redate_version_freezes(now, weeks)
+
+    executed = [call.args[0] for call in deps["oltp"].execute.call_args_list]
+    version_updates = [s for s in executed if "dq_monitored_table_versions" in s and s.startswith("UPDATE")]
+    # every logged freeze is re-dated (2 bindings x 2 versions)
+    assert len(version_updates) == 4
+    first_iso = redate.iso(svc._week_instant(now, 0, weeks))
+    last_iso = redate.iso(svc._week_instant(now, weeks - 1, weeks))
+    # v1 anchors at the first-week instant; the last freeze stays strictly before
+    # the final-week instant so the final run still resolves to the top version
+    assert any(first_iso in s and "version = 1" in s and "b-orders" in s for s in version_updates)
+    assert all(last_iso not in s for s in version_updates)
+
+
+def test_redate_version_freezes_noop_without_freezes_or_weeks():
+    svc, deps = _svc()
+    deps["oltp"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+    svc._freeze_log = [("b1", 1)]
+    svc._redate_version_freezes(datetime(2026, 7, 14, tzinfo=timezone.utc), 0)
+    assert not deps["oltp"].execute.called
 
 
 def test_validation_gate_submits_all_runs_before_waiting():
@@ -1142,3 +1219,166 @@ def test_validation_gate_deletes_gate_runs_from_both_tables():
     # one DELETE per gate run against each of the two tables
     assert any(s.startswith("DELETE FROM") and "dq_metrics" in s and "gate-run" in s for s in deletes)
     assert any(s.startswith("DELETE FROM") and "dq_validation_runs" in s and "gate-run" in s for s in deletes)
+
+
+# ---------------------------------------------------------------------------
+# Item 31: the SSN rule is submitted-for-approval only — never approved, never
+# embedded, never mapped to a binding.
+# ---------------------------------------------------------------------------
+
+
+def test_pending_approval_rule_is_submitted_but_never_approved_or_mapped():
+    # The SSN rule (in PENDING_APPROVAL_RULE_KEYS) is created + submitted so it
+    # lands in the Review & Approve queue, but is NEVER approved and NEVER
+    # returned in the rule_map (so no binding can map it) — it stays an
+    # UNMAPPED, pending_approval library draft.
+    assert manifest.PENDING_APPROVAL_RULE_KEYS, "expected at least one pending-approval demo rule"
+    svc, deps = _svc()
+    _use_create_path(deps)
+
+    created_keys: list[str] = []
+    submitted_ids: list[str] = []
+    approved_ids: list[str] = []
+
+    def _create(*_a, **kwargs):
+        # derive the rule key from the reserved name tag in user_metadata
+        meta = kwargs["user_metadata"]
+        name = json.dumps(meta)
+        rid = f"rid-{len(created_keys)}"
+        created_keys.append(name)
+        return (MagicMock(rule_id=rid), None)
+
+    deps["registry"].create_rule.side_effect = _create
+    deps["registry"].submit.side_effect = lambda rid, _u: submitted_ids.append(rid) or MagicMock(rule_id=rid)
+    deps["registry"].approve.side_effect = lambda rid, _u: approved_ids.append(rid) or MagicMock(rule_id=rid, version=2)
+
+    rule_map = svc._build_rules("admin@example.com")
+
+    # the pending rule is not in the map (so bindings can never resolve it)
+    for key in manifest.PENDING_APPROVAL_RULE_KEYS:
+        assert key not in rule_map, f"pending-approval rule {key!r} must not be in the rule_map"
+    # every rule (incl. the pending one) was created + submitted...
+    assert deps["registry"].create_rule.call_count == len(manifest.RULES)
+    assert deps["registry"].submit.call_count == len(manifest.RULES)
+    # ...but only the non-pending rules were approved
+    assert deps["registry"].approve.call_count == len(manifest.RULES) - len(manifest.PENDING_APPROVAL_RULE_KEYS)
+
+
+def test_pending_approval_rule_is_not_embedded():
+    # A pending_approval rule must NOT enter the suggestion corpus (only approved
+    # rules are embedded via the real approve route).
+    embeddings = MagicMock()
+    svc, deps = _svc(embeddings=embeddings)
+    _use_create_path(deps)
+
+    svc._build_rules("admin@example.com")
+
+    embedded_count = len(manifest.RULES) - len(manifest.PENDING_APPROVAL_RULE_KEYS)
+    assert embeddings.embed_and_store.call_count == embedded_count
+
+
+def test_pending_approval_rule_key_references_a_real_manifest_rule():
+    # Guard: every key in PENDING_APPROVAL_RULE_KEYS must name a real rule so a
+    # typo can't silently disable the feature.
+    for key in manifest.PENDING_APPROVAL_RULE_KEYS:
+        assert key in manifest.RULES_BY_KEY, f"{key!r} is not a manifest rule"
+
+
+def test_ssn_rule_is_unmapped_in_every_binding():
+    # The SSN rule must not appear in any binding's mappings — it stays an
+    # unmapped library rule.
+    for binding in manifest.BINDINGS:
+        assert "ssn_format" not in binding.mappings, f"ssn_format must not be bound to {binding.table}"
+
+
+# ---------------------------------------------------------------------------
+# Item 10: the demo runs a real profiler job on a demo table.
+# ---------------------------------------------------------------------------
+
+
+def test_run_profiling_submits_job_and_records_result_row():
+    # The profiling phase creates a temp view, submits the profiler Job, records
+    # the RUNNING placeholder, polls dq_profiling_results to a terminal SUCCESS,
+    # then drops the view — producing a real profiler result the Profile page renders.
+    job_service = MagicMock()
+    job_service.submit_run.return_value = 9911
+    profiler_view = MagicMock()
+    profiler_view.create_view.return_value = "dqx.dqx_studio_tmp.tmp_view_abc"
+    svc, deps = _svc(job_service=job_service, profiler_view=profiler_view)
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.return_value = [{"status": "SUCCESS"}]
+
+    run_id = svc._run_profiling("admin@example.com")
+
+    assert run_id is not None
+    # a view was created over the demo profile table and dropped afterwards
+    profiler_view.create_view.assert_called_once()
+    assert manifest.PROFILE_DEMO_TABLE in profiler_view.create_view.call_args.args[0]
+    profiler_view.drop_view.assert_called_once_with("dqx.dqx_studio_tmp.tmp_view_abc")
+    # the profiler Job was submitted with task_type=profile
+    assert job_service.submit_run.call_args.kwargs["task_type"] == "profile"
+    # a RUNNING placeholder was recorded into dq_profiling_results
+    assert "dq_profiling_results" in job_service.record_run_started.call_args.kwargs["table"]
+    assert job_service.record_run_started.call_args.kwargs["run_id"] == run_id
+
+
+def test_run_profiling_is_invoked_as_a_phase_of_run():
+    # run() must invoke the profiling phase (so the demo actually profiles) and
+    # report a "profile" phase status.
+    job_service = MagicMock()
+    job_service.submit_run.return_value = 1
+    profiler_view = MagicMock()
+    profiler_view.create_view.return_value = "dqx.dqx_studio_tmp.tmp_view_x"
+    svc, deps = _svc(job_service=job_service, profiler_view=profiler_view)
+    _use_create_path(deps)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+    deps["app_sql"].query_dicts.return_value = [{"status": "SUCCESS"}]
+
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    job_service.submit_run.assert_called_once()
+    phases = [c.args[0].phase for c in deps["status"].set.call_args_list]
+    assert "profile" in phases
+    last = deps["status"].set.call_args_list[-1].args[0]
+    assert last.state == "succeeded"
+
+
+def test_run_profiling_is_a_noop_without_collaborators():
+    # With no job service / view service (minimal test graph, no compute), the
+    # profiling phase is a logged no-op — it never raises.
+    svc, _deps = _svc()  # no job_service / profiler_view
+    assert svc._run_profiling("admin@example.com") is None
+
+
+def test_run_profiling_failure_does_not_abort_seed():
+    # A profiler failure (submit error / timeout) must be swallowed so the
+    # ~30min seed continues; the view is still dropped.
+    job_service = MagicMock()
+    job_service.submit_run.side_effect = RuntimeError("no warehouse")
+    profiler_view = MagicMock()
+    profiler_view.create_view.return_value = "dqx.dqx_studio_tmp.tmp_view_y"
+    svc, deps = _svc(job_service=job_service, profiler_view=profiler_view)
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+
+    # must not raise
+    svc._run_profiling("admin@example.com")
+    profiler_view.drop_view.assert_called_once_with("dqx.dqx_studio_tmp.tmp_view_y")
+
+
+def test_run_profiling_failure_does_not_fail_the_whole_seed():
+    # Even when profiling fails, run(weeks=0) still reaches a succeeded terminal
+    # status — profiling is best-effort.
+    job_service = MagicMock()
+    job_service.submit_run.side_effect = RuntimeError("no warehouse")
+    profiler_view = MagicMock()
+    profiler_view.create_view.return_value = "dqx.dqx_studio_tmp.tmp_view_z"
+    svc, deps = _svc(job_service=job_service, profiler_view=profiler_view)
+    _use_create_path(deps)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
+
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    last = deps["status"].set.call_args_list[-1].args[0]
+    assert last.state == "succeeded"

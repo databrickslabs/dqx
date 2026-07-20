@@ -257,16 +257,49 @@ export function buildDesiredApplications(stagedRows: AppliedRuleOut[]): DesiredA
  *  `stableStringify(currentSnapshot) !== stableStringify(snapshotFromRule(...))`
  *  pattern). Sorts by `rule_id` and, within each application, by mapping
  *  group so row insertion order and mapping-group order never cause a false
- *  "dirty" positive. */
-export function desiredApplicationsKey(stagedRows: AppliedRuleOut[]): string {
+ *  "dirty" positive.
+ *
+ *  Threshold dirty-detection (item 33): a per-rule/per-column threshold that
+ *  equals its *effective default* is normalized to the same key as `null`
+ *  ("follow default"), because they mean the same thing to the checker. This
+ *  keeps two facts from producing false diffs against each other: (a) an
+ *  explicit last-saved override equal to the default and a null-follow-default
+ *  are treated as EQUAL, so re-entering the saved value never marks dirty, and
+ *  (b) it never rewrites the persisted payload — `buildDesiredApplications`
+ *  still carries the explicit value, so saving can't silently downgrade an
+ *  explicit override to follow-default.
+ *
+ *  *adminDefault* is the workspace-wide default pass threshold used to resolve
+ *  a rule's effective default when the rule carries no registry default. */
+export function desiredApplicationsKey(stagedRows: AppliedRuleOut[], adminDefault: number): string {
+  // Resolve each rule_id's registry-level default from its rows (dropped by
+  // buildDesiredApplications, so read it off the grouped source rows here).
+  const ruleDefaultById = new Map<string, number>();
+  for (const { ruleId, rows } of groupAppliedRulesByRuleId(stagedRows)) {
+    ruleDefaultById.set(ruleId, rows[0]?.rule_pass_threshold ?? adminDefault);
+  }
+
   const normalized = buildDesiredApplications(stagedRows)
     .map((application) => {
-      // Stable serialization of per-column threshold map — sort keys so
-      // insertion order never produces a false "dirty" positive.
+      // Effective per-rule default (registry default ?? admin default). A
+      // per-rule override equal to it means "follow default" → normalize to null.
+      const ruleDefault = ruleDefaultById.get(application.rule_id) ?? adminDefault;
+      const rawPass = application.pass_threshold ?? null;
+      const normPass = rawPass === null || rawPass === ruleDefault ? null : rawPass;
+
+      // Effective per-COLUMN default = the rule-level effective threshold
+      // (explicit per-rule override ?? rule default), mirroring the pill's
+      // `columnEffectiveDefault`. Drop any column override equal to it.
+      const columnDefault = rawPass ?? ruleDefault;
       const colThresholds = application.column_pass_thresholds;
-      const colThresholdsStr = colThresholds
-        ? JSON.stringify(Object.fromEntries(Object.entries(colThresholds).sort()))
+      const normColThresholds = colThresholds
+        ? Object.fromEntries(Object.entries(colThresholds).filter(([, pct]) => pct !== columnDefault))
         : null;
+      const colThresholdsStr =
+        normColThresholds && Object.keys(normColThresholds).length > 0
+          ? JSON.stringify(Object.fromEntries(Object.entries(normColThresholds).sort()))
+          : null;
+
       return {
         rule_id: application.rule_id,
         column_mapping: (application.column_mapping ?? [])
@@ -274,7 +307,7 @@ export function desiredApplicationsKey(stagedRows: AppliedRuleOut[]): string {
           .sort(),
         pinned_version: application.pinned_version ?? null,
         severity_override: application.severity_override ?? null,
-        pass_threshold: application.pass_threshold ?? null,
+        pass_threshold: normPass,
         column_pass_thresholds: colThresholdsStr,
         tags: JSON.stringify(Object.fromEntries(Object.entries(application.tags ?? {}).sort())),
       };
@@ -324,6 +357,29 @@ export function computeRunGating(baselineCount: number, stagedCount: number): Ru
 // fall back to the first slot. Returns null when there are no slots (the
 // rule has no column arguments and needs no mapping).
 // ---------------------------------------------------------------------------
+
+/** Rule ids already mapped to a specific column across all staged rows.
+ *  Used by the by-column Add Rule dialog to compute a column-scoped
+ *  "already applied" set: a rule applied to column A is not disabled when
+ *  adding to column B — only rules that ALREADY target that exact column are
+ *  locked (item 4). Multi-value slot values (comma-joined) are parsed the
+ *  same way as `getUsedColumnsForRule` above. */
+export function getRuleIdsForColumn(rows: AppliedRuleOut[], columnName: string): Set<string> {
+  const result = new Set<string>();
+  for (const row of rows) {
+    for (const group of row.column_mapping ?? []) {
+      for (const value of Object.values(group)) {
+        if (!value) continue;
+        for (const col of value.split(",")) {
+          if (col.trim() === columnName) {
+            result.add(row.rule_id);
+          }
+        }
+      }
+    }
+  }
+  return result;
+}
 
 /** Pick the slot name to bind a column to when adding a rule from the
  *  by-column view. Returns the name of the first slot whose family matches

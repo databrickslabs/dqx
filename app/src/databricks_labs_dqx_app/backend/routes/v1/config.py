@@ -1174,7 +1174,7 @@ class RulesRegistrySettingsOut(BaseModel):
 
     auto_upgrade_without_approval: bool = Field(
         description="Re-approval behaviour: silently re-approve a following application's "
-        "re-rendered check (True) vs. send it back to pending_approval (False, default)."
+        "re-rendered check (True, default) vs. send it back to pending_approval (False)."
     )
     default_auto_upgrade: bool = Field(
         description="Attach-time default pin for new applications/members: follow latest "
@@ -1339,18 +1339,28 @@ def save_approvals_mode(
 
 
 class GlobalResultsSettingsOut(BaseModel):
-    """Effective global-Results-tab gating setting."""
+    """Effective global-Results-tab gating settings."""
 
     global_results_enabled: bool = Field(
         description="Whether the app-wide, all-tables Results surface (nav item + homepage "
         "overall-score explainer) is enabled. Defaults to False (hidden)."
     )
+    rules_results_tab_enabled: bool = Field(
+        default=False,
+        description="Whether the per-rule Results tab is shown inside the Rules Registry rule "
+        "dialog. Distinct from global_results_enabled. Defaults to False (hidden).",
+    )
 
 
 class GlobalResultsSettingsIn(BaseModel):
-    """Update payload for the global-Results-tab gating setting."""
+    """Update payload for the global-Results-tab gating settings.
 
-    global_results_enabled: bool
+    Both fields are optional so a caller can flip just one toggle without
+    having to echo the other's current value back.
+    """
+
+    global_results_enabled: bool | None = None
+    rules_results_tab_enabled: bool | None = None
 
 
 @router.get(
@@ -1365,9 +1375,13 @@ def get_global_results_settings(
 
     Available to any authenticated user — the sidebar and homepage both read
     it to decide whether to surface the global Results nav item and the
-    overall-score "?" explainer.
+    overall-score "?" explainer, and the rule dialog reads it to decide
+    whether to surface the per-rule Results tab.
     """
-    return GlobalResultsSettingsOut(global_results_enabled=svc.get_global_results_enabled())
+    return GlobalResultsSettingsOut(
+        global_results_enabled=svc.get_global_results_enabled(),
+        rules_results_tab_enabled=svc.get_rules_results_tab_enabled(),
+    )
 
 
 @router.put(
@@ -1381,10 +1395,25 @@ def save_global_results_settings(
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     email: Annotated[str, Depends(get_user_email)],
 ) -> GlobalResultsSettingsOut:
-    """Enable or disable the global Results tab (admin only)."""
-    saved = svc.save_global_results_enabled(body.global_results_enabled, user_email=email)
-    logger.info("Saved global_results_enabled = %s (by=%s)", saved, email)
-    return GlobalResultsSettingsOut(global_results_enabled=saved)
+    """Enable or disable the global Results tab and/or the per-rule Results tab (admin only).
+
+    Each toggle is updated only when its field is present in the body, so a
+    caller can flip one without echoing the other's current value.
+    """
+    if body.global_results_enabled is not None:
+        saved_global = svc.save_global_results_enabled(body.global_results_enabled, user_email=email)
+        logger.info("Saved global_results_enabled = %s (by=%s)", saved_global, email)
+    else:
+        saved_global = svc.get_global_results_enabled()
+    if body.rules_results_tab_enabled is not None:
+        saved_rules = svc.save_rules_results_tab_enabled(body.rules_results_tab_enabled, user_email=email)
+        logger.info("Saved rules_results_tab_enabled = %s (by=%s)", saved_rules, email)
+    else:
+        saved_rules = svc.get_rules_results_tab_enabled()
+    return GlobalResultsSettingsOut(
+        global_results_enabled=saved_global,
+        rules_results_tab_enabled=saved_rules,
+    )
 
 
 # ----------------------------------------------------------------------

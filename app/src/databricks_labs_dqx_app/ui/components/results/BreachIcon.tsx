@@ -10,8 +10,8 @@ import { cn } from "@/lib/utils";
 /**
  * A small warning triangle shown when a results group has a threshold breach.
  * Renders nothing when criticality is null/undefined or an unrecognised value.
- * - "warn" → amber
- * - "error" → red (destructive)
+ * The icon is always amber (item 45 — no variable colour for threshold fails);
+ * error vs warn is still conveyed by the tooltip text, not the colour.
  */
 export function BreachIcon({
   criticality,
@@ -37,12 +37,11 @@ export function BreachIcon({
         <span
           className={cn(
             "inline-flex shrink-0 items-center",
-            // Higher-contrast fills, especially in dark mode: a brighter
-            // red/amber in dark and a deeper shade in light, plus a heavier
-            // stroke so the small triangle reads clearly against tinted rows.
-            isError
-              ? "text-red-600 dark:text-red-400"
-              : "text-amber-600 dark:text-amber-300",
+            // Always amber (item 45): the warning triangle no longer varies
+            // colour by criticality — a deeper amber in light and a brighter
+            // amber in dark, with a heavier stroke so the small triangle reads
+            // clearly against tinted rows. error vs warn lives in the tooltip.
+            "text-amber-600 dark:text-amber-300",
             className,
           )}
           aria-label={tooltip}
