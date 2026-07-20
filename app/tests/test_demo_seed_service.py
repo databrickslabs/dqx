@@ -633,6 +633,42 @@ def test_weekly_trend_tightens_card_rule_at_tighten_week():
     assert deps["registry"].update_draft.call_args.args[0] == "card-rid"
 
 
+def test_redate_version_freezes_spreads_freezes_across_trend_window():
+    # Item 2: version freezes are written at seed-time "now"; left unmoved they
+    # all sit AFTER every back-dated run, so annotate_trend_versions resolves
+    # every trend point to version 0 and the results-over-time version markers
+    # never appear. _redate_version_freezes must re-date each binding's freezes
+    # into the trend window (strictly increasing, in version order) so version
+    # bumps land mid-timeline and each version's first appearance gets a marker.
+    svc, deps = _svc()
+    deps["oltp"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+    now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc)
+    weeks = 4
+    # two bindings, each with two real freezes (v1 at build, v2 at week 0)
+    svc._freeze_log = [("b-orders", 1), ("b-orders", 2), ("b-customers", 1), ("b-customers", 2)]
+
+    svc._redate_version_freezes(now, weeks)
+
+    executed = [call.args[0] for call in deps["oltp"].execute.call_args_list]
+    version_updates = [s for s in executed if "dq_monitored_table_versions" in s and s.startswith("UPDATE")]
+    # every logged freeze is re-dated (2 bindings x 2 versions)
+    assert len(version_updates) == 4
+    first_iso = redate.iso(svc._week_instant(now, 0, weeks))
+    last_iso = redate.iso(svc._week_instant(now, weeks - 1, weeks))
+    # v1 anchors at the first-week instant; the last freeze stays strictly before
+    # the final-week instant so the final run still resolves to the top version
+    assert any(first_iso in s and "version = 1" in s and "b-orders" in s for s in version_updates)
+    assert all(last_iso not in s for s in version_updates)
+
+
+def test_redate_version_freezes_noop_without_freezes_or_weeks():
+    svc, deps = _svc()
+    deps["oltp"].fqn.side_effect = lambda table: f"dqx.dqx_studio.{table}"
+    svc._freeze_log = [("b1", 1)]
+    svc._redate_version_freezes(datetime(2026, 7, 14, tzinfo=timezone.utc), 0)
+    assert not deps["oltp"].execute.called
+
+
 def test_validation_gate_submits_all_runs_before_waiting():
     # FIX J (perf): run_binding only SUBMITS an async serverless Job (returns
     # immediately); the wait is what serializes. The gate must submit EVERY

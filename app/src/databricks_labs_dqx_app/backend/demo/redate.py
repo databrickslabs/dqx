@@ -84,6 +84,35 @@ def build_redate_runs_sql(runs_fqn: str, run_id: str, target_iso: str, duration_
     )
 
 
+def build_redate_versions_sql(versions_fqn: str, binding_id: str, version: int, target_iso: str) -> str:
+    """Build SQL to re-date a ``dq_monitored_table_versions`` freeze's *created_at*.
+
+    A binding's version freezes are written at seed-time "now" (see
+    ``MonitoredTableVersionService.freeze_new_version``), but every run in the
+    demo trend is back-dated into the past. Left unmoved, every freeze would sit
+    *after* every re-dated run, so ``annotate_trend_versions`` (which stamps each
+    trend point with the highest version whose freeze is at/-before the run
+    instant) would resolve every point to version 0 and the results-over-time
+    chart would show no version markers. Re-dating each freeze's *created_at*
+    into the historical window places the version bumps mid-timeline so the
+    trend resolves increasing versions and the markers appear.
+
+    Args:
+        versions_fqn: Fully-qualified *dq_monitored_table_versions* table name.
+        binding_id: The monitored-table binding whose freeze to re-date.
+        version: The version integer identifying the freeze row (an app-internal
+            integer, interpolated verbatim after an ``int`` cast).
+        target_iso: Target timestamp literal body (*YYYY-MM-DD HH:MM:SS*).
+
+    Returns:
+        An ``UPDATE`` statement targeting the matched ``(binding_id, version)`` freeze.
+    """
+    return (
+        f"UPDATE {versions_fqn} SET created_at = {_ts(target_iso)} "
+        f"WHERE binding_id = '{escape_sql_string(binding_id)}' AND version = {int(version)}"
+    )
+
+
 def build_delete_metrics_sql(metrics_fqn: str, run_id: str) -> str:
     """Build SQL to delete a run's *dq_metrics* rows.
 

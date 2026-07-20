@@ -192,6 +192,9 @@ class DemoSeedService:
         self._catalog = catalog
         self._schema = manifest.SOURCE_SCHEMA
         self._started_at = ""
+        # (binding_id, version) freeze events in creation order — populated by
+        # :meth:`_approve_binding`, drained by :meth:`_redate_version_freezes`.
+        self._freeze_log: list[tuple[str, int]] = []
 
     def set_tagging_sql(self, sql: SqlExecutor | None) -> None:
         """Set the (OBO) SqlExecutor used for governed-tag assignment.
@@ -516,13 +519,18 @@ class DemoSeedService:
             desired.append(DesiredAppliedRule(rule_id=rule_id, column_mapping=column_mapping))
         return desired
 
-    def _approve_binding(self, binding_id: str, user_email: str) -> None:
+    def _approve_binding(self, binding_id: str, user_email: str) -> int:
         """Drive a binding's materialized checks to ``approved`` and freeze a version.
 
         Replicates the exact approve-route sequence (materialize, transition
         ``draft -> pending_approval -> approved``, set binding status, freeze)
         so the audit trail is identical to a hand-approval and the binding is
         genuinely approved — not reliant on any approvals-mode auto-publish.
+
+        Returns:
+            The new (bumped) version integer frozen for the binding. The caller
+            re-dates that freeze's ``created_at`` into the trend window so the
+            results-over-time version markers land mid-timeline.
         """
         # Imported lazily: ``routes.v1`` imports this module (via ``admin.py``),
         # so a module-level import here forms a circular import when this module
@@ -547,7 +555,14 @@ class DemoSeedService:
             user_email=user_email,
         )
         self._monitored_tables.set_status(binding_id, "approved", user_email)
-        self._version_service.freeze_new_version(binding_id, user_email)
+        version = self._version_service.freeze_new_version(binding_id, user_email)
+        # Record the freeze in creation order so the weekly trend can re-date each
+        # binding's freeze ``created_at`` into the historical window (see
+        # :meth:`_redate_version_freezes`). Freezes are written at seed-time
+        # "now"; left unmoved they all sit after every back-dated run and the
+        # results-over-time version markers never appear.
+        self._freeze_log.append((binding_id, version))
+        return version
 
     # ------------------------------------------------------------------
     # Phase: data products
@@ -880,7 +895,56 @@ class DemoSeedService:
         # strips (see the cutoff rationale above).
         self._score_cache.refresh_all_for_tables(sorted(self._table_fqns()))
         self._delete_history_after(cutoff)
+        # Back-date every version freeze into the trend window so the
+        # results-over-time version markers land mid-timeline instead of all at
+        # seed-time "now" (where they would sit after every re-dated run and
+        # resolve every point to version 0 — no markers). Done last, once every
+        # freeze (build + weekly re-approvals) has been logged.
+        self._redate_version_freezes(now, weeks)
         return trend_points
+
+    def _redate_version_freezes(self, now: datetime, weeks: int) -> None:
+        """Spread each binding's version freezes across the trend window.
+
+        A binding accrues several freezes during the seed (v1 at build, v2 at
+        week 0, plus one per rule-lifecycle change week), all written at
+        seed-time "now". ``annotate_trend_versions`` stamps each trend point with
+        the highest version whose freeze is at/-before the run instant, so
+        freezes clustered at "now" (after every back-dated run) leave every point
+        at version 0 and the chart shows no version markers.
+
+        This distributes a binding's F freezes over F strictly-increasing
+        instants spanning ``[first-week instant, last-week instant)`` in version
+        order, so successive versions become active across the timeline and a
+        marker appears at each version's first appearance (v1 included). Only
+        genuinely-frozen ``(binding_id, version)`` rows are re-dated — no fake
+        versions are fabricated.
+        """
+        if weeks <= 0 or not self._freeze_log:
+            return
+        by_binding: dict[str, list[int]] = {}
+        for binding_id, version in self._freeze_log:
+            # freeze_new_version returns a concrete int in production; guard so a
+            # non-int (only possible under a mocked version service in tests)
+            # never reaches the ``int()`` cast in the SQL builder.
+            if isinstance(version, bool) or not isinstance(version, int):
+                continue
+            by_binding.setdefault(binding_id, []).append(version)
+        if not by_binding:
+            return
+        first = self._week_instant(now, 0, weeks)
+        last = self._week_instant(now, weeks - 1, weeks)
+        span = last - first
+        versions_fqn = self._oltp.fqn("dq_monitored_table_versions")
+        for binding_id, versions in by_binding.items():
+            ordered = sorted(set(versions))
+            count = len(ordered)
+            for index, version in enumerate(ordered):
+                # index/count keeps the last freeze strictly before ``last`` so
+                # the final week's run still resolves to the top version.
+                instant = first + (span * index) // count if count else first
+                target_iso = redate.iso(instant)
+                self._oltp.execute(redate.build_redate_versions_sql(versions_fqn, binding_id, version, target_iso))
 
     def _tighten_card_rule(self, rule_map: dict[str, str], user_email: str) -> None:
         """Edit + re-approve the card-validation rule to a new version at TIGHTEN_WEEK.

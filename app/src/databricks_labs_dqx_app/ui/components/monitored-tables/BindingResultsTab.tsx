@@ -662,22 +662,25 @@ function ResultsBody({
     { key: "failed_records", label: "Rows" },
   ]);
 
-  // #65: mark the runs where the binding version incremented vs the previous
-  // point. The overall trend is sorted ascending by run; a point carries the
-  // version active as-of its run (backend-stamped), so a strict increase is a
-  // new approval. Kept subtle and only on this single-table overall trend.
+  // #65: mark the run where each binding version FIRST becomes active. The
+  // overall trend is sorted ascending by run; a point carries the version
+  // active as-of its run (backend-stamped). Emitting a marker at the first
+  // appearance of every distinct version — not only on increases from a prior
+  // non-null version — means v1 (a table's first approval) gets a marker too,
+  // not just v2+. Version 0 is the pre-freeze baseline ("before any approval"),
+  // so it never earns a marker. Kept subtle and only on this single-table trend.
   const versionMarkers: Array<{ run_date: string; label: string }> = [];
   {
-    let prevVersion: number | null = null;
+    const seen = new Set<number>();
     for (const point of trend?.trend ?? []) {
       const version = point.version ?? null;
-      if (version != null && prevVersion != null && version > prevVersion && point.run_date) {
-        versionMarkers.push({
-          run_date: String(point.run_date),
-          label: t("resultsUi.versionMarker", { version }),
-        });
-      }
-      if (version != null) prevVersion = version;
+      if (version == null || version < 1 || !point.run_date) continue;
+      if (seen.has(version)) continue;
+      seen.add(version);
+      versionMarkers.push({
+        run_date: String(point.run_date),
+        label: t("resultsUi.versionMarker", { version }),
+      });
     }
   }
 
