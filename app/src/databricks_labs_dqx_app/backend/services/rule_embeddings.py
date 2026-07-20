@@ -26,7 +26,6 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_description,
     get_rule_dimension,
     get_rule_name,
-    get_rule_severity,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
@@ -48,10 +47,17 @@ _MAX_PREDICATE_CHARS = 500
 def build_rule_embed_text(rule: RegistryRule) -> str:
     """Build the normalized text blob embedded for *rule*.
 
-    Combines name, description, dimension/severity tags, slot names, free-
-    text tags, and a truncated predicate/body summary so semantically
-    similar rules land close together in embedding space (e.g. "email
-    format" and "valid email regex").
+    Combines name, description, dimension tag, slot family/cardinality, free-
+    text tags, check function name, and a truncated predicate/body summary so
+    semantically similar rules land close together in embedding space (e.g.
+    "email format" and "valid email regex").
+
+    Slot family and cardinality use the same vocabulary as the query-side
+    ``family_for_type`` token (numeric|text|temporal|boolean|array|any), so
+    adding them creates a direct match channel between document and query.
+
+    Severity is intentionally omitted — nearly every rule has one, so it
+    dilutes cosine similarity without improving ranking.
 
     Args:
         rule: The registry rule to summarize. Any mode (``dqx_native`` /
@@ -71,12 +77,15 @@ def build_rule_embed_text(rule: RegistryRule) -> str:
     dimension = get_rule_dimension(rule.user_metadata)
     if dimension:
         parts.append(f"dimension: {dimension}")
-    severity = get_rule_severity(rule.user_metadata)
-    if severity:
-        parts.append(f"severity: {severity}")
     if rule.definition.slots:
-        slot_names = ", ".join(slot.name for slot in rule.definition.slots)
-        parts.append(f"slots: {slot_names}")
+        slot_summaries = ", ".join(
+            f"{s.name} ({s.family}, {s.cardinality})" for s in rule.definition.slots
+        )
+        parts.append(f"input columns: {slot_summaries}")
+    body = rule.definition.body
+    check_func = body.get("function")
+    if isinstance(check_func, str) and check_func.strip():
+        parts.append(f"check: {check_func.strip()}")
     tags = [
         f"{key}: {value}"
         for key, value in rule.user_metadata.items()
@@ -84,7 +93,7 @@ def build_rule_embed_text(rule: RegistryRule) -> str:
     ]
     if tags:
         parts.append("tags: " + ", ".join(tags))
-    predicate = _extract_predicate(rule.definition.body)
+    predicate = _extract_predicate(body)
     if predicate:
         parts.append(f"predicate: {predicate[:_MAX_PREDICATE_CHARS]}")
     return "\n".join(parts).strip()
