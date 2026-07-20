@@ -445,6 +445,16 @@ class ScoreViewService:
             "    expr: run_mode\n"
             "  - name: check_name\n"
             "    expr: check_name\n"
+            # Rule identity — registry_rule_id is the rule's STABLE id
+            # (survives renames); rule_name is the underlying rule name
+            # (the per-column check_name is suffixed). Both already emitted
+            # by the shaping view's attribution join, so surfacing them as
+            # dimensions lets a metric-view query scope to one rule across
+            # all the tables it runs on (rename-safe on registry_rule_id).
+            "  - name: registry_rule_id\n"
+            "    expr: registry_rule_id\n"
+            "  - name: rule_name\n"
+            "    expr: rule_name\n"
             # As-of-run attribution (frozen into checks_json at
             # materialization time — later tag edits never rewrite these).
             "  - name: severity\n"
