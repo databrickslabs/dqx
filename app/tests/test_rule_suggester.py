@@ -251,6 +251,45 @@ class TestHappyPath:
         assert suggestion.dimension == "Completeness"
         assert suggestion.severity == "High"
 
+    async def test_per_column_retrieval_unions_column_specific_candidates(
+        self, monitored_tables, registry, apply_rules
+    ):
+        """Per-column retrieval must surface EACH column's strongest rules.
+
+        A query-aware retriever returns different rules depending on which
+        column's query text it sees: ``r_email`` only for the email column,
+        ``r_id`` only for the id column. The suggester retrieves per column and
+        unions, so BOTH reach the judge — whereas the old single blended
+        top-K query would have returned only one set. Regression guard for
+        "sales_customers.email never gets email rules on a wide table".
+        """
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}, "email": {}})
+        registry.get_rule.side_effect = lambda rid: _rule(rid, ["column"])
+
+        class ColumnAwareRetriever:
+            def is_available(self):
+                return True, ""
+
+            def retrieve(self, query_text: str, top_k: int):
+                if "email" in query_text:
+                    return [RetrievedRule(rule_id="r_email", score=0.95)]
+                if "id" in query_text:
+                    return [RetrievedRule(rule_id="r_id", score=0.90)]
+                return []
+
+        gateway = _gateway({"suggestions": []})
+        suggester = _suggester(monitored_tables, registry, apply_rules, ColumnAwareRetriever(), gateway)
+
+        await suggester.suggest("b1", "user@x")
+
+        # The suggester resolves each unioned candidate via registry.get_rule,
+        # so both column-specific rules must have been looked up (→ handed to
+        # the judge). A single blended query would have surfaced only one.
+        looked_up = {call.args[0] for call in registry.get_rule.call_args_list}
+        assert "r_email" in looked_up
+        assert "r_id" in looked_up
+
     async def test_judge_requests_deterministic_temperature(self, monitored_tables, registry, apply_rules):
         monitored_tables.get.return_value = _binding_detail()
         monitored_tables.get_latest_profile.return_value = _profile({"id": {}, "email": {}})
