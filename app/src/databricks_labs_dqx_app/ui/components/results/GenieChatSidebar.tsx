@@ -13,6 +13,7 @@ import {
   History,
   Trash2,
   Check,
+  SendHorizonal,
 } from "lucide-react";
 
 import {
@@ -606,7 +607,8 @@ export function GenieChatBody({
           placeholder={t("genie.inputPlaceholder")}
           disabled={pending !== null}
         />
-        <Button type="submit" disabled={pending !== null}>
+        <Button type="submit" disabled={pending !== null} className="gap-1.5">
+          <SendHorizonal className="h-4 w-4" />
           {t("genie.send")}
         </Button>
       </form>

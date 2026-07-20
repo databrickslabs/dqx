@@ -67,6 +67,9 @@ def _use_create_path(deps, rule_id: str = "r1") -> None:
     returns the published rule.
     """
     deps["registry"].find_approved_rule_for_definition.return_value = None
+    # Pending rules dedupe on structural fingerprint (idempotent re-seed guard);
+    # None means "no existing active rule", so the create path runs.
+    deps["registry"].get_active_rule_by_fingerprint.return_value = None
     deps["registry"].create_rule.return_value = (MagicMock(rule_id=rule_id), None)
     deps["registry"].submit.return_value = MagicMock(rule_id=rule_id)
     deps["registry"].approve.return_value = MagicMock(rule_id=rule_id, version=2)
@@ -170,6 +173,8 @@ def test_build_rules_is_idempotent_when_rule_already_approved():
     # An already-approved rule with the same fingerprint is reused, never re-created.
     svc, deps = _svc()
     deps["registry"].find_approved_rule_for_definition.return_value = MagicMock(rule_id="existing")
+    # no pre-existing pending twin, so the pending rule still takes the create path.
+    deps["registry"].get_active_rule_by_fingerprint.return_value = None
     # the pending-approval rule always takes the create path, so create_rule
     # must still return a (rule, warning) tuple.
     deps["registry"].create_rule.return_value = (MagicMock(rule_id="pending"), None)
@@ -204,6 +209,7 @@ def test_build_rules_embeds_reused_rules_too():
     embeddings = MagicMock()
     svc, deps = _svc(embeddings=embeddings)
     deps["registry"].find_approved_rule_for_definition.return_value = MagicMock(rule_id="existing")
+    deps["registry"].get_active_rule_by_fingerprint.return_value = None
     # the pending-approval rule takes the create path even when others are reused.
     deps["registry"].create_rule.return_value = (MagicMock(rule_id="pending"), None)
 
@@ -211,6 +217,24 @@ def test_build_rules_embeds_reused_rules_too():
 
     embedded_count = len(manifest.RULES) - len(manifest.PENDING_APPROVAL_RULE_KEYS)
     assert embeddings.embed_and_store.call_count == embedded_count
+
+
+def test_pending_approval_rule_is_idempotent_when_already_present():
+    # A no-wipe re-seed must NOT mint a duplicate pending draft: if an active
+    # (draft/pending/approved) rule with the same fingerprint already exists,
+    # the pending rule is skipped (create_rule not called for it).
+    svc, deps = _svc()
+    deps["registry"].find_approved_rule_for_definition.return_value = None
+    # An existing active rule with the pending rule's fingerprint is found.
+    deps["registry"].get_active_rule_by_fingerprint.return_value = MagicMock(rule_id="existing-pending")
+    deps["registry"].create_rule.return_value = (MagicMock(rule_id="r1"), None)
+
+    svc._build_rules("admin@example.com")
+
+    # create_rule is called for every APPROVED manifest rule, but NOT for the
+    # pending one (it was found via fingerprint and skipped).
+    approved_count = len(manifest.RULES) - len(manifest.PENDING_APPROVAL_RULE_KEYS)
+    assert deps["registry"].create_rule.call_count == approved_count
 
 
 def test_build_rules_survives_embed_failure():

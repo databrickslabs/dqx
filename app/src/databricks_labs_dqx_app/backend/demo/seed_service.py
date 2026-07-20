@@ -546,8 +546,20 @@ class DemoSeedService:
         so it appears in the Review & Approve / drafts queue. The rule_id is not
         returned, so no binding can map it — it stays an UNMAPPED library draft
         that demonstrates the pending-approval flow.
+
+        Idempotent on re-seed: a no-wipe redeploy would otherwise mint a
+        duplicate pending draft each run. If an active (draft/pending/approved)
+        rule with the same structural fingerprint already exists, skip creation.
         """
         definition = self._definition_for(spec)
+        fingerprint = self._registry.compute_definition_fingerprint(
+            cast(RuleMode, spec.mode),
+            definition,
+            cast(Polarity, spec.polarity) if spec.polarity is not None else None,
+        )
+        if self._registry.get_active_rule_by_fingerprint(fingerprint) is not None:
+            logger.info("Demo pending rule '%s' already present, skipping", spec.key)
+            return
         rule, _warning = self._registry.create_rule(
             mode=cast(RuleMode, spec.mode),
             definition=definition,
