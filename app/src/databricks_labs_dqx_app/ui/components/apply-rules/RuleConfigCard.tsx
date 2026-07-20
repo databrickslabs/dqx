@@ -27,6 +27,8 @@ import type { LabelDefinition } from "@/lib/api-custom";
 import { paramValueToRaw } from "@/lib/registry-rule-conversion";
 import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
 import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
+import { FilterBuilder } from "@/components/rules/lowcode/FilterBuilder";
+import { GroupByField } from "@/components/rules/lowcode/GroupByField";
 import { isV2Ast } from "@/lib/lowcodeAst";
 import { slotFamilyToLowcode, type LowcodeColumnRef } from "@/lib/lowcodeCompile";
 import { buildVersionPinMenuModel } from "@/lib/version-pin-menu";
@@ -112,20 +114,16 @@ function LowcodeLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   const body = (registryRule.definition.body ?? {}) as Record<string, unknown>;
   const ast = body.lowcode_ast;
   const groupBy = typeof body.group_by === "string" ? body.group_by : "";
-  const compiled = typeof body.sql_query === "string" ? body.sql_query : typeof body.predicate === "string" ? body.predicate : "";
+  const filterAst = isV2Ast(body.filter_ast) ? body.filter_ast : null;
   const declaredColumns: LowcodeColumnRef[] = (registryRule.definition.slots ?? []).map((s) => ({
     name: s.name,
     family: slotFamilyToLowcode(s.family),
   }));
 
   if (!isV2Ast(ast)) {
-    // No stored AST (e.g. legacy/hand-crafted lowcode body) — fall back to
-    // the compiled SQL text so the disclosure is never empty.
-    return compiled ? (
-      <pre className="font-mono text-xs whitespace-pre-wrap rounded bg-muted/40 p-3 overflow-x-auto">{compiled}</pre>
-    ) : (
-      <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>
-    );
+    // No stored AST (e.g. legacy/hand-crafted lowcode body) — show unavailable
+    // rather than leaking raw compiled SQL to the Apply Rules view.
+    return <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>;
   }
 
   return (
@@ -139,15 +137,20 @@ function LowcodeLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
           <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
             {t("rulesRegistry.lowcodeGroupByLabel")}
           </div>
-          <code className="block font-mono text-xs rounded bg-muted/40 p-2 overflow-x-auto">{groupBy}</code>
+          <GroupByField
+            value={groupBy}
+            onChange={() => {}}
+            declaredColumns={declaredColumns.filter((c) => !c.name.includes("."))}
+            disabled
+          />
         </div>
       )}
-      {compiled && (
+      {filterAst && (
         <div className="space-y-1">
           <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-            {t("monitoredTables.ruleLogicCompiledSql")}
+            {t("rulesRegistry.lowcodeFilterLabel")}
           </div>
-          <pre className="font-mono text-xs whitespace-pre-wrap rounded bg-muted/40 p-3 overflow-x-auto">{compiled}</pre>
+          <FilterBuilder ast={filterAst} onChange={() => {}} declaredColumns={declaredColumns} readOnly />
         </div>
       )}
     </div>
@@ -158,7 +161,6 @@ function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
   const { t } = useTranslation();
   const body = (registryRule.definition.body ?? {}) as Record<string, unknown>;
   const fn = typeof body.function === "string" ? body.function : undefined;
-  const args = body.arguments;
   const sql = typeof body.sql_query === "string" ? body.sql_query : undefined;
   const predicate = typeof body.predicate === "string" ? body.predicate : undefined;
   const parameters = registryRule.definition.parameters ?? [];
@@ -178,7 +180,13 @@ function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
     return <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>;
   }
 
-  const text = sql ?? predicate ?? `${fnLabel}(${args ? JSON.stringify(args) : ""})`;
+  // Bug 1 fix: show just the friendly function label — no args JSON dump.
+  // Parameters are already rendered separately by RuleParametersView below.
+  // Bug 2 fix: for sql/predicate-only rules, show a neutral label rather than
+  // leaking the compiled SQL predicate or query into this view.
+  const text = fn
+    ? (fnLabel ?? fn)
+    : t("monitoredTables.ruleLogicCustomSql");
 
   return (
     <div className="space-y-3">
