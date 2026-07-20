@@ -33,6 +33,7 @@ import {
   Loader2,
   Undo2,
   GitCompare,
+  FileDown,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -72,6 +73,7 @@ import { invalidateAfterRegistryRuleApprovalChange } from "@/lib/registry-rule-i
 import { cn } from "@/lib/utils";
 import { Pagination } from "@/components/Pagination";
 import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
+import { BulkActionBar } from "@/components/data-table/BulkActionBar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import {
   RulesTable,
@@ -303,6 +305,7 @@ function RegistryRulesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
+  const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
   const [bulkDeprecateOpen, setBulkDeprecateOpen] = useState(false);
   const [bulkRevokeOpen, setBulkRevokeOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -436,6 +439,17 @@ function RegistryRulesPage() {
       eligible,
       (ruleId) => approveMutation.mutateAsync({ ruleId }),
       t("rulesRegistry.bulkApproved"),
+      invalidateAfterApprovalChange,
+    );
+  };
+
+  const confirmBulkReject = () => {
+    setBulkRejectOpen(false);
+    const eligible = selectedRules.filter((r) => r.status === "pending_approval");
+    bulkAction(
+      eligible,
+      (ruleId) => rejectMutation.mutateAsync({ ruleId }),
+      t("rulesRegistry.bulkRejected"),
       invalidateAfterApprovalChange,
     );
   };
@@ -720,87 +734,90 @@ function RegistryRulesPage() {
     [pendingRuleId, perms, canRevokeRule],
   );
 
-  const bulkToolbar =
-    selectedIds.size > 0 ? (
-      <div className="flex flex-wrap items-center gap-2 mb-3 p-2.5 rounded-lg bg-muted/60 border w-full">
-        <span className="text-sm font-medium mr-1">
-          {t("rulesRegistry.selectedCount", { count: selectedIds.size })}
-        </span>
-        {bulkBusy ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <>
-            {perms.canApproveRules && selectedRules.some((r) => r.status === "pending_approval") && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1 h-7 text-xs text-emerald-600"
-                onClick={() => setBulkApproveOpen(true)}
-              >
-                <CheckCircle2 className="h-3 w-3" />
-                {t("rulesRegistry.bulkApprove")}
-              </Button>
-            )}
-            {perms.canApproveRules && selectedRules.some((r) => r.status === "approved") && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1 h-7 text-xs"
-                onClick={() => setBulkDeprecateOpen(true)}
-              >
-                <Archive className="h-3 w-3" />
-                {t("rulesRegistry.bulkDeprecate")}
-              </Button>
-            )}
-            {selectedRules.some((r) => canRevokeRule(r)) && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1 h-7 text-xs text-amber-600"
-                onClick={() => setBulkRevokeOpen(true)}
-              >
-                <Undo2 className="h-3 w-3" />
-                {t("rulesRegistry.bulkRevoke")}
-              </Button>
-            )}
-            {/* Export moved off the always-on header into this selection action
-                bar — it exports exactly the ticked rows (rule_id[] filter). */}
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1 h-7 text-xs"
-              onClick={() => setExportOpen(true)}
-            >
-              {t("exportYaml.button")}
-            </Button>
-            <ExportDialog
-              open={exportOpen}
-              onOpenChange={setExportOpen}
-              fetchDqx={() => exportRegistryRules({ rule_id: [...selectedIds] })}
-            />
-            {selectedRules.some((r) => canDeleteRule(r)) && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1 h-7 text-xs text-destructive"
-                onClick={() => setBulkDeleteOpen(true)}
-              >
-                <Trash2 className="h-3 w-3" />
-                {t("rulesRegistry.bulkDelete")}
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-xs ml-auto"
-              onClick={() => setSelectedIds(new Set())}
-            >
-              {t("rulesRegistry.clearSelection")}
-            </Button>
-          </>
-        )}
-      </div>
-    ) : null;
+  // Canonical action order across all three overviews (bug-bash-v4 item 14):
+  // Run (where applicable) → Approve → Reject → [Deprecate → Revoke:
+  // rules-only] → Export → Delete → Clear. Rules has no Run.
+  const bulkToolbar = (
+    <BulkActionBar
+      count={selectedIds.size}
+      label={t("rulesRegistry.selectedCount", { count: selectedIds.size })}
+      busy={bulkBusy}
+      onClear={() => setSelectedIds(new Set())}
+      clearLabel={t("rulesRegistry.clearSelection")}
+    >
+      {perms.canApproveRules && selectedRules.some((r) => r.status === "pending_approval") && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1 h-7 text-xs text-emerald-600"
+          onClick={() => setBulkApproveOpen(true)}
+        >
+          <CheckCircle2 className="h-3 w-3" />
+          {t("rulesRegistry.bulkApprove")}
+        </Button>
+      )}
+      {perms.canApproveRules && selectedRules.some((r) => r.status === "pending_approval") && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1 h-7 text-xs text-destructive"
+          onClick={() => setBulkRejectOpen(true)}
+        >
+          <XCircle className="h-3 w-3" />
+          {t("rulesRegistry.bulkReject")}
+        </Button>
+      )}
+      {perms.canApproveRules && selectedRules.some((r) => r.status === "approved") && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1 h-7 text-xs"
+          onClick={() => setBulkDeprecateOpen(true)}
+        >
+          <Archive className="h-3 w-3" />
+          {t("rulesRegistry.bulkDeprecate")}
+        </Button>
+      )}
+      {selectedRules.some((r) => canRevokeRule(r)) && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1 h-7 text-xs text-amber-600"
+          onClick={() => setBulkRevokeOpen(true)}
+        >
+          <Undo2 className="h-3 w-3" />
+          {t("rulesRegistry.bulkRevoke")}
+        </Button>
+      )}
+      {/* Export moved off the always-on header into this selection action
+          bar — it exports exactly the ticked rows (rule_id[] filter). */}
+      <Button
+        size="sm"
+        variant="outline"
+        className="gap-1 h-7 text-xs"
+        onClick={() => setExportOpen(true)}
+      >
+        <FileDown className="h-3 w-3" />
+        {t("exportYaml.button")}
+      </Button>
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        fetchDqx={() => exportRegistryRules({ rule_id: [...selectedIds] })}
+      />
+      {selectedRules.some((r) => canDeleteRule(r)) && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1 h-7 text-xs text-destructive"
+          onClick={() => setBulkDeleteOpen(true)}
+        >
+          <Trash2 className="h-3 w-3" />
+          {t("rulesRegistry.bulkDelete")}
+        </Button>
+      )}
+    </BulkActionBar>
+  );
 
   const filterControls = (
     <>
@@ -922,8 +939,9 @@ function RegistryRulesPage() {
           <Skeleton className="h-64 w-full" />
         ) : (
           <>
-            {bulkToolbar}
-            <RulesTable
+            <div className="relative">
+              {bulkToolbar}
+              <RulesTable
               rows={pagedRules}
               labelDefinitions={labelDefinitions}
               sortKey={sortKey}
@@ -948,7 +966,8 @@ function RegistryRulesPage() {
                   </p>
                 </div>
               }
-            />
+              />
+            </div>
             <Pagination page={page} totalItems={rules.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
           </>
         )}
@@ -984,6 +1003,28 @@ function RegistryRulesPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={confirmBulkApprove}>{t("rulesRegistry.actionApprove")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkRejectOpen} onOpenChange={setBulkRejectOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("rulesRegistry.bulkRejectTitle", {
+                count: selectedRules.filter((r) => r.status === "pending_approval").length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("rulesRegistry.bulkRejectBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmBulkReject}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {t("rulesRegistry.actionReject")}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

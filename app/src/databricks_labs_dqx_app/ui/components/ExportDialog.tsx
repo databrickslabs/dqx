@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AxiosResponse } from "axios";
 import { toast } from "sonner";
@@ -33,26 +33,53 @@ interface ExportDialogProps {
  * ODCS data contract) before downloading.  The ODCS option is hidden when
  * *fetchOdcs* is not provided (rules-only surfaces).
  *
+ * When there is only one available format (no *fetchOdcs*), the modal is
+ * skipped entirely: opening it downloads the DQX export directly, preserving
+ * the same success/error toasts (bug-bash-v4 item 3). The multi-format case
+ * keeps the choice modal.
+ *
  * The dialog is trigger-agnostic — callers manage *open* + *onOpenChange*.
  */
 export function ExportDialog({ open, onOpenChange, fetchDqx, fetchOdcs, title }: ExportDialogProps) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
+  const singleFormat = !fetchOdcs;
 
-  const run = async (fetcher: ExportFetcher) => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const res = await fetcher();
-      downloadExportFile(res.data);
-      toast.success(t("exportYaml.success", { filename: res.data.filename }));
-      onOpenChange(false);
-    } catch (err) {
-      toast.error(extractApiError(err, t("exportYaml.failed")));
-    } finally {
-      setBusy(false);
+  const run = useCallback(
+    async (fetcher: ExportFetcher) => {
+      setBusy(true);
+      try {
+        const res = await fetcher();
+        downloadExportFile(res.data);
+        toast.success(t("exportYaml.success", { filename: res.data.filename }));
+        onOpenChange(false);
+      } catch (err) {
+        toast.error(extractApiError(err, t("exportYaml.failed")));
+        onOpenChange(false);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [onOpenChange, t],
+  );
+
+  // Single-format surfaces have no choice to make, so "opening" the dialog
+  // just triggers the download. We guard with a ref so a re-render while the
+  // request is in flight doesn't fire a second download.
+  const autoRunning = useRef(false);
+  useEffect(() => {
+    if (!singleFormat) return;
+    if (open && !autoRunning.current) {
+      autoRunning.current = true;
+      void run(fetchDqx);
+    } else if (!open) {
+      autoRunning.current = false;
     }
-  };
+  }, [open, singleFormat, run, fetchDqx]);
+
+  // No modal for single-format surfaces — the effect above drives the
+  // download directly.
+  if (singleFormat) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
