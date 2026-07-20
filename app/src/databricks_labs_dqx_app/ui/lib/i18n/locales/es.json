@@ -1845,7 +1845,7 @@
     "emptyStateNoTables": "Todavía no hay tablas.",
     "neverProfiled": "Nunca perfilada",
     "actionOpen": "Abrir",
-    "commentsSectionTitle": "Comentarios",
+    "actionComments": "Comentarios",
     "actionDelete": "Eliminar",
     "actionsMenuLabel": "Acciones",
     "deleteConfirmTitle": "¿Dejar de monitorizar esta tabla?",

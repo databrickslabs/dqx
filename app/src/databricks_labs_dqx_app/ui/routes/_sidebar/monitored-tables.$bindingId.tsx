@@ -55,6 +55,7 @@ import {
   KeyRound,
   LineChart,
   Loader2,
+  MessageSquare,
   MoreVertical,
   Play,
   Plus,
@@ -112,7 +113,7 @@ import {
 import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
-import { CommentThread } from "@/components/CommentThread";
+import { CommentsDialog } from "@/components/CommentThread";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import {
@@ -368,6 +369,7 @@ function MonitoredTableDetailPage() {
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
   // View-changes diff dialog target — mirrors the overview row's GitCompare
   // action so the same review affordance is available on the detail banner.
   const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
@@ -645,15 +647,22 @@ function MonitoredTableDetailPage() {
                   <History className="h-3.5 w-3.5" />
                   {t("runsHistory.menuViewRuns")}
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setCommentsOpen(true)} className="gap-2">
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  {t("monitoredTables.actionComments")}
+                </DropdownMenuItem>
                 {perms.canCreateRules && (
-                  <DropdownMenuItem
-                    onClick={() => setDeleteConfirmOpen(true)}
-                    variant="destructive"
-                    className="gap-2"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    {t("monitoredTables.actionDelete")}
-                  </DropdownMenuItem>
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setDeleteConfirmOpen(true)}
+                      variant="destructive"
+                      className="gap-2"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {t("monitoredTables.actionDelete")}
+                    </DropdownMenuItem>
+                  </>
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
@@ -827,7 +836,7 @@ function MonitoredTableDetailPage() {
           </div>
 
           <TabsContent value="about">
-            <AboutTab bindingId={bindingId} table={table} onColumnClick={handleColumnDeepLink} />
+            <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
           </TabsContent>
 
           {/* pt-4 matches the other tabs' top spacing (About/Schedule own it internally). */}
@@ -901,6 +910,13 @@ function MonitoredTableDetailPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <CommentsDialog
+        entityType="monitored_table"
+        entityId={bindingId}
+        open={commentsOpen}
+        onOpenChange={setCommentsOpen}
+      />
 
       <AlertDialog open={blocker.status === "blocked"}>
         <AlertDialogContent>
@@ -1242,11 +1258,9 @@ function ColumnTagsCell({ tags }: { tags: string[] }) {
 }
 
 function AboutTab({
-  bindingId,
   table,
   onColumnClick,
 }: {
-  bindingId: string;
   table: MonitoredTableOut;
   /** Deep-links to the Apply Rules "by column" lens, expanded to that
    *  column (item 1) — reuses the jump+expand handoff already wired
@@ -1479,13 +1493,6 @@ function AboutTab({
         <ViewDataTab tableFqn={table.table_fqn} />
       </section>
 
-      {/* Table-level notes (steward context, ownership, general discussion)
-          live here in About — moved off the header ⋮ menu. Run-specific
-          discussion instead lives with the run on the Results tab. */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold">{t("monitoredTables.commentsSectionTitle")}</h2>
-        <CommentThread entityType="monitored_table" entityId={bindingId} />
-      </section>
     </div>
   );
 }

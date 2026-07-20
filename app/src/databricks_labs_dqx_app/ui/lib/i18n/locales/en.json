@@ -1845,7 +1845,7 @@
     "emptyStateNoTables": "No tables yet.",
     "neverProfiled": "Never profiled",
     "actionOpen": "Open",
-    "commentsSectionTitle": "Comments",
+    "actionComments": "Comments",
     "actionDelete": "Delete",
     "actionsMenuLabel": "Actions",
     "deleteConfirmTitle": "Stop monitoring this table?",

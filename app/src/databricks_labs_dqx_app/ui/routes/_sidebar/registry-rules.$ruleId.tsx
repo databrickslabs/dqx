@@ -12,6 +12,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -383,19 +384,23 @@ function RegistryRuleDetailPage() {
               <Braces className="h-3.5 w-3.5" />
               {t("rulesRegistry.actionViewJson")}
             </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => setCommentsOpen(true)} className="gap-2">
               <MessageSquare className="h-3.5 w-3.5" />
               {t("rulesRegistry.actionComments")}
             </DropdownMenuItem>
             {canDelete && (
-              <DropdownMenuItem
-                onClick={() => setDeleteConfirmOpen(true)}
-                variant="destructive"
-                className="gap-2"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                {t("rulesRegistry.actionDelete")}
-              </DropdownMenuItem>
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setDeleteConfirmOpen(true)}
+                  variant="destructive"
+                  className="gap-2"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {t("rulesRegistry.actionDelete")}
+                </DropdownMenuItem>
+              </>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
