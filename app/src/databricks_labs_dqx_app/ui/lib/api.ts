@@ -2770,6 +2770,11 @@ export interface RegistryRuleOut {
   display_status: RegistryRuleOutDisplayStatus;
 }
 
+/**
+ * Authoring mode frozen at publish time (dqx_native/lowcode/sql). Exposed so a version's diff renders its frozen check JSON as-of-the-version rather than relying on the live rule's (admin-mutable) mode. ``None`` only for legacy snapshots written before mode was frozen — consumers fall back to the live rule's mode for those.
+ */
+export type RegistryRuleVersionOutMode = 'dqx_native' | 'lowcode' | 'sql' | null;
+
 export type RegistryRuleVersionOutPolarity = 'pass' | 'fail' | null;
 
 export type RegistryRuleVersionOutUserMetadata = { [key: string]: unknown };
@@ -2784,6 +2789,8 @@ export type RegistryRuleVersionOutCreatedAt = string | null;
 export interface RegistryRuleVersionOut {
   rule_id: string;
   version: number;
+  /** Authoring mode frozen at publish time (dqx_native/lowcode/sql). Exposed so a version's diff renders its frozen check JSON as-of-the-version rather than relying on the live rule's (admin-mutable) mode. ``None`` only for legacy snapshots written before mode was frozen — consumers fall back to the live rule's mode for those. */
+  mode?: RegistryRuleVersionOutMode;
   definition: RuleDefinition;
   polarity?: RegistryRuleVersionOutPolarity;
   user_metadata?: RegistryRuleVersionOutUserMetadata;

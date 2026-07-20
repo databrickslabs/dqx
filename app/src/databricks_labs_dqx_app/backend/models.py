@@ -480,6 +480,15 @@ class RegistryRuleVersionOut(BaseModel):
 
     rule_id: str
     version: int
+    mode: RegistryRuleMode | None = Field(
+        default=None,
+        description=(
+            "Authoring mode frozen at publish time (dqx_native/lowcode/sql). Exposed so a version's "
+            "diff renders its frozen check JSON as-of-the-version rather than relying on the live "
+            "rule's (admin-mutable) mode. ``None`` only for legacy snapshots written before mode was "
+            "frozen — consumers fall back to the live rule's mode for those."
+        ),
+    )
     definition: RegistryRuleDefinition
     polarity: RegistryPolarity | None = None
     user_metadata: dict[str, Any] = Field(default_factory=dict)
@@ -491,6 +500,7 @@ class RegistryRuleVersionOut(BaseModel):
         return cls(
             rule_id=version.rule_id,
             version=version.version,
+            mode=version.mode,
             definition=version.definition,
             polarity=version.polarity,
             user_metadata=version.user_metadata,

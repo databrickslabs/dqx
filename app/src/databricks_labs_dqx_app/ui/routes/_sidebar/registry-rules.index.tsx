@@ -701,7 +701,7 @@ function RegistryRulesPage() {
                       ruleId: rule.rule_id,
                       name: getTag(rule, RESERVED_NAME_KEY) || rule.rule_id,
                       version: rule.version,
-                      definition: rule.definition,
+                      proposed: rule,
                     })
                   }
                 >

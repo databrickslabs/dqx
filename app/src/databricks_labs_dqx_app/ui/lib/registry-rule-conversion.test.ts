@@ -168,6 +168,57 @@ describe("buildDqxCheckJson — criticality honours the admin mapping", () => {
   });
 });
 
+// The rule "View changes" diff (bug-bash-v4 item 43) materializes BOTH sides
+// through buildDqxCheckJson so every field renders like the table diff. The
+// previous side feeds a FROZEN version snapshot, which carries its own frozen
+// `mode` and must render as-of-that-version.
+describe("buildDqxCheckJson — materializes a full check for a frozen version snapshot", () => {
+  test("renders every field the diff needs (function/arguments/criticality/name/message/tags)", () => {
+    const version = {
+      mode: "dqx_native" as const,
+      polarity: null,
+      definition: {
+        body: { function: "is_not_null", arguments: { column: "{{column_1}}" } },
+        slots: [],
+        parameters: [],
+        error_message: "col must not be null",
+      },
+      user_metadata: { severity: "High", name: "id_not_null", team: "data-eng" },
+    };
+    const check = buildDqxCheckJson(version) as Record<string, unknown>;
+    expect(check.criticality).toBe("error");
+    expect(check.name).toBe("id_not_null");
+    expect(check.message_expr).toBe("col must not be null");
+    expect(check.user_metadata).toEqual({ severity: "High", name: "id_not_null", team: "data-eng" });
+    expect(check.check).toEqual({ function: "is_not_null", arguments: { column: "{{column_1}}" } });
+  });
+
+  test("uses the frozen mode over the live fallback for a versioned snapshot", () => {
+    const sqlVersion = {
+      mode: "sql" as const,
+      polarity: "fail" as const,
+      definition: { body: { predicate: "amount > 0" }, slots: [], parameters: [] },
+      user_metadata: {},
+    };
+    // fallback is dqx_native, but the frozen mode (sql) must win.
+    const check = buildDqxCheckJson(sqlVersion, undefined, "dqx_native").check as Record<string, unknown>;
+    expect(check.function).toBe("sql_expression");
+    expect((check.arguments as Record<string, unknown>).expression).toBe("amount > 0");
+    expect((check.arguments as Record<string, unknown>).negate).toBe(true);
+  });
+
+  test("falls back to the caller-supplied live mode for a legacy null-mode snapshot", () => {
+    const legacy = {
+      mode: null,
+      polarity: null,
+      definition: { body: { function: "is_not_null", arguments: { column: "{{c}}" } }, slots: [], parameters: [] },
+      user_metadata: {},
+    };
+    const check = buildDqxCheckJson(legacy, undefined, "dqx_native").check as Record<string, unknown>;
+    expect(check.function).toBe("is_not_null");
+  });
+});
+
 // ── parseDqxCheckJson: slot-name round-trip (item 32) + severity import (56) ──
 
 const identity = (key: string) => key;

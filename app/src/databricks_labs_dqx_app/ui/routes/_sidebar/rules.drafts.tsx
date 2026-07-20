@@ -241,7 +241,7 @@ function RegistryApprovalsSection({
                         ruleId: rule.rule_id,
                         name,
                         version: rule.version,
-                        definition: rule.definition,
+                        proposed: rule,
                       })
                     }
                     className="gap-1 h-7 text-xs"
