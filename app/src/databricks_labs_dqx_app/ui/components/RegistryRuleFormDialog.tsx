@@ -3409,7 +3409,12 @@ export function RegistryRuleFormDialog({
             NATIVE and SQL states — Low-Code uses LowcodeBuilder (same chrome),
             whose first row hosts the selector. */}
         {(!decisionPointChosen || mode === "dqx_native") && (
-          <div className="grid max-w-2xl grid-cols-[80px_minmax(0,1fr)_minmax(0,1fr)] gap-2 items-center py-1">
+          // Same 4-track template as LowcodeRow (readOnly variant), with an
+          // empty spacer for the absent value cell, so the column + operator
+          // boxes render at the IDENTICAL width across page-load / native /
+          // Condition Builder. A bare 3-track grid let the column track eat
+          // half the row, making {{column}} much wider than the builder's.
+          <div className="grid max-w-2xl grid-cols-[80px_minmax(0,1.6fr)_minmax(8rem,max-content)_minmax(0,2.2fr)] gap-2 items-center py-1">
             <div className="flex items-center h-8 pl-2 justify-self-start">
               {/* Same IF styling as LowcodeRow's inline IF so the framing word is
                   identical in size across native / low-code / SQL. */}
@@ -3454,6 +3459,10 @@ export function RegistryRuleFormDialog({
               // Basic Checks list; SQL mode has no submenu so root is fine.
               initialView={decisionPointChosen && mode === "dqx_native" ? "basic" : "root"}
             />
+            {/* Empty spacer for the value track (this anchor row has no value
+                input) so the 4-track template matches LowcodeRow and the
+                operator's max-content sizing behaves identically. */}
+            <span aria-hidden />
           </div>
         )}
         {/* Low-Code builder renders INSIDE the Condition section (directly under
