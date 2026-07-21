@@ -55,21 +55,19 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
   return (
     <div
       className={cn(
-        // Left-packed row (item 3). `max-w-2xl` caps the grid so on wide
-        // layouts (e.g. the routed detail page) the controls stop stretching
-        // edge-to-edge ("fully justified"); the block is left-aligned so the
-        // slack sits on the right. Each control fills its `fr` track (the
-        // triggers carry `w-full`) so the columns read as a flush, aligned
-        // table — matching dqlake's LowcodeRow, whose base SelectTrigger is
-        // `w-full` (DQX's is `w-fit`, which is what left the earlier build
-        // looking ragged with controls pinned to the left of each track).
-        "grid max-w-2xl gap-2 items-center py-1",
-        // Value track widened (1.4fr → 2.2fr) so the value input has room to
-        // grow with its content (long "in" lists, wide strings) instead of
-        // being clipped narrow; column/operator tracks keep their behaviour.
+        // Left-packed row (item 3). Each control fills its track (the triggers
+        // carry `w-full`) so the columns read as a flush, aligned table —
+        // matching dqlake's LowcodeRow, whose base SelectTrigger is `w-full`.
+        "grid gap-2 items-center py-1",
+        // FIXED column + function widths so both boxes are the SAME width across
+        // every rule type (page-load / native / Condition Builder / row filter):
+        //   - column = 11rem (the Condition Builder width the user likes)
+        //   - function/operator = 18rem (the new-page anchor width)
+        // The value track takes the remainder (minmax(0,1fr)). max-w cap dropped
+        // so the two fixed boxes never reflow and value isn't squeezed.
         readOnly
-          ? "grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,2.2fr)]"
-          : "grid-cols-[80px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,2.2fr)_28px]",
+          ? "grid-cols-[80px_11rem_18rem_minmax(0,1fr)]"
+          : "grid-cols-[80px_11rem_18rem_minmax(0,1fr)_28px]",
       )}
     >
       {isFirst ? (

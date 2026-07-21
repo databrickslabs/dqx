@@ -3409,7 +3409,11 @@ export function RegistryRuleFormDialog({
             NATIVE and SQL states — Low-Code uses LowcodeBuilder (same chrome),
             whose first row hosts the selector. */}
         {(!decisionPointChosen || mode === "dqx_native") && (
-          <div className="grid max-w-2xl grid-cols-[80px_minmax(0,1fr)_minmax(0,1fr)] gap-2 items-center py-1">
+          // Same FIXED column (11rem) + function (18rem) widths as LowcodeRow so
+          // the {{column}} and <FUNCTION> boxes are identical across page-load /
+          // native / Condition Builder. This anchor row has no value input, so
+          // there is no 4th track.
+          <div className="grid grid-cols-[80px_11rem_18rem] gap-2 items-center py-1">
             <div className="flex items-center h-8 pl-2 justify-self-start">
               {/* Same IF styling as LowcodeRow's inline IF so the framing word is
                   identical in size across native / low-code / SQL. */}
