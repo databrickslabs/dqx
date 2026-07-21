@@ -1,4 +1,4 @@
-import type { AnyRow, JoinAst, LowcodeAstV2 } from "./lowcodeAst";
+import { isColumnRef, type AnyRow, type JoinAst, type LowcodeAstV2 } from "./lowcodeAst";
 import { VALIDITY_SQL_TYPE, type Family } from "./lowcodeOperators";
 import { stripSqlLineComments } from "./sqlComments";
 import type { RuleSlotFamily } from "@/lib/api";
@@ -52,6 +52,14 @@ function quote(v: unknown): string {
   if (v === null || v === undefined) return "NULL";
   const s = String(v).replaceAll("'", "''");
   return `'${s}'`;
+}
+
+// A comparison RHS is EITHER a column reference (item 42 — emit ref(), so a
+// plain name becomes {{name}} and a joined-table col emits raw) OR a literal
+// (quote() as before). This is the only place the literal-vs-column decision
+// is made for scalar operands.
+function valueSql(value: unknown): string {
+  return isColumnRef(value) ? ref(value.$col) : quote(value);
 }
 
 function quoteList(values: unknown[]): string {
@@ -132,9 +140,9 @@ function aggExpr(spec: { aggregate?: string; column_ref?: string; aggregate_para
 
 function rowSql(left: string, operator: string, value: unknown): string {
   const op = operator;
-  if (["=", "!=", "<", "<=", ">", ">="].includes(op)) return `${left} ${op} ${quote(value)}`;
-  if (op === "equals") return `${left} = ${quote(value)}`;
-  if (op === "not equals") return `${left} != ${quote(value)}`;
+  if (["=", "!=", "<", "<=", ">", ">="].includes(op)) return `${left} ${op} ${valueSql(value)}`;
+  if (op === "equals") return `${left} = ${valueSql(value)}`;
+  if (op === "not equals") return `${left} != ${valueSql(value)}`;
   if (op === "contains") return `${left} LIKE '%${likeLiteral(value)}%'`;
   if (op === "does not contain") return `${left} NOT LIKE '%${likeLiteral(value)}%'`;
   if (op === "starts with") return `${left} LIKE '${likeLiteral(value)}%'`;
@@ -150,10 +158,10 @@ function rowSql(left: string, operator: string, value: unknown): string {
   if (op === "is not null") return `${left} IS NOT NULL`;
   if (op === "is true") return `${left} = TRUE`;
   if (op === "is false") return `${left} = FALSE`;
-  if (op === "before") return `${left} < ${quote(value)}`;
-  if (op === "after") return `${left} > ${quote(value)}`;
-  if (op === "on or before") return `${left} <= ${quote(value)}`;
-  if (op === "on or after") return `${left} >= ${quote(value)}`;
+  if (op === "before") return `${left} < ${valueSql(value)}`;
+  if (op === "after") return `${left} > ${valueSql(value)}`;
+  if (op === "on or before") return `${left} <= ${valueSql(value)}`;
+  if (op === "on or after") return `${left} >= ${valueSql(value)}`;
   if (op === "is in last") {
     const obj = (value && typeof value === "object" ? value : {}) as { number?: number; unit?: string };
     return `${left} >= current_timestamp() - INTERVAL '${obj.number ?? 0} ${obj.unit ?? "days"}'`;

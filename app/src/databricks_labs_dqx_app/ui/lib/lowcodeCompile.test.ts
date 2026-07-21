@@ -523,3 +523,35 @@ describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without cor
   });
 
 });
+
+describe("item42: column-ref RHS in single-value operators", () => {
+  test("item42: comparison RHS column-ref emits {{col}} not a quoted literal", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "amount", operator: ">=", value: { $col: "credit_limit" } })])),
+    ).toBe("{{amount}} >= {{credit_limit}}");
+  });
+
+  test("item42: equals with a column-ref RHS compiles to = {{col}}", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "a", operator: "equals", value: { $col: "b" } })])),
+    ).toBe("{{a}} = {{b}}");
+  });
+
+  test("item42: temporal 'before' with a column-ref RHS compiles to < {{col}}", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "start_date", operator: "before", value: { $col: "end_date" } })])),
+    ).toBe("{{start_date}} < {{end_date}}");
+  });
+
+  test("item42: a qualified (join) column RHS emits raw table.col", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "amount", operator: ">=", value: { $col: "orders.total" } })])),
+    ).toBe("{{amount}} >= orders.total");
+  });
+
+  test("item42: literal RHS is unchanged (regression)", () => {
+    expect(compileAstToSql(ast([row({ column_ref: "amount", operator: ">=", value: 100 })]))).toBe(
+      "{{amount}} >= 100",
+    );
+  });
+});
