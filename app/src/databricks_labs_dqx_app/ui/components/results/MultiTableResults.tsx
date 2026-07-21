@@ -146,6 +146,25 @@ export function friendlyTableName(fqn: string | null | undefined): string {
   return (fqn ?? "").split(".").pop() ?? "";
 }
 
+/** Catalog part of a `catalog.schema.table` FQN (mirrors backend catalog_of). */
+export function catalogOfFqn(fqn: string | null | undefined): string {
+  return (fqn ?? "").split(".")[0] ?? "";
+}
+
+/** Two-part `catalog.schema` identity of an FQN (mirrors backend schema_of):
+ *  unambiguous across catalogs. Empty when the FQN has fewer than two parts. */
+export function schemaOfFqn(fqn: string | null | undefined): string {
+  const parts = (fqn ?? "").split(".");
+  return parts.length >= 2 ? `${parts[0]}.${parts[1]}` : "";
+}
+
+/** Display name for a schema identity = its bare schema segment (the part
+ *  after the catalog); the catalog is shown by its own chip/filter. */
+export function friendlySchemaName(schemaIdentity: string): string {
+  const parts = schemaIdentity.split(".");
+  return parts.length >= 2 ? parts[1] : schemaIdentity;
+}
+
 /** Distinct per-table series names (first-seen order), each given a stable
  *  dull colour by index (cycling through DULL_TABLE_COLORS). */
 export function buildTableColorMap(
@@ -244,6 +263,8 @@ const CHIP_LABEL_KEYS: Record<Facet, string> = {
   rule: "resultsUi.chipRule",
   column: "resultsUi.chipColumn",
   table: "resultsUi.chipTable",
+  catalog: "resultsUi.chipCatalog",
+  schema: "resultsUi.chipSchema",
 };
 
 export interface MultiTableResultsSectionProps {
@@ -591,14 +612,17 @@ export function MultiTableResultsSection({
   const chipDisplay = (facet: Facet, value: string) => {
     if (facet === "rule") return ruleChipDisplay(value, ruleChipRows);
     if (facet === "table") return friendlyTableName(value);
+    // Schema chips show the bare schema name (the catalog has its own chip).
+    if (facet === "schema") return friendlySchemaName(value);
     return value;
   };
-  const chips = (["dimension", "severity", "rule", "column", "table"] as const).flatMap(
-    (facet) =>
-      filters[facet].map((value) => ({
-        key: `${facet}:${value}`,
-        label: t(CHIP_LABEL_KEYS[facet], { value: chipDisplay(facet, value) }),
-      })),
+  const chips = (
+    ["dimension", "severity", "rule", "column", "table", "catalog", "schema"] as const
+  ).flatMap((facet) =>
+    filters[facet].map((value) => ({
+      key: `${facet}:${value}`,
+      label: t(CHIP_LABEL_KEYS[facet], { value: chipDisplay(facet, value) }),
+    })),
   );
 
   // Item 35: option lists for the top-level Global Results filter dropdowns.
@@ -614,23 +638,31 @@ export function MultiTableResultsSection({
     }
     return [...byValue.values()].sort((a, b) => a.label.localeCompare(b.label));
   };
+  // Every accessible table FQN (base by_table row set) — the universe the
+  // catalog → schema → table dropdowns are derived and cascaded from.
+  const allTableFqns = (baseResults?.by_table ?? [])
+    .map((g) => g.label)
+    .filter((l): l is string => l != null);
+  const selectedCatalogs = new Set(filters.catalog);
+  const selectedSchemas = new Set(filters.schema);
+  // Catalog options: every distinct catalog. Schema options: narrowed to the
+  // selected catalog(s) (all catalogs when none picked). Table options:
+  // narrowed to the selected catalog(s) AND schema(s). This is the hierarchical
+  // cascade — a narrower level's option list only offers what the wider levels
+  // allow, matching the discovery browser's catalog → schema → table flow.
+  const catalogFilterOptions = dedupeSortOptions(
+    allTableFqns.map((fqn) => ({ value: catalogOfFqn(fqn), label: catalogOfFqn(fqn) })),
+  );
+  const schemaFilterOptions = dedupeSortOptions(
+    allTableFqns
+      .filter((fqn) => selectedCatalogs.size === 0 || selectedCatalogs.has(catalogOfFqn(fqn)))
+      .map((fqn) => ({ value: schemaOfFqn(fqn), label: friendlySchemaName(schemaOfFqn(fqn)) })),
+  );
   const tableFilterOptions = dedupeSortOptions(
-    (baseResults?.by_table ?? [])
-      .map((g) => g.label)
-      .filter((l): l is string => l != null)
+    allTableFqns
+      .filter((fqn) => selectedCatalogs.size === 0 || selectedCatalogs.has(catalogOfFqn(fqn)))
+      .filter((fqn) => selectedSchemas.size === 0 || selectedSchemas.has(schemaOfFqn(fqn)))
       .map((fqn) => ({ value: fqn, label: friendlyTableName(fqn) })),
-  );
-  const dimensionFilterOptions = dedupeSortOptions(
-    (baseResults?.by_dimension ?? [])
-      .map((g) => g.label)
-      .filter((l): l is string => l != null)
-      .map((label) => ({ value: label, label })),
-  );
-  const severityFilterOptions = dedupeSortOptions(
-    (baseResults?.by_severity ?? [])
-      .map((g) => g.label)
-      .filter((l): l is string => l != null)
-      .map((label) => ({ value: label, label })),
   );
   const ruleFilterOptions = dedupeSortOptions(
     (baseResults?.by_rule ?? [])
@@ -655,11 +687,43 @@ export function MultiTableResultsSection({
   const onFacetFilterChange = (facet: Facet, values: string[]) =>
     setFilters((f) => ({ ...f, [facet]: values }));
 
+  // Catalog/schema cascade: narrowing a WIDER level prunes any downstream
+  // selection it no longer permits, so the active filters can never disagree
+  // with the (now-narrowed) option lists. Widening (adding a catalog) leaves
+  // downstream picks untouched.
+  const onCatalogFilterChange = (values: string[]) => {
+    const allow = new Set(values);
+    setFilters((f) => {
+      const keepSchema = allow.size === 0 ? f.schema : f.schema.filter((s) => allow.has(catalogOfFqn(s)));
+      const keepTable = allow.size === 0 ? f.table : f.table.filter((t) => allow.has(catalogOfFqn(t)));
+      if (keepTable.length === 0) setSelectedTable(null);
+      return { ...f, catalog: values, schema: keepSchema, table: keepTable };
+    });
+  };
+  const onSchemaFilterChange = (values: string[]) => {
+    const allow = new Set(values);
+    setFilters((f) => {
+      const keepTable = allow.size === 0 ? f.table : f.table.filter((t) => allow.has(schemaOfFqn(t)));
+      if (keepTable.length === 0) setSelectedTable(null);
+      return { ...f, schema: values, table: keepTable };
+    });
+  };
+
   const onRemoveChip = (key: string) => {
     const [facet, value] = key.split(/:(.+)/) as [Facet, string];
     // The table facet mirrors the invalid-samples selection — removing its
     // chip clears both, exactly like re-clicking the selected By table row.
     if (facet === "table") setSelectedTable(null);
+    // Catalog/schema chips route through the cascade handlers so removing a
+    // wider level also prunes the downstream picks it no longer permits.
+    if (facet === "catalog") {
+      onCatalogFilterChange(filters.catalog.filter((v) => v !== value));
+      return;
+    }
+    if (facet === "schema") {
+      onSchemaFilterChange(filters.schema.filter((v) => v !== value));
+      return;
+    }
     setFilters((f) => toggleFacet(f, facet, value));
   };
 
@@ -785,13 +849,35 @@ export function MultiTableResultsSection({
           rows toggle, so they re-scope every trend + breakdown box. Styled to
           match the overview filter bubbles (shared FILTER_TRIGGER_CLASS). The
           active-chip row below the drilldown still mirrors the selection, so a
-          filter set here is also removable there. Column is intentionally
+          filter set here is also removable there.
+
+          Order is the discovery hierarchy — catalog → schema → table → rule.
+          Catalog/schema cascade: each narrows the next level's option list.
+          Dimension/severity dropdowns were removed here (still reachable by
+          clicking a By-dimension / By-severity breakdown row). Column is
           absent — columns are table-specific (only populated once a single
-          table is selected), so there is no cross-table column universe to
-          offer here. */}
+          table is selected), so there is no cross-table column universe. */}
       {showTopLevelFilters && (
         <FadeIn delay={0.04}>
           <div className="flex flex-wrap items-center gap-2">
+            <ResultsFacetFilter
+              allLabel={t("resultsUi.filterAllCatalogs")}
+              options={catalogFilterOptions}
+              selected={filters.catalog}
+              onChange={onCatalogFilterChange}
+              searchPlaceholder={t("resultsUi.filterSearchCatalogs")}
+              emptyText={t("resultsUi.filterNoCatalogs")}
+              ariaLabel={t("resultsUi.filterAllCatalogs")}
+            />
+            <ResultsFacetFilter
+              allLabel={t("resultsUi.filterAllSchemas")}
+              options={schemaFilterOptions}
+              selected={filters.schema}
+              onChange={onSchemaFilterChange}
+              searchPlaceholder={t("resultsUi.filterSearchSchemas")}
+              emptyText={t("resultsUi.filterNoSchemas")}
+              ariaLabel={t("resultsUi.filterAllSchemas")}
+            />
             <ResultsFacetFilter
               allLabel={t("resultsUi.filterAllTables")}
               options={tableFilterOptions}
@@ -800,24 +886,6 @@ export function MultiTableResultsSection({
               searchPlaceholder={t("resultsUi.filterSearchTables")}
               emptyText={t("resultsUi.filterNoTables")}
               ariaLabel={t("resultsUi.filterAllTables")}
-            />
-            <ResultsFacetFilter
-              allLabel={t("resultsUi.filterAllDimensions")}
-              options={dimensionFilterOptions}
-              selected={filters.dimension}
-              onChange={(v) => onFacetFilterChange("dimension", v)}
-              searchPlaceholder={t("resultsUi.filterSearchDimensions")}
-              emptyText={t("resultsUi.filterNoDimensions")}
-              ariaLabel={t("resultsUi.filterAllDimensions")}
-            />
-            <ResultsFacetFilter
-              allLabel={t("resultsUi.filterAllSeverities")}
-              options={severityFilterOptions}
-              selected={filters.severity}
-              onChange={(v) => onFacetFilterChange("severity", v)}
-              searchPlaceholder={t("resultsUi.filterSearchSeverities")}
-              emptyText={t("resultsUi.filterNoSeverities")}
-              ariaLabel={t("resultsUi.filterAllSeverities")}
             />
             <ResultsFacetFilter
               allLabel={t("resultsUi.filterAllRules")}

@@ -37,7 +37,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
-from databricks_labs_dqx_app.backend.metrics_utils import safe_int
+from databricks_labs_dqx_app.backend.metrics_utils import catalog_of, safe_int, schema_of
 from databricks_labs_dqx_app.backend.models import (
     EntityResultsOut,
     GroupRowOut,
@@ -160,6 +160,13 @@ class ResultFacets:
     set of member table FQNs. It participates in the AND like the other
     four facets everywhere EXCEPT the ``by_table`` breakdown itself,
     which self-excludes it (see ``compute_entity_results``).
+
+    *catalogs* / *schemas* are the Global Results hierarchical scope
+    (catalog → schema → table). Unlike *tables* they are NOT self-excluded
+    from ``by_table`` — narrowing to a catalog/schema is meant to shrink the
+    By-table row set too. *schemas* values are the two-part ``catalog.schema``
+    identity (see ``metrics_utils.schema_of``) so a ``sales`` schema in two
+    catalogs stays distinct.
     """
 
     dimensions: tuple[str, ...] = ()
@@ -167,9 +174,19 @@ class ResultFacets:
     rules: tuple[str, ...] = ()
     columns: tuple[str, ...] = ()
     tables: tuple[str, ...] = ()
+    catalogs: tuple[str, ...] = ()
+    schemas: tuple[str, ...] = ()
 
     def any_active(self) -> bool:
-        return bool(self.dimensions or self.severities or self.rules or self.columns or self.tables)
+        return bool(
+            self.dimensions
+            or self.severities
+            or self.rules
+            or self.columns
+            or self.tables
+            or self.catalogs
+            or self.schemas
+        )
 
 
 def _parse_columns_json(raw: str | None) -> tuple[str, ...]:
@@ -245,6 +262,10 @@ def row_matches_facets(row: CheckResultRow, facets: ResultFacets) -> bool:
     row's table FQN — the SQL analogue of dqlake's binding filter.
     """
     if facets.tables and row.table_fqn not in facets.tables:
+        return False
+    if facets.catalogs and catalog_of(row.table_fqn) not in facets.catalogs:
+        return False
+    if facets.schemas and schema_of(row.table_fqn) not in facets.schemas:
         return False
     if facets.dimensions and row.dimension not in facets.dimensions:
         return False
@@ -366,7 +387,9 @@ def _by_column_rows(
     one column, so the resolver sees a single-column row and can apply that
     column's per-column threshold override."""
     exploded = [replace(row, columns=(column,)) for row in rows for column in row.columns]
-    return _group_rows(exploded, lambda row: row.columns[0], with_check_count=False, resolve_threshold=resolve_threshold)
+    return _group_rows(
+        exploded, lambda row: row.columns[0], with_check_count=False, resolve_threshold=resolve_threshold
+    )
 
 
 def _trend_asof(
@@ -758,7 +781,9 @@ def compute_entity_results(
                 else matched
             )
             table_box_rows = [row for row in matched_sans_table if instant_of(row) == latest.get(row.table_fqn)]
-        result.by_dimension = _group_rows(breakdown_rows, lambda row: row.dimension, resolve_threshold=resolve_threshold)
+        result.by_dimension = _group_rows(
+            breakdown_rows, lambda row: row.dimension, resolve_threshold=resolve_threshold
+        )
         result.by_severity = _group_rows(breakdown_rows, lambda row: row.severity, resolve_threshold=resolve_threshold)
         result.by_rule = _by_rule_rows(breakdown_rows, resolve_threshold)
         result.by_column = _by_column_rows(breakdown_rows, resolve_threshold)
@@ -795,8 +820,12 @@ def compute_entity_results(
             scope_instants = {row.run_date for row in capped_rows}
             expansion = [row for row in asof_rows if row.run_date in scope_instants and row_matches_facets(row, facets)]
         result.trend = _trend_asof(expansion, resolve_threshold)
-        result.trend_by_dimension = _trend_grouped(expansion, lambda row: row.dimension, resolve_threshold=resolve_threshold)
-        result.trend_by_severity = _trend_grouped(expansion, lambda row: row.severity, resolve_threshold=resolve_threshold)
+        result.trend_by_dimension = _trend_grouped(
+            expansion, lambda row: row.dimension, resolve_threshold=resolve_threshold
+        )
+        result.trend_by_severity = _trend_grouped(
+            expansion, lambda row: row.severity, resolve_threshold=resolve_threshold
+        )
         if table_axis == "by_table":
             # Per-table markers plotted at their RUN-BATCH instant so every
             # member of one Table-Space run shares the Average point's x —

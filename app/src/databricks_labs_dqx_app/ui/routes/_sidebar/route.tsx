@@ -155,25 +155,11 @@ function Layout() {
               </>
             )}
 
-            {/* Runs History — visible to all */}
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                asChild
-                isActive={location.pathname.startsWith("/runs-history")}
-                tooltip={t("sidebar.runsHistory")}
-              >
-                <Link to="/runs-history">
-                  <History />
-                  <span>{t("sidebar.runsHistory")}</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-
             {/* Results — org-wide DQ results composition over all monitored
                 tables (dq-results endpoints). Visible to all; the backend
                 filters to the viewer's accessible catalogs. Admin-gated and
                 hidden by default (B2-20) — an admin opts in on the
-                Configuration page. */}
+                Configuration page. When shown, it sits ABOVE Runs History. */}
             {globalResultsEnabled && (
               <SidebarMenuItem>
                 <SidebarMenuButton
@@ -188,6 +174,20 @@ function Layout() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
             )}
+
+            {/* Runs History — visible to all */}
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                isActive={location.pathname.startsWith("/runs-history")}
+                tooltip={t("sidebar.runsHistory")}
+              >
+                <Link to="/runs-history">
+                  <History />
+                  <span>{t("sidebar.runsHistory")}</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>

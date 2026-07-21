@@ -20,6 +20,17 @@ def catalog_of(fqn: str) -> str:
     return parts[0] if parts else ""
 
 
+def schema_of(fqn: str) -> str:
+    """Extract the ``catalog.schema`` prefix from a fully qualified table name.
+
+    Returns the two-part schema identity (not the bare schema name) so it is
+    unambiguous across catalogs — two catalogs can both hold a ``sales``
+    schema. Empty string when the FQN has fewer than two parts.
+    """
+    parts = fqn.split(".")
+    return f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else ""
+
+
 def safe_int(value: Any) -> int | None:
     """Best-effort string→int that tolerates ``None`` and decimal strings."""
     if value in (None, ""):
