@@ -829,7 +829,13 @@ export const useTimezone = <
     queryKey: queryOptions?.queryKey ?? getTimezoneQueryKey(),
     queryFn: () => getTimezone(axiosOptions),
     select: ((resp: Awaited<ReturnType<typeof getTimezone>>) => resp.data) as never,
-    staleTime: 5 * 60 * 1000,
+    // Session-stable app config: the workspace timezone doesn't change within a
+    // session, so pin to Infinity (matching role/version/approvals-mode) rather
+    // than the 5-minute default — otherwise every component that mounts this
+    // after the window lapses re-fetches config/timezone. The settings page
+    // invalidates getTimezoneQueryKey() on save, so an actual change still
+    // refreshes it.
+    staleTime: Infinity,
     ...queryOptions,
   }) as UseQueryResult<TData, TError>;
 };
