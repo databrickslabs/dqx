@@ -67,16 +67,18 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
         "grid gap-2 items-center py-1",
         // Column stays a FIXED 11rem everywhere. The operator + value tracks
         // differ by mode:
-        //   - compact (Condition Builder only): operator sizes to CONTENT
-        //     (minmax(6rem,max-content)) so `<=` is narrow and the box shrinks
-        //     from the RIGHT with a fixed left edge; value is a fixed 18rem so
-        //     the row is NOT forced full-width. Grid is left-packed to content.
+        //   - compact (Condition Builder only): the whole row is capped at
+        //     max-w-2xl (the original bounded width) so it never sprawls across
+        //     a wide dialog. Operator sizes to CONTENT (minmax(6rem,max-content))
+        //     so `<=` is narrow and shrinks from the RIGHT with a fixed left
+        //     edge; value fills the REMAINDER within the cap (minmax(0,1fr)) —
+        //     bounded, so the extra input box is never oversized.
         //   - default (row filters): operator fixed 18rem, value fills the
-        //     remainder (minmax(0,1fr)) — unchanged.
+        //     remainder — unchanged.
         compact
           ? readOnly
-            ? "grid-cols-[80px_11rem_minmax(6rem,max-content)_18rem]"
-            : "grid-cols-[80px_11rem_minmax(6rem,max-content)_18rem_28px]"
+            ? "max-w-2xl grid-cols-[80px_11rem_minmax(6rem,max-content)_minmax(0,1fr)]"
+            : "max-w-2xl grid-cols-[80px_11rem_minmax(6rem,max-content)_minmax(0,1fr)_28px]"
           : readOnly
             ? "grid-cols-[80px_11rem_18rem_minmax(0,1fr)]"
             : "grid-cols-[80px_11rem_18rem_minmax(0,1fr)_28px]",
