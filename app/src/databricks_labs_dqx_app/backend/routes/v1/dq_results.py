@@ -323,11 +323,16 @@ def _count_filtered_failed_rows(
     selective filter. Returns None on any error (the caller then keeps the
     scan-window count rather than surfacing a wrong headline).
     """
+    # ORDER BY created_at DESC to MATCH the preview scan's window: both are
+    # capped, so aligning their order guarantees the count covers the same
+    # top-N rows the preview shows — otherwise, on a run larger than the cap,
+    # the two scans could pull disjoint windows and report total < len(rows)
+    # (breaking the "N of M" display).
     stmt = (
         f"SELECT to_json(errors) AS errors, to_json(warnings) AS warnings "
         f"FROM {quarantine_table} WHERE source_table_fqn = '{escaped_fqn}' "  # noqa: S608
         f"{run_cond}"
-        f"LIMIT {_FAILED_ROWS_MAX}"
+        f"ORDER BY created_at DESC LIMIT {_FAILED_ROWS_MAX}"
     )
     try:
         rows = sql.query_dicts(stmt)
