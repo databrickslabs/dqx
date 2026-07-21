@@ -402,13 +402,15 @@ class TestMetricViewDdl:
         measures = {m["name"]: m["expr"] for m in body["measures"]}
         assert measures["error_tests"] == "SUM(error_count)"
         assert measures["warning_tests"] == "SUM(warning_count)"
-        assert measures["failed_checks"] == "COUNT_IF((error_count + warning_count) > 0)"
-        assert measures["total_checks"] == "COUNT(1)"
+        # FILTER (WHERE ...) form (docs-preferred over COUNT_IF for metric-view measures).
+        assert measures["failed_checks"] == "COUNT(1) FILTER (WHERE (error_count + warning_count) > 0)"
+        # COUNT(check_name) so a no-check placeholder run reports 0, not 1.
+        assert measures["total_checks"] == "COUNT(check_name)"
         # "How many rules do I have" — the acceptance smoke test.
         assert measures["rule_count"] == "COUNT(DISTINCT registry_rule_id)"
         assert (
             measures["failed_rule_count"]
-            == "COUNT(DISTINCT CASE WHEN (error_count + warning_count) > 0 THEN registry_rule_id END)"
+            == "COUNT(DISTINCT registry_rule_id) FILTER (WHERE (error_count + warning_count) > 0)"
         )
 
 

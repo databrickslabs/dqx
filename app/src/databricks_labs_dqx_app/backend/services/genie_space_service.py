@@ -791,15 +791,16 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     )
 
     # "How many rules do I have" — the acceptance smoke test. Answered from
-    # the metric view as the DISTINCT rules that have RUN (registry_rule_id),
-    # via MEASURE(rule_count), across published runs. This is a rate/coverage
-    # question the metric view owns; the dim_dq_rules counts below answer the
-    # separate AUTHORING questions (added recently, approved-and-running).
+    # the metric view as the DISTINCT rules that ran (registry_rule_id) in each
+    # table's LATEST published run, via MEASURE(rule_count). is_latest_run scopes
+    # to the current rule set so rules since removed are NOT counted (a bare
+    # published filter counts every rule that EVER ran — overcounts). The
+    # dim_dq_rules counts below answer the separate AUTHORING questions.
     rules_have = (
         "SELECT MEASURE(`rule_count`) AS rules,\n"
         "       MEASURE(`failed_rule_count`) AS failing_rules\n"
         f"FROM {mv}\n"
-        "WHERE `run_mode` = 'published'"
+        "WHERE `run_mode` = 'published' AND `is_latest_run` = true"
     )
 
     rules_added_recently = (
