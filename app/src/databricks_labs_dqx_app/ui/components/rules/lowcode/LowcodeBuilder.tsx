@@ -94,6 +94,10 @@ export function LowcodeBuilder({ ast, onChange, declaredColumns, readOnly, rende
           onDelete={() => deleteRow(i)}
           readOnly={readOnly}
           renderOperator={renderOperator}
+          // Condition Builder uses the compact layout (content-sized operator
+          // that shrinks from the right, capped value box); row filters
+          // (FilterBuilder) keep the default fixed-operator / full-width value.
+          compact
           // A rule must keep at least one condition — hide the X on the last
           // remaining row.
           canDelete={ast.rows.length > 1}
