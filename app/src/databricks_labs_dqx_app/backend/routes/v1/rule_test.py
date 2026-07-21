@@ -79,11 +79,6 @@ class RuleTestRunIn(BaseModel):
     adhoc: AdhocRunIn | None = None
     table: TableRunIn | None = None
     display_cap: int = Field(default=5000, ge=1, le=50_000)
-    # The rule's ROW FILTER (compiled SQL boolean, ``definition.filter``). When
-    # set, it scopes WHICH rows the check evaluates: a row the filter excludes is
-    # NOT evaluated, so its per-row verdict is NULL (grid leaves it untinted)
-    # rather than a misleading pass/fail. Empty/omitted -> behaviour unchanged.
-    filter: str = ""
     # Set by the Low-Code editor when the rule folds joins and/or group-by into a
     # dataset-level ``sql_query`` (see ``lib/lowcodeCompile.compileLowcodeBody``).
     # Only the row predicate reaches this route, so testing such a rule would
@@ -94,9 +89,7 @@ class RuleTestRunIn(BaseModel):
 
 class TestRowOut(BaseModel):
     cells: dict[str, str | None]
-    # ``None`` = row excluded by the rule's ROW FILTER (not evaluated); the UI
-    # leaves such a row untinted. ``True``/``False`` = pass/fail.
-    passed: bool | None
+    passed: bool
     row_idx: int | None = None
 
 
@@ -140,9 +133,7 @@ async def run_rule_test(
                 column_mapping=mapping,
                 display_cap=body.display_cap,
             )
-            result = await svc.run_adhoc(
-                predicate=body.predicate, polarity=body.polarity, source=source, row_filter=body.filter or None
-            )
+            result = await svc.run_adhoc(predicate=body.predicate, polarity=body.polarity, source=source)
         else:
             if body.table is None:
                 raise ValueError("A table and column mapping are required.")
@@ -156,9 +147,7 @@ async def run_rule_test(
                 sample_value=body.table.sample_value,
                 display_cap=body.display_cap,
             )
-            result = await svc.run_table(
-                predicate=body.predicate, polarity=body.polarity, source=table_source, row_filter=body.filter or None
-            )
+            result = await svc.run_table(predicate=body.predicate, polarity=body.polarity, source=table_source)
     except UnsafeSqlQueryError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:

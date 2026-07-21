@@ -3231,7 +3231,6 @@ export interface RuleTestRunIn {
    * @maximum 50000
    */
   display_cap?: number;
-  filter?: string;
   lowcode_advanced?: boolean;
 }
 
@@ -3962,13 +3961,11 @@ export interface TagSuggestionsOut {
 
 export type TestRowOutCells = {[key: string]: string | null};
 
-export type TestRowOutPassed = boolean | null;
-
 export type TestRowOutRowIdx = number | null;
 
 export interface TestRowOut {
   cells: TestRowOutCells;
-  passed: TestRowOutPassed;
+  passed: boolean;
   row_idx?: TestRowOutRowIdx;
 }
 

@@ -75,44 +75,6 @@ class TestRunAdhoc:
         sql_executor_mock.query_dicts.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_filter_yields_none_verdict_for_excluded_row(self, service, sql_executor_mock):
-        # A row the ROW FILTER excludes comes back with a SQL NULL verdict, which
-        # maps to a None verdict (grid leaves it untinted); an in-filter row keeps
-        # its pass/fail verdict.
-        sql_executor_mock.query_dicts.return_value = [
-            {"amount": "5", "region": "US", "__row_idx": "0", "__passed": "true"},
-            {"amount": "-3", "region": "US", "__row_idx": "1", "__passed": "false"},
-            {"amount": "9", "region": "EU", "__row_idx": "2", "__passed": None},
-        ]
-        src = AdhocSource(
-            columns=["amount", "region"],
-            rows=[["5", "US"], ["-3", "US"], ["9", "EU"]],
-            families={"amount": "numeric", "region": "text"},
-            column_mapping={"amount": "amount", "region": "region"},
-        )
-
-        result = await service.run_adhoc(
-            predicate="{{amount}} > 0", polarity="pass", source=src, row_filter="{{region}} = 'US'"
-        )
-
-        sql = sql_executor_mock.query_dicts.call_args.args[0]
-        assert "CASE WHEN NOT (`region` = 'US')" in sql
-        assert result.rows[0].passed is True
-        assert result.rows[1].passed is False
-        assert result.rows[2].passed is None
-
-    @pytest.mark.asyncio
-    async def test_rejects_unsafe_filter(self, service, sql_executor_mock):
-        # The filter is user SQL and must pass the same is_sql_query_safe gate as
-        # the predicate — an unsafe filter is rejected before anything runs.
-        src = AdhocSource(columns=["a"], rows=[["1"]], families={}, column_mapping={"a": "a"})
-        with pytest.raises(UnsafeSqlQueryError):
-            await service.run_adhoc(
-                predicate="{{a}} > 0", polarity="pass", source=src, row_filter="1=1; DROP TABLE x"
-            )
-        sql_executor_mock.query_dicts.assert_not_called()
-
-    @pytest.mark.asyncio
     async def test_injection_data_without_keyword_runs_as_harmless_literal(self, service, sql_executor_mock):
         # A trailing-backslash + break-out attempt with no forbidden keyword passes
         # the safety gate BUT is fully escaped: the payload can only ever appear as

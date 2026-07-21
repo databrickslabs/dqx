@@ -3881,7 +3881,6 @@ export function RegistryRuleFormDialog({
           predicate={testEffectivePredicate}
           polarity={polarity}
           slots={sqlSlots}
-          filter={filter}
           ruleMode={mode === "lowcode" ? "lowcode" : "sql"}
           lowcodeAdvanced={lowcodeAdvanced}
           canTest={testEffectivePredicate.length > 0 && (mode !== "sql" || sqlError === null)}

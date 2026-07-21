@@ -79,33 +79,23 @@ class RuleTestService:
         """Whether AI test-data generation can be offered (kill-switch + endpoint)."""
         return self._ai.is_enabled() and bool(self._ai.endpoint_name())
 
-    async def run_adhoc(
-        self, *, predicate: str, polarity: str, source: AdhocSource, row_filter: str | None = None
-    ) -> TestRunResult:
+    async def run_adhoc(self, *, predicate: str, polarity: str, source: AdhocSource) -> TestRunResult:
         """Evaluate *predicate* over the manual VALUES grid, per-row verdicts.
 
         Both the AI-generated grid and hand-typed rows flow through here, so the
-        same safety gates cover every ad-hoc cell. When *row_filter* is given,
-        rows it excludes carry a ``None`` verdict (not evaluated).
+        same safety gates cover every ad-hoc cell.
         """
         self._guard_predicate(predicate, source.column_mapping)
-        self._guard_filter(row_filter, source.column_mapping)
-        sql = build_adhoc_sql(predicate, polarity, source, row_filter)
+        sql = build_adhoc_sql(predicate, polarity, source)
         self._guard_assembled(sql)
         rows = await asyncio.to_thread(self._sql.query_dicts, sql)
         return parse_result(rows, display_cap=source.display_cap)
 
-    async def run_table(
-        self, *, predicate: str, polarity: str, source: TableSource, row_filter: str | None = None
-    ) -> TestRunResult:
-        """Evaluate *predicate* over a sample of a real UC table, per-row verdicts.
-
-        When *row_filter* is given, rows it excludes carry a ``None`` verdict.
-        """
+    async def run_table(self, *, predicate: str, polarity: str, source: TableSource) -> TestRunResult:
+        """Evaluate *predicate* over a sample of a real UC table, per-row verdicts."""
         validate_fqn(source.table)
         self._guard_predicate(predicate, source.column_mapping)
-        self._guard_filter(row_filter, source.column_mapping)
-        sql = build_table_sql(predicate, polarity, source, row_filter)
+        sql = build_table_sql(predicate, polarity, source)
         self._guard_assembled(sql)
         rows = await asyncio.to_thread(self._sql.query_dicts, sql)
         return parse_result(rows, display_cap=source.display_cap)
@@ -166,20 +156,6 @@ class RuleTestService:
         # aware, so a `--` inside a string literal still counts as live SQL.
         if not is_sql_query_safe(strip_sql_line_comments(substituted)):
             raise UnsafeSqlQueryError("The rule's SQL predicate contains prohibited statements and cannot be tested.")
-
-    @staticmethod
-    def _guard_filter(row_filter: str | None, column_mapping: dict[str, str]) -> None:
-        """Reject a ROW FILTER that fails DQX's SQL-safety gate after substitution.
-
-        The filter is user SQL exactly like the predicate, so it runs through the
-        same ``is_sql_query_safe`` gate (comments stripped so inert prose can't
-        trip the keyword scan). A blank filter is a no-op.
-        """
-        if not row_filter:
-            return
-        substituted = substitute_slots(row_filter, column_mapping)
-        if not is_sql_query_safe(strip_sql_line_comments(substituted)):
-            raise UnsafeSqlQueryError("The rule's row filter contains prohibited statements and cannot be tested.")
 
     @staticmethod
     def _guard_assembled(sql: str) -> None:
