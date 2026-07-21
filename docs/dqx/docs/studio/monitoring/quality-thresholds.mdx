@@ -1,0 +1,65 @@
+---
+sidebar_position: 2
+title: "Set quality thresholds"
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Set quality thresholds
+
+This page is for data stewards who want a check to reflect the *real* state of their data. Real data is rarely perfect. A quality threshold lets a check tolerate some failures before it turns red, so you can set an honest bar today and raise it as the data gets better.
+
+## Why a threshold helps
+
+By default, a check is either passing or failing. But if a column is 88% clean and you demand 100%, that check stays red forever — and a check that's always red is a check everyone learns to ignore.
+
+A **pass threshold** sets how many rows must pass for the check to count as green. For example, "at least 70% of rows must pass." If 82% pass, the check is green. If only 61% pass, it's flagged.
+
+This turns quality into a dial instead of a pass/fail cliff. You can accept 70% today, get the check green, and start improving the underlying data. Next month you raise the bar to 80%, then 95%, as the data catches up. Progress stays visible the whole way.
+
+<Admonition type="note" title="A threshold never changes your data">
+Setting or raising a threshold only changes when a check is flagged. It never deletes or edits rows. Failing rows are still sampled into a quarantine view so you can look into them.
+</Admonition>
+
+## Set a threshold on a check
+
+Thresholds live on a **monitored table** — a table you've applied rules to. Open the table and go to its **Apply Rules** tab. Each applied check has a threshold control, so you can set a different bar for each rule and each column.
+
+<ThemedImage
+  alt="Apply Rules tab of a monitored table, showing applied checks grouped by column with pass-threshold badges"
+  sources={{
+    light: useBaseUrl('/img/studio/table_apply_rules_light.png'),
+    dark: useBaseUrl('/img/studio/table_apply_rules_dark.png'),
+  }}
+/>
+
+A check with a threshold shows a small badge like `< 70%`. Read it as: "flag this check if fewer than 70% of rows pass." Checks without a badge use the simplest bar — every row must pass.
+
+<Admonition type="tip" title="Start loose, then tighten">
+Set the threshold just below where the data is today so the check goes green, then raise it a little each time the data improves. A steadily rising threshold is a much clearer signal of progress than a check stuck on red.
+</Admonition>
+
+## A worked example
+
+Say your `customers` table has an `email` column, and about 12% of rows are missing an email address today. You apply an "email is not null" check.
+
+- With no threshold, the check demands 100% and shows red — accurate, but not actionable.
+- Set the threshold to `< 90%`: the check needs 90% of rows to have an email. With 88% clean today it's still flagged, but only just — a clear, close target.
+- Once the data team fills in the gaps and 96% of rows have an email, the check turns green.
+- You then raise the threshold to `< 98%` to keep pushing, and set the next goal.
+
+Same check, same column — the threshold is what let you track the climb.
+
+## How thresholds relate to the quality score
+
+Each monitored table has a data quality (DQ) score based on how many **tests** passed versus how many ran. A test is a single evaluation of a check against one row, so a run of one check over a million rows produces a million tests.
+
+The threshold decides *when a check counts as passing* for that score. A green check (at or above its threshold) contributes as passing; a flagged one counts against the score. So thresholds shape both the badges you see on the Apply Rules tab and the overall score on the table's Results view.
+
+To see how the score and trend are built, read [Measure quality health](/docs/studio/running/measure-quality-health). For the difference between rules, checks, and tests, see [Key concepts](/docs/studio/start-here/key-concepts#rules-checks-and-tests).
+
+<Admonition type="info" title="Org-wide defaults">
+Admins can set default thresholds for your whole organization, so new checks start from a sensible bar instead of demanding 100%. You can still override the default on any individual check. See [Set up for your org](/docs/studio/start-here/set-up-for-your-org).
+</Admonition>

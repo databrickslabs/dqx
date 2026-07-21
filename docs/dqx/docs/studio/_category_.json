@@ -1,0 +1,13 @@
+{
+  "label": "DQX Studio",
+  "position": 250,
+  "collapsible": true,
+  "collapsed": false,
+  "link": {
+    "type": "doc",
+    "id": "studio/index"
+  },
+  "customProps": {
+    "description": "The no-code web app for data quality"
+  }
+}

@@ -1,0 +1,105 @@
+---
+sidebar_position: 3
+title: "Governed tags"
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Governed tags & auto-mapping
+
+This page is for **Data Stewards** and **Data Governance Managers** who want the
+same class of data — all personal information, all location fields, all email
+addresses — to get the same quality rules everywhere, without mapping every rule
+to every column by hand.
+
+A **governed tag** is a label your organization agrees on for a kind of data —
+for example `class.location`, `class.pii`, or `class.email`. An admin defines
+the approved set once. When you tag a rule with one of these labels and apply it
+to a table, DQX Studio looks at the columns that already carry the same tag and
+**suggests** which columns the rule should check. You accept the suggestion
+instead of hunting for the right column yourself.
+
+## Why this matters
+
+Without governed tags, someone has to remember that "country code" lives in a
+column called `country_code` on one table and `ctry` on another, and manually
+point each validation rule at the right place. That is slow and easy to get
+wrong.
+
+Governed tags flip it around. You describe *what kind of data* a rule is for,
+once. From then on, any table whose columns are tagged with that class gets the
+rule suggested automatically — so your taxonomy stays consistent and no PII or
+location column quietly slips through unchecked.
+
+## A worked example
+
+Say you have a rule, **"is a valid ISO country code"**, and you tag it with
+`class.location`.
+
+Now you open a customer table whose `country_code` column carries the same
+`class.location` tag in Unity Catalog. You can see that tag on the column when
+you view the table's schema:
+
+<ThemedImage
+  alt="Monitored table schema showing a class.location governed tag on a column"
+  sources={{
+    light: useBaseUrl('/img/studio/table_detail_light.png'),
+    dark: useBaseUrl('/img/studio/table_detail_dark.png'),
+  }}
+/>
+
+Because the rule's tag matches the column's tag, DQX Studio suggests applying
+the rule to `country_code`. The suggestion shows up as a **matched-tag chip** on
+that column when you apply rules — a small marker telling you *why* the rule was
+proposed here. You confirm it, and the rule starts checking that column on every
+run.
+
+## How to set it up
+
+### 1. Define governed tags (admin)
+
+An admin curates the approved set of tags in **Admin Settings → Tags**. This is
+where the shared taxonomy lives — the tags everyone else picks from.
+
+<ThemedImage
+  alt="Admin Settings Tags screen listing governed tag definitions"
+  sources={{
+    light: useBaseUrl('/img/studio/settings_tags_light.png'),
+    dark: useBaseUrl('/img/studio/settings_tags_dark.png'),
+  }}
+/>
+
+See [Set up DQX Studio for your organization](/docs/studio/start-here/set-up-for-your-org)
+for the wider admin setup.
+
+### 2. Tag a rule (author)
+
+When you create or edit a rule, add a governed tag to it — for example, tag your
+"is a valid ISO country code" rule with `class.location`. You pick from the tags
+your admin defined, so the taxonomy stays consistent.
+
+See [Create a rule](/docs/studio/authoring/create-a-rule) for the full authoring
+flow.
+
+### 3. Accept the suggested columns (applying)
+
+Open a table's **Apply Rules** tab. Where a rule's governed tag matches a tagged
+column, DQX Studio proposes that column and marks it with a matched-tag chip.
+Review the suggestions and accept the ones that are right — the rule becomes a
+**check** on those columns.
+
+See [Monitor a table](/docs/studio/monitoring/monitor-a-table) for everything you
+can do on the Apply Rules tab.
+
+<Admonition type="tip" title="Suggestions, not automatic changes">
+Matched-tag chips are suggestions. Nothing is applied until you accept it, so
+you stay in control of which columns each rule checks.
+</Admonition>
+
+<Admonition type="note" title="Tags come from Unity Catalog">
+Column matching relies on the tags already set on your columns in Unity Catalog.
+If a rule isn't being suggested where you expect, check that the column carries
+the matching governed tag.
+</Admonition>

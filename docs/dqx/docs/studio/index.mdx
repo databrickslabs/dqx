@@ -1,0 +1,106 @@
+---
+sidebar_position: 0
+title: DQX Studio
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# DQX Studio
+
+**DQX Studio is a no-code web app for data quality.** It lets you define the
+rules your data should follow, run them against your tables, and see — at a
+glance — whether your data can be trusted. All from a browser, with no code to
+write or maintain.
+
+It runs inside your own Databricks workspace as a
+[Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html),
+so it uses your Databricks sign-in and only ever shows you data you already have
+access to.
+
+<ThemedImage
+  alt="DQX Studio home page showing overall data quality score and a quality trend chart"
+  sources={{
+    light: useBaseUrl('/img/studio/home_light.png'),
+    dark: useBaseUrl('/img/studio/home_dark.png'),
+  }}
+/>
+
+## Who it's for
+
+DQX Studio is built for the people accountable for data quality — **data
+stewards**, **data governance managers**, and the analysts and owners who work
+with them — not just engineers. If you can describe what "good data" looks like
+("customer email should never be blank", "an order amount can't be negative"),
+you can use DQX Studio to enforce it.
+
+## What do you want to do?
+
+You don't have to read this guide front to back. Pick the doorway that matches
+why you're here:
+
+- **See whether your data is healthy** → start at
+  [Measure quality health](/docs/studio/running/measure-quality-health).
+- **Add a new rule** → follow the
+  [Quickstart](/docs/studio/start-here/quickstart), or jump to
+  [Create a rule](/docs/studio/authoring/create-a-rule).
+- **A rule is failing and you need to act** →
+  [Fix a failing rule](/docs/studio/running/fix-a-failing-rule).
+- **Roll DQX Studio out across your organization** →
+  [Set up DQX Studio for your organization](/docs/studio/start-here/set-up-for-your-org).
+
+<Admonition type="tip" title="New here? Read this first">
+The [Quickstart](/docs/studio/start-here/quickstart) takes you from an empty
+screen to your first monitored table in about ten minutes. If you're unsure how
+the pieces fit together, [Key concepts](/docs/studio/start-here/key-concepts)
+explains the handful of terms you'll see everywhere.
+</Admonition>
+
+## How DQX Studio is organized
+
+DQX Studio has three levels that build on each other. Understanding them makes
+everything else click:
+
+1. **Rules Registry** — your library of reusable rules. You write a rule once
+   (for example, "this column is never blank") and reuse it across many tables.
+2. **Monitored tables** — a table you've applied rules to. This is the single
+   source of truth for that table's data quality.
+3. **Collections** — a *data product*: a group of related tables you look at,
+   run, and schedule together (for example, the tables behind one dashboard or
+   Genie space).
+
+[Key concepts](/docs/studio/start-here/key-concepts) covers this model in full.
+
+## In this section
+
+- **Start here** — [what DQX Studio is](/docs/studio/), the
+  [Quickstart](/docs/studio/start-here/quickstart),
+  [key concepts](/docs/studio/start-here/key-concepts), and an
+  [admin setup guide](/docs/studio/start-here/set-up-for-your-org).
+- **Authoring rules** — [create a rule](/docs/studio/authoring/create-a-rule),
+  [generate rules with AI](/docs/studio/authoring/generate-with-ai) or
+  [by profiling](/docs/studio/authoring/generate-by-profiling),
+  [import rules](/docs/studio/authoring/import-rules), and the
+  [checks catalog](/docs/studio/authoring/checks-catalog).
+- **Monitor your tables** —
+  [monitor a table](/docs/studio/monitoring/monitor-a-table),
+  [set quality thresholds](/docs/studio/monitoring/quality-thresholds),
+  [governed tags](/docs/studio/monitoring/governed-tags), and
+  [collections](/docs/studio/monitoring/collections).
+- **Run & review** — [run checks](/docs/studio/running/run-checks),
+  [fix a failing rule](/docs/studio/running/fix-a-failing-rule), and
+  [measure quality health](/docs/studio/running/measure-quality-health).
+- **Governance & security** —
+  [roles & permissions](/docs/studio/governance/roles-and-permissions),
+  the [approval workflow](/docs/studio/governance/approval-workflow),
+  [data access & security](/docs/studio/governance/data-access-and-security), and
+  [governance controls](/docs/studio/governance/governance-controls).
+- **Help** — [troubleshooting & FAQ](/docs/studio/help/troubleshooting-faq) and
+  a [glossary](/docs/studio/help/glossary).
+
+<Admonition type="note" title="Prefer to work in code?">
+DQX Studio is the no-code experience. If you'd rather define and run checks from
+Python in your pipelines and notebooks, see [DQX Core](/docs/guide/) — the same
+data-quality engine, exposed as a Python package.
+</Admonition>

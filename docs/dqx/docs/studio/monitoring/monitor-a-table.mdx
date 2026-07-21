@@ -1,0 +1,110 @@
+---
+sidebar_position: 1
+title: "Monitor a table"
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Monitor a table
+
+This page is for stewards who want to put real, ongoing data-quality checks on a
+table. It's where the reusable rules in your [Rules Registry](/docs/studio/start-here/key-concepts)
+stop being definitions and start doing work.
+
+When you apply rules to a Unity Catalog table, that table becomes a **monitored
+table** — the single source of truth for that table's data quality. Everything
+about how healthy the table is, which checks run on it, and how it's trended over
+time lives in one place.
+
+## Open a table to monitor
+
+1. Go to **Tables**.
+2. Select **Monitor a table**.
+3. Browse Unity Catalog: pick a **catalog**, then a **schema**, then a **table**.
+   You only see catalogs, schemas, and tables you already have access to — if a
+   table you expect isn't listed, it's a permissions question, not a bug.
+4. The table detail opens.
+
+<Admonition type="tip" title="Adding many tables at once">
+Need to bring dozens of tables under monitoring? Use bulk-register to add many
+tables in one step instead of opening them one at a time.
+</Admonition>
+
+## The table detail
+
+A monitored table has four tabs:
+
+- **About** — the table's schema, a preview of sample data, and an "ask a
+  question" box for quick natural-language questions about the data.
+- **Apply Rules** — where you turn rules into live checks. This is the focus of
+  this page.
+- **Results** — the table's data-quality score, its trend over time, and a
+  breakdown you can drill into down to the failing rows.
+- **Profile** — a scan of the table's shape that can suggest candidate rules.
+
+<ThemedImage
+  alt="Monitored table About tab showing schema, a governed tag, and a sample-data preview with an ask-a-question box"
+  sources={{
+    light: useBaseUrl('/img/studio/table_detail_light.png'),
+    dark: useBaseUrl('/img/studio/table_detail_dark.png'),
+  }}
+/>
+
+## Apply rules
+
+Open the **Apply Rules** tab to attach rules from your registry to this table.
+Each rule you apply to a column becomes a **check** — a single rule can become
+many checks across your tables and columns.
+
+<ThemedImage
+  alt="Apply Rules tab showing rules mapped to columns, severity indicators, pass-threshold badges, and a Suggest rules button"
+  sources={{
+    light: useBaseUrl('/img/studio/table_apply_rules_light.png'),
+    dark: useBaseUrl('/img/studio/table_apply_rules_dark.png'),
+  }}
+/>
+
+You can look at your checks two ways:
+
+- **By column** — see every check attached to a given column.
+- **By rule** — see every column a given rule is checking.
+
+For each check you apply, you can tune it for this table without touching the
+underlying rule:
+
+- **Override the severity.** A check is either an **error** (a failure fails the
+  run) or a **warning** (a failure is reported but doesn't fail the run). The rule
+  carries a default, and you can override it here for this table.
+- **Set a pass threshold.** Instead of demanding every row pass, you can require,
+  say, 70% of rows to pass for the check to count as healthy. This is useful when
+  you're improving quality gradually. See
+  [Quality thresholds](/docs/studio/monitoring/quality-thresholds).
+
+<Admonition type="tip" title="Let the app suggest checks">
+Select **Suggest rules** to have the app propose checks based on the table's
+data. It's a shortcut for getting started — you review and keep the ones that fit.
+</Admonition>
+
+<Admonition type="note" title="Governed tags speed this up">
+If a rule carries a governed tag (for example `class.location`), the app can
+suggest which columns it applies to, so you don't have to map every check by hand.
+See [Governed tags](/docs/studio/monitoring/governed-tags).
+</Admonition>
+
+<Admonition type="info" title="Your data is never changed">
+Applying rules and running checks only reads and evaluates your data. A failing
+check never deletes or modifies the table — failing rows are sampled into a
+quarantine view for triage.
+</Admonition>
+
+## Save as draft, or submit for review
+
+When you've applied the checks you want, you can **save as a draft** to keep
+working, or **submit for review**. Once your changes are approved, the table is
+actively monitored and its checks run on the schedule set for it.
+
+- Learn how review and approval works in the
+  [Approval workflow](/docs/studio/governance/approval-workflow).
+- Learn how and when checks run in [Run checks](/docs/studio/running/run-checks).

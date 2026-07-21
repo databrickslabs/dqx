@@ -1,0 +1,8 @@
+{
+  "label": "DQX Core",
+  "position": 300,
+  "collapsible": true,
+  "collapsed": true,
+  "link": { "type": "doc", "id": "guide/index" },
+  "customProps": { "description": "The DQX Python package for code-level data quality" }
+}

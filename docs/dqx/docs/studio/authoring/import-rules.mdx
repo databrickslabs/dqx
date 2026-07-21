@@ -1,0 +1,104 @@
+---
+sidebar_position: 4
+title: Import rules
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Import rules
+
+If your team already has data-quality rules defined somewhere else, you don't
+have to re-create them by hand. DQX Studio can bring them in for you.
+
+There are two ways to import: from a **DQX YAML** file, or from a **data
+contract**. Both do the same thing at the end — they turn what you give them
+into rules in your Rules Registry.
+
+<Admonition type="info" title="Everything lands as drafts">
+Nothing goes live when you import. Every imported rule arrives as a **draft**,
+just like a rule you write yourself. Someone reviews and approves it before it
+starts running. See [Approval workflow](/docs/studio/governance/approval-workflow).
+</Admonition>
+
+## From DQX YAML
+
+If you have rules written in DQX's own file format, paste or upload them here.
+This is the same format DQX Core uses to store checks, so anything exported from
+a DQX pipeline or checked into your code will import cleanly.
+
+<ThemedImage
+  alt="Import rules screen, From DQX YAML tab: a box to paste or upload a YAML file, a Validate button, and a preview of the checks it found"
+  sources={{
+    light: useBaseUrl('/img/studio/import_yaml_light.png'),
+    dark: useBaseUrl('/img/studio/import_yaml_dark.png'),
+  }}
+/>
+
+To import:
+
+1. Paste your YAML (or JSON) into the box, or upload the file.
+2. DQX Studio checks that the format is valid and shows you a preview of the
+   rules it found. If something is wrong, you'll see exactly what needs fixing.
+3. Test the rules against sample rows if you want to see how they behave before
+   committing. No data is changed by a test.
+4. Save. The rules are added to your Rules Registry as drafts.
+
+<Admonition type="tip" title="What the format looks like">
+The YAML format matches DQX Core's storage format for checks, so files move
+between the two without translation. For the full syntax — every field and
+option — see
+[Quality checks definition](/docs/guide/quality_checks_definition).
+</Admonition>
+
+## From a data contract
+
+A **data contract** is a file in which a data product declares its own quality
+expectations — the shape its data should take and the rules it promises to keep.
+DQX Studio reads Open Data Contract Standard (ODCS) version 3 contracts. Instead
+of writing rules for a table one at a time, you can point at the contract that
+already describes it and let the app derive the rules for you.
+
+This is worth doing because the contract is owned by the team that produces the
+data. When they say a column must never be empty or must match a certain set of
+values, importing their contract turns those promises directly into checks you
+can monitor — no guessing, no drift between what was agreed and what you test.
+
+<ThemedImage
+  alt="Import rules screen, From a data contract tab: upload or paste an ODCS contract, then pick the Unity Catalog table each part targets"
+  sources={{
+    light: useBaseUrl('/img/studio/import_contract_light.png'),
+    dark: useBaseUrl('/img/studio/import_contract_dark.png'),
+  }}
+/>
+
+To import:
+
+1. Upload or paste the ODCS v3 contract.
+2. DQX Studio derives checks from it — schema validation (does each column exist
+   with the right type?), constraints the contract sets on columns, and any
+   explicit rules written in the contract's quality section.
+3. For each part of the contract, pick the Unity Catalog table it targets, so
+   the app knows where each rule belongs.
+4. Save. The derived rules are added as drafts, ready for review.
+
+<Admonition type="tip" title="Go deeper on data contracts">
+For the full picture of how DQX turns a contract into checks — including the
+kinds of quality rules it can read — see
+[Data contract quality rules generation](/docs/guide/data_contract_quality_rules_generation).
+</Admonition>
+
+## Bulk import for platform teams
+
+If you manage many data products and want to roll out quality rules across all
+of them at once — the kind of thing a platform team does from a pipeline or a
+Git-based workflow — DQX Studio supports **bulk import** from multiple contracts
+in one pass. It can register the tables, create the rules, and apply them
+together, so a large rollout doesn't mean importing one contract at a time.
+
+<Admonition type="note" title="Still reviewed">
+Bulk import follows the same rule: imported rules are drafts. Your team's
+[approval workflow](/docs/studio/governance/approval-workflow) still applies
+before anything runs against production data.
+</Admonition>

@@ -1,0 +1,47 @@
+---
+sidebar_position: 3
+title: "Data access & security"
+---
+
+import Admonition from '@theme/Admonition';
+
+# Data access & security
+
+This page is for governance and security reviewers deciding whether to approve a DQX Studio rollout — and for stewards wondering why a table they expected isn't showing up. The short version: DQX Studio never gives anyone access to data they couldn't already reach on their own.
+
+## DQX Studio browses your data as you
+
+When you open DQX Studio, it looks at Unity Catalog **on your behalf** — as if you were browsing it yourself. You only ever see the catalogs, schemas, tables, and columns you already have permission to see. Someone with different permissions, signed in to the same app, sees a different list.
+
+The same is true when work actually runs:
+
+- **Profiling** a table (scanning it to suggest rules) reads only data you're allowed to read.
+- **Testing** a rule against sample rows runs as you, against data you can already see.
+- **Failing rows** you view during triage are limited to the data you're permitted to access.
+
+Because of this, DQX Studio can't show or read anything you couldn't already open yourself in Unity Catalog. It respects your existing permissions — it doesn't replace them or widen them.
+
+<Admonition type="info" title="Scheduled runs">
+Runs you kick off happen as you. Runs that happen automatically on a schedule are carried out by a controlled workspace identity that your admin sets up — so overnight monitoring keeps working even when you're not signed in.
+</Admonition>
+
+## What this means in practice
+
+**A missing table is a permissions matter, not a bug.** If a table you expected isn't in the list, it almost always means you don't yet have access to it in Unity Catalog. This is the single most common first-hour surprise, and it's easily fixed: ask whoever grants Unity Catalog access in your organization to give you (or the relevant steward) permission on that table. Once the access is in place, the table appears.
+
+**Least privilege by design.** DQX Studio doesn't hand anyone broader data access than they already have. Adding a person to the app can't expose data their Unity Catalog permissions wouldn't already allow.
+
+**Your data is never modified.** DQX Studio reads and evaluates data to measure its quality. Running checks — even checks that fail — never deletes or changes the underlying data. Failing rows are sampled into a separate view for triage.
+
+<Admonition type="note" title="Two different questions">
+"What can I *do* in the app?" and "What data can I *see*?" are separate. Your app role controls the first — whether you can author rules, approve them, or run checks. Your Unity Catalog permissions control the second — which tables and columns you can view. A person can be an admin in DQX Studio and still not see a table they lack Unity Catalog access to.
+</Admonition>
+
+## Builds on your existing governance
+
+DQX Studio sits on top of the Unity Catalog permissions you already manage. There's no separate data-access layer to configure and keep in sync — the access controls your data team already trusts are the same ones DQX Studio honors.
+
+## Related
+
+- [Roles & permissions](/docs/studio/governance/roles-and-permissions) — what each person can *do* in the app, which is separate from what data they can *see*.
+- [Troubleshooting & FAQ](/docs/studio/help/troubleshooting-faq) — including "Why can't I see my table?"

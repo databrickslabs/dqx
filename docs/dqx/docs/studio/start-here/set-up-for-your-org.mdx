@@ -1,0 +1,129 @@
+---
+sidebar_position: 4
+title: "Set up for your organization"
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Set up DQX Studio for your organization
+
+This page is for the person standing up DQX Studio for a team — a data governance manager or workspace admin. You'll make a handful of decisions once, and every author, reviewer, and steward who follows inherits them. Think of it as a rollout playbook: work through the steps in order, and by the end your team can start authoring rules against a shared set of standards.
+
+<Admonition type="note" title="You'll need the Admin role">
+Everything below lives under **Admin Settings** and is only available to people with the **Admin** role. If you can't see Admin Settings, ask an existing admin to grant it — or to walk through these steps with you.
+</Admonition>
+
+## Step 1 — Map roles to your teams
+
+**The decision:** who can look, who can author, who can approve, and who can run checks.
+
+DQX Studio has four roles, from least to most access:
+
+- **Viewer** — read-only. Can see rules, tables, and results.
+- **Rule Author** — can create and edit their own draft rules.
+- **Rule Approver** — can approve anyone's drafts, not just their own.
+- **Admin** — everything, including these settings.
+
+There's also a separate **Runner** privilege that sits alongside the roles. It grants permission to trigger runs (evaluate checks against data). It's additive — you can give it to a Viewer or an Author without changing their role. Admins can always run.
+
+Rather than naming individuals, you map your existing **workspace groups** to these roles. Assign the group your analysts already belong to as Viewers or Authors, your leads as Approvers, and a small trusted group as Admins. When someone joins or leaves a group, their access follows automatically.
+
+<ThemedImage
+  alt="Admin Settings — Entitlements tab: workspace groups mapped to app roles"
+  sources={{
+    light: useBaseUrl('/img/studio/settings_entitlements_light.png'),
+    dark: useBaseUrl('/img/studio/settings_entitlements_dark.png'),
+  }}
+/>
+
+<Admonition type="tip" title="Start narrow">
+Give most people Viewer or Rule Author to begin with, and keep the Approver and Admin groups small. You can always widen access later.
+</Admonition>
+
+For the full breakdown of what each role can do, see [Roles and permissions](/docs/studio/governance/roles-and-permissions).
+
+## Step 2 — Decide your approval policy
+
+**The decision:** should a second person sign off before a rule goes live?
+
+By default, DQX Studio uses **four-eyes approval**: an author submits a draft, and someone else reviews and approves it before it becomes active. Authors can't approve their own work unless they're also an approver or admin. This keeps a check on what gets applied to your data and gives you an audit trail of who approved what.
+
+We recommend keeping approval on for production. For a sandbox or a trusted development environment where speed matters more than sign-off, you can allow **auto-approval** so drafts go live without a second reviewer.
+
+<ThemedImage
+  alt="Admin Settings — Governance tab: approvals mode and data retention"
+  sources={{
+    light: useBaseUrl('/img/studio/settings_governance_light.png'),
+    dark: useBaseUrl('/img/studio/settings_governance_dark.png'),
+  }}
+/>
+
+See [The approval workflow](/docs/studio/governance/approval-workflow) for how review and sign-off work day to day.
+
+## Step 3 — Define your standards
+
+**The decision:** what "good quality" means for your organization, expressed once so everyone reuses it.
+
+This is where you set the shared vocabulary your authors will pick from:
+
+- **Governed tags** — reusable labels such as `class.location` or `class.email`. When an author tags a rule, the app suggests which columns it applies to. Define the tags your organization cares about here so authors aren't inventing their own.
+- **Quality dimensions** — the categories you report against: completeness, validity, accuracy, consistency, uniqueness, and timeliness. Decide which matter most for your data so scores roll up in a way your team understands.
+- **Default pass thresholds** — how strict a check has to be to count as passing (for example, "at least 90% of rows must pass"). Set a sensible default so authors don't start from scratch; they can still override per table.
+
+<ThemedImage
+  alt="Admin Settings — Tags tab: governed tag definitions"
+  sources={{
+    light: useBaseUrl('/img/studio/settings_tags_light.png'),
+    dark: useBaseUrl('/img/studio/settings_tags_dark.png'),
+  }}
+/>
+
+Getting these right up front saves a lot of cleanup later. See [Governed tags](/docs/studio/monitoring/governed-tags) and [Quality thresholds](/docs/studio/monitoring/quality-thresholds) for the details.
+
+## Step 4 — Set retention and handle sensitive data
+
+**The decision:** how long you keep run history, and — separately — how long you keep sampled rows that may contain sensitive data.
+
+When a check fails, DQX Studio never changes your data. Instead it samples a few of the failing rows into a "quarantine" view so a steward can see what went wrong. Those sample rows can contain real, sensitive values, so they get their own retention setting, independent from ordinary run history.
+
+You control two things on the Governance tab:
+
+- **Runs and metrics retention** — how long score history and run records are kept for trend reporting.
+- **Quarantined sample retention** — how long the sampled failing rows are kept before they're cleared.
+
+Set the sample retention as short as your triage process allows if the data is sensitive, and keep run metrics longer so your quality trends stay meaningful over time.
+
+<Admonition type="caution" title="Sensitive data lives in samples, not scores">
+Trend scores and counts are just numbers — safe to keep. The quarantined sample rows are the part that may hold sensitive values. Tune that retention deliberately.
+</Admonition>
+
+See [Governance controls](/docs/studio/governance/governance-controls) for the full set of retention and data-handling options.
+
+## Step 5 — Set the timezone and display options
+
+**The decision:** how times and results appear for everyone.
+
+On the General tab you set the **display timezone** so run times and schedules read correctly for your team — worth doing before people start reading run history. You can also enable a workspace-wide **Global Results tab**, which gives everyone a single place to see quality across all monitored tables at once, and choose whether results appear directly on rules.
+
+<ThemedImage
+  alt="Admin Settings — General tab: display timezone and global results toggle"
+  sources={{
+    light: useBaseUrl('/img/studio/settings_general_light.png'),
+    dark: useBaseUrl('/img/studio/settings_general_dark.png'),
+  }}
+/>
+
+## Step 6 — Know that everything is audited
+
+Every change to a rule, role, schedule, or setting is recorded — who made it, when, and what it was before and after. You don't have to switch anything on; it's always on. If you ever need to answer "who changed this and why", the record is there.
+
+See [Governance controls](/docs/studio/governance/governance-controls) for where to find the audit history.
+
+## Now invite your team
+
+Your organization is set up. Point people to the right starting place:
+
+- **Authors** — send them to the [Quickstart](/docs/studio/start-here/quickstart) to create their first rule.
+- **Stewards** — send them to [Measure quality health](/docs/studio/running/measure-quality-health) to read scores and trends and act on failing checks.

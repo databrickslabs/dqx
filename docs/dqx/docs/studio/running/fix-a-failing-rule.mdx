@@ -1,0 +1,81 @@
+---
+sidebar_position: 2
+title: Fix a failing rule
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# A rule failed — what now?
+
+You opened the Results and something is red. Take a breath: this is exactly what DQX Studio is for. A failing check is a signal, not a disaster, and nothing bad has happened to your data. This page walks you through reading the result, looking at what actually failed, and deciding what to do about it.
+
+This is for the **steward** who owns quality for a table or a data product and needs a clear next step.
+
+## 1. Read the result
+
+Open the **Results** view for a monitored table or a collection. The top of the page shows the **DQ score** — a single percentage that sums up how healthy the data is. Below it, the score is broken down so you can see *where* the problem is: by **dimension** (completeness, validity, accuracy, and so on), by **severity**, by **rule**, and by **table**.
+
+<ThemedImage
+  alt="Collection Results view showing the overall DQ score, a trend chart over time, and breakdowns by dimension, severity, rule, and table"
+  sources={{
+    light: useBaseUrl('/img/studio/collection_results_light.png'),
+    dark: useBaseUrl('/img/studio/collection_results_dark.png'),
+  }}
+/>
+
+Each check shows a pass/fail ratio bar — the share of rows (or aggregate tests) that passed. A couple of terms to keep straight:
+
+- **Error vs warning.** Each check is either an **error** (it fails the run) or a **warning** (it's reported, but doesn't fail the run). Warnings are things worth watching; errors are things you agreed should block. See [Key concepts](/docs/studio/start-here/key-concepts).
+- **Failing vs below threshold.** A check counts as **failing** when it drops below its **pass threshold** — the bar you set for how many rows must pass to call it green (shown as a `< 70%` badge, for example). A check with a threshold isn't expected to be perfect; it's expected to clear the bar. See [Quality thresholds](/docs/studio/monitoring/quality-thresholds).
+
+<Admonition type="info" title="One run, many tests">
+The counts you see ("421,121 failed of 2,350,000 tests") mean one check produced one **test** per row it evaluated. A big failure count over a huge table can still be a small percentage. Read the ratio, not just the raw number.
+</Admonition>
+
+## 2. Look at the failing rows
+
+Numbers tell you *how much* failed. To understand *why*, click into a failing check to see a sample of the rows that didn't pass — the **quarantine** sample.
+
+"Quarantine" sounds alarming, so let's be plain about it: it's simply the set of rows that failed a check, captured to one side so you can inspect them. Looking at real failing rows is usually the fastest way to tell whether the data is wrong or the rule is wrong.
+
+<Admonition type="tip" title="Your data is safe">
+Quarantine does **not** delete, move, or change anything. Every row is still exactly where it was in your table. DQX Studio only reads and evaluates your data — it never modifies it. The quarantine sample is a copy kept for inspection, nothing more.
+</Admonition>
+
+You only see rows from tables you already have access to in Unity Catalog, and only what you're permitted to see — so this is safe to explore.
+
+## 3. Your options
+
+Once you've seen what failed, you have a few ways to respond. Pick the one that matches the situation.
+
+### Fix the data at the source
+
+This is the real remedy. If the rows are genuinely wrong — missing emails, negative prices, malformed IDs — the fix belongs upstream in the pipeline or table that produced them. If you don't own that pipeline, this is the moment to hand the failing rows to the person who does. Once the data is corrected, the next run will show the check recovering.
+
+### Adjust the threshold
+
+Sometimes the data is fine but the bar is unrealistically strict — for example, you're improving quality gradually and 100% isn't achievable yet. Lower the pass threshold to a level that's honest about where you are today, then tighten it over time as the data improves. See [Quality thresholds](/docs/studio/monitoring/quality-thresholds).
+
+### Change the severity
+
+If a check is failing runs but shouldn't be a hard stop, change it from an **error** to a **warning** so it's reported without blocking. The reverse works too: promote a warning to an error once you're confident it should block. Severity is set as a default on the rule and can be overridden per table.
+
+### Refine the rule
+
+If the failures are false alarms — the rule is too broad, or it's checking the wrong thing — the rule itself needs work. Edit it (or its draft) to narrow the condition or correct the logic. Because changes go through review before they go live, you can adjust safely. See [Create a rule](/docs/studio/authoring/create-a-rule).
+
+### Escalate
+
+If the fix isn't yours to make, escalate to the table's steward or data owner. A failing check with a clear quarantine sample is a strong, specific thing to hand over — far better than "something looks off".
+
+<Admonition type="note" title="Leave a note and keep the record">
+You can leave a **comment** on a run to tell your team what you found or what you decided. Every run is kept in **Runs History**, so the record of what failed and when stays available. See [Measure quality health](/docs/studio/running/measure-quality-health).
+</Admonition>
+
+## Next
+
+- [Quality thresholds](/docs/studio/monitoring/quality-thresholds)
+- [Create a rule](/docs/studio/authoring/create-a-rule)
+- [Measure quality health](/docs/studio/running/measure-quality-health)

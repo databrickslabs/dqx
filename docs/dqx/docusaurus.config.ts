@@ -124,10 +124,20 @@ const config: Config = {
               ],
             },
             {
-              id: 'user-guide',
-              name: 'User Guide',
-              description: 'Complete guide for using DQX features',
+              id: 'dqx-studio',
+              name: 'DQX Studio',
+              description: 'The no-code web app for authoring, reviewing, running, and monitoring data quality rules',
               position: 2,
+              routes: [
+                { route: '/dqx/docs/studio' },
+                { route: '/dqx/docs/studio/**' }
+              ],
+            },
+            {
+              id: 'dqx-core',
+              name: 'DQX Core',
+              description: 'The DQX Python package for code-level data quality',
+              position: 3,
               routes: [
                 { route: '/dqx/docs/guide/**' }
               ],
@@ -136,7 +146,7 @@ const config: Config = {
               id: 'reference',
               name: 'Reference',
               description: 'API reference, CLI commands, and technical documentation',
-              position: 3,
+              position: 4,
               routes: [
                 { route: '/dqx/docs/reference/**' }
               ],
@@ -145,7 +155,7 @@ const config: Config = {
               id: 'development',
               name: 'Development',
               description: 'Contributing and development documentation',
-              position: 4,
+              position: 5,
               routes: [
                 { route: '/dqx/docs/dev/**' }
               ],
@@ -154,7 +164,7 @@ const config: Config = {
               id: 'demos',
               name: 'Demos',
               description: 'Example implementations and demos',
-              position: 5,
+              position: 6,
               routes: [
                 { route: '/dqx/docs/demos' },
                 { route: '/dqx/docs/demos/**' }

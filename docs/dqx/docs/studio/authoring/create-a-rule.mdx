@@ -1,0 +1,159 @@
+---
+sidebar_position: 1
+title: Create a rule
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Create a rule
+
+A **rule** captures one expectation about your data — "this column is never
+blank", "an amount is never negative", "a status is one of a known set". You
+write it once in the **Rules Registry** and reuse it on as many tables as you
+like.
+
+This page walks through creating a rule the no-code way. It's the most common
+thing you'll do in DQX Studio, so it's worth reading once end to end.
+
+<Admonition type="note" title="Before you start">
+You need the **Rule Author** role (or higher) to create rules. If you only see a
+read-only view, ask your admin — see
+[Roles & permissions](/docs/studio/governance/roles-and-permissions).
+</Admonition>
+
+## Start a new rule
+
+Open **Rules** in the sidebar and click **New rule**. The rule editor opens on
+the **About** tab, where you describe what the rule is. You'll fill in the
+*details* here, and the *logic* on the Implementation tab next.
+
+<ThemedImage
+  alt="The New rule editor, About tab: name, description, default severity, dimension, and tags"
+  sources={{
+    light: useBaseUrl('/img/studio/create_rule_about_light.png'),
+    dark: useBaseUrl('/img/studio/create_rule_about_dark.png'),
+  }}
+/>
+
+Fill in:
+
+- **Name** — a short, human name. Say what good looks like, not what's wrong:
+  *"Email is present"*, not *"email null check"*.
+- **Description** — one line on what the rule checks and why it matters.
+- **Default severity** — [**error**](/docs/studio/start-here/key-concepts#errors-and-warnings)
+  (a failing check fails the run) or **warning** (reported, doesn't fail the
+  run). This is just the starting point — you can override it for a specific
+  table when you apply the rule.
+- **Dimension** — which
+  [aspect of quality](/docs/studio/start-here/key-concepts#quality-dimensions)
+  this measures (completeness, validity, accuracy, and so on). This is what lets
+  you later report quality *by category*.
+- **Tags** *(optional)* — labels for organizing and filtering rules. Some tags
+  are [governed tags](/docs/studio/monitoring/governed-tags) that help the app
+  suggest which columns a rule applies to.
+
+## Define what the rule checks
+
+Switch to the **Implementation** tab. This is where you say *what* makes data
+pass or fail — without writing code.
+
+<ThemedImage
+  alt="The Implementation tab: a column placeholder and a plain-language condition builder"
+  sources={{
+    light: useBaseUrl('/img/studio/create_rule_implementation_light.png'),
+    dark: useBaseUrl('/img/studio/create_rule_implementation_dark.png'),
+  }}
+/>
+
+### Columns are placeholders, not real columns
+
+Notice the column is written as `{{column_1}}` — a **placeholder**. Because a
+rule lives in the Registry and is meant to be *reused*, you don't pick a real
+column here. You choose the actual column later, when you
+[apply the rule to a table](/docs/studio/monitoring/monitor-a-table). That's how
+one "is never blank" rule can protect `email` on one table and `phone` on
+another.
+
+### Build the condition
+
+Under **Condition**, you build a simple sentence: *IF `{{column_1}}` …* and then
+pick what must be true. Click the condition to choose how you want to express
+it:
+
+<ThemedImage
+  alt="Choosing how to express a condition: Basic Rules, Condition Builder, or SQL"
+  sources={{
+    light: useBaseUrl('/img/studio/create_rule_basic_checks_light.png'),
+    dark: useBaseUrl('/img/studio/create_rule_basic_checks_dark.png'),
+  }}
+/>
+
+You have three ways to express the check. **Most stewards only ever need the
+first one:**
+
+- **Basic Rules** *(recommended, no code)* — pick a ready-made check from a
+  catalog: is not null, is in a list, is in a range, matches a pattern, is
+  unique, and many more. Fill in a couple of values and you're done. This is the
+  no-code path.
+- **Condition Builder** — build a more complex condition visually, for cases the
+  basic checks don't cover. Some familiarity with logic helps.
+- **SQL** — write a custom condition in SQL. For technical users who want full
+  control.
+
+Pick a check from **Basic Rules**, fill in whatever it needs (for example, the
+allowed values for an "is in a list" check), and your rule is defined. For the
+full menu of built-in checks and what each one does, see the
+[Checks catalog](/docs/studio/authoring/checks-catalog).
+
+<Admonition type="tip" title="Not sure which check you want?">
+Describe it in plain English instead. The **Generate** box at the top of the
+editor turns a sentence like *"order amount must be positive and under
+$1,000,000"* into a check for you — see
+[Generate rules with AI](/docs/studio/authoring/generate-with-ai).
+</Admonition>
+
+## Test it before you save
+
+Open the **Test** tab to try the rule against a small sample of real data before
+you commit to it. A test run shows how many rows would pass, fail, or warn, and
+lets you see example rows that don't pass — so you can confirm the rule does what
+you meant.
+
+Testing changes nothing: it reads a sample, evaluates the rule, and persists
+nothing. It's the safest way to catch a rule that's too strict or too loose
+before it goes live.
+
+## Save and submit
+
+When you're happy:
+
+- **Save as draft** keeps the rule private to you while you keep working on it.
+- **Save & submit** sends it for review. An approver checks it and, once
+  approved, the rule becomes active and available to apply to tables.
+
+<Admonition type="note" title="Why can't I just make it live myself?">
+Unless you're an approver or admin, you can't approve your own rule. This
+"four-eyes" step means someone other than the author signs off before a rule
+affects any run — a simple guardrail against mistakes. See the
+[Approval workflow](/docs/studio/governance/approval-workflow).
+</Admonition>
+
+## What happens next
+
+An approved rule sits in the Registry, ready to use. It doesn't check anything on
+its own yet — the next step is to
+[apply it to a table](/docs/studio/monitoring/monitor-a-table), which turns your
+reusable rule into a live check.
+
+## Other ways to create rules
+
+Writing rules by hand is only one option. You can also:
+
+- [Generate rules with AI](/docs/studio/authoring/generate-with-ai) from a
+  plain-English description.
+- [Generate rules by profiling](/docs/studio/authoring/generate-by-profiling) —
+  let DQX Studio scan a table and suggest rules based on the data it finds.
+- [Import rules](/docs/studio/authoring/import-rules) you already have, from DQX
+  YAML or a data contract.

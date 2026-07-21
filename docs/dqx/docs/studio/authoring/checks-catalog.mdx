@@ -1,0 +1,110 @@
+---
+sidebar_position: 5
+title: "Checks catalog"
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Checks catalog
+
+This page is for **Data Stewards** who want to know what kinds of things DQX Studio can check for — before you sit down to write a rule. It groups the built-in checks by what you're trying to verify, in plain language, so you can find the right one by intent rather than by name.
+
+These are the same checks you pick from **Basic Rules** when you [create a rule](/docs/studio/authoring/create-a-rule). When you open the check picker, you'll see them grouped and searchable, just like the groups below.
+
+<ThemedImage
+  alt="The built-in check catalog inside DQX Studio, with a search box and checks grouped by category such as Aggregates and Allowed Values"
+  sources={{
+    light: useBaseUrl('/img/studio/create_rule_basic_checks_light.png'),
+    dark: useBaseUrl('/img/studio/create_rule_basic_checks_dark.png'),
+  }}
+/>
+
+<Admonition type="tip" title="Just pick from the list">
+You don't need to memorize any of this. When you create a rule, the check picker shows the full catalog with search. This page is here to help you plan and to explain what each kind of check does.
+</Admonition>
+
+## Find a check by what you want to verify
+
+### Check something is present
+
+Make sure a value is actually there — the most common quality expectation. Use this when a column should never be blank, like a customer ID or an email address.
+
+- A value must not be empty *(is not null)*.
+- A value must not be empty or just blank spaces *(is not null and not empty)*.
+
+This supports the **completeness** dimension.
+
+### Check a value is in an allowed set
+
+Make sure a value is one of a known, approved list — for example a status that must be one of `active`, `paused`, or `closed`, or a country code that must come from your approved list.
+
+- A value must be one of an allowed list *(is in list)*.
+- A value must not be one of a disallowed list *(is not in list)*.
+
+### Check a value is in a range
+
+Make sure a number or date falls between sensible limits — an age between 0 and 120, a price that is never negative, a discount that never exceeds 100%.
+
+- A value must fall within a lower and upper bound *(is in range)*.
+- A value must not be below a minimum, or not above a maximum *(is not less than / is not greater than)*.
+- A value must not be negative *(is not negative)*.
+
+### Check a format or pattern
+
+Make sure a value looks the way it should — an email address, a phone number, a Social Security number shaped like `NNN-NN-NNNN`, or a code that follows a set pattern.
+
+- A value must match a text pattern you describe *(matches a regular expression / pattern)*.
+- A value must look like a valid date or timestamp *(is a valid date / timestamp)*.
+
+<Admonition type="note" title="Patterns without the jargon">
+A "regular expression" is just a way to describe the shape of text — for example "three digits, a dash, two digits, a dash, four digits" for a Social Security number. When you build one of these checks, you describe the shape; the exact syntax is covered in the reference below.
+</Admonition>
+
+### Check uniqueness
+
+Make sure there are no unwanted duplicates — every order ID appears once, or no two customers share the same email. You can check a single column, or a combination of columns together (so the same customer *and* date never appears twice).
+
+- Values must be unique, with no duplicates *(is unique)* — across one column or several columns combined.
+
+This supports the **uniqueness** dimension.
+
+### Check timeliness
+
+Make sure dates and timestamps make sense for "now" — an event timestamp that isn't set in the future, or a record that is recent enough to still be relevant.
+
+- A timestamp must not be in the future.
+- A date must be recent enough to meet your freshness expectation.
+
+This supports the **timeliness** dimension.
+
+### Compare across rows and aggregates
+
+Make sure the table as a whole behaves — not just individual rows. Use these when the expectation is about a total, an average, or a trend rather than a single value.
+
+- A summary figure — an average, sum, or count — must stay within bounds *(aggregate checks)*.
+- A time-series total must not show sudden spikes or drops compared with its recent history *(rolling-window outlier checks — "has no aggregate outliers")*.
+
+### Compare against another table or reference
+
+Make sure your data lines up with a trusted source or an expected shape.
+
+- A value must exist in a reference table — for example every product code in orders must be a real product *(foreign-key style checks)*.
+- The table's shape — its columns, their order, and their types — must match an expected schema or a reference table *(schema validation)*. You can require a **compatible** match (the expected columns are present) or a **strict** match (the shape lines up exactly).
+
+### Custom logic
+
+When none of the built-ins fit, you can write your own condition in SQL — for example "`ship_date` must be on or after `order_date`". This is the most flexible option and is available alongside Basic Rules when you create a rule.
+
+<Admonition type="tip" title="You don't have to start from scratch">
+Two aids can propose checks for you: describe what you want in plain English and let the app [generate a rule with AI](/docs/studio/authoring/generate-with-ai), or scan a table and let it [suggest rules by profiling](/docs/studio/authoring/generate-by-profiling) the data.
+</Admonition>
+
+## The precise, function-by-function reference
+
+The groups above are written to help you choose. For the exact list of every built-in check, its precise behavior, and the arguments it accepts, see the DQX Core reference:
+
+- [Quality checks reference](/docs/reference/quality_checks)
+
+Argument names and exact options are best read there — this page stays conceptual on purpose so it doesn't drift out of date.

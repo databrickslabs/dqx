@@ -1,0 +1,68 @@
+---
+sidebar_position: 4
+title: "Governance controls"
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Governance controls: audit trail & retention
+
+If you own data-quality compliance, these are the controls you'll be asked about in an audit: who changed what, who approved it, and how long the evidence and any sensitive rows are kept. This page explains both — the audit trail and the retention settings — so you can answer those questions with confidence.
+
+Both are configured in Admin Settings and can only be changed by an admin. See [Set up DQX Studio for your organization](/docs/studio/start-here/set-up-for-your-org).
+
+## Audit trail & change history
+
+Every change to a rule, a role assignment, or a schedule is recorded — who made it, when, and the before-and-after values. Nothing that governs your data quality changes silently.
+
+This is your evidence trail. It answers the questions an auditor will ask:
+
+- **"Who granted this group the ability to run checks?"** Role and permission changes are logged, including which workspace group was mapped to which app role and when.
+- **"Who approved this rule, and when?"** Every rule moves through draft → submit → review → approve before it goes active. That approval is recorded against the person who made it.
+- **"What did this rule look like before it was edited?"** Changes keep a before-and-after record, so you can see exactly what a rule, threshold, or schedule was previously set to.
+
+Approval history is visible on each item itself. When you open a rule, a monitored table, or a collection, you can see who approved it and read any comments the approver left when they signed off — so the reasoning behind a decision travels with the item, not just the fact that it happened.
+
+<Admonition type="info" title="The approvals policy is itself audited">
+Whether approval is required at all is a governed control. Turning the four-eyes approval requirement on or off is recorded like any other change, so no one can quietly relax the review policy. See [The approval workflow](/docs/studio/governance/approval-workflow).
+</Admonition>
+
+## Data retention & sensitive rows
+
+You control how long DQX Studio keeps its data with two separate retention settings, because two very different kinds of data are involved.
+
+- **Runs, results, and metrics** — how long the history of your checks is kept: the scores, the trends over time, and the pass/fail counts. This is your long-term quality record, so it typically has a longer retention.
+- **Quarantined sample rows** — how long the actual failing rows are kept.
+
+**Quarantine** is a small sample of the rows that failed a check, captured so someone can inspect *why* they failed. Because those rows come from your real data, they may contain sensitive or personal (PII) information. That's why quarantine has its own, usually shorter, retention: you keep the evidence just long enough to investigate a problem, then it's cleared — supporting data minimization.
+
+<ThemedImage
+  alt="Admin Settings Governance tab showing the Approvals mode and two separate Data retention settings — one for invalid results and one for all other data"
+  sources={{
+    light: useBaseUrl('/img/studio/settings_governance_light.png'),
+    dark: useBaseUrl('/img/studio/settings_governance_dark.png'),
+  }}
+/>
+
+### Who can see quarantined rows
+
+Access to quarantined sample rows is limited to approvers and admins. On top of that, you only ever see data you already have permission to in Unity Catalog — DQX Studio can't show you rows from a table you couldn't otherwise read. For the full picture of how the app respects your existing access, see [Data access & security](/docs/studio/governance/data-access-and-security).
+
+## Governance FAQ
+
+**Can an author approve their own rule?**
+No — not unless they are also an approver or admin. This is the four-eyes rule: the person who writes a change and the person who approves it should be different people. See [The approval workflow](/docs/studio/governance/approval-workflow).
+
+**Who can see quarantined data?**
+Approvers and admins, and only for data they already have access to in Unity Catalog. See [Data access & security](/docs/studio/governance/data-access-and-security).
+
+**What is logged, and for how long?**
+Every change to rules, roles, and schedules is logged with who, when, and before/after values. Runs, results, and metrics are kept for the period an admin sets; quarantined sample rows are kept for a separate, usually shorter, period. Both are set in Admin Settings.
+
+**What identity runs a scheduled check?**
+Checks run against only the data the app has access to, and you only see catalogs and tables you can already read in Unity Catalog. See [Data access & security](/docs/studio/governance/data-access-and-security).
+
+**Who can change these settings?**
+Only admins, in Admin Settings. See [Set up DQX Studio for your organization](/docs/studio/start-here/set-up-for-your-org).
