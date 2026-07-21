@@ -57,13 +57,6 @@ ROW_IDX_COL = "__row_idx"
 # once the break-out vectors (quote / backslash) are already neutralised.
 _STRIP_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
-# A surviving ``{{token}}`` placeholder after slot substitution. In Databricks
-# SQL ``{{token}}`` is a NAMED PARAMETER MARKER; the Statement Execution API call
-# passes no parameters, so any such marker makes the query error / return no
-# rows. Detected so the builders can drop an unresolvable ROW FILTER rather than
-# emit a query that silently fails.
-_UNRESOLVED_SLOT_RE = re.compile(r"\{\{\s*[^}]+\}\}")
-
 
 def _sql_type_for_family(family: str | None) -> str:
     return _FAMILY_SQL_TYPE.get((family or "").lower(), "STRING")
@@ -99,17 +92,6 @@ def substitute_slots(text: str, mapping: dict[str, str]) -> str:
     return result
 
 
-def has_unresolved_slots(sql: str) -> bool:
-    """True if *sql* still contains a ``{{...}}`` placeholder after substitution.
-
-    Such a leftover token is a Databricks named parameter marker (see
-    ``_UNRESOLVED_SLOT_RE``); emitting it would make the Statement Execution API
-    call fail because no parameters are bound. The builders use this to drop an
-    unresolvable ROW FILTER instead of shipping a query that returns nothing.
-    """
-    return _UNRESOLVED_SLOT_RE.search(sql) is not None
-
-
 def passed_expr(predicate: str, polarity: str, row_filter: str | None = None) -> str:
     """SQL verdict for a row: TRUE (pass), FALSE (fail), or NULL (not evaluated).
 
@@ -132,39 +114,6 @@ def passed_expr(predicate: str, polarity: str, row_filter: str | None = None) ->
     # filter is not satisfied (three-valued logic), matching how a WHERE clause
     # would drop the row from evaluation.
     return f"CASE WHEN NOT ({row_filter}) OR ({row_filter}) IS NULL THEN NULL ELSE {verdict} END"
-
-
-def _resolve_filter(row_filter: str | None, column_mapping: dict[str, str]) -> str | None:
-    """Substitute a ROW FILTER's slots, dropping it if any token stays unresolved.
-
-    A filter can reference a slot/column that the test source (ad-hoc grid or
-    table mapping) does not include; that token survives substitution as a live
-    ``{{...}}`` parameter marker which would break the whole query. In that case
-    the filter cannot be evaluated over this source, so it is dropped (returns
-    ``None``) and every row gets the plain two-state pass/fail verdict — the
-    exact pre-ROW-FILTER behaviour. A fully-resolvable filter is returned as-is
-    so its rows keep the three-state (in-filter pass/fail, out-of-filter NULL)
-    verdict.
-    """
-    if not row_filter:
-        return None
-    filt = substitute_slots(row_filter, column_mapping)
-    if has_unresolved_slots(filt):
-        return None
-    return filt
-
-
-def _assert_predicate_resolved(predicate: str) -> None:
-    """Guard that the substituted predicate carries no live parameter marker.
-
-    Predicate slots are always present in the column mapping, so this never
-    fires in normal use; it exists so a malformed rule can never emit a live
-    ``{{...}}`` marker (which would silently return no rows). Raises ValueError
-    (surfaced by the route as a 400) rather than degrading, because a predicate
-    that cannot be evaluated has no meaningful test verdict.
-    """
-    if has_unresolved_slots(predicate):
-        raise ValueError("Rule predicate references a slot with no mapped column")
 
 
 # ---------------------------------------------------------------------------
@@ -203,8 +152,7 @@ def build_table_sql(predicate: str, polarity: str, src: TableSource, row_filter:
     validate_fqn(src.table)
     table = quote_fqn(src.table)
     pred = substitute_slots(predicate, src.column_mapping)
-    _assert_predicate_resolved(pred)
-    filt = _resolve_filter(row_filter, src.column_mapping)
+    filt = substitute_slots(row_filter, src.column_mapping) if row_filter else None
     passed = passed_expr(pred, polarity, filt)
     sample = _sample_clause(src.sample_kind, src.sample_value)
     return (
@@ -310,8 +258,7 @@ def build_adhoc_sql(predicate: str, polarity: str, src: AdhocSource, row_filter:
         values_block = f"SELECT * FROM (VALUES {rows_sql}) AS raw ({collist})"
 
     pred = substitute_slots(predicate, src.column_mapping)
-    _assert_predicate_resolved(pred)
-    filt = _resolve_filter(row_filter, src.column_mapping)
+    filt = substitute_slots(row_filter, src.column_mapping) if row_filter else None
     passed = passed_expr(pred, polarity, filt)
     return (
         f"WITH src AS (SELECT {cast_cols} FROM ({values_block}) AS raw2)\n"

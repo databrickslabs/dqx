@@ -9,7 +9,6 @@ from databricks_labs_dqx_app.backend.rule_test_sql import (
     TableSource,
     build_adhoc_sql,
     build_table_sql,
-    has_unresolved_slots,
     parse_result,
     passed_expr,
     substitute_slots,
@@ -119,20 +118,6 @@ class TestBuildTableSql:
         )
         assert "CASE WHEN NOT (`region` = 'US') OR (`region` = 'US') IS NULL THEN NULL ELSE (`amount` > 0) END AS __passed" in sql
 
-    def test_filter_with_unmapped_token_is_dropped(self):
-        # A filter token absent from column_mapping cannot be resolved, so the
-        # filter is dropped (plain two-state verdict) and NO live {{...}} param
-        # marker reaches the SQL — otherwise the query returns nothing.
-        sql = build_table_sql(
-            "{{col}} > 0",
-            "pass",
-            TableSource(table="c.s.t", column_mapping={"col": "amount"}),
-            row_filter="{{region}} = 'US'",
-        )
-        assert "{{" not in sql
-        assert "CASE WHEN" not in sql
-        assert "(`amount` > 0) AS __passed" in sql
-
 
 class TestBuildAdhocSql:
     def test_row_idx_and_values(self):
@@ -227,41 +212,6 @@ class TestBuildAdhocSql:
             "CASE WHEN NOT (`region` = 'US') OR (`region` = 'US') IS NULL THEN NULL ELSE (`amount` > 0) END AS __passed"
             in sql
         )
-
-    def test_filter_with_unmapped_token_is_dropped(self):
-        # Regression for dd926191: a filter token not in column_mapping (common
-        # for the manual/ad-hoc grid) survived substitution as a live {{...}}
-        # param marker, so the Statement Execution call returned nothing. The
-        # filter is now dropped: no {{ reaches the SQL and the verdict is the
-        # plain two-state pass/fail (no CASE).
-        src = AdhocSource(
-            columns=["amount"],
-            rows=[["5"], ["-3"]],
-            families={"amount": "numeric"},
-            column_mapping={"amount": "amount"},
-        )
-        sql = build_adhoc_sql("{{amount}} > 0", "pass", src, row_filter="{{region}} = 'US'")
-        assert "{{" not in sql
-        assert "CASE WHEN" not in sql
-        assert "(`amount` > 0) AS __passed" in sql
-
-    def test_predicate_with_unmapped_token_raises(self):
-        # A predicate token with no mapped column would emit a live {{...}} param
-        # marker; guarded with a hard error rather than a silently-empty result.
-        src = AdhocSource(columns=["amount"], rows=[["5"]], families={}, column_mapping={})
-        with pytest.raises(ValueError):
-            build_adhoc_sql("{{amount}} > 0", "pass", src)
-
-
-class TestHasUnresolvedSlots:
-    def test_detects_leftover_token(self):
-        assert has_unresolved_slots("`amount` > 0 AND {{region}} = 'US'") is True
-
-    def test_clean_sql_has_none(self):
-        assert has_unresolved_slots("`amount` > 0") is False
-
-    def test_whitespace_padded_token_detected(self):
-        assert has_unresolved_slots("{{ region }} = 'US'") is True
 
 
 class TestParseResult:
