@@ -84,13 +84,19 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
         // as STATIC literal strings in source (no template interpolation), so
         // every variant is spelled out in full below. `agg` widens the field
         // track (11rem -> 22rem) for aggregated rows only.
+        // Aggregated rows: wider cap (max-w-4xl) and the field track GROWS to
+        // fill — minmax(22rem,1fr) — so the aggregate-function + column pickers
+        // (split evenly by AggregatedFieldArea's internal grid-cols-2) expand
+        // leftward into the available width instead of sitting at a fixed size.
+        // The value there is usually a small number, so it's bounded to
+        // ~14rem rather than eating the remainder. Normal rows unchanged.
         (() => {
           const agg = row.kind === "aggregated";
           if (compact) {
             if (agg) {
               return readOnly
-                ? "max-w-3xl grid-cols-[80px_22rem_minmax(6rem,max-content)_minmax(0,1fr)]"
-                : "max-w-3xl grid-cols-[80px_22rem_minmax(6rem,max-content)_minmax(0,1fr)_28px]";
+                ? "max-w-4xl grid-cols-[80px_minmax(22rem,1fr)_minmax(6rem,max-content)_minmax(8rem,14rem)]"
+                : "max-w-4xl grid-cols-[80px_minmax(22rem,1fr)_minmax(6rem,max-content)_minmax(8rem,14rem)_28px]";
             }
             return readOnly
               ? "max-w-2xl grid-cols-[80px_11rem_minmax(6rem,max-content)_minmax(0,1fr)]"
@@ -98,8 +104,8 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
           }
           if (agg) {
             return readOnly
-              ? "grid-cols-[80px_22rem_18rem_minmax(0,1fr)]"
-              : "grid-cols-[80px_22rem_18rem_minmax(0,1fr)_28px]";
+              ? "grid-cols-[80px_minmax(22rem,1fr)_18rem_minmax(8rem,14rem)]"
+              : "grid-cols-[80px_minmax(22rem,1fr)_18rem_minmax(8rem,14rem)_28px]";
           }
           return readOnly
             ? "grid-cols-[80px_11rem_18rem_minmax(0,1fr)]"
