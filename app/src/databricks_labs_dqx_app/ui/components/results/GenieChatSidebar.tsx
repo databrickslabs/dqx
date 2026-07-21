@@ -681,7 +681,10 @@ export function GenieChatSidebar({
         // Width is driven by the drag handle, not the breakpoint class.
         // Hide the Sheet's default absolute close button — we render our own in
         // the header row so it lines up with the "Ask Genie" title.
-        className="flex flex-col p-0 [&>button.absolute]:hidden"
+        // `border-l-0` drops the Sheet's default 1px left border, which rendered
+        // as a light vertical bar down the panel's inner (drag) edge; the
+        // shadow + drag handle already delineate that edge.
+        className="flex flex-col border-l-0 p-0 [&>button.absolute]:hidden"
         // Inline maxWidth beats the base class's `sm:max-w-sm`, which otherwise
         // caps the panel at 384px regardless of the chosen width.
         style={{
