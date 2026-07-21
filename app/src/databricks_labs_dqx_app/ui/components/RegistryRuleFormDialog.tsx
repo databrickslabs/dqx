@@ -3520,7 +3520,13 @@ export function RegistryRuleFormDialog({
                 <ConditionSelector
                   checkFunctions={checkFunctions}
                   currentSlots={currentSlots}
-                  operatorFamily={anchorOperatorFamily}
+                  // Key the operator/function list to THIS row's selected
+                  // column family (not the first declared slot). Swapping the
+                  // IF column then refreshes the offered expressions — e.g.
+                  // picking a text column after a numeric one now surfaces the
+                  // text operators. `family` is ANY (all operators) until a
+                  // column is chosen, matching the anchor fallback.
+                  operatorFamily={family}
                   onSelect={requestModeChange}
                   disabled={readOnly}
                   currentLabel={value || t("rulesRegistry.coreConditionBuilder")}
