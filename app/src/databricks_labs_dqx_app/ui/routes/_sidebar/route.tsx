@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/sidebar";
 import { useGlobalResultsEnabled } from "@/hooks/use-global-results-enabled";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
+import { useRunFailureToasts } from "@/hooks/use-run-failure-toasts";
 
 export const Route = createFileRoute("/_sidebar")({
   component: () => <Layout />,
@@ -37,6 +38,11 @@ function Layout() {
   // Review & Approve nav item (and its trailing divider) are hidden (B2-142).
   const { mode: approvalsMode } = useApprovalsMode();
   const approvalsEnabled = approvalsMode !== "disabled";
+
+  // App-wide run-failure watcher (item 58). Mounted once here so a FAILED
+  // validation/profiling run raises a toast (with a "View" link into Runs
+  // History) on any authenticated page — not only while Runs History is open.
+  useRunFailureToasts();
 
   // The old "Create Rules" expandable group (Single-table rules,
   // Cross-table rules, Profile & Generate) and the standalone "Active
@@ -92,15 +98,17 @@ function Layout() {
               </SidebarMenuButton>
             </SidebarMenuItem>
 
-            {/* Table Spaces — group monitored tables into governed,
+            {/* Collections — group monitored tables into governed,
                 versioned, schedulable bundles (Phase 11; renamed from
-                "Data Products" in P21 item 28). ``/runs`` and the old
-                ``/data-products`` path redirect here so old bookmarks don't
-                404, so both are folded into the active-state check. */}
+                "Data Products" → "Table Spaces" → "Collections" in
+                bug-bash-v4 item 56). ``/runs`` and the old ``/table-spaces``
+                and ``/data-products`` paths redirect here so old bookmarks
+                don't 404, so all are folded into the active-state check. */}
             <SidebarMenuItem>
               <SidebarMenuButton
                 asChild
                 isActive={
+                  location.pathname.startsWith("/collections") ||
                   location.pathname.startsWith("/table-spaces") ||
                   location.pathname.startsWith("/data-products") ||
                   (location.pathname.startsWith("/runs") &&
@@ -108,7 +116,7 @@ function Layout() {
                 }
                 tooltip={t("sidebar.dataProducts")}
               >
-                <Link to="/table-spaces">
+                <Link to="/collections">
                   <Boxes />
                   <span>{t("sidebar.dataProducts")}</span>
                 </Link>

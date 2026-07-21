@@ -222,7 +222,7 @@ def test_text_instructions_single_entry_with_newline_terminated_paragraphs() -> 
     assert len(text_instructions) == 1
     content = text_instructions[0]["content"]
     assert content == list(gs.TEXT_INSTRUCTIONS)
-    assert len(content) == 13
+    assert len(content) == 15
     assert all(p.endswith("\n") for p in content)
     joined = "".join(content)
     assert "MEASURE()" in joined
@@ -329,6 +329,9 @@ def test_every_sample_question_has_a_curated_sql() -> None:
 _METADATA_DIM_QUESTIONS = {
     "Which rules does a steward own?",
     "What is the description of a rule?",
+    "How many rules do I have?",
+    "How many rules have been added recently?",
+    "How many rules are running?",
 }
 
 
@@ -575,6 +578,74 @@ def test_genie_instructions_explain_column_fanout() -> None:
     assert "registry_rule_id" in joined
 
 
+def test_rule_context_curated_sqls_scope_to_one_rule_by_rule_name() -> None:
+    # Item 19 B: the rule-kind chip questions (previously with NO curated SQL)
+    # now resolve to SQL scoped to ONE rule via :rule_name, keyed on rule_name
+    # (never check_name) and grouped/compared on registry_rule_id across runs.
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    rule_questions = [
+        "What is this rule's overall pass rate?",
+        "How many tables is this rule applied to?",
+        "How many failures does this rule have right now?",
+        "Which tables is this rule failing on most?",
+        "Which table is hurting this rule's score the most?",
+        "Which columns does this rule fail on most?",
+        "How has this rule's pass rate changed over recent runs?",
+    ]
+    for question in rule_questions:
+        entry = by_q[question]
+        sql = "".join(entry["sql"])
+        assert ":rule_name" in sql, question
+        assert "`rule_name` = :rule_name" in sql, question
+        assert "`check_name` = :rule_name" not in sql, question
+        assert entry["parameters"] == [
+            {
+                "name": "rule_name",
+                "description": ["Name of the registry rule to scope to."],
+                "type_hint": "STRING",
+            }
+        ], question
+        assert entry["usage_guidance"]
+    # The rule-context routing paragraph is taught in TEXT_INSTRUCTIONS.
+    joined = "".join(gs.TEXT_INSTRUCTIONS)
+    assert "(Rule: <name>)" in joined
+    assert "ONE registry rule" in joined
+    # build_serialized_space carries rule_name / registry_rule_id as metric
+    # dimensions in the metric-view description.
+    space = build()
+    mv_desc = "".join(space["data_sources"]["metric_views"][0]["description"])
+    assert "rule_name" in mv_desc
+    assert "registry_rule_id" in mv_desc
+
+
+def test_breach_curated_sql_and_instructions() -> None:
+    # Item 19 D: breach awareness. A check breaches when its run pass rate
+    # falls below the pass_threshold frozen into that run (NULL-gated).
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    sql = "".join(by_q["Which checks breached their pass threshold?"]["sql"])
+    assert f"`{CATALOG}`.`{SCHEMA}`.v_dq_check_results" in sql
+    assert "`pass_threshold` IS NOT NULL" in sql
+    assert "`pass_threshold` / 100.0" in sql
+    assert "`run_mode` = 'published'" in sql
+    joined = "".join(gs.TEXT_INSTRUCTIONS)
+    assert "breach" in joined
+    assert "pass_threshold" in joined
+
+
+def test_registry_count_curated_sqls_read_the_dim() -> None:
+    # Item 19 C: 'how many rules' questions read dim_dq_rules (no run_mode).
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    for question in (
+        "How many rules do I have?",
+        "How many rules have been added recently?",
+        "How many rules are running?",
+    ):
+        sql = "".join(by_q[question]["sql"])
+        assert f"`{CATALOG}`.`{SCHEMA}`.dim_dq_rules" in sql
+        assert "run_mode" not in sql
+    assert "INTERVAL 7 DAYS" in "".join(by_q["How many rules have been added recently?"]["sql"])
+
+
 def test_benchmarks_reuse_curated_sql_verbatim_and_cover_all_questions() -> None:
     space = build()
     benchmarks = space["benchmarks"]["questions"]
@@ -648,6 +719,7 @@ def test_column_configs_enable_prompt_matching_sorted_by_name() -> None:
         "criticality",
         "dimension",
         "input_location",
+        "rule_name",
         "run_mode",
         "severity",
     }

@@ -34,7 +34,7 @@ const BASE_TILES: { nameKey: string; descriptionKey: string; href: string; icon:
   {
     nameKey: "sidebar.dataProducts",
     descriptionKey: "home.grid.tableSpacesDesc",
-    href: "/table-spaces",
+    href: "/collections",
     icon: Boxes,
   },
 ];
