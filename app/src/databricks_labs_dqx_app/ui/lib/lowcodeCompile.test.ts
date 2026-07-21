@@ -573,3 +573,9 @@ test("item42: length between literal bounds unchanged (regression)", () => {
     compileAstToSql(ast([row({ column_ref: "name", operator: "length between", value: [1, 10] })])),
   ).toBe("length({{name}}) BETWEEN 1 AND 10");
 });
+
+test("item42: a column-ref value survives JSON round-trip and still compiles", () => {
+  const original = ast([row({ column_ref: "amount", operator: ">=", value: { $col: "credit_limit" } })]);
+  const rehydrated = JSON.parse(JSON.stringify(original)) as typeof original;
+  expect(compileAstToSql(rehydrated)).toBe("{{amount}} >= {{credit_limit}}");
+});
