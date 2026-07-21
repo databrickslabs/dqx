@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverAnchor, PopoverTrigger } from "@/components/ui/popover";
-import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Plus, X } from "lucide-react";
@@ -111,6 +111,7 @@ function ColumnAwareInput({
       </PopoverAnchor>
       <PopoverContent className="w-56 p-0" align="start">
         <Command>
+          <CommandInput placeholder={t("rulesRegistry.lowcodeGroupBySearch")} />
           <CommandList>
             <CommandEmpty>{t("rulesRegistry.lowcodeValueNoColumns")}</CommandEmpty>
             <CommandGroup heading={t("rulesRegistry.lowcodeValueColumnsHeader")}>
@@ -364,6 +365,7 @@ function ChipInput({
         </PopoverTrigger>
         <PopoverContent className="w-56 p-0" align="start">
           <Command>
+            <CommandInput placeholder={t("rulesRegistry.lowcodeGroupBySearch")} />
             <CommandList>
               <CommandEmpty>{t("rulesRegistry.lowcodeValueNoColumns")}</CommandEmpty>
               <CommandGroup heading={t("rulesRegistry.lowcodeValueColumnsHeader")}>
