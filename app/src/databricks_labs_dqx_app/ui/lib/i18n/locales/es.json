@@ -1227,7 +1227,9 @@
     "skeletonFailedLoad": "Error al cargar el historial de ejecuciones",
     "successBadge": "Éxito",
     "successOption": "Éxito",
-    "runSetFilterChip": "Filtrado por el conjunto de ejecuciones {{runSetId}}…"
+    "runSetFilterChip": "Filtrado por el conjunto de ejecuciones {{runSetId}}…",
+    "failureToastTitle": "Error en la ejecución: {{table}}",
+    "failureToastAction": "Ver en el historial"
   },
   "aiAssistant": {
     "title": "Generar reglas",

@@ -1227,7 +1227,9 @@
     "skeletonFailedLoad": "Impossibile caricare la cronologia esecuzioni",
     "successBadge": "Successo",
     "successOption": "Successo",
-    "runSetFilterChip": "Filtrato per il set di esecuzioni {{runSetId}}…"
+    "runSetFilterChip": "Filtrato per il set di esecuzioni {{runSetId}}…",
+    "failureToastTitle": "Esecuzione non riuscita: {{table}}",
+    "failureToastAction": "Vedi nella cronologia"
   },
   "aiAssistant": {
     "title": "Genera regole",

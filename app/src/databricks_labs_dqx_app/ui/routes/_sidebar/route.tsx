@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/sidebar";
 import { useGlobalResultsEnabled } from "@/hooks/use-global-results-enabled";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
+import { useRunFailureToasts } from "@/hooks/use-run-failure-toasts";
 
 export const Route = createFileRoute("/_sidebar")({
   component: () => <Layout />,
@@ -37,6 +38,11 @@ function Layout() {
   // Review & Approve nav item (and its trailing divider) are hidden (B2-142).
   const { mode: approvalsMode } = useApprovalsMode();
   const approvalsEnabled = approvalsMode !== "disabled";
+
+  // App-wide run-failure watcher (item 58). Mounted once here so a FAILED
+  // validation/profiling run raises a toast (with a "View" link into Runs
+  // History) on any authenticated page — not only while Runs History is open.
+  useRunFailureToasts();
 
   // The old "Create Rules" expandable group (Single-table rules,
   // Cross-table rules, Profile & Generate) and the standalone "Active
