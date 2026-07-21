@@ -14,6 +14,7 @@ import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react
 import { AuthGuard } from "@/components/AuthGuard";
 import { toast } from "sonner";
 import { errorToast } from "@/lib/toast";
+import { getCurrentUserQueryKey } from "@/lib/api";
 
 const mutationCache = new MutationCache({
   onSuccess: (_data, _vars, _ctx, mutation) => {
@@ -44,6 +45,18 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// Session-stable identity: the SCIM current-user doesn't change within a
+// session. The role, version, approvals-mode and global-results queries are
+// already pinned to staleTime: Infinity at their hooks, but current-user was
+// still riding the 5-minute default and re-fetching whenever it lapsed —
+// firing repeatedly across a session (once per component that mounts it after
+// the window expires). Pin it here centrally, by query key, so the keyed
+// hooks (suspense + non-suspense) all inherit it without per-call-site churn.
+// (Timezone is pinned at its own hook in api-custom.ts, alongside the same
+// reasoning, because that hand-written hook passes staleTime directly into
+// useQuery — which would override a query-default set here.)
+queryClient.setQueryDefaults(getCurrentUserQueryKey(), { staleTime: Infinity });
 
 const router = createRouter({
   routeTree,
