@@ -66,15 +66,15 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
         "grid max-w-2xl gap-2 items-center py-1",
         // Value track widened (1.4fr → 2.2fr) so the value input has room to
         // grow with its content (long "in" lists, wide strings) instead of
-        // being clipped narrow. The column/function and operator tracks carry
-        // px MINs (not 0) so a long "{{credit_card_number}}" placeholder or
-        // operator/function name ("is not null and not empty", "passes") isn't
-        // clipped to "{{credit_card_numb…}}" / "is not …" — each track can grow
-        // past its min with its content and only truncates when the whole row
-        // runs out of room.
+        // being clipped narrow. The operator/function track sizes to its
+        // CONTENT (minmax(8rem,max-content)) — not a fixed 1fr share — so a
+        // longer operator/function name ("is not null and not empty",
+        // "is non-negative") grows the box to fit instead of clipping to
+        // "is non-ne…". Bounded set of names, so it never runs away. The
+        // column track keeps its original 0-min 1.6fr behaviour (unchanged).
         readOnly
-          ? "grid-cols-[80px_minmax(11rem,1.6fr)_minmax(8rem,1fr)_minmax(0,2.2fr)]"
-          : "grid-cols-[80px_minmax(11rem,1.6fr)_minmax(8rem,1fr)_minmax(0,2.2fr)_28px]",
+          ? "grid-cols-[80px_minmax(0,1.6fr)_minmax(8rem,max-content)_minmax(0,2.2fr)]"
+          : "grid-cols-[80px_minmax(0,1.6fr)_minmax(8rem,max-content)_minmax(0,2.2fr)_28px]",
       )}
     >
       {isFirst ? (
