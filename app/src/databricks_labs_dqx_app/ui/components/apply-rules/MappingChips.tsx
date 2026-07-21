@@ -17,11 +17,23 @@ import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import type { AppliedRuleOutColumnMappingItem, ColumnOut, RuleSlot } from "@/lib/api";
+import type {
+  AppliedRuleOutColumnMappingItem,
+  ColumnOut,
+  RuleSlot,
+} from "@/lib/api";
 import { computeMatchedTagsForSlot } from "@/lib/registry-rule-conversion";
-import { ColumnDropdownList, MultiColumnPicker, columnsForSlot } from "./ColumnPicker";
+import {
+  ColumnDropdownList,
+  MultiColumnPicker,
+  columnsForSlot,
+} from "./ColumnPicker";
 
 const PALETTE = [
   "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 dark:text-emerald-400",
@@ -37,8 +49,12 @@ export function paletteAt(index: number): string {
 }
 
 /** Count mapping entries that have at least one slot filled. */
-function countNonEmpty(mapping: AppliedRuleOutColumnMappingItem[], slotNames: string[]): number {
-  return mapping.filter((entry) => slotNames.some((s) => Boolean(entry[s]))).length;
+function countNonEmpty(
+  mapping: AppliedRuleOutColumnMappingItem[],
+  slotNames: string[],
+): number {
+  return mapping.filter((entry) => slotNames.some((s) => Boolean(entry[s])))
+    .length;
 }
 
 function FamilyBadge({ family }: { family: string }) {
@@ -71,7 +87,12 @@ function ReadonlyChip({
   busy?: boolean;
 }) {
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-mono", colorClass)}>
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-mono",
+        colorClass,
+      )}
+    >
       {onJump ? (
         <button
           type="button"
@@ -95,7 +116,14 @@ function ReadonlyChip({
           aria-label={removeTitle}
           className="ml-0.5 opacity-60 hover:opacity-100 focus:outline-none leading-none disabled:opacity-40"
         >
-          {busy ? <Loader2 className="h-2.5 w-2.5 animate-spin inline-block" aria-hidden /> : "×"}
+          {busy ? (
+            <Loader2
+              className="h-2.5 w-2.5 animate-spin inline-block"
+              aria-hidden
+            />
+          ) : (
+            "×"
+          )}
         </button>
       )}
     </span>
@@ -136,10 +164,18 @@ function EditableChip({
   // The chip's own current column must stay selectable even though it's
   // technically "in use" — only exclude *other* groups' columns from the
   // candidate list.
-  const matches = columnsForSlot(columns, slot, excludeColumns.filter((c) => c !== label));
+  const matches = columnsForSlot(
+    columns,
+    slot,
+    excludeColumns.filter((c) => c !== label),
+  );
 
   const picker = (
-    <PopoverContent className="w-80 p-0" align="start" onClick={(e) => e.stopPropagation()}>
+    <PopoverContent
+      className="w-80 p-0"
+      align="start"
+      onClick={(e) => e.stopPropagation()}
+    >
       <ColumnDropdownList
         slot={slot}
         matches={matches}
@@ -189,7 +225,12 @@ function EditableChip({
   );
 
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-mono", colorClass)}>
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-mono",
+        colorClass,
+      )}
+    >
       {labelButton}
       {onJump && (
         <Popover open={open} onOpenChange={setOpen}>
@@ -198,7 +239,9 @@ function EditableChip({
               type="button"
               onClick={(e) => e.stopPropagation()}
               title={t("monitoredTables.changeColumnTitle")}
-              aria-label={t("monitoredTables.changeColumnLabel", { column: label })}
+              aria-label={t("monitoredTables.changeColumnLabel", {
+                column: label,
+              })}
               className="opacity-60 hover:opacity-100 focus:outline-none leading-none px-0.5"
             >
               &#x25BE;
@@ -265,13 +308,19 @@ function PendingSlotChip({
   const matches = columnsForSlot(columns, slot, excludeColumns);
   return (
     <span
-      className={cn("inline-flex items-center gap-1 rounded border border-dashed px-2 py-0.5 text-xs font-mono", colorClass)}
+      className={cn(
+        "inline-flex items-center gap-1 rounded border border-dashed px-2 py-0.5 text-xs font-mono",
+        colorClass,
+      )}
     >
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button
             type="button"
-            className={cn("cursor-pointer hover:underline focus:outline-none", !value && "text-muted-foreground font-sans")}
+            className={cn(
+              "cursor-pointer hover:underline focus:outline-none",
+              !value && "text-muted-foreground font-sans",
+            )}
           >
             {value || t("monitoredTables.selectColumnPlaceholder")}
           </button>
@@ -327,9 +376,20 @@ function PendingManySlotChip({
   const [selected, setSelected] = useState<string[]>([]);
   return (
     <div className="flex flex-col gap-1.5 w-full max-w-xs">
-      <MultiColumnPicker slot={slot} columns={columns} value={selected} onChange={setSelected} excludeColumns={excludeColumns} />
+      <MultiColumnPicker
+        slot={slot}
+        columns={columns}
+        value={selected}
+        onChange={setSelected}
+        excludeColumns={excludeColumns}
+      />
       <div className="flex justify-end">
-        <Button size="sm" variant="secondary" disabled={selected.length === 0} onClick={() => onCommit(selected)}>
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={selected.length === 0}
+          onClick={() => onCommit(selected)}
+        >
           {t("monitoredTables.applyButton")}
         </Button>
       </div>
@@ -426,7 +486,9 @@ export function MappingChips({
                 key={slot}
                 colorClass={paletteAt(groupIdx)}
                 label={`${slot} → ${column}`}
-                onJump={onJumpToColumn ? () => onJumpToColumn(column) : undefined}
+                onJump={
+                  onJumpToColumn ? () => onJumpToColumn(column) : undefined
+                }
               />
             ))}
           </div>
@@ -440,12 +502,16 @@ export function MappingChips({
   // Every column already used anywhere in this rule's mapping — excluded
   // from a chip's own picker candidates (minus its own current value, see
   // `EditableChip`) so the same column can't be picked twice across groups.
-  const usedColumns = columnMapping.flatMap((group) => slotNames.map((s) => group[s]).filter((v): v is string => Boolean(v)));
+  const usedColumns = columnMapping.flatMap((group) =>
+    slotNames.map((s) => group[s]).filter((v): v is string => Boolean(v)),
+  );
   // The next slot in declaration order still missing a value in the
   // in-progress group — its picker auto-opens as soon as it becomes this,
   // so filling one `cardinality: "one"` slot immediately reveals the next
   // one's column list with no extra click to open it.
-  const activePendingSlot = addingGroup ? slots.find((s) => !pendingValues?.[s.name])?.name : undefined;
+  const activePendingSlot = addingGroup
+    ? slots.find((s) => !pendingValues?.[s.name])?.name
+    : undefined;
 
   return (
     <div className={cn("space-y-2", className)}>
@@ -460,15 +526,60 @@ export function MappingChips({
           const isLastSlot = slotIdx === slots.length - 1;
           const filled = columnMapping
             .map((group, groupIdx) => ({ colName: group[slot.name], groupIdx }))
-            .filter((e): e is { colName: string; groupIdx: number } => Boolean(e.colName));
+            .filter((e): e is { colName: string; groupIdx: number } =>
+              Boolean(e.colName),
+            );
+
+          // The governed tags that matched for this slot, mirrored under the
+          // `{{slot}}` placeholder as well as under each mapped column chip
+          // (the match is a property of the slot↔column tag mapping, so it
+          // reads the same on both sides). Union across every mapped column so
+          // a rule applied to several columns shows the slot's full matched set.
+          const slotMatchedTags =
+            slotTags && columnTags
+              ? Array.from(
+                  new Set(
+                    filled.flatMap(({ colName }) =>
+                      computeMatchedTagsForSlot(
+                        slotTags,
+                        columnTags,
+                        slot.name,
+                        colName,
+                      ),
+                    ),
+                  ),
+                )
+              : [];
 
           return (
-            <div key={slot.name} className="grid grid-cols-[160px_24px_1fr] items-center gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="font-mono text-xs truncate">{`{{${slot.name}}}`}</span>
-                <FamilyBadge family={slot.family} />
+            <div
+              key={slot.name}
+              className="grid grid-cols-[160px_24px_1fr] items-center gap-3"
+            >
+              {/* flex-col so matched-tag chips stack below the slot placeholder,
+                  mirroring the column-chip side (below). */}
+              <div className="flex flex-col items-start gap-1 min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-mono text-xs truncate">{`{{${slot.name}}}`}</span>
+                  <FamilyBadge family={slot.family} />
+                </div>
+                {slotMatchedTags.length > 0 && (
+                  <span className="inline-flex flex-wrap items-center gap-1">
+                    {slotMatchedTags.map((tag) => (
+                      <Badge
+                        key={tag}
+                        variant="secondary"
+                        className="text-[10px] font-mono px-1.5 py-0 h-auto opacity-75"
+                      >
+                        {tag}
+                      </Badge>
+                    ))}
+                  </span>
+                )}
               </div>
-              <span className="text-muted-foreground text-xs justify-self-center self-center">&rarr;</span>
+              <span className="text-muted-foreground text-xs justify-self-center self-center">
+                &rarr;
+              </span>
               {/* items-start so a column chip's matched-tag line (stacked below
                   it) doesn't vertically-center the row's other chips / the
                   "+ Apply to another column" button — they stay on the top line. */}
@@ -481,13 +592,21 @@ export function MappingChips({
                   filled.map(({ colName, groupIdx }) => {
                     const matchedTags =
                       slotTags && columnTags
-                        ? computeMatchedTagsForSlot(slotTags, columnTags, slot.name, colName)
+                        ? computeMatchedTagsForSlot(
+                            slotTags,
+                            columnTags,
+                            slot.name,
+                            colName,
+                          )
                         : [];
                     return (
                       // Column chip on top; any matched governed-tag chips sit
                       // on the line BELOW it (not to its right), so the match
                       // reads as metadata about the column above it.
-                      <span key={groupIdx} className="inline-flex flex-col items-start gap-1">
+                      <span
+                        key={groupIdx}
+                        className="inline-flex flex-col items-start gap-1"
+                      >
                         {onChangeGroup ? (
                           <EditableChip
                             colorClass={paletteAt(groupIdx)}
@@ -495,18 +614,42 @@ export function MappingChips({
                             slot={slot}
                             columns={columns}
                             excludeColumns={usedColumns}
-                            onChange={(next) => onChangeGroup(groupIdx, slot.name, next)}
-                            onJump={onJumpToColumn ? () => onJumpToColumn(colName) : undefined}
-                            onRemove={onRemoveGroup ? () => onRemoveGroup(groupIdx) : undefined}
-                            removeTitle={t("monitoredTables.removeMappingGroupTitle", { count: groupIdx + 1 })}
+                            onChange={(next) =>
+                              onChangeGroup(groupIdx, slot.name, next)
+                            }
+                            onJump={
+                              onJumpToColumn
+                                ? () => onJumpToColumn(colName)
+                                : undefined
+                            }
+                            onRemove={
+                              onRemoveGroup
+                                ? () => onRemoveGroup(groupIdx)
+                                : undefined
+                            }
+                            removeTitle={t(
+                              "monitoredTables.removeMappingGroupTitle",
+                              { count: groupIdx + 1 },
+                            )}
                           />
                         ) : (
                           <ReadonlyChip
                             colorClass={paletteAt(groupIdx)}
                             label={colName}
-                            onJump={onJumpToColumn ? () => onJumpToColumn(colName) : undefined}
-                            onRemove={onRemoveGroup ? () => onRemoveGroup(groupIdx) : undefined}
-                            removeTitle={t("monitoredTables.removeMappingGroupTitle", { count: groupIdx + 1 })}
+                            onJump={
+                              onJumpToColumn
+                                ? () => onJumpToColumn(colName)
+                                : undefined
+                            }
+                            onRemove={
+                              onRemoveGroup
+                                ? () => onRemoveGroup(groupIdx)
+                                : undefined
+                            }
+                            removeTitle={t(
+                              "monitoredTables.removeMappingGroupTitle",
+                              { count: groupIdx + 1 },
+                            )}
                             busy={busyGroupIdx === groupIdx}
                           />
                         )}
@@ -541,17 +684,24 @@ export function MappingChips({
                     // Exclude columns already picked for *other* slots in
                     // this same in-progress group — same column can't fill
                     // two slots of one mapping group.
-                    const pendingSiblingColumns = Object.entries(pendingValues ?? {})
+                    const pendingSiblingColumns = Object.entries(
+                      pendingValues ?? {},
+                    )
                       .filter(([slotName]) => slotName !== slot.name)
                       .flatMap(([, v]) => v.split(","));
-                    const excludeColumns = [...usedColumns, ...pendingSiblingColumns];
+                    const excludeColumns = [
+                      ...usedColumns,
+                      ...pendingSiblingColumns,
+                    ];
                     return slot.cardinality === "many" ? (
                       <PendingManySlotChip
                         key="pending"
                         slot={slot}
                         columns={columns}
                         excludeColumns={excludeColumns}
-                        onCommit={(colNames) => onPendingSelect(slot.name, colNames.join(","))}
+                        onCommit={(colNames) =>
+                          onPendingSelect(slot.name, colNames.join(","))
+                        }
                       />
                     ) : (
                       <PendingSlotChip
@@ -562,7 +712,9 @@ export function MappingChips({
                         value={pendingValues?.[slot.name]}
                         autoOpen={slot.name === activePendingSlot}
                         colorClass={paletteAt(columnMapping.length)}
-                        onSelect={(colName) => onPendingSelect(slot.name, colName)}
+                        onSelect={(colName) =>
+                          onPendingSelect(slot.name, colName)
+                        }
                         onCancel={isLastSlot ? onCancelAdd : undefined}
                       />
                     );
