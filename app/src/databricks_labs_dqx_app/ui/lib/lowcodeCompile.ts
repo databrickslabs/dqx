@@ -1,5 +1,5 @@
 import { isColumnRef, type AnyRow, type JoinAst, type LowcodeAstV2 } from "./lowcodeAst";
-import { VALIDITY_SQL_TYPE, type Family } from "./lowcodeOperators";
+import { operatorValidForFamily, VALIDITY_SQL_TYPE, type Family } from "./lowcodeOperators";
 import { stripSqlLineComments } from "./sqlComments";
 import type { RuleSlotFamily } from "@/lib/api";
 
@@ -303,6 +303,41 @@ export function slotFamilyToLowcode(family: RuleSlotFamily | string): Family {
 export interface LowcodeColumnRef {
   name: string;
   family: Family;
+}
+
+/**
+ * Whether *row* is stranded (left referencing an incompatible slot) by retyping
+ * the slot *retypedName* to *newFamily*. A row is stranded when EITHER:
+ *
+ *   • it uses *retypedName* as its LHS `column_ref` and its operator is no
+ *     longer offered for *newFamily* (e.g. "contains" after switching the
+ *     column to numeric), OR
+ *   • it uses *retypedName* as a `{ $col }` RHS value (item 42, column-vs-column
+ *     comparison) and the retype breaks the family match — a column comparison
+ *     only makes sense same-family. We resolve the LHS column's family via
+ *     *lhsFamilyLookup*; the row is stranded when *newFamily* differs from the
+ *     LHS family. When the LHS family can't be resolved, we conservatively
+ *     treat any change away from *oldFamily* as stranding.
+ *
+ * Pure — no component state. Aggregated rows are not family-operator gated here
+ * (mirrors `clearStrandedRows`) so they're never reported stranded.
+ */
+export function rowStrandedByRetype(
+  row: AnyRow,
+  retypedName: string,
+  newFamily: Family,
+  oldFamily: Family,
+  lhsFamilyLookup: (name: string) => Family | undefined,
+): boolean {
+  if (row.kind !== "row") return false;
+  if (row.column_ref === retypedName && !operatorValidForFamily(row.operator, newFamily)) return true;
+  if (isColumnRef(row.value) && row.value.$col === retypedName) {
+    const lhsFamily = lhsFamilyLookup(row.column_ref);
+    if (lhsFamily === undefined) return newFamily !== oldFamily;
+    if (lhsFamily === "ANY" || newFamily === "ANY") return false;
+    return newFamily !== lhsFamily;
+  }
+  return false;
 }
 
 function groupByTokenToRefName(raw: string): string {

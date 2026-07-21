@@ -87,3 +87,31 @@ export function isV2Ast(ast: unknown): ast is LowcodeAstV2 {
 export function hashAst(ast: LowcodeAstV2): string {
   return JSON.stringify(ast, Object.keys(ast).sort());
 }
+
+/**
+ * Return a NEW ast with every reference to the reusable column/slot *oldName*
+ * rewritten to *newName*, so renaming a slot in the "Columns used" panel keeps
+ * the low-code AST in sync (otherwise the rows keep pointing at the old,
+ * now-undeclared name). Three reference sites are rewritten:
+ *
+ *   • each row's LHS `column_ref` (the statement stub),
+ *   • each row's RHS `value` when it's a `{ $col }` column reference (item 42),
+ *   • each join key's `column_ref` (the input-side of the join condition).
+ *
+ * A no-op (same-named or absent) still returns a structurally-equal ast. When
+ * *oldName* equals *newName* the input reference is returned unchanged.
+ */
+export function renameColumnInAst(ast: LowcodeAstV2, oldName: string, newName: string): LowcodeAstV2 {
+  if (oldName === newName) return ast;
+  const rows = ast.rows.map((row): AnyRow => {
+    let next = row;
+    if (next.column_ref === oldName) next = { ...next, column_ref: newName };
+    if (isColumnRef(next.value) && next.value.$col === oldName) next = { ...next, value: { $col: newName } };
+    return next;
+  });
+  const joins = ast.joins.map((join) => ({
+    ...join,
+    keys: join.keys.map((key) => (key.column_ref === oldName ? { ...key, column_ref: newName } : key)),
+  }));
+  return { ...ast, rows, joins };
+}

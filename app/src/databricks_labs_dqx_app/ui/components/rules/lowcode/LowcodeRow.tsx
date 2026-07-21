@@ -65,8 +65,13 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
         // carry `w-full`) so the columns read as a flush, aligned table —
         // matching dqlake's LowcodeRow, whose base SelectTrigger is `w-full`.
         "grid gap-2 items-center py-1",
-        // Column stays a FIXED 11rem everywhere. The operator + value tracks
-        // differ by mode:
+        // The field column is a FIXED 11rem for a normal row (one column
+        // picker), but an AGGREGATED row packs TWO controls into that cell
+        // (aggregate-function picker + column picker), so 11rem cramps both
+        // ("cou…" / "{{col"). Widen the field track to 22rem for aggregated
+        // rows so each of its two controls gets ~11rem — matching a normal
+        // row's single control — while normal rows are UNCHANGED at 11rem.
+        // The operator + value tracks differ by mode:
         //   - compact (Condition Builder only): the whole row is capped at
         //     max-w-2xl (the original bounded width) so it never sprawls across
         //     a wide dialog. Operator sizes to CONTENT (minmax(6rem,max-content))
@@ -75,13 +80,31 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
         //     bounded, so the extra input box is never oversized.
         //   - default (row filters): operator fixed 18rem, value fills the
         //     remainder — unchanged.
-        compact
-          ? readOnly
-            ? "max-w-2xl grid-cols-[80px_11rem_minmax(6rem,max-content)_minmax(0,1fr)]"
-            : "max-w-2xl grid-cols-[80px_11rem_minmax(6rem,max-content)_minmax(0,1fr)_28px]"
-          : readOnly
+        // NOTE: Tailwind only generates arbitrary grid-cols values that appear
+        // as STATIC literal strings in source (no template interpolation), so
+        // every variant is spelled out in full below. `agg` widens the field
+        // track (11rem -> 22rem) for aggregated rows only.
+        (() => {
+          const agg = row.kind === "aggregated";
+          if (compact) {
+            if (agg) {
+              return readOnly
+                ? "max-w-3xl grid-cols-[80px_22rem_minmax(6rem,max-content)_minmax(0,1fr)]"
+                : "max-w-3xl grid-cols-[80px_22rem_minmax(6rem,max-content)_minmax(0,1fr)_28px]";
+            }
+            return readOnly
+              ? "max-w-2xl grid-cols-[80px_11rem_minmax(6rem,max-content)_minmax(0,1fr)]"
+              : "max-w-2xl grid-cols-[80px_11rem_minmax(6rem,max-content)_minmax(0,1fr)_28px]";
+          }
+          if (agg) {
+            return readOnly
+              ? "grid-cols-[80px_22rem_18rem_minmax(0,1fr)]"
+              : "grid-cols-[80px_22rem_18rem_minmax(0,1fr)_28px]";
+          }
+          return readOnly
             ? "grid-cols-[80px_11rem_18rem_minmax(0,1fr)]"
-            : "grid-cols-[80px_11rem_18rem_minmax(0,1fr)_28px]",
+            : "grid-cols-[80px_11rem_18rem_minmax(0,1fr)_28px]";
+        })(),
       )}
     >
       {isFirst ? (
