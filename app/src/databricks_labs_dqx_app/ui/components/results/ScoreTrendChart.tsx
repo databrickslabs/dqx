@@ -1192,7 +1192,14 @@ export function ScoreTrendChart({
       <p className="text-sm text-muted-foreground">{t("resultsUi.noRunsYet")}</p>
     ) : (
       <>
-      <div ref={wrapRef} className="relative min-w-0 overflow-hidden rounded-md border p-2 [&_.recharts-surface]:outline-none [&_.recharts-wrapper]:outline-none [&_svg]:outline-none [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
+      {/* Double-click resets zoom when a zoom is active. Attached HERE on the
+          wrapper (not the Recharts chart) so it fires anywhere in the plot —
+          the gradient-fill Area path sits above the chart background and
+          swallowed chart-level dblclicks on/below the line, so reset only
+          worked in the empty area above it. Native dblclicks bubble up from
+          every SVG child to this div. Guard with zoomed/yZoomed so a dblclick
+          on an unzoomed chart is a harmless no-op. */}
+      <div ref={wrapRef} onDoubleClick={() => { if (zoomed || yZoomed) resetZoom(); }} className="relative min-w-0 overflow-hidden rounded-md border p-2 [&_.recharts-surface]:outline-none [&_.recharts-wrapper]:outline-none [&_svg]:outline-none [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
           {(zoomed || yZoomed) && (
             <button
               type="button"
@@ -1210,10 +1217,8 @@ export function ScoreTrendChart({
               // gesture survives the pointer leaving the plot and commits only
               // on mouseup — never on mouseleave).
               onMouseDown={startGesture}
-              // Double-click resets zoom when a zoom is active. Guard with
-              // zoomed/yZoomed so a double-click on an unzoomed chart is a
-              // harmless no-op and never starts a spurious drag.
-              onDoubleClick={() => { if (zoomed || yZoomed) resetZoom(); }}
+              // (Double-click-to-reset is on the wrapper div above, not here —
+              // the chart-level handler didn't fire over the Area fill.)
               style={
                 dragging
                   ? { cursor: "crosshair", userSelect: "none" }
