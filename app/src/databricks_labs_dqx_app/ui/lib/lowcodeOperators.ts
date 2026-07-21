@@ -260,3 +260,47 @@ export const FAMILY_LABEL: Record<Family, string> = {
   BOOLEAN: "Boolean",
   ANY: "Any",
 };
+
+// Operators whose scalar operand(s) are compiled via `valueSql()` in
+// `lowcodeCompile.ts`'s `rowSql` — i.e. the compiler honours a ColumnRefValue
+// and emits a `{{slot}}` reference instead of a quoted literal. The two MUST
+// stay in sync: adding an operator to `rowSql` that calls `valueSql()` requires
+// a matching addition here, and vice versa.
+//
+// Operators NOT in this set are compiled with `quote()` / `likeLiteral()` which
+// stringify any object value as `[object Object]` — so we must prevent the user
+// from entering a column reference into those value cells.
+const COLUMN_REF_ALLOWED_OPS = new Set<string>([
+  // Arithmetic comparisons
+  "=",
+  "!=",
+  "<",
+  "<=",
+  ">",
+  ">=",
+  // Textual aliases
+  "equals",
+  "not equals",
+  // Temporal aliases (compile to <, >, <=, >= via valueSql)
+  "before",
+  "after",
+  "on or before",
+  "on or after",
+  // Range — bounds are each passed through valueSql
+  "between",
+  "length between",
+  // Set membership — each entry is passed through valueSql
+  "in",
+  "not in",
+]);
+
+/**
+ * Whether *operator*'s value operand(s) are compiled via `valueSql()` in
+ * `lowcodeCompile.ts`, meaning a ColumnRefValue (`{ $col }`) is honoured and
+ * emits a `{{slot}}` SQL reference. When false the compiler uses `quote()` /
+ * `likeLiteral()`, which stringify an object as `[object Object]` — so the UI
+ * must not offer the column-reference picker for those operators.
+ */
+export function operatorAllowsColumnRef(operator: string): boolean {
+  return COLUMN_REF_ALLOWED_OPS.has(operator);
+}

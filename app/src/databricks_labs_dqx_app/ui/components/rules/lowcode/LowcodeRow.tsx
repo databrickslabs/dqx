@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { OperatorDropdown } from "./OperatorDropdown";
 import { ValueCell } from "./ValueCell";
 import { AggregatedFieldArea } from "./AggregatedFieldArea";
-import { aggregateOutputFamily, type Family } from "@/lib/lowcodeOperators";
+import { aggregateOutputFamily, operatorValidForFamily, type Family } from "@/lib/lowcodeOperators";
 import type { AnyRow, Combinator } from "@/lib/lowcodeAst";
 import type { LowcodeColumnRef } from "@/lib/lowcodeCompile";
 
@@ -65,8 +65,13 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
         // carry `w-full`) so the columns read as a flush, aligned table —
         // matching dqlake's LowcodeRow, whose base SelectTrigger is `w-full`.
         "grid gap-2 items-center py-1",
-        // Column stays a FIXED 11rem everywhere. The operator + value tracks
-        // differ by mode:
+        // The field column is a FIXED 11rem for a normal row (one column
+        // picker), but an AGGREGATED row packs TWO controls into that cell
+        // (aggregate-function picker + column picker), so 11rem cramps both
+        // ("cou…" / "{{col"). Widen the field track to 22rem for aggregated
+        // rows so each of its two controls gets ~11rem — matching a normal
+        // row's single control — while normal rows are UNCHANGED at 11rem.
+        // The operator + value tracks differ by mode:
         //   - compact (Condition Builder only): the whole row is capped at
         //     max-w-2xl (the original bounded width) so it never sprawls across
         //     a wide dialog. Operator sizes to CONTENT (minmax(6rem,max-content))
@@ -75,13 +80,37 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
         //     bounded, so the extra input box is never oversized.
         //   - default (row filters): operator fixed 18rem, value fills the
         //     remainder — unchanged.
-        compact
-          ? readOnly
-            ? "max-w-2xl grid-cols-[80px_11rem_minmax(6rem,max-content)_minmax(0,1fr)]"
-            : "max-w-2xl grid-cols-[80px_11rem_minmax(6rem,max-content)_minmax(0,1fr)_28px]"
-          : readOnly
+        // NOTE: Tailwind only generates arbitrary grid-cols values that appear
+        // as STATIC literal strings in source (no template interpolation), so
+        // every variant is spelled out in full below. `agg` widens the field
+        // track (11rem -> 22rem) for aggregated rows only.
+        // Aggregated rows: wider cap (max-w-4xl) and the field track GROWS to
+        // fill — minmax(22rem,1fr) — so the aggregate-function + column pickers
+        // (split evenly by AggregatedFieldArea's internal grid-cols-2) expand
+        // leftward into the available width instead of sitting at a fixed size.
+        // The value there is usually a small number, so it's bounded to
+        // ~14rem rather than eating the remainder. Normal rows unchanged.
+        (() => {
+          const agg = row.kind === "aggregated";
+          if (compact) {
+            if (agg) {
+              return readOnly
+                ? "max-w-4xl grid-cols-[80px_minmax(22rem,1fr)_minmax(6rem,max-content)_minmax(8rem,14rem)]"
+                : "max-w-4xl grid-cols-[80px_minmax(22rem,1fr)_minmax(6rem,max-content)_minmax(8rem,14rem)_28px]";
+            }
+            return readOnly
+              ? "max-w-2xl grid-cols-[80px_11rem_minmax(6rem,max-content)_minmax(0,1fr)]"
+              : "max-w-2xl grid-cols-[80px_11rem_minmax(6rem,max-content)_minmax(0,1fr)_28px]";
+          }
+          if (agg) {
+            return readOnly
+              ? "grid-cols-[80px_minmax(22rem,1fr)_18rem_minmax(8rem,14rem)]"
+              : "grid-cols-[80px_minmax(22rem,1fr)_18rem_minmax(8rem,14rem)_28px]";
+          }
+          return readOnly
             ? "grid-cols-[80px_11rem_18rem_minmax(0,1fr)]"
-            : "grid-cols-[80px_11rem_18rem_minmax(0,1fr)_28px]",
+            : "grid-cols-[80px_11rem_18rem_minmax(0,1fr)_28px]";
+        })(),
       )}
     >
       {isFirst ? (
@@ -138,11 +167,24 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
             <SelectValue placeholder={t("rulesRegistry.lowcodeColumnPlaceholder")} />
           </SelectTrigger>
           <SelectContent>
-            {declaredColumns.map((c) => (
-              <SelectItem key={c.name} value={c.name} className="font-mono text-xs">
-                {c.name.includes(".") ? c.name : `{{${c.name}}}`}
-              </SelectItem>
-            ))}
+            {declaredColumns
+              // Once an operator/function is chosen, only offer columns whose
+              // family supports it — so you can't pick a column the operator
+              // can't run on (e.g. swap a datetime column for a boolean one
+              // under a `>` comparison). Before an operator is chosen, every
+              // column is offered. The currently-selected column stays visible
+              // regardless, so its Select value never orphans.
+              .filter(
+                (c) =>
+                  !row.operator ||
+                  c.name === row.column_ref ||
+                  operatorValidForFamily(row.operator, c.family),
+              )
+              .map((c) => (
+                <SelectItem key={c.name} value={c.name} className="font-mono text-xs">
+                  {c.name.includes(".") ? c.name : `{{${c.name}}}`}
+                </SelectItem>
+              ))}
           </SelectContent>
         </Select>
       ) : (
@@ -160,7 +202,7 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
       {renderOperator
         ? renderOperator({ family, value: row.operator, onChange: setOperator, isFirst })
         : <OperatorDropdown value={row.operator} family={family} onChange={setOperator} />}
-      <ValueCell operator={row.operator} family={family} value={row.value} onChange={setValue} />
+      <ValueCell operator={row.operator} family={family} value={row.value} onChange={setValue} declaredColumns={declaredColumns} />
 
       {!readOnly &&
         (canDelete ? (

@@ -62,6 +62,35 @@ class TestCompileAstToSql:
         assert compile_ast_to_sql(_ast([row])) == "COUNT({{id}}) <= 5"
 
 
+class TestColumnRefValue:
+    """A row value of ``{"$col": "<column>"}`` compiles the RHS to a column
+    reference (item 42), mirroring ``valueSql`` in ``lowcodeCompile.ts`` — so a
+    col-vs-col comparison yields ``{{a}} < {{b}}``, never a blank RHS."""
+
+    def test_comparison_rhs_is_slot_placeholder(self):
+        sql = compile_ast_to_sql(_ast([_row(column_ref="a", operator="<", value={"$col": "b"})]))
+        assert sql == "{{a}} < {{b}}"
+
+    def test_qualified_rhs_column_passes_through_raw(self):
+        sql = compile_ast_to_sql(_ast([_row(column_ref="a", operator="=", value={"$col": "orders.total"})]))
+        assert sql == "{{a}} = orders.total"
+
+    def test_between_bounds_may_be_column_refs(self):
+        sql = compile_ast_to_sql(
+            _ast([_row(column_ref="x", operator="between", value=[{"$col": "lo"}, {"$col": "hi"}])])
+        )
+        assert sql == "{{x}} BETWEEN {{lo}} AND {{hi}}"
+
+    def test_in_list_may_mix_columns_and_literals(self):
+        sql = compile_ast_to_sql(_ast([_row(column_ref="s", operator="in", value=[{"$col": "b"}, "x"])]))
+        assert sql == "{{s}} IN ({{b}}, 'x')"
+
+    def test_rhs_column_slot_is_extracted_as_token(self):
+        body = compile_lowcode_body(_ast([_row(column_ref="a", operator="<", value={"$col": "b"})]), "")
+        assert body.predicate == "{{a}} < {{b}}"
+        assert extract_slot_tokens(body.predicate) == ["a", "b"]
+
+
 class TestExpandedOperatorCatalog:
     """The DQ-steward operator additions must compile identically to the
     frontend (``ui/lib/lowcodeCompile.ts``) so an AI-proposed rule using one

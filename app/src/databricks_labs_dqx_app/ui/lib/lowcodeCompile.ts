@@ -1,5 +1,5 @@
-import type { AnyRow, JoinAst, LowcodeAstV2 } from "./lowcodeAst";
-import { VALIDITY_SQL_TYPE, type Family } from "./lowcodeOperators";
+import { isColumnRef, type AnyRow, type JoinAst, type LowcodeAstV2 } from "./lowcodeAst";
+import { operatorValidForFamily, VALIDITY_SQL_TYPE, type Family } from "./lowcodeOperators";
 import { stripSqlLineComments } from "./sqlComments";
 import type { RuleSlotFamily } from "@/lib/api";
 
@@ -54,8 +54,12 @@ function quote(v: unknown): string {
   return `'${s}'`;
 }
 
-function quoteList(values: unknown[]): string {
-  return values.map(quote).join(", ");
+// A comparison RHS is EITHER a column reference (item 42 — emit ref(), so a
+// plain name becomes {{name}} and a joined-table col emits raw) OR a literal
+// (quote() as before). This is the only place the literal-vs-column decision
+// is made for scalar operands.
+function valueSql(value: unknown): string {
+  return isColumnRef(value) ? ref(value.$col) : quote(value);
 }
 
 // Escape a value for embedding INSIDE a single-quoted SQL LIKE pattern
@@ -132,9 +136,9 @@ function aggExpr(spec: { aggregate?: string; column_ref?: string; aggregate_para
 
 function rowSql(left: string, operator: string, value: unknown): string {
   const op = operator;
-  if (["=", "!=", "<", "<=", ">", ">="].includes(op)) return `${left} ${op} ${quote(value)}`;
-  if (op === "equals") return `${left} = ${quote(value)}`;
-  if (op === "not equals") return `${left} != ${quote(value)}`;
+  if (["=", "!=", "<", "<=", ">", ">="].includes(op)) return `${left} ${op} ${valueSql(value)}`;
+  if (op === "equals") return `${left} = ${valueSql(value)}`;
+  if (op === "not equals") return `${left} != ${valueSql(value)}`;
   if (op === "contains") return `${left} LIKE '%${likeLiteral(value)}%'`;
   if (op === "does not contain") return `${left} NOT LIKE '%${likeLiteral(value)}%'`;
   if (op === "starts with") return `${left} LIKE '${likeLiteral(value)}%'`;
@@ -142,18 +146,18 @@ function rowSql(left: string, operator: string, value: unknown): string {
   if (op === "matches regex") return `${left} RLIKE ${quote(value)}`;
   if (op === "between") {
     const [lo, hi] = Array.isArray(value) ? (value as unknown[]) : [null, null];
-    return `${left} BETWEEN ${quote(lo)} AND ${quote(hi)}`;
+    return `${left} BETWEEN ${valueSql(lo)} AND ${valueSql(hi)}`;
   }
-  if (op === "in") return `${left} IN (${quoteList((value as unknown[]) ?? [])})`;
-  if (op === "not in") return `${left} NOT IN (${quoteList((value as unknown[]) ?? [])})`;
+  if (op === "in") return `${left} IN (${((value as unknown[]) ?? []).map(valueSql).join(", ")})`;
+  if (op === "not in") return `${left} NOT IN (${((value as unknown[]) ?? []).map(valueSql).join(", ")})`;
   if (op === "is null") return `${left} IS NULL`;
   if (op === "is not null") return `${left} IS NOT NULL`;
   if (op === "is true") return `${left} = TRUE`;
   if (op === "is false") return `${left} = FALSE`;
-  if (op === "before") return `${left} < ${quote(value)}`;
-  if (op === "after") return `${left} > ${quote(value)}`;
-  if (op === "on or before") return `${left} <= ${quote(value)}`;
-  if (op === "on or after") return `${left} >= ${quote(value)}`;
+  if (op === "before") return `${left} < ${valueSql(value)}`;
+  if (op === "after") return `${left} > ${valueSql(value)}`;
+  if (op === "on or before") return `${left} <= ${valueSql(value)}`;
+  if (op === "on or after") return `${left} >= ${valueSql(value)}`;
   if (op === "is in last") {
     const obj = (value && typeof value === "object" ? value : {}) as { number?: number; unit?: string };
     return `${left} >= current_timestamp() - INTERVAL '${obj.number ?? 0} ${obj.unit ?? "days"}'`;
@@ -172,7 +176,7 @@ function rowSql(left: string, operator: string, value: unknown): string {
   if (op === "is shorter than") return `length(${left}) < ${quote(value)}`;
   if (op === "length between") {
     const [lo, hi] = Array.isArray(value) ? (value as unknown[]) : [null, null];
-    return `length(${left}) BETWEEN ${quote(lo)} AND ${quote(hi)}`;
+    return `length(${left}) BETWEEN ${valueSql(lo)} AND ${valueSql(hi)}`;
   }
   if (op === "is not empty") return `length(trim(${left})) > 0`;
   if (op === "is empty") return `length(trim(${left})) = 0`;
@@ -299,6 +303,41 @@ export function slotFamilyToLowcode(family: RuleSlotFamily | string): Family {
 export interface LowcodeColumnRef {
   name: string;
   family: Family;
+}
+
+/**
+ * Whether *row* is stranded (left referencing an incompatible slot) by retyping
+ * the slot *retypedName* to *newFamily*. A row is stranded when EITHER:
+ *
+ *   • it uses *retypedName* as its LHS `column_ref` and its operator is no
+ *     longer offered for *newFamily* (e.g. "contains" after switching the
+ *     column to numeric), OR
+ *   • it uses *retypedName* as a `{ $col }` RHS value (item 42, column-vs-column
+ *     comparison) and the retype breaks the family match — a column comparison
+ *     only makes sense same-family. We resolve the LHS column's family via
+ *     *lhsFamilyLookup*; the row is stranded when *newFamily* differs from the
+ *     LHS family. When the LHS family can't be resolved, we conservatively
+ *     treat any change away from *oldFamily* as stranding.
+ *
+ * Pure — no component state. Aggregated rows are not family-operator gated here
+ * (mirrors `clearStrandedRows`) so they're never reported stranded.
+ */
+export function rowStrandedByRetype(
+  row: AnyRow,
+  retypedName: string,
+  newFamily: Family,
+  oldFamily: Family,
+  lhsFamilyLookup: (name: string) => Family | undefined,
+): boolean {
+  if (row.kind !== "row") return false;
+  if (row.column_ref === retypedName && !operatorValidForFamily(row.operator, newFamily)) return true;
+  if (isColumnRef(row.value) && row.value.$col === retypedName) {
+    const lhsFamily = lhsFamilyLookup(row.column_ref);
+    if (lhsFamily === undefined) return newFamily !== oldFamily;
+    if (lhsFamily === "ANY" || newFamily === "ANY") return false;
+    return newFamily !== lhsFamily;
+  }
+  return false;
 }
 
 function groupByTokenToRefName(raw: string): string {

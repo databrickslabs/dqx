@@ -122,6 +122,10 @@ The first row's combinator is null; later rows use "AND" or "OR". The "kind" fie
 Guidelines:
 - Use double quotes for all JSON keys and string values. Do not include any prose outside the JSON.
 - Every column_ref MUST also appear in "columns". Reference declared columns by name via column_ref.
+- A row's "value" may be EITHER a literal OR a column reference object {{"$col": "<column name>"}} \
+to compare one column against another. For "column a is less than column b": {{"kind": "row", \
+"combinator": null, "column_ref": "a", "operator": "<", "value": {{"$col": "b"}}}}. The referenced \
+column ("b" here) MUST also be listed in "columns", exactly like column_ref.
 - Always produce a populated "lowcode_ast" with at least one usable row.
 
 {vocab}"""
@@ -717,6 +721,11 @@ class AiRulesService:
             if not is_sql_query_safe(sql_query):
                 logger.warning("AI-generated sql rule dropped: unsafe SQL query")
                 return None
+            # Declare a slot per {{token}} in the predicate so the materializer
+            # substitutes every column ref — including a RHS col-vs-col ref
+            # (item 42) — exactly like the low-code pass does. Family hints come
+            # from the model's `columns`, else "any".
+            slots = self._derive_sql_slots(sql_query, proposal.get("columns"))
         else:
             return None
 
@@ -847,6 +856,33 @@ class AiRulesService:
                 }
             )
         return slots
+
+    @staticmethod
+    def _derive_sql_slots(sql_query: str, ai_columns: object) -> list[dict[str, Any]]:
+        """One slot per distinct ``{{token}}`` in a raw sql_query proposal (item 42).
+
+        A RHS column reference such as ``{{credit_limit}}`` is substituted by the
+        materializer only when a matching slot is declared. Mirrors
+        *_derive_lowcode_slots*'s token/family handling: family hints come from the
+        model's *columns* list (normalised to *_VALID_SLOT_FAMILIES*), else ``"any"``.
+        *arg_key* is ``None`` — sql-mode slots fill placeholders, not a function param.
+        """
+        family_hint: dict[str, str] = {}
+        if isinstance(ai_columns, list):
+            for col in ai_columns:
+                if not isinstance(col, dict):
+                    continue
+                name = col.get("name")
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                raw_family = col.get("family")
+                family = raw_family.lower() if isinstance(raw_family, str) else ""
+                family_hint[name.strip()] = family if family in _VALID_SLOT_FAMILIES else "any"
+        tokens = extract_slot_tokens(sql_query)
+        return [
+            {"name": name, "family": family_hint.get(name, "any"), "position": i, "cardinality": "one", "arg_key": None}
+            for i, name in enumerate(tokens)
+        ]
 
     @staticmethod
     def _derive_native_slots(

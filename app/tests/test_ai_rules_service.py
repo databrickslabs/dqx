@@ -169,6 +169,29 @@ class TestGenerateRule:
         assert result["mode"] == "sql"
         assert result["slots"] == []
 
+    def test_sql_proposal_derives_slots_from_predicate_tokens(self):
+        """A col-vs-col SQL proposal declares a slot per {{token}} so the RHS column
+        is substituted and runs (item 42)."""
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock())
+        proposal = {
+            "name": "amount within limit",
+            "description": "amount must not exceed credit_limit",
+            "mode": "sql",
+            "dimension": "validity",
+            "severity": "error",
+            "polarity": "pass",
+            "definition": {"sql_query": "{{amount}} <= {{credit_limit}}"},
+            "columns": [
+                {"name": "amount", "family": "numeric"},
+                {"name": "credit_limit", "family": "numeric"},
+            ],
+        }
+        result = svc._validate_and_repair_proposal(proposal)
+        assert result is not None
+        names = [s["name"] for s in result["slots"]]
+        assert names == ["amount", "credit_limit"]
+        assert {s["family"] for s in result["slots"]} == {"numeric"}
+
     async def test_generation_requests_deterministic_temperature(self):
         proposal = json.dumps(
             {
@@ -335,6 +358,41 @@ class TestGenerateRuleLowcode:
         assert body["group_by"] == "{{customer_id}}"
         # One slot per placeholder in the compiled body, families from the hint.
         assert {s["name"]: s["family"] for s in result["slots"]} == {"order_id": "numeric", "customer_id": "any"}
+
+    def test_col_vs_col_value_compiles_rhs_column_and_declares_both_slots(self):
+        # Item 42 / col-vs-col bug: a row whose value is a column reference
+        # {"$col": "b"} must compile to a NON-blank RHS ({{b}}) and declare both
+        # column slots, so the lowcode pass (tried first) produces a runnable
+        # rule instead of `{{a}} < <empty>` that never falls through to sql.
+        proposal = json.loads(
+            _lowcode_proposal(
+                name="A Less Than B",
+                description="a must be less than b",
+                columns=[{"name": "a", "family": "numeric"}, {"name": "b", "family": "numeric"}],
+                lowcode_ast={
+                    "rows": [
+                        {
+                            "kind": "row",
+                            "combinator": None,
+                            "column_ref": "a",
+                            "operator": "<",
+                            "value": {"$col": "b"},
+                        }
+                    ],
+                    "joins": [],
+                },
+            )
+        )
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock())
+
+        validated = svc._validate_lowcode_proposal(proposal)
+
+        assert validated is not None
+        assert validated["mode"] == "lowcode"
+        # RHS is the {{b}} placeholder, not a NULL/blank operand.
+        assert validated["definition"]["predicate"] == "{{a}} < {{b}}"
+        assert {s["name"] for s in validated["slots"]} == {"a", "b"}
+        assert {s["name"]: s["family"] for s in validated["slots"]} == {"a": "numeric", "b": "numeric"}
 
     async def test_unusable_lowcode_falls_through_to_dqx_native(self):
         # Low-code AST has no compilable rows -> fall through to dqx_native.

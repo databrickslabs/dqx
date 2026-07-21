@@ -6,10 +6,11 @@ import {
   compileLowcodeBody,
   lowcodeHasAdvancedShape,
   pruneStaleGroupByRefs,
+  rowStrandedByRetype,
 } from "./lowcodeCompile";
 import type { LowcodeColumnRef } from "./lowcodeCompile";
-import type { AnyRow, JoinAst, LowcodeAstV2 } from "./lowcodeAst";
-import { OPERATORS_BY_FAMILY } from "./lowcodeOperators";
+import { renameColumnInAst, type AnyRow, type JoinAst, type LowcodeAstV2 } from "./lowcodeAst";
+import { OPERATORS_BY_FAMILY, operatorAllowsColumnRef, type Family } from "./lowcodeOperators";
 
 // Unit tests for the low-code -> SQL compiler. This is the sole guard against
 // the class of bug that shipped the Advanced (joins / group-by) paths broken:
@@ -522,4 +523,187 @@ describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without cor
     });
   });
 
+});
+
+describe("item42: column-ref RHS in single-value operators", () => {
+  test("item42: comparison RHS column-ref emits {{col}} not a quoted literal", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "amount", operator: ">=", value: { $col: "credit_limit" } })])),
+    ).toBe("{{amount}} >= {{credit_limit}}");
+  });
+
+  test("item42: equals with a column-ref RHS compiles to = {{col}}", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "a", operator: "equals", value: { $col: "b" } })])),
+    ).toBe("{{a}} = {{b}}");
+  });
+
+  test("item42: temporal 'before' with a column-ref RHS compiles to < {{col}}", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "start_date", operator: "before", value: { $col: "end_date" } })])),
+    ).toBe("{{start_date}} < {{end_date}}");
+  });
+
+  test("item42: a qualified (join) column RHS emits raw table.col", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "amount", operator: ">=", value: { $col: "orders.total" } })])),
+    ).toBe("{{amount}} >= orders.total");
+  });
+
+  test("item42: literal RHS is unchanged (regression)", () => {
+    expect(compileAstToSql(ast([row({ column_ref: "amount", operator: ">=", value: 100 })]))).toBe(
+      "{{amount}} >= 100",
+    );
+  });
+});
+
+test("item42: between with a column upper bound mixes literal + {{col}}", () => {
+  expect(
+    compileAstToSql(ast([row({ column_ref: "x", operator: "between", value: [0, { $col: "cap" }] })])),
+  ).toBe("{{x}} BETWEEN 0 AND {{cap}}");
+});
+
+test("item42: 'in' with a column entry emits {{col}} alongside literals", () => {
+  expect(
+    compileAstToSql(ast([row({ column_ref: "code", operator: "in", value: ["A", { $col: "fallback_code" }] })])),
+  ).toBe("{{code}} IN ('A', {{fallback_code}})");
+});
+
+test("item42: length between literal bounds unchanged (regression)", () => {
+  expect(
+    compileAstToSql(ast([row({ column_ref: "name", operator: "length between", value: [1, 10] })])),
+  ).toBe("length({{name}}) BETWEEN 1 AND 10");
+});
+
+test("item42: a column-ref value survives JSON round-trip and still compiles", () => {
+  const original = ast([row({ column_ref: "amount", operator: ">=", value: { $col: "credit_limit" } })]);
+  const rehydrated = JSON.parse(JSON.stringify(original)) as typeof original;
+  expect(compileAstToSql(rehydrated)).toBe("{{amount}} >= {{credit_limit}}");
+});
+
+describe("operatorAllowsColumnRef", () => {
+  test("returns true for column-enabled single-value operators", () => {
+    expect(operatorAllowsColumnRef("<")).toBe(true);
+    expect(operatorAllowsColumnRef("<=")).toBe(true);
+    expect(operatorAllowsColumnRef(">")).toBe(true);
+    expect(operatorAllowsColumnRef(">=")).toBe(true);
+    expect(operatorAllowsColumnRef("=")).toBe(true);
+    expect(operatorAllowsColumnRef("!=")).toBe(true);
+    expect(operatorAllowsColumnRef("equals")).toBe(true);
+    expect(operatorAllowsColumnRef("not equals")).toBe(true);
+    expect(operatorAllowsColumnRef("before")).toBe(true);
+    expect(operatorAllowsColumnRef("after")).toBe(true);
+    expect(operatorAllowsColumnRef("on or before")).toBe(true);
+    expect(operatorAllowsColumnRef("on or after")).toBe(true);
+  });
+
+  test("returns true for range and set operators (column-enabled bounds/entries)", () => {
+    expect(operatorAllowsColumnRef("between")).toBe(true);
+    expect(operatorAllowsColumnRef("length between")).toBe(true);
+    expect(operatorAllowsColumnRef("in")).toBe(true);
+    expect(operatorAllowsColumnRef("not in")).toBe(true);
+  });
+
+  test("returns false for literal-only operators (LIKE / regex / length predicates)", () => {
+    expect(operatorAllowsColumnRef("contains")).toBe(false);
+    expect(operatorAllowsColumnRef("does not contain")).toBe(false);
+    expect(operatorAllowsColumnRef("starts with")).toBe(false);
+    expect(operatorAllowsColumnRef("ends with")).toBe(false);
+    expect(operatorAllowsColumnRef("matches regex")).toBe(false);
+    expect(operatorAllowsColumnRef("does not match regex")).toBe(false);
+    expect(operatorAllowsColumnRef("has length")).toBe(false);
+    expect(operatorAllowsColumnRef("is longer than")).toBe(false);
+    expect(operatorAllowsColumnRef("is shorter than")).toBe(false);
+    expect(operatorAllowsColumnRef("is a multiple of")).toBe(false);
+  });
+});
+
+describe("renameColumnInAst — slot rename propagation", () => {
+  const colRefRow = (over: Partial<AnyRow> = {}): AnyRow =>
+    ({ kind: "row", combinator: null, column_ref: "price", operator: "=", value: { $col: "cost" }, ...over }) as AnyRow;
+
+  test("rewrites the LHS column_ref stub", () => {
+    const before = ast([row({ column_ref: "email" })]);
+    const after = renameColumnInAst(before, "email", "contact_email");
+    expect(after.rows[0].column_ref).toBe("contact_email");
+  });
+
+  test("rewrites a { $col } RHS value", () => {
+    const after = renameColumnInAst(ast([colRefRow()]), "cost", "list_cost");
+    expect(after.rows[0].value).toEqual({ $col: "list_cost" });
+    expect(after.rows[0].column_ref).toBe("price"); // LHS untouched
+  });
+
+  test("rewrites both LHS and RHS in a single row", () => {
+    const after = renameColumnInAst(ast([colRefRow({ column_ref: "x", value: { $col: "x" } })]), "x", "y");
+    expect(after.rows[0].column_ref).toBe("y");
+    expect(after.rows[0].value).toEqual({ $col: "y" });
+  });
+
+  test("rewrites join key column_refs", () => {
+    const joins: JoinAst[] = [
+      { join_type: "INNER", target_table: "cat.sch.dim", keys: [{ joined_column: "id", column_ref: "region" }] },
+    ];
+    const after = renameColumnInAst(ast([row()], joins), "region", "region_code");
+    expect(after.joins[0].keys[0].column_ref).toBe("region_code");
+    expect(after.joins[0].keys[0].joined_column).toBe("id"); // joined side untouched
+  });
+
+  test("no-op when the old name is absent (structurally equal)", () => {
+    const before = ast([row({ column_ref: "email" })]);
+    const after = renameColumnInAst(before, "missing", "whatever");
+    expect(after).toEqual(before);
+  });
+
+  test("no-op when old === new (returns same reference)", () => {
+    const before = ast([row({ column_ref: "email" })]);
+    expect(renameColumnInAst(before, "email", "email")).toBe(before);
+  });
+
+  test("leaves literal values and qualified refs alone", () => {
+    const before = ast([row({ column_ref: "amount", operator: "=", value: 5 })]);
+    const after = renameColumnInAst(before, "other", "renamed");
+    expect(after.rows[0].value).toBe(5);
+  });
+});
+
+describe("rowStrandedByRetype — retype stranding predicate", () => {
+  const lookup = (m: Record<string, Family>) => (name: string): Family | undefined => m[name];
+
+  test("LHS: operator no longer offered for the new family strands the row", () => {
+    const r = row({ column_ref: "code", operator: "contains", value: "x" });
+    expect(rowStrandedByRetype(r, "code", "NUMERIC", "TEXTUAL", lookup({}))).toBe(true);
+  });
+
+  test("LHS: operator still valid for the new family does not strand", () => {
+    const r = row({ column_ref: "code", operator: "is not null", value: null });
+    expect(rowStrandedByRetype(r, "code", "NUMERIC", "TEXTUAL", lookup({}))).toBe(false);
+  });
+
+  test("RHS { $col }: retype breaks family match with LHS -> stranded", () => {
+    const r = row({ column_ref: "price", operator: "=", value: { $col: "cost" } });
+    // LHS price is NUMERIC, cost is being retyped to TEXTUAL -> mismatch.
+    expect(rowStrandedByRetype(r, "cost", "TEXTUAL", "NUMERIC", lookup({ price: "NUMERIC" }))).toBe(true);
+  });
+
+  test("RHS { $col }: retype keeps family match -> not stranded", () => {
+    const r = row({ column_ref: "price", operator: "=", value: { $col: "cost" } });
+    expect(rowStrandedByRetype(r, "cost", "NUMERIC", "TEMPORAL", lookup({ price: "NUMERIC" }))).toBe(false);
+  });
+
+  test("RHS { $col }: LHS family ANY never strands", () => {
+    const r = row({ column_ref: "anything", operator: "=", value: { $col: "cost" } });
+    expect(rowStrandedByRetype(r, "cost", "TEXTUAL", "NUMERIC", lookup({ anything: "ANY" }))).toBe(false);
+  });
+
+  test("RHS { $col }: unresolvable LHS falls back to differing-from-old", () => {
+    const r = row({ column_ref: "gone", operator: "=", value: { $col: "cost" } });
+    expect(rowStrandedByRetype(r, "cost", "TEXTUAL", "NUMERIC", lookup({}))).toBe(true);
+    expect(rowStrandedByRetype(r, "cost", "NUMERIC", "NUMERIC", lookup({}))).toBe(false);
+  });
+
+  test("row not referencing the retyped slot is never stranded", () => {
+    const r = row({ column_ref: "other", operator: "contains", value: "x" });
+    expect(rowStrandedByRetype(r, "code", "NUMERIC", "TEXTUAL", lookup({}))).toBe(false);
+  });
 });

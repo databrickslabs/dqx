@@ -85,15 +85,11 @@ import {
   compileAstToSql,
   compileLowcodeBody,
   lowcodeHasAdvancedShape,
+  rowStrandedByRetype,
   slotFamilyToLowcode,
   type LowcodeColumnRef,
 } from "@/lib/lowcodeCompile";
-import {
-  OPERATORS_BY_FAMILY,
-  AI_OPS,
-  operatorValidForFamily,
-  type Family as LowcodeFamily,
-} from "@/lib/lowcodeOperators";
+import { OPERATORS_BY_FAMILY, AI_OPS, type Family as LowcodeFamily } from "@/lib/lowcodeOperators";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -104,7 +100,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { EMPTY_LOWCODE_AST, isV2Ast, type AnyRow, type JoinAst, type LowcodeAstV2 } from "@/lib/lowcodeAst";
+import {
+  EMPTY_LOWCODE_AST,
+  isV2Ast,
+  renameColumnInAst,
+  type AnyRow,
+  type JoinAst,
+  type LowcodeAstV2,
+} from "@/lib/lowcodeAst";
 import { cn } from "@/lib/utils";
 import selector from "@/lib/selector";
 import { stripSqlLineComments } from "@/lib/sqlComments";
@@ -3009,34 +3012,74 @@ export function RegistryRuleFormDialog({
     strandedColumns: string[];
   } | null>(null);
 
-  // Drop every low-code condition row whose column is being retyped to an
-  // incompatible family (its operator is no longer offered). Keeps rows on
-  // other columns and rows that remain valid. Also re-anchors the first row's
+  // Resolve a low-code column ref's family from a given slot set (declared
+  // `{{slot}}` names) plus the joined-table columns (qualified `<table>.<col>`).
+  // Used by both the retype-stranding detection and the clearing pass so they
+  // agree on every row's LHS/RHS family.
+  const makeLowcodeFamilyLookup = (slots: RuleSlot[]) => {
+    const byName = new Map<string, LowcodeFamily>();
+    for (const s of slots) byName.set(s.name, slotFamilyToLowcode(s.family));
+    for (const c of joinedColumns) byName.set(c.name, c.family);
+    return (name: string): LowcodeFamily | undefined => byName.get(name);
+  };
+
+  // Drop every low-code condition row stranded by a column being retyped to an
+  // incompatible family — whether the column is the row's LHS statement stub
+  // (`column_ref`, operator no longer offered) OR its RHS `{ $col }` comparison
+  // target (item 42, family no longer matches the LHS). Keeps rows on other
+  // columns and rows that remain valid. Re-anchors the first surviving row's
   // combinator to null if the original first row was removed.
   const clearStrandedRows = (nextSlots: RuleSlot[]) => {
-    const familyByName = new Map(nextSlots.map((s) => [s.name, slotFamilyToLowcode(s.family)]));
-    const surviving = lowcodeAst.rows.filter((row) => {
-      if (row.kind !== "row") return true; // aggregated rows aren't family-operator gated here
-      const fam = familyByName.get(row.column_ref);
-      if (fam === undefined) return true; // column not among the retyped slots
-      return operatorValidForFamily(row.operator, fam);
-    });
+    const prevByName = new Map(currentSlots.map((s) => [s.name, slotFamilyToLowcode(s.family)]));
+    const lhsFamilyLookup = makeLowcodeFamilyLookup(nextSlots);
+    const retyped = nextSlots
+      .filter((s) => {
+        const prev = prevByName.get(s.name);
+        return prev !== undefined && prev !== slotFamilyToLowcode(s.family);
+      })
+      .map((s) => ({ name: s.name, newFamily: slotFamilyToLowcode(s.family), oldFamily: prevByName.get(s.name)! }));
+    const surviving = lowcodeAst.rows.filter(
+      (row) =>
+        !retyped.some((r) => rowStrandedByRetype(row, r.name, r.newFamily, r.oldFamily, lhsFamilyLookup)),
+    );
     const normalized = surviving.length > 0 ? [{ ...surviving[0], combinator: null }, ...surviving.slice(1)] : [];
     setLowcodeAst({ ...lowcodeAst, rows: normalized });
   };
 
-  // Wraps the SlotsPanel onChange: if a family change would strand low-code
-  // conditions, defer it behind a warning modal; otherwise apply immediately.
+  // Wraps the SlotsPanel onChange:
+  //   1. Propagate any slot RENAME into the low-code AST (both the LHS
+  //      `column_ref` stub and any `{ $col }` RHS ref, plus join keys) so rows
+  //      keep pointing at the live slot name — renames never go through the
+  //      type-change warning path.
+  //   2. If a family RETYPE would strand low-code conditions (LHS operator or
+  //      RHS column-comparison family), defer behind a warning modal; otherwise
+  //      apply immediately.
   const handleSlotsChange = (next: RuleSlot[]) => {
+    // Detect renames by pairing slots positionally (same index, name changed).
+    // Length changes are adds/removes, not renames, so skip rename detection.
+    if (mode === "lowcode" && next.length === currentSlots.length) {
+      let renamedAst = lowcodeAst;
+      let didRename = false;
+      currentSlots.forEach((prevSlot, i) => {
+        const newName = next[i]?.name;
+        if (newName !== undefined && prevSlot.name !== newName) {
+          renamedAst = renameColumnInAst(renamedAst, prevSlot.name, newName);
+          didRename = true;
+        }
+      });
+      if (didRename) setLowcodeAst(renamedAst);
+    }
     if (mode === "lowcode") {
       const prevByName = new Map(currentSlots.map((s) => [s.name, s.family]));
+      const lhsFamilyLookup = makeLowcodeFamilyLookup(next);
       const retypedToIncompatible: string[] = [];
       for (const slot of next) {
         const prevFamily = prevByName.get(slot.name);
         if (prevFamily === undefined || prevFamily === slot.family) continue;
         const nextFamily = slotFamilyToLowcode(slot.family);
-        const stranded = lowcodeAst.rows.some(
-          (row) => row.kind === "row" && row.column_ref === slot.name && !operatorValidForFamily(row.operator, nextFamily),
+        const oldFamily = slotFamilyToLowcode(prevFamily);
+        const stranded = lowcodeAst.rows.some((row) =>
+          rowStrandedByRetype(row, slot.name, nextFamily, oldFamily, lhsFamilyLookup),
         );
         if (stranded) retypedToIncompatible.push(slot.name);
       }
@@ -3477,7 +3520,13 @@ export function RegistryRuleFormDialog({
                 <ConditionSelector
                   checkFunctions={checkFunctions}
                   currentSlots={currentSlots}
-                  operatorFamily={anchorOperatorFamily}
+                  // Key the operator/function list to THIS row's selected
+                  // column family (not the first declared slot). Swapping the
+                  // IF column then refreshes the offered expressions — e.g.
+                  // picking a text column after a numeric one now surfaces the
+                  // text operators. `family` is ANY (all operators) until a
+                  // column is chosen, matching the anchor fallback.
+                  operatorFamily={family}
                   onSelect={requestModeChange}
                   disabled={readOnly}
                   currentLabel={value || t("rulesRegistry.coreConditionBuilder")}
