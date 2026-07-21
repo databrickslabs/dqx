@@ -361,6 +361,8 @@ def _facets(
     rule: list[str] | None,
     column: list[str] | None,
     table: list[str] | None = None,
+    catalog: list[str] | None = None,
+    schema: list[str] | None = None,
 ) -> ResultFacets:
     return ResultFacets(
         dimensions=tuple(dimension or ()),
@@ -368,6 +370,8 @@ def _facets(
         rules=tuple(rule or ()),
         columns=tuple(column or ()),
         tables=tuple(table or ()),
+        catalogs=tuple(catalog or ()),
+        schemas=tuple(schema or ()),
     )
 
 
@@ -807,6 +811,8 @@ def get_global_results(
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
     table: Annotated[list[str] | None, Query()] = None,
+    catalog: Annotated[list[str] | None, Query()] = None,
+    schema: Annotated[list[str] | None, Query()] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
@@ -871,7 +877,7 @@ def get_global_results(
     )
     return compute_entity_results(
         rows,
-        _facets(dimension, severity, rule, column, table),
+        _facets(dimension, severity, rule, column, table, catalog, schema),
         axes=axes,
         table_axis="by_table",
         failed_records_by_run=failed_records,

@@ -574,6 +574,50 @@ class TestTableFacet:
         assert not ResultFacets().any_active()
 
 
+class TestCatalogSchemaFacets:
+    """The Global Results hierarchical scope (catalog -> schema -> table).
+
+    Unlike the table facet, catalog/schema are NOT self-excluded from the
+    by_table box: narrowing to a catalog/schema is meant to shrink the By
+    table row set too. FQN is ``main.sales.orders`` (catalog ``main``,
+    schema identity ``main.sales``)."""
+
+    OTHER_SCHEMA = "main.ops.events"  # same catalog, different schema
+    OTHER_CATALOG = "prod.sales.orders"  # different catalog
+
+    def _rows(self):
+        return [
+            make_row("c1", failed=10, total=100, dimension="Completeness", rule_id="rule-1"),
+            make_row("c2", failed=20, total=100, fqn=self.OTHER_SCHEMA, dimension="Validity", rule_id="rule-2"),
+            make_row("c3", failed=30, total=100, fqn=self.OTHER_CATALOG, dimension="Accuracy", rule_id="rule-3"),
+        ]
+
+    def test_catalog_facet_restricts_to_that_catalog(self):
+        out = compute_entity_results(self._rows(), ResultFacets(catalogs=("main",)), table_axis="by_table")
+        assert {g.label for g in out.by_table} == {FQN, self.OTHER_SCHEMA}
+
+    def test_schema_facet_restricts_to_that_schema(self):
+        out = compute_entity_results(self._rows(), ResultFacets(schemas=("main.sales",)), table_axis="by_table")
+        assert {g.label for g in out.by_table} == {FQN}
+
+    def test_catalog_and_schema_and_together(self):
+        # main catalog AND main.ops schema -> only the ops table.
+        out = compute_entity_results(
+            self._rows(), ResultFacets(catalogs=("main",), schemas=("main.ops",)), table_axis="by_table"
+        )
+        assert {g.label for g in out.by_table} == {self.OTHER_SCHEMA}
+
+    def test_catalog_facet_is_not_self_excluded_from_by_table(self):
+        # Contrast with the table facet: a catalog chip DOES shrink the By
+        # table box (foreign-catalog rows drop out).
+        out = compute_entity_results(self._rows(), ResultFacets(catalogs=("main",)), table_axis="by_table")
+        assert self.OTHER_CATALOG not in {g.label for g in out.by_table}
+
+    def test_catalog_schema_count_as_active(self):
+        assert ResultFacets(catalogs=("main",)).any_active()
+        assert ResultFacets(schemas=("main.sales",)).any_active()
+
+
 class TestTrends:
     def _multi_run(self):
         return [
@@ -1431,7 +1475,9 @@ class TestBreach:
 
     def test_run_and_trend_points_carry_breach(self):
         rows = [
-            make_row(check="c1", failed=20, total=100, error_count=20, criticality="error", run_date="2026-07-01 00:00:00"),
+            make_row(
+                check="c1", failed=20, total=100, error_count=20, criticality="error", run_date="2026-07-01 00:00:00"
+            ),
         ]
         out = compute_entity_results(rows, ResultFacets(), table_axis="tables", resolve_threshold=self._resolver(90))
         assert out.trend[0].breached is True

@@ -4612,6 +4612,8 @@ severity?: string[] | null;
 rule?: string[] | null;
 column?: string[] | null;
 table?: string[] | null;
+catalog?: string[] | null;
+schema?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
@@ -9871,6 +9873,14 @@ can display them as non-removable (disabled) rows:
 
 - *workspace_admin*: members of the SCIM ``admins`` group.
 - *app_owner*: principals with ``CAN_MANAGE`` permission on this app.
+
+Both lookups run as the calling admin (``obo_ws``) first, falling back to
+the app SP (``sp_ws``) only if the admin call fails. The app SP frequently
+lacks ``apps.<name>/get`` on its own app and broad SCIM read, so an
+SP-only implementation returned an empty list even when admins and
+CAN_MANAGE owners exist (item 32). Group members come from ``groups.get``
+(by id), since ``groups.list`` does not reliably populate the ``members``
+sub-attribute.
 
 De-duplication is intentionally omitted — a principal that is both a
 workspace admin and an app owner appears twice (once per kind), which lets
