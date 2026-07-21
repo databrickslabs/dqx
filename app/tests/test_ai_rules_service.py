@@ -169,6 +169,29 @@ class TestGenerateRule:
         assert result["mode"] == "sql"
         assert result["slots"] == []
 
+    def test_sql_proposal_derives_slots_from_predicate_tokens(self):
+        """A col-vs-col SQL proposal declares a slot per {{token}} so the RHS column
+        is substituted and runs (item 42)."""
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock())
+        proposal = {
+            "name": "amount within limit",
+            "description": "amount must not exceed credit_limit",
+            "mode": "sql",
+            "dimension": "validity",
+            "severity": "error",
+            "polarity": "pass",
+            "definition": {"sql_query": "{{amount}} <= {{credit_limit}}"},
+            "columns": [
+                {"name": "amount", "family": "numeric"},
+                {"name": "credit_limit", "family": "numeric"},
+            ],
+        }
+        result = svc._validate_and_repair_proposal(proposal)
+        assert result is not None
+        names = [s["name"] for s in result["slots"]]
+        assert names == ["amount", "credit_limit"]
+        assert {s["family"] for s in result["slots"]} == {"numeric"}
+
     async def test_generation_requests_deterministic_temperature(self):
         proposal = json.dumps(
             {
