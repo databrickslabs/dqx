@@ -26,14 +26,25 @@ export function toFailingRecords(
  *  `le` on the failed-rows endpoint, so a download can pull the whole set. */
 export const EXPORT_ROW_LIMIT = 100000;
 
-/** Source columns for the export = union of all rows' row_values keys, in
- *  first-seen order. Callers pass only rows; the columns are derived here. */
+/** Source columns for the export/table = union of all rows' row_values keys
+ *  AND their failed_columns, in first-seen order. Callers pass only rows; the
+ *  columns are derived here.
+ *
+ *  failed_columns must be folded in because the backend renders row_values
+ *  from `to_json(row_data)`, which OMITS null-valued fields — so a column that
+ *  is null on every failing row (common when the failing check is exactly a
+ *  not-null / is-present check on that column) never appears among the
+ *  row_values keys. Without the fold, filtering the failing records by such a
+ *  column made that very column vanish from the table (item 63). It renders
+ *  with a "—" placeholder cell (the value genuinely is null). */
 export function columnsFromRows(rows: FailingRecord[]): string[] {
   const columns: string[] = [];
+  const add = (key: string) => {
+    if (!columns.includes(key)) columns.push(key);
+  };
   for (const row of rows) {
-    for (const key of Object.keys(row.row_values)) {
-      if (!columns.includes(key)) columns.push(key);
-    }
+    for (const key of Object.keys(row.row_values)) add(key);
+    for (const key of row.failed_columns) add(key);
   }
   return columns;
 }
