@@ -460,7 +460,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
     try {
       await deleteMut.mutateAsync({ productId: product.product_id });
       toast.success(t("dataProducts.toastDeleted"));
-      void navigate({ to: "/table-spaces" });
+      void navigate({ to: "/collections" });
     } catch (e) {
       toast.error(extractApiError(e, t("dataProducts.toastDeleteFailed")), { duration: 6000 });
     }

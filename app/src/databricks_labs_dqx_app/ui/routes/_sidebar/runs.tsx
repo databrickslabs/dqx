@@ -10,7 +10,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 // separate route files and keep resolving on their own.
 export const Route = createFileRoute("/_sidebar/runs")({
   beforeLoad: () => {
-    throw redirect({ to: "/table-spaces" as string });
+    throw redirect({ to: "/collections" as string });
   },
   component: () => null,
 });
