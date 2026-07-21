@@ -270,7 +270,7 @@ class DemoSeedService:
             self._set_status("running", "datagen", "Generating source tables", user_email)
             self._build_source_data()
 
-            self._set_status("running", "profile", "Profiling a demo source table", user_email)
+            self._set_status("running", "profile", "Profiling demo source tables", user_email)
             self._run_profiling(user_email)
 
             self._set_status("running", "rules", "Publishing reusable rule set", user_email)
@@ -385,49 +385,77 @@ class DemoSeedService:
     # Phase: profiling
     # ------------------------------------------------------------------
 
-    def _run_profiling(self, user_email: str) -> str | None:
-        """Run the real profiler on one demo table so the Profile page shows output.
+    def _run_profiling(self, user_email: str) -> list[str]:
+        """Run the real profiler on EVERY demo table so the Profile page shows output.
+
+        Profiles each demo source table in turn (one profiler Job per table),
+        so every table — not just one — carries a genuine profiling result.
+        Each table is profiled independently: a failure on one is logged and
+        skipped, and the rest still run (a single table's profiler hiccup must
+        never abort the ~30min seed).
+
+        Best-effort by design: profiling needs a configured Job and warehouse
+        that may be absent in a CLI / test / no-compute seed context. When the
+        collaborators are missing the whole phase is skipped.
+
+        Returns:
+            The app-level ``run_id``s of the submitted profiler runs (one per
+            table that was attempted); empty when profiling was skipped.
+        """
+        job_service = self._job_service
+        profiler_view = self._profiler_view
+        if job_service is None or profiler_view is None:
+            logger.info("Demo profiling skipped: no job service / view service configured")
+            return []
+
+        # Bind the (now non-None) collaborators to locals and pass them in so the
+        # per-table helper is narrowed without re-checking None on every table.
+        run_ids: list[str] = []
+        for spec in manifest.TABLES:
+            run_id = self._profile_one_table(self._table_fqn(spec.name), user_email, job_service, profiler_view)
+            if run_id is not None:
+                run_ids.append(run_id)
+        return run_ids
+
+    def _profile_one_table(
+        self,
+        table_fqn: str,
+        user_email: str,
+        job_service: JobService,
+        profiler_view: ViewService,
+    ) -> str | None:
+        """Profile a single demo table (see :meth:`_run_profiling`).
 
         Replicates the ``POST /profiler/run`` route server-side (with SP
         collaborators): create a temp view over the demo table, submit the
         profiler Job, record the RUNNING placeholder, then poll
-        ``dq_profiling_results`` until the runner writes a terminal row — so the
-        demo produces a genuine profiling result rendered identically to a
-        hand-triggered run. The temp view is dropped once terminal.
-
-        Best-effort by design: profiling needs a configured Job and warehouse
-        that may be absent in a CLI / test / no-compute seed context, and a
-        profiler hiccup must never abort the ~30min seed. Any failure — missing
-        collaborators, submit error, timeout — is logged and skipped; the happy
-        path (Job + view service present, Job succeeds) writes a real result.
+        ``dq_profiling_results`` until the runner writes a terminal row — a
+        genuine profiling result rendered identically to a hand-triggered run.
+        The temp view is dropped once terminal. Any failure is logged and
+        skipped so the caller can continue with the remaining tables.
 
         Returns:
             The app-level ``run_id`` of the submitted profiler run, or ``None``
-            when profiling was skipped or failed.
+            when this table's profiling was skipped or failed before submit.
         """
-        if self._job_service is None or self._profiler_view is None:
-            logger.info("Demo profiling skipped: no job service / view service configured")
-            return None
-
-        table_fqn = self._table_fqn(manifest.PROFILE_DEMO_TABLE)
         run_id = uuid4().hex[:16]
         view_fqn: str | None = None
         try:
-            view_fqn = self._profiler_view.create_view(table_fqn, sample_limit=_PROFILE_SAMPLE_LIMIT)
+            view_fqn = profiler_view.create_view(table_fqn, sample_limit=_PROFILE_SAMPLE_LIMIT)
             config = {
                 "sample_limit": _PROFILE_SAMPLE_LIMIT,
                 "source_table_fqn": table_fqn,
                 "columns": None,
                 "profile_options": None,
             }
-            job_run_id = self._job_service.submit_run(
+            job_run_id = job_service.submit_run(
                 task_type="profile",
                 view_fqn=view_fqn,
                 config=config,
                 run_id=run_id,
                 requesting_user=user_email,
             )
-            self._job_service.record_run_started(
+            job_service.record_run_started(
                 table=self._app_sql.fqn("dq_profiling_results"),
                 run_id=run_id,
                 requesting_user=user_email,
@@ -457,7 +485,7 @@ class DemoSeedService:
         finally:
             if view_fqn is not None:
                 try:
-                    self._profiler_view.drop_view(view_fqn)
+                    profiler_view.drop_view(view_fqn)
                 except Exception:  # noqa: BLE001
                     logger.warning("Failed to drop demo profiler view %s", self._sanitize(view_fqn))
 

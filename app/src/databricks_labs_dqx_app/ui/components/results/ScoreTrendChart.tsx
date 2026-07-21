@@ -1560,18 +1560,15 @@ export function ScoreTrendChart({
                 <OverallLayer points={overall ?? []} />
               )}
               {/* Breach markers: a small ⚠ glyph anchored AT each breaching run's
-                  data point (alongside the point, like the version tags) —
-                  amber for warn-criticality, red for error. No vertical rule.
-                  The glyph reads at a glance; the run-picker row carries the
-                  full-text tooltip for the same run. Skipped when the point has
-                  no score (can't anchor to the line). */}
+                  data point (alongside the point, like the version tags). ALWAYS
+                  amber — the warning icon never varies colour by criticality
+                  (item 45/65); error vs warn is conveyed by the run-picker row's
+                  tooltip, not the glyph colour. No vertical rule. Skipped when the
+                  point has no score (can't anchor to the line). */}
               {(breachMarkers ?? []).map((m) => {
                 const x = Date.parse(m.run_date);
                 if (!Number.isFinite(x) || m.score == null || !Number.isFinite(m.score)) return null;
-                const fill =
-                  m.criticality === "error"
-                    ? "var(--destructive)"
-                    : "oklch(0.70 0.19 60)"; /* deeper amber — more contrast on the plot */
+                const fill = "oklch(0.70 0.19 60)"; /* deeper amber — more contrast on the plot */
                 return (
                   <ReferenceDot
                     key={`bm-${m.run_date}`}
