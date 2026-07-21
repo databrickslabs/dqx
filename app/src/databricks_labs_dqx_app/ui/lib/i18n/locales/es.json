@@ -2090,7 +2090,7 @@
     "tagPickerDrillIn": "Mostrar valores de {{key}}",
     "applyToTagButton": "+ Aplicar a una etiqueta",
     "applyToAnotherTagButton": "+ Aplicar a otra etiqueta",
-    "applyToTagTooltip": "Aplica etiquetas a esta columna para aplicar automáticamente esta regla a cualquier columna de una tabla monitoreada con etiquetas coincidentes",
+    "applyToTagTooltip": "Al asignar etiqueta(s) a esta columna, esta regla puede aplicarse automáticamente a tablas/columnas con etiqueta(s) coincidente(s)",
     "slotTagRemove": "Quitar etiqueta",
     "suggestedColumnsHeading": "Sugeridas",
     "compatibleColumnsHeading": "Columnas compatibles",
