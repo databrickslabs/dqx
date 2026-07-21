@@ -27,8 +27,8 @@ Open the **Results** view for a monitored table or a collection. The top of the 
 
 Each check shows a pass/fail ratio bar — the share of rows (or aggregate tests) that passed. A couple of terms to keep straight:
 
-- **Error vs warning.** Each check is either an **error** (it fails the run) or a **warning** (it's reported, but doesn't fail the run). Warnings are things worth watching; errors are things you agreed should block. See [Key concepts](/docs/studio/start-here/key-concepts).
 - **Failing vs below threshold.** A check counts as **failing** when it drops below its **pass threshold** — the bar you set for how many rows must pass to call it green (shown as a `< 70%` badge, for example). A check with a threshold isn't expected to be perfect; it's expected to clear the bar. See [Quality thresholds](/docs/studio/monitoring/quality-thresholds).
+- **Severity tells you how urgent it is.** Each failing check carries a severity — **Low**, **Medium**, **High**, or **Critical** — so you can triage the serious problems first. Severity is a priority, not what decides pass or fail. See [Key concepts](/docs/studio/start-here/key-concepts#severity).
 
 <Admonition type="info" title="One run, many tests">
 The counts you see ("421,121 failed of 2,350,000 tests") mean one check produced one **test** per row it evaluated. A big failure count over a huge table can still be a small percentage. Read the ratio, not just the raw number.
@@ -58,9 +58,9 @@ This is the real remedy. If the rows are genuinely wrong — missing emails, neg
 
 Sometimes the data is fine but the bar is unrealistically strict — for example, you're improving quality gradually and 100% isn't achievable yet. Lower the pass threshold to a level that's honest about where you are today, then tighten it over time as the data improves. See [Quality thresholds](/docs/studio/monitoring/quality-thresholds).
 
-### Change the severity
+### Adjust the severity
 
-If a check is failing runs but shouldn't be a hard stop, change it from an **error** to a **warning** so it's reported without blocking. The reverse works too: promote a warning to an error once you're confident it should block. Severity is set as a default on the rule and can be overridden per table.
+If a failing check is lower-stakes than its severity suggests (or higher), change its severity — **Low**, **Medium**, **High**, or **Critical** — so it's triaged and reported at the right level. Severity is set as a default on the rule and can be overridden per table. It doesn't change whether the check passes; it changes how prominently the failure is flagged.
 
 ### Refine the rule
 

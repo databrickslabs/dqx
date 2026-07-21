@@ -124,22 +124,22 @@ const config: Config = {
               ],
             },
             {
-              id: 'dqx-studio',
-              name: 'DQX Studio',
-              description: 'The no-code web app for authoring, reviewing, running, and monitoring data quality rules',
-              position: 2,
-              routes: [
-                { route: '/dqx/docs/studio' },
-                { route: '/dqx/docs/studio/**' }
-              ],
-            },
-            {
               id: 'dqx-core',
               name: 'DQX Core',
               description: 'The DQX Python package for code-level data quality',
-              position: 3,
+              position: 2,
               routes: [
                 { route: '/dqx/docs/guide/**' }
+              ],
+            },
+            {
+              id: 'dqx-studio',
+              name: 'DQX Studio',
+              description: 'The no-code web app for authoring, reviewing, running, and monitoring data quality rules',
+              position: 3,
+              routes: [
+                { route: '/dqx/docs/studio' },
+                { route: '/dqx/docs/studio/**' }
               ],
             },
             {

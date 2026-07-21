@@ -51,10 +51,8 @@ In a moment you'll see suggested rules — things like "this ID is never blank" 
 
 <Admonition type="tip" title="Prefer to describe it in words?">
 You can also **generate a rule with AI** — type what you want in plain English
-("email addresses should look valid") and the app proposes a check. Profiling and
-AI are two different aids; either gets you a rule fast. See
-[Generate rules by profiling](/docs/studio/authoring/generate-by-profiling) and
-[Generate a rule with AI](/docs/studio/authoring/generate-with-ai).
+("email addresses should look valid") and the app proposes a check. Both aids
+live on the [Create a rule](/docs/studio/authoring/create-a-rule) page.
 </Admonition>
 
 ## 3. Apply the rule to your table
@@ -74,8 +72,8 @@ tables.
 
 While you're here, set two things for the check:
 
-- **Severity** — mark it an **error** (a failure fails the run) or a **warning**
-  (reported, but doesn't fail the run). Start with error.
+- **Severity** — how much a failure matters: **Low**, **Medium**, **High**, or
+  **Critical**. It's a priority for triage and reporting, not a pass/fail switch.
 - **Pass threshold** — optionally require that, say, "70% of rows must pass"
   before the check counts as healthy. This is handy for gradual clean-up. See
   [Set quality thresholds](/docs/studio/monitoring/quality-thresholds).

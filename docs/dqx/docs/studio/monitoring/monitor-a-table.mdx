@@ -74,22 +74,34 @@ You can look at your checks two ways:
 For each check you apply, you can tune it for this table without touching the
 underlying rule:
 
-- **Override the severity.** A check is either an **error** (a failure fails the
-  run) or a **warning** (a failure is reported but doesn't fail the run). The rule
-  carries a default, and you can override it here for this table.
+- **Override the severity.** Set how much a failure matters on this table —
+  **Low**, **Medium**, **High**, or **Critical**. The rule carries a default
+  severity; you can override it here. Severity is a priority for triage and
+  reporting, not what decides pass or fail. See
+  [Key concepts](/docs/studio/start-here/key-concepts#severity).
 - **Set a pass threshold.** Instead of demanding every row pass, you can require,
-  say, 70% of rows to pass for the check to count as healthy. This is useful when
-  you're improving quality gradually. See
+  say, 70% of rows to pass for the check to count as healthy. This is what decides
+  whether a check is green. Useful when you're improving quality gradually. See
   [Quality thresholds](/docs/studio/monitoring/quality-thresholds).
 
-<Admonition type="tip" title="Let the app suggest checks">
-Select **Suggest rules** to have the app propose checks based on the table's
-data. It's a shortcut for getting started — you review and keep the ones that fit.
-</Admonition>
+### Suggest rules with AI
 
-<Admonition type="note" title="Governed tags speed this up">
-If a rule carries a governed tag (for example `class.location`), the app can
-suggest which columns it applies to, so you don't have to map every check by hand.
+You don't have to map every check by hand. Select **Suggest rules** and DQX
+Studio looks at this specific table — its columns, their names and types, and the
+shape of the data — and proposes a tailored set of checks for it: an `id` that
+should be unique, an `email` that should match a pattern, an `amount` that
+shouldn't be negative, and so on.
+
+It's the fastest way to go from an unmonitored table to a sensible starting set
+of checks. You stay in control — review each suggestion, keep the ones that fit,
+drop the rest, and adjust severities or thresholds before you submit. Think of it
+as a knowledgeable first draft of "what should we be checking on this table?",
+not a decision made for you.
+
+<Admonition type="note" title="Governed tags apply rules automatically">
+If a rule's column is marked with a governed tag (for example `class.location`),
+that rule is applied automatically to any column on this table carrying the same
+tag — so tagged rules land on the right columns without you mapping them by hand.
 See [Governed tags](/docs/studio/monitoring/governed-tags).
 </Admonition>
 

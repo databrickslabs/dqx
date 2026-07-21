@@ -42,10 +42,11 @@ Fill in:
 - **Name** — a short, human name. Say what good looks like, not what's wrong:
   *"Email is present"*, not *"email null check"*.
 - **Description** — one line on what the rule checks and why it matters.
-- **Default severity** — [**error**](/docs/studio/start-here/key-concepts#errors-and-warnings)
-  (a failing check fails the run) or **warning** (reported, doesn't fail the
-  run). This is just the starting point — you can override it for a specific
-  table when you apply the rule.
+- **Default severity** — how much a failure of this rule matters:
+  [**Low**, **Medium**, **High**, or **Critical**](/docs/studio/start-here/key-concepts#severity)
+  (your organization can customize these levels). Severity is a priority for
+  triage and reporting, not a pass/fail switch — it's the starting point, and you
+  can override it for a specific table when you apply the rule.
 - **Dimension** — which
   [aspect of quality](/docs/studio/start-here/key-concepts#quality-dimensions)
   this measures (completeness, validity, accuracy, and so on). This is what lets
@@ -76,6 +77,24 @@ column here. You choose the actual column later, when you
 one "is never blank" rule can protect `email` on one table and `phone` on
 another.
 
+### A rule can use more than one column
+
+A rule isn't limited to a single column. Under **Columns used** you can add
+several placeholders — `{{column_1}}`, `{{column_2}}`, and so on — and your
+condition can reference all of them. This is what lets a rule express a
+relationship *between* columns, not just a fact about one. For example:
+
+- **A date ordering:** `{{end_date}}` is on or after `{{start_date}}`.
+- **Conditional presence:** if `{{payment_method}}` is `card`, then
+  `{{card_last_four}}` must not be blank.
+- **A combined uniqueness key:** the pair `{{customer_id}}` + `{{order_date}}`
+  never appears twice.
+- **A cross-column comparison:** `{{discounted_price}}` is not greater than
+  `{{list_price}}`.
+
+Just as with a single-column rule, you map each placeholder to a real column when
+you apply the rule to a table — so a multi-column rule stays just as reusable.
+
 ### Build the condition
 
 Under **Condition**, you build a simple sentence: *IF `{{column_1}}` …* and then
@@ -94,32 +113,119 @@ You have three ways to express the check. **Most stewards only ever need the
 first one:**
 
 - **Basic Rules** *(recommended, no code)* — pick a ready-made check from a
-  catalog: is not null, is in a list, is in a range, matches a pattern, is
-  unique, and many more. Fill in a couple of values and you're done. This is the
-  no-code path.
-- **Condition Builder** — build a more complex condition visually, for cases the
-  basic checks don't cover. Some familiarity with logic helps.
-- **SQL** — write a custom condition in SQL. For technical users who want full
+  catalog. Fill in a couple of values and you're done. This is the no-code path;
+  the full catalog is below.
+- **Condition Builder** — build a more complex condition visually. This is where
+  you [chain several checks together with **AND** / **OR**](#chain-logic-with-and--or)
+  — worth knowing about, so it has its own section below.
+- **SQL** — write a custom condition in SQL, for technical users who want full
   control.
 
-Pick a check from **Basic Rules**, fill in whatever it needs (for example, the
-allowed values for an "is in a list" check), and your rule is defined. For the
-full menu of built-in checks and what each one does, see the
-[Checks catalog](/docs/studio/authoring/checks-catalog).
-
 <Admonition type="tip" title="Not sure which check you want?">
-Describe it in plain English instead. The **Generate** box at the top of the
-editor turns a sentence like *"order amount must be positive and under
-$1,000,000"* into a check for you — see
-[Generate rules with AI](/docs/studio/authoring/generate-with-ai).
+Describe it in plain English instead — the **Generate** box at the top of the
+editor drafts a check for you. See [Generate a rule with AI](#generate-a-rule-with-ai)
+below.
+</Admonition>
+
+### The catalog of built-in checks
+
+When you open the **Basic Rules** picker you'll see the built-in checks, grouped
+and searchable. You don't need to memorize them — but here's what's available, by
+what you're trying to verify:
+
+| You want to check that… | Checks to reach for |
+| ----------------------- | ------------------- |
+| **A value is present** (never blank) | is not null; is not null and not empty |
+| **A value is in an allowed set** | is in list; is not in list |
+| **A number or date is in range** | is in range; is not less than / is not greater than; is not negative |
+| **A value matches a format** (email, phone, an ID shaped like `NNN-NN-NNNN`) | matches a pattern; is a valid date / timestamp |
+| **There are no unwanted duplicates** | is unique — across one column *or several columns combined* |
+| **Dates make sense for "now"** | a timestamp is not in the future; a date is recent enough |
+| **The table as a whole behaves** | aggregate checks (an average / sum / count stays within bounds); rolling-window outlier checks |
+| **Data lines up with another table** | a value must exist in a reference table (foreign-key style); the table's shape matches an expected schema |
+
+<Admonition type="note" title="Patterns without the jargon">
+A "pattern" (regular expression) is just a way to describe the *shape* of text —
+for example "three digits, a dash, two digits, a dash, four digits" for a Social
+Security number. You describe the shape; you don't need to be an expert.
+</Admonition>
+
+For the exact, function-by-function reference — every built-in check, its precise
+behavior, and the arguments it accepts — see the
+[Quality checks reference](/docs/reference/quality_checks) in DQX Core.
+
+### Chain logic with AND / OR
+
+The **Custom condition** (Condition Builder) is the most powerful no-code option,
+and it's worth calling out: it lets you **chain several checks together with
+`AND` and `OR`** to express real-world rules that a single check can't. You build
+each step the same visual way, then combine them.
+
+For example:
+
+- *`{{email}}` is not blank **AND** matches an email pattern.*
+- *`{{status}}` is `shipped` **OR** `{{status}}` is `delivered`.*
+- *`{{discount}}` is between 0 and 100 **AND** `{{amount}}` is not negative.*
+- *If `{{payment_method}}` is `card`, **then** `{{card_last_four}}` is present
+  **AND** is four digits.*
+
+Because a custom condition can reference
+[more than one column](#a-rule-can-use-more-than-one-column) and combine several
+tests, it's the way to capture nuanced expectations without dropping into SQL.
+
+<Admonition type="tip" title="When to reach for SQL">
+If even AND/OR chaining can't express what you need, the **SQL** option lets a
+technical user write the condition directly — for example a window calculation or
+a lookup that the visual builder doesn't cover.
+</Admonition>
+
+### Advanced options: filters and joins
+
+Below the condition is an **Advanced** section for the less common cases. Expand
+it when your rule needs more than a plain condition:
+
+- **Filter** — apply the rule to only *some* rows. A filter is a condition that
+  decides which rows the check runs on, so you can say "only check `amount` on
+  rows where `status` is `active`" or "only rows from this year". Rows that don't
+  match the filter are skipped rather than failed.
+- **Join / reference another table** — check a value against a *different* table.
+  This is how referential checks work — for example "every `product_id` in orders
+  must exist in the products table". You point at the reference table and the
+  columns to match on, and DQX Studio compares against it when the rule runs.
+
+Most rules never need the Advanced section — reach for it when a rule has to
+target a subset of rows or look something up in another table.
+
+## Generate a rule with AI
+
+If you'd rather describe what you want than build it by hand, use the **Generate**
+box at the top of the editor. Type the expectation in plain English and DQX
+Studio proposes a matching check with its settings filled in. Good prompts are
+specific:
+
+- `order amount must be positive and under $1,000,000`
+- `email should look like a valid email address`
+- `status must be one of placed, shipped, delivered, cancelled`
+- `signup date can't be in the future`
+- `card last four must be present when payment method is card`
+
+The app reads your description, picks a matching check (or chains a few together),
+and fills in the details — the allowed values, the range, the pattern, and so on.
+
+<Admonition type="caution" title="Always review AI output">
+A generated rule is a **starting point**, not a finished rule. Read what the app
+proposed, adjust anything that isn't quite right, and run the **Test** tab before
+saving — AI can misread a description or pick settings you didn't intend. Once
+saved, a generated rule follows the same review, approval, and audit path as any
+other rule.
 </Admonition>
 
 ## Test it before you save
 
 Open the **Test** tab to try the rule against a small sample of real data before
-you commit to it. A test run shows how many rows would pass, fail, or warn, and
-lets you see example rows that don't pass — so you can confirm the rule does what
-you meant.
+you commit to it. A test run shows how many rows would pass or fail, and lets you
+see example rows that don't pass — so you can confirm the rule does what you
+meant.
 
 Testing changes nothing: it reads a sample, evaluates the rule, and persists
 nothing. It's the safest way to catch a rule that's too strict or too loose
@@ -147,13 +253,20 @@ its own yet — the next step is to
 [apply it to a table](/docs/studio/monitoring/monitor-a-table), which turns your
 reusable rule into a live check.
 
+## Get a head start by profiling a table
+
+If you're not sure what to check yet, let DQX Studio look at the data first. When
+you open a table, you can run a quick **profile** — the app scans a sample and
+suggests candidate rules based on what it finds (a column that's never blank →
+"is not null"; values that all look like emails → a pattern check; a small set of
+repeated values → "is in list"). Keep the suggestions you like; they're saved as
+drafts you can refine and submit like any other rule.
+
+It's a convenient starting point, not a replacement for authoring — you'll still
+review and tidy the suggestions. Profiling lives on the table itself; see
+[Monitor a table](/docs/studio/monitoring/monitor-a-table).
+
 ## Other ways to create rules
 
-Writing rules by hand is only one option. You can also:
-
-- [Generate rules with AI](/docs/studio/authoring/generate-with-ai) from a
-  plain-English description.
-- [Generate rules by profiling](/docs/studio/authoring/generate-by-profiling) —
-  let DQX Studio scan a table and suggest rules based on the data it finds.
-- [Import rules](/docs/studio/authoring/import-rules) you already have, from DQX
-  YAML or a data contract.
+You can also [import rules](/docs/studio/authoring/import-rules) you already have,
+from DQX YAML or an Open Data Contract.

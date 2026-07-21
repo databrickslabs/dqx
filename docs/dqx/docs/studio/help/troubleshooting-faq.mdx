@@ -25,11 +25,11 @@ No. DQX Studio reads and evaluates your data — it never modifies, deletes, or 
 
 See [Fix a failing rule](/docs/studio/running/fix-a-failing-rule).
 
-### What's the difference between an error and a warning?
+### What does a rule's severity mean?
 
-An **error** fails the run — it's a problem you want to block on. A **warning** is reported but doesn't fail the run — it's something to keep an eye on. You set a default when you write a rule and can change it per table.
+Severity is how much a failure matters — **Low**, **Medium**, **High**, or **Critical** (your organization can customize these). It's a priority that helps you triage and report on failures; it does **not** decide whether a check passes or fails. What decides pass/fail is the [pass threshold](/docs/studio/monitoring/quality-thresholds). You set a default severity when you write a rule and can change it per table.
 
-See [Key concepts](/docs/studio/start-here/key-concepts).
+See [Key concepts](/docs/studio/start-here/key-concepts#severity).
 
 ### What's the difference between a rule, a check, and a test?
 

@@ -1,6 +1,6 @@
 {
   "label": "DQX Core",
-  "position": 300,
+  "position": 250,
   "collapsible": true,
   "collapsed": true,
   "link": { "type": "doc", "id": "guide/index" },

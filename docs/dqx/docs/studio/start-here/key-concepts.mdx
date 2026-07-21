@@ -100,16 +100,26 @@ run and report on as one data product. See
 [Collections](/docs/studio/monitoring/collections).
 </Admonition>
 
-## Errors and warnings
+## Severity
 
-Every check has a **severity**:
+Every rule has a **severity** that says how much a failure matters. The built-in
+levels are:
 
-- **Error** — a serious problem. If the check doesn't pass, the run is marked as
-  failing.
-- **Warning** — worth knowing about, but it won't fail the run.
+- **Low**
+- **Medium**
+- **High**
+- **Critical**
 
-You set a default severity when you write a rule, and you can override it for a
-specific table when you apply it.
+Severity is a *priority* — it helps you triage and report ("show me the critical
+failures first"), and the Results views break quality down by severity so you can
+see where the serious problems are. It does **not**, by itself, decide whether a
+run is "good" or "bad" — that's what
+[pass thresholds](#pass-thresholds) are for.
+
+You set a default severity when you write a rule and can override it for a
+specific table when you apply it. The set of severity levels is **customizable**,
+so your organization can rename or adjust them to match how you already
+classify data issues.
 
 ## Quality dimensions
 

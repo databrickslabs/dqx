@@ -1,12 +1,13 @@
 import Layout from '@theme/Layout';
-import { JSX } from 'react';
+import { JSX, useState } from 'react';
 import ThemedImage from '@theme/ThemedImage';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import Link from '@docusaurus/Link';
 import Button from '../components/Button';
 import {
   AppWindow, Code, Sparkles, BarChart2, ShieldCheck, LineChart, ScrollText,
-  PlusCircle, HeartPulse, Settings2, Boxes, Store, ArrowRight,
+  PlusCircle, HeartPulse, Settings2, Boxes, Store, ArrowRight, Search,
+  Info, FileText, Activity, AlertTriangle, CheckCircle, Grid, PieChart, Radar,
 } from 'lucide-react';
 
 const Hero = (): JSX.Element => {
@@ -27,24 +28,8 @@ const Hero = (): JSX.Element => {
         </a>
       </p>
 
-      {/* Two doorways: Studio (no-code) and Core (Python) */}
+      {/* Two doorways: Core (Python) first, Studio (no-code) second */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl">
-        <Link
-          to="/docs/studio/"
-          className="group flex flex-col items-start text-left p-6 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm hover:shadow-lg hover:border-red-400 transition-all no-underline"
-        >
-          <AppWindow className="w-8 h-8 text-red-500 mb-3" />
-          <h2 className="text-xl font-semibold mb-1 text-gray-900 dark:text-white">DQX Studio</h2>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-            The no-code web app. Author, run, and monitor quality rules from your browser —
-            no code required.
-          </p>
-          <span className="text-red-500 text-sm font-medium inline-flex items-center gap-1">
-            Open the Studio guide
-            <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-          </span>
-        </Link>
-
         <Link
           to="/docs/guide/"
           className="group flex flex-col items-start text-left p-6 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm hover:shadow-lg hover:border-blue-400 transition-all no-underline"
@@ -60,6 +45,179 @@ const Hero = (): JSX.Element => {
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
           </span>
         </Link>
+
+        <Link
+          to="/docs/studio/"
+          className="group flex flex-col items-start text-left p-6 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm hover:shadow-lg hover:border-red-400 transition-all no-underline"
+        >
+          <AppWindow className="w-8 h-8 text-red-500 mb-3" />
+          <h2 className="text-xl font-semibold mb-1 text-gray-900 dark:text-white">DQX Studio</h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+            The no-code web app. Author, run, and monitor quality rules from your browser —
+            no code required.
+          </p>
+          <span className="text-red-500 text-sm font-medium inline-flex items-center gap-1">
+            Open the Studio guide
+            <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+          </span>
+        </Link>
+      </div>
+    </div>
+  );
+};
+
+const coreFeatures = [
+  { title: 'Data format agnostic', description: 'Works seamlessly with PySpark DataFrames.', icon: FileText },
+  { title: 'Batch & streaming', description: 'Spark batch and Structured Streaming, with Lakeflow (DLT) pipeline integration.', icon: Activity },
+  { title: 'Row & column-level rules', description: 'Define quality rules at both the row and column level.', icon: Grid },
+  { title: 'Rich failure detail', description: 'Get detailed insight into exactly why a check failed.', icon: Info },
+  { title: 'Custom reactions to failures', description: 'Drop, mark, or quarantine invalid data flexibly.', icon: AlertTriangle },
+  { title: 'Profiling & rule generation', description: 'Profile input data and auto-generate data quality rule candidates.', icon: BarChart2 },
+  { title: 'Code or config checks', description: 'Define checks in code, or declaratively as configuration.', icon: Code },
+  { title: 'Validation summary & dashboard', description: 'Track and pinpoint data quality issues over time.', icon: PieChart },
+  { title: 'Row anomaly detection', description: 'Detect unusual rows with trained ML models and explanations.', icon: Radar },
+  { title: 'Data contracts', description: 'Generate quality rules from ODCS contracts, including schema validation.', icon: ScrollText },
+];
+
+const studioFeatures = [
+  { title: 'No-code rule authoring', description: 'Build checks from a catalog of ready-made rules — no code needed.', icon: Sparkles, link: '/docs/studio/authoring/create-a-rule' },
+  { title: 'Suggest rules with AI', description: 'Point the app at a table and it proposes a tailored set of checks for its columns and data.', icon: Sparkles, link: '/docs/studio/monitoring/monitor-a-table#suggest-rules-with-ai' },
+  { title: 'Monitor tables & thresholds', description: 'Apply rules to tables, set pass thresholds, and improve quality gradually.', icon: BarChart2, link: '/docs/studio/monitoring/monitor-a-table' },
+  { title: 'Data products with Collections', description: 'Group related tables into a data product and see quality across all of them at once.', icon: Boxes, link: '/docs/studio/monitoring/collections' },
+  { title: 'Results & drill-down', description: 'Follow the score down by dimension, severity, rule, and table — all the way to the failing rows.', icon: LineChart, link: '/docs/studio/running/fix-a-failing-rule' },
+  { title: 'Governed by design', description: 'Four-eyes approvals, roles, audit trails, and access that respects Unity Catalog.', icon: ShieldCheck, link: '/docs/studio/governance/approval-workflow' },
+];
+
+// Screenshot thumbnails for the Studio feature cards (cropped/zoomed hero shots).
+const studioFeatureImages: Record<string, string> = {
+  'No-code rule authoring': 'create_rule_basic_checks_thumb',
+  'Suggest rules with AI': 'table_apply_rules_thumb',
+  'Monitor tables & thresholds': 'table_apply_rules_thumb',
+  'Data products with Collections': 'collection_results_thumb',
+  'Results & drill-down': 'collection_results_thumb',
+  'Governed by design': 'review_approve_thumb',
+};
+
+// Resolve base URLs at module scope via a small hook wrapper so we never call
+// useBaseUrl conditionally or inside a loop (React requires a stable hook count).
+const useStudioThumbs = () => {
+  const base = useBaseUrl('/img/studio/');
+  const thumbs: Record<string, { light: string; dark: string }> = {};
+  for (const image of new Set(Object.values(studioFeatureImages))) {
+    thumbs[image] = {
+      light: `${base}${image}_light.png`,
+      dark: `${base}${image}_dark.png`,
+    };
+  }
+  return thumbs;
+};
+
+const FeatureTabs = (): JSX.Element => {
+  const [tab, setTab] = useState<'core' | 'studio'>('core');
+  const isCore = tab === 'core';
+  const thumbs = useStudioThumbs();
+
+  return (
+    <div className="px-4 md:px-10 py-12 w-full">
+      <div className="max-w-6xl mx-auto">
+        <h2 className="text-2xl md:text-3xl font-semibold text-center mb-2">
+          Compare what each option offers
+        </h2>
+        <p className="text-center text-gray-600 dark:text-gray-400 mb-8">
+          DQX comes in two flavors. Pick one to see its features.
+        </p>
+
+        {/* Full-width tab picker */}
+        <div className="flex w-full rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden mb-8">
+          <button
+            onClick={() => setTab('core')}
+            className={`flex-1 flex items-center justify-center gap-2 py-4 px-4 text-base font-semibold transition-colors ${
+              isCore
+                ? 'bg-blue-500 text-white'
+                : 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
+            }`}
+            aria-pressed={isCore}
+          >
+            <Code className="w-5 h-5" /> DQX Core
+            <span className="hidden sm:inline font-normal opacity-80">· Python package</span>
+          </button>
+          <button
+            onClick={() => setTab('studio')}
+            className={`flex-1 flex items-center justify-center gap-2 py-4 px-4 text-base font-semibold transition-colors ${
+              !isCore
+                ? 'bg-red-500 text-white'
+                : 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
+            }`}
+            aria-pressed={!isCore}
+          >
+            <AppWindow className="w-5 h-5" /> DQX Studio
+            <span className="hidden sm:inline font-normal opacity-80">· No-code app</span>
+          </button>
+        </div>
+
+        {/* Revealed feature panel */}
+        {isCore ? (
+          <div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {coreFeatures.map((f, i) => {
+                const Icon = f.icon;
+                return (
+                  <div key={i} className="flex flex-col rounded-xl border border-gray-200 dark:border-gray-800 p-5 bg-white dark:bg-gray-900">
+                    <Icon className="w-6 h-6 text-blue-500 mb-2" />
+                    <h3 className="text-lg font-semibold mb-1 text-gray-900 dark:text-white">{f.title}</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">{f.description}</p>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="text-center mt-8 flex flex-wrap gap-3 justify-center">
+              <Button variant="secondary" outline link="/docs/installation" size="medium" label="Install DQX Core" />
+              <Button variant="secondary" outline link="/docs/guide/" size="medium" label="DQX Core guide" />
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {studioFeatures.map((f, i) => {
+                const Icon = f.icon;
+                const image = studioFeatureImages[f.title];
+                const thumb = image ? thumbs[image] : undefined;
+                return (
+                  <Link
+                    key={i}
+                    to={f.link}
+                    className="group flex flex-col rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden hover:shadow-lg hover:border-red-400 transition-all no-underline bg-white dark:bg-gray-900"
+                  >
+                    {thumb && (
+                      <div className="overflow-hidden border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-950/40 aspect-[16/9]">
+                        <ThemedImage
+                          className="w-full h-full object-cover object-top group-hover:scale-[1.02] transition-transform"
+                          alt={f.title}
+                          sources={{ light: thumb.light, dark: thumb.dark }}
+                        />
+                      </div>
+                    )}
+                    <div className="p-5">
+                      <Icon className="w-6 h-6 text-red-500 mb-2" />
+                      <h3 className="text-lg font-semibold mb-1 text-gray-900 dark:text-white">{f.title}</h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">{f.description}</p>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+            <div className="text-center mt-8 flex flex-wrap gap-3 justify-center">
+              <Button
+                variant="primary"
+                link="/docs/studio/start-here/quickstart"
+                size="medium"
+                label="Get started in 10 minutes"
+                className="bg-gradient-to-r from-red-500 to-orange-500 text-white hover:from-red-600 hover:to-orange-600 transition-all"
+              />
+              <Button variant="secondary" outline link="/docs/studio/" size="medium" label="DQX Studio guide" />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -67,39 +225,19 @@ const Hero = (): JSX.Element => {
 
 const TaskLauncher = (): JSX.Element => {
   const tasks = [
-    {
-      title: 'Check my data’s health',
-      description: 'See quality scores and trends across your tables.',
-      icon: HeartPulse,
-      link: '/docs/studio/running/measure-quality-health',
-    },
-    {
-      title: 'Add a rule',
-      description: 'Define an expectation your data should meet.',
-      icon: PlusCircle,
-      link: '/docs/studio/authoring/create-a-rule',
-    },
-    {
-      title: 'Automate quality checks',
-      description: 'Run checks on a schedule across related tables.',
-      icon: Settings2,
-      link: '/docs/studio/running/run-checks',
-    },
-    {
-      title: 'Govern a rollout',
-      description: 'Set roles, approvals, and standards for your org.',
-      icon: ShieldCheck,
-      link: '/docs/studio/start-here/set-up-for-your-org',
-    },
+    { title: 'Check my data’s health', description: 'See quality scores and trends across your tables.', icon: HeartPulse, link: '/docs/studio/running/measure-quality-health' },
+    { title: 'Add a rule', description: 'Define an expectation your data should meet.', icon: PlusCircle, link: '/docs/studio/authoring/create-a-rule' },
+    { title: 'Automate quality checks', description: 'Run checks on a schedule across related tables.', icon: Settings2, link: '/docs/studio/running/run-checks' },
+    { title: 'Govern a rollout', description: 'Set roles, approvals, and standards for your org.', icon: ShieldCheck, link: '/docs/studio/start-here/set-up-for-your-org' },
   ];
 
   return (
-    <div className="px-4 md:px-10 py-12 w-full">
+    <div className="px-4 md:px-10 py-12 w-full bg-gray-50 dark:bg-gray-950/40">
       <h2 className="text-2xl md:text-3xl font-semibold text-center mb-2">
-        What do you want to do?
+        Using DQX Studio? Jump straight in
       </h2>
       <p className="text-center text-gray-600 dark:text-gray-400 mb-8">
-        Jump straight to the task in DQX Studio.
+        Go directly to the task you came to do.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-w-5xl mx-auto">
         {tasks.map((t, i) => {
@@ -121,128 +259,6 @@ const TaskLauncher = (): JSX.Element => {
   );
 };
 
-const StudioShowcase = (): JSX.Element => {
-  return (
-    <div className="px-4 md:px-10 py-12 w-full bg-gray-50 dark:bg-gray-950/40">
-      <div className="max-w-5xl mx-auto">
-        <div className="text-center mb-8">
-          <span className="inline-flex items-center gap-2 text-red-500 font-medium text-sm mb-2">
-            <AppWindow className="w-4 h-4" /> DQX STUDIO
-          </span>
-          <h2 className="text-2xl md:text-3xl font-semibold mb-2">
-            See your data quality at a glance
-          </h2>
-          <p className="text-gray-600 dark:text-gray-400 max-w-2xl mx-auto text-balance">
-            A no-code home for data stewards: an overall quality score, trends over time,
-            and a clear path from rule to result.
-          </p>
-        </div>
-        <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800 shadow-lg">
-          <ThemedImage
-            alt="The DQX Studio home page showing quality scores and a trend chart"
-            sources={{
-              light: useBaseUrl('/img/studio/home_light.png'),
-              dark: useBaseUrl('/img/studio/home_dark.png'),
-            }}
-          />
-        </div>
-        <div className="text-center mt-8">
-          <Button
-            variant="primary"
-            link="/docs/studio/start-here/quickstart"
-            size="large"
-            label="Get started in 10 minutes"
-            className="font-mono bg-gradient-to-r from-red-500 to-orange-500 text-white hover:from-red-600 hover:to-orange-600 transition-all"
-          />
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const Features = (): JSX.Element => {
-  const features = [
-    {
-      title: 'No-code rule authoring',
-      description: 'Build checks from a catalog of ready-made rules, or describe them and let AI draft them for you.',
-      icon: Sparkles,
-      image: 'create_rule_basic_checks',
-      link: '/docs/studio/authoring/create-a-rule',
-    },
-    {
-      title: 'Monitor tables & thresholds',
-      description: 'Apply rules to your tables, set pass thresholds, and improve quality gradually.',
-      icon: BarChart2,
-      image: 'table_apply_rules',
-      link: '/docs/studio/monitoring/monitor-a-table',
-    },
-    {
-      title: 'Data products with Collections',
-      description: 'Group related tables into a data product and see quality across all of them at once.',
-      icon: Boxes,
-      image: 'collection_results',
-      link: '/docs/studio/monitoring/collections',
-    },
-    {
-      title: 'Measure & report health',
-      description: 'Overall scores, trends, and breakdowns by dimension, severity, rule, and table.',
-      icon: LineChart,
-      image: 'collection_results',
-      link: '/docs/studio/running/measure-quality-health',
-    },
-    {
-      title: 'Governed by design',
-      description: 'Four-eyes approvals, roles, audit trails, and access that respects Unity Catalog permissions.',
-      icon: ShieldCheck,
-      image: 'review_approve',
-      link: '/docs/studio/governance/approval-workflow',
-    },
-    {
-      title: 'Import from data contracts',
-      description: 'Bring rules in from DQX YAML or an Open Data Contract — reviewed before they go live.',
-      icon: ScrollText,
-      image: 'import_contract',
-      link: '/docs/studio/authoring/import-rules',
-    },
-  ];
-
-  return (
-    <div className="px-4 md:px-10 py-12 w-full">
-      <h2 className="text-2xl md:text-3xl font-semibold text-center mb-8">
-        Everything you need for data quality
-      </h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
-        {features.map((f, i) => {
-          const Icon = f.icon;
-          return (
-            <Link
-              key={i}
-              to={f.link}
-              className="group flex flex-col rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden hover:shadow-lg hover:border-red-400 transition-all no-underline bg-white dark:bg-gray-900"
-            >
-              <div className="overflow-hidden border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-950/40 aspect-[16/10]">
-                <ThemedImage
-                  className="w-full h-full object-cover object-top group-hover:scale-[1.02] transition-transform"
-                  alt={f.title}
-                  sources={{
-                    light: useBaseUrl(`/img/studio/${f.image}_light.png`),
-                    dark: useBaseUrl(`/img/studio/${f.image}_dark.png`),
-                  }}
-                />
-              </div>
-              <div className="p-5">
-                <Icon className="w-6 h-6 text-red-500 mb-2" />
-                <h3 className="text-lg font-semibold mb-1 text-gray-900 dark:text-white">{f.title}</h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400">{f.description}</p>
-              </div>
-            </Link>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
-
 const Marketplace = (): JSX.Element => {
   return (
     <div className="px-4 md:px-10 py-12 w-full">
@@ -251,33 +267,12 @@ const Marketplace = (): JSX.Element => {
           <Store className="w-3.5 h-3.5" /> COMING SOON
         </span>
         <h2 className="text-2xl md:text-3xl font-semibold mb-3">
-          The DQX Marketplace
+          DQX Studio on the Databricks Marketplace
         </h2>
         <p className="text-gray-600 dark:text-gray-400 max-w-2xl mx-auto text-balance">
-          Browse and install ready-made rule packs for common domains and standards —
-          so you can start with a trusted set of data quality rules instead of a blank page.
-          We’re building it now.
+          A one-click listing on the Databricks Marketplace to install DQX Studio into
+          your workspace — no manual deployment steps. We’re working on it.
         </p>
-      </div>
-    </div>
-  );
-};
-
-const CoreCallout = (): JSX.Element => {
-  return (
-    <div className="px-4 md:px-10 pb-16 pt-4 w-full">
-      <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6 rounded-xl border border-gray-200 dark:border-gray-800 p-8 bg-white dark:bg-gray-900">
-        <div className="text-center md:text-left">
-          <h2 className="text-xl md:text-2xl font-semibold mb-1">Prefer to work in code?</h2>
-          <p className="text-gray-600 dark:text-gray-400 text-balance">
-            DQX Core is the Python package behind the Studio — define and run checks
-            directly in your PySpark pipelines and notebooks.
-          </p>
-        </div>
-        <div className="flex gap-3 shrink-0">
-          <Button variant="secondary" outline link="/docs/installation" size="medium" label="Install" />
-          <Button variant="secondary" outline link="/docs/guide/" size="medium" label="DQX Core guide" />
-        </div>
       </div>
     </div>
   );
@@ -289,11 +284,9 @@ export default function Home(): JSX.Element {
       <main>
         <div className="flex flex-col items-center mx-auto w-full max-w-screen-xl">
           <Hero />
+          <FeatureTabs />
           <TaskLauncher />
-          <StudioShowcase />
-          <Features />
           <Marketplace />
-          <CoreCallout />
         </div>
       </main>
     </Layout>
