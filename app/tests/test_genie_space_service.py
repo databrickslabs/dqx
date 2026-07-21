@@ -222,7 +222,8 @@ def test_text_instructions_single_entry_with_newline_terminated_paragraphs() -> 
     assert len(text_instructions) == 1
     content = text_instructions[0]["content"]
     assert content == list(gs.TEXT_INSTRUCTIONS)
-    assert len(content) == 15
+    # Terse dqlake-style set — one topic per bullet.
+    assert len(content) == 11
     assert all(p.endswith("\n") for p in content)
     joined = "".join(content)
     assert "MEASURE()" in joined
@@ -329,7 +330,6 @@ def test_every_sample_question_has_a_curated_sql() -> None:
 _METADATA_DIM_QUESTIONS = {
     "Which rules does a steward own?",
     "What is the description of a rule?",
-    "How many rules do I have?",
     "How many rules have been added recently?",
     "How many rules are running?",
 }
@@ -632,11 +632,23 @@ def test_breach_curated_sql_and_instructions() -> None:
     assert "pass_threshold" in joined
 
 
+def test_rules_have_reads_the_metric_view_via_measure_rule_count() -> None:
+    # Item 59 acceptance smoke test: 'how many rules do I have' MUST resolve to
+    # MEASURE(rule_count) over the metric view (the distinct rules that ran),
+    # not a dim_dq_rules count.
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    sql = "".join(by_q["How many rules do I have?"]["sql"])
+    assert f"`{CATALOG}`.`{SCHEMA}`.mv_dq_scores" in sql
+    assert "MEASURE(`rule_count`)" in sql
+    assert "MEASURE(`failed_rule_count`)" in sql
+    assert "`run_mode` = 'published'" in sql
+    assert "dim_dq_rules" not in sql
+
+
 def test_registry_count_curated_sqls_read_the_dim() -> None:
-    # Item 19 C: 'how many rules' questions read dim_dq_rules (no run_mode).
+    # Item 19 C: authoring-count questions read dim_dq_rules (no run_mode).
     by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
     for question in (
-        "How many rules do I have?",
         "How many rules have been added recently?",
         "How many rules are running?",
     ):
