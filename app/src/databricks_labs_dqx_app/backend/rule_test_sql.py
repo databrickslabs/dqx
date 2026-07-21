@@ -92,16 +92,28 @@ def substitute_slots(text: str, mapping: dict[str, str]) -> str:
     return result
 
 
-def passed_expr(predicate: str, polarity: str) -> str:
-    """Boolean SQL that is TRUE when a row satisfies the rule.
+def passed_expr(predicate: str, polarity: str, row_filter: str | None = None) -> str:
+    """SQL verdict for a row: TRUE (pass), FALSE (fail), or NULL (not evaluated).
 
     Reproduces ``check_funcs.sql_expression`` (``negate = polarity == 'fail'``):
     a ``fail``-polarity predicate describes the *failure* shape, so a row passes
     when the predicate is NOT true.
+
+    When *row_filter* is given, the verdict becomes THREE-STATE to mirror how a
+    rule's ROW FILTER scopes evaluation: a row the filter excludes is *not
+    evaluated*, so its verdict is NULL rather than a misleading pass/fail. A row
+    the filter keeps (filter TRUE) keeps the exact pass/fail verdict it would
+    have had with no filter. The filter must already have its ``{{slot}}``
+    placeholders substituted the same way the predicate does.
     """
-    if polarity == "pass":
-        return f"({predicate})"
-    return f"(NOT ({predicate}))"
+    verdict = f"({predicate})" if polarity == "pass" else f"(NOT ({predicate}))"
+    if not row_filter:
+        return verdict
+    # Filter FALSE *or* NULL -> row excluded (NULL verdict); otherwise the
+    # pass/fail verdict. ``NOT (f) OR (f) IS NULL`` is TRUE exactly when the
+    # filter is not satisfied (three-valued logic), matching how a WHERE clause
+    # would drop the row from evaluation.
+    return f"CASE WHEN NOT ({row_filter}) OR ({row_filter}) IS NULL THEN NULL ELSE {verdict} END"
 
 
 # ---------------------------------------------------------------------------
@@ -129,17 +141,19 @@ def _sample_clause(kind: SampleKind, value: int) -> str:
     return ""  # full
 
 
-def build_table_sql(predicate: str, polarity: str, src: TableSource) -> str:
+def build_table_sql(predicate: str, polarity: str, src: TableSource, row_filter: str | None = None) -> str:
     """Build the ROW test query for a real UC table sample.
 
     Returns every sampled row with its ``__passed`` verdict so the grid can
-    tint each row. Raises ``ValueError`` (via ``validate_fqn``) on a malformed
-    table name.
+    tint each row. When *row_filter* is given, rows it excludes carry a NULL
+    verdict (not evaluated) so the grid leaves them untinted. Raises
+    ``ValueError`` (via ``validate_fqn``) on a malformed table name.
     """
     validate_fqn(src.table)
     table = quote_fqn(src.table)
     pred = substitute_slots(predicate, src.column_mapping)
-    passed = passed_expr(pred, polarity)
+    filt = substitute_slots(row_filter, src.column_mapping) if row_filter else None
+    passed = passed_expr(pred, polarity, filt)
     sample = _sample_clause(src.sample_kind, src.sample_value)
     return (
         f"WITH src AS (SELECT * FROM {table} {sample})\n"
@@ -214,12 +228,14 @@ def _values_cell(col: str, value: Any) -> str:
     return _lit(value)
 
 
-def build_adhoc_sql(predicate: str, polarity: str, src: AdhocSource) -> str:
+def build_adhoc_sql(predicate: str, polarity: str, src: AdhocSource, row_filter: str | None = None) -> str:
     """Build the ROW test query over inline VALUES (manual test grid).
 
     A leading synthetic ``__row_idx`` ordinal is injected so the frontend can
     map each verdict back to its input row. Ragged rows are normalised to the
-    column count (short rows padded with NULL, overflow dropped).
+    column count (short rows padded with NULL, overflow dropped). When
+    *row_filter* is given, rows it excludes carry a NULL verdict (not
+    evaluated) so the grid leaves them untinted.
     """
     columns = [ROW_IDX_COL, *src.columns]
     indexed_rows = [[i, *row] for i, row in enumerate(src.rows)]
@@ -242,7 +258,8 @@ def build_adhoc_sql(predicate: str, polarity: str, src: AdhocSource) -> str:
         values_block = f"SELECT * FROM (VALUES {rows_sql}) AS raw ({collist})"
 
     pred = substitute_slots(predicate, src.column_mapping)
-    passed = passed_expr(pred, polarity)
+    filt = substitute_slots(row_filter, src.column_mapping) if row_filter else None
+    passed = passed_expr(pred, polarity, filt)
     return (
         f"WITH src AS (SELECT {cast_cols} FROM ({values_block}) AS raw2)\n"
         f"SELECT src.*, {passed} AS {PASSED_COL} FROM src\n"
@@ -258,7 +275,9 @@ def build_adhoc_sql(predicate: str, polarity: str, src: AdhocSource) -> str:
 @dataclass
 class TestRow:
     cells: dict[str, str | None]
-    passed: bool
+    # ``None`` = row excluded by the rule's ROW FILTER (not evaluated) — the grid
+    # leaves it untinted; ``True``/``False`` = pass/fail.
+    passed: bool | None
     row_idx: int | None = None
 
 
@@ -269,8 +288,14 @@ class TestRunResult:
     truncated: bool
 
 
-def _coerce_passed(raw: Any) -> bool:
-    # statement_execution returns booleans as the strings "true"/"false".
+def _coerce_passed(raw: Any) -> bool | None:
+    # statement_execution returns booleans as the strings "true"/"false"; a
+    # filter-excluded row's verdict is SQL NULL, which arrives as None (or the
+    # literal "null") and maps to a None verdict so the grid leaves it untinted.
+    if raw is None:
+        return None
+    if isinstance(raw, str) and raw.lower() == "null":
+        return None
     return raw is True or (isinstance(raw, str) and raw.lower() == "true")
 
 

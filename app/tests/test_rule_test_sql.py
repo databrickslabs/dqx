@@ -52,6 +52,20 @@ class TestPassedExpr:
     def test_fail_polarity_negates(self):
         assert passed_expr("col IS NULL", "fail") == "(NOT (col IS NULL))"
 
+    def test_blank_filter_is_no_op(self):
+        assert passed_expr("col > 0", "pass", "") == "(col > 0)"
+        assert passed_expr("col > 0", "pass", None) == "(col > 0)"
+
+    def test_filter_wraps_verdict_in_three_state_case(self):
+        # A row the filter excludes (FALSE or NULL) is NOT evaluated -> NULL
+        # verdict; an in-filter row keeps the exact pass/fail verdict.
+        out = passed_expr("col > 0", "pass", "region = 'US'")
+        assert out == "CASE WHEN NOT (region = 'US') OR (region = 'US') IS NULL THEN NULL ELSE (col > 0) END"
+
+    def test_filter_with_fail_polarity(self):
+        out = passed_expr("col IS NULL", "fail", "active")
+        assert out == "CASE WHEN NOT (active) OR (active) IS NULL THEN NULL ELSE (NOT (col IS NULL)) END"
+
 
 class TestBuildTableSql:
     def test_records_sample_orders_by_rand(self):
@@ -92,6 +106,17 @@ class TestBuildTableSql:
     def test_invalid_fqn_raises(self):
         with pytest.raises(ValueError):
             build_table_sql("{{col}} > 0", "pass", TableSource(table="not_a_fqn", column_mapping={"col": "a"}))
+
+    def test_filter_slots_substituted_and_three_state(self):
+        # The filter's {{slot}} placeholders are substituted the same way the
+        # predicate's are, and the verdict becomes a three-state CASE.
+        sql = build_table_sql(
+            "{{col}} > 0",
+            "pass",
+            TableSource(table="c.s.t", column_mapping={"col": "amount", "reg": "region"}),
+            row_filter="{{reg}} = 'US'",
+        )
+        assert "CASE WHEN NOT (`region` = 'US') OR (`region` = 'US') IS NULL THEN NULL ELSE (`amount` > 0) END AS __passed" in sql
 
 
 class TestBuildAdhocSql:
@@ -175,6 +200,19 @@ class TestBuildAdhocSql:
         with pytest.raises(ValueError):
             build_adhoc_sql("{{ev`il}} IS NOT NULL", "pass", src)
 
+    def test_filter_produces_three_state_verdict(self):
+        src = AdhocSource(
+            columns=["amount", "region"],
+            rows=[["5", "US"], ["-3", "US"], ["9", "EU"]],
+            families={"amount": "numeric", "region": "text"},
+            column_mapping={"amount": "amount", "region": "region"},
+        )
+        sql = build_adhoc_sql("{{amount}} > 0", "pass", src, row_filter="{{region}} = 'US'")
+        assert (
+            "CASE WHEN NOT (`region` = 'US') OR (`region` = 'US') IS NULL THEN NULL ELSE (`amount` > 0) END AS __passed"
+            in sql
+        )
+
 
 class TestParseResult:
     def test_strips_hidden_columns_and_reads_verdict(self):
@@ -199,6 +237,19 @@ class TestParseResult:
         rows = [{"c": "x", "__passed": True}]
         result = parse_result(rows, display_cap=5000)
         assert result.rows[0].passed is True
+
+    def test_null_verdict_from_filtered_out_row_maps_to_none(self):
+        # A row excluded by the rule's ROW FILTER carries a SQL NULL verdict; it
+        # must map to None (not False) so the grid leaves it untinted.
+        rows = [
+            {"amount": "5", "__row_idx": "0", "__passed": "true"},
+            {"amount": "9", "__row_idx": "2", "__passed": None},
+            {"amount": "-3", "__row_idx": "3", "__passed": "null"},
+        ]
+        result = parse_result(rows, display_cap=5000)
+        assert result.rows[0].passed is True
+        assert result.rows[1].passed is None
+        assert result.rows[2].passed is None
 
     def test_truncated_when_at_cap(self):
         rows = [{"c": "x", "__passed": "true"}]

@@ -106,6 +106,7 @@ export function RuleTestPanel({
   canTest,
   ruleMode = "sql",
   lowcodeAdvanced = false,
+  filter = "",
 }: {
   /** Effective SQL predicate: raw in SQL mode, compiled AST in Low-Code mode. */
   predicate: string;
@@ -119,6 +120,10 @@ export function RuleTestPanel({
    *  forwarded so the route can reject a mis-testable rule (belt-and-braces —
    *  the parent already hides the surface for these). */
   lowcodeAdvanced?: boolean;
+  /** The rule's ROW FILTER (compiled SQL, `definition.filter`). When set, rows
+   *  the filter excludes are NOT evaluated and are left untinted (neutral)
+   *  rather than tinted pass/fail. Empty -> behaviour unchanged. */
+  filter?: string;
 }) {
   const { t } = useTranslation();
   const ai = useAiAvailability();
@@ -137,7 +142,8 @@ export function RuleTestPanel({
   );
 
   // Logic hash: rebuild a fresh grid whenever the rule's testable logic changes.
-  const logicHash = JSON.stringify({ p: predicate, pol: polarity, s: slots.map((s) => [s.name, s.family]) });
+  // The filter is part of that logic — changing it changes which rows evaluate.
+  const logicHash = JSON.stringify({ p: predicate, pol: polarity, f: filter, s: slots.map((s) => [s.name, s.family]) });
   const [manual, setManualState] = useState<ManualState>(
     () => getManual(CACHE_KEY, logicHash) ?? buildInitialManual(slots),
   );
@@ -215,7 +221,13 @@ export function RuleTestPanel({
   };
 
   const onRun = () => {
-    const common = { mode: ruleMode, predicate, polarity, lowcode_advanced: lowcodeAdvanced };
+    const common = {
+      mode: ruleMode,
+      predicate,
+      polarity,
+      lowcode_advanced: lowcodeAdvanced,
+      ...(filter ? { filter } : {}),
+    };
     if (mode === "adhoc") {
       runMutation.mutate(
         {
@@ -248,11 +260,13 @@ export function RuleTestPanel({
     }
   };
 
-  // Manual verdicts: map each result row's row_idx -> passed. A row absent from
-  // the result is treated as passing (green), matching dqlake.
+  // Manual verdicts: map each result row's row_idx -> passed. A row the rule's
+  // ROW FILTER excludes comes back with a null verdict (not evaluated) and is
+  // left untinted. A row absent from the result is treated as passing (green),
+  // matching dqlake.
   const manualVerdicts = useMemo(() => {
     if (mode !== "adhoc" || !result) return undefined;
-    const byIdx = new Map<number, boolean>();
+    const byIdx = new Map<number, boolean | null>();
     for (const r of result.rows) if (r.row_idx != null) byIdx.set(r.row_idx, r.passed);
     return manual.rows.map((_, i) => (byIdx.has(i) ? byIdx.get(i)! : true));
   }, [mode, result, manual.rows]);

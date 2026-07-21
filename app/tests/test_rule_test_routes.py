@@ -56,6 +56,37 @@ class TestRun:
         assert out.rows[1].passed is False
 
     @pytest.mark.asyncio
+    async def test_filter_forwarded_and_none_verdict_passes_through(self, svc):
+        captured = {}
+
+        async def _run(**kwargs):
+            captured.update(kwargs)
+            return TestRunResult(
+                columns=["a"],
+                rows=[TestRow(cells={"a": "9"}, passed=None, row_idx=2)],
+                truncated=False,
+            )
+
+        svc.run_adhoc.side_effect = _run
+        out = await run_rule_test(_adhoc_body(filter="{{a}} < 100"), svc)
+        # The route forwards the row filter to the service...
+        assert captured["row_filter"] == "{{a}} < 100"
+        # ...and a None (filter-excluded) verdict survives serialization as null.
+        assert out.rows[0].passed is None
+
+    @pytest.mark.asyncio
+    async def test_blank_filter_forwarded_as_none(self, svc):
+        captured = {}
+
+        async def _run(**kwargs):
+            captured.update(kwargs)
+            return TestRunResult(columns=["a"], rows=[], truncated=False)
+
+        svc.run_adhoc.side_effect = _run
+        await run_rule_test(_adhoc_body(), svc)
+        assert captured["row_filter"] is None
+
+    @pytest.mark.asyncio
     async def test_native_rejected_without_calling_service(self, svc):
         body = _adhoc_body()
         body.mode = "dqx_native"
