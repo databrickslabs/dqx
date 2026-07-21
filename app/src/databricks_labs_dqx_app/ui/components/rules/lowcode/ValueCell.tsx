@@ -2,13 +2,22 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverAnchor, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Plus, X } from "lucide-react";
 import { valueCellShape, VALIDITY_TYPES, type Family } from "@/lib/lowcodeOperators";
+import type { LowcodeColumnRef } from "@/lib/lowcodeCompile";
+import { isColumnRef, type ColumnRefValue } from "@/lib/lowcodeAst";
 
 type Props = {
   operator: string;
   family: Family;
   value: unknown;
   onChange: (next: unknown) => void;
+  /** Declared columns available to reference (item 42). */
+  declaredColumns?: LowcodeColumnRef[];
 };
 
 const UNIT_OPTIONS = ["minutes", "hours", "days", "weeks", "months", "years"];
@@ -23,9 +32,112 @@ const UNIT_OPTIONS = ["minutes", "hours", "days", "weeks", "months", "years"];
 // with — its grid track without overflowing it.
 const VALUE_INPUT_CLASS = "h-8 w-full min-w-0 font-mono text-xs md:text-xs";
 
+/**
+ * A single value input that can hold a literal OR one column reference (item
+ * 42). Typing `{` opens a family-filtered column autocomplete; picking a column
+ * commits a ColumnRefValue and the box renders as a chip (✕ clears back to a
+ * literal). The whole box is literal-XOR-column — never a mixed expression.
+ */
+function ColumnAwareInput({
+  value,
+  onChange,
+  family,
+  declaredColumns,
+  type = "text",
+  placeholder,
+}: {
+  value: unknown;
+  onChange: (next: unknown) => void;
+  family: Family;
+  declaredColumns: LowcodeColumnRef[];
+  type?: "text" | "number" | "date";
+  placeholder?: string;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+
+  // Only same-family columns are offered (ANY family shows all). Qualified
+  // join columns (table.col) carry ANY and are always shown.
+  const candidates = declaredColumns.filter(
+    (c) => family === "ANY" || c.family === "ANY" || c.family === family,
+  );
+
+  if (isColumnRef(value)) {
+    return (
+      <Badge
+        variant="secondary"
+        className="h-8 gap-1 rounded-md px-2 font-mono text-xs font-normal"
+      >
+        <span className="truncate">{`{{${(value as ColumnRefValue).$col}}}`}</span>
+        <button
+          type="button"
+          aria-label={t("rulesRegistry.lowcodeValueClearColumn")}
+          className="opacity-60 hover:opacity-100"
+          onClick={() => onChange("")}
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </Badge>
+    );
+  }
+
+  const text = value == null ? "" : String(value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>
+        <Input
+          type={type}
+          value={text}
+          placeholder={placeholder}
+          className={VALUE_INPUT_CLASS}
+          onChange={(e) => {
+            const v = e.target.value;
+            // Typing "{" (as the FIRST char) enters column-pick mode: open the
+            // autocomplete and keep the box a literal until a column is chosen.
+            if (v === "{") {
+              setOpen(true);
+              return;
+            }
+            onChange(type === "number" ? Number(v) : v);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "{") {
+              e.preventDefault();
+              setOpen(true);
+            }
+          }}
+        />
+      </PopoverAnchor>
+      <PopoverContent className="w-56 p-0" align="start">
+        <Command>
+          <CommandList>
+            <CommandEmpty>{t("rulesRegistry.lowcodeValueNoColumns")}</CommandEmpty>
+            <CommandGroup heading={t("rulesRegistry.lowcodeValueColumnsHeader")}>
+              {candidates.map((c) => (
+                <CommandItem
+                  key={c.name}
+                  value={c.name}
+                  className="font-mono text-xs"
+                  onSelect={() => {
+                    onChange({ $col: c.name });
+                    setOpen(false);
+                  }}
+                >
+                  {c.name.includes(".") ? c.name : `{{${c.name}}}`}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // Ported 1:1 from dqlake's ValueCell — the operator+family determine the
 // value-input shape (single/double/chip/interval/type-picker/none).
-export function ValueCell({ operator, family, value, onChange }: Props) {
+export function ValueCell({ operator, family, value, onChange, declaredColumns }: Props) {
   const { t } = useTranslation();
   const shape = valueCellShape(operator, family);
 
@@ -37,11 +149,12 @@ export function ValueCell({ operator, family, value, onChange }: Props) {
 
   if (shape.kind === "single") {
     return (
-      <Input
+      <ColumnAwareInput
+        value={value}
+        onChange={onChange}
+        family={family}
+        declaredColumns={declaredColumns ?? []}
         type={shape.type}
-        value={value == null ? "" : String(value)}
-        onChange={(e) => onChange(shape.type === "number" ? Number(e.target.value) : e.target.value)}
-        className={VALUE_INPUT_CLASS}
       />
     );
   }
@@ -55,17 +168,19 @@ export function ValueCell({ operator, family, value, onChange }: Props) {
     };
     return (
       <div className="flex w-full min-w-0 items-center gap-1">
-        <Input
-          value={lo == null ? "" : String(lo)}
-          onChange={(e) => update(0, e.target.value)}
-          className={VALUE_INPUT_CLASS}
+        <ColumnAwareInput
+          value={lo}
+          onChange={(v) => update(0, v)}
+          family={family}
+          declaredColumns={declaredColumns ?? []}
           placeholder={t("rulesRegistry.lowcodeMinPlaceholder")}
         />
         <span className="text-xs text-muted-foreground">…</span>
-        <Input
-          value={hi == null ? "" : String(hi)}
-          onChange={(e) => update(1, e.target.value)}
-          className={VALUE_INPUT_CLASS}
+        <ColumnAwareInput
+          value={hi}
+          onChange={(v) => update(1, v)}
+          family={family}
+          declaredColumns={declaredColumns ?? []}
           placeholder={t("rulesRegistry.lowcodeMaxPlaceholder")}
         />
       </div>
@@ -73,7 +188,14 @@ export function ValueCell({ operator, family, value, onChange }: Props) {
   }
 
   if (shape.kind === "chip") {
-    return <ChipInput value={value} onChange={onChange} />;
+    return (
+      <ChipInput
+        value={value}
+        onChange={onChange}
+        family={family}
+        declaredColumns={declaredColumns ?? []}
+      />
+    );
   }
 
   if (shape.kind === "type-picker") {
@@ -123,43 +245,143 @@ export function ValueCell({ operator, family, value, onChange }: Props) {
   return null;
 }
 
-function ChipInput({ value, onChange }: { value: unknown; onChange: (v: unknown) => void }) {
+function ChipInput({
+  value,
+  onChange,
+  family,
+  declaredColumns,
+}: {
+  value: unknown;
+  onChange: (v: unknown) => void;
+  family: Family;
+  declaredColumns: LowcodeColumnRef[];
+}) {
   const { t } = useTranslation();
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // An `in` / `not in` list holds a mix of literals and column references
+  // (item 42). Column refs render as removable chips; literals stay in the
+  // free-text comma buffer exactly as before. Splitting the array this way
+  // keeps ChipInput's literal comma-entry behaviour untouched.
+  const entries = Array.isArray(value) ? (value as unknown[]) : [];
+  const columnRefs = entries.filter(isColumnRef) as ColumnRefValue[];
+  const literals = entries.filter((v) => !isColumnRef(v));
+
   // Local buffer lets the user type commas / trailing whitespace freely; we
   // only commit the parsed array on blur, so the visible text reflects
-  // exactly what they typed until they tab/click away.
-  const initial = Array.isArray(value) ? (value as unknown[]).join(", ") : "";
+  // exactly what they typed until they tab/click away. It tracks the LITERAL
+  // entries only — column refs are rendered as chips, not text.
+  const initial = literals.join(", ");
   const [text, setText] = useState<string>(initial);
   const [focused, setFocused] = useState(false);
 
   useEffect(() => {
     if (focused) return;
-    const next = Array.isArray(value) ? (value as unknown[]).join(", ") : "";
-    // Functional update so the effect reads no outer `text` — deps stay
-    // exhaustive on the values that should re-sync the buffer (the incoming
-    // committed `value` and focus), without refiring on every keystroke.
+    // Recompute the literal buffer from `value` inline so the effect's deps
+    // stay exhaustive on the committed `value` and focus — no derived array in
+    // the closure — without refiring on every keystroke.
+    const next = (Array.isArray(value) ? (value as unknown[]) : [])
+      .filter((v) => !isColumnRef(v))
+      .join(", ");
     setText((prev) => (prev === next ? prev : next));
   }, [value, focused]);
+
+  // Same strict family filter as ColumnAwareInput: only same-family columns
+  // (ANY shows all; ANY-family columns are always shown).
+  const candidates = declaredColumns.filter(
+    (c) => family === "ANY" || c.family === "ANY" || c.family === family,
+  );
 
   const commit = (s: string) => {
     const parts = s
       .split(",")
       .map((p) => p.trim())
       .filter(Boolean);
-    onChange(parts);
+    // Preserve existing column-ref entries; literals reflect the text buffer.
+    onChange([...parts, ...columnRefs]);
+  };
+
+  const addColumn = (name: string) => {
+    // Rebuild the literals from the current buffer so an uncommitted edit is
+    // not lost, then append the new column reference.
+    const parts = text
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    onChange([...parts, ...columnRefs, { $col: name }]);
+    setPickerOpen(false);
+  };
+
+  const removeColumn = (name: string) => {
+    const parts = text
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    onChange([...parts, ...columnRefs.filter((c) => c.$col !== name)]);
   };
 
   return (
-    <Input
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      onFocus={() => setFocused(true)}
-      onBlur={() => {
-        setFocused(false);
-        commit(text);
-      }}
-      placeholder={t("rulesRegistry.lowcodeChipPlaceholder")}
-      className={VALUE_INPUT_CLASS}
-    />
+    <div className="flex w-full min-w-0 flex-wrap items-center gap-1">
+      {columnRefs.map((c) => (
+        <Badge
+          key={c.$col}
+          variant="secondary"
+          className="h-8 gap-1 rounded-md px-2 font-mono text-xs font-normal"
+        >
+          <span className="truncate">{`{{${c.$col}}}`}</span>
+          <button
+            type="button"
+            aria-label={t("rulesRegistry.lowcodeValueClearColumn")}
+            className="opacity-60 hover:opacity-100"
+            onClick={() => removeColumn(c.$col)}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </Badge>
+      ))}
+      <Input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => {
+          setFocused(false);
+          commit(text);
+        }}
+        placeholder={t("rulesRegistry.lowcodeChipPlaceholder")}
+        className={VALUE_INPUT_CLASS}
+      />
+      <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 shrink-0 gap-1 px-2 text-xs text-muted-foreground"
+          >
+            <Plus className="h-3 w-3" />
+            {t("rulesRegistry.lowcodeValueColumnsHeader")}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-56 p-0" align="start">
+          <Command>
+            <CommandList>
+              <CommandEmpty>{t("rulesRegistry.lowcodeValueNoColumns")}</CommandEmpty>
+              <CommandGroup heading={t("rulesRegistry.lowcodeValueColumnsHeader")}>
+                {candidates.map((c) => (
+                  <CommandItem
+                    key={c.name}
+                    value={c.name}
+                    className="font-mono text-xs"
+                    onSelect={() => addColumn(c.name)}
+                  >
+                    {c.name.includes(".") ? c.name : `{{${c.name}}}`}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </div>
   );
 }

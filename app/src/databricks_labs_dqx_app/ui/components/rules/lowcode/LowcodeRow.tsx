@@ -160,7 +160,7 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
       {renderOperator
         ? renderOperator({ family, value: row.operator, onChange: setOperator, isFirst })
         : <OperatorDropdown value={row.operator} family={family} onChange={setOperator} />}
-      <ValueCell operator={row.operator} family={family} value={row.value} onChange={setValue} />
+      <ValueCell operator={row.operator} family={family} value={row.value} onChange={setValue} declaredColumns={declaredColumns} />
 
       {!readOnly &&
         (canDelete ? (
