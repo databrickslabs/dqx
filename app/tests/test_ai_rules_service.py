@@ -359,6 +359,41 @@ class TestGenerateRuleLowcode:
         # One slot per placeholder in the compiled body, families from the hint.
         assert {s["name"]: s["family"] for s in result["slots"]} == {"order_id": "numeric", "customer_id": "any"}
 
+    def test_col_vs_col_value_compiles_rhs_column_and_declares_both_slots(self):
+        # Item 42 / col-vs-col bug: a row whose value is a column reference
+        # {"$col": "b"} must compile to a NON-blank RHS ({{b}}) and declare both
+        # column slots, so the lowcode pass (tried first) produces a runnable
+        # rule instead of `{{a}} < <empty>` that never falls through to sql.
+        proposal = json.loads(
+            _lowcode_proposal(
+                name="A Less Than B",
+                description="a must be less than b",
+                columns=[{"name": "a", "family": "numeric"}, {"name": "b", "family": "numeric"}],
+                lowcode_ast={
+                    "rows": [
+                        {
+                            "kind": "row",
+                            "combinator": None,
+                            "column_ref": "a",
+                            "operator": "<",
+                            "value": {"$col": "b"},
+                        }
+                    ],
+                    "joins": [],
+                },
+            )
+        )
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock())
+
+        validated = svc._validate_lowcode_proposal(proposal)
+
+        assert validated is not None
+        assert validated["mode"] == "lowcode"
+        # RHS is the {{b}} placeholder, not a NULL/blank operand.
+        assert validated["definition"]["predicate"] == "{{a}} < {{b}}"
+        assert {s["name"] for s in validated["slots"]} == {"a", "b"}
+        assert {s["name"]: s["family"] for s in validated["slots"]} == {"a": "numeric", "b": "numeric"}
+
     async def test_unusable_lowcode_falls_through_to_dqx_native(self):
         # Low-code AST has no compilable rows -> fall through to dqx_native.
         native = json.dumps(

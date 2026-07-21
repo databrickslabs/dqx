@@ -122,6 +122,10 @@ The first row's combinator is null; later rows use "AND" or "OR". The "kind" fie
 Guidelines:
 - Use double quotes for all JSON keys and string values. Do not include any prose outside the JSON.
 - Every column_ref MUST also appear in "columns". Reference declared columns by name via column_ref.
+- A row's "value" may be EITHER a literal OR a column reference object {{"$col": "<column name>"}} \
+to compare one column against another. For "column a is less than column b": {{"kind": "row", \
+"combinator": null, "column_ref": "a", "operator": "<", "value": {{"$col": "b"}}}}. The referenced \
+column ("b" here) MUST also be listed in "columns", exactly like column_ref.
 - Always produce a populated "lowcode_ast" with at least one usable row.
 
 {vocab}"""

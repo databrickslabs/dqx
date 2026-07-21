@@ -199,8 +199,34 @@ def _quote(value: object) -> str:
     return f"'{escaped}'"
 
 
+def _column_ref_name(value: object) -> str | None:
+    """The referenced column name when *value* is a column reference, else None.
+
+    A column reference is ``{"$col": "<column>"}`` with a non-empty string name
+    (item 42); mirrors ``isColumnRef`` in ``lowcodeAst.ts``. Returned so callers
+    can both test for and read the name in one narrowing step.
+    """
+    if isinstance(value, dict):
+        name = value.get("$col")
+        if isinstance(name, str) and name:
+            return name
+    return None
+
+
+def _value_sql(value: object) -> str:
+    """Render a comparison RHS operand — a column reference OR a literal.
+
+    Mirrors ``valueSql`` in ``lowcodeCompile.ts`` (item 42): a column reference
+    ``{"$col": "b"}`` emits ``_ref("b")`` (a plain name -> ``{{b}}`` placeholder,
+    a joined-table column -> raw), so one column can be compared against another;
+    anything else is quoted as a literal.
+    """
+    name = _column_ref_name(value)
+    return _ref(name) if name is not None else _quote(value)
+
+
 def _quote_list(values: list[object]) -> str:
-    return ", ".join(_quote(v) for v in values)
+    return ", ".join(_value_sql(v) for v in values)
 
 
 def _like_literal(value: object) -> str:
@@ -271,11 +297,11 @@ def _agg_expr(spec: dict[str, Any]) -> str:
 def _row_sql(left: str, operator: str, value: object) -> str:
     op = operator
     if op in _COMPARISON_OPS:
-        return f"{left} {op} {_quote(value)}"
+        return f"{left} {op} {_value_sql(value)}"
     if op == "equals":
-        return f"{left} = {_quote(value)}"
+        return f"{left} = {_value_sql(value)}"
     if op == "not equals":
-        return f"{left} != {_quote(value)}"
+        return f"{left} != {_value_sql(value)}"
     if op == "contains":
         return f"{left} LIKE '%{_like_literal(value)}%'"
     if op == "does not contain":
@@ -288,7 +314,7 @@ def _row_sql(left: str, operator: str, value: object) -> str:
         return f"{left} RLIKE {_quote(value)}"
     if op == "between":
         lo, hi = (value[0], value[1]) if isinstance(value, list) and len(value) >= 2 else (None, None)
-        return f"{left} BETWEEN {_quote(lo)} AND {_quote(hi)}"
+        return f"{left} BETWEEN {_value_sql(lo)} AND {_value_sql(hi)}"
     if op == "in":
         return f"{left} IN ({_quote_list(value if isinstance(value, list) else [])})"
     if op == "not in":
@@ -302,13 +328,13 @@ def _row_sql(left: str, operator: str, value: object) -> str:
     if op == "is false":
         return f"{left} = FALSE"
     if op == "before":
-        return f"{left} < {_quote(value)}"
+        return f"{left} < {_value_sql(value)}"
     if op == "after":
-        return f"{left} > {_quote(value)}"
+        return f"{left} > {_value_sql(value)}"
     if op == "on or before":
-        return f"{left} <= {_quote(value)}"
+        return f"{left} <= {_value_sql(value)}"
     if op == "on or after":
-        return f"{left} >= {_quote(value)}"
+        return f"{left} >= {_value_sql(value)}"
     if op == "is in last":
         obj = value if isinstance(value, dict) else {}
         number = obj.get("number", 0)
@@ -333,7 +359,7 @@ def _row_sql(left: str, operator: str, value: object) -> str:
         return f"length({left}) < {_quote(value)}"
     if op == "length between":
         lo, hi = (value[0], value[1]) if isinstance(value, list) and len(value) >= 2 else (None, None)
-        return f"length({left}) BETWEEN {_quote(lo)} AND {_quote(hi)}"
+        return f"length({left}) BETWEEN {_value_sql(lo)} AND {_value_sql(hi)}"
     if op == "is not empty":
         return f"length(trim({left})) > 0"
     if op == "is empty":
