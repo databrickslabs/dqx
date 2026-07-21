@@ -559,6 +559,13 @@ export function MultiTableResultsSection({
   const dimFacet = buildFacet(results?.by_dimension, baseResults?.by_dimension);
   const sevFacet = buildFacet(results?.by_severity, baseResults?.by_severity);
   const ruleFacet = buildFacet(results?.by_rule, baseResults?.by_rule);
+  // By table honors the Applicable/All toggle like every other facet box:
+  // Applicable hides rows excluded by the active chips; All keeps the base
+  // rows and greys the excluded ones (with their base numbers + breach icon),
+  // so a breached-but-filtered-out table still surfaces. Its labels are
+  // remapped to the friendly (last-segment) name at render, so the muted-label
+  // set is remapped the same way to stay matched.
+  const tableFacet = buildFacet(results?.by_table, baseResults?.by_table);
 
   // Rule name → breach criticality for the failing-records cell hover's ⚠.
   // Keyed by the by_rule row label (what failures carry as rule_name); only
@@ -980,7 +987,7 @@ export function MultiTableResultsSection({
               <DimensionBreakdown
                 title={t("resultsUi.byTableTitle")}
                 valueHeader={t("resultsUi.tableHeader")}
-                rows={toRows(results?.by_table).map((r) => ({
+                rows={tableFacet.rows.map((r) => ({
                   ...r,
                   label: r.label == null ? null : friendlyTableName(r.label),
                   // Selection is keyed on the friendly name (see
@@ -988,6 +995,9 @@ export function MultiTableResultsSection({
                   // fall back to the friendly label, not the full FQN.
                   value: null,
                 }))}
+                // Muted labels come back as FQNs; remap to the friendly name
+                // so they match the remapped row labels above.
+                mutedLabels={tableFacet.mutedLabels.map((l) => friendlyTableName(l))}
                 loading={breakdownRefetching}
                 selected={selectedTable ? [selectedTable] : []}
                 onSelect={onTableSelect}
