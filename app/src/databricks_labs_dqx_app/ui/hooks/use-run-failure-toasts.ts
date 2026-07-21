@@ -80,10 +80,12 @@ export function useRunFailureToasts(): void {
   const seededRef = useRef(false);
 
   useEffect(() => {
-    // Wait for the first successful load before seeding — otherwise an empty
-    // pre-fetch snapshot would seed nothing and then toast the whole backlog
-    // once the real data arrives.
-    if (validationResp === undefined && profileResp === undefined) return;
+    // Wait until BOTH listings have returned before seeding — otherwise the
+    // faster query alone seeds the "handled" set, and when the slower query
+    // resolves its pre-existing FAILED runs are unseen and storm-toast the
+    // backlog (the exact thing seeding prevents). Must be `||`, not `&&`: hold
+    // the guard while EITHER is still undefined.
+    if (validationResp === undefined || profileResp === undefined) return;
 
     const { toToast, seen } = selectFailureToasts(candidates, seenRef.current, seededRef.current);
     seenRef.current = seen;
