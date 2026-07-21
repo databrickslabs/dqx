@@ -555,3 +555,21 @@ describe("item42: column-ref RHS in single-value operators", () => {
     );
   });
 });
+
+test("item42: between with a column upper bound mixes literal + {{col}}", () => {
+  expect(
+    compileAstToSql(ast([row({ column_ref: "x", operator: "between", value: [0, { $col: "cap" }] })])),
+  ).toBe("{{x}} BETWEEN 0 AND {{cap}}");
+});
+
+test("item42: 'in' with a column entry emits {{col}} alongside literals", () => {
+  expect(
+    compileAstToSql(ast([row({ column_ref: "code", operator: "in", value: ["A", { $col: "fallback_code" }] })])),
+  ).toBe("{{code}} IN ('A', {{fallback_code}})");
+});
+
+test("item42: length between literal bounds unchanged (regression)", () => {
+  expect(
+    compileAstToSql(ast([row({ column_ref: "name", operator: "length between", value: [1, 10] })])),
+  ).toBe("length({{name}}) BETWEEN 1 AND 10");
+});

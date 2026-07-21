@@ -62,10 +62,6 @@ function valueSql(value: unknown): string {
   return isColumnRef(value) ? ref(value.$col) : quote(value);
 }
 
-function quoteList(values: unknown[]): string {
-  return values.map(quote).join(", ");
-}
-
 // Escape a value for embedding INSIDE a single-quoted SQL LIKE pattern
 // (e.g. `'%<value>%'`). Only the quote needs doubling so a value like
 // `O'Brien` can't terminate the literal early and break the SQL — matching
@@ -150,10 +146,10 @@ function rowSql(left: string, operator: string, value: unknown): string {
   if (op === "matches regex") return `${left} RLIKE ${quote(value)}`;
   if (op === "between") {
     const [lo, hi] = Array.isArray(value) ? (value as unknown[]) : [null, null];
-    return `${left} BETWEEN ${quote(lo)} AND ${quote(hi)}`;
+    return `${left} BETWEEN ${valueSql(lo)} AND ${valueSql(hi)}`;
   }
-  if (op === "in") return `${left} IN (${quoteList((value as unknown[]) ?? [])})`;
-  if (op === "not in") return `${left} NOT IN (${quoteList((value as unknown[]) ?? [])})`;
+  if (op === "in") return `${left} IN (${((value as unknown[]) ?? []).map(valueSql).join(", ")})`;
+  if (op === "not in") return `${left} NOT IN (${((value as unknown[]) ?? []).map(valueSql).join(", ")})`;
   if (op === "is null") return `${left} IS NULL`;
   if (op === "is not null") return `${left} IS NOT NULL`;
   if (op === "is true") return `${left} = TRUE`;
@@ -180,7 +176,7 @@ function rowSql(left: string, operator: string, value: unknown): string {
   if (op === "is shorter than") return `length(${left}) < ${quote(value)}`;
   if (op === "length between") {
     const [lo, hi] = Array.isArray(value) ? (value as unknown[]) : [null, null];
-    return `length(${left}) BETWEEN ${quote(lo)} AND ${quote(hi)}`;
+    return `length(${left}) BETWEEN ${valueSql(lo)} AND ${valueSql(hi)}`;
   }
   if (op === "is not empty") return `length(trim(${left})) > 0`;
   if (op === "is empty") return `length(trim(${left})) = 0`;
