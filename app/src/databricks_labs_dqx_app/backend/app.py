@@ -281,6 +281,7 @@ async def _build_scheduler_data_product_service(
         binding_run_service=binding_run_service,
         version_service=version_service,
         app_settings=app_settings,
+        materializer=materializer,
     )
     return data_product_service, binding_run_service
 

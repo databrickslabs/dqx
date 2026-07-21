@@ -1122,21 +1122,27 @@ export function ScoreTrendChart({
   // area runs from y=PLOT_TOP (the 100% line, green) to y=PLOT_BOTTOM (the 0%
   // line, red) — see the plot-geometry constants defined above.
   const scoreGradientId = "score-trend-gradient";
-  // Vertical gradient over the plot's y-range: top (100%) green, bottom (0%)
-  // red, with a yellow midpoint — the ramp's 1/0.5/0 hues.
+  // Vertical gradient over the plot's y-range: top green, bottom red, yellow
+  // midpoint. The stop COLOURS are keyed to the VISIBLE y-domain, not a fixed
+  // 0–100, so the ramp stays true under a y-zoom (item 57): when zoomed to
+  // [yLo, yHi] the plot top shows scoreColor(yHi) and the bottom scoreColor(yLo).
+  // Because the gradient is `userSpaceOnUse` over PLOT_TOP→PLOT_BOTTOM (the
+  // visible top/bottom), recolouring the stops to the domain keeps every pixel
+  // at its true score colour — seamless in and out of zoom.
+  const [scoreYLo, scoreYHi] = mode === "count" ? [0, 100] : (yZoomDomain ?? [0, 100]);
+  const scoreYMid = (scoreYLo + scoreYHi) / 2;
   const scoreGradientStops = [
-    { offset: "0%", color: scoreColor(1) },
-    { offset: "50%", color: scoreColor(0.5) },
-    { offset: "100%", color: scoreColor(0) },
+    { offset: "0%", color: scoreColor(scoreYHi / 100) },
+    { offset: "50%", color: scoreColor(scoreYMid / 100) },
+    { offset: "100%", color: scoreColor(scoreYLo / 100) },
   ];
-  // Separate fill gradient: same vertical red→green ramp but semi-transparent
-  // so the filled area reads as a tint under the connecting line. Green at the
-  // top (high score) fading to red at the bottom (low score).
+  // Separate fill gradient: same domain-keyed red→green ramp but semi-transparent
+  // so the filled area reads as a tint under the connecting line.
   const scoreFillGradientId = "score-trend-fill-gradient";
   const scoreFillGradientStops = [
-    { offset: "0%", color: scoreColor(1), opacity: 0.35 },
-    { offset: "50%", color: scoreColor(0.5), opacity: 0.18 },
-    { offset: "100%", color: scoreColor(0), opacity: 0.05 },
+    { offset: "0%", color: scoreColor(scoreYHi / 100), opacity: 0.35 },
+    { offset: "50%", color: scoreColor(scoreYMid / 100), opacity: 0.18 },
+    { offset: "100%", color: scoreColor(scoreYLo / 100), opacity: 0.05 },
   ];
 
   // Overall-mode legend, shown just beneath the chart: "Overall" (foreground
@@ -1218,15 +1224,15 @@ export function ScoreTrendChart({
                       : undefined
               }
             >
-              {isOverallScore && !yZoomed && (
+              {isOverallScore && (
                 <defs>
-                  {/* userSpaceOnUse + plot-area y coords → the ramp is keyed to
-                      the absolute 0–100 axis, not the line's own extent. Under a
-                      y-zoom (B2-17) the axis no longer spans 0–100, so these
-                      pixel-keyed stops would mis-map; the gradient is dropped
-                      then and the line/fill fall back to a flat colour (the dots
-                      stay value-coloured — they key on each point's own score,
-                      not pixels, so they remain correct). */}
+                  {/* userSpaceOnUse + plot-area y coords key the ramp to the
+                      VISIBLE plot top/bottom. Under a y-zoom the axis no longer
+                      spans 0–100, so the stop COLOURS are recomputed for the
+                      current [yLo,yHi] domain (see scoreGradientStops) — the pixel
+                      mapping and the colour mapping move together, keeping the
+                      ramp seamless while zoomed (item 57). The dots stay
+                      value-coloured independently (per-point score). */}
                   <linearGradient
                     id={scoreGradientId}
                     gradientUnits="userSpaceOnUse"
@@ -1461,12 +1467,14 @@ export function ScoreTrendChart({
                       key={name}
                       type={lineType}
                       dataKey={name}
-                      // Flat fallback while y-zoomed (the pixel-keyed gradient
-                      // would mis-map — see the guarded <defs> above).
-                      stroke={yZoomed ? "var(--foreground)" : `url(#${scoreGradientId})`}
+                      // The gradient stops are recomputed for the current y-domain
+                      // (see the <defs> below), so the same 0–100 score ramp stays
+                      // seamless under zoom — no flat fallback (item 57: the old
+                      // var(--foreground) fallback rendered the line white in dark
+                      // mode). Per-point dots keep their own score-mapped colours.
+                      stroke={`url(#${scoreGradientId})`}
                       strokeWidth={2}
-                      fill={yZoomed ? "var(--foreground)" : `url(#${scoreFillGradientId})`}
-                      fillOpacity={yZoomed ? 0.06 : undefined}
+                      fill={`url(#${scoreFillGradientId})`}
                       connectNulls
                       dot={scoreDot}
                       activeDot={scoreActiveDot}
