@@ -32,6 +32,12 @@ type Props = {
   /** Whether this row can be deleted. `false` hides the X — used to keep at
    * least one condition on the rule (a rule with zero conditions is invalid). */
   canDelete?: boolean;
+  /** Condition-Builder-only compact layout (NOT the page-open anchor row, NOT
+   * row filters): the operator box sizes to its CONTENT (so `<=` is narrow and
+   * the box shrinks from the right, left edge fixed) and the value box is
+   * capped so the row isn't forced to full width. When false (row filters), the
+   * operator keeps its fixed 18rem width and the value fills the remainder. */
+  compact?: boolean;
 };
 
 function familyOf(name: string, declared: LowcodeColumnRef[]): Family {
@@ -41,7 +47,7 @@ function familyOf(name: string, declared: LowcodeColumnRef[]): Family {
 
 // Ported 1:1 from dqlake's LowcodeRow — one condition row: IF anchor / AND-OR
 // pill, column (or aggregate) picker, operator dropdown, value cell, delete.
-export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, readOnly, renderOperator, canDelete = true }: Props) {
+export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, readOnly, renderOperator, canDelete = true, compact = false }: Props) {
   const { t } = useTranslation();
   const family: Family =
     row.kind === "row"
@@ -59,15 +65,21 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
         // carry `w-full`) so the columns read as a flush, aligned table —
         // matching dqlake's LowcodeRow, whose base SelectTrigger is `w-full`.
         "grid gap-2 items-center py-1",
-        // FIXED column + function widths so both boxes are the SAME width across
-        // every rule type (page-load / native / Condition Builder / row filter):
-        //   - column = 11rem (the Condition Builder width the user likes)
-        //   - function/operator = 18rem (the new-page anchor width)
-        // The value track takes the remainder (minmax(0,1fr)). max-w cap dropped
-        // so the two fixed boxes never reflow and value isn't squeezed.
-        readOnly
-          ? "grid-cols-[80px_11rem_18rem_minmax(0,1fr)]"
-          : "grid-cols-[80px_11rem_18rem_minmax(0,1fr)_28px]",
+        // Column stays a FIXED 11rem everywhere. The operator + value tracks
+        // differ by mode:
+        //   - compact (Condition Builder only): operator sizes to CONTENT
+        //     (minmax(6rem,max-content)) so `<=` is narrow and the box shrinks
+        //     from the RIGHT with a fixed left edge; value is a fixed 18rem so
+        //     the row is NOT forced full-width. Grid is left-packed to content.
+        //   - default (row filters): operator fixed 18rem, value fills the
+        //     remainder (minmax(0,1fr)) — unchanged.
+        compact
+          ? readOnly
+            ? "grid-cols-[80px_11rem_minmax(6rem,max-content)_18rem]"
+            : "grid-cols-[80px_11rem_minmax(6rem,max-content)_18rem_28px]"
+          : readOnly
+            ? "grid-cols-[80px_11rem_18rem_minmax(0,1fr)]"
+            : "grid-cols-[80px_11rem_18rem_minmax(0,1fr)_28px]",
       )}
     >
       {isFirst ? (
