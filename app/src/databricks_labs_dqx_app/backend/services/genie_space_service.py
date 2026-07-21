@@ -148,144 +148,94 @@ SAMPLE_QUESTIONS = [
 # context routing, diagnosis, and honesty about what the data can't show.
 TEXT_INSTRUCTIONS = [
     (
-        "You are answering questions from a data steward about the data quality of their tables. "
-        "Open with a headline: one sentence in plain language stating the key finding with its "
-        "number. Leave a blank line after it, then give the supporting breakdown in the paragraphs "
-        "that follow. When a lower level of detail explains the headline number (a rule, a quality "
-        "dimension, a severity, a column), include it and name the specific contributors.\n"
+        "You answer a data steward about their tables' data quality. Open with a headline — one "
+        "sentence stating the key finding and its number — then a blank line, then the breakdown. "
+        "Never give a bare number: drill from rules to dimensions/severities to columns, name the "
+        "specific contributors, and surface the correlations you find (score against applied rules, "
+        "severities, dimensions, versions, stewards, sub-scores, thresholds and active warnings, "
+        "and number of tests).\n"
     ),
     (
-        "A test is one record-level evaluation of one check. Pass rate is "
-        "1 - SUM(failed_tests) / SUM(total_tests), computed at the test grain. Read every "
-        "metric-view measure with MEASURE(). The views return scores and rates as fractions of 1 — "
-        "always convert them and state every score, pass rate, or failure rate as a percentage "
-        'with one decimal place, "91.5%", never a bare fraction like 0.915. Report failures as a '
-        'share of tests run, with the denominator — "1,250 of 50,000 tests failed (2.5%)" — and '
-        "avoid bare counts, since they mean little on their own. Do not average pass rates across "
-        "runs or tables; recompute from the underlying sums.\n"
+        "A test is one record-level evaluation of one check. Read every metric-view measure with "
+        "MEASURE(); pass rate is 1 - SUM(failed_tests) / SUM(total_tests) at test grain, and you "
+        "never average rates across runs or tables — recompute from the sums. State every score or "
+        'rate as a percentage with one decimal ("91.5%", never a bare fraction like 0.915), and '
+        'report failures as a share of tests with the denominator ("1,250 of 50,000 tests, 2.5%"), '
+        "not a bare count.\n"
     ),
     (
-        "Refer to things by their human names: the fully-qualified table name and the run "
-        "timestamp. Wrap fully-qualified names and identifiers containing underscores in backticks "
-        "so they render literally. Internal identifiers (run ids, rule fingerprints) support joins "
-        "but do not belong in answers.\n"
+        "Use human names — the fully-qualified table name (backtick-quoted, like identifiers with "
+        "underscores) and the run timestamp. Internal ids (run ids, rule fingerprints) are for "
+        "joins, not answers.\n"
     ),
     (
-        "Severity is one of Critical, High, Medium, or Low — present in that order, leading with "
-        "Critical. Quality dimensions (Completeness, Validity, and so on) are the steward's "
-        "business framing; prefer them when summarising what kind of quality problem exists.\n"
+        "Severity is Critical, High, Medium, or Low: present in that order, leading with Critical; "
+        "prefer quality dimensions (Completeness, Validity, ...) when framing what kind of problem "
+        "exists. Unqualified 'severity' means the APPLIED severity the check ran with (on "
+        "v_dq_check_results / v_dq_check_attribution / mv_dq_scores, post severity_override); "
+        "dim_dq_rules.default_severity is the rule's own authored default — use it only for rule "
+        "defaults, authoring, or drift questions.\n"
     ),
     (
-        "When the steward asks about severity without qualification, they mean the APPLIED severity "
-        "the check actually ran with — the value on v_dq_check_results, v_dq_check_attribution, and "
-        "mv_dq_scores (already reflecting any per-application severity_override). dim_dq_rules."
-        "default_severity is a DIFFERENT thing: the rule's own DEFAULT severity tag as authored, not "
-        "what ran on any table. Surface or compare default_severity only when the question is about "
-        "rule defaults, rule authoring, or the drift between a rule's default and what actually ran; "
-        "for everything else use the applied severity.\n"
+        "A rule applied to several columns fans out into one check per column, sharing rule_name "
+        "and registry_rule_id and differing only in check_name (suffixed with the column). Report "
+        "such a rule ONCE by rule_name and treat the per-column checks as its rollup "
+        "(COUNT(DISTINCT check_name) is how many columns it covers); group across runs on "
+        "registry_rule_id where present (fall back to check_name when NULL) and display the newest "
+        "run's check_name. Never present a suffixed check_name as a separate rule.\n"
     ),
     (
-        "A rule's check_name is its display name AS OF each run and can change when the rule is "
-        "renamed; registry_rule_id is the rule's stable identity. When grouping or comparing "
-        "rules ACROSS runs, group by registry_rule_id where it is present (fall back to "
-        "check_name when it is NULL) and display the check_name from the newest run.\n"
+        "Results carry a run_mode of published or draft. Never include draft-run data unless the "
+        "question explicitly asks for drafts: filter to published runs by default, and say which "
+        "you used when it matters.\n"
     ),
     (
-        "Results carry a run_mode of published or draft. Never include draft-run data in an "
-        "answer unless the question explicitly asks for drafts: filter to published runs by "
-        "default, and say which you used when it matters.\n"
-    ),
-    (
-        "The message may name its subject: `(Table: <fqn>)` scopes to that table; "
+        "Route on the message preamble. `(Table: <fqn>)` scopes to that table. "
         "`(Data product: <name> — tables: ...)` scopes to those member tables, and the product's "
-        "headline score is the mean of its member tables' pass rates, not the pooled rate. For "
-        "the average over time, read v_dq_check_results_asof (filtered NOT include_drafts): it "
-        "already carries, at each run instant (as_of_time), every table's most recent published "
-        "run at-or-before that instant, so group by as_of_time and input_location for per-table "
-        "rates and average those, scoped with input_location IN (the member tables). Without a "
-        "subject, answer across all tables.\n"
+        "headline is the MEAN of member tables' pass rates (not the pooled rate): read "
+        "v_dq_check_results_asof (NOT include_drafts) grouped by as_of_time and input_location for "
+        "per-table rates, scoped with input_location IN the members, and average those. "
+        "`(Rule: <name>)` scopes every metric to that ONE registry rule across all its "
+        "tables/columns — filter rule_name, group on registry_rule_id, and report its pooled pass "
+        "rate recomputed from summed failed/total over each table's latest published run. Without "
+        "a subject, answer across all tables.\n"
     ),
     (
-        "The subject may instead be a single rule: `(Rule: <name>)` scopes every metric to that "
-        "ONE registry rule across all the tables and columns it runs on. Key the scope on the "
-        "rule itself — filter rule_name to the named rule, and group on registry_rule_id (the "
-        "rule's STABLE identity) when comparing across runs or renames — never on check_name, "
-        "because a rule applied to several columns fans out into one check_name per column. A "
-        "rule spans multiple tables, so report its headline pass rate as the pooled rate "
-        "recomputed from the summed failed and total tests over each table's latest published "
-        "run (not an average of per-table rates), and break the answer down by table "
-        "(input_location) and, from the exploded columns array, by column. mv_dq_scores carries "
-        "rule_name and registry_rule_id dimensions for the flat per-table rollup; read the "
-        "shaping view v_dq_check_results for per-column attribution.\n"
+        "A check breaches when its run pass rate (1 - (error_count + warning_count) / "
+        "input_row_count) falls below the pass_threshold frozen into that run — a 0-100 percent on "
+        "v_dq_check_results (NULL = not judged, excluded). List breaches worst-first with pass rate "
+        "and threshold. There is otherwise no target or SLA: report rates without judging them "
+        "against an invented goal, attribute what you can see, and say plainly when a cause (such as "
+        "an upstream data change) is outside what you can observe.\n"
     ),
     (
-        "A check breaches when its pass rate for a run falls below its pass_threshold — the "
-        "effective threshold frozen into that run, a percentage from 0 to 100 on "
-        "v_dq_check_results (NULL for legacy runs predating the stamp, which cannot be judged "
-        "and are excluded). Compute a check's pass rate as 1 - (error_count + warning_count) / "
-        "input_row_count and treat it as breached when that falls below pass_threshold / 100. "
-        "When asked which checks breached, list them worst-first with their pass rate and their "
-        "threshold, and note that checks with no recorded threshold are not evaluated.\n"
+        "To explain a change (in either direction — don't assume a drop), compute the contributors "
+        "before concluding and name each material one unprompted with its category and magnitude — "
+        "never settle for reporting that something happened. Compare the latest run with the most "
+        "recent prior run whose value differs, pair rules by registry_rule_id where present "
+        "(check_name otherwise), rank by the change in failed tests, and cite the run date and time "
+        "of both runs (curr_run_ts / prev_run_ts). The contributor categories: rules added (a check "
+        "evaluated for the first time — not one that passed before), rules removed, rules renamed "
+        "(same registry_rule_id, new check_name — a rename, not an add), rule definitions changed "
+        "(same rule, different mapped columns), failure-rate changes, and test-volume changes (more "
+        "or less data at a steady rate). For a definition change, name the columns gained/lost "
+        "(added_columns / removed_columns) and how the count moved (prev_column_count to "
+        "curr_column_count) — applying a rule to more columns runs more checks and can lower the "
+        "score with no failure-rate spike. Say which dimension or severity moved most; if no prior "
+        "run differs, say quality has been stable over the available history.\n"
     ),
     (
-        "To explain a change in score — in either direction, and whenever asked how or why it "
-        "changed — always compute the contributors before concluding, and name each material one "
-        "unprompted with its category and magnitude: the data can almost always say what changed, "
-        "so never settle for reporting that something happened. Compare the latest run with the "
-        "most recent prior run whose value differs, pairing rules by identity — registry_rule_id "
-        "where present, check_name otherwise. Name WHEN the change appeared: state the run date "
-        "and time of both runs being compared — the decomposition returns them as curr_run_ts and "
-        "prev_run_ts — so a change is never just 'since the last run' without its actual "
-        "timestamps. The contributor categories: rules added (no prior "
-        "value — a check evaluated for the first time, not one that passed before), rules removed, "
-        "rules renamed (the same registry_rule_id under a new check_name — a rename, not an add), "
-        "rule definitions changed (same rule, different mapped columns), failure-rate changes (a "
-        "rule's failed share of tests moved), and test-volume changes (more or less data evaluated "
-        "at a steady rate). The curated decomposition already categorizes every rule this way — "
-        "reuse it for any change or why question, organize the prose by category, and when "
-        "contributors span several dimensions or severities, say which dimension or severity "
-        "moved most. For a rule definitions changed contributor, be concrete about the structural "
-        "change: name the specific columns added and removed (added_columns / removed_columns) and "
-        "state how the mapped-column count moved (prev_column_count to curr_column_count), because "
-        "applying a rule to more columns runs more checks and can lower the score even when each "
-        "check's own failure rate is unchanged — this, not a spike in failures, is often why the "
-        "score fell. If no prior run differs, say the score has been stable over the available "
-        "history.\n"
+        "To show or list failed rows, query v_dq_failing_rows for the table's latest published run "
+        "(run_id from v_dq_check_results, ORDER BY run_time DESC LIMIT 1) and return one row per "
+        "failing record as to_json(row_data) — never the wrapper columns (quarantine_id, errors, "
+        "warnings); read errors/warnings only for the prose. Failing records are per-run: show a "
+        "different run only when the steward names a specific one. An empty result may mean the "
+        "steward has not opened that table in DQX Studio, where access is verified.\n"
     ),
     (
-        "There is no target or SLA in this data: report rates and changes without judging them "
-        "against a goal, attribute what you can see to the rule, table, column, dimension, or "
-        "severity in front of you, and say plainly when a cause (such as an upstream data change) "
-        "is outside what you can observe.\n"
-    ),
-    (
-        "When asked to show or list the rows or records that failed, query v_dq_failing_rows for "
-        "that table and return one row per failing record with the record's own values — select "
-        "to_json(row_data) so the whole record appears in one cell — never the internal wrapper "
-        "columns (quarantine_id, errors, warnings). Read errors and warnings only to explain in "
-        "prose which rules failed and why, describing the failure pattern once rather than "
-        "re-listing rows the table already shows. Failing records are per-run: scope to the "
-        "table's latest published run via its run_id from v_dq_check_results (ORDER BY run_time "
-        "DESC LIMIT 1), and show a different run only when the steward asks for a specific one. "
-        "The view returns rows only for tables whose access the asking steward has recently "
-        "verified: an empty result may simply mean they have not opened that table in DQX "
-        "Studio, where access is verified.\n"
-    ),
-    (
-        "Keep answers short and write prose as short paragraphs, not lists: bullets are only for "
-        "genuine multi-item breakdowns, never for narrative. Define a term briefly if the steward "
-        "may not know it. Each sentence should add something new — a number, a cause, a "
-        "definition, or a next step — and when there is nothing more to add, stop.\n"
-    ),
-    (
-        "A rule applied to several columns fans out into one check per column: "
-        "those checks share the rule's name (the `rule_name` field) and its "
-        "`registry_rule_id`, differing only in `check_name` (suffixed with the "
-        "column). Report such a rule ONCE by its `rule_name`, and treat the "
-        "per-column checks as its rollup — `COUNT(DISTINCT check_name)` is how "
-        "many columns it covers and the exploded `columns` array attributes "
-        "failures to each. Never present the suffixed `check_name` as a separate "
-        "rule.\n"
+        "Keep answers to short paragraphs (bullets only for genuine multi-item breakdowns, never "
+        "narrative), define a term briefly if the steward may not know it, make every sentence add "
+        "something new, and stop when there is nothing more to add.\n"
     ),
 ]
 
@@ -840,12 +790,17 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "ORDER BY pass_rate ASC"
     )
 
-    # --- registry counts over the metadata dim (no run_mode, no score join) ---
-    rules_total = (
-        "SELECT COUNT(*) AS total_rules,\n"
-        "       COUNT_IF(`status` = 'approved') AS approved_rules,\n"
-        "       COUNT_IF(`status` = 'draft') AS draft_rules\n"
-        f"FROM {dim_rules}"
+    # "How many rules do I have" — the acceptance smoke test. Answered from
+    # the metric view as the DISTINCT rules that ran (registry_rule_id) in each
+    # table's LATEST published run, via MEASURE(rule_count). is_latest_run scopes
+    # to the current rule set so rules since removed are NOT counted (a bare
+    # published filter counts every rule that EVER ran — overcounts). The
+    # dim_dq_rules counts below answer the separate AUTHORING questions.
+    rules_have = (
+        "SELECT MEASURE(`rule_count`) AS rules,\n"
+        "       MEASURE(`failed_rule_count`) AS failing_rules\n"
+        f"FROM {mv}\n"
+        "WHERE `run_mode` = 'published' AND `is_latest_run` = true"
     )
 
     rules_added_recently = (
@@ -1175,11 +1130,13 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         # --- registry counts over the metadata dim (no run_mode) ---
         {
             "question": ["How many rules do I have?"],
-            "sql": _lines(rules_total),
+            "sql": _lines(rules_have),
             "usage_guidance": [
-                "Registry rule counts from the dim_dq_rules metadata table: total rules, plus how "
-                "many are approved and how many are still drafts. Not run results — this table "
-                "carries no pass rates."
+                "Distinct rules that have RUN, from mv_dq_scores via MEASURE(rule_count) over "
+                "published runs (registry_rule_id is the stable identity), plus "
+                "MEASURE(failed_rule_count) for how many are failing. Report the rule count as the "
+                "headline. For counts of AUTHORED rules by review status (drafts, approved), read "
+                "dim_dq_rules instead."
             ],
         },
         {
@@ -1391,6 +1348,28 @@ def _sql_snippets(catalog: str, schema: str) -> dict:
                 "period-over-period changes by the change in this."
             ],
         },
+        {
+            "alias": "rule_count",
+            "display_name": "Rule Count",
+            "sql": [f"MEASURE({mv}.`rule_count`)"],
+            "synonyms": ["how many rules", "number of rules", "distinct rules"],
+            "instruction": [
+                "Distinct rules (by stable registry id) that RAN across the grouped rows — the "
+                "answer to 'how many rules do I have' at the run x table grain. Read with "
+                "MEASURE(); GROUP BY rule_name or input_location to break it down. For counts of "
+                "AUTHORED rules by review status instead, read dim_dq_rules."
+            ],
+        },
+        {
+            "alias": "failed_rule_count",
+            "display_name": "Failed Rule Count",
+            "sql": [f"MEASURE({mv}.`failed_rule_count`)"],
+            "synonyms": ["rules failing", "how many rules are failing", "distinct failing rules"],
+            "instruction": [
+                "Distinct rules with at least one failing test across the grouped rows. Read with "
+                "MEASURE(); the answer to 'how many rules are failing'."
+            ],
+        },
     ]
     filters = [
         {
@@ -1588,11 +1567,15 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                     "identifier": mv,
                     "description": [
                         "DQ score metric view: measures score (pass rate, 0-1), failed_tests, "
-                        "and total_tests over dimensions input_location, run_id, run_time, "
-                        "is_latest_run, run_mode, check_name, registry_rule_id (the rule's stable "
-                        "id), rule_name (the underlying rule name — scope to one rule by this), "
-                        "severity, dimension, criticality. Read measures with MEASURE(); group by "
-                        "run_time for trends; filter run_mode = 'published' by default."
+                        "error_tests, warning_tests (active warnings), total_tests, failed_checks, "
+                        "total_checks, rule_count (distinct rules that ran — the answer to 'how many "
+                        "rules'), and failed_rule_count (distinct rules with a failing test) over "
+                        "dimensions input_location, run_id, run_time, is_latest_run, run_mode, "
+                        "pass_threshold (frozen per-run breach threshold, 0-100), binding_version "
+                        "(rule-set version), check_name, registry_rule_id (the rule's stable id), "
+                        "rule_name (the underlying rule name — scope to one rule by this), severity "
+                        "(APPLIED), dimension, criticality. Read every measure with MEASURE(); group "
+                        "by run_time for trends; filter run_mode = 'published' by default."
                     ],
                 }
             ],

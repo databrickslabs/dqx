@@ -2090,7 +2090,7 @@
     "tagPickerDrillIn": "Show {{key}} values",
     "applyToTagButton": "+ Apply to a tag",
     "applyToAnotherTagButton": "+ Apply to another tag",
-    "applyToTagTooltip": "Apply tags to this column to auto-apply this rule to any column of a monitored table with matching tag(s)",
+    "applyToTagTooltip": "By mapping tag(s) to this column, this rule can be auto-applied to tables/columns with matching tag(s)",
     "slotTagRemove": "Remove tag",
     "suggestedColumnsHeading": "Suggested",
     "compatibleColumnsHeading": "Compatible columns",

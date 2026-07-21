@@ -109,6 +109,11 @@ router = APIRouter()
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 
 _RUNS_LIMIT = 50
+# Upper bound on failing-row scans (matches the failed-rows endpoint's
+# ``limit`` ceiling and the UI download cap). Bounds both the preview
+# window and the true-filtered-count pass so neither can pull an unbounded
+# result set on a pathologically large run.
+_FAILED_ROWS_MAX = 100000
 # Fallback swatch for label values missing a configured colour (matches
 # the UI's muted gray).
 _DEFAULT_LABEL_COLOR = "#6B7280"
@@ -297,6 +302,57 @@ def _fetch_failed_records_by_run(
         failed = input_rows - valid_rows if input_rows is not None and valid_rows is not None else None
         out[(fqn, run_id)] = failed if failed is None or failed >= 0 else None
     return out
+
+
+def _count_filtered_failed_rows(
+    sql: SqlExecutor,
+    quarantine_table: str,
+    escaped_fqn: str,
+    run_cond: str,
+    facets: ResultFacets,
+) -> int | None:
+    """True count of a run's failing rows matching the active facets.
+
+    The facet predicates (dimension/severity/rule/column) are evaluated
+    app-side over each row's parsed failure structs — they are not SQL
+    predicates — so the filtered *total* cannot come from the mode-wide
+    ``dq_metrics`` number (that counts every failing row of the run,
+    whatever check failed). This scans the WHOLE run's failure structs
+    (``errors``/``warnings`` only — never the wide ``row_data`` payload)
+    and counts matches, so a capped preview window can't undercount a
+    selective filter. Returns None on any error (the caller then keeps the
+    scan-window count rather than surfacing a wrong headline).
+    """
+    # ORDER BY created_at DESC to MATCH the preview scan's window: both are
+    # capped, so aligning their order guarantees the count covers the same
+    # top-N rows the preview shows — otherwise, on a run larger than the cap,
+    # the two scans could pull disjoint windows and report total < len(rows)
+    # (breaking the "N of M" display).
+    stmt = (
+        f"SELECT to_json(errors) AS errors, to_json(warnings) AS warnings "
+        f"FROM {quarantine_table} WHERE source_table_fqn = '{escaped_fqn}' "  # noqa: S608
+        f"{run_cond}"
+        f"ORDER BY created_at DESC LIMIT {_FAILED_ROWS_MAX}"
+    )
+    try:
+        rows = sql.query_dicts(stmt)
+    except Exception:
+        logger.warning("Filtered failing-row count failed; keeping scan-window total", exc_info=True)
+        return None
+    count = 0
+    for raw in rows:
+        parsed_failures = parse_failures(raw)
+        failed_columns = sorted({c for f in parsed_failures for c in f.columns})
+        if QuarantineSampleService.row_matches_filters(
+            enrich_failures(parsed_failures),
+            failed_columns,
+            dimensions=facets.dimensions,
+            severities=facets.severities,
+            rules=facets.rules,
+            columns=facets.columns,
+        ):
+            count += 1
+    return count
 
 
 def _facets(
@@ -1174,9 +1230,10 @@ def get_dq_results_failed_rows(
 
     facets = _facets(dimension, severity, rule, column)
     # When filters are active, scan a wider window than the page size so a
-    # selective filter can still fill the page; *total* counts the matches
-    # within the scanned window (a lower bound when the window is capped).
-    scan_limit = limit if not facets.any_active() else min(max(limit * 5, 1000), 100000)
+    # selective filter can still fill the page. *total* is corrected to the
+    # TRUE filtered count below (a dedicated count pass), so this window only
+    # governs how many rows the preview itself renders.
+    scan_limit = limit if not facets.any_active() else min(max(limit * 5, 1000), _FAILED_ROWS_MAX)
 
     # (4) SP-side fetch of the precomputed failing rows, with created_at
     # surfaced as the run_ts.
@@ -1241,16 +1298,20 @@ def get_dq_results_failed_rows(
         )
 
     # *total* must reflect the TRUE number of failing records for the
-    # resolved run, not the size of the (capped) preview scan. With NO
-    # active facets, read the run's authoritative distinct failing-row
-    # count from dq_metrics (input_row_count - valid_row_count) so the
-    # "download to view all N" headline is correct even when *rows* is
-    # capped at *limit*. With active facets the filters are applied
-    # app-side over each row's parsed failure structs (not a SQL
-    # predicate), so a true FILTERED count can't come from the mode-wide
-    # metrics number; there *total* stays the count of matches found
-    # within the scanned window (a lower bound when the window is capped)
-    # — the documented pre-existing behaviour.
+    # resolved run — never the size of the (capped) preview scan.
+    #  - No active facets: read the run's authoritative distinct
+    #    failing-row count from dq_metrics (input_row_count -
+    #    valid_row_count) so the "download to view all N" headline is
+    #    correct even when *rows* is capped at *limit*.
+    #  - Active facets: the filters are applied app-side over each row's
+    #    parsed failure structs (not a SQL predicate), so the metrics
+    #    number — which counts EVERY failing row of the run regardless of
+    #    which check failed — would over-report. Instead count the true
+    #    matches across the WHOLE run (a dedicated errors/warnings-only
+    #    scan), not just the capped preview window. Without this the
+    #    filtered headline reported the scan-window match count, a lower
+    #    bound that badly undershot a selective filter on a large run
+    #    (item 63: a single-check filter showed 307 of its real 1183).
     total = len(matched)
     if not facets.any_active() and raw_rows:
         # Every returned row belongs to exactly ONE run (the WHERE clause
@@ -1262,6 +1323,13 @@ def get_dq_results_failed_rows(
             true_total = failed_by_run.get((table_fqn, resolved_run_id))
             if true_total is not None:
                 total = true_total
+    elif facets.any_active() and raw_rows:
+        # len(matched) counts only the capped preview window; count the true
+        # filtered total across the FULL run so a selective filter's headline
+        # isn't a scan-window lower bound.
+        exact = _count_filtered_failed_rows(sp_sql, quarantine_table, e_fqn, run_cond, facets)
+        if exact is not None:
+            total = exact
     return FailedRowsOut(rows=matched[:limit], total=total, suppressed=False)
 
 

@@ -559,10 +559,6 @@ RULES_BY_KEY: dict[str, RuleSpec] = {r.key: r for r in RULES}
 # Referenced by no binding, so they stay UNMAPPED library drafts.
 PENDING_APPROVAL_RULE_KEYS: frozenset[str] = frozenset({"ssn_format"})
 
-# Source table the demo runs the profiler against so the Profile page shows a
-# real ``dq_profiling_results`` row (see ``DemoSeedService._run_profiling``).
-PROFILE_DEMO_TABLE = "customers"
-
 
 # --------------------------------------------------------------------------- #
 # Bindings — which rules apply to which table, with slot -> column mappings.

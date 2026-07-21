@@ -1297,9 +1297,10 @@ def test_ssn_rule_is_unmapped_in_every_binding():
 
 
 def test_run_profiling_submits_job_and_records_result_row():
-    # The profiling phase creates a temp view, submits the profiler Job, records
-    # the RUNNING placeholder, polls dq_profiling_results to a terminal SUCCESS,
-    # then drops the view — producing a real profiler result the Profile page renders.
+    # The profiling phase profiles EVERY demo table: per table it creates a temp
+    # view, submits the profiler Job, records the RUNNING placeholder, polls
+    # dq_profiling_results to terminal SUCCESS, then drops the view — a real
+    # profiler result per table that the Profile page renders (item 64).
     job_service = MagicMock()
     job_service.submit_run.return_value = 9911
     profiler_view = MagicMock()
@@ -1308,18 +1309,23 @@ def test_run_profiling_submits_job_and_records_result_row():
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
     deps["app_sql"].query_dicts.return_value = [{"status": "SUCCESS"}]
 
-    run_id = svc._run_profiling("admin@example.com")
+    run_ids = svc._run_profiling("admin@example.com")
 
-    assert run_id is not None
-    # a view was created over the demo profile table and dropped afterwards
-    profiler_view.create_view.assert_called_once()
-    assert manifest.PROFILE_DEMO_TABLE in profiler_view.create_view.call_args.args[0]
-    profiler_view.drop_view.assert_called_once_with("dqx.dqx_studio_tmp.tmp_view_abc")
-    # the profiler Job was submitted with task_type=profile
+    # one profiler run per demo table (not just one table)
+    n_tables = len(manifest.TABLES)
+    assert len(run_ids) == n_tables
+    assert profiler_view.create_view.call_count == n_tables
+    assert job_service.submit_run.call_count == n_tables
+    # every demo table was profiled (its fqn appears in a create_view call)
+    profiled = {c.args[0] for c in profiler_view.create_view.call_args_list}
+    for spec in manifest.TABLES:
+        assert any(spec.name in fqn for fqn in profiled)
+    # each temp view was dropped
+    assert profiler_view.drop_view.call_count == n_tables
+    # the profiler Job was submitted with task_type=profile, RUNNING placeholder recorded
     assert job_service.submit_run.call_args.kwargs["task_type"] == "profile"
-    # a RUNNING placeholder was recorded into dq_profiling_results
     assert "dq_profiling_results" in job_service.record_run_started.call_args.kwargs["table"]
-    assert job_service.record_run_started.call_args.kwargs["run_id"] == run_id
+    assert job_service.record_run_started.call_args.kwargs["run_id"] in run_ids
 
 
 def test_run_profiling_is_invoked_as_a_phase_of_run():
@@ -1337,7 +1343,8 @@ def test_run_profiling_is_invoked_as_a_phase_of_run():
 
     svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
 
-    job_service.submit_run.assert_called_once()
+    # profiling runs once per demo table
+    assert job_service.submit_run.call_count == len(manifest.TABLES)
     phases = [c.args[0].phase for c in deps["status"].set.call_args_list]
     assert "profile" in phases
     last = deps["status"].set.call_args_list[-1].args[0]
@@ -1348,7 +1355,7 @@ def test_run_profiling_is_a_noop_without_collaborators():
     # With no job service / view service (minimal test graph, no compute), the
     # profiling phase is a logged no-op — it never raises.
     svc, _deps = _svc()  # no job_service / profiler_view
-    assert svc._run_profiling("admin@example.com") is None
+    assert svc._run_profiling("admin@example.com") == []
 
 
 def test_run_profiling_failure_does_not_abort_seed():
@@ -1361,9 +1368,11 @@ def test_run_profiling_failure_does_not_abort_seed():
     svc, deps = _svc(job_service=job_service, profiler_view=profiler_view)
     deps["app_sql"].fqn.side_effect = lambda t: f"dqx.dqx_studio.{t}"
 
-    # must not raise
+    # must not raise — a failing table is logged and skipped, the rest still run,
+    # and each table's temp view is still dropped (finally).
     svc._run_profiling("admin@example.com")
-    profiler_view.drop_view.assert_called_once_with("dqx.dqx_studio_tmp.tmp_view_y")
+    assert profiler_view.drop_view.call_count == len(manifest.TABLES)
+    profiler_view.drop_view.assert_called_with("dqx.dqx_studio_tmp.tmp_view_y")
 
 
 def test_run_profiling_failure_does_not_fail_the_whole_seed():

@@ -38,7 +38,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, Boxes, CheckCircle2, FileDown, GitCompare, Loader2, Play, Plus, RotateCcw, Search, Trash2, Undo2, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileDown, GitCompare, LayoutGrid, Loader2, Play, Plus, RotateCcw, Search, Trash2, Undo2, XCircle } from "lucide-react";
 import {
   useListDataProducts,
   useApproveDataProduct,
@@ -713,13 +713,13 @@ function DataProductsPage() {
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center text-center">
-                {/* Boxes — the same glyph as the Table Spaces sidebar nav, so
-                    the empty state reads as the same feature. Boxes is built
-                    from isometric diagonals at fractional coordinates that
-                    anti-alias softly at 48px / very-low opacity, so we render
-                    it a touch smaller (h-10) and at /50 opacity where its
-                    strokes stay crisp rather than blurring. */}
-                <Boxes className="h-10 w-10 text-muted-foreground/50 mb-3" />
+                {/* LayoutGrid, NOT the Boxes brand glyph: Boxes is built from
+                    isometric diagonals at fractional coordinates that anti-alias
+                    to a blur at these sizes/opacities (the real cause — a prior
+                    transform-clear hypothesis was reverted as wrong, see commit
+                    2fe2cf33 / B2-117). LayoutGrid's axis-aligned rects stay crisp,
+                    matching the Rules/Tables overview empty states. */}
+                <LayoutGrid className="h-12 w-12 text-muted-foreground/30 mb-3" />
                 <p className="text-sm text-muted-foreground">
                   {hasActiveFilters
                     ? t("dataProducts.emptyState")

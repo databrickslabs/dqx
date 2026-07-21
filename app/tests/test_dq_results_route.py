@@ -1385,10 +1385,11 @@ class TestFailedRowsTrueTotal:
         sql_dispatch(sql_mock, quarantine_rows=[quarantine_row("q1")], metrics_rows=[])
         assert client.get(FAILED_ROWS_URL).json()["total"] == 1
 
-    def test_faceted_total_stays_scan_count_and_skips_metrics_read(self, client, sql_mock):
+    def test_faceted_total_skips_metrics_read(self, client, sql_mock):
         # With filters active the true FILTERED count can't come from the
-        # mode-wide metrics number, so total stays the scanned-window match
-        # count and no dq_metrics read is issued.
+        # mode-wide metrics number (it counts EVERY failing row of the run,
+        # whatever check failed), so no dq_metrics read is issued — the count
+        # comes from a dedicated quarantine scan instead.
         sql_mock.query_dicts.return_value = [
             quarantine_row(
                 "q1",
@@ -1398,6 +1399,32 @@ class TestFailedRowsTrueTotal:
         body = client.get(FAILED_ROWS_URL, params={"rule": "c1"}).json()
         assert body["total"] == 1
         assert self._metrics_stmts(sql_mock) == []
+
+    def test_faceted_total_counts_whole_run_not_capped_preview(self, client, sql_mock):
+        # item 63: the filtered headline must be the TRUE count of matching
+        # rows across the whole run — never the capped preview window. The
+        # preview (row_data SELECT, capped at *limit*) returns 1 row; the
+        # dedicated count pass (errors/warnings-only SELECT, no row_data)
+        # sees the full run and reports the real filtered total.
+        preview_rows = [
+            quarantine_row("q1", errors=[{"name": "c1", "message": "m", "columns": ["id"]}]),
+        ]
+        count_rows = [
+            quarantine_row(f"q{i}", errors=[{"name": "c1", "message": "m", "columns": ["id"]}])
+            for i in range(3)
+        ]
+
+        def dispatch(stmt: str, **_kwargs: object) -> list[dict[str, str | None]]:
+            if "dq_quarantine_records" not in stmt:
+                return []
+            # The preview SELECT carries row_data + ORDER BY; the count pass
+            # selects only the failure structs.
+            return preview_rows if "row_data" in stmt else count_rows
+
+        sql_mock.query_dicts.side_effect = dispatch
+        body = client.get(FAILED_ROWS_URL, params={"limit": 1, "rule": "c1"}).json()
+        assert len(body["rows"]) == 1  # preview stays capped at limit
+        assert body["total"] == 3  # true filtered count over the full run
 
     def test_no_rows_yields_zero_total_without_metrics_read(self, client, sql_mock):
         sql_dispatch(sql_mock, quarantine_rows=[])

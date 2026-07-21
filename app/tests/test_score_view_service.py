@@ -360,13 +360,30 @@ class TestMetricViewDdl:
             # untagged legacy runs resolved to 'published' in the
             # shaping view.
             "run_mode": "run_mode",
+            # Frozen per-run pass-threshold and monitored-table (rule set)
+            # version — existing shaping-view columns surfaced for breach
+            # and version drill-down.
+            "pass_threshold": "pass_threshold",
+            "binding_version": "binding_version",
             "check_name": "check_name",
+            # Rule identity — stable id survives renames; rule_name scopes
+            # to one rule.
+            "registry_rule_id": "registry_rule_id",
+            "rule_name": "rule_name",
             # As-of-run attribution dimensions (frozen at materialization
             # time in checks_json — never rewritten by later tag edits).
             "severity": "severity",
             "dimension": "dimension",
             "criticality": "criticality",
         }
+
+    def test_yaml_every_dimension_and_measure_has_a_comment(self, svc):
+        # The comments ARE the Genie grounding — every dim/measure must carry one.
+        body = _yaml_body(svc.metric_view_ddl())
+        for d in body["dimensions"]:
+            assert d.get("comment"), d["name"]
+        for m in body["measures"]:
+            assert m.get("comment"), m["name"]
 
     def test_yaml_measures_match_the_score_formula(self, svc):
         body = _yaml_body(svc.metric_view_ddl())
@@ -376,6 +393,25 @@ class TestMetricViewDdl:
         # TRY_DIVIDE (not /) so a zero/NULL denominator yields NULL —
         # the SQL equivalent of ScoreService's None-when-no-rows.
         assert measures["score"] == "1 - TRY_DIVIDE(SUM(error_count + warning_count), SUM(input_row_count))"
+
+    def test_yaml_carries_the_count_and_severity_split_measures(self, svc):
+        # dqlake-style composing measures that answer authoring/coverage
+        # questions directly. The run-picker names (score/failed_tests/
+        # total_tests) stay; these are additive.
+        body = _yaml_body(svc.metric_view_ddl())
+        measures = {m["name"]: m["expr"] for m in body["measures"]}
+        assert measures["error_tests"] == "SUM(error_count)"
+        assert measures["warning_tests"] == "SUM(warning_count)"
+        # FILTER (WHERE ...) form (docs-preferred over COUNT_IF for metric-view measures).
+        assert measures["failed_checks"] == "COUNT(1) FILTER (WHERE (error_count + warning_count) > 0)"
+        # COUNT(check_name) so a no-check placeholder run reports 0, not 1.
+        assert measures["total_checks"] == "COUNT(check_name)"
+        # "How many rules do I have" — the acceptance smoke test.
+        assert measures["rule_count"] == "COUNT(DISTINCT registry_rule_id)"
+        assert (
+            measures["failed_rule_count"]
+            == "COUNT(DISTINCT registry_rule_id) FILTER (WHERE (error_count + warning_count) > 0)"
+        )
 
 
 class TestEnsureViews:

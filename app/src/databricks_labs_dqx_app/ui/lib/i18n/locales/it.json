@@ -2090,7 +2090,7 @@
     "tagPickerDrillIn": "Mostra i valori di {{key}}",
     "applyToTagButton": "+ Applica a un tag",
     "applyToAnotherTagButton": "+ Applica a un altro tag",
-    "applyToTagTooltip": "Applica dei tag a questa colonna per applicare automaticamente questa regola a qualsiasi colonna di una tabella monitorata con tag corrispondenti",
+    "applyToTagTooltip": "Mappando dei tag su questa colonna, questa regola può essere applicata automaticamente a tabelle/colonne con tag corrispondenti",
     "slotTagRemove": "Rimuovi tag",
     "suggestedColumnsHeading": "Suggerite",
     "compatibleColumnsHeading": "Colonne compatibili",
