@@ -117,10 +117,11 @@ export function toggleFacet(
   return { ...filters, [facet]: next };
 }
 
-/** undefined when the array is empty, else the array — so an empty facet is
- *  omitted from the query params (and stays backward-compatible). */
-function orUndef(values: string[]): string[] | undefined {
-  return values.length ? values : undefined;
+/** undefined when the array is empty or absent, else the array — so an empty
+ *  (or not-yet-present) facet is omitted from the query params and stays
+ *  backward-compatible with older/partial filter objects. */
+function orUndef(values: string[] | undefined): string[] | undefined {
+  return values && values.length ? values : undefined;
 }
 
 /** The facet chips → query params mapping shared by every FILTERED query on

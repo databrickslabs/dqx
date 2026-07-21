@@ -130,6 +130,8 @@ describe("facetQueryParams (facet chips → query params, per box)", () => {
     rule: [],
     column: ["amount"],
     table: [],
+    catalog: [],
+    schema: [],
     runId: "run-1",
   };
 
@@ -140,6 +142,8 @@ describe("facetQueryParams (facet chips → query params, per box)", () => {
       rule: undefined,
       column: ["amount"],
       table: undefined,
+      catalog: undefined,
+      schema: undefined,
     });
   });
 
@@ -166,6 +170,8 @@ describe("facetQueryParams (facet chips → query params, per box)", () => {
       "rule",
       "column",
       "table",
+      "catalog",
+      "schema",
     ]);
   });
 
