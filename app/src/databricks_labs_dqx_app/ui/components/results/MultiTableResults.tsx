@@ -435,9 +435,21 @@ export function MultiTableResultsSection({
     filters.severity.length > 0 ||
     filters.rule.length > 0 ||
     filters.column.length > 0 ||
-    filters.table.length > 0;
+    filters.table.length > 0 ||
+    filters.catalog.length > 0 ||
+    filters.schema.length > 0;
 
-  const accessibleTableCount = (baseResults?.by_table ?? []).length;
+  // The score label's "against N tables" count reflects the CURRENT scope:
+  // when any facet is active it counts the tables actually in the filtered
+  // result (so narrowing catalog/schema/table live-updates N), falling back to
+  // the full accessible set when nothing is filtered. by_table self-excludes
+  // the table facet, so re-apply it here the same way sumTestCounts does.
+  const filteredTableRows = (results?.by_table ?? []).filter(
+    (g) => filters.table.length === 0 || (g.label != null && filters.table.includes(g.label)),
+  );
+  const accessibleTableCount = hasActiveFilter
+    ? filteredTableRows.length
+    : (baseResults?.by_table ?? []).length;
   // By table shows the FRIENDLY table name (last FQN segment), so the selection
   // is keyed on that. Map it back to the full FQN to resolve the table.
   const fqnByFriendly = new Map(
