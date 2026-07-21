@@ -37,6 +37,29 @@ export interface AggregatedRowAst {
 
 export type AnyRow = RowAst | AggregatedRowAst;
 
+/**
+ * A condition value that references another COLUMN instead of holding a
+ * literal (item 42). `$col` is the referenced column's name — a declared slot
+ * (plain name → `{{name}}` at compile time) or a joined-table column
+ * (`table.col`, emitted raw). A value box holds EITHER a literal (bare scalar /
+ * array / object, as before) OR one of these — never a mix. Additive: literal
+ * values stay bare scalars, so existing ASTs are unchanged.
+ */
+export interface ColumnRefValue {
+  $col: string;
+}
+
+/** True when a condition value (or a `between` bound / `in` entry) is a column
+ *  reference rather than a literal. */
+export function isColumnRef(v: unknown): v is ColumnRefValue {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    typeof (v as Record<string, unknown>).$col === "string" &&
+    (v as ColumnRefValue).$col.length > 0
+  );
+}
+
 export interface JoinKeyAst {
   joined_column: string;
   column_ref: string;
