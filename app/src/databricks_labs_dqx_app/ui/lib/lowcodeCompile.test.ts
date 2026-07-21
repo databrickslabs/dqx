@@ -9,7 +9,7 @@ import {
 } from "./lowcodeCompile";
 import type { LowcodeColumnRef } from "./lowcodeCompile";
 import type { AnyRow, JoinAst, LowcodeAstV2 } from "./lowcodeAst";
-import { OPERATORS_BY_FAMILY } from "./lowcodeOperators";
+import { OPERATORS_BY_FAMILY, operatorAllowsColumnRef } from "./lowcodeOperators";
 
 // Unit tests for the low-code -> SQL compiler. This is the sole guard against
 // the class of bug that shipped the Advanced (joins / group-by) paths broken:
@@ -578,4 +578,41 @@ test("item42: a column-ref value survives JSON round-trip and still compiles", (
   const original = ast([row({ column_ref: "amount", operator: ">=", value: { $col: "credit_limit" } })]);
   const rehydrated = JSON.parse(JSON.stringify(original)) as typeof original;
   expect(compileAstToSql(rehydrated)).toBe("{{amount}} >= {{credit_limit}}");
+});
+
+describe("operatorAllowsColumnRef", () => {
+  test("returns true for column-enabled single-value operators", () => {
+    expect(operatorAllowsColumnRef("<")).toBe(true);
+    expect(operatorAllowsColumnRef("<=")).toBe(true);
+    expect(operatorAllowsColumnRef(">")).toBe(true);
+    expect(operatorAllowsColumnRef(">=")).toBe(true);
+    expect(operatorAllowsColumnRef("=")).toBe(true);
+    expect(operatorAllowsColumnRef("!=")).toBe(true);
+    expect(operatorAllowsColumnRef("equals")).toBe(true);
+    expect(operatorAllowsColumnRef("not equals")).toBe(true);
+    expect(operatorAllowsColumnRef("before")).toBe(true);
+    expect(operatorAllowsColumnRef("after")).toBe(true);
+    expect(operatorAllowsColumnRef("on or before")).toBe(true);
+    expect(operatorAllowsColumnRef("on or after")).toBe(true);
+  });
+
+  test("returns true for range and set operators (column-enabled bounds/entries)", () => {
+    expect(operatorAllowsColumnRef("between")).toBe(true);
+    expect(operatorAllowsColumnRef("length between")).toBe(true);
+    expect(operatorAllowsColumnRef("in")).toBe(true);
+    expect(operatorAllowsColumnRef("not in")).toBe(true);
+  });
+
+  test("returns false for literal-only operators (LIKE / regex / length predicates)", () => {
+    expect(operatorAllowsColumnRef("contains")).toBe(false);
+    expect(operatorAllowsColumnRef("does not contain")).toBe(false);
+    expect(operatorAllowsColumnRef("starts with")).toBe(false);
+    expect(operatorAllowsColumnRef("ends with")).toBe(false);
+    expect(operatorAllowsColumnRef("matches regex")).toBe(false);
+    expect(operatorAllowsColumnRef("does not match regex")).toBe(false);
+    expect(operatorAllowsColumnRef("has length")).toBe(false);
+    expect(operatorAllowsColumnRef("is longer than")).toBe(false);
+    expect(operatorAllowsColumnRef("is shorter than")).toBe(false);
+    expect(operatorAllowsColumnRef("is a multiple of")).toBe(false);
+  });
 });

@@ -7,7 +7,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Plus, X } from "lucide-react";
-import { valueCellShape, VALIDITY_TYPES, type Family } from "@/lib/lowcodeOperators";
+import { valueCellShape, operatorAllowsColumnRef, VALIDITY_TYPES, type Family } from "@/lib/lowcodeOperators";
 import type { LowcodeColumnRef } from "@/lib/lowcodeCompile";
 import { isColumnRef, type ColumnRefValue } from "@/lib/lowcodeAst";
 
@@ -37,6 +37,13 @@ const VALUE_INPUT_CLASS = "h-8 w-full min-w-0 font-mono text-xs md:text-xs";
  * 42). Typing `{` opens a family-filtered column autocomplete; picking a column
  * commits a ColumnRefValue and the box renders as a chip (✕ clears back to a
  * literal). The whole box is literal-XOR-column — never a mixed expression.
+ *
+ * When `allowColumnRef` is false the column-picker is entirely disabled: no `{`
+ * trigger, no Popover, no column autocomplete. The box behaves as a plain
+ * literal input identical to pre-item-42 behaviour. This must be passed for
+ * operators whose compiler path (`rowSql`) uses `quote()`/`likeLiteral()` rather
+ * than `valueSql()` — those operators cannot honour a column reference and would
+ * silently emit `[object Object]` into the generated SQL.
  */
 function ColumnAwareInput({
   value,
@@ -45,6 +52,7 @@ function ColumnAwareInput({
   declaredColumns,
   type = "text",
   placeholder,
+  allowColumnRef = true,
 }: {
   value: unknown;
   onChange: (next: unknown) => void;
@@ -52,6 +60,7 @@ function ColumnAwareInput({
   declaredColumns: LowcodeColumnRef[];
   type?: "text" | "number" | "date";
   placeholder?: string;
+  allowColumnRef?: boolean;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -62,7 +71,7 @@ function ColumnAwareInput({
     (c) => family === "ANY" || c.family === "ANY" || c.family === family,
   );
 
-  if (isColumnRef(value)) {
+  if (allowColumnRef && isColumnRef(value)) {
     return (
       <Badge
         variant="secondary"
@@ -81,7 +90,26 @@ function ColumnAwareInput({
     );
   }
 
-  const text = value == null ? "" : String(value);
+  // When allowColumnRef is false (or value was a stale column ref from a
+  // prior operator), treat the value as a plain literal string.
+  const text = isColumnRef(value) ? "" : value == null ? "" : String(value);
+
+  if (!allowColumnRef) {
+    // Plain literal input — no Popover, no `{` interception. Byte-identical to
+    // the pre-item-42 input for operators the compiler treats as literal-only.
+    return (
+      <Input
+        type={type}
+        value={text}
+        placeholder={placeholder}
+        className={VALUE_INPUT_CLASS}
+        onChange={(e) => {
+          const v = e.target.value;
+          onChange(type === "number" ? Number(v) : v);
+        }}
+      />
+    );
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -141,6 +169,7 @@ function ColumnAwareInput({
 export function ValueCell({ operator, family, value, onChange, declaredColumns }: Props) {
   const { t } = useTranslation();
   const shape = valueCellShape(operator, family);
+  const colRefAllowed = operatorAllowsColumnRef(operator);
 
   if (shape.kind === "none") {
     // Operators like "is null" / "is not null" take no value — render an empty
@@ -156,6 +185,7 @@ export function ValueCell({ operator, family, value, onChange, declaredColumns }
         family={family}
         declaredColumns={declaredColumns ?? []}
         type={shape.type}
+        allowColumnRef={colRefAllowed}
       />
     );
   }
@@ -175,6 +205,7 @@ export function ValueCell({ operator, family, value, onChange, declaredColumns }
           family={family}
           declaredColumns={declaredColumns ?? []}
           placeholder={t("rulesRegistry.lowcodeMinPlaceholder")}
+          allowColumnRef={colRefAllowed}
         />
         <span className="text-xs text-muted-foreground">…</span>
         <ColumnAwareInput
@@ -183,6 +214,7 @@ export function ValueCell({ operator, family, value, onChange, declaredColumns }
           family={family}
           declaredColumns={declaredColumns ?? []}
           placeholder={t("rulesRegistry.lowcodeMaxPlaceholder")}
+          allowColumnRef={colRefAllowed}
         />
       </div>
     );
@@ -195,6 +227,7 @@ export function ValueCell({ operator, family, value, onChange, declaredColumns }
         onChange={onChange}
         family={family}
         declaredColumns={declaredColumns ?? []}
+        allowColumnRef={colRefAllowed}
       />
     );
   }
@@ -251,11 +284,13 @@ function ChipInput({
   onChange,
   family,
   declaredColumns,
+  allowColumnRef = true,
 }: {
   value: unknown;
   onChange: (v: unknown) => void;
   family: Family;
   declaredColumns: LowcodeColumnRef[];
+  allowColumnRef?: boolean;
 }) {
   const { t } = useTranslation();
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -303,6 +338,12 @@ function ChipInput({
   };
 
   const addColumn = (name: string) => {
+    // Skip if this column ref is already present — prevents duplicate {$col}
+    // chips and a shared React key warning.
+    if (columnRefs.some((c) => c.$col === name)) {
+      setPickerOpen(false);
+      return;
+    }
     // Rebuild the literals from the current buffer so an uncommitted edit is
     // not lost, then append the new column reference.
     const parts = text
@@ -323,7 +364,7 @@ function ChipInput({
 
   return (
     <div className="flex w-full min-w-0 flex-wrap items-center gap-1">
-      {columnRefs.map((c) => (
+      {allowColumnRef && columnRefs.map((c) => (
         <Badge
           key={c.$col}
           variant="secondary"
@@ -351,7 +392,7 @@ function ChipInput({
         placeholder={t("rulesRegistry.lowcodeChipPlaceholder")}
         className={VALUE_INPUT_CLASS}
       />
-      <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+      {allowColumnRef && <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
         <PopoverTrigger asChild>
           <Button
             type="button"
@@ -383,7 +424,7 @@ function ChipInput({
             </CommandList>
           </Command>
         </PopoverContent>
-      </Popover>
+      </Popover>}
     </div>
   );
 }
