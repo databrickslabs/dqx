@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { OperatorDropdown } from "./OperatorDropdown";
 import { ValueCell } from "./ValueCell";
 import { AggregatedFieldArea } from "./AggregatedFieldArea";
-import { aggregateOutputFamily, type Family } from "@/lib/lowcodeOperators";
+import { aggregateOutputFamily, operatorValidForFamily, type Family } from "@/lib/lowcodeOperators";
 import type { AnyRow, Combinator } from "@/lib/lowcodeAst";
 import type { LowcodeColumnRef } from "@/lib/lowcodeCompile";
 
@@ -138,11 +138,24 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
             <SelectValue placeholder={t("rulesRegistry.lowcodeColumnPlaceholder")} />
           </SelectTrigger>
           <SelectContent>
-            {declaredColumns.map((c) => (
-              <SelectItem key={c.name} value={c.name} className="font-mono text-xs">
-                {c.name.includes(".") ? c.name : `{{${c.name}}}`}
-              </SelectItem>
-            ))}
+            {declaredColumns
+              // Once an operator/function is chosen, only offer columns whose
+              // family supports it — so you can't pick a column the operator
+              // can't run on (e.g. swap a datetime column for a boolean one
+              // under a `>` comparison). Before an operator is chosen, every
+              // column is offered. The currently-selected column stays visible
+              // regardless, so its Select value never orphans.
+              .filter(
+                (c) =>
+                  !row.operator ||
+                  c.name === row.column_ref ||
+                  operatorValidForFamily(row.operator, c.family),
+              )
+              .map((c) => (
+                <SelectItem key={c.name} value={c.name} className="font-mono text-xs">
+                  {c.name.includes(".") ? c.name : `{{${c.name}}}`}
+                </SelectItem>
+              ))}
           </SelectContent>
         </Select>
       ) : (
