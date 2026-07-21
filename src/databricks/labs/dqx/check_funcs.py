@@ -1623,12 +1623,7 @@ def sql_query(
         # To retain the original records we need to join back to the input DataFrame.
         # Therefore, applying this check multiple times at once can potentially lead to long spark plans.
         # When applying large number of sql query checks, it may be beneficial to split it into separate runs.
-        joined_df = df.join(user_query_df_unique, on=merge_columns, how="left")
-
-        # we only care about original columns + condition
-        result_df = joined_df.select(*[joined_df[col] for col in df.columns], joined_df[unique_condition_column])
-
-        return result_df
+        return _join_results_on_null_safe_columns(df, user_query_df_unique, merge_columns, [unique_condition_column])
 
     if negate:
         message_expr = F.lit(msg) if msg else F.lit(f"Value is matching query: '{query}'")
@@ -1991,7 +1986,7 @@ def has_no_aggr_outliers(
         # Step 5: join current bucket + stats (left-join so current bucket always survives)
         if group_by:
             join_keys = [c if isinstance(c, str) else get_column_name_or_alias(c) for c in group_by]
-            joined = current.join(stats, on=join_keys, how="left")
+            joined = _join_results_on_null_safe_columns(current, stats, join_keys, ["__dq_mu", "__dq_sigma", "__dq_n"])
         else:
             # Use a dummy-key left-join so the current bucket row survives even when stats
             # is empty (e.g. only 1 bucket of data → hist is empty → stats has 0 rows).
@@ -2037,7 +2032,7 @@ def has_no_aggr_outliers(
         select_cols = [condition_col, msg_col]
         if group_by:
             join_keys = [c if isinstance(c, str) else get_column_name_or_alias(c) for c in group_by]
-            return df.join(result.select(*join_keys, *select_cols), on=join_keys, how="left")
+            return _join_results_on_null_safe_columns(df, result, join_keys, select_cols)
         return df.crossJoin(result.select(*select_cols))
 
     # Build alias
@@ -2922,6 +2917,20 @@ def _match_rows(
     return results
 
 
+def _join_results_on_null_safe_columns(
+    df: DataFrame, result_df: DataFrame, join_columns: list[str], result_columns: list[str]
+) -> DataFrame:
+    """Left-join computed result columns while matching null join keys."""
+    joined = _match_rows(
+        df.alias("df"),
+        result_df.alias("ref_df"),
+        join_columns,
+        join_columns,
+        check_missing_records=False,
+    )
+    return joined.select("df.*", *[F.col(f"ref_df.{column}").alias(column) for column in result_columns])
+
+
 def _add_row_diffs(
     df: DataFrame, pk_column_names: list[str], ref_pk_column_names: list[str], row_missing_col: str, row_extra_col: str
 ) -> DataFrame:
@@ -3374,7 +3383,7 @@ def _is_aggr_compare(
                 # Note: Aliased Column expressions in group_by are not supported for window-incompatible
                 # aggregates (e.g., count_distinct). Use string column names or simple F.col() expressions.
                 join_cols = [col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by]
-                df = df.join(agg_df, on=join_cols, how="left")
+                df = _join_results_on_null_safe_columns(df, agg_df, join_cols, [metric_col])
             else:
                 # Use standard window function approach for window-compatible aggregates
                 window_spec = Window.partitionBy(*group_cols)
