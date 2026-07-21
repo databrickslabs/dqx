@@ -638,11 +638,32 @@ function ConditionSelector({
                 <CommandEmpty>
                   <span className="text-xs text-muted-foreground">{t("rulesRegistry.noMatches")}</span>
                 </CommandEmpty>
-                {/* SQL checks live INSIDE Basic Checks (not at the root), styled
-                    like the native checks below. Single- vs cross-table SQL
-                    differ only by whether the author writes JOINs — there is a
-                    single `sql` mode — so both divert to onSelect({ type: "sql" }).
-                    Purely for discoverability (item 40). */}
+                {grouped.map(([category, fns]) => (
+                  <CommandGroup key={category} heading={category} className={COMMAND_GROUP_HEADING_CLASS}>
+                    {fns.map((fn) => (
+                      <CommandItem
+                        key={fn.name}
+                        value={fn.name}
+                        onSelect={() => {
+                          onSelect({ type: "native", fnName: fn.name });
+                          setOpen(false);
+                        }}
+                        className="items-start gap-2 text-xs"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="font-medium">{fn.label}</span>
+                          {fn.doc && (
+                            <span className="block text-[10px] text-muted-foreground truncate">{fn.doc}</span>
+                          )}
+                        </span>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                ))}
+                {/* SQL checks live INSIDE Basic Checks, at the END alongside the
+                    "Other" group (item 61). Single- vs cross-table SQL differ only
+                    by whether the author writes JOINs — one `sql` mode — so both
+                    divert to onSelect({ type: "sql" }); here for discoverability. */}
                 <CommandGroup heading={t("rulesRegistry.coreSql")} className={COMMAND_GROUP_HEADING_CLASS}>
                   <CommandItem
                     value="__sql_single_table__"
@@ -677,28 +698,6 @@ function ConditionSelector({
                     </span>
                   </CommandItem>
                 </CommandGroup>
-                {grouped.map(([category, fns]) => (
-                  <CommandGroup key={category} heading={category} className={COMMAND_GROUP_HEADING_CLASS}>
-                    {fns.map((fn) => (
-                      <CommandItem
-                        key={fn.name}
-                        value={fn.name}
-                        onSelect={() => {
-                          onSelect({ type: "native", fnName: fn.name });
-                          setOpen(false);
-                        }}
-                        className="items-start gap-2 text-xs"
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="font-medium">{fn.label}</span>
-                          {fn.doc && (
-                            <span className="block text-[10px] text-muted-foreground truncate">{fn.doc}</span>
-                          )}
-                        </span>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                ))}
               </>
             )}
 
