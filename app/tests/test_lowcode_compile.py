@@ -186,89 +186,9 @@ class TestCompileLowcodeBody:
             }
         ]
         body = compile_lowcode_body(_ast([_row(column_ref="cat.sch.dim.valid", operator="is not null")], joins), "")
-        # join-key refs are qualified to {{input_view}} so the SELECT and ON clause
-        # are unambiguous when the joined table also has a column named dim_id.
-        assert body.merge_columns == ["{{input_view}}.{{dim_id}}"]
+        assert body.merge_columns == ["{{dim_id}}"]
         assert body.sql_query is not None
-        assert "LEFT JOIN cat.sch.dim ON cat.sch.dim.id = {{input_view}}.{{dim_id}}" in body.sql_query
-
-
-class TestJoinQualification:
-    """Own-table columns must be qualified to ``{{input_view}}`` when joins are
-    present so Spark can resolve them unambiguously (AMBIGUOUS_REFERENCE fix)."""
-
-    def test_own_columns_qualified_to_input_view_when_join_present(self):
-        ast = {
-            "rows": [{"kind": "row", "column_ref": "customer_id", "operator": ">", "value": 0}],
-            "joins": [
-                {
-                    "target_table": "dqx.dqx_studio_demo.customers",
-                    "join_type": "INNER",
-                    "keys": [{"column_ref": "customer_id", "joined_column": "customer_id"}],
-                }
-            ],
-        }
-        body = compile_lowcode_body(ast, "")
-        q = body.sql_query or ""
-        assert "{{input_view}}.{{customer_id}}" in q  # predicate own column qualified
-        assert "dqx.dqx_studio_demo.customers.customer_id" in q  # joined side stays raw-qualified
-
-    def test_own_columns_bare_when_no_join(self):
-        ast = {"rows": [{"kind": "row", "column_ref": "amount", "operator": ">", "value": 0}], "joins": []}
-        pred = compile_ast_to_sql(ast)
-        assert "{{amount}}" in pred
-        assert "{{input_view}}" not in pred
-
-    def test_joined_table_column_stays_raw_with_join(self):
-        ast = {
-            "rows": [{"kind": "row", "column_ref": "customers.tier", "operator": "=", "value": "'gold'"}],
-            "joins": [
-                {
-                    "target_table": "customers",
-                    "join_type": "INNER",
-                    "keys": [{"column_ref": "customer_id", "joined_column": "customer_id"}],
-                }
-            ],
-        }
-        q = compile_lowcode_body(ast, "").sql_query or ""
-        # dotted column refs are joined-table columns — never double-qualify
-        assert "customers.tier" in q
-        assert "{{input_view}}.{{customers.tier}}" not in q
-
-    def test_col_ref_value_qualified_under_join(self):
-        """A ``$col`` value reference that names an own-table column must also be
-        qualified when a join is present (item-42 column-vs-column comparisons)."""
-        ast = {
-            "rows": [{"kind": "row", "column_ref": "amount", "operator": "<", "value": {"$col": "limit"}}],
-            "joins": [
-                {
-                    "target_table": "limits",
-                    "join_type": "LEFT",
-                    "keys": [{"column_ref": "customer_id", "joined_column": "customer_id"}],
-                }
-            ],
-        }
-        q = compile_lowcode_body(ast, "").sql_query or ""
-        assert "{{input_view}}.{{amount}}" in q
-        assert "{{input_view}}.{{limit}}" in q
-
-    def test_join_key_refs_in_select_are_qualified(self):
-        """The SELECT and merge_columns for a join-only rule must list qualified
-        key refs so the materializer merges on the right (unambiguous) column."""
-        joins = [
-            {
-                "join_type": "INNER",
-                "target_table": "ref_table",
-                "keys": [{"column_ref": "order_id", "joined_column": "id"}],
-            }
-        ]
-        body = compile_lowcode_body(
-            {"rows": [{"kind": "row", "column_ref": "status", "operator": "is not null", "value": None}], "joins": joins},
-            "",
-        )
-        assert body.merge_columns == ["{{input_view}}.{{order_id}}"]
-        assert body.sql_query is not None
-        assert "SELECT {{input_view}}.{{order_id}}" in body.sql_query
+        assert "LEFT JOIN cat.sch.dim ON cat.sch.dim.id = {{dim_id}}" in body.sql_query
 
 
 class TestUsabilityAndTokens:

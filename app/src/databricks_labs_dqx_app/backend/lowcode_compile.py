@@ -181,21 +181,11 @@ _SLOT_TOKEN_SCAN_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
 # --- Value / reference helpers (mirror lowcodeCompile.ts) --------------------
 
 
-def _ref(column: str, qualify: bool = False) -> str:
+def _ref(column: str) -> str:
     """Qualified (dotted) refs name a joined-table column and stay raw; plain
     refs name a declared slot and are wrapped as ``{{name}}`` placeholders the
-    materializer substitutes with the real column.
-
-    When *qualify* is True and the column is unqualified (no ``.`` in the name),
-    the slot is prefixed with ``{{input_view}}.`` so it resolves to the unique
-    input view name at runtime — avoiding ``[AMBIGUOUS_REFERENCE]`` errors when
-    the rule joins to another table that contains a column with the same name.
-    Non-join callers leave *qualify* at its default False so output stays
-    byte-identical to the pre-join form.
-    """
-    if "." in column:
-        return column
-    return f"{{{{input_view}}}}.{{{{{column}}}}}" if qualify else f"{{{{{column}}}}}"
+    materializer substitutes with the real column."""
+    return column if "." in column else f"{{{{{column}}}}}"
 
 
 def _quote(value: object) -> str:
@@ -223,24 +213,20 @@ def _column_ref_name(value: object) -> str | None:
     return None
 
 
-def _value_sql(value: object, qualify: bool = False) -> str:
+def _value_sql(value: object) -> str:
     """Render a comparison RHS operand — a column reference OR a literal.
 
     Mirrors ``valueSql`` in ``lowcodeCompile.ts`` (item 42): a column reference
     ``{"$col": "b"}`` emits ``_ref("b")`` (a plain name -> ``{{b}}`` placeholder,
     a joined-table column -> raw), so one column can be compared against another;
     anything else is quoted as a literal.
-
-    *qualify* is forwarded to ``_ref`` so that ``$col`` value references that
-    name own-table columns are also qualified to ``{{input_view}}`` when a join
-    is present.
     """
     name = _column_ref_name(value)
-    return _ref(name, qualify) if name is not None else _quote(value)
+    return _ref(name) if name is not None else _quote(value)
 
 
-def _quote_list(values: list[object], qualify: bool = False) -> str:
-    return ", ".join(_value_sql(v, qualify) for v in values)
+def _quote_list(values: list[object]) -> str:
+    return ", ".join(_value_sql(v) for v in values)
 
 
 def _like_literal(value: object) -> str:
@@ -281,12 +267,6 @@ def _split_top_level_commas(value: str) -> list[str]:
 
 
 def _join_key_refs(joins: list[dict[str, Any]]) -> list[str]:
-    """Return deduplicated qualified own-column refs used as join keys.
-
-    These appear in the SELECT and GROUP BY of join-mode queries, so they must
-    be qualified to ``{{input_view}}`` to avoid ambiguity with same-name columns
-    on the joined tables.
-    """
     seen: set[str] = set()
     out: list[str] = []
     for join in joins or []:
@@ -296,7 +276,7 @@ def _join_key_refs(joins: list[dict[str, Any]]) -> list[str]:
             column_ref = key.get("column_ref")
             if not column_ref:
                 continue
-            token = _ref(column_ref, qualify=True)
+            token = _ref(column_ref)
             if token in seen:
                 continue
             seen.add(token)
@@ -304,24 +284,24 @@ def _join_key_refs(joins: list[dict[str, Any]]) -> list[str]:
     return out
 
 
-def _agg_expr(spec: dict[str, Any], qualify: bool = False) -> str:
+def _agg_expr(spec: dict[str, Any]) -> str:
     agg = spec.get("aggregate")
     col = spec.get("column_ref")
     if not agg or agg not in _AGG_SQL:
         return ""
     if not col:
         return ""
-    return _AGG_SQL[agg](_ref(col, qualify), spec.get("aggregate_param"))
+    return _AGG_SQL[agg](_ref(col), spec.get("aggregate_param"))
 
 
-def _row_sql(left: str, operator: str, value: object, qualify: bool = False) -> str:
+def _row_sql(left: str, operator: str, value: object) -> str:
     op = operator
     if op in _COMPARISON_OPS:
-        return f"{left} {op} {_value_sql(value, qualify)}"
+        return f"{left} {op} {_value_sql(value)}"
     if op == "equals":
-        return f"{left} = {_value_sql(value, qualify)}"
+        return f"{left} = {_value_sql(value)}"
     if op == "not equals":
-        return f"{left} != {_value_sql(value, qualify)}"
+        return f"{left} != {_value_sql(value)}"
     if op == "contains":
         return f"{left} LIKE '%{_like_literal(value)}%'"
     if op == "does not contain":
@@ -334,11 +314,11 @@ def _row_sql(left: str, operator: str, value: object, qualify: bool = False) -> 
         return f"{left} RLIKE {_quote(value)}"
     if op == "between":
         lo, hi = (value[0], value[1]) if isinstance(value, list) and len(value) >= 2 else (None, None)
-        return f"{left} BETWEEN {_value_sql(lo, qualify)} AND {_value_sql(hi, qualify)}"
+        return f"{left} BETWEEN {_value_sql(lo)} AND {_value_sql(hi)}"
     if op == "in":
-        return f"{left} IN ({_quote_list(value if isinstance(value, list) else [], qualify)})"
+        return f"{left} IN ({_quote_list(value if isinstance(value, list) else [])})"
     if op == "not in":
-        return f"{left} NOT IN ({_quote_list(value if isinstance(value, list) else [], qualify)})"
+        return f"{left} NOT IN ({_quote_list(value if isinstance(value, list) else [])})"
     if op == "is null":
         return f"{left} IS NULL"
     if op == "is not null":
@@ -427,20 +407,20 @@ def _row_sql(left: str, operator: str, value: object, qualify: bool = False) -> 
     return ""
 
 
-def _compile_row(row: dict[str, Any], qualify: bool = False) -> str:
+def _compile_row(row: dict[str, Any]) -> str:
     if row.get("kind") == "row":
         column_ref = row.get("column_ref")
         if not column_ref:
             return ""
-        return _row_sql(_ref(column_ref, qualify), str(row.get("operator", "")), row.get("value"), qualify)
-    left = _agg_expr(row, qualify)
+        return _row_sql(_ref(column_ref), str(row.get("operator", "")), row.get("value"))
+    left = _agg_expr(row)
     if not left:
         return ""
     op = str(row.get("operator", ""))
     value = row.get("value")
     if op in _COMPARISON_OPS:
         if isinstance(value, dict) and "aggregate" in value:
-            right = _agg_expr(value, qualify)
+            right = _agg_expr(value)
         else:
             right = _quote(value)
         return f"{left} {op} {right}"
@@ -455,22 +435,15 @@ def _compile_row(row: dict[str, Any], qualify: bool = False) -> str:
 
 
 def compile_ast_to_sql(ast: dict[str, Any]) -> str:
-    """Compile the row stack into a single boolean *pass* condition.
-
-    When the AST carries joins, own-table columns (those without a ``.`` in
-    their name) are qualified to ``{{input_view}}`` to avoid
-    ``[AMBIGUOUS_REFERENCE]`` errors at runtime when the joined table shares
-    a column name with the input table.
-    """
+    """Compile the row stack into a single boolean *pass* condition."""
     rows = ast.get("rows") or []
     if not rows:
         return ""
-    qualify = bool(ast.get("joins"))
     parts: list[str] = []
     for i, row in enumerate(rows):
         if not isinstance(row, dict):
             continue
-        frag = _compile_row(row, qualify)
+        frag = _compile_row(row)
         if not frag:
             continue
         if i == 0:
@@ -505,7 +478,7 @@ def compile_joins_to_sql(joins: list[dict[str, Any]]) -> str:
             out.append(head)
             continue
         conds = [
-            f"{target}.{k['joined_column']} = {_ref(k['column_ref'], qualify=True)}"
+            f"{target}.{k['joined_column']} = {_ref(k['column_ref'])}"
             for k in keys
             if k.get("joined_column") and k.get("column_ref")
         ]
