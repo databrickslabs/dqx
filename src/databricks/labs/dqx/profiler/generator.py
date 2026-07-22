@@ -458,7 +458,7 @@ class DQGenerator(DQEngineBase):
         Returns:
             A dictionary representing the data quality rule.
         """
-        params = params or {}
+        params = params or {}  # consume the shared **params dispatch arg (see _checks_mapping call site)
         return {
             "check": {
                 "function": "has_no_outliers",

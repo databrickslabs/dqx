@@ -18,7 +18,7 @@ from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
 from databricks.labs.dqx.profiler.profile import DQProfile
-from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, TEXT_TYPES
+from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, TEXT_TYPES, validate_profile_options
 from databricks.labs.dqx.profiler.profile_options import (
     DEFAULT_PROFILE_OPTIONS,
     PROFILE_OPTION_FILTER,
@@ -104,6 +104,7 @@ class DQProfiler(DQEngineBase):
             options = {}
 
         options = {**DEFAULT_PROFILE_OPTIONS, **options}  # merge default options with user-provided options
+        validate_profile_options(options)  # fail fast on misconfiguration before any profiling work
         df = self._sample(df, options)
 
         dq_rules: list[DQProfile] = []
@@ -481,8 +482,10 @@ class DQProfiler(DQEngineBase):
         """Run registered profile builders for a column and append profiles.
 
         Builders are invoked in PROFILE_BUILDER_REGISTRY insertion order (null_or_empty →
-        is_in → min_max). Preserving that order matters: the min_max builder reads summary-stats
-        metrics written by earlier passes, so it must run last among the built-in builders.
+        is_in → min_max → has_no_outliers). Preserving that order matters: the min_max builder
+        reads summary-stats metrics written by earlier passes, so it must run after them. Any
+        builder that depends on min_max's resolved min/max (written back into *metrics* below)
+        must be registered after min_max.
 
         After a min_max profile is produced, its resolved min/max values are written back into
         *metrics* so that downstream consumers (e.g. LLM primary-key detection) can read them

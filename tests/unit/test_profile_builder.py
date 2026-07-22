@@ -14,6 +14,7 @@ from databricks.labs.dqx.profiler.profile_builder import (
     make_min_max_profile,
     make_null_or_empty_profile,
     register_profile_builder,
+    validate_profile_options,
 )
 
 
@@ -672,3 +673,48 @@ def test_has_no_outliers_filter_propagated(mock_df):
 
     assert profile is not None
     assert profile.filter == "x > 0"
+
+
+def test_has_no_outliers_ratio_equal_to_threshold_emits_profile(mock_df):
+    # median=3.0, MAD=1.0 → bounds=(-0.5, 6.5); 1 outlier / 10 non-null = 10% == 10% threshold.
+    # Inclusive gate (<=) must still emit, matching the null/empty ratio gates.
+    mock_df.agg.return_value.collect.return_value = [[3.0]]
+    mock_df.select.return_value.agg.return_value.collect.return_value = [[1.0]]
+    mock_df.filter.return_value.count.return_value = 1
+
+    profile = make_has_no_outliers_profile(
+        mock_df, "measurement", T.IntegerType(), {"count_non_null": 10}, {"outliers_ratio": 0.1}
+    )
+
+    assert profile is not None
+    assert profile.name == "has_no_outliers"
+
+
+def test_has_no_outliers_near_degenerate_mad_returns_none(mock_df):
+    # A tiny-but-nonzero MAD relative to the column scale collapses the band to near-zero width;
+    # emitting a rule here would flag almost every row at apply time, so it must be skipped.
+    mock_df.agg.return_value.collect.return_value = [[1_000_000.0]]
+    mock_df.select.return_value.agg.return_value.collect.return_value = [[1e-9]]
+
+    profile = make_has_no_outliers_profile(
+        mock_df, "col", T.IntegerType(), {"count_non_null": 10}, {"outliers_ratio": 0.05}
+    )
+
+    assert profile is None
+
+
+def test_validate_profile_options_raises_when_allow_and_deny_both_set():
+    with pytest.raises(InvalidParameterError, match="Please provide only one of them"):
+        validate_profile_options(
+            {
+                "has_no_outliers_allow_columns": ["a"],
+                "has_no_outliers_deny_columns": ["b"],
+            }
+        )
+
+
+def test_validate_profile_options_passes_when_only_one_list_set():
+    # Only one of the two lists set (or neither) must not raise.
+    validate_profile_options({"has_no_outliers_allow_columns": ["a"]})
+    validate_profile_options({"has_no_outliers_deny_columns": ["b"]})
+    validate_profile_options({})

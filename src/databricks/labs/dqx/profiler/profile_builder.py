@@ -404,6 +404,31 @@ def _is_profile_enabled(
     return column_name not in denied_columns
 
 
+def validate_profile_options(profiler_options: dict[str, Any]) -> None:
+    """
+    Validates profiler options once, up front, before any profiling work is done.
+
+    Currently checks the allow/deny column-list pairs that are mutually exclusive, so a
+    misconfiguration fails fast at option-build time rather than partway through a profiling run
+    (which would happen if the check only ran per column inside *_is_profile_enabled*).
+
+    Args:
+        profiler_options: Configuration options for the DQProfiler (merged with defaults).
+
+    Raises:
+        InvalidParameterError: if both the allow-columns and deny-columns option of a builder are set.
+    """
+    mutually_exclusive_pairs = [
+        (PROFILE_OPTION_HAS_NO_OUTLIERS_ALLOW_COLUMNS, PROFILE_OPTION_HAS_NO_OUTLIERS_DENY_COLUMNS),
+    ]
+    for allow_option, deny_option in mutually_exclusive_pairs:
+        if profiler_options.get(allow_option) and profiler_options.get(deny_option):
+            raise InvalidParameterError(
+                f"Values for both '{allow_option}' and '{deny_option}' are provided in the configuration. "
+                "Please provide only one of them."
+            )
+
+
 def _make_min_max_profile_with_outlier_removal(
     df: DataFrame,
     column_name: str,
@@ -753,7 +778,7 @@ def make_has_no_outliers_profile(
     A profile is returned when all the following conditions are met:
     - The column type is child of `pyspark.sql.types.NumericType`.
     - The DataFrame is non-empty.
-    - The fraction of outliers (values outside *median* ± 3.5 × MAD) is below *outliers_ratio*.
+    - The fraction of outliers (values outside *median* ± 3.5 × MAD) is at or below *outliers_ratio*.
     - Profile generation is enabled at configuration level for all columns or given column.
 
     Args:
@@ -785,9 +810,16 @@ def make_has_no_outliers_profile(
         return None
 
     lower_bound, upper_bound = bounds
-    if lower_bound == upper_bound:
+    # Skip degenerate distributions. Exactly-equal bounds mean MAD == 0 (a constant column). A
+    # tiny-but-nonzero MAD collapses the band to a near-zero width relative to the column's scale,
+    # which would emit a rule that flags almost every row as an outlier at apply time. Guard both
+    # with a scale-relative check so only meaningfully-wide bands produce a rule.
+    band_width = upper_bound - lower_bound
+    scale = max(abs(lower_bound), abs(upper_bound))
+    if band_width <= 0 or (scale > 0 and band_width <= 1e-12 * scale):
         logger.info(
-            f"MAD bounds are equal for column '{column_name}'. All values are equal in the distribution. Skipping profile generation."
+            f"MAD band is degenerate (near-zero width) for column '{column_name}'. "
+            "The distribution is (near-)constant. Skipping profile generation."
         )
         return None
 
@@ -802,7 +834,9 @@ def make_has_no_outliers_profile(
     )
 
     safe_column_name = column_name.replace("\n", " ").replace("\r", " ")
-    if outliers_ratio < outliers_ratio_threshold:
+    # Inclusive (<=) to match the sibling ratio gates (max_null_ratio / max_empty_ratio), so a
+    # column whose outlier fraction exactly equals the configured threshold still emits a rule.
+    if outliers_ratio <= outliers_ratio_threshold:
         return DQProfile(
             name="has_no_outliers",
             description=f"Column {safe_column_name} has {outliers_ratio * 100:.1f}% of outliers (allowed: {outliers_ratio_threshold * 100:.1f}%). Lower boundary - {lower_bound}, upper boundary - {upper_bound}.",
