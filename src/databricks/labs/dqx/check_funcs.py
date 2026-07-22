@@ -1251,7 +1251,9 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
                 f"Column '{col_expr_str}' must be of numeric type to perform outlier detection using MAD method, "
                 f"but got type '{column_type.simpleString()}' instead."
             )
-        filter_condition = safe_filter_expr(row_filter)
+        # Validate and compile the filter (rejecting unsafe SQL); keep None when no filter is given so
+        # the MAD calculation stays a true no-op instead of filtering on F.lit(True).
+        filter_condition = safe_filter_expr(row_filter) if row_filter else None
         median, mad = _calculate_median_absolute_deviation(df, col_expr_str, filter_condition)
         if median is not None and mad is not None:
             median = float(median)
@@ -1263,9 +1265,11 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
             upper_bound_expr = get_limit_expr(upper_bound)
 
             condition = (col_expr < (lower_bound_expr)) | (col_expr > (upper_bound_expr))
+            # Restrict the flagged rows to the filtered subset when a filter is present.
+            outlier_condition = (filter_condition & condition) if filter_condition is not None else condition
 
             # Add outlier detection columns
-            result_df = df.withColumn(condition_col, F.when(filter_condition & condition, True).otherwise(False))
+            result_df = df.withColumn(condition_col, F.when(outlier_condition, True).otherwise(False))
         else:
             # If median or mad could not be calculated, no outliers can be detected
             result_df = df.withColumn(condition_col, F.lit(False))
@@ -1961,7 +1965,7 @@ def has_no_aggr_outliers(
                 f"but got type '{time_col_type.simpleString()}' instead."
             )
 
-        filter_col = filter_col = safe_filter_expr(row_filter)
+        filter_col = safe_filter_expr(row_filter)
         filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
         aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
 

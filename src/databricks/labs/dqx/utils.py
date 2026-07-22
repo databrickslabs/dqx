@@ -60,6 +60,51 @@ COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
 COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$", re.DOTALL)
 INVALID_COLUMN_NAME_PATTERN = re.compile(r"[\s,;{}\(\)\n\t=]+")
 _UNRESOLVED_PLACEHOLDER_PATTERN = re.compile(r"\{\{[^}]*\}\}")
+
+# Destructive SQL statement keywords rejected by `is_sql_query_safe`. SELECT is intentionally
+# omitted: filters may legitimately use subqueries and are authored by trusted operators.
+_FORBIDDEN_SQL_KEYWORDS = (
+    "delete",
+    "insert",
+    "update",
+    "drop",
+    "truncate",
+    "alter",
+    "create",
+    "replace",
+    "grant",
+    "revoke",
+    "merge",
+    "use",
+    "refresh",
+    "analyze",
+    "optimize",
+    "zorder",
+)
+# Precompiled once at module scope (this helper is on the LLM / rule-validation hot path).
+_FORBIDDEN_SQL_KEYWORDS_PATTERN = re.compile(rf"\b(?:{'|'.join(_FORBIDDEN_SQL_KEYWORDS)})\b")
+# Matches SQL comments (line `-- ...`, block `/* ... */`), quoted string literals, and backtick-quoted
+# identifiers. Scanned left-to-right so a comment marker inside a string literal (e.g. '-- not a comment')
+# is correctly treated as data, and a quote inside a comment is treated as part of the comment.
+_SQL_COMMENT_OR_LITERAL_PATTERN = re.compile(
+    r"(?P<comment>--[^\n]*|/\*.*?\*/)"  # line or block comment
+    r"|'(?:[^']|'')*'"  # single-quoted string literal (with '' escapes)
+    r"|\"(?:[^\"]|\"\")*\""  # double-quoted string literal (with "" escapes)
+    r"|`(?:[^`]|``)*`",  # backtick-quoted identifier (with `` escapes)
+    re.DOTALL,
+)
+
+
+def _strip_literals_keep_comments(match: "re.Match[str]") -> str:
+    """Replace a quoted literal/identifier with a space, keeping comment text so its keywords are scanned."""
+    return match.group() if match.group("comment") is not None else " "
+
+
+def _strip_literals_and_comments(match: "re.Match[str]") -> str:
+    """Remove a comment entirely and replace a quoted literal/identifier with a space."""
+    return "" if match.group("comment") is not None else " "
+
+
 _SCALAR_VARIABLE_TYPES = (str, int, float, bool, Decimal, datetime.date, datetime.datetime, datetime.time)
 
 VariableValue = str | int | float | bool | Decimal | datetime.date | datetime.datetime | datetime.time
@@ -237,32 +282,32 @@ def normalize_col_str(col_str: str) -> str:
     return re.sub(COLUMN_NORMALIZE_EXPRESSION, "_", col_str[:max_chars].lower()).rstrip("_")
 
 
-def is_sql_query_safe(query: str, forbid_select: bool = False) -> bool:
-    # Normalize the query by removing extra whitespace and converting to lowercase
-    normalized_query = re.sub(r"\s+", " ", query).strip().lower()
+def is_sql_query_safe(query: str) -> bool:
+    """
+    Returns True if the query contains no destructive SQL statement keyword, otherwise False.
 
-    # Check for prohibited statements
-    forbidden_statements = [
-        "delete",
-        "insert",
-        "update",
-        "drop",
-        "truncate",
-        "alter",
-        "create",
-        "replace",
-        "grant",
-        "revoke",
-        "merge",
-        "use",
-        "refresh",
-        "analyze",
-        "optimize",
-        "zorder",
-    ]
-    if forbid_select:
-        forbidden_statements = forbidden_statements + ["select"]
-    return not any(re.search(rf"\b{kw}\b", normalized_query) for kw in forbidden_statements)
+    Quoted string literals and backtick-quoted identifiers are stripped before scanning so that a
+    forbidden keyword appearing as data (e.g. ``status = 'drop'``) or as a quoted column name
+    (e.g. `` `drop` ``) is not mistaken for a statement. Comments are checked two ways so both a
+    keyword *inside* a comment (e.g. ``/* delete */``) and a keyword *split* by a comment
+    (e.g. ``dr/**/op``) are caught. ``SELECT`` is allowed: filters may legitimately use subqueries
+    and are authored by trusted operators.
+
+    Args:
+        query: The SQL query or filter predicate to validate.
+
+    Returns:
+        True if the query is free of destructive statement keywords, False otherwise.
+    """
+    # Strip quoted literals/identifiers so keywords appearing as data are not flagged. Scan the query
+    # both with comments kept (catches a keyword hidden inside a comment) and with comments removed
+    # (catches a keyword split by an inline comment, e.g. dr/**/op). Lowercase for case-insensitive match.
+    with_comments = _SQL_COMMENT_OR_LITERAL_PATTERN.sub(_strip_literals_keep_comments, query).lower()
+    without_comments = _SQL_COMMENT_OR_LITERAL_PATTERN.sub(_strip_literals_and_comments, query).lower()
+    return not (
+        _FORBIDDEN_SQL_KEYWORDS_PATTERN.search(with_comments)
+        or _FORBIDDEN_SQL_KEYWORDS_PATTERN.search(without_comments)
+    )
 
 
 def safe_filter_expr(filter_expr: str | None) -> Column:
