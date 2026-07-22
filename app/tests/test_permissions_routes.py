@@ -56,7 +56,8 @@ def test_list_object_grants_returns_grants():
     assert out.grants[0].principal_name == "Alice"
 
 
-def test_list_object_grants_surfaces_default_flag():
+def test_list_object_grants_users_group_row_is_default():
+    """The workspace users-group direct grant is always computed as is_default=True."""
     perms = _perms_mock()
     perms.list_effective_grants.return_value = [
         ObjectGrant(
@@ -67,12 +68,70 @@ def test_list_object_grants_surfaces_default_flag():
             principal_name="users",
             privileges={Privilege.SELECT, Privilege.APPLY},
             inherit=False,
-            is_default=True,
         )
     ]
     out = list_object_grants("registry_rule", "r1", "me@x.com", UserRole.ADMIN, frozenset(), perms)
     assert out.grants[0].is_default is True
     assert out.grants[0].principal_id == "users"
+
+
+def test_list_object_grants_owner_row_is_default():
+    """The object owner's direct grant is computed as is_default=True."""
+    perms = _perms_mock()
+    # owner@x.com is the owner (returned by _perms_mock.get_object_owner)
+    perms.list_effective_grants.return_value = [
+        ObjectGrant(
+            object_type="monitored_table",
+            object_id="t1",
+            principal_id="owner@x.com",
+            principal_type="user",
+            principal_name="Owner",
+            privileges={Privilege.SELECT},
+            inherit=False,
+        )
+    ]
+    out = list_object_grants("monitored_table", "t1", "me@x.com", UserRole.ADMIN, frozenset(), perms)
+    assert out.grants[0].is_default is True
+    assert out.grants[0].principal_id == "owner@x.com"
+
+
+def test_list_object_grants_regular_grant_not_default():
+    """A direct grant to a non-owner, non-users-group principal is is_default=False."""
+    perms = _perms_mock()
+    perms.list_effective_grants.return_value = [
+        ObjectGrant(
+            object_type="registry_rule",
+            object_id="r1",
+            principal_id="alice@x.com",
+            principal_type="user",
+            principal_name="Alice",
+            privileges={Privilege.SELECT},
+            inherit=False,
+        )
+    ]
+    out = list_object_grants("registry_rule", "r1", "me@x.com", UserRole.ADMIN, frozenset(), perms)
+    assert out.grants[0].is_default is False
+
+
+def test_list_object_grants_inherited_row_not_default():
+    """An inherited grant is never is_default, even if it targets the users group."""
+    perms = _perms_mock()
+    perms.list_effective_grants.return_value = [
+        ObjectGrant(
+            object_type="registry_rule",
+            object_id="r1",
+            principal_id="users",
+            principal_type="group",
+            principal_name="users",
+            privileges={Privilege.SELECT},
+            inherit=False,
+            inherited_from_type="monitored_table",
+            inherited_from_id="t1",
+        )
+    ]
+    out = list_object_grants("registry_rule", "r1", "me@x.com", UserRole.ADMIN, frozenset(), perms)
+    assert out.grants[0].is_default is False
+    assert out.grants[0].inherited is True
 
 
 def test_set_object_grant_rejects_legacy_sentinel():

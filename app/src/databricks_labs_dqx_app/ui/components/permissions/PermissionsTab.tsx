@@ -21,10 +21,11 @@
  * empty shell with a "save first" message instead of the grants table.
  *
  * Registry rules sit at the bottom of the object hierarchy — there's
- * nothing beneath a rule to inherit a grant to — so the inherit toggle and
- * the "Inheritance" column are omitted for `objectType === "registry_rule"`.
- * The backend still accepts the `inherit` field for rules; this is a
- * UI-only omission.
+ * nothing beneath a rule to inherit a grant to — so the inherit toggle in the
+ * add/edit dialog is omitted for `objectType === "registry_rule"`. The
+ * backend still accepts the `inherit` field for rules; this is a UI-only
+ * omission. The "Inheritance" column has been removed from the table entirely
+ * for all object types; the inherit toggle in the dialog is kept.
  */
 import { useLayoutEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -75,6 +76,7 @@ import {
   PRIV_SELECT,
   PRIV_MODIFY,
   PRIV_APPLY,
+  PRIV_EXECUTE,
   PRIV_ALL,
   isUsersGroupGrant,
   isOwnerDefaultGrant,
@@ -83,6 +85,7 @@ import {
   privilegeTagLabel,
   grantsEmptyColSpan,
   hasSavedObject,
+  forceSelectWhenOthers,
 } from "@/components/permissions/permissions-utils";
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -162,6 +165,7 @@ interface GrantDraft {
   view: boolean;
   modify: boolean;
   apply: boolean;
+  execute: boolean;
   inherit: boolean;
 }
 
@@ -204,6 +208,7 @@ function GrantDialog({
     view: true,
     modify: false,
     apply: false,
+    execute: false,
     inherit: defaultInherit,
   });
 
@@ -227,6 +232,7 @@ function GrantDialog({
         view: all || privs.includes(PRIV_SELECT),
         modify: all || privs.includes(PRIV_MODIFY),
         apply: all || privs.includes(PRIV_APPLY),
+        execute: all || privs.includes(PRIV_EXECUTE),
         inherit: initialGrantInherit(editing, defaultInherit),
       });
     } else {
@@ -235,12 +241,14 @@ function GrantDialog({
         view: true,
         modify: false,
         apply: false,
+        execute: false,
         inherit: initialGrantInherit(null, defaultInherit),
       });
     }
   }, [open, editing, defaultInherit]);
 
-  const noPrivileges = !draft.view && !draft.modify && !draft.apply;
+  const noPrivileges = !draft.view && !draft.modify && !draft.apply && !draft.execute;
+  const lockSelect = draft.modify || draft.apply || draft.execute;
   const canSave = !!draft.principal && (!noPrivileges || allowEmpty) && !saving;
 
   return (
@@ -282,7 +290,11 @@ function GrantDialog({
               <label className="grid grid-cols-[auto_5rem_1fr] items-center gap-2 text-sm">
                 <Checkbox
                   checked={draft.view}
-                  onCheckedChange={(c) => setDraft((d) => ({ ...d, view: c === true }))}
+                  disabled={lockSelect}
+                  onCheckedChange={(c) => {
+                    if (lockSelect) return;
+                    setDraft((d) => ({ ...d, view: c === true }));
+                  }}
                 />
                 <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_SELECT)}</span>
                 <span className="select-none text-xs text-muted-foreground">{t("permissions.viewHint")}</span>
@@ -290,7 +302,9 @@ function GrantDialog({
               <label className="grid grid-cols-[auto_5rem_1fr] items-center gap-2 text-sm">
                 <Checkbox
                   checked={draft.modify}
-                  onCheckedChange={(c) => setDraft((d) => ({ ...d, modify: c === true }))}
+                  onCheckedChange={(c) =>
+                    setDraft((d) => forceSelectWhenOthers({ ...d, modify: c === true }))
+                  }
                 />
                 <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_MODIFY)}</span>
                 <span className="select-none text-xs text-muted-foreground">{t("permissions.modifyHint")}</span>
@@ -298,11 +312,25 @@ function GrantDialog({
               <label className="grid grid-cols-[auto_5rem_1fr] items-center gap-2 text-sm">
                 <Checkbox
                   checked={draft.apply}
-                  onCheckedChange={(c) => setDraft((d) => ({ ...d, apply: c === true }))}
+                  onCheckedChange={(c) =>
+                    setDraft((d) => forceSelectWhenOthers({ ...d, apply: c === true }))
+                  }
                 />
                 <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_APPLY)}</span>
                 <span className="select-none text-xs text-muted-foreground">{t("permissions.applyHint")}</span>
               </label>
+              {objectType !== "registry_rule" && (
+                <label className="grid grid-cols-[auto_5rem_1fr] items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={draft.execute}
+                    onCheckedChange={(c) =>
+                      setDraft((d) => forceSelectWhenOthers({ ...d, execute: c === true }))
+                    }
+                  />
+                  <span className={PRIVILEGE_TAG_CLASS}>{privilegeTagLabel(PRIV_EXECUTE)}</span>
+                  <span className="select-none text-xs text-muted-foreground">{t("permissions.executeHint")}</span>
+                </label>
+              )}
             </div>
           </div>
 
@@ -349,9 +377,9 @@ export function PermissionsTab({
   const qc = useQueryClient();
   const hasObject = hasSavedObject(objectId);
   // Rules are the bottom of the object hierarchy — there's nothing beneath
-  // them to inherit grants to, so the inherit toggle and inheritance column
-  // are rule-specific UI omissions. The backend still accepts the `inherit`
-  // field on this object type; only the UI hides it here.
+  // them to inherit grants to, so the inherit toggle in the add/edit dialog
+  // is omitted for registry rules. The backend still accepts the `inherit`
+  // field on this object type; only the UI hides the toggle here.
   const isRule = objectType === "registry_rule";
   const emptyStateKey =
     objectType === "registry_rule"
@@ -394,6 +422,7 @@ export function PermissionsTab({
     if (draft.view) privileges.push(PRIV_SELECT);
     if (draft.modify) privileges.push(PRIV_MODIFY);
     if (draft.apply) privileges.push(PRIV_APPLY);
+    if (draft.execute) privileges.push(PRIV_EXECUTE);
     try {
       await setMut.mutateAsync({
         objectType,
@@ -411,34 +440,6 @@ export function PermissionsTab({
       toast.success(t("permissions.grantSaved"));
     } catch (e) {
       toast.error(extractApiError(e, t("permissions.grantSaveFailed")), { duration: 6000 });
-    }
-  };
-
-  // Revoke a synthetic default row (users-group or owner) by materializing an
-  // explicit empty-privilege "revoked" marker for that principal — the backend
-  // then stops falling back to the implicit default (SELECT+APPLY for the users
-  // group; ALL PRIVILEGES for the owner). Workspace admins/approvers retain
-  // access regardless, so this can't orphan the object.
-  const handleRevokeDefault = async (grant: ObjectGrantOut) => {
-    setRemovingId(grant.principal_id);
-    try {
-      await setMut.mutateAsync({
-        objectType,
-        objectId,
-        data: {
-          principal_id: grant.principal_id,
-          principal_type: grant.principal_type,
-          principal_name: grant.principal_name ?? grant.principal_id,
-          privileges: [],
-          inherit: grant.inherit ?? defaultInherit,
-        },
-      });
-      invalidate();
-      toast.success(t("permissions.grantRemoved"));
-    } catch (e) {
-      toast.error(extractApiError(e, t("permissions.grantRemoveFailed")), { duration: 6000 });
-    } finally {
-      setRemovingId(null);
     }
   };
 
@@ -509,7 +510,6 @@ export function PermissionsTab({
                   <TableRow>
                     <TableHead>{t("permissions.principal")}</TableHead>
                     <TableHead>{t("permissions.privileges")}</TableHead>
-                    {!isRule && <TableHead>{t("permissions.inheritance")}</TableHead>}
                     <TableHead>{t("permissions.grantedBy")}</TableHead>
                     {canManage && <TableHead className="w-[80px] text-right" />}
                   </TableRow>
@@ -568,33 +568,19 @@ export function PermissionsTab({
                           <TableCell>
                             <PrivilegeBadges privileges={grant.privileges ?? []} />
                           </TableCell>
-                          {!isRule && (
-                            <TableCell>
-                              {inherited ? (
-                                <span className="text-xs text-muted-foreground italic">
-                                  {t("permissions.inheritedFrom", {
-                                    type: grant.inherited_from_type ?? "",
-                                  })}
-                                </span>
-                              ) : grant.inherit ? (
-                                <span className="text-xs">{t("permissions.inherits")}</span>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">—</span>
-                              )}
-                            </TableCell>
-                          )}
                           <TableCell>
-                            <span className="text-xs text-muted-foreground">{grant.grantor ?? "—"}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {isDefault ? t("permissions.grantedBySystem") : (grant.grantor ?? "—")}
+                            </span>
                           </TableCell>
                           {canManage && (
                             <TableCell className="text-right">
                               {/* Inherited rows are managed on the parent object —
-                                  read-only here. Every other row (direct grants and
-                                  the synthetic users-group / owner defaults) is
-                                  editable and revocable: revoking a default
-                                  materializes an explicit "revoked" marker. Owners
-                                  can be revoked too; workspace admins/approvers keep
-                                  access regardless, so the object can't be orphaned. */}
+                                  read-only here. Every other row (direct grants,
+                                  the users-group default, and the owner row) is
+                                  editable and deletable. Owners can be removed too;
+                                  workspace admins/approvers keep access regardless,
+                                  so the object can't be orphaned. */}
                               {!inherited && (
                                 <div className="flex items-center justify-end gap-1">
                                   <Button
@@ -612,9 +598,7 @@ export function PermissionsTab({
                                         variant="ghost"
                                         size="icon"
                                         className="h-7 w-7 text-destructive hover:text-destructive"
-                                        onClick={() =>
-                                          isDefault ? handleRevokeDefault(grant) : handleRemove(grant)
-                                        }
+                                        onClick={() => handleRemove(grant)}
                                         disabled={removingId === grant.principal_id}
                                         aria-label={t("permissions.revokePermission")}
                                       >

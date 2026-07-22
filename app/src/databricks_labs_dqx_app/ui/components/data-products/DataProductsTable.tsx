@@ -141,21 +141,10 @@ function VersionCell({ version }: { version: number }) {
   );
 }
 
-/** "# Tables" cell — runnable count, plus a localized "(N not ready)" hint
- *  when some members aren't yet approved/versioned. */
+/** "# Tables" cell — total member count. */
 function TablesCell({ product }: { product: DataProductOut }) {
-  const { t } = useTranslation();
   const member = product.member_count ?? 0;
-  const runnable = product.runnable_count ?? 0;
-  const notReady = member - runnable;
-  return (
-    <span className="tabular-nums">
-      {runnable}
-      {notReady > 0 && (
-        <span className="text-muted-foreground"> {t("dataProducts.notReadySuffix", { count: notReady })}</span>
-      )}
-    </span>
-  );
+  return <span className="tabular-nums">{member}</span>;
 }
 
 /** Schedule cell — check/x icon, same treatment as dqlake's DataProductsTable. */

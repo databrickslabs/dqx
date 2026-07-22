@@ -51,7 +51,7 @@ export function ProductTablesTab({ editState, canEdit }: Props) {
   };
 
   return (
-    <div className="space-y-4 max-w-3xl">
+    <div className="space-y-4 max-w-5xl">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold">{t("dataProducts.tabTables")}</h2>
         {canEdit && members.length > 0 && (
@@ -95,11 +95,6 @@ export function ProductTablesTab({ editState, canEdit }: Props) {
                     >
                       {m.table_fqn}
                     </Link>
-                    {!m.runnable && (
-                      <p className="text-muted-foreground font-sans not-italic mt-0.5">
-                        {t("dataProducts.memberNotReadyHelper")}
-                      </p>
-                    )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     <Link

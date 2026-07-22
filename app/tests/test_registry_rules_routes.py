@@ -132,6 +132,20 @@ class TestCreateAndUpdate:
         assert result.rule.rule_id == "r1"
         assert result.dedup_warning == "possible duplicate"
 
+    def test_create_seeds_default_grants_via_service(self):
+        """Seeding is now the service's responsibility (not the route's).
+
+        The route no longer holds a PermissionsService reference for seeding.
+        This test verifies the service's create_rule is called (and seeding
+        therefore flows through the service layer contract, tested exhaustively
+        in test_registry_service.py::TestCreateRule::test_create_rule_seeds_default_grants).
+        """
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule(rule_id="new-r1"), None)
+        body = CreateRegistryRuleIn(mode="dqx_native", definition=_definition())
+        create_registry_rule(body=body, svc=svc, user_email="alice@x")
+        svc.create_rule.assert_called_once()
+
     def test_create_uses_injected_user_email_without_scim_call(self):
         """Author identity comes from the header-derived ``get_user_email``
         dependency (``CurrentUser``), NOT a per-request SCIM

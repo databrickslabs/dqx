@@ -5,8 +5,7 @@ fan-out over
 :class:`~databricks_labs_dqx_app.backend.services.data_product_service.DataProductService`.
 RBAC (design spec §5): view VIEWER+; create/update/delete/members/submit
 RULE_AUTHOR+; approve/reject approvers-only (same gate as the monitored-table
-approve/reject routes); run uses the same orthogonal RUNNER gate as
-``runMonitoredTable`` / ``batch_run_from_catalog``.
+approve/reject routes); run is gated on CAN_RUN_ROLES (ADMIN + RULE_AUTHOR).
 """
 
 from typing import Annotated
@@ -15,7 +14,7 @@ from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentPrincipalIds,
@@ -27,7 +26,6 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_obo_ws,
     get_permissions_service,
     require_role,
-    require_runner,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
@@ -182,6 +180,7 @@ def create_data_product(
     body: CreateDataProductIn,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> DataProductOut:
     """Create a new data product (status ``draft``, no approver gate)."""
     try:
@@ -543,18 +542,33 @@ def revert_data_product(
     "/{product_id}/run",
     response_model=RunDataProductOut,
     operation_id="runDataProduct",
-    # Same orthogonal RUNNER gate as ``runMonitoredTable`` / batch_run_from_catalog.
-    dependencies=[require_runner()],
+    # Run gate: only ADMIN and RULE_AUTHOR may trigger runs.
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def run_data_product(
     product_id: str,
     body: RunDataProductIn,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> RunDataProductOut:
-    """Run every runnable member of a data product through a shared run set."""
+    """Run every runnable member of a data product through a shared run set.
+
+    Requires ``EXECUTE`` on the data product (direct/inherited/owner)
+    unless the caller is an admin/approver.
+    """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.DATA_PRODUCT.value,
+        product_id,
+        Privilege.EXECUTE,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
+    )
     try:
-        user_email = _current_user_email(obo_ws)
         result = svc.run(product_id, source=body.source, user_email=user_email, trigger="manual")
         return RunDataProductOut.from_domain(result)
     except LookupError as e:

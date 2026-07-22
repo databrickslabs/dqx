@@ -174,6 +174,38 @@ class TestPgMigrationsCatalogue:
         # One pending row per (binding, rule) — enforced by a UNIQUE constraint.
         assert "UNIQUE (binding_id, rule_id)" in v15.sql
 
+    def test_v20_backfills_default_grants_for_all_object_types(self):
+        """v20 must INSERT…SELECT default grants for all three object types
+        (registry_rule, monitored_table, data_product), each with a users-group
+        row and an owner row, all guarded by WHERE NOT EXISTS."""
+        v20 = next(m for m in PG_MIGRATIONS if m.version == 20)
+        sql = v20.sql
+        for obj_type in ("registry_rule", "monitored_table", "data_product"):
+            assert obj_type in sql, f"v20 must cover object type '{obj_type}'"
+        assert "SELECT,APPLY,EXECUTE" in sql, "users-group privileges must be present"
+        assert "ALL_PRIVILEGES" in sql, "owner privileges must be present"
+        assert "NOT EXISTS" in sql, "backfill must be idempotent via WHERE NOT EXISTS"
+        assert "dq_object_grants" in sql
+
+    def test_v21_strips_execute_from_registry_rule_grants(self):
+        """v21 must UPDATE dq_object_grants to remove EXECUTE from
+        registry_rule rows, leaving ALL_PRIVILEGES (owner) rows untouched."""
+        v21 = next(m for m in PG_MIGRATIONS if m.version == 21)
+        sql = v21.sql
+        assert "UPDATE" in sql, "v21 must be an UPDATE statement"
+        assert "dq_object_grants" in sql
+        assert "registry_rule" in sql, "must target registry_rule rows"
+        assert "EXECUTE" in sql, "must reference the EXECUTE token to strip it"
+        # Postgres array helpers used to strip the token
+        assert "array_remove" in sql, "must use array_remove to strip EXECUTE"
+        assert "string_to_array" in sql
+        assert "array_to_string" in sql
+        # Must NOT touch ALL_PRIVILEGES rows (owner rows)
+        assert "ALL_PRIVILEGES" in sql, "must guard against touching ALL_PRIVILEGES rows"
+        assert "<> 'ALL_PRIVILEGES'" in sql or "!= 'ALL_PRIVILEGES'" in sql, (
+            "must explicitly exclude ALL_PRIVILEGES rows from the UPDATE"
+        )
+
 
 # ---------------------------------------------------------------------------
 # PgMigration dataclass behaviour

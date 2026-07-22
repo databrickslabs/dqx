@@ -39,6 +39,8 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_pass_threshold,
     get_rule_severity,
 )
+from databricks_labs_dqx_app.backend.common.permissions import ObjectType
+from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
@@ -148,9 +150,15 @@ class MonitoredTableService:
 
     VALID_STATUSES: frozenset[str] = frozenset(get_args(MonitoredTableStatus))
 
-    def __init__(self, sql: OltpExecutorProtocol, profiling_sql: SqlExecutor) -> None:
+    def __init__(
+        self,
+        sql: OltpExecutorProtocol,
+        profiling_sql: SqlExecutor,
+        permissions: PermissionsService | None = None,
+    ) -> None:
         self._sql = sql
         self._profiling_sql = profiling_sql
+        self._perms = permissions
         self._table = sql.fqn("dq_monitored_tables")
         self._versions_table = sql.fqn("dq_monitored_table_versions")
         self._applied_table = sql.fqn("dq_applied_rules")
@@ -229,6 +237,13 @@ class MonitoredTableService:
             updated_at=now,
         )
         self._insert(binding)
+        if self._perms is not None:
+            self._perms.seed_default_grants(
+                ObjectType.MONITORED_TABLE.value,
+                binding.binding_id,
+                owner_email=user_email,
+                grantor=user_email,
+            )
         logger.info("Registered monitored table %s (binding_id=%s)", table_fqn, binding.binding_id)
         return binding
 
@@ -279,6 +294,13 @@ class MonitoredTableService:
                 updated_at=now,
             )
             self._insert(binding)
+            if self._perms is not None:
+                self._perms.seed_default_grants(
+                    ObjectType.MONITORED_TABLE.value,
+                    binding.binding_id,
+                    owner_email=user_email,
+                    grantor=user_email,
+                )
             registered.append(fqn)
 
         logger.info(

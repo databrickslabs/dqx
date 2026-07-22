@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   PRIV_ALL,
   PRIV_APPLY,
+  PRIV_EXECUTE,
   PRIV_MODIFY,
   PRIV_SELECT,
+  forceSelectWhenOthers,
   grantsEmptyColSpan,
   hasSavedObject,
   initialGrantInherit,
@@ -34,8 +36,8 @@ describe("isAllPrivileges", () => {
     expect(isAllPrivileges([PRIV_ALL])).toBe(true);
   });
 
-  test("true when SELECT + MODIFY + APPLY are all present regardless of order", () => {
-    expect(isAllPrivileges([PRIV_APPLY, PRIV_SELECT, PRIV_MODIFY])).toBe(true);
+  test("true when SELECT + MODIFY + APPLY + EXECUTE are all present regardless of order", () => {
+    expect(isAllPrivileges([PRIV_APPLY, PRIV_SELECT, PRIV_MODIFY, PRIV_EXECUTE])).toBe(true);
   });
 
   test("false when any of the three individual privileges is missing", () => {
@@ -44,6 +46,44 @@ describe("isAllPrivileges", () => {
 
   test("false for an empty privilege list", () => {
     expect(isAllPrivileges([])).toBe(false);
+  });
+
+  test("EXECUTE counts toward ALL — true when SELECT + MODIFY + APPLY + EXECUTE all present", () => {
+    expect(isAllPrivileges([PRIV_SELECT, PRIV_MODIFY, PRIV_APPLY, PRIV_EXECUTE])).toBe(true);
+  });
+
+  test("false when EXECUTE is missing from the concrete set", () => {
+    expect(isAllPrivileges([PRIV_SELECT, PRIV_MODIFY, PRIV_APPLY])).toBe(false);
+  });
+});
+
+describe("forceSelectWhenOthers", () => {
+  test("checking MODIFY forces SELECT on", () => {
+    expect(forceSelectWhenOthers({ view: false, modify: true, apply: false, execute: false }).view).toBe(true);
+  });
+
+  test("checking APPLY forces SELECT on", () => {
+    expect(forceSelectWhenOthers({ view: false, modify: false, apply: true, execute: false }).view).toBe(true);
+  });
+
+  test("checking EXECUTE forces SELECT on", () => {
+    expect(forceSelectWhenOthers({ view: false, modify: false, apply: false, execute: true }).view).toBe(true);
+  });
+
+  test("no other privilege leaves SELECT as-is (false)", () => {
+    expect(forceSelectWhenOthers({ view: false, modify: false, apply: false, execute: false }).view).toBe(false);
+  });
+
+  test("no other privilege leaves SELECT as-is (true)", () => {
+    expect(forceSelectWhenOthers({ view: true, modify: false, apply: false, execute: false }).view).toBe(true);
+  });
+
+  test("does not mutate the original draft", () => {
+    const original = { view: false, modify: true, apply: false, execute: false };
+    const result = forceSelectWhenOthers(original);
+    expect(result).not.toBe(original);
+    expect(original.view).toBe(false);
+    expect(result.view).toBe(true);
   });
 });
 
@@ -102,6 +142,11 @@ describe("initialGrantInherit", () => {
 });
 
 describe("grantsEmptyColSpan", () => {
+  // The "Inheritance" column has been removed for all object types.
+  // Base columns are now 3 (Principal · Privileges · Granted by) for both
+  // rules and non-rules. isRule is kept as a param for call-site compatibility
+  // but no longer affects the result.
+
   test("rule, no manage: Principal + Privileges + Granted By = 3", () => {
     expect(grantsEmptyColSpan(true, false)).toBe(3);
   });
@@ -110,12 +155,12 @@ describe("grantsEmptyColSpan", () => {
     expect(grantsEmptyColSpan(true, true)).toBe(4);
   });
 
-  test("non-rule, no manage: + Inheritance column = 4", () => {
-    expect(grantsEmptyColSpan(false, false)).toBe(4);
+  test("non-rule, no manage: same 3 columns as rule (Inheritance column removed)", () => {
+    expect(grantsEmptyColSpan(false, false)).toBe(3);
   });
 
-  test("non-rule, can manage: Inheritance + actions = 5", () => {
-    expect(grantsEmptyColSpan(false, true)).toBe(5);
+  test("non-rule, can manage: 3 + actions = 4", () => {
+    expect(grantsEmptyColSpan(false, true)).toBe(4);
   });
 });
 

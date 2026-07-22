@@ -19,6 +19,7 @@ from .dependencies import (
     get_materializer,
     get_monitored_table_service,
     get_monitored_table_version_service,
+    get_permissions_service,
     get_registry_service,
     get_rules_catalog_service,
     get_run_set_service,
@@ -248,9 +249,10 @@ async def _build_scheduler_data_product_service(
     with SP credentials (``SchedulerService._create_view``/
     ``_create_view_from_sql``) rather than a calling user's OBO token.
     """
-    monitored_tables = await get_monitored_table_service(sql=oltp, profiling_sql=sp_sql)
-    registry = await get_registry_service(sql=oltp)
     app_settings = await get_app_settings_service(sql=oltp)
+    perms = await get_permissions_service(sql=oltp, app_settings=app_settings)
+    monitored_tables = await get_monitored_table_service(sql=oltp, profiling_sql=sp_sql, perms=perms)
+    registry = await get_registry_service(sql=oltp, perms=perms)
     rules_catalog = await get_rules_catalog_service(sql=oltp)
     materializer = await get_materializer(
         sql=oltp, registry=registry, monitored_tables=monitored_tables, app_settings=app_settings
@@ -282,6 +284,7 @@ async def _build_scheduler_data_product_service(
         version_service=version_service,
         app_settings=app_settings,
         materializer=materializer,
+        perms=perms,
     )
     return data_product_service, binding_run_service
 

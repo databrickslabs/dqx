@@ -9,12 +9,11 @@ model, hierarchy, baseline, and role-layering rules live in
 
 Enforcement contract (see :meth:`require`): roles remain the coarse gate
 (``require_role`` still guards routes); object grants refine *within* a role.
-``ADMIN``/``RULE_APPROVER`` bypass object grants (UC owner/admin convention);
-the object creator is owner-equivalent (implicit ``ALL_PRIVILEGES``); the
-workspace users group holds
-:data:`~backend.common.permissions.DEFAULT_USERS_GROUP_PRIVILEGES` on every
-object by default (implicit-unless-overridden) so existing flows keep working
-on day one.
+``ADMIN``/``RULE_APPROVER`` bypass object grants (UC owner/admin convention).
+Both the workspace users-group default (:data:`~backend.common.permissions.DEFAULT_USERS_GROUP_PRIVILEGES`)
+and the object owner's ``ALL_PRIVILEGES`` are stored as real grant rows by
+:meth:`seed_default_grants` at object-creation time — no implicit defaults are
+synthesised at read time. Deleting a grant row permanently removes access.
 
 Roles are the HARD CEILING (entitlements invariant, item #43). An object
 grant can only ever confer a member of the :class:`~backend.common.permissions.Privilege`
@@ -44,13 +43,13 @@ from fastapi import HTTPException, status
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_permissions_for_role
 from databricks_labs_dqx_app.backend.common.permissions import (
-    DEFAULT_USERS_GROUP_PRIVILEGES,
     USERS_GROUP_PRINCIPAL_ID,
     USERS_GROUP_PRINCIPAL_NAME,
     CHILD_TO_PARENT_TYPE,
     ObjectType,
     PrincipalType,
     Privilege,
+    default_users_group_privileges_for,
     expand_privileges,
     is_reserved_principal_id,
     is_users_group,
@@ -153,36 +152,13 @@ class PermissionsService:
         so the UI can render them distinctly (greyed + "Inherited from …"),
         mirroring how Unity Catalog surfaces inherited grants.
 
-        The workspace users-group default is surfaced as a real row: when the
-        object has no stored users-group grant, a synthetic ``is_default`` row
-        (SELECT + APPLY) is prepended so the UI renders it like any grant. Once
-        a users-group grant is materialized (narrowed/revoked), that stored row
-        shows instead. The users-group grant is per-object and never inherited.
-
-        The object creator is surfaced the same way: a synthetic ``is_default``
-        row granting ``ALL_PRIVILEGES`` to the owner's email is prepended when
-        the owner is known and has no explicit stored grant — display parity for
-        the owner-equivalent privileges the creator already holds at enforcement
-        time. If an explicit grant for the owner exists, that stored row is
-        authoritative and the synthetic owner row is suppressed.
+        Both the users-group default and the owner grant are now stored rows
+        (materialized by :meth:`seed_default_grants` at object-creation time).
+        No synthetic rows are inserted here — what is stored is what is shown.
         """
         direct = self.list_grants(object_type, object_id)
         result = list(direct)
         direct_principals = {g.principal_id for g in direct}
-        if USERS_GROUP_PRINCIPAL_ID not in direct_principals:
-            result.insert(0, self._default_users_group_grant(object_type, object_id))
-        # Synthetic owner/creator default — display parity with the users-group
-        # default. The creator holds ALL PRIVILEGES at enforcement time (see
-        # ``effective_privileges``), so surface it as an auto-generated,
-        # non-materialized row. Suppress it when an explicit grant already
-        # targets the owner (that stored row is authoritative — don't double-list).
-        owner_email = self.get_object_owner(object_type, object_id)
-        # Display-only suppression: also tolerate a name match here so the
-        # synthetic owner row isn't double-listed next to an explicit grant that
-        # carries the owner email as its display name. This is cosmetic and must
-        # not influence enforcement (which keys on the verified principal id).
-        if owner_email and not self._owner_has_display_grant(owner_email, direct):
-            result.insert(0, self._default_owner_grant(object_type, object_id, owner_email))
         for parent_type, parent_id in self._parent_refs(object_type, object_id):
             for g in self.list_grants(parent_type.value, parent_id):
                 if not g.inherit:
@@ -226,120 +202,31 @@ class PermissionsService:
         )
 
     @staticmethod
-    def _default_users_group_grant(object_type: str, object_id: str) -> ObjectGrant:
-        """Build the synthetic (implicit) users-group default grant for display."""
-        return ObjectGrant(
-            object_type=object_type,
-            object_id=object_id,
-            principal_id=USERS_GROUP_PRINCIPAL_ID,
-            principal_type=PrincipalType.GROUP.value,
-            principal_name=USERS_GROUP_PRINCIPAL_NAME,
-            privileges=set(DEFAULT_USERS_GROUP_PRIVILEGES),
-            inherit=False,
-            grantor=None,
-            is_default=True,
-        )
-
-    @staticmethod
-    def _default_owner_grant(object_type: str, object_id: str, owner_email: str) -> ObjectGrant:
-        """Build the synthetic (implicit) owner/creator full-privilege grant for display.
-
-        Parallels :meth:`_default_users_group_grant`: the object creator is
-        owner-equivalent and holds ``ALL_PRIVILEGES`` at enforcement time (see
-        :meth:`effective_privileges`), which is otherwise invisible in the
-        Permissions tab. Surface it as an auto-generated, non-materialized
-        (``is_default``) row keyed on the owner's email. Display-only — never
-        stored, never inherited; enforcement is unchanged.
-        """
-        return ObjectGrant(
-            object_type=object_type,
-            object_id=object_id,
-            principal_id=owner_email,
-            principal_type=PrincipalType.USER.value,
-            principal_name=owner_email,
-            privileges={Privilege.ALL_PRIVILEGES},
-            inherit=False,
-            grantor=None,
-            is_default=True,
-        )
-
-    @staticmethod
     def _grant_targets_email(grant: ObjectGrant, email: str) -> bool:
         """ENFORCEMENT matcher — True when a grant is keyed on ``email`` by VERIFIED id.
 
-        Matches on ``principal_id`` ONLY (case-insensitively). The owner marker
-        and any legacy owner grant are always stored keyed by
-        ``principal_id = owner_email`` (see :meth:`set_grant` — both the
-        revoke/empty-marker and narrow paths send the email as the principal id),
-        so id matching still finds them.
+        Matches on ``principal_id`` ONLY (case-insensitively). Owner grants are
+        always stored keyed by ``principal_id = owner_email`` (see
+        :meth:`seed_default_grants`), so id matching reliably finds them.
 
         Deliberately does NOT match ``principal_name``: that is the free-text SCIM
         display name (:mod:`backend.routes.v1.principals`), which some workspace
         SCIM configs let a principal edit. Treating it as an identity key is a
         spoofing surface — a principal who sets their display name to the owner's
-        email could otherwise suppress the owner's implicit privileges or inherit
-        the owner's access. Cosmetic display-row suppression that still tolerates
-        name matches lives in :meth:`_grant_matches_email_for_display` and never
-        feeds an enforcement decision.
+        email could otherwise inherit the owner's access.
         """
         target = email.strip().lower()
         return (grant.principal_id or "").strip().lower() == target
 
-    @staticmethod
-    def _grant_matches_email_for_display(grant: ObjectGrant, email: str) -> bool:
-        """DISPLAY-ONLY matcher — True when a grant is keyed on ``email`` by id OR name.
-
-        Used solely to decide whether to render the synthetic owner default row
-        (avoid double-listing when an explicit grant carries the owner email as
-        its display name). This is a cosmetic, presentation-layer choice and must
-        NEVER gate an enforcement decision — for that use
-        :meth:`_grant_targets_email`, which keys off the verified principal id
-        only.
-        """
-        target = email.strip().lower()
-        return (grant.principal_id or "").strip().lower() == target or (
-            grant.principal_name or ""
-        ).strip().lower() == target
-
     @classmethod
     def _owner_has_explicit_grant(cls, owner_email: str, direct: list[ObjectGrant]) -> bool:
-        """ENFORCEMENT — True when a stored grant targets the owner by VERIFIED id.
+        """True when a stored grant targets the owner by VERIFIED principal id.
 
-        Matches only on ``principal_id`` (see :meth:`_grant_targets_email`). Gates
-        whether the owner's implicit ``ALL_PRIVILEGES`` and implicit
-        manage-grants capability are suppressed, so it must key off the verified
-        identity, never the mutable display name. The owner marker (empty
-        "revoked" row) and any narrowing grant are always id-keyed on the owner
-        email, so id matching still detects them.
+        Used by :meth:`seed_default_grants` for idempotency: skip inserting an
+        owner row when one already exists. Matches on ``principal_id`` only (see
+        :meth:`_grant_targets_email`).
         """
         return any(cls._grant_targets_email(g, owner_email) for g in direct)
-
-    @classmethod
-    def _owner_has_display_grant(cls, owner_email: str, direct: list[ObjectGrant]) -> bool:
-        """DISPLAY-ONLY — True when a stored grant targets the owner by id OR name.
-
-        Used to suppress the synthetic owner default row so it isn't double-listed
-        alongside an explicit grant that carries the owner email as its id or
-        display name. Cosmetic only — never an enforcement decision (see
-        :meth:`_owner_has_explicit_grant` for that).
-        """
-        return any(cls._grant_matches_email_for_display(g, owner_email) for g in direct)
-
-    def _principal_targets_owner(
-        self, object_type: str, object_id: str, principal_id: str, principal_name: str | None
-    ) -> bool:
-        """True when a grant for (``principal_id``/``principal_name``) targets the owner.
-
-        Used by :meth:`set_grant` to decide whether an empty-privilege grant
-        should materialize a "revoked" marker row (owner/users-group semantics)
-        rather than delete-to-implicit-default. Matches the owner by SCIM id or
-        by the owner's email carried as the principal id/name.
-        """
-        owner_email = self.get_object_owner(object_type, object_id)
-        if not owner_email:
-            return False
-        target = owner_email.strip().lower()
-        return (principal_id or "").strip().lower() == target or (principal_name or "").strip().lower() == target
 
     def _parent_refs(self, object_type: str, object_id: str) -> list[tuple[ObjectType, str]]:
         """Resolve the parent objects a child inherits grants from.
@@ -407,31 +294,23 @@ class PermissionsService:
     ) -> set[Privilege]:
         """Resolve the privileges a caller effectively holds on an object.
 
-        Combines: the workspace users-group default (implicit unless the object
-        has an explicit users-group grant that narrows/revokes it), direct
-        grants matching the caller's principal set (the users-group grant
-        matches every caller), and inherited grants (``inherit=True``) on parent
-        objects. The object creator (``owner_email``) is treated as holding all
-        privileges *implicitly* — unless an explicit stored grant targets the
-        owner, in which case that stored row is authoritative (the owner's
-        auto-granted access is revocable: a grant-manager may narrow it, or
-        materialize an empty "revoked" marker to strip it entirely). Workspace
-        admins / approvers still bypass object grants at the :meth:`has_privilege`
-        boundary, so a revoked owner never orphans the object.
+        Reads only stored rows — direct grants matching the caller's principal
+        set plus inherited grants (``inherit=True``) on parent objects. The
+        users-group default and the owner's full grant are both materialised as
+        real rows by :meth:`seed_default_grants` at object-creation time; no
+        implicit defaults are synthesised here.
 
-        The users-group default is per-object: if the object has *no* stored
-        users-group row it contributes :data:`DEFAULT_USERS_GROUP_PRIVILEGES`;
-        if it *does* (even an empty/revoked one) that stored row wins and the
-        default is not added. Inherited users-group rows are ignored (the
-        default is intrinsic to each object, never inherited).
+        Workspace admins / approvers bypass object grants at the
+        :meth:`has_privilege` boundary; that is the only non-stored access path.
 
         Args:
             object_type: The securable object type value.
             object_id: The securable object id.
             principal_ids: The caller's principal ids (own SCIM id + group
                 ids/names).
-            owner_email: The object's ``created_by`` email, if known.
-            principal_email: The caller's email, for the ownership check.
+            owner_email: Passed for compatibility; not used for implicit grants.
+            principal_email: The caller's email, used to match grants keyed by
+                email (e.g. an owner grant stored keyed on the owner's email).
 
         Returns:
             The set of concrete privileges the caller effectively holds.
@@ -439,8 +318,8 @@ class PermissionsService:
         def _matches(grant: ObjectGrant) -> bool:
             # The users-group grant applies to everyone; other grants match the
             # caller's resolved principal set (own id + group ids/names) or a
-            # grant keyed on the caller's own email (e.g. an explicit owner grant,
-            # which is stored keyed on the owner email, not their SCIM id).
+            # grant keyed on the caller's own email (e.g. an owner grant stored
+            # keyed on the owner email, not their SCIM id).
             if is_users_group(grant.principal_id) or grant.principal_id in principal_ids:
                 return True
             return bool(principal_email) and self._grant_targets_email(grant, principal_email or "")
@@ -448,19 +327,6 @@ class PermissionsService:
         priv: set[Privilege] = set()
         direct = self.list_grants(object_type, object_id)
 
-        # The creator holds ALL PRIVILEGES implicitly — but only while no explicit
-        # stored grant targets the owner. Once a grant-manager materializes an
-        # owner grant (to narrow the owner's access or revoke it with an empty
-        # marker), that stored row is authoritative and the implicit full grant
-        # no longer applies. The caller-is-owner check therefore yields to an
-        # explicit owner row rather than short-circuiting unconditionally.
-        caller_is_owner = bool(
-            owner_email and principal_email and owner_email.strip().lower() == principal_email.strip().lower()
-        )
-        if caller_is_owner and not (owner_email and self._owner_has_explicit_grant(owner_email, direct)):
-            return expand_privileges({Privilege.ALL_PRIVILEGES})
-
-        has_users_group_row = any(is_users_group(g.principal_id) for g in direct)
         for grant in direct:
             if _matches(grant):
                 priv |= expand_privileges(grant.privileges)
@@ -470,10 +336,6 @@ class PermissionsService:
                 # Users-group grants are per-object, never inherited.
                 if grant.inherit and not is_users_group(grant.principal_id) and _matches(grant):
                     priv |= expand_privileges(grant.privileges)
-
-        # Implicit users-group default, unless the object overrides it.
-        if not has_users_group_row:
-            priv |= set(DEFAULT_USERS_GROUP_PRIVILEGES)
 
         return priv
 
@@ -569,18 +431,15 @@ class PermissionsService:
         UC, holding ALL PRIVILEGES on an object does NOT by itself let you
         re-grant it (MANAGE is separate).
 
-        The owner's *implicit* manage capability is revocable: once an explicit
-        stored grant targets the owner (a narrowing, or an empty "revoked"
-        marker), the owner no longer manages grants implicitly — consistent with
-        :meth:`effective_privileges`, where the explicit owner row overrides the
-        implicit full grant. Workspace admins / approvers (:data:`_ROLE_BYPASS`)
-        always retain manage, so an object can never be orphaned.
+        The owner can always manage grants on their own object (keyed by email
+        match, regardless of stored rows). Workspace admins / approvers
+        (:data:`_ROLE_BYPASS`) also always retain manage, so an object can
+        never be orphaned.
         """
         if role in _ROLE_BYPASS:
             return True
         if owner_email and principal_email and owner_email.strip().lower() == principal_email.strip().lower():
-            direct = self.list_grants(object_type, object_id)
-            return not self._owner_has_explicit_grant(owner_email, direct)
+            return True
         return False
 
     def can_edit_and_approve(
@@ -624,6 +483,71 @@ class PermissionsService:
         )
 
     # ------------------------------------------------------------------
+    # Seeding
+    # ------------------------------------------------------------------
+
+    def seed_default_grants(
+        self,
+        object_type: str,
+        object_id: str,
+        owner_email: str | None,
+        grantor: str | None,
+    ) -> None:
+        """Materialise the default grant rows for a newly created object.
+
+        Inserts the workspace users-group row with the privileges appropriate
+        for the object type (see
+        :func:`~backend.common.permissions.default_users_group_privileges_for`)
+        and, when *owner_email* is set, an owner row with ``ALL_PRIVILEGES``.
+        Both inserts are idempotent — a row is only written when no row for
+        that principal already exists on the object.
+
+        The users-group privilege set is type-specific: ``registry_rule``
+        objects receive ``{SELECT, APPLY}`` only — ``EXECUTE`` is meaningless
+        on a rule (the privilege means "run profiling/validation on a table or
+        collection"). ``monitored_table`` and ``data_product`` objects receive
+        ``{SELECT, APPLY, EXECUTE}`` (the historical default).
+
+        Should be called once by each entity service at object-creation time
+        (registry rule, monitored table, data product). A separate backfill
+        migration handles pre-existing objects.
+
+        Args:
+            object_type: The securable object type value.
+            object_id: The securable object id.
+            owner_email: The creating user's email; an owner grant is seeded
+                when non-empty.
+            grantor: The actor recorded as the grantor on both rows.
+        """
+        direct = self.list_grants(object_type, object_id)
+        existing_ids = {g.principal_id for g in direct}
+
+        if USERS_GROUP_PRINCIPAL_ID not in existing_ids:
+            users_group_privs = default_users_group_privileges_for(object_type)
+            self.set_grant(
+                object_type,
+                object_id,
+                USERS_GROUP_PRINCIPAL_ID,
+                principal_type=PrincipalType.GROUP.value,
+                principal_name=USERS_GROUP_PRINCIPAL_NAME,
+                privileges=set(users_group_privs),
+                inherit=False,
+                grantor=grantor,
+            )
+
+        if owner_email and not self._owner_has_explicit_grant(owner_email, direct):
+            self.set_grant(
+                object_type,
+                object_id,
+                owner_email,
+                principal_type=PrincipalType.USER.value,
+                principal_name=owner_email,
+                privileges={Privilege.ALL_PRIVILEGES},
+                inherit=False,
+                grantor=grantor,
+            )
+
+    # ------------------------------------------------------------------
     # Write
     # ------------------------------------------------------------------
 
@@ -644,23 +568,19 @@ class PermissionsService:
         Replace semantics: the principal's full privilege set is overwritten
         (matches the UI's checkbox state).
 
-        Empty privilege set: for a normal principal this is equivalent to
-        :meth:`remove_grant` (the row is deleted). For the workspace users
-        group — and for the object owner — it instead materializes an explicit
-        empty-privilege row — the per-object "revoked" marker that suppresses
-        the implicit default (so the object no longer falls back to SELECT +
-        APPLY for everyone, or, for the owner, to the implicit ALL PRIVILEGES).
-        Materializing the owner marker is what makes the owner's auto-granted
-        full access revocable; workspace admins/approvers still bypass object
-        grants, so the object never becomes orphaned.
+        Empty privilege set: always equivalent to :meth:`remove_grant` — the
+        row is deleted regardless of which principal is targeted. There is no
+        "revoked marker" for users-group or owner: deleting their stored row
+        permanently removes the grant. Workspace admins/approvers always bypass
+        object grants via the role bypass in :meth:`has_privilege`, so the
+        object can never become fully orphaned even if all stored grants are
+        removed.
         """
         self._validate_object_id(object_id)
         self._reject_reserved_principal(principal_id)
         self._validate_enums(object_type, principal_type)
         norm = normalize_privileges(privileges)
-        users_group = is_users_group(principal_id)
-        targets_owner = self._principal_targets_owner(object_type, object_id, principal_id, principal_name)
-        if not norm and not users_group and not targets_owner:
+        if not norm:
             self.remove_grant(object_type, object_id, principal_id, actor=grantor)
             return ObjectGrant(
                 object_type=object_type,

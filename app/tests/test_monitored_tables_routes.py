@@ -217,7 +217,8 @@ class TestRegister:
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", steward="bob@x")
         discovery = _mock_discovery(owner="owner@x")
         result = register_monitored_table(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery, tag_suggestions=_tag_suggestions_mock()
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery,
+            tag_suggestions=_tag_suggestions_mock(),
         )
         assert result.table.table_fqn == "cat.schema.tbl"
         assert result.applied_rule_count == 0
@@ -225,13 +226,31 @@ class TestRegister:
         svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", steward="bob@x")
         discovery.get_table_owner.assert_not_called()
 
+    def test_register_seeds_default_grants_via_service(self):
+        """Seeding is now the service's responsibility (not the route's).
+
+        The route no longer holds a PermissionsService reference for seeding.
+        This test verifies the service's register is called (and seeding
+        therefore flows through the service layer contract, tested exhaustively
+        in test_monitored_table_service.py::TestRegister::test_register_seeds_default_grants).
+        """
+        svc = MagicMock()
+        svc.register.return_value = _table(binding_id="new-b1")
+        body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", steward="bob@x")
+        register_monitored_table(
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery(),
+            tag_suggestions=_tag_suggestions_mock(),
+        )
+        svc.register.assert_called_once()
+
     def test_register_defaults_steward_to_uc_owner(self):
         svc = MagicMock()
         svc.register.return_value = _table()
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
         discovery = _mock_discovery(owner="owner@x")
         register_monitored_table(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery, tag_suggestions=_tag_suggestions_mock()
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery,
+            tag_suggestions=_tag_suggestions_mock(),
         )
         discovery.get_table_owner.assert_called_once_with("cat.schema.tbl")
         svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", steward="owner@x")
@@ -244,7 +263,8 @@ class TestRegister:
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
         discovery = _mock_discovery(owner=None)
         register_monitored_table(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery, tag_suggestions=_tag_suggestions_mock()
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery,
+            tag_suggestions=_tag_suggestions_mock(),
         )
         svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", steward=None)
 
@@ -254,7 +274,8 @@ class TestRegister:
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
         with pytest.raises(HTTPException) as excinfo:
             register_monitored_table(
-                body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery(), tag_suggestions=_tag_suggestions_mock()
+                body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery(),
+                tag_suggestions=_tag_suggestions_mock(),
             )
         assert excinfo.value.status_code == 409
 
@@ -264,7 +285,8 @@ class TestRegister:
         body = RegisterMonitoredTableIn(table_fqn="bad-fqn")
         with pytest.raises(HTTPException) as excinfo:
             register_monitored_table(
-                body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery(), tag_suggestions=_tag_suggestions_mock()
+                body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery(),
+                tag_suggestions=_tag_suggestions_mock(),
             )
         assert excinfo.value.status_code == 400
 
@@ -275,7 +297,8 @@ class TestRegister:
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", steward="bob@x")
         tag_suggestions = _tag_suggestions_mock()
         register_monitored_table(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery(), tag_suggestions=tag_suggestions
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery(),
+            tag_suggestions=tag_suggestions,
         )
         tag_suggestions.apply_matches.assert_called_once_with("b1", "alice@x")
 
@@ -287,7 +310,8 @@ class TestRegister:
         tag_suggestions = MagicMock()
         tag_suggestions.apply_matches.side_effect = RuntimeError("boom")
         result = register_monitored_table(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery(), tag_suggestions=tag_suggestions
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=_mock_discovery(),
+            tag_suggestions=tag_suggestions,
         )
         assert result.table.table_fqn == "cat.schema.tbl"
 
@@ -1300,16 +1324,15 @@ class TestListTagSuggestions:
 class TestRunMonitoredTable:
     """``POST /monitored-tables/{binding_id}/run`` — resolution matrix + RBAC gate."""
 
-    def test_gated_by_require_runner_not_a_primary_role(self):
-        """The route must use the orthogonal RUNNER gate (matching batch_run_from_catalog),
-        not a plain ``require_role(...)`` primary-role check — non-runner authors/approvers
-        must still be rejected even though they'd pass every ``require_role`` check.
+    def test_gated_by_can_run_roles(self):
+        """The run route must use require_role(*CAN_RUN_ROLES) — only ADMIN
+        and RULE_AUTHOR may trigger runs; VIEWER and RULE_APPROVER are rejected.
         """
         for route in mt_routes.router.routes:
             if getattr(route, "operation_id", None) != "runMonitoredTable":
                 continue
             qualnames = {getattr(dep.dependency, "__qualname__", "") for dep in route.dependencies}
-            assert any("require_runner" in q for q in qualnames)
+            assert any("require_role" in q or "_check" in q for q in qualnames)
             return
         raise AssertionError("No route found for operation_id=runMonitoredTable")
 
@@ -1323,6 +1346,9 @@ class TestRunMonitoredTable:
             body=RunMonitoredTableIn(source="approved", version=None),
             obo_ws=_mock_obo_ws(),
             run_svc=svc,
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
         )
         assert result.run_set_id == "rs-1"
         assert result.run_id == "run-1"
@@ -1336,18 +1362,72 @@ class TestRunMonitoredTable:
             "b1", source="approved", version=None, user_email="alice@x", trigger="manual", rule_ids=None
         )
 
+    def test_execute_check_called_before_run(self):
+        """require_object(EXECUTE) is invoked on the monitored table before delegating to run_binding."""
+        from unittest.mock import create_autospec
+        from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+
+        svc = MagicMock()
+        svc.run_binding.return_value = BindingRunResult(
+            run_set_id="rs-1", run_id="run-1", job_run_id=42, view_fqn="dqx_studio_tmp.tmp_1"
+        )
+        perms = create_autospec(PermissionsService, instance=True)
+        run_monitored_table(
+            "b1",
+            body=RunMonitoredTableIn(source="draft"),
+            obo_ws=_mock_obo_ws(),
+            run_svc=svc,
+            role=UserRole.RULE_AUTHOR,
+            principal_ids=frozenset({"u1"}),
+            perms=perms,
+        )
+        perms.require_object.assert_called_once()
+        call_kwargs = perms.require_object.call_args
+        assert call_kwargs.args[0] == "monitored_table"
+        assert call_kwargs.args[1] == "b1"
+        from databricks_labs_dqx_app.backend.common.permissions import Privilege
+        assert call_kwargs.args[2] == Privilege.EXECUTE
+
+    def test_execute_denied_raises_403(self):
+        """When require_object raises 403, run_binding is never called."""
+        from unittest.mock import create_autospec
+        from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+        from fastapi import HTTPException as FastHTTPException
+
+        svc = MagicMock()
+        perms = create_autospec(PermissionsService, instance=True)
+        perms.require_object.side_effect = FastHTTPException(status_code=403, detail="Denied")
+        with pytest.raises(FastHTTPException) as excinfo:
+            run_monitored_table(
+                "b1",
+                body=RunMonitoredTableIn(source="draft"),
+                obo_ws=_mock_obo_ws(),
+                run_svc=svc,
+                role=UserRole.RULE_AUTHOR,
+                principal_ids=frozenset(),
+                perms=perms,
+            )
+        assert excinfo.value.status_code == 403
+        svc.run_binding.assert_not_called()
+
     def test_binding_not_found_maps_to_404(self):
         svc = MagicMock()
         svc.run_binding.side_effect = BindingNotFoundError("Monitored table not found: b1")
         with pytest.raises(HTTPException) as excinfo:
-            run_monitored_table("b1", body=RunMonitoredTableIn(source="draft"), obo_ws=_mock_obo_ws(), run_svc=svc)
+            run_monitored_table(
+                "b1", body=RunMonitoredTableIn(source="draft"), obo_ws=_mock_obo_ws(), run_svc=svc,
+                role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock(),
+            )
         assert excinfo.value.status_code == 404
 
     def test_never_approved_maps_to_409(self):
         svc = MagicMock()
         svc.run_binding.side_effect = NeverApprovedError("never approved")
         with pytest.raises(HTTPException) as excinfo:
-            run_monitored_table("b1", body=RunMonitoredTableIn(source="approved"), obo_ws=_mock_obo_ws(), run_svc=svc)
+            run_monitored_table(
+                "b1", body=RunMonitoredTableIn(source="approved"), obo_ws=_mock_obo_ws(), run_svc=svc,
+                role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock(),
+            )
         assert excinfo.value.status_code == 409
 
     def test_missing_snapshot_maps_to_422(self):
@@ -1355,7 +1435,8 @@ class TestRunMonitoredTable:
         svc.run_binding.side_effect = MissingSnapshotError("no snapshot")
         with pytest.raises(HTTPException) as excinfo:
             run_monitored_table(
-                "b1", body=RunMonitoredTableIn(source="approved", version=9), obo_ws=_mock_obo_ws(), run_svc=svc
+                "b1", body=RunMonitoredTableIn(source="approved", version=9), obo_ws=_mock_obo_ws(), run_svc=svc,
+                role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock(),
             )
         assert excinfo.value.status_code == 422
 
@@ -1364,7 +1445,8 @@ class TestRunMonitoredTable:
         svc.run_binding.side_effect = BindingRunError("missing sql_query")
         with pytest.raises(HTTPException) as excinfo:
             run_monitored_table(
-                "b1", body=RunMonitoredTableIn(source="approved", version=1), obo_ws=_mock_obo_ws(), run_svc=svc
+                "b1", body=RunMonitoredTableIn(source="approved", version=1), obo_ws=_mock_obo_ws(), run_svc=svc,
+                role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock(),
             )
         assert excinfo.value.status_code == 400
 
@@ -1372,7 +1454,10 @@ class TestRunMonitoredTable:
         svc = MagicMock()
         svc.run_binding.side_effect = RuntimeError("boom")
         with pytest.raises(HTTPException) as excinfo:
-            run_monitored_table("b1", body=RunMonitoredTableIn(source="draft"), obo_ws=_mock_obo_ws(), run_svc=svc)
+            run_monitored_table(
+                "b1", body=RunMonitoredTableIn(source="draft"), obo_ws=_mock_obo_ws(), run_svc=svc,
+                role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock(),
+            )
         assert excinfo.value.status_code == 500
 
 

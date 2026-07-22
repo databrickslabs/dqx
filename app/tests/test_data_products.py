@@ -640,6 +640,41 @@ class TestCreate:
         with pytest.raises(ValueError):
             service.create("   ", None, None, "alice@x")
 
+    def test_create_seeds_default_grants(
+        self, sql, monitored_tables, run_set_service, binding_run_service,
+        version_service, app_settings, materializer
+    ):
+        """DataProductService.create seeds default grants via the injected PermissionsService."""
+        from unittest.mock import create_autospec
+        from databricks_labs_dqx_app.backend.common.permissions import ObjectType
+        from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+
+        perms = create_autospec(PermissionsService, instance=True)
+        svc = DataProductService(
+            sql=sql,
+            monitored_tables=monitored_tables,
+            run_set_service=run_set_service,
+            binding_run_service=binding_run_service,
+            version_service=version_service,
+            app_settings=app_settings,
+            materializer=materializer,
+            permissions=perms,
+        )
+        sql.query.return_value = []  # name available
+        product = svc.create("Orders", None, None, "alice@x")
+        perms.seed_default_grants.assert_called_once_with(
+            ObjectType.DATA_PRODUCT.value,
+            product.product_id,
+            owner_email="alice@x",
+            grantor="alice@x",
+        )
+
+    def test_create_skips_seeding_when_no_permissions_service(self, service, sql):
+        """DataProductService.create is safe with no PermissionsService injected (None default)."""
+        sql.query.return_value = []
+        product = service.create("Orders", None, None, "alice@x")
+        assert product.status == "draft"
+
 
 class TestUpdate:
     def test_update_flips_published_to_draft_without_bumping_version(self, service, sql):

@@ -55,6 +55,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RunSetTrigger,
     ScheduleKind,
 )
+from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
 from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer
@@ -62,6 +63,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
     MonitoredTableSummary,
 )
+from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.score_cache_service import CachedScore, parse_cached_score
@@ -203,8 +205,10 @@ class DataProductService:
         version_service: MonitoredTableVersionService,
         app_settings: AppSettingsService,
         materializer: Materializer,
+        permissions: PermissionsService | None = None,
     ) -> None:
         self._sql = sql
+        self._perms = permissions
         self._monitored_tables = monitored_tables
         self._run_set_service = run_set_service
         self._binding_run_service = binding_run_service
@@ -313,6 +317,13 @@ class DataProductService:
             f"{self._opt_str(product.schedule_kind)}, "
             f"'{product.status}', 0, {self._opt_str(created_by)}, now(), {self._opt_str(created_by)}, now())"
         )
+        if self._perms is not None:
+            self._perms.seed_default_grants(
+                ObjectType.DATA_PRODUCT.value,
+                product.product_id,
+                owner_email=created_by,
+                grantor=created_by,
+            )
         logger.info("Created data product %s (product_id=%s)", name, product.product_id)
         return product
 

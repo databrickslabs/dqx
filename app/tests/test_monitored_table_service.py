@@ -195,6 +195,30 @@ class TestRegister:
             svc.register("main.weird`schema.tbl", "alice@x")
         sql.execute.assert_not_called()
 
+    def test_register_seeds_default_grants(self, sql, profiling_sql):
+        """register seeds default grants via the injected PermissionsService."""
+        from unittest.mock import create_autospec
+        from databricks_labs_dqx_app.backend.common.permissions import ObjectType
+        from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+
+        perms = create_autospec(PermissionsService, instance=True)
+        svc = MonitoredTableService(sql=sql, profiling_sql=profiling_sql, permissions=perms)
+        sql.query.return_value = []  # no existing binding
+        table = svc.register("cat.schema.tbl", "alice@x", steward="bob@x")
+        perms.seed_default_grants.assert_called_once_with(
+            ObjectType.MONITORED_TABLE.value,
+            table.binding_id,
+            owner_email="alice@x",
+            grantor="alice@x",
+        )
+
+    def test_register_skips_seeding_when_no_permissions_service(self, svc, sql):
+        """register is safe with no PermissionsService injected (None default)."""
+        sql.query.return_value = []
+        table = svc.register("cat.schema.tbl", "alice@x")
+        # No error — the optional seeding guard fires cleanly
+        assert table.table_fqn == "cat.schema.tbl"
+
 
 # ---------------------------------------------------------------------------
 # bulk_register
@@ -256,6 +280,36 @@ class TestBulkRegister:
         select_sql = sql.query.call_args[0][0]
         assert "cat.schema.new1" in select_sql
         assert "cat.schema.new2" in select_sql
+
+    def test_bulk_register_seeds_default_grants_per_binding(self, sql, profiling_sql):
+        """bulk_register seeds default grants for each successfully registered binding."""
+        from unittest.mock import call, create_autospec
+        from databricks_labs_dqx_app.backend.common.permissions import ObjectType
+        from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+
+        perms = create_autospec(PermissionsService, instance=True)
+        svc = MonitoredTableService(sql=sql, profiling_sql=profiling_sql, permissions=perms)
+        # No existing tables (existence query returns empty)
+        sql.query.return_value = []
+        result = svc.bulk_register(["cat.schema.new1", "cat.schema.new2"], "alice@x")
+        assert sorted(result.registered) == ["cat.schema.new1", "cat.schema.new2"]
+        # seed_default_grants called ONCE per registered binding
+        assert perms.seed_default_grants.call_count == 2
+        calls = perms.seed_default_grants.call_args_list
+        # Both calls use the correct object_type and owner
+        for c in calls:
+            assert c == call(
+                ObjectType.MONITORED_TABLE.value,
+                c.args[1],  # binding_id — different per registration
+                owner_email="alice@x",
+                grantor="alice@x",
+            )
+
+    def test_bulk_register_skips_seeding_when_no_permissions_service(self, svc, sql):
+        """bulk_register is safe with no PermissionsService injected (None default)."""
+        sql.query.return_value = []
+        result = svc.bulk_register(["cat.schema.new1"], "alice@x")
+        assert result.registered == ["cat.schema.new1"]
 
 
 # ---------------------------------------------------------------------------

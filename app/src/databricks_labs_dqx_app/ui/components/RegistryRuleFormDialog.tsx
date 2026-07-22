@@ -1742,6 +1742,10 @@ export function RegistryRuleFormDialog({
     () => labelDefinitions.find((d) => d.key === RESERVED_DIMENSION_KEY)?.values ?? [],
     [labelDefinitions],
   );
+  const dimensionDescriptions = useMemo(
+    () => labelDefinitions.find((d) => d.key === RESERVED_DIMENSION_KEY)?.value_descriptions ?? {},
+    [labelDefinitions],
+  );
   const severityValues = useMemo(
     () => orderSeverityValuesForDisplay(labelDefinitions.find((d) => d.key === RESERVED_SEVERITY_KEY)?.values ?? []),
     [labelDefinitions],
@@ -2940,14 +2944,20 @@ export function RegistryRuleFormDialog({
               <SelectValue placeholder={t("rulesRegistry.selectDimension")} />
             </SelectTrigger>
             <SelectContent>
-              {dimensionValues.map((v) => (
-                <SelectItem key={v} value={v} className="text-xs">
-                  <span className="flex items-center gap-1.5">
-                    <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_DIMENSION_KEY, v)} />
-                    {v}
-                  </span>
-                </SelectItem>
-              ))}
+              {dimensionValues.map((v) => {
+                const description = dimensionDescriptions[v];
+                return (
+                  <SelectItem key={v} value={v} className="text-xs">
+                    <span
+                      className="flex items-center gap-1.5"
+                      title={description || undefined}
+                    >
+                      <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_DIMENSION_KEY, v)} />
+                      {v}
+                    </span>
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
           {showFieldSuggest && dimensionValues.length > 0 && (

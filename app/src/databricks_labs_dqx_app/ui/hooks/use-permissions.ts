@@ -29,17 +29,22 @@ export interface UsePermissionsResult {
   canConfigureStorage: boolean;
   canManageRoles: boolean;
   /**
-   * Whether the user can see and use the "Run Rules" page. True for
-   * admins (implicit) and any user with an explicit RUNNER role mapping.
-   * Other primary roles (author, approver, viewer) do NOT grant this on
-   * their own — RUNNER is orthogonal/additive.
+   * Whether the user can trigger profiler and validation runs. True for
+   * admins and rule authors (both hold the ``run_rules`` permission
+   * directly). Approvers and viewers do NOT hold it — the orthogonal
+   * RUNNER role has been removed; run access is now granted via the
+   * ADMIN and RULE_AUTHOR roles directly.
    */
   canRunRules: boolean;
   isAdmin: boolean;
   isRuleApprover: boolean;
   isRuleAuthor: boolean;
   isViewer: boolean;
-  /** True iff the orthogonal RUNNER role is held (admins always count). */
+  /**
+   * True iff the caller effectively holds run access (admin or
+   * rule_author). Kept for backward-compat with code that reads
+   * ``isRunner``; new code should prefer ``canRunRules``.
+   */
   isRunner: boolean;
 }
 
@@ -56,9 +61,10 @@ export function usePermissions(): UsePermissionsResult {
     const role = data?.role ?? "viewer";
     const permissions = (data?.permissions ?? []) as Permission[];
     const isAdmin = role === "admin";
-    // ``is_runner`` from the backend already includes the admin-implicit
-    // case, but we OR with ``isAdmin`` defensively in case the field is
-    // missing (older deployment, cached response, etc.).
+    // ``is_runner`` from the backend reflects run access (admin + rule_author).
+    // OR with ``isAdmin`` defensively in case the field is missing (older
+    // deployment, cached response, etc.). The orthogonal RUNNER role has been
+    // removed — run_rules is now a permission of ADMIN and RULE_AUTHOR only.
     const isRunner = (data?.is_runner ?? false) || isAdmin;
 
     const hasPermission = (permission: Permission): boolean =>
@@ -78,7 +84,7 @@ export function usePermissions(): UsePermissionsResult {
       canConfigureStorage: hasPermission("configure_storage"),
       canManageRoles: hasPermission("manage_roles"),
       // Prefer the explicit ``run_rules`` permission flag from the
-      // backend (which folds in admin + runner). Fall back to isRunner
+      // backend (held by admin + rule_author roles). Fall back to isRunner
       // for resilience against older API responses.
       canRunRules: hasPermission("run_rules") || isRunner,
       isAdmin,

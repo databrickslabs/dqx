@@ -28,6 +28,7 @@ from uuid import uuid4
 from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from databricks.labs.dqx.utils import is_sql_query_safe
 
+from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
 from databricks_labs_dqx_app.backend.registry_models import (
     AuthorKind,
@@ -40,6 +41,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_dimension,
     get_rule_severity,
 )
+from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
 
@@ -85,8 +87,9 @@ class RegistryService:
     # (use "Duplicate" / undeprecate respectively).
     EDITABLE_STATUSES: frozenset[str] = frozenset({"draft", "approved"})
 
-    def __init__(self, sql: OltpExecutorProtocol) -> None:
+    def __init__(self, sql: OltpExecutorProtocol, permissions: PermissionsService | None = None) -> None:
         self._sql = sql
+        self._perms = permissions
         self._table = sql.fqn("dq_rules")
         self._versions_table = sql.fqn("dq_rule_versions")
         self._history_table = sql.fqn("dq_rules_history")
@@ -564,6 +567,13 @@ class RegistryService:
         warning = self._dedup_warning(rule)
         self._insert(rule)
         self._record_history(rule.rule_id, rule.definition, rule.version, "create", None, "draft", user_email)
+        if self._perms is not None:
+            self._perms.seed_default_grants(
+                ObjectType.REGISTRY_RULE.value,
+                rule.rule_id,
+                owner_email=user_email,
+                grantor=user_email,
+            )
         logger.info("Created registry rule %s (mode=%s)", rule.rule_id, rule.mode)
         return rule, warning
 

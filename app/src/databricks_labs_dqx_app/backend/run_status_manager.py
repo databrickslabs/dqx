@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Protocol
 
 from databricks_labs_dqx_app.backend.config import AppConfig
@@ -213,6 +214,12 @@ _MAX_RECONCILE_PER_CALL = 25
 _STATUS_CACHE_TTL_SECONDS = 30.0
 _status_cache: dict[int, tuple[_JobStatusLike, float]] = {}
 
+# A RUNNING row older than this threshold that cannot be reconciled via the
+# Jobs API (no job_run_id, or the job status is unavailable) is treated as an
+# unrecoverable stale placeholder and flipped to FAILED. Real runs complete
+# well within a few hours on these dev/UAT targets; 12 h is a safe floor.
+_STALE_RUNNING_MAX_AGE_HOURS = 12
+
 
 def _cached_job_status(job_run_id: int, status_fn: Callable[[int], _JobStatusLike]) -> _JobStatusLike:
     """Return the job-run status, memoised for ``_STATUS_CACHE_TTL_SECONDS``."""
@@ -284,36 +291,78 @@ def reconcile_running_rows(
     SUCCESS here would surface a metric-less run. This mirrors
     ``get_dry_run_status``. Everything is best-effort — any failure is logged
     and the row is left untouched so listing never breaks.
+
+    **Stale-placeholder fallback:** when a RUNNING row cannot be resolved via
+    the Jobs API (no *job_run_id*, or the Jobs API lookup raised an exception)
+    AND its *created_at* is older than :data:`_STALE_RUNNING_MAX_AGE_HOURS`,
+    it is flipped to FAILED with a clear error message. This prevents ancient
+    placeholder rows from keeping the frontend in an infinite polling loop.
+    Only genuinely old, unresolvable rows are affected; recent rows and rows
+    whose Jobs-API state is still active are left untouched.
     """
     running_ids = [rid for r in rows if r.get("status") == "RUNNING" and (rid := r.get("run_id"))]
     if not running_ids:
         return
     job_run_ids = _get_running_job_run_ids(sql, app_conf, table_name, running_ids[:_MAX_RECONCILE_PER_CALL])
-    if not job_run_ids:
-        return
+
+    now_utc = datetime.now(timezone.utc)
 
     for row in rows:
         run_id = row.get("run_id")
         if row.get("status") != "RUNNING" or not run_id:
             continue
         job_run_id = job_run_ids.get(run_id)
-        if job_run_id is None:
+
+        if job_run_id is not None:
+            # --- Jobs-API path ---
+            try:
+                status = _cached_job_status(job_run_id, status_fn)
+            except Exception as exc:
+                logger.warning("reconcile: failed to fetch job status for run %s: %s", run_id, exc)
+                # Fall through to stale-age check below; if the row is old
+                # enough it will still be flipped to FAILED.
+                status = None
+
+            if status is not None:
+                if status.state not in _TERMINAL_LIFECYCLE_STATES:
+                    # Job still running — do not touch the row.
+                    continue
+                if status.result_state == "SUCCESS":
+                    # Runner owns the terminal SUCCESS row; don't clobber it.
+                    continue
+                new_status = "CANCELED" if status.result_state == "CANCELED" else "FAILED"
+                error_message = status.message or f"Run finished with state: {status.state}"
+                update_run_status(sql, app_conf, table_name, run_id, status=new_status, error_message=error_message)
+                row["status"] = new_status
+                if not row.get("error_message"):
+                    row["error_message"] = error_message
+                continue
+            # status is None (Jobs-API raised) — fall through to stale-age check.
+
+        # --- Stale-age fallback ---
+        # Reached when: (a) no job_run_id, or (b) Jobs API raised an exception.
+        # Flip to FAILED only if the row is old enough to be unrecoverable.
+        created_at_str = row.get("created_at")
+        if not created_at_str:
             continue
         try:
-            status = _cached_job_status(job_run_id, status_fn)
-        except Exception as exc:
-            logger.warning("reconcile: failed to fetch job status for run %s: %s", run_id, exc)
+            # created_at arrives as a CAST(TIMESTAMP AS STRING), which Spark
+            # formats as "YYYY-MM-DD HH:MM:SS[.fraction]" (no timezone suffix).
+            # Treat it as UTC and replace the space separator for fromisoformat.
+            created_at = datetime.fromisoformat(str(created_at_str).replace(" ", "T"))
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+        except ValueError:
             continue
-
-        if status.state not in _TERMINAL_LIFECYCLE_STATES:
+        age_hours = (now_utc - created_at).total_seconds() / 3600.0
+        if age_hours < _STALE_RUNNING_MAX_AGE_HOURS:
             continue
-        if status.result_state == "SUCCESS":
-            # Runner owns the terminal SUCCESS row; don't clobber it.
-            continue
-
-        new_status = "CANCELED" if status.result_state == "CANCELED" else "FAILED"
-        error_message = status.message or f"Run finished with state: {status.state}"
-        update_run_status(sql, app_conf, table_name, run_id, status=new_status, error_message=error_message)
-        row["status"] = new_status
+        stale_message = (
+            f"Run status unrecoverable (stale RUNNING placeholder); "
+            f"marked failed after {_STALE_RUNNING_MAX_AGE_HOURS}h."
+        )
+        update_run_status(sql, app_conf, table_name, run_id, status="FAILED", error_message=stale_message)
+        row["status"] = "FAILED"
         if not row.get("error_message"):
-            row["error_message"] = error_message
+            row["error_message"] = stale_message
+        logger.info(f"reconcile: flipped stale RUNNING row {run_id} to FAILED (age {age_hours:.1f}h)")

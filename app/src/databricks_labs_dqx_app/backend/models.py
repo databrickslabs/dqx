@@ -1,3 +1,4 @@
+import functools
 from typing import TYPE_CHECKING, Any, Literal
 
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
@@ -47,7 +48,18 @@ if TYPE_CHECKING:
     # Imported for typing only: a runtime import would form a cycle
     # (models -> profiling_suggestion_service -> profiling_rule_builder -> models,
     # whose ``CheckFunctionDef`` is defined far below this line).
-    from .services.profiling_suggestion_service import BatchApplyResult, ProfilingSuggestion
+    from .services.profiling_suggestion_service import BatchApplyResult, EnrichedAppliedRule, ProfilingSuggestion
+
+
+@functools.lru_cache(maxsize=None)
+def _cached_core_version() -> str:
+    """Return the core DQX library version, computed once and cached for the process lifetime."""
+    try:
+        from importlib.metadata import version as pkg_version
+
+        return pkg_version("databricks-labs-dqx")
+    except Exception:
+        return "unknown"
 
 
 class VersionOut(BaseModel):
@@ -55,14 +67,8 @@ class VersionOut(BaseModel):
     core_version: str
 
     @classmethod
-    def from_metadata(cls):
-        try:
-            from importlib.metadata import version as pkg_version
-
-            core = pkg_version("databricks-labs-dqx")
-        except Exception:
-            core = "unknown"
-        return cls(version=__version__, core_version=core)
+    def from_metadata(cls) -> "VersionOut":
+        return cls(version=__version__, core_version=_cached_core_version())
 
 
 class ConfigOut(BaseModel):
@@ -765,6 +771,34 @@ class AppliedRuleOut(BaseModel):
             created_at=applied.created_at.isoformat() if applied.created_at else None,
         )
 
+    @classmethod
+    def from_enriched(cls, enriched: "EnrichedAppliedRule") -> "AppliedRuleOut":
+        """Build from an :class:`EnrichedAppliedRule` returned by the profiler suggestion flow.
+
+        Populates *rule_name*, *rule_dimension*, and *rule_severity* from the
+        enriched display fields so staged profiler rows render identically to
+        persisted rows built via :meth:`from_summary`.
+        """
+        applied = enriched.applied_rule
+        return cls(
+            id=applied.id,
+            binding_id=applied.binding_id,
+            rule_id=applied.rule_id,
+            pinned_version=applied.pinned_version,
+            severity_override=applied.severity_override,
+            row_filter=applied.row_filter,
+            pass_threshold=applied.pass_threshold,
+            column_pass_thresholds=get_applied_column_pass_thresholds(applied.user_metadata),
+            column_mapping=applied.column_mapping,
+            user_metadata=applied.user_metadata,
+            mapping_hash=applied.mapping_hash,
+            created_by=applied.created_by,
+            created_at=applied.created_at.isoformat() if applied.created_at else None,
+            rule_name=enriched.rule_name,
+            rule_dimension=enriched.rule_dimension,
+            rule_severity=enriched.rule_severity,
+        )
+
 
 class ApplyRuleIn(BaseModel):
     """Request body for applying a published registry rule to a monitored table."""
@@ -1182,7 +1216,7 @@ class ApplyProfilingSuggestionsOut(BaseModel):
     @classmethod
     def from_domain(cls, result: "BatchApplyResult") -> "ApplyProfilingSuggestionsOut":
         return cls(
-            applied=[AppliedRuleOut.from_domain(a) for a in result.applied],
+            applied=[AppliedRuleOut.from_enriched(a) for a in result.applied],
             failed=[ProfilingSuggestionApplyFailureOut(index=f.index, reason=f.reason) for f in result.failed],
         )
 

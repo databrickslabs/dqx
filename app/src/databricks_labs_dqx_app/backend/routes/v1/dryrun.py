@@ -9,7 +9,7 @@ from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
@@ -25,7 +25,6 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_user_catalog_names,
     get_view_service,
     require_role,
-    require_runner,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
@@ -182,15 +181,6 @@ async def list_validation_runs(
                 if not review_value or review_value not in review_filter:
                     continue
 
-            checks: list[dict[str, Any]] = []
-            raw = row.get("checks_json")
-            if raw:
-                try:
-                    parsed = json.loads(raw)
-                    if isinstance(parsed, list):
-                        checks = parsed
-                except (json.JSONDecodeError, TypeError):
-                    pass
             results.append(
                 ValidationRunSummaryOut(
                     run_id=run_id,
@@ -212,7 +202,6 @@ async def list_validation_runs(
                     error_message=row.get("error_message"),
                     duration_seconds=float(v) if (v := row.get("duration_seconds")) is not None else None,
                     job_run_id=int(v) if (v := row.get("job_run_id")) else None,
-                    checks=checks,
                     review_status=review_value,
                     review_status_is_default=bool(review.is_default) if review else False,
                     review_status_updated_by=review.updated_by if review else None,
@@ -229,11 +218,8 @@ async def list_validation_runs(
     "/batch-from-catalog",
     response_model=BatchRunFromCatalogOut,
     operation_id="batchRunFromCatalog",
-    # Executing approved rules from the Run Rules page is gated on the
-    # orthogonal runner role (admins are implicit runners). Authors and
-    # approvers without an explicit RUNNER mapping cannot trigger batch
-    # runs even though they would otherwise pass the _NON_VIEWERS check.
-    dependencies=[require_runner()],
+    # Run gate: only ADMIN and RULE_AUTHOR may trigger batch runs.
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def batch_run_from_catalog(
     body: BatchRunFromCatalogIn,
@@ -338,7 +324,7 @@ def batch_run_from_catalog(
     "",
     response_model=DryRunSubmitOut,
     operation_id="submitDryRun",
-    dependencies=[require_role(*_NON_VIEWERS)],
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def submit_dry_run(
     body: DryRunIn,
@@ -583,7 +569,7 @@ def get_dry_run_status(
 @router.post(
     "/runs/{run_id}/cancel",
     operation_id="cancelDryRun",
-    dependencies=[require_role(*_NON_VIEWERS)],
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def cancel_dry_run(
     run_id: str,
