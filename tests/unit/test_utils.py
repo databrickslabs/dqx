@@ -22,6 +22,7 @@ from databricks.labs.dqx.utils import (
     missing_required_packages,
     get_file_extension,
     resolve_variables,
+    quote_column_name,
 )
 from databricks.labs.dqx.rule import normalize_bound_args
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
@@ -847,3 +848,9 @@ def test_resolve_variables_accepts_time():
     checks = [{"expr": "t > '{{ t }}'"}]
     result = resolve_variables(checks, {"t": time(10, 30)})
     assert result[0]["expr"] == "t > '10:30:00'"
+
+
+def test_quote_column_name():
+    column_name = "my `column` name"
+    result = quote_column_name(column_name)
+    assert result == "`my ``column`` name`"
