@@ -1949,11 +1949,12 @@ class SchedulerService:
 
         list_sql = (
             f"SELECT table_name "
-            f"FROM `{self._catalog}`.information_schema.views "
+            f"FROM `{self._catalog}`.information_schema.tables "
             f"WHERE table_schema = '{escape_sql_string(self._tmp_schema)}' "
+            f"  AND table_type = 'VIEW' "
             f"  AND table_name LIKE 'tmp\\_view\\_%' ESCAPE '\\\\' "
-            f"  AND created_at < current_timestamp() - INTERVAL {_GC_AGE_HOURS} HOUR "
-            f"ORDER BY created_at ASC "
+            f"  AND created < current_timestamp() - INTERVAL {_GC_AGE_HOURS} HOUR "
+            f"ORDER BY created ASC "
             f"LIMIT {_GC_MAX_DROPS_PER_RUN}"
         )
         try:

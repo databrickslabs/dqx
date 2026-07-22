@@ -355,6 +355,16 @@ class TestGcOrphanViews:
         # Must not have attempted the in-use cross-check either.
         mocks.sql.query.assert_not_called()
 
+    def test_list_query_targets_information_schema_tables_created(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        mocks.tmp.query.return_value = []
+        svc._gc_orphan_views()
+        list_sql = mocks.tmp.query.call_args_list[0].args[0]
+        assert "information_schema.tables" in list_sql
+        assert "table_type = 'VIEW'" in list_sql
+        assert "created_at" not in list_sql
+        assert "created <" in list_sql
+
 
 # ---------------------------------------------------------------------------
 # _maybe_gc_orphan_views — gate-keeper behaviour
