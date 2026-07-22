@@ -33,6 +33,7 @@ from pyspark.sql import SparkSession
 if TYPE_CHECKING:
     from databricks.labs.dqx.profiler.profiler import DQProfile
 
+from dqx_mcp_runner.config_compat import config_has_field, config_replace
 from dqx_mcp_runner.naming import (
     IDENTIFIER_RE,
     PRINCIPAL_RE,
@@ -168,11 +169,13 @@ def save_checks(spark: SparkSession, ws: WorkspaceClient, params: dict) -> dict:
 
     engine = DQEngine(workspace_client=ws, spark=spark)
     _handler, config = ChecksStorageHandlerFactory(ws, spark).create_for_location(location, run_config_name)
-    # Apply the write mode through the config's validator via replace() — NOT attribute assignment,
-    # which bypasses validation and silently no-ops on a config with no `mode`. The per-user output
-    # is always a table backend, which declares `mode`; fail clearly if that ever isn't the case.
-    if "mode" in type(config).model_fields:
-        config = config.replace(mode=mode)
+    # Apply the write mode through a fresh copy — NOT attribute assignment, which bypasses
+    # validation and silently no-ops on a config with no `mode`. The per-user output is always a
+    # table backend, which declares `mode`; fail clearly if that ever isn't the case. Field lookup
+    # and copy go through version-agnostic helpers so the pinned DQX release can be either a
+    # pydantic-config or an older dataclass-config version.
+    if config_has_field(config, "mode"):
+        config = config_replace(config, mode=mode)
     else:
         raise InvalidParameterError(f"The checks backend for '{location}' does not support a write mode.")
     engine.save_checks(checks, config)
