@@ -327,7 +327,9 @@ def _ensure_metadata_dims(sp_sql: SqlExecutor, oltp: OltpExecutorProtocol) -> No
     try:
         registry = RegistryService(sql=oltp)
         monitored_tables = MonitoredTableService(sql=oltp, profiling_sql=sp_sql)
-        MetadataDimService(sp_sql=sp_sql, registry=registry, monitored_tables=monitored_tables).refresh()
+        MetadataDimService(
+            sp_sql=sp_sql, registry=registry, monitored_tables=monitored_tables, genie_schema=conf.genie_schema_name
+        ).refresh()
         logger.info("Ensured DQ metadata dims exist and are refreshed")
     except Exception as e:
         logger.warning(
@@ -349,7 +351,7 @@ def _ensure_entitlement_objects(sp_sql: SqlExecutor) -> None:
     it is deliberately NOT part of the Lakebase/OLTP data model.
     """
     try:
-        service = EntitlementService(sql=sp_sql)
+        service = EntitlementService(sql=sp_sql, genie_schema=conf.genie_schema_name)
         service.ensure_objects()
         logger.info(
             "Ensured entitlement objects exist: %s and %s",
@@ -745,6 +747,7 @@ async def lifespan(app: FastAPI):
                 sp_sql=sp_sql,
                 registry=scheduler_registry,
                 monitored_tables=scheduler_monitored_tables,
+                genie_schema=conf.genie_schema_name,
             )
 
             # Apply-on-tag reconcile sweep (Task 7): wired with the same

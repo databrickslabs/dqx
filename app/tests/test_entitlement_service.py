@@ -43,7 +43,7 @@ PLAIN_TABLE = TableInfo(row_filter=None, columns=[ColumnInfo(name="id"), ColumnI
 def svc(sql_executor_mock) -> EntitlementService:
     sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
     sql_executor_mock.query.return_value = []
-    return EntitlementService(sql=sql_executor_mock)
+    return EntitlementService(sql=sql_executor_mock, genie_schema="genie")
 
 
 @pytest.fixture
@@ -83,7 +83,7 @@ class TestConstants:
 
     def test_quoted_fqns(self, svc):
         assert svc.entitlements_table_fqn_quoted == "`dqx_test`.`dqx_app_test`.dq_user_table_entitlements"
-        assert svc.failing_rows_view_fqn_quoted == "`dqx_test`.`dqx_app_test`.v_dq_failing_rows"
+        assert svc.failing_rows_view_fqn_quoted == "`dqx_test`.`genie`.v_dq_failing_rows"
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ class TestFailingRowsViewDdl:
 
     def test_targets_view_and_reads_quarantine_records(self, svc):
         ddl = svc.failing_rows_view_ddl()
-        assert f"`dqx_test`.`dqx_app_test`.{FAILING_ROWS_VIEW_NAME}" in ddl
+        assert f"`dqx_test`.`genie`.{FAILING_ROWS_VIEW_NAME}" in ddl
         assert "`dqx_test`.`dqx_app_test`.dq_quarantine_records" in ddl
 
     def test_gate_is_current_user_exists_with_ttl(self, svc):

@@ -845,7 +845,7 @@ async def get_entitlement_service(
     view are SP-owned UC objects. The caller's OBO executor (for the
     self-verification probes) is passed per call, never stored.
     """
-    return EntitlementService(sql=sp_sql)
+    return EntitlementService(sql=sp_sql, genie_schema=conf.genie_schema_name)
 
 
 async def get_data_product_service(
