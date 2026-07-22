@@ -6,6 +6,41 @@ import Admonition from '@theme/Admonition';
 
 #  Demos
 
+## DQX Studio built-in demo
+
+If you're using [DQX Studio](/docs/studio/), the no-code web app, you don't need
+a notebook to try it out. Studio ships with a **built-in demo** so you can
+explore every feature against realistic data before pointing it at your own
+tables. It creates a small set of sample tables, a library of reusable rules,
+monitored tables, collections, and past runs — enough to see scores, trends,
+failing records, and the approval workflow in action.
+
+An admin turns the demo on from **Admin Settings**. Deploying it sets up the
+sample catalog, seeds the rules and monitored tables, and generates a history of
+runs so the results views have something to show. Once it's in place you can:
+
+* Browse the [rules registry](/docs/studio/authoring/create-a-rule) and see how
+  rules are reused across tables.
+* Open a [monitored table](/docs/studio/monitoring/monitor-a-table) and its
+  [results page](/docs/studio/running/results) — including failing records you
+  can inspect.
+* View a [collection](/docs/studio/monitoring/collections) such as *Customer 360*
+  to see quality across related tables at once.
+* Try [Ask Genie](/docs/studio/running/genie) on the demo's results.
+
+It's the fastest way for a new steward or reviewer to get comfortable — nothing
+they do to the demo touches production data. When you're done, the demo can be
+removed from Admin Settings just as easily, clearing the sample content so it
+doesn't clutter your workspace.
+
+<Admonition type="note" title="Admin only">
+Only the **Admin** role can deploy or remove the demo, since it creates sample
+data and app content. See
+[Set up DQX Studio for your organization](/docs/studio/governance/).
+</Admonition>
+
+## Notebook demos
+
 Import the following notebooks in the Databricks workspace to try DQX out:
 ## Use as Library
 * [DQX Quick Start Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_quick_start_demo_library.py) - quickstart DQX usage as a library.
