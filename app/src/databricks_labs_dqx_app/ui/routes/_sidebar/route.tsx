@@ -207,7 +207,7 @@ function Layout() {
             <SidebarMenuItem>
               <SidebarMenuButton asChild tooltip={t("sidebar.documentation")}>
                 <a
-                  href="https://databrickslabs.github.io/dqx/docs/guide/dqx_studio/#accessing-dqx-studio"
+                  href="https://databrickslabs.github.io/dqx/docs/studio/"
                   target="_blank"
                   rel="noopener noreferrer"
                   title={t("sidebar.documentationTitle")}

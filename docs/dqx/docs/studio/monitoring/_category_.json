@@ -1,1 +1,1 @@
-{ "label": "Monitor your tables", "position": 3, "collapsible": true, "collapsed": false }
+{ "label": "Monitor your tables", "position": 3, "collapsible": true, "collapsed": false, "link": { "type": "doc", "id": "studio/monitoring/index" } }

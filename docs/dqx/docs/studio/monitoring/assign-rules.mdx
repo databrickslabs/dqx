@@ -1,62 +1,21 @@
 ---
 sidebar_position: 1
-title: "Monitor a table"
+title: "Assign rules"
 ---
 
 import Admonition from '@theme/Admonition';
 import ThemedImage from '@theme/ThemedImage';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 
-# Monitor a table
+# Assign rules
 
-This page is for stewards who want to put real, ongoing data-quality checks on a
-table. It's where the reusable rules in your [Rules Registry](/docs/studio/start-here/key-concepts)
-stop being definitions and start doing work.
+Assigning rules is where the reusable definitions in your
+[Rules Registry](/docs/studio/start-here/key-concepts) start doing work: you
+attach them to a [monitored table](/docs/studio/monitoring/)'s columns and tune
+them for that table. Each rule you apply to a column becomes a **check** — a
+single rule can become many checks across your tables and columns.
 
-When you apply rules to a Unity Catalog table, that table becomes a **monitored
-table** — the single source of truth for that table's data quality. Everything
-about how healthy the table is, which checks run on it, and how it's trended over
-time lives in one place.
-
-## Open a table to monitor
-
-1. Go to **Tables**.
-2. Select **Monitor a table**.
-3. Browse Unity Catalog: pick a **catalog**, then a **schema**, then a **table**.
-   You only see catalogs, schemas, and tables you already have access to — if a
-   table you expect isn't listed, it's a permissions question, not a bug.
-4. The table detail opens.
-
-<Admonition type="tip" title="Adding many tables at once">
-Need to bring dozens of tables under monitoring? Use bulk-register to add many
-tables in one step instead of opening them one at a time.
-</Admonition>
-
-## The table detail
-
-A monitored table has four tabs:
-
-- **About** — the table's schema, a preview of sample data, and an "ask a
-  question" box for quick natural-language questions about the data.
-- **Apply Rules** — where you turn rules into live checks. This is the focus of
-  this page.
-- **Results** — the table's data-quality score, its trend over time, and a
-  breakdown you can drill into down to the failing rows.
-- **Profile** — a scan of the table's shape that can suggest candidate rules.
-
-<ThemedImage
-  alt="Monitored table About tab showing schema, a governed tag, and a sample-data preview with an ask-a-question box"
-  sources={{
-    light: useBaseUrl('/img/studio/table_detail_light.png'),
-    dark: useBaseUrl('/img/studio/table_detail_dark.png'),
-  }}
-/>
-
-## Apply rules
-
-Open the **Apply Rules** tab to attach rules from your registry to this table.
-Each rule you apply to a column becomes a **check** — a single rule can become
-many checks across your tables and columns.
+Open the **Apply Rules** tab on a monitored table to get started.
 
 <ThemedImage
   alt="Apply Rules tab showing rules mapped to columns, severity indicators, pass-threshold badges, and a Suggest rules button"
@@ -84,7 +43,7 @@ underlying rule:
   whether a check is green. Useful when you're improving quality gradually. See
   [Quality thresholds](/docs/studio/monitoring/quality-thresholds).
 
-### Pin a rule version
+## Pin a rule version
 
 Rules in the registry evolve — an author edits a rule and it gets a new version.
 Each check on your table shows a **version selector** (for example, *Latest
@@ -99,13 +58,21 @@ Each check on your table shows a **version selector** (for example, *Latest
 Pinning is per check, so you can let most checks follow the latest while holding a
 sensitive one steady.
 
-### Suggest rules with AI
+## Suggest rules with AI
 
 You don't have to map every check by hand. Select **Suggest rules** and DQX
 Studio looks at this specific table — its columns, their names and types, and the
 shape of the data — and proposes a tailored set of checks for it: an `id` that
 should be unique, an `email` that should match a pattern, an `amount` that
 shouldn't be negative, and so on.
+
+<ThemedImage
+  alt="Suggest rules with AI: the app proposes a tailored set of checks for a table's columns"
+  sources={{
+    light: useBaseUrl('/img/studio/feat_suggest_light.png'),
+    dark: useBaseUrl('/img/studio/feat_suggest_dark.png'),
+  }}
+/>
 
 It's the fastest way to go from an unmonitored table to a sensible starting set
 of checks. You stay in control — review each suggestion, keep the ones that fit,
