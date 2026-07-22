@@ -52,8 +52,16 @@ def test_compute_rule_fingerprint_set_arguments_order_independent():
     reversed_check = {
         "check": {"function": "is_in_list", "arguments": {"allowed": IterationOrderedSet(list(reversed(values)))}}
     }
+    plain_set_check = {"check": {"function": "is_in_list", "arguments": {"allowed": set(values)}}}
 
-    assert compute_rule_fingerprint(check) == compute_rule_fingerprint(reversed_check)
+    fingerprint = compute_rule_fingerprint(check)
+    assert fingerprint == compute_rule_fingerprint(reversed_check)
+    # The custom subclass canonicalizes to the same fingerprint as a plain set of the same values.
+    assert fingerprint == compute_rule_fingerprint(plain_set_check)
+
+    # A set with different values must produce a different fingerprint (sort does not collapse distinct inputs).
+    different_check = {"check": {"function": "is_in_list", "arguments": {"allowed": {1, "1", ("pair", 2)}}}}
+    assert compute_rule_fingerprint(different_check) != fingerprint
 
 
 def test_compute_rule_set_fingerprint_by_metadata_same_set_same_fingerprint():
