@@ -90,7 +90,7 @@ const studioFeatures = [
   { title: 'Monitor tables & thresholds', description: 'Apply rules to tables, set pass thresholds, and improve quality gradually.', icon: BarChart2, link: '/docs/studio/monitoring/monitor-a-table' },
   { title: 'Suggest rules with AI', description: 'Point the app at a table and it proposes a tailored set of checks for its columns and data.', icon: Sparkles, link: '/docs/studio/monitoring/monitor-a-table#suggest-rules-with-ai' },
   { title: 'Data products with Collections', description: 'Group related tables into a data product and see quality across all of them at once.', icon: Boxes, link: '/docs/studio/monitoring/collections' },
-  { title: 'Results & drill-down', description: 'Follow the score down by dimension, severity, rule, and table — all the way to the failing rows.', icon: LineChart, link: '/docs/studio/running/' },
+  { title: 'Results & drill-down', description: 'Follow the score down by dimension, severity, rule, and table — all the way to the failing rows.', icon: LineChart, link: '/docs/studio/running/results' },
   { title: 'Governed by design', description: 'Four-eyes approvals, roles, audit trails, and access that respects Unity Catalog.', icon: ShieldCheck, link: '/docs/studio/governance/approval-workflow' },
 ];
 
@@ -232,9 +232,9 @@ const FeatureTabs = ({ tab, setTab }: { tab: 'core' | 'studio'; setTab: (t: 'cor
 
 const TaskLauncher = (): JSX.Element => {
   const tasks = [
-    { title: 'Check my data’s health', description: 'See quality scores and trends across your tables.', icon: HeartPulse, link: '/docs/studio/running/' },
+    { title: 'Check my data’s health', description: 'See quality scores and trends across your tables.', icon: HeartPulse, link: '/docs/studio/running/results' },
     { title: 'Add a rule', description: 'Define an expectation your data should meet.', icon: PlusCircle, link: '/docs/studio/authoring/create-a-rule' },
-    { title: 'Automate quality checks', description: 'Run checks on a schedule across related tables.', icon: Settings2, link: '/docs/studio/running/' },
+    { title: 'Automate quality checks', description: 'Run checks on a schedule across related tables.', icon: Settings2, link: '/docs/studio/running/run-and-schedule' },
     { title: 'Govern a rollout', description: 'Set roles, approvals, and standards for your org.', icon: ShieldCheck, link: '/docs/studio/governance/' },
   ];
 
