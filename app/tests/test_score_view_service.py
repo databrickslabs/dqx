@@ -455,17 +455,16 @@ class TestStartupWiring:
         assert ASOF_VIEW_NAME in executed[2]
         assert METRIC_VIEW_NAME in executed[3]
 
-    def test_is_best_effort_and_never_raises(self, sql_executor_mock):
-        # This property is enforced by the app-level caller (_ensure_score_views
-        # in app.py), not by ScoreViewService itself.  Verify that ensure_views
-        # propagates exceptions — callers must wrap it in try/except.
+    def test_ensure_views_propagates_executor_errors(self, sql_executor_mock):
+        # ScoreViewService.ensure_views() propagates exceptions — the docstring
+        # documents this explicitly ("Raises on failure").  The best-effort
+        # swallowing lives in the app-level _ensure_score_views wrapper
+        # (app.py), not here.  Callers must wrap it in try/except themselves.
         sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
         sql_executor_mock.execute.side_effect = RuntimeError("warehouse cannot create metric views")
         svc = ScoreViewService(sql=sql_executor_mock, genie_schema="genie")
-        try:
+        with pytest.raises(RuntimeError, match="warehouse cannot create metric views"):
             svc.ensure_views()
-        except RuntimeError:
-            pass  # expected — the best-effort wrapper lives in app.py
 
 
 # ---------------------------------------------------------------------------
