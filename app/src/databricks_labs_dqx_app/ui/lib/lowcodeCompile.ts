@@ -44,11 +44,7 @@ const AGG_SQL: Record<string, (col: string, param?: number | null) => string> = 
 // Qualified refs (containing a dot) name a joined-table column and are
 // emitted as raw SQL. Plain refs name a declared slot and stay wrapped as
 // `{{name}}` placeholders the materializer substitutes with the real column.
-// When `qualify` is true (own-table column inside a join rule), the plain
-// ref is prefixed with `{{input_view}}.` to avoid AMBIGUOUS_REFERENCE errors
-// when the joined table contains a same-named column. Mirrors Python's `_ref`.
-const ref = (c: string, qualify = false): string =>
-  c.includes(".") ? c : qualify ? `{{input_view}}.{{${c}}}` : `{{${c}}}`;
+const ref = (c: string) => (c.includes(".") ? c : `{{${c}}}`);
 
 function quote(v: unknown): string {
   if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
@@ -61,10 +57,9 @@ function quote(v: unknown): string {
 // A comparison RHS is EITHER a column reference (item 42 — emit ref(), so a
 // plain name becomes {{name}} and a joined-table col emits raw) OR a literal
 // (quote() as before). This is the only place the literal-vs-column decision
-// is made for scalar operands. When `qualify` is true, own-column $col refs
-// are qualified to `{{input_view}}.{{col}}` (same rule as the LHS).
-function valueSql(value: unknown, qualify = false): string {
-  return isColumnRef(value) ? ref(value.$col, qualify) : quote(value);
+// is made for scalar operands.
+function valueSql(value: unknown): string {
+  return isColumnRef(value) ? ref(value.$col) : quote(value);
 }
 
 // Escape a value for embedding INSIDE a single-quoted SQL LIKE pattern
@@ -122,8 +117,7 @@ function joinKeyRefs(joins: JoinAst[]): string[] {
     if (j.join_type === "CROSS" || !j.target_table) continue;
     for (const k of j.keys ?? []) {
       if (!k.column_ref) continue;
-      // Join key refs always exist in a join context — qualify own columns.
-      const token = ref(k.column_ref, true);
+      const token = ref(k.column_ref);
       if (seen.has(token)) continue;
       seen.add(token);
       out.push(token);
@@ -132,19 +126,19 @@ function joinKeyRefs(joins: JoinAst[]): string[] {
   return out;
 }
 
-function aggExpr(spec: { aggregate?: string; column_ref?: string; aggregate_param?: number | null }, qualify = false): string {
+function aggExpr(spec: { aggregate?: string; column_ref?: string; aggregate_param?: number | null }): string {
   const agg = spec.aggregate;
   const col = spec.column_ref;
   if (!agg || !(agg in AGG_SQL)) return "";
   if (!col) return "";
-  return AGG_SQL[agg](ref(col, qualify), spec.aggregate_param);
+  return AGG_SQL[agg](ref(col), spec.aggregate_param);
 }
 
-function rowSql(left: string, operator: string, value: unknown, qualify = false): string {
+function rowSql(left: string, operator: string, value: unknown): string {
   const op = operator;
-  if (["=", "!=", "<", "<=", ">", ">="].includes(op)) return `${left} ${op} ${valueSql(value, qualify)}`;
-  if (op === "equals") return `${left} = ${valueSql(value, qualify)}`;
-  if (op === "not equals") return `${left} != ${valueSql(value, qualify)}`;
+  if (["=", "!=", "<", "<=", ">", ">="].includes(op)) return `${left} ${op} ${valueSql(value)}`;
+  if (op === "equals") return `${left} = ${valueSql(value)}`;
+  if (op === "not equals") return `${left} != ${valueSql(value)}`;
   if (op === "contains") return `${left} LIKE '%${likeLiteral(value)}%'`;
   if (op === "does not contain") return `${left} NOT LIKE '%${likeLiteral(value)}%'`;
   if (op === "starts with") return `${left} LIKE '${likeLiteral(value)}%'`;
@@ -152,18 +146,18 @@ function rowSql(left: string, operator: string, value: unknown, qualify = false)
   if (op === "matches regex") return `${left} RLIKE ${quote(value)}`;
   if (op === "between") {
     const [lo, hi] = Array.isArray(value) ? (value as unknown[]) : [null, null];
-    return `${left} BETWEEN ${valueSql(lo, qualify)} AND ${valueSql(hi, qualify)}`;
+    return `${left} BETWEEN ${valueSql(lo)} AND ${valueSql(hi)}`;
   }
-  if (op === "in") return `${left} IN (${((value as unknown[]) ?? []).map((v) => valueSql(v, qualify)).join(", ")})`;
-  if (op === "not in") return `${left} NOT IN (${((value as unknown[]) ?? []).map((v) => valueSql(v, qualify)).join(", ")})`;
+  if (op === "in") return `${left} IN (${((value as unknown[]) ?? []).map(valueSql).join(", ")})`;
+  if (op === "not in") return `${left} NOT IN (${((value as unknown[]) ?? []).map(valueSql).join(", ")})`;
   if (op === "is null") return `${left} IS NULL`;
   if (op === "is not null") return `${left} IS NOT NULL`;
   if (op === "is true") return `${left} = TRUE`;
   if (op === "is false") return `${left} = FALSE`;
-  if (op === "before") return `${left} < ${valueSql(value, qualify)}`;
-  if (op === "after") return `${left} > ${valueSql(value, qualify)}`;
-  if (op === "on or before") return `${left} <= ${valueSql(value, qualify)}`;
-  if (op === "on or after") return `${left} >= ${valueSql(value, qualify)}`;
+  if (op === "before") return `${left} < ${valueSql(value)}`;
+  if (op === "after") return `${left} > ${valueSql(value)}`;
+  if (op === "on or before") return `${left} <= ${valueSql(value)}`;
+  if (op === "on or after") return `${left} >= ${valueSql(value)}`;
   if (op === "is in last") {
     const obj = (value && typeof value === "object" ? value : {}) as { number?: number; unit?: string };
     return `${left} >= current_timestamp() - INTERVAL '${obj.number ?? 0} ${obj.unit ?? "days"}'`;
@@ -182,7 +176,7 @@ function rowSql(left: string, operator: string, value: unknown, qualify = false)
   if (op === "is shorter than") return `length(${left}) < ${quote(value)}`;
   if (op === "length between") {
     const [lo, hi] = Array.isArray(value) ? (value as unknown[]) : [null, null];
-    return `length(${left}) BETWEEN ${valueSql(lo, qualify)} AND ${valueSql(hi, qualify)}`;
+    return `length(${left}) BETWEEN ${valueSql(lo)} AND ${valueSql(hi)}`;
   }
   if (op === "is not empty") return `length(trim(${left})) > 0`;
   if (op === "is empty") return `length(trim(${left})) = 0`;
@@ -224,18 +218,18 @@ function rowSql(left: string, operator: string, value: unknown, qualify = false)
   return "";
 }
 
-function compileRow(row: AnyRow, qualify = false): string {
+function compileRow(row: AnyRow): string {
   if (row.kind === "row") {
     if (!row.column_ref) return "";
-    return rowSql(ref(row.column_ref, qualify), row.operator, row.value, qualify);
+    return rowSql(ref(row.column_ref), row.operator, row.value);
   }
-  const left = aggExpr(row, qualify);
+  const left = aggExpr(row);
   if (!left) return "";
   const op = row.operator;
   if (["=", "!=", "<", "<=", ">", ">="].includes(op)) {
     const right =
       row.value && typeof row.value === "object" && "aggregate" in (row.value as Record<string, unknown>)
-        ? aggExpr(row.value as { aggregate?: string; column_ref?: string }, qualify)
+        ? aggExpr(row.value as { aggregate?: string; column_ref?: string })
         : quote(row.value);
     return `${left} ${op} ${right}`;
   }
@@ -249,17 +243,12 @@ function compileRow(row: AnyRow, qualify = false): string {
 }
 
 /** Compile the row stack into a single boolean WHERE/HAVING expression (the
- *  "pass" condition — IF this holds THEN the row passes, by default).
- *
- *  When the AST has joins, own-table column refs are qualified to
- *  `{{input_view}}.{{col}}` to avoid AMBIGUOUS_REFERENCE errors when a joined
- *  table contains a column with the same name. Mirrors Python's `compile_ast_to_sql`. */
+ *  "pass" condition — IF this holds THEN the row passes, by default). */
 export function compileAstToSql(ast: LowcodeAstV2): string {
   if (!ast.rows?.length) return "";
-  const qualify = (ast.joins?.length ?? 0) > 0;
   const parts: string[] = [];
   ast.rows.forEach((row, i) => {
-    const frag = compileRow(row, qualify);
+    const frag = compileRow(row);
     if (!frag) return;
     if (i === 0) parts.push(frag);
     else parts.push(`${row.combinator ?? "AND"} ${frag}`);
@@ -286,7 +275,7 @@ export function compileJoinsToSql(joins: JoinAst[]): string {
       if (j.join_type === "CROSS") return head;
       const conds = j.keys
         .filter((k) => k.joined_column && k.column_ref)
-        .map((k) => `${j.target_table}.${k.joined_column} = ${ref(k.column_ref, true)}`);
+        .map((k) => `${j.target_table}.${k.joined_column} = ${ref(k.column_ref)}`);
       return `${head} ON ${conds.join(" AND ")}`;
     })
     .join(" ");

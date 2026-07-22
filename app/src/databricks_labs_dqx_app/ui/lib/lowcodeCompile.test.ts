@@ -275,12 +275,11 @@ describe("OPERATORS_BY_FAMILY — ported dqlake catalogue", () => {
 });
 
 describe("compileJoinsToSql", () => {
-  test("LEFT JOIN emits the qualified ON condition against an {{input_view}}.{{slot}} ref", () => {
+  test("LEFT JOIN emits the qualified ON condition against a {{slot}} ref", () => {
     const joins: JoinAst[] = [
       { join_type: "LEFT", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "customer_id" }] },
     ];
-    // Own-table column in an ON clause is always qualified to avoid AMBIGUOUS_REFERENCE.
-    expect(compileJoinsToSql(joins)).toBe("LEFT JOIN c.s.dim ON c.s.dim.id = {{input_view}}.{{customer_id}}");
+    expect(compileJoinsToSql(joins)).toBe("LEFT JOIN c.s.dim ON c.s.dim.id = {{customer_id}}");
   });
 
   test("CROSS JOIN emits no ON clause", () => {
@@ -313,19 +312,18 @@ describe("compileLowcodeBody — folding", () => {
     expect(body.predicate).toBeUndefined();
   });
 
-  test("joins only -> row-level sql_query merging on the input-side join keys (qualified)", () => {
+  test("joins only -> row-level sql_query merging on the input-side join keys", () => {
     const joins: JoinAst[] = [
       { join_type: "LEFT", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "customer_id" }] },
     ];
     const body = compileLowcodeBody(ast([row({ column_ref: "customer_id", operator: "is not null" })], joins), "");
-    // Own-table columns are qualified to {{input_view}}.{{col}} when joins are present.
     expect(body.sql_query).toBe(
-      "SELECT {{input_view}}.{{customer_id}}, (NOT ({{input_view}}.{{customer_id}} IS NOT NULL)) AS condition " +
-        "FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{input_view}}.{{customer_id}}",
+      "SELECT {{customer_id}}, (NOT ({{customer_id}} IS NOT NULL)) AS condition " +
+        "FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{customer_id}}",
     );
     // merge_columns must exist on the input table -> the join keys, NOT absent
     // (absent would route DQX to the dataset-level 1-row path and fail at run).
-    expect(body.merge_columns).toEqual(["{{input_view}}.{{customer_id}}"]);
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
   });
 
   test("joins + group-by -> group-by wins as the merge key", () => {
@@ -342,7 +340,7 @@ describe("compileLowcodeBody — folding", () => {
     };
     const body = compileLowcodeBody(ast([agg], joins), "{{region}}");
     expect(body.merge_columns).toEqual(["{{region}}"]);
-    expect(body.sql_query).toContain("INNER JOIN c.s.dim ON c.s.dim.id = {{input_view}}.{{cid}}");
+    expect(body.sql_query).toContain("INNER JOIN c.s.dim ON c.s.dim.id = {{cid}}");
     expect(body.sql_query).toContain("GROUP BY {{region}}");
   });
 
@@ -353,10 +351,9 @@ describe("compileLowcodeBody — folding", () => {
     expect(body.sql_query).toContain("GROUP BY {{region}}, COALESCE({{country}}, 'XX')");
   });
 
-  test("CROSS-join-only (no keys, no group-by) -> dataset-level query with qualified own columns, no merge_columns", () => {
+  test("CROSS-join-only (no keys, no group-by) -> dataset-level query, no merge_columns", () => {
     const body = compileLowcodeBody(ast([row()], [{ join_type: "CROSS", target_table: "c.s.dim", keys: [] }]), "");
-    // Own-table columns qualified even in CROSS-join context (joins present).
-    expect(body.sql_query).toBe("SELECT (NOT ({{input_view}}.{{email}} IS NOT NULL)) AS condition FROM {{input_view}} CROSS JOIN c.s.dim");
+    expect(body.sql_query).toBe("SELECT (NOT ({{email}} IS NOT NULL)) AS condition FROM {{input_view}} CROSS JOIN c.s.dim");
     expect(body.merge_columns).toBeUndefined();
   });
 });
@@ -469,12 +466,11 @@ describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without cor
       sqlJoins: joins,
       sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
     });
-    // buildSqlBody uses the raw predicate as-is; ON clause and SELECT merge keys are qualified.
     expect(body.sql_query).toBe(
-      "SELECT {{input_view}}.{{customer_id}}, (NOT ({{customer_id}} IS NOT NULL)) AS condition " +
-        "FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{input_view}}.{{customer_id}}",
+      "SELECT {{customer_id}}, (NOT ({{customer_id}} IS NOT NULL)) AS condition " +
+        "FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{customer_id}}",
     );
-    expect(body.merge_columns).toEqual(["{{input_view}}.{{customer_id}}"]);
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
   });
 
   test("no joins, no passthrough -> plain single-table { predicate }", () => {
@@ -583,83 +579,6 @@ test("item42: a column-ref value survives JSON round-trip and still compiles", (
   const original = ast([row({ column_ref: "amount", operator: ">=", value: { $col: "credit_limit" } })]);
   const rehydrated = JSON.parse(JSON.stringify(original)) as typeof original;
   expect(compileAstToSql(rehydrated)).toBe("{{amount}} >= {{credit_limit}}");
-});
-
-// ---------------------------------------------------------------------------
-// Join qualification: own-table columns qualified to {{input_view}}.{{col}}
-// when a join is present; bare {{col}} when no join. Mirrors Python commits
-// 54357c63 + df09692d (_ref, compile_ast_to_sql qualification).
-// ---------------------------------------------------------------------------
-describe("join qualification — own-table columns qualified when join present", () => {
-  test("own columns qualified to input view when join present", () => {
-    const joinedAst: LowcodeAstV2 = {
-      rows: [{ kind: "row", combinator: null, column_ref: "customer_id", operator: ">", value: 0 } as AnyRow],
-      joins: [
-        {
-          target_table: "dqx.dqx_studio_demo.customers",
-          join_type: "INNER",
-          keys: [{ column_ref: "customer_id", joined_column: "customer_id" }],
-        },
-      ],
-    };
-    const body = compileLowcodeBody(joinedAst, "");
-    const q = body.sql_query ?? "";
-    expect(q).toContain("{{input_view}}.{{customer_id}}");
-    expect(q).toContain("dqx.dqx_studio_demo.customers.customer_id");
-  });
-
-  test("own columns bare when no join", () => {
-    const simpleAst: LowcodeAstV2 = {
-      rows: [{ kind: "row", combinator: null, column_ref: "amount", operator: ">", value: 0 } as AnyRow],
-      joins: [],
-    };
-    const pred = compileAstToSql(simpleAst);
-    expect(pred).toContain("{{amount}}");
-    expect(pred).not.toContain("{{input_view}}");
-  });
-
-  test("joined-table column stays raw (dotted) with join present", () => {
-    const joinedAst: LowcodeAstV2 = {
-      rows: [{ kind: "row", combinator: null, column_ref: "customers.tier", operator: "=", value: "'gold'" } as AnyRow],
-      joins: [
-        {
-          target_table: "customers",
-          join_type: "INNER",
-          keys: [{ column_ref: "customer_id", joined_column: "customer_id" }],
-        },
-      ],
-    };
-    const q = compileLowcodeBody(joinedAst, "").sql_query ?? "";
-    // dotted column: never double-qualified
-    expect(q).toContain("customers.tier");
-    expect(q).not.toContain("{{input_view}}.{{customers.tier}}");
-  });
-
-  test("$col column-ref value on temporal operator is qualified under join", () => {
-    // Mirrors Python test_col_ref_value_on_temporal_op_qualified_under_join.
-    const joinedAst: LowcodeAstV2 = {
-      rows: [
-        {
-          kind: "row",
-          combinator: null,
-          column_ref: "start_date",
-          operator: "before",
-          value: { $col: "end_date" },
-        } as AnyRow,
-      ],
-      joins: [
-        {
-          target_table: "c.s.dim",
-          join_type: "LEFT",
-          keys: [{ column_ref: "id", joined_column: "id" }],
-        },
-      ],
-    };
-    const pred = compileAstToSql(joinedAst);
-    // Both LHS and RHS own-column refs must be qualified.
-    expect(pred).toContain("{{input_view}}.{{start_date}}");
-    expect(pred).toContain("{{input_view}}.{{end_date}}");
-  });
 });
 
 describe("operatorAllowsColumnRef", () => {
