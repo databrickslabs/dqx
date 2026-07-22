@@ -1,0 +1,39 @@
+[project]
+name = "mcp-dqx"
+version = "0.1.0"
+description = "DQX MCP Server - AI agent tools for data quality checks"
+requires-python = ">=3.11"
+dependencies = [
+    # Runtime deps the server imports directly. Keep in sync with requirements.txt
+    # (the manifest the Databricks App installs). mcp/pydantic come in via fastmcp;
+    # databricks-labs-dqx is NOT a server dep — only the runner notebook uses it, and
+    # it is installed via the job environment spec in databricks.yml.
+    "fastmcp>=2.12.5",
+    "starlette",
+    "uvicorn>=0.34.2",
+    "databricks-sdk>=0.60.0",
+]
+
+[project.scripts]
+mcp-dqx = "server.main:main"
+
+# For local development, uncomment the following to use the local DQX source:
+# [tool.uv.sources]
+# databricks-labs-dqx = { path = "../", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["server"]
+
+[tool.basedpyright]
+# ``make mcp-check`` runs basedpyright over the synced runtime env (server deps only — no pytest,
+# no pyspark). Exclude tests (already type-checked at pytest collection) and the runner sub-project
+# (its pyspark/dqx deps aren't in this env — it builds and type-checks as its own wheel). Mirrors
+# app/pyproject.toml: ``standard`` mode drops the strict-only ``recommended`` rules that fire on
+# every Any-typed Databricks SDK / fastmcp response, keeping the check focused on real type errors
+# and consistent across macOS/Linux (pyright's warning exit-code semantics differ by platform).
+typeCheckingMode = "standard"
+exclude = ["tests", "runner", "**/.venv", "**/__pycache__"]
