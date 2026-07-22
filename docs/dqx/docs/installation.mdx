@@ -680,19 +680,17 @@ The bundle creates these in your workspace (all prefixed by `name_prefix`, defau
 |---|---|---|
 | Databricks App | `mcp-dqx` | The MCP server (serves `/mcp`); runs as its own app service principal. |
 | App service principal | auto-named | **Auto-created by the platform** when the app is deployed — its application id is assigned at deploy time (not known beforehand). The identity the app process runs as. |
-| Job | `mcp-dqx-runner` | Serverless **wheel-task** job with `databricks-labs-dqx` installed; **runs as the runner SP**. Tools submit work to it. The DQX wheel is built from the repo source you deploy from (typically `main`, possibly unreleased), **not** a pinned PyPI release — see [DQX version](#mcp-dqx-version). |
+| Job | `mcp-dqx-runner` | Serverless **wheel-task** job that installs a **pinned, published `databricks-labs-dqx` release** from the registry; **runs as the runner SP**. Tools submit work to it. See [DQX version](#mcp-dqx-version). |
 | Job | `mcp-dqx-setup` | One-time setup: temp schema, results volume, and all UC grants. |
 
 The catalog is injected into the app as a plain `DQX_CATALOG` config value (no secret scope — a catalog name isn't sensitive; UC grants govern access). Nothing is destroy-protected, so `databricks bundle destroy` removes all of it (see [Upgrade and uninstall](#mcp-upgrade-uninstall)). The runner service principal is the exception: you create it yourself before deploying (it is not part of the bundle), so `bundle destroy` leaves it in place — delete it manually if you no longer need it.
 
 #### DQX version {#mcp-dqx-version}
 
-<Admonition type="warning" title="The runner uses DQX built from source, not a released version">
-The runner job does **not** install a released `databricks-labs-dqx` from PyPI. The deploy [builds the DQX wheel from the repo source you deploy from](https://github.com/databrickslabs/dqx/blob/main/mcp-server/databricks.yml) (`uv build ../ --wheel`) and the runner installs that wheel. So the DQX version the tools execute is **whatever is checked out in your working tree at deploy time** — typically `main` (possibly ahead of the latest release, including unreleased changes and behavior not yet in any tagged version).
+The runner job installs a **pinned, published `databricks-labs-dqx` release** from the package registry — set in the runner job's environment dependencies in [`mcp-server/databricks.yml`](https://github.com/databrickslabs/dqx/blob/v0.15.0/mcp-server/databricks.yml) (currently `databricks-labs-dqx[datacontract]==0.15.0`). This mirrors DQX Studio, which also pins a released version rather than building from source, so the DQX version the tools run is deterministic and independent of your local working tree.
 
-- To run a **specific released version**, deploy from a checked-out release tag (`git checkout v<x.y.z>` before deploying), or change the `artifacts` build in [`mcp-server/databricks.yml`](https://github.com/databrickslabs/dqx/blob/main/mcp-server/databricks.yml) to install a pinned `databricks-labs-dqx==<x.y.z>` from PyPI instead of building the local wheel.
-- **Redeploy to pick up changes:** the runner is *not* auto-updated. It keeps executing the wheel from the last deploy until you redeploy (see [Upgrade and uninstall](#mcp-upgrade-uninstall)) — a `git pull` alone changes nothing on the workspace.
-</Admonition>
+- **To upgrade DQX,** bump the pinned version in `mcp-server/databricks.yml` and redeploy.
+- **Redeploy to pick up changes:** the runner is *not* auto-updated — it keeps using the version from the last deploy until you redeploy (see [Upgrade and uninstall](#mcp-upgrade-uninstall)).
 
 #### What the deploy creates inside your catalog {#mcp-catalog-objects}
 

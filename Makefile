@@ -44,12 +44,12 @@ lint: ## Check Python without modifying (black --check, ruff, mypy, pylint)
 	$(UV_RUN) mypy .
 	$(UV_RUN) pylint --output-format=colorized -j 0 src tests
 
-fmt: ## Format and auto-fix Python (black, ruff --fix, mypy, pylint, docs URL refresh)
+fmt: ## Format and auto-fix Python (black, ruff --fix, mypy, pylint, version sync of docs URLs + DQX pins)
 	$(UV_RUN) black .
 	$(UV_RUN) ruff check . --fix
 	$(UV_RUN) mypy .
 	$(UV_RUN) pylint --output-format=colorized -j 0 src tests
-	$(UV_RUN) python docs/dqx/update_github_urls.py
+	$(UV_RUN) python docs/dqx/sync_versions.py
 
 ##@ Tests (DQX library)
 
@@ -68,8 +68,8 @@ perf: ## Run performance benchmarks (long timeout)
 anomaly: ## Run anomaly integration tests (long timeout, with reruns)
 	$(UV_RUN) pytest tests/integration_anomaly/ -v -n 10 --timeout 1200 --durations 20 --reruns 2 --reruns-delay 5
 
-# The integration test's deploy (ci_deploy.sh -> bundle deploy) builds the artifact wheels with
-# `uv build ../` from inside mcp-server/, so the global *relative* UV_BUILD_CONSTRAINT
+# The integration test's deploy (ci_deploy.sh -> bundle deploy) builds the runner wheel with
+# `uv build ./runner` from inside mcp-server/, so the global *relative* UV_BUILD_CONSTRAINT
 # (.build-constraints.txt) would resolve against the wrong directory and fail with
 # "File not found: .build-constraints.txt". Pin it to the absolute repo-root path (same fix as
 # mcp-deploy). CI doesn't hit this — it runs via the acceptance harness, not make.
@@ -207,11 +207,11 @@ mcp-check: ## Type-check the MCP server with basedpyright (standard mode, errors
 # is passed as CATALOG below and injected into the app as the DQX_CATALOG config value (no secret).
 #
 # Usage: make mcp-deploy PROFILE=my-profile CATALOG=main
-# CATALOG is REQUIRED: workspace.artifact_path is the UC volume /Volumes/<CATALOG>/tmp/dqx_artifacts
+# CATALOG is REQUIRED: workspace.artifact_path is the UC volume /Volumes/<CATALOG>/dqx_mcp_tmp/dqx_artifacts
 # that hosts the runner wheels; it is resolved at deploy time and must pre-exist. It is also the
 # catalog the app + runner use for temp views and per-user output schemas.
 # TARGET defaults to the bundle's default target (dev); override with TARGET=<t>.
-# The bundle artifact build runs `uv build ../` from inside mcp-server/, so the global
+# The bundle artifact build runs `uv build ./runner` from inside mcp-server/, so the global
 # relative UV_BUILD_CONSTRAINT (.build-constraints.txt) would resolve against the wrong
 # directory. Pin it to the absolute repo-root path so the wheel build finds it.
 mcp-deploy: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
@@ -225,15 +225,15 @@ mcp-deploy: ## Deploy the MCP server bundle, run setup, and (re)deploy + start t
 
 # One-command teardown (nothing in the MCP bundle is destroy-protected, so — unlike the Studio's
 # multi-step unbind-then-destroy uninstall — this is a single command). Removes the app + runner/
-# setup jobs, then drops the out-of-band runner-wheel volume. Leaves the <catalog>.tmp schema and any
+# setup jobs, then drops the out-of-band runner-wheel volume. Leaves the <catalog>.dqx_mcp_tmp schema and any
 # dqx_mcp_<user> output schemas intact (they may hold user data) — drop those manually if you want a
 # fully clean wipe. runner_service_principal_id isn't needed to destroy, so its placeholder is fine.
 mcp-destroy: ## Tear down the MCP server (app + jobs + runner-wheel volume). Requires PROFILE + CATALOG
 	@test -n "$(PROFILE)" || (echo "Usage: make mcp-destroy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>]"; exit 1)
 	@test -n "$(CATALOG)" || (echo "Usage: make mcp-destroy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>]"; exit 1)
 	cd mcp-server && databricks bundle destroy -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --auto-approve --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
-	cd mcp-server && databricks volumes delete $(CATALOG).tmp.dqx_artifacts -p $(PROFILE) 2>/dev/null || true
-	@echo "Destroyed the MCP app + jobs and the dqx_artifacts volume. The $(CATALOG).tmp schema and any $(CATALOG).dqx_mcp_<user> output schemas are left intact — drop them manually if you want a full wipe."
+	cd mcp-server && databricks volumes delete $(CATALOG).dqx_mcp_tmp.dqx_artifacts -p $(PROFILE) 2>/dev/null || true
+	@echo "Destroyed the MCP app + jobs and the dqx_artifacts volume. The $(CATALOG).dqx_mcp_tmp schema and any $(CATALOG).dqx_mcp_<user> output schemas are left intact — drop them manually if you want a full wipe."
 
 ##@ App deploy (require PROFILE=<databricks-profile>; most also need TARGET=<bundle-target>)
 

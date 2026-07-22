@@ -77,10 +77,11 @@ resources:
           spec:
             environment_version: "2"
             dependencies:
-              # The runner wheel (this sub-project) + the DQX library wheel built from THIS repo
-              # (see artifacts), not a published PyPI release, so the runner exercises in-repo
-              # (possibly unreleased) source. The [datacontract] extra's dependency is listed
-              # explicitly because pip extras can't be applied to a wheel path.
+              # The runner wheel (this sub-project) + a PINNED, published DQX release from the
+              # registry (mirrors the DQX Studio task runner, which also pins
+              # databricks-labs-dqx==<version>). Keep this version in sync with the repo's current
+              # release; bump it when upgrading DQX. The [datacontract] extra can be applied here
+              # because this is a PyPI spec (not a wheel path — pip extras don't apply to wheel paths).
               #
               # The [llm] extra (dspy) is intentionally NOT installed — the runner stays lean and
               # deterministic, mirroring the DQX Studio task runner. As a result the
@@ -89,8 +90,7 @@ resources:
               # follow-up: add the dspy/litellm deps from the DQX [llm] extra here, plumb an LLM
               # endpoint config through to the runner, and re-expose the parameter in server/tools.py.
               - ./.build/dqx_mcp_runner-*.whl
-              - ./.build/databricks_labs_dqx-*.whl
-              - datacontract-cli>=0.11.1,<1.0
+              - databricks-labs-dqx[datacontract]==0.15.0
       parameters:
         - name: operation
           default: ""
@@ -177,12 +177,13 @@ sync:
     - "notebooks/**"
     - ".build/**"
 
-# Build the wheels the runner job installs from THIS branch's source (not published PyPI releases):
-# the DQX library wheel (from the repo root) and the MCP runner wheel (this sub-project's ./runner).
-# Mirrors the app/ bundle, which also builds the parent wheel via `uv build ../ --wheel`.
+# Build only the MCP runner wheel (this sub-project's ./runner). DQX is a pinned published release
+# installed from the registry by the runner job's environment spec — not built from source here.
 artifacts:
-  dqx_library_wheel:
-    build: uv build ../ --wheel --out-dir ./.build
+  # Only the runner wheel (this sub-project) is built locally. DQX itself is a PINNED published
+  # release installed from the registry at job-environment install time (see the runner job's
+  # environment dependencies above) — mirroring the DQX Studio task runner, which also pins
+  # databricks-labs-dqx from the registry rather than building the parent wheel from source.
   dqx_mcp_runner_wheel:
     build: uv build ./runner --wheel --out-dir ./.build
 
