@@ -6,8 +6,8 @@ import Link from '@docusaurus/Link';
 import Button from '../components/Button';
 import {
   AppWindow, Code, Sparkles, BarChart2, ShieldCheck, LineChart, ScrollText,
-  PlusCircle, HeartPulse, Settings2, Boxes, Store, ArrowRight, Search,
-  Info, FileText, Activity, AlertTriangle, CheckCircle, Grid, PieChart, Radar,
+  PlusCircle, HeartPulse, Settings2, Boxes, Store, ArrowRight, Library,
+  Info, FileText, Activity, AlertTriangle, Grid, PieChart, Radar,
 } from 'lucide-react';
 
 const Hero = (): JSX.Element => {
@@ -32,15 +32,18 @@ const Hero = (): JSX.Element => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl">
         <Link
           to="/docs/guide/"
-          className="group flex flex-col items-start text-left p-6 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm hover:shadow-lg hover:border-blue-400 transition-all no-underline"
+          className="group flex flex-col items-start text-left p-6 rounded-xl border-2 border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 shadow-sm hover:shadow-xl hover:border-blue-500 transition-all no-underline"
         >
           <Code className="w-8 h-8 text-blue-500 mb-3" />
           <h2 className="text-xl font-semibold mb-1 text-gray-900 dark:text-white">DQX Core</h2>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+          <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
             The Python package. Define and run checks in your PySpark pipelines and
             notebooks — batch and streaming.
           </p>
-          <span className="text-blue-500 text-sm font-medium inline-flex items-center gap-1">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs font-semibold px-2.5 py-1 mb-3">
+            Used by 700+ Databricks customers
+          </span>
+          <span className="text-blue-600 dark:text-blue-400 text-sm font-medium inline-flex items-center gap-1 mt-auto">
             Open the Core guide
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
           </span>
@@ -48,15 +51,18 @@ const Hero = (): JSX.Element => {
 
         <Link
           to="/docs/studio/"
-          className="group flex flex-col items-start text-left p-6 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm hover:shadow-lg hover:border-red-400 transition-all no-underline"
+          className="group flex flex-col items-start text-left p-6 rounded-xl border-2 border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 shadow-sm hover:shadow-xl hover:border-red-500 transition-all no-underline"
         >
           <AppWindow className="w-8 h-8 text-red-500 mb-3" />
           <h2 className="text-xl font-semibold mb-1 text-gray-900 dark:text-white">DQX Studio</h2>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+          <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
             The no-code web app. Author, run, and monitor quality rules from your browser —
             no code required.
           </p>
-          <span className="text-red-500 text-sm font-medium inline-flex items-center gap-1">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 text-xs font-semibold px-2.5 py-1 mb-3">
+            No code required
+          </span>
+          <span className="text-red-600 dark:text-red-400 text-sm font-medium inline-flex items-center gap-1 mt-auto">
             Open the Studio guide
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
           </span>
@@ -80,22 +86,22 @@ const coreFeatures = [
 ];
 
 const studioFeatures = [
-  { title: 'No-code rule authoring', description: 'Build checks from a catalog of ready-made rules — no code needed.', icon: Sparkles, link: '/docs/studio/authoring/create-a-rule' },
-  { title: 'Suggest rules with AI', description: 'Point the app at a table and it proposes a tailored set of checks for its columns and data.', icon: Sparkles, link: '/docs/studio/monitoring/monitor-a-table#suggest-rules-with-ai' },
+  { title: 'Reusable rules repository', description: 'Build reusable checks in low code, with a built-in AI assistant.', icon: Library, link: '/docs/studio/authoring/create-a-rule' },
   { title: 'Monitor tables & thresholds', description: 'Apply rules to tables, set pass thresholds, and improve quality gradually.', icon: BarChart2, link: '/docs/studio/monitoring/monitor-a-table' },
+  { title: 'Suggest rules with AI', description: 'Point the app at a table and it proposes a tailored set of checks for its columns and data.', icon: Sparkles, link: '/docs/studio/monitoring/monitor-a-table#suggest-rules-with-ai' },
   { title: 'Data products with Collections', description: 'Group related tables into a data product and see quality across all of them at once.', icon: Boxes, link: '/docs/studio/monitoring/collections' },
-  { title: 'Results & drill-down', description: 'Follow the score down by dimension, severity, rule, and table — all the way to the failing rows.', icon: LineChart, link: '/docs/studio/running/fix-a-failing-rule' },
+  { title: 'Results & drill-down', description: 'Follow the score down by dimension, severity, rule, and table — all the way to the failing rows.', icon: LineChart, link: '/docs/studio/running/' },
   { title: 'Governed by design', description: 'Four-eyes approvals, roles, audit trails, and access that respects Unity Catalog.', icon: ShieldCheck, link: '/docs/studio/governance/approval-workflow' },
 ];
 
-// Screenshot thumbnails for the Studio feature cards (cropped/zoomed hero shots).
+// Screenshot thumbnails for the Studio feature cards (properly-framed crops).
 const studioFeatureImages: Record<string, string> = {
-  'No-code rule authoring': 'create_rule_basic_checks_thumb',
-  'Suggest rules with AI': 'table_apply_rules_thumb',
-  'Monitor tables & thresholds': 'table_apply_rules_thumb',
-  'Data products with Collections': 'collection_results_thumb',
-  'Results & drill-down': 'collection_results_thumb',
-  'Governed by design': 'review_approve_thumb',
+  'Reusable rules repository': 'feat_authoring',
+  'Monitor tables & thresholds': 'feat_thresholds',
+  'Suggest rules with AI': 'feat_suggest',
+  'Data products with Collections': 'feat_collections',
+  'Results & drill-down': 'feat_results',
+  'Governed by design': 'feat_governed',
 };
 
 // Resolve base URLs at module scope via a small hook wrapper so we never call
@@ -112,8 +118,7 @@ const useStudioThumbs = () => {
   return thumbs;
 };
 
-const FeatureTabs = (): JSX.Element => {
-  const [tab, setTab] = useState<'core' | 'studio'>('core');
+const FeatureTabs = ({ tab, setTab }: { tab: 'core' | 'studio'; setTab: (t: 'core' | 'studio') => void }): JSX.Element => {
   const isCore = tab === 'core';
   const thumbs = useStudioThumbs();
 
@@ -127,14 +132,14 @@ const FeatureTabs = (): JSX.Element => {
           DQX comes in two flavors. Pick one to see its features.
         </p>
 
-        {/* Full-width tab picker */}
-        <div className="flex w-full rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden mb-8">
+        {/* Full-width segmented tab picker */}
+        <div className="flex w-full gap-1.5 p-1.5 rounded-xl bg-gray-100 dark:bg-gray-800/60 mb-8">
           <button
             onClick={() => setTab('core')}
-            className={`flex-1 flex items-center justify-center gap-2 py-4 px-4 text-base font-semibold transition-colors ${
+            className={`flex-1 flex items-center justify-center gap-2 py-3.5 px-4 rounded-lg text-base font-semibold transition-all ${
               isCore
-                ? 'bg-blue-500 text-white'
-                : 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
+                ? 'bg-blue-500 text-white shadow'
+                : 'text-gray-600 dark:text-gray-300 hover:bg-white/60 dark:hover:bg-gray-700/50'
             }`}
             aria-pressed={isCore}
           >
@@ -143,10 +148,10 @@ const FeatureTabs = (): JSX.Element => {
           </button>
           <button
             onClick={() => setTab('studio')}
-            className={`flex-1 flex items-center justify-center gap-2 py-4 px-4 text-base font-semibold transition-colors ${
+            className={`flex-1 flex items-center justify-center gap-2 py-3.5 px-4 rounded-lg text-base font-semibold transition-all ${
               !isCore
-                ? 'bg-red-500 text-white'
-                : 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
+                ? 'bg-red-500 text-white shadow'
+                : 'text-gray-600 dark:text-gray-300 hover:bg-white/60 dark:hover:bg-gray-700/50'
             }`}
             aria-pressed={!isCore}
           >
@@ -171,8 +176,10 @@ const FeatureTabs = (): JSX.Element => {
               })}
             </div>
             <div className="text-center mt-8 flex flex-wrap gap-3 justify-center">
+              <Button variant="secondary" outline link="/docs/motivation" size="medium" label="Motivation" />
               <Button variant="secondary" outline link="/docs/installation" size="medium" label="Install DQX Core" />
               <Button variant="secondary" outline link="/docs/guide/" size="medium" label="DQX Core guide" />
+              <Button variant="secondary" outline link="/docs/demos" size="medium" label="Demos" />
             </div>
           </div>
         ) : (
@@ -189,9 +196,9 @@ const FeatureTabs = (): JSX.Element => {
                     className="group flex flex-col rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden hover:shadow-lg hover:border-red-400 transition-all no-underline bg-white dark:bg-gray-900"
                   >
                     {thumb && (
-                      <div className="overflow-hidden border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-950/40 aspect-[16/9]">
+                      <div className="overflow-hidden border-b border-gray-100 dark:border-gray-800 bg-gray-100 dark:bg-gray-950/60 aspect-[16/10] flex items-center justify-center p-2">
                         <ThemedImage
-                          className="w-full h-full object-cover object-top group-hover:scale-[1.02] transition-transform"
+                          className="max-w-full max-h-full object-contain rounded group-hover:scale-[1.02] transition-transform"
                           alt={f.title}
                           sources={{ light: thumb.light, dark: thumb.dark }}
                         />
@@ -225,10 +232,10 @@ const FeatureTabs = (): JSX.Element => {
 
 const TaskLauncher = (): JSX.Element => {
   const tasks = [
-    { title: 'Check my data’s health', description: 'See quality scores and trends across your tables.', icon: HeartPulse, link: '/docs/studio/running/measure-quality-health' },
+    { title: 'Check my data’s health', description: 'See quality scores and trends across your tables.', icon: HeartPulse, link: '/docs/studio/running/' },
     { title: 'Add a rule', description: 'Define an expectation your data should meet.', icon: PlusCircle, link: '/docs/studio/authoring/create-a-rule' },
-    { title: 'Automate quality checks', description: 'Run checks on a schedule across related tables.', icon: Settings2, link: '/docs/studio/running/run-checks' },
-    { title: 'Govern a rollout', description: 'Set roles, approvals, and standards for your org.', icon: ShieldCheck, link: '/docs/studio/start-here/set-up-for-your-org' },
+    { title: 'Automate quality checks', description: 'Run checks on a schedule across related tables.', icon: Settings2, link: '/docs/studio/running/' },
+    { title: 'Govern a rollout', description: 'Set roles, approvals, and standards for your org.', icon: ShieldCheck, link: '/docs/studio/governance/' },
   ];
 
   return (
@@ -279,14 +286,19 @@ const Marketplace = (): JSX.Element => {
 };
 
 export default function Home(): JSX.Element {
+  const [tab, setTab] = useState<'core' | 'studio'>('core');
   return (
     <Layout>
       <main>
         <div className="flex flex-col items-center mx-auto w-full max-w-screen-xl">
           <Hero />
-          <FeatureTabs />
-          <TaskLauncher />
-          <Marketplace />
+          <FeatureTabs tab={tab} setTab={setTab} />
+          {tab === 'studio' && (
+            <>
+              <TaskLauncher />
+              <Marketplace />
+            </>
+          )}
         </div>
       </main>
     </Layout>

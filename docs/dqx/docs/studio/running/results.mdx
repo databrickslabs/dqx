@@ -1,0 +1,73 @@
+---
+sidebar_position: 2
+title: Results page
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Results page
+
+Every monitored table and collection has a **Results** view — the place to see
+how your data is doing, find what's failing, and decide what to do about it.
+
+## Read the score
+
+At the top is the **DQ score** — the share of tests that passed. (A single run of
+one check produces many **tests**: one per row it evaluates, so a run over a
+million rows produces a million tests. See
+[Rules, checks, and tests](/docs/studio/start-here/key-concepts#rules-checks-and-tests).)
+
+A check is **failing** when its pass rate drops below its **pass threshold** —
+the minimum you require, shown as a `< 70%` badge. Below the score, breakdowns
+split the results by **dimension**, **severity** (Low / Medium / High /
+Critical), **rule**, and **column**, so you can see where quality is slipping.
+
+<ThemedImage
+  alt="Collection Results view: average DQ score, trend over time, and breakdowns by dimension and severity"
+  sources={{
+    light: useBaseUrl('/img/studio/collection_results_light.png'),
+    dark: useBaseUrl('/img/studio/collection_results_dark.png'),
+  }}
+/>
+
+<Admonition type="tip" title="Reporting to leadership">
+"Healthy" means your checks are meeting their thresholds and the score is holding
+steady or climbing. For a leadership update, quote the **overall DQ score** and
+point to the **trend line** — a stable or rising score over recent runs is the
+story, not a single day's number.
+</Admonition>
+
+## Investigate and act on a failure
+
+To see what actually went wrong, open the **Failed records** table and **hover a
+failing cell** — a popup lists every check that row failed, each with its
+severity and the reason.
+
+<ThemedImage
+  alt="Failed records table with a hovered row showing a popup of the checks that row failed, each with severity and reason"
+  sources={{
+    light: useBaseUrl('/img/studio/failed_record_popup_light.png'),
+    dark: useBaseUrl('/img/studio/failed_record_popup_dark.png'),
+  }}
+/>
+
+A failing check is a prompt to act, not always a problem with the rule. You can
+**fix the data at source**, **adjust the threshold** if the target was
+unrealistic ([Quality thresholds](/docs/studio/monitoring/quality-thresholds)),
+**change the severity** to reprioritize, **refine the rule**, or **escalate** to
+the team that owns the data. The **Show comments** control opens a notes thread
+so you can record what you found and hand it off — each comment keeps its author
+and timestamp.
+
+<Admonition type="info" title="Your data is never changed">
+Failing a check never deletes or edits your data. The failing rows shown here are
+a **sample** copied into a quarantine view purely so you can inspect them. The
+source table is untouched.
+</Admonition>
+
+![Comments panel on a Results page with a posted team note](/img/studio/comments_dark.png)
+
+Prefer to just ask? The [Ask Genie](/docs/studio/running/genie) panel answers
+questions about your results in plain English.

@@ -10,7 +10,6 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 # Applying Quality Checks
 
 You can apply quality checks to your data using the following approaches:
-* [DQX Studio (no-code UI)](/docs/studio/): for a no-code experience, DQX Studio is the recommended option. It lets you apply checks to data at-rest and review the results from a browser, without writing code or maintaining configuration files.
 * [Programmatic approach](#programmatic-approach): you can apply checks programmatically to a DataFrame or Tables. This method is required if you want to perform a data quality check for data in-transit.
 * [No-code approach (Workflows)](#no-code-approach-workflows): you can apply checks for data at-rest using workflows if DQX is installed in the workspace as a tool. This does not require code-level integration and is suitable for data already stored in Delta tables or files.
 
@@ -658,10 +657,6 @@ dq_engine.apply_checks_and_save_in_table(
 ## No-code approach (Workflows)
 
 You can apply quality checks to data at-rest using DQX Workflows without writing any code. This requires installation of DQX in the workspace as a tool (see [installation guide](/docs/installation)).
-
-<Admonition type="tip" title="Prefer a UI?">
-[DQX Studio](/docs/studio/) is the recommended no-code option — it provides a browser-based UI to apply checks, review results, and monitor runs, without maintaining a configuration file.
-</Admonition>
 
 The workflows use [configuration file](/docs/installation/#configuration-file) to specify input and output locations, and to apply sets of quality checks from a storage.
 

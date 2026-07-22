@@ -144,30 +144,30 @@ const config: Config = {
             },
             {
               id: 'reference',
-              name: 'Reference',
-              description: 'API reference, CLI commands, and technical documentation',
+              name: 'DQX Core — Reference',
+              description: 'DQX Core API reference, CLI commands, and technical documentation',
               position: 4,
               routes: [
                 { route: '/dqx/docs/reference/**' }
               ],
             },
             {
-              id: 'development',
-              name: 'Development',
-              description: 'Contributing and development documentation',
-              position: 5,
-              routes: [
-                { route: '/dqx/docs/dev/**' }
-              ],
-            },
-            {
               id: 'demos',
-              name: 'Demos',
-              description: 'Example implementations and demos',
-              position: 6,
+              name: 'DQX Core — Demos',
+              description: 'DQX Core example implementations and demos',
+              position: 5,
               routes: [
                 { route: '/dqx/docs/demos' },
                 { route: '/dqx/docs/demos/**' }
+              ],
+            },
+            {
+              id: 'development',
+              name: 'Development',
+              description: 'Contributing and development documentation',
+              position: 6,
+              routes: [
+                { route: '/dqx/docs/dev/**' }
               ],
             },
             {

@@ -1,0 +1,43 @@
+---
+sidebar_position: 3
+title: Ask Genie
+---
+
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Ask Genie
+
+Not sure where to look? Open the **Ask Genie** panel on any
+[results page](/docs/studio/running/results) and ask in plain English. It answers
+with a short explanation and a chart — no SQL, no query building.
+
+## Find the worst spots
+
+Ask it to point you at where quality is slipping:
+
+> Which columns have the most failures?
+
+<ThemedImage
+  alt="Ask Genie answering 'which columns have the most failures?' with a bar chart"
+  sources={{
+    light: useBaseUrl('/img/studio/genie_insight_light.png'),
+    dark: useBaseUrl('/img/studio/genie_insight_dark.png'),
+  }}
+/>
+
+## Explain a change over time
+
+Ask it to diagnose a shift in the score, and it breaks down which rules moved and
+by how much:
+
+> What is driving my changes in score over time?
+
+Genie compares the runs and shows the per-rule before-and-after fail rates, so you
+can see exactly which check pulled the score up or down.
+
+![Ask Genie answering 'what is driving my changes in score over time?' with per-rule before and after fail rates](/img/studio/genie_diagnose_dark.png)
+
+Genie comes with suggested questions grouped as **basic stats**, **drilldown**,
+**trends over time**, and **diagnose** — a good starting point when you're not
+sure what to ask.

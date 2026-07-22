@@ -20,7 +20,7 @@ thing you'll do in DQX Studio, so it's worth reading once end to end.
 <Admonition type="note" title="Before you start">
 You need the **Rule Author** role (or higher) to create rules. If you only see a
 read-only view, ask your admin — see
-[Roles & permissions](/docs/studio/governance/roles-and-permissions).
+[Roles & permissions](/docs/studio/governance/permissions-and-entitlements).
 </Admonition>
 
 ## Start a new rule
@@ -52,7 +52,7 @@ Fill in:
   this measures (completeness, validity, accuracy, and so on). This is what lets
   you later report quality *by category*.
 - **Tags** *(optional)* — labels for organizing and filtering rules. Some tags
-  are [governed tags](/docs/studio/monitoring/governed-tags) that help the app
+  are [governed tags](/docs/studio/authoring/governed-tags) that help the app
   suggest which columns a rule applies to.
 
 ## Define what the rule checks
@@ -95,31 +95,10 @@ relationship *between* columns, not just a fact about one. For example:
 Just as with a single-column rule, you map each placeholder to a real column when
 you apply the rule to a table — so a multi-column rule stays just as reusable.
 
-### Build the condition
-
 Under **Condition**, you build a simple sentence: *IF `{{column_1}}` …* and then
-pick what must be true. Click the condition to choose how you want to express
-it:
-
-<ThemedImage
-  alt="Choosing how to express a condition: Basic Rules, Condition Builder, or SQL"
-  sources={{
-    light: useBaseUrl('/img/studio/create_rule_basic_checks_light.png'),
-    dark: useBaseUrl('/img/studio/create_rule_basic_checks_dark.png'),
-  }}
-/>
-
-You have three ways to express the check. **Most stewards only ever need the
-first one:**
-
-- **Basic Rules** *(recommended, no code)* — pick a ready-made check from a
-  catalog. Fill in a couple of values and you're done. This is the no-code path;
-  the full catalog is below.
-- **Condition Builder** — build a more complex condition visually. This is where
-  you [chain several checks together with **AND** / **OR**](#chain-logic-with-and--or)
-  — worth knowing about, so it has its own section below.
-- **SQL** — write a custom condition in SQL, for technical users who want full
-  control.
+pick what must be true. There are three ways to express what makes data pass or
+fail, from the simplest to the most powerful. Most rules only ever need the
+first.
 
 <Admonition type="tip" title="Not sure which check you want?">
 Describe it in plain English instead — the **Generate** box at the top of the
@@ -127,11 +106,22 @@ editor drafts a check for you. See [Generate a rule with AI](#generate-a-rule-wi
 below.
 </Admonition>
 
-### The catalog of built-in checks
+### Simple checks
 
-When you open the **Basic Rules** picker you'll see the built-in checks, grouped
-and searchable. You don't need to memorize them — but here's what's available, by
-what you're trying to verify:
+The no-code option: pick a ready-made check from a catalog, fill in a couple of
+values, and you're done. It covers most of what you'll want to check.
+
+<ThemedImage
+  alt="Choosing a ready-made check from the catalog of built-in checks"
+  sources={{
+    light: useBaseUrl('/img/studio/create_rule_basic_checks_light.png'),
+    dark: useBaseUrl('/img/studio/create_rule_basic_checks_dark.png'),
+  }}
+/>
+
+When you open the picker you'll see the built-in checks, grouped and searchable.
+You don't need to memorize them — but here's what's available, by what you're
+trying to verify:
 
 | You want to check that… | Checks to reach for |
 | ----------------------- | ------------------- |
@@ -154,12 +144,11 @@ For the exact, function-by-function reference — every built-in check, its prec
 behavior, and the arguments it accepts — see the
 [Quality checks reference](/docs/reference/quality_checks) in DQX Core.
 
-### Chain logic with AND / OR
+### Condition builder
 
-The **Custom condition** (Condition Builder) is the most powerful no-code option,
-and it's worth calling out: it lets you **chain several checks together with
-`AND` and `OR`** to express real-world rules that a single check can't. You build
-each step the same visual way, then combine them.
+The condition builder lets you **chain several checks together with `AND` and
+`OR`** to express real-world rules that a single check can't. You build each step
+the same visual way, then combine them.
 
 For example:
 
@@ -169,20 +158,12 @@ For example:
 - *If `{{payment_method}}` is `card`, **then** `{{card_last_four}}` is present
   **AND** is four digits.*
 
-Because a custom condition can reference
+Because a condition built this way can reference
 [more than one column](#a-rule-can-use-more-than-one-column) and combine several
 tests, it's the way to capture nuanced expectations without dropping into SQL.
 
-<Admonition type="tip" title="When to reach for SQL">
-If even AND/OR chaining can't express what you need, the **SQL** option lets a
-technical user write the condition directly — for example a window calculation or
-a lookup that the visual builder doesn't cover.
-</Admonition>
-
-### Advanced options: filters and joins
-
-Below the condition is an **Advanced** section for the less common cases. Expand
-it when your rule needs more than a plain condition:
+The condition builder also has an **Advanced** box for the less common cases.
+Expand it when your rule needs more than a plain condition:
 
 - **Filter** — apply the rule to only *some* rows. A filter is a condition that
   decides which rows the check runs on, so you can say "only check `amount` on
@@ -193,8 +174,14 @@ it when your rule needs more than a plain condition:
   must exist in the products table". You point at the reference table and the
   columns to match on, and DQX Studio compares against it when the rule runs.
 
-Most rules never need the Advanced section — reach for it when a rule has to
-target a subset of rows or look something up in another table.
+Most rules never need the Advanced box — reach for it when a rule has to target a
+subset of rows or look something up in another table.
+
+### Custom SQL
+
+For advanced users: when even the condition builder can't express what you need,
+write the condition directly in SQL. This gives you full control for cases the
+visual builder doesn't cover — for example a window calculation or a lookup.
 
 ## Generate a rule with AI
 
@@ -211,6 +198,11 @@ specific:
 
 The app reads your description, picks a matching check (or chains a few together),
 and fills in the details — the allowed values, the range, the pattern, and so on.
+
+You can also ask for a specific *type* of rule rather than only describing the
+data expectation. Say you want a uniqueness check, a range check, or a
+pattern/regex check, and the assistant builds that kind of rule — for example
+`make a uniqueness check on customer id` or `add a regex check for a UK postcode`.
 
 <Admonition type="caution" title="Always review AI output">
 A generated rule is a **starting point**, not a finished rule. Read what the app
@@ -230,6 +222,11 @@ meant.
 Testing changes nothing: it reads a sample, evaluates the rule, and persists
 nothing. It's the safest way to catch a rule that's too strict or too loose
 before it goes live.
+
+You don't have to hand-write test cases either. DQX Studio can generate tests for
+you with AI — it looks at what the rule checks and produces example rows that
+should pass and fail, so you can confirm the rule behaves the way you meant
+without inventing sample data yourself.
 
 ## Save and submit
 

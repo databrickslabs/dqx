@@ -1,0 +1,56 @@
+---
+sidebar_position: 1
+title: Running & scheduling
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Running & scheduling
+
+A **run** evaluates every check on a table (or a whole collection) against the
+current data and records the results. You can run on demand or on a schedule.
+
+## Run now
+
+Open a monitored table or a collection and click **Run now**. The run continues
+in the background, so you can leave the page. When it finishes, it appears in
+**Runs History** and its results show up on the [results page](/docs/studio/running/results).
+
+<Admonition type="note" title="You need the Runner privilege">
+Triggering a run needs the **Runner** privilege. Admins have it automatically. If
+you don't see **Run now**, ask an admin to grant it — see
+[Permissions & entitlements](/docs/studio/governance/permissions-and-entitlements).
+</Admonition>
+
+## Put it on a schedule
+
+For quality you want to keep an eye on, put a collection (or a single table) on a
+schedule so it runs itself:
+
+- **Hourly**
+- **Daily** at a time you pick
+- **Weekly** on the days you choose
+- **Custom** — a cron expression, if you need something more specific
+
+You can **pause**, **resume**, or **delete** a schedule at any time, right where
+you set it up. Scheduled times follow the workspace timezone set by your admin.
+If a scheduled run is still going when the next one is due, the app skips the new
+one rather than running two at once.
+
+## Runs history
+
+Every past run shows up in **Runs History**, with its status and how long it
+took — validation runs and profiling runs alike.
+
+<ThemedImage
+  alt="Runs History showing past validation and profiling runs with status and duration"
+  sources={{
+    light: useBaseUrl('/img/studio/runs_history_light.png'),
+    dark: useBaseUrl('/img/studio/runs_history_dark.png'),
+  }}
+/>
+
+Once a run finishes, head to the [results page](/docs/studio/running/results) to
+read the score and investigate anything that failed.

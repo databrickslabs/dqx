@@ -1,0 +1,48 @@
+---
+sidebar_position: 3
+title: "Try the built-in demo"
+---
+
+import Admonition from '@theme/Admonition';
+
+# Try the built-in demo
+
+DQX Studio ships with a **built-in demo** so you can explore every feature
+against realistic data before pointing it at your own tables. It creates a small
+set of sample tables, a library of reusable rules, monitored tables, collections,
+and past runs — enough to see scores, trends, failing records, and the approval
+workflow in action.
+
+## Deploy the demo
+
+An admin turns the demo on from **Admin Settings**. Deploying it sets up the
+sample catalog, seeds the rules and monitored tables, and generates a history of
+runs so the results views have something to show.
+
+<Admonition type="note" title="Admin only">
+Only the **Admin** role can deploy or remove the demo, since it creates sample
+data and app content. See
+[Set up DQX Studio for your organization](/docs/studio/governance/).
+</Admonition>
+
+## What you can explore
+
+Once the demo is in place, walk through the whole product with real content:
+
+- Browse the [rules registry](/docs/studio/authoring/create-a-rule) and see how
+  rules are reused across tables.
+- Open a [monitored table](/docs/studio/monitoring/monitor-a-table) and its
+  [results page](/docs/studio/running/results) — including failing records you
+  can inspect.
+- View a [collection](/docs/studio/monitoring/collections) such as *Customer 360*
+  to see quality across related tables at once.
+- Try [Ask Genie](/docs/studio/running/genie) on the demo's results.
+
+It's the fastest way for a new steward or reviewer to get comfortable — nothing
+they do to the demo touches production data.
+
+## Remove it when you're done
+
+The demo can be removed from Admin Settings just as easily. Removing it clears
+the sample content so it doesn't clutter your workspace once your team is
+working with real tables.

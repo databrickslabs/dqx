@@ -84,6 +84,21 @@ underlying rule:
   whether a check is green. Useful when you're improving quality gradually. See
   [Quality thresholds](/docs/studio/monitoring/quality-thresholds).
 
+### Pin a rule version
+
+Rules in the registry evolve — an author edits a rule and it gets a new version.
+Each check on your table shows a **version selector** (for example, *Latest
+(v1)*). You choose how that check tracks the rule:
+
+- **Latest** — the check always uses the newest approved version of the rule, so
+  improvements roll out to your table automatically.
+- **Pin to a version** — lock the check to a specific version, so it stays exactly
+  as it is until you deliberately move it. Pin when you want a table's behavior to
+  stay stable regardless of registry changes.
+
+Pinning is per check, so you can let most checks follow the latest while holding a
+sensitive one steady.
+
 ### Suggest rules with AI
 
 You don't have to map every check by hand. Select **Suggest rules** and DQX
@@ -102,7 +117,7 @@ not a decision made for you.
 If a rule's column is marked with a governed tag (for example `class.location`),
 that rule is applied automatically to any column on this table carrying the same
 tag — so tagged rules land on the right columns without you mapping them by hand.
-See [Governed tags](/docs/studio/monitoring/governed-tags).
+See [Governed tags](/docs/studio/authoring/governed-tags).
 </Admonition>
 
 <Admonition type="info" title="Your data is never changed">
@@ -119,4 +134,4 @@ actively monitored and its checks run on the schedule set for it.
 
 - Learn how review and approval works in the
   [Approval workflow](/docs/studio/governance/approval-workflow).
-- Learn how and when checks run in [Run checks](/docs/studio/running/run-checks).
+- Learn how and when checks run in [Run checks](/docs/studio/running/).

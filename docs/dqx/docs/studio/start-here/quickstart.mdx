@@ -10,9 +10,8 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 # Quickstart: your first monitored table in 10 minutes
 
 This is a start-to-finish walkthrough for someone opening DQX Studio for the
-first time. By the end you'll have a real table being watched for quality
-problems, with a rule applied, run, and results on screen — no rule-writing by
-hand, no code.
+first time. By the end you'll have a rule you built, applied to a real table,
+run, with results on screen — no code.
 
 Follow the steps in order. Each one builds on the last.
 
@@ -22,60 +21,75 @@ only ever shows you data you can already see, so pick a table you know — an
 `orders`, `customers`, or similar table works well.
 </Admonition>
 
-## 1. Open DQX Studio
+## 1. Create a reusable rule
 
-Open the app. The **home** view greets you with an at-a-glance summary — how many
-rules, tables, and collections you have, your overall data quality score, and a
-trend of average quality over time. On a fresh setup these will be empty. That's
-fine; you're about to change that.
+A **rule** is a reusable definition of a data-quality expectation — for example,
+"this column is never blank". Author it once here, and you'll be able to apply it
+to as many tables as you like.
+
+Go to **Rules** and choose **New rule**. You'll fill in two tabs:
+
+- On the **About** tab, give the rule a **name** and a short **description**, pick
+  a **default severity** (**Low**, **Medium**, **High**, or **Critical**), and
+  choose a **dimension** (such as completeness or validity — the quality aspect
+  this rule measures).
+- On the **Implementation** tab, pick a check from **Basic Rules** — for example
+  **is not null**, which flags any blank value. That's all a simple rule needs.
 
 <ThemedImage
-  alt="DQX Studio home view showing at-a-glance stats for rules, tables, and collections, an average-quality trend chart, and Get Started tiles"
+  alt="Creating a rule — the Basic Rules check picker showing the built-in check catalog grouped by category with search"
   sources={{
-    light: useBaseUrl('/img/studio/home_light.png'),
-    dark: useBaseUrl('/img/studio/home_dark.png'),
+    light: useBaseUrl('/img/studio/create_rule_basic_checks_light.png'),
+    dark: useBaseUrl('/img/studio/create_rule_basic_checks_dark.png'),
   }}
 />
 
-## 2. Get a rule without writing one
-
-A **rule** is a reusable definition of a data-quality expectation — for example,
-"this column is never blank". Instead of writing one from scratch, let DQX Studio
-suggest rules for you by **profiling** a table: it scans the data, looks at its
-shape, and proposes sensible candidate rules.
-
-Start a new profiling session, pick the table you chose above, and let it scan.
-In a moment you'll see suggested rules — things like "this ID is never blank" or
-"this amount is never negative". Accept one that looks useful. It lands in your
-**Rules Registry** as a draft, ready to apply.
-
 <Admonition type="tip" title="Prefer to describe it in words?">
-You can also **generate a rule with AI** — type what you want in plain English
-("email addresses should look valid") and the app proposes a check. Both aids
-live on the [Create a rule](/docs/studio/authoring/create-a-rule) page.
+On the About tab you can also describe the rule in plain English and let **AI**
+generate the check for you. See [Create a rule](/docs/studio/authoring/create-a-rule)
+for both approaches.
 </Admonition>
 
-## 3. Apply the rule to your table
+Save the rule. It lands in your **Rules Registry** — your library of reusable
+rules — ready to apply.
 
-Now attach the rule to real data. Open your table's **Apply rules** view, find
-the column the rule fits, and apply the rule to it. This turns the rule into a
-**check** — the same rule can become many checks across different columns and
-tables.
+## 2. Add a table to monitor
+
+Before you can apply a rule to a table, you register the table with DQX Studio.
+
+Go to **Tables** and choose **Monitor a table**. Browse Unity Catalog and pick the
+table you chose above. Because DQX Studio only shows data you already have access
+to, if a table isn't listed it's a permissions matter, not a bug.
 
 <ThemedImage
-  alt="A monitored table's Apply Rules view, showing rules grouped by column with severity indicators and pass-threshold badges"
+  alt="The Monitored Tables list, showing catalog, schema, and table with rule counts, DQ score, and last run"
+  sources={{
+    light: useBaseUrl('/img/studio/tables_list_light.png'),
+    dark: useBaseUrl('/img/studio/tables_list_dark.png'),
+  }}
+/>
+
+## 3. Apply your rule to the table
+
+Open your table and go to its **Apply Rules** tab. Find the column your rule fits
+and apply the rule to it. This turns the rule into a **check** — the same rule can
+become many checks across different columns and tables.
+
+<ThemedImage
+  alt="A monitored table's Apply Rules tab, showing rules grouped by column with severity indicators and pass-threshold badges"
   sources={{
     light: useBaseUrl('/img/studio/table_apply_rules_light.png'),
     dark: useBaseUrl('/img/studio/table_apply_rules_dark.png'),
   }}
 />
 
-While you're here, set two things for the check:
+Here you can override the rule's defaults for this table:
 
-- **Severity** — how much a failure matters: **Low**, **Medium**, **High**, or
-  **Critical**. It's a priority for triage and reporting, not a pass/fail switch.
-- **Pass threshold** — optionally require that, say, "70% of rows must pass"
-  before the check counts as healthy. This is handy for gradual clean-up. See
+- **Severity** — keep the rule's default, or change it for this check. Severity is
+  a priority for triage and reporting; it doesn't decide pass or fail.
+- **Pass threshold** — optionally require that, say, "70% of rows must pass" before
+  the check counts as healthy. Thresholds are set per rule and per column, which is
+  handy for gradual clean-up. See
   [Set quality thresholds](/docs/studio/monitoring/quality-thresholds).
 
 Your table is now a **monitored table** — the single place to see and manage that
@@ -83,39 +97,35 @@ table's data quality.
 
 ## 4. Let it go through approval
 
-Rules don't go live the instant you make them. Your new rule is submitted for
-review, and an approver signs off before it becomes active. This "four-eyes" step
-means at least two people touch every rule before it affects a run.
-
-For this walkthrough, assume it's approved. (If you're an approver or admin, you
-can approve it yourself.) See the
-[Approval workflow](/docs/studio/governance/approval-workflow) for how this works.
+Rules don't go live the instant you make them: your check is submitted for review,
+and an approver signs off before it becomes active. See the
+[Approval workflow](/docs/studio/governance/approval-workflow). For this
+walkthrough, assume it's approved.
 
 ## 5. Run the checks
 
-With an active check in place, run it. From your monitored table, trigger a run.
-DQX Studio reads the table and evaluates the check against every row — producing
-one **test** per row. It never changes your data; it only reports what it finds.
-See [Run checks](/docs/studio/running/run-checks).
+With an active check in place, trigger a run from your monitored table. DQX Studio
+reads the table and evaluates the check against every row. It never changes your
+data; it only reports what it finds. See [Run and review](/docs/studio/running/).
 
 ## 6. See your results
 
 When the run finishes, open the table's **Results**. You'll see an overall **data
-quality score**, a breakdown by dimension and severity, and — the useful part —
-you can drill into the exact **rows that failed** so you know what to fix.
+quality score** and a breakdown of what passed and what didn't. The useful part is
+the **Failed records** table — hover a failing row to see exactly which checks it
+failed, each with its severity and the reason, so you know what to fix.
 
 <ThemedImage
-  alt="A Results view showing an overall data quality score, a quality trend over time, and a breakdown by dimension and severity"
+  alt="A Results view — hovering a failing row shows a popup listing the checks it failed with severity and reason"
   sources={{
-    light: useBaseUrl('/img/studio/collection_results_light.png'),
-    dark: useBaseUrl('/img/studio/collection_results_dark.png'),
+    light: useBaseUrl('/img/studio/failed_record_popup_light.png'),
+    dark: useBaseUrl('/img/studio/failed_record_popup_dark.png'),
   }}
 />
 
 That's the whole loop: a rule, applied to a table, run, with results you can act
-on. See [Measure quality health](/docs/studio/running/measure-quality-health) to
-read a score, and [Fix a failing rule](/docs/studio/running/fix-a-failing-rule)
-to work through the rows that didn't pass.
+on. See [Run and review](/docs/studio/running/) to read a score and work through
+the rows that didn't pass.
 
 <Admonition type="tip" title="Failing rows are safe to inspect">
 A failing check never deletes or edits your data. Failing rows are sampled into a
@@ -127,5 +137,7 @@ view purely so you can triage them.
 - **[Key concepts](/docs/studio/start-here/key-concepts)** — the handful of ideas
   (rules vs checks vs tests, the three levels, roles) that make everything else
   click.
-- **[Create a rule](/docs/studio/authoring/create-a-rule)** — build your own rule
-  from scratch when the suggestions don't cover what you need.
+- **[Create a rule](/docs/studio/authoring/create-a-rule)** — go deeper on building
+  rules, including custom conditions and AI generation.
+- **[Monitor a table](/docs/studio/monitoring/monitor-a-table)** — register more
+  tables and apply your rules across them.

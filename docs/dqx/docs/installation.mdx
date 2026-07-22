@@ -102,7 +102,7 @@ PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" pip install databric
 ## DQX installation as a Tool in a Databricks Workspace
 
 If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
-However, installing DQX in the workspace offers additional benefits such as profiling and quality checker workflows allowing for no-code quality checking, a pre-configured dashboard, and convenient configuration management. For a fully no-code experience driven by a browser-based UI, [DQX Studio](#dqx-studio-installation) is the recommended option.
+However, installing DQX in the workspace offers additional benefits such as profiling and quality checker workflows allowing for no-code quality checking, and convenient configuration management. For a fully no-code experience driven by a browser-based UI, [DQX Studio](#dqx-studio-installation) is the recommended option.
 
 See the [Installation Configuration reference](/docs/reference/installation_wizard) for a complete reference of the options available through the installation wizard.
 
@@ -575,30 +575,3 @@ Database migrations run automatically on app startup and preserve existing rules
 `prevent_destroy` is what stops a `databricks bundle destroy` (or a forced replace from a deploy) from wiping your rules, schedules, role mappings, and comments. The multi-step uninstall above is by design — silent data loss is the bigger risk to protect against.
 </Admonition>
 
-## Installing Dashboard
-
-DQX data quality dashboard can be used to monitor data quality across all tables monitored by DQX.
-The dashboard is not scheduled to refresh by default, ensuring no costs are incurred.
-
-You have two options to set up the dashboard:
-
-### Option 1: Import directly in the workspace
-
-You can import the dashboard directly from a file. The dashboard file (`DQX_Dashboard.lvdash.json`) is available in the [GitHub repository](https://github.com/databrickslabs/dqx/blob/v0.15.0/src/databricks/labs/dqx/dashboards/). To import it:
-1. Navigate to **Dashboards** in the Databricks UI
-2. Click **Import dashboard from file**
-3. Select the `.lvdash.json` file
-4. Provide parameters and refresh the dashboard
-
-### Option 2: Use Databricks CLI
-
-When you install DQX as a tool using the Databricks CLI (see [Install DQX using Databricks CLI](#install-dqx-using-databricks-cli)), the dashboard is automatically deployed to the installation directory.
-
-You can then open it using:
-```commandline
-databricks labs dqx open-dashboards
-```
-
-After executing the command:
-1. Locate and click on the dashboard file in the workspace UI
-2. Provide parameters and refresh the dashboard

@@ -1,0 +1,98 @@
+---
+sidebar_position: 3
+title: "Governed tags"
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Governed tags
+
+This page is for **Data Stewards** and **Data Governance Managers** who want the
+same kind of data — all location fields, all email addresses, all personal
+information — to get the same quality rules everywhere, automatically, without
+attaching rules to columns one table at a time.
+
+## What governed tags are
+
+A **governed tag** is a label your organization agrees on for a kind of data —
+for example `domain`, `pii`, `sensitivity`, `region`, or a "Legal Framework"
+tag. Governed tags are **defined in Unity Catalog**, not in DQX Studio. They're
+the shared vocabulary your whole organization already uses to classify columns.
+
+The idea behind governed tags in DQX Studio is simple: instead of pointing a
+rule at a named column, you point it at a **tag**. Any column that carries that
+tag then gets the rule applied to it — automatically, wherever that column
+lives.
+
+<Admonition type="note" title="Governed tags vs. rule labels">
+Don't confuse governed tags with the plain **Tags** / **Add label** field on a
+rule's About tab. Those labels are just for organizing and finding your rules.
+Governed tags are different: they attach to a **column** inside a rule and drive
+the auto-apply behavior described below.
+</Admonition>
+
+## Apply a governed tag to a rule's column
+
+When you create or edit a rule, each column the rule uses can be tied to a
+governed tag. On the column, click **+ Apply to a tag** and pick a tag from the
+searchable list — this list shows the governed tags that exist in Unity Catalog
+(`domain`, `pii`, `sensitivity`, `region`, "Legal Framework", and so on). If the
+tag you need doesn't exist yet, you can create it in Unity Catalog yourself.
+
+<ThemedImage
+  alt="The rule editor with the + Apply to a tag dropdown open, showing a searchable list of Unity Catalog governed tags"
+  sources={{
+    light: useBaseUrl('/img/studio/apply_to_tag_light.png'),
+    dark: useBaseUrl('/img/studio/apply_to_tag_dark.png'),
+  }}
+/>
+
+Now the rule isn't tied to a column *name* — it's tied to a *tag*. See
+[Create a rule](/docs/studio/authoring/create-a-rule) for the full rule-authoring
+walkthrough.
+
+## How auto-apply works on your tables
+
+Once a rule's column is tied to a governed tag, the rule **auto-applies** to any
+table column that carries the same governed tag in Unity Catalog — no manual
+mapping. A rule scoped to `pii`, for instance, lands on every column tagged `pii`
+across all your tables, and picks up new `pii` columns the moment they're tagged.
+
+You can see a column's governed tags in the table's schema. Here a column carries
+a `class.location` tag:
+
+<ThemedImage
+  alt="Monitored table schema showing a class.location governed tag on a column"
+  sources={{
+    light: useBaseUrl('/img/studio/table_detail_light.png'),
+    dark: useBaseUrl('/img/studio/table_detail_dark.png'),
+  }}
+/>
+
+Checks that arrived this way are marked with a **matched-tag chip**, so you can
+see at a glance that they came from a governed tag rather than being mapped by
+hand. You'll find these on the table's **Apply Rules** tab — see
+[Monitor a table](/docs/studio/monitoring/monitor-a-table).
+
+## Why this matters
+
+Without governed tags, someone has to remember that an email lives in a column
+called `email` on one table, `email_address` on another, and `contact_email` on a
+third — and hand-apply the email rule to each one. That's slow, and it's how a
+column quietly slips through unchecked.
+
+Governed tags flip it around. You express *what kind of data* a rule is for,
+once. Any column tagged as that kind of data — today or in the future — is
+covered automatically. Your standards stay consistent across every table: tag a
+rule's column as `pii`, and every PII column in your estate is checked, without
+anyone tracking them down by hand.
+
+<Admonition type="tip" title="Tag the column, not the rule">
+Governed tags attach to a **column** inside a rule, not to the rule as a whole.
+That's what lets the rule follow the tag onto real columns wherever they appear.
+</Admonition>
+
+Admins can review the organization's governance settings under
+[Governance](/docs/studio/governance/).

@@ -1,0 +1,112 @@
+---
+sidebar_position: 0
+title: "Governance & security"
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Governance & security
+
+This section is for the people accountable for *how* DQX Studio is run — data
+governance managers and workspace admins. It covers rolling the app out to your
+teams, the controls that keep it accountable, and how it respects your existing
+data access.
+
+If you're setting DQX Studio up for the first time, the rollout playbook below
+walks you through it. For the day-to-day detail behind each step, follow the
+links into the rest of this section.
+
+## Set up DQX Studio for your organization
+
+You'll make a handful of decisions once, and every author, reviewer, and steward
+who follows inherits them.
+
+<Admonition type="note" title="You'll need the Admin role">
+Everything below lives under **Admin Settings** and is only available to people
+with the **Admin** role. If you can't see Admin Settings, ask an existing admin.
+</Admonition>
+
+### Step 1 — Map roles to your teams
+
+Map your existing Databricks **workspace groups** to DQX Studio's roles — Viewer,
+Rule Author, Rule Approver, Admin — plus the additive **Runner** privilege for
+triggering runs. Assign groups rather than individuals, so access follows people
+as they join and leave. Start narrow: most people as Viewer or Author, a small
+group as Approver and Admin.
+
+<ThemedImage
+  alt="Admin Settings — Entitlements tab: workspace groups mapped to app roles"
+  sources={{
+    light: useBaseUrl('/img/studio/settings_entitlements_light.png'),
+    dark: useBaseUrl('/img/studio/settings_entitlements_dark.png'),
+  }}
+/>
+
+Full detail: [Permissions & entitlements](/docs/studio/governance/permissions-and-entitlements).
+
+### Step 2 — Decide your approval policy
+
+By default DQX Studio uses **four-eyes approval**: an author submits a draft and
+someone else approves it before it goes live. Keep this on for production; for a
+sandbox you can allow auto-approval. The setting is itself audited.
+
+<ThemedImage
+  alt="Admin Settings — Governance tab: approvals mode and data retention"
+  sources={{
+    light: useBaseUrl('/img/studio/settings_governance_thumb_light.png'),
+    dark: useBaseUrl('/img/studio/settings_governance_thumb_dark.png'),
+  }}
+/>
+
+Full detail: [The approval workflow](/docs/studio/governance/approval-workflow).
+
+### Step 3 — Define your standards
+
+Set the shared vocabulary authors will reuse:
+
+- **Governed tags** — reusable labels such as `domain`, `pii`, or
+  `class.location`. These are defined in **Unity Catalog**, not in DQX Studio, and
+  authors pick from them (or create their own in Unity Catalog) when tagging a
+  rule's column. A tagged rule then auto-applies to matching columns. See
+  [Governed tags](/docs/studio/authoring/governed-tags).
+- **Quality dimensions** — the categories you report against (completeness,
+  validity, accuracy, consistency, uniqueness, timeliness).
+- **Default pass thresholds** — how strict a check must be to count as passing.
+  Set a sensible default; authors can override per table. See
+  [Set quality thresholds](/docs/studio/monitoring/quality-thresholds).
+
+### Step 4 — Set retention and handle sensitive data
+
+In Admin Settings you choose how long runs, results, and metrics are kept, and —
+separately — how long quarantined sample rows (which may contain sensitive data)
+are kept. Keep the evidence long enough to investigate, then let it clear to
+support data minimization.
+
+<Admonition type="tip" title="Now invite your team">
+With roles, approvals, and standards in place, point authors at the
+[Quickstart](/docs/studio/start-here/quickstart) and stewards at
+[Run & review](/docs/studio/running/).
+</Admonition>
+
+## How DQX Studio respects your data access
+
+DQX Studio browses Unity Catalog **as you** — you only ever see catalogs and
+tables you already have permission to, and profiling and tests run under your own
+access. It never widens anyone's reach to data. Quarantined sample rows are
+visible only to approvers and admins, and still only for data they can already
+read.
+
+Every change to a rule, role, permission, or schedule is **audited** — who
+changed it, when, and the before-and-after values — so you always have an
+evidence trail.
+
+## In this section
+
+- [Permissions & entitlements](/docs/studio/governance/permissions-and-entitlements)
+  — roles across the app, and per-object access.
+- [The approval workflow](/docs/studio/governance/approval-workflow) — draft →
+  review → approve, and the four-eyes rule.
+- [Try the built-in demo](/docs/studio/governance/demo) — deploy sample content
+  from Admin Settings to explore every feature.
