@@ -12,6 +12,7 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_greater_than,
     is_ipv4_address_in_cidr,
     is_ipv6_address_in_cidr,
+    is_valid_national_id,
     sql_expression,
 )
 from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
@@ -141,3 +142,33 @@ def test_sql_expression_complex_exists_negate_auto_name():
     expression = "EXISTS (SELECT 1 FROM cfg WHERE cfg.val = STATUS)"
     result = sql_expression(expression, negate=True)
     assert get_column_name_or_alias(result) == "exists_select_1_from_cfg_where_cfg_val_status"
+
+
+def test_is_valid_national_id_default_country_auto_name():
+    result = is_valid_national_id("a")
+    assert get_column_name_or_alias(result) == "a_does_not_match_pattern_ssn_us"
+
+
+def test_is_valid_national_id_explicit_us_auto_name():
+    result = is_valid_national_id("a", country="US")
+    assert get_column_name_or_alias(result) == "a_does_not_match_pattern_ssn_us"
+
+
+def test_is_valid_national_id_country_is_case_insensitive():
+    result = is_valid_national_id("a", country="us")
+    assert get_column_name_or_alias(result) == "a_does_not_match_pattern_ssn_us"
+
+
+def test_is_valid_national_id_missing_country():
+    with pytest.raises(MissingParameterError, match="'country' is not provided."):
+        is_valid_national_id("a", country=None)
+
+
+def test_is_valid_national_id_non_string_country():
+    with pytest.raises(InvalidParameterError, match="'country' must be a string"):
+        is_valid_national_id("a", country=123)
+
+
+def test_is_valid_national_id_unsupported_country():
+    with pytest.raises(InvalidParameterError, match="Unsupported country code for national ID validation"):
+        is_valid_national_id("a", country="ZZ")

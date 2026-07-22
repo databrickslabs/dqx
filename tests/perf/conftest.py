@@ -319,3 +319,25 @@ def generated_email_df(spark):
         gen = gen.withColumnSpec(col, template=template)
 
     return gen.build()
+
+
+@pytest.fixture
+def generated_national_id_df(spark):
+    ssn_schema_str = (
+        "col1_ssn_dashed: string, " "col2_ssn_plain: string, " "col3_ssn_valid_area: string, " "col4_ssn_spaced: string"
+    )
+    schema = _parse_datatype_string(ssn_schema_str)
+
+    ssn_templates = {
+        "col1_ssn_dashed": r"\n\n\n-\n\n-\n\n\n\n",
+        "col2_ssn_plain": r"\n\n\n\n\n\n\n\n\n",
+        "col3_ssn_valid_area": r"1\n\n-\n\n-\n\n\n\n",
+        "col4_ssn_spaced": r"\n\n\n \n\n \n\n\n\n",
+    }
+
+    _, gen = make_data_gen(spark, n_rows=DEFAULT_ROWS, n_columns=len(ssn_templates), partitions=DEFAULT_PARTITIONS)
+    gen = gen.withSchema(schema)
+    for col, template in ssn_templates.items():
+        gen = gen.withColumnSpec(col, template=template)
+
+    return gen.build()
