@@ -46,6 +46,28 @@ from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validat
 logger = logging.getLogger(__name__)
 
 
+def _parse_snapshot_check_count(state_text: object) -> int | None:
+    """Parse check_count from a frozen dq_monitored_table_versions.state_json text.
+
+    Mirrors MonitoredTableVersions.snapshot_counts_many: prefer the cached
+    *check_count* int, else fall back to the *rule_refs* length; None when
+    there is no snapshot (draft binding) or the text won't parse.
+    """
+    if not isinstance(state_text, str) or not state_text:
+        return None
+    try:
+        state = json.loads(state_text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(state, dict):
+        return None
+    cc = state.get("check_count")
+    if isinstance(cc, int):
+        return cc
+    refs = state.get("rule_refs")
+    return len(refs) if isinstance(refs, list) else None
+
+
 class DuplicateMonitoredTableError(ValueError):
     """Raised by :meth:`MonitoredTableService.register` for an already-bound ``table_fqn``."""
 
@@ -92,6 +114,7 @@ class MonitoredTableSummary:
 
     table: MonitoredTable
     applied_rule_count: int = 0
+    applied_check_count: int | None = None
     check_count: int = 0
     score: float | None = None
     failed_tests: int | None = None
@@ -332,40 +355,52 @@ class MonitoredTableService:
         if steward:
             clauses.append(f"mt.steward = '{escape_sql_string(steward)}'")
         score_computed_at = self._sql.ts_text("sc.computed_at")
+        state_json_text = self._sql.select_json_text("v.state_json")
         sql = (
             f"SELECT {self._build_select_cols('mt.')}, "
-            f"sc.score, sc.failed_tests, sc.total_tests, {score_computed_at} AS score_computed_at "
+            f"sc.score, sc.failed_tests, sc.total_tests, {score_computed_at} AS score_computed_at, "
+            f"{state_json_text} AS version_state_json "
             f"FROM {self._table} mt "
             f"LEFT JOIN {self._score_cache_table} sc "
-            f"ON sc.scope_type = 'table' AND sc.scope_key = mt.table_fqn"
+            f"ON sc.scope_type = 'table' AND sc.scope_key = mt.table_fqn "
+            f"LEFT JOIN {self._versions_table} v "
+            f"ON v.binding_id = mt.binding_id AND v.version = mt.version"
         )
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY mt.updated_at DESC LIMIT 2000"
         rows = self._sql.query(sql)
         # Base columns end with schedule_kind (index 13), so the score-cache
-        # LEFT-JOIN columns follow at 14..17.
-        tables = [(self._row_to_table(row), parse_cached_score(row[14], row[15], row[16], row[17])) for row in rows]
+        # LEFT-JOIN columns follow at 14..17, and the version_state_json at 18.
+        tables = [
+            (
+                self._row_to_table(row),
+                parse_cached_score(row[14], row[15], row[16], row[17]),
+                _parse_snapshot_check_count(row[18]),
+            )
+            for row in rows
+        ]
         if catalog:
-            tables = [(t, s) for t, s in tables if self._fqn_part(t.table_fqn, 0) == catalog]
+            tables = [(t, s, c) for t, s, c in tables if self._fqn_part(t.table_fqn, 0) == catalog]
         if schema:
-            tables = [(t, s) for t, s in tables if self._fqn_part(t.table_fqn, 1) == schema]
+            tables = [(t, s, c) for t, s, c in tables if self._fqn_part(t.table_fqn, 1) == schema]
         if name:
             needle = name.lower()
-            tables = [(t, s) for t, s in tables if needle in t.table_fqn.lower()]
-        applied_counts = self._applied_rule_counts([t.binding_id for t, _ in tables])
-        check_counts = self._materialized_check_counts([t.table_fqn for t, _ in tables])
+            tables = [(t, s, c) for t, s, c in tables if needle in t.table_fqn.lower()]
+        applied_counts = self._applied_rule_counts([t.binding_id for t, _, _c in tables])
+        check_counts = self._materialized_check_counts([t.table_fqn for t, _, _c in tables])
         return [
             MonitoredTableSummary(
                 table=t,
                 applied_rule_count=applied_counts.get(t.binding_id, 0),
+                applied_check_count=snap_check_count,
                 check_count=check_counts.get(t.table_fqn, 0),
                 score=cached.score,
                 failed_tests=cached.failed_tests,
                 total_tests=cached.total_tests,
                 score_computed_at=cached.computed_at,
             )
-            for t, cached in tables
+            for t, cached, snap_check_count in tables
         ]
 
     @staticmethod

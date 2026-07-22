@@ -70,12 +70,14 @@ def _table_row(
     failed_tests: str | None = None,
     total_tests: str | None = None,
     score_computed_at: str | None = None,
+    version_state_json: str | None = None,
 ) -> list[str]:
     # ``schedule_kind`` (B2-52) is at index 13; the trailing 4 cells are the
     # dq_score_cache LEFT-JOIN columns the list query selects (P3.4, indices
-    # 14..17) — all None when the table has never been scored. The single-row
-    # read paths select only the first 14 columns; the extra cells are simply
-    # ignored by _row_to_table.
+    # 14..17) — all None when the table has never been scored. Index 18 is the
+    # version_state_json from the dq_monitored_table_versions LEFT JOIN. The
+    # single-row read paths select only the first 14 columns; the extra cells
+    # are simply ignored by _row_to_table.
     return [
         binding_id,
         table_fqn,
@@ -95,6 +97,7 @@ def _table_row(
         failed_tests,
         total_tests,
         score_computed_at,
+        version_state_json,
     ]
 
 
@@ -363,6 +366,66 @@ class TestListMonitoredTables:
         assert summary.failed_tests is None
         assert summary.total_tests is None
         assert summary.score_computed_at is None
+
+    def test_list_includes_applied_check_count_from_version_snapshot(self, svc, sql):
+        """Approved binding: applied_check_count reads from version snapshot's check_count."""
+        state_json = json.dumps({"check_count": 7, "rule_refs": [1, 2, 3]})
+        sql.query.side_effect = [
+            [
+                _table_row(
+                    binding_id="b1",
+                    table_fqn="cat.schema.t1",
+                    version=3,
+                    status="approved",
+                    version_state_json=state_json,
+                )
+            ],
+            [["b1", "3"]],  # applied-rule counts
+            [["cat.schema.t1", "7"]],  # materialized-check counts
+        ]
+        summaries = svc.list_monitored_tables()
+        list_sql = sql.query.call_args_list[0][0][0]
+        # The query must join dq_monitored_table_versions and select state_json text
+        assert "dq_monitored_table_versions" in list_sql
+        assert "to_json(v.state_json)" in list_sql
+        assert summaries[0].applied_check_count == 7
+
+    def test_list_applied_check_count_none_for_draft_binding(self, svc, sql):
+        """Draft binding (version=0, no snapshot): applied_check_count is None."""
+        sql.query.side_effect = [
+            [
+                _table_row(
+                    binding_id="b1",
+                    table_fqn="cat.schema.t1",
+                    version=0,
+                    status="draft",
+                    version_state_json=None,
+                )
+            ],
+            [],  # applied-rule counts
+            [],  # materialized-check counts
+        ]
+        summaries = svc.list_monitored_tables()
+        assert summaries[0].applied_check_count is None
+
+    def test_list_applied_check_count_falls_back_to_rule_refs_length(self, svc, sql):
+        """When check_count absent from snapshot, fall back to len(rule_refs)."""
+        state_json = json.dumps({"rule_refs": [{"rule_id": "r1"}, {"rule_id": "r2"}]})
+        sql.query.side_effect = [
+            [
+                _table_row(
+                    binding_id="b1",
+                    table_fqn="cat.schema.t1",
+                    version=2,
+                    status="approved",
+                    version_state_json=state_json,
+                )
+            ],
+            [],  # applied-rule counts
+            [],  # materialized-check counts
+        ]
+        summaries = svc.list_monitored_tables()
+        assert summaries[0].applied_check_count == 2
 
 
 # ---------------------------------------------------------------------------
