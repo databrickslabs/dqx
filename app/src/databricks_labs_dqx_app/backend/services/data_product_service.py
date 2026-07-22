@@ -833,7 +833,13 @@ class DataProductService:
             snapshot = pinned_counts.get((summary.table.binding_id, pinned_version))
             if snapshot is not None:
                 return snapshot
-        checks_count = live_check_counts.get(summary.table.binding_id, summary.check_count)
+        rendered = live_check_counts.get(summary.table.binding_id)
+        if rendered is not None:
+            checks_count = rendered
+        elif summary.applied_check_count is not None:
+            checks_count = summary.applied_check_count
+        else:
+            checks_count = summary.check_count
         return summary.applied_rule_count, checks_count
 
     def _pinned_snapshot_counts(self, member_rows: list[_MemberRow]) -> dict[tuple[str, int], tuple[int, int]]:
@@ -876,6 +882,12 @@ class DataProductService:
                 continue
             summary = table_map.get(row.binding_id)
             if summary is None:
+                continue
+            # Approved bindings (version > 0) read their frozen snapshot count from
+            # the summary (applied_check_count) — no render. Only never-approved
+            # drafts (version == 0) need a live render (item 44). Mirrors the Tables
+            # overview's _apply_snapshot_check_counts split.
+            if summary.table.version > 0:
                 continue
             seen.add(row.binding_id)
             live_bindings.append((row.binding_id, summary.table.table_fqn))
