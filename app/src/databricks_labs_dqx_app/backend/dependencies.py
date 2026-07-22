@@ -946,7 +946,15 @@ async def get_demo_seed_service(
         catalog=conf.catalog,
         schema=DEMO_SOURCE_SCHEMA,
     )
-    sp_view = ViewService(sql=sp_sql, sp_sql=sp_sql)
+    sp_view = ViewService(
+        sql=SqlExecutor(
+            ws=sp_ws,
+            warehouse_id=warehouse_id,
+            catalog=conf.catalog,
+            schema=conf.tmp_schema_name,
+        ),
+        sp_sql=sp_sql,
+    )
     # Profiler temp views for the demo profiling phase are created on the tmp
     # schema (like the request-path ViewService), but as the SP — the seed runs
     # on a background thread with no OBO token.
