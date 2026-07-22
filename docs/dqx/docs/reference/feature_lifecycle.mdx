@@ -1,0 +1,50 @@
+---
+sidebar_position: 500.5
+title: Feature lifecycle
+sidebar_label: Feature lifecycle
+---
+
+# Feature lifecycle
+
+DQX features move through release stages as they mature. When a feature is not yet generally
+available, its documentation page shows a status badge next to the title — for example, the
+[DQX MCP Server](/docs/guide/dqx_mcp_server) is <span className="badge badge--beta">Beta</span>.
+This page explains what each badge means.
+
+Features **without** a badge are [generally available](#ga).
+
+## Status badges
+
+| Badge | Stage | Summary |
+|---|---|---|
+| <span className="badge badge--secondary">Experimental</span> | [Experimental](#experimental) | For evaluation only; may change or be removed at any time. |
+| <span className="badge badge--beta">Beta</span> | [Beta](#beta) | Usable and feature-complete; the API may still change before GA. |
+| <span className="badge badge--success">GA</span> | [Generally available](#ga) | Stable and production-ready (the default for unbadged features). |
+| <span className="badge badge--secondary">Deprecated</span> | [Deprecated](#deprecated) | Still works but slated for removal; migrate to the replacement. |
+
+## Experimental {#experimental}
+
+The feature is available for evaluation and early feedback. Its API, behavior, and on-disk or
+table formats may change — or the feature may be removed entirely — in any release, without notice
+or a migration path. There are no backward-compatibility or support guarantees. Not recommended
+for production workloads.
+
+## Beta {#beta}
+
+The feature is feature-complete and usable, and is released for broader adoption and feedback ahead
+of general availability. The API may still change in backward-incompatible ways between releases,
+and some rough edges may remain. It is suitable for non-critical workloads; if you depend on the
+current behavior, pin your DQX version and review the [changelog](https://github.com/databrickslabs/dqx/blob/v0.15.0/CHANGELOG.md)
+when upgrading.
+
+## Generally available (GA) {#ga}
+
+The feature is stable and production-ready, and is covered by DQX's normal
+[semantic versioning](https://semver.org/) and backward-compatibility practices. This is the
+default: a feature with no status badge is generally available.
+
+## Deprecated {#deprecated}
+
+The feature still works but is slated for removal in a future release. Its documentation points to
+the recommended replacement — migrate at your earliest convenience. Deprecations and their removal
+timelines are called out in the [changelog](https://github.com/databrickslabs/dqx/blob/v0.15.0/CHANGELOG.md).
