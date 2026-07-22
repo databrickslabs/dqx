@@ -436,15 +436,17 @@ class TestStartupWiring:
         sql_executor_mock.execute.side_effect = RuntimeError("no CREATE TABLE privilege")
         _ensure_entitlement_objects(sql_executor_mock)  # must not propagate
 
-    def test_grants_use_schema_plus_select_on_the_five_views(self, sql_executor_mock):
+    def test_grants_use_genie_schema_plus_select_on_the_five_views(self, sql_executor_mock):
+        # The 5 readable views live in the genie schema (default "genie"), not the
+        # main app schema. USE SCHEMA and SELECT must reference genie_schema_name.
         from databricks_labs_dqx_app.backend.app import _grant_user_view_access
 
         _grant_user_view_access(sql_executor_mock)
         executed = [call.args[0] for call in sql_executor_mock.execute_no_schema.call_args_list]
-        assert executed[0] == "GRANT USE SCHEMA ON SCHEMA `dqx_test`.`dqx_app_test` TO `account users`"
+        assert executed[0] == "GRANT USE SCHEMA ON SCHEMA `dqx_test`.`genie` TO `account users`"
         select_grants = executed[1:]
         assert [
-            f"GRANT SELECT ON TABLE `dqx_test`.`dqx_app_test`.{name} TO `account users`"
+            f"GRANT SELECT ON TABLE `dqx_test`.`genie`.{name} TO `account users`"
             for name in (
                 "mv_dq_scores",
                 "v_dq_check_results",

@@ -833,7 +833,7 @@ async def get_score_cache_service(
     viewer-independent; catalog filtering happens at read time on the
     list endpoints.
     """
-    return ScoreCacheService(oltp=oltp, warehouse_sql=warehouse_sql)
+    return ScoreCacheService(oltp=oltp, warehouse_sql=warehouse_sql, genie_schema=conf.genie_schema_name)
 
 
 async def get_entitlement_service(
