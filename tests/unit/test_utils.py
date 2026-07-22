@@ -280,6 +280,9 @@ def test_select_allowed():
         "col = 'use case'",
         'label = "truncate now"',
         "`drop` = 1",
+        # backslash-escaped quote inside a literal must not end the literal early (Spark default parser)
+        r"comment = 'can\'t drop this' AND active = true",
+        r'note = "a \" delete b"',
     ],
 )
 def test_keyword_inside_quoted_literal_or_identifier_is_safe(predicate):

@@ -86,10 +86,12 @@ _FORBIDDEN_SQL_KEYWORDS_PATTERN = re.compile(rf"\b(?:{'|'.join(_FORBIDDEN_SQL_KE
 # Matches SQL comments (line `-- ...`, block `/* ... */`), quoted string literals, and backtick-quoted
 # identifiers. Scanned left-to-right so a comment marker inside a string literal (e.g. '-- not a comment')
 # is correctly treated as data, and a quote inside a comment is treated as part of the comment.
+# String literals recognise both doubled-quote ('') and backslash (\') escapes, matching Spark's default
+# parser, so a closing quote is not detected prematurely (e.g. 'can\'t drop' is one literal, not two).
 _SQL_COMMENT_OR_LITERAL_PATTERN = re.compile(
     r"(?P<comment>--[^\n]*|/\*.*?\*/)"  # line or block comment
-    r"|'(?:[^']|'')*'"  # single-quoted string literal (with '' escapes)
-    r"|\"(?:[^\"]|\"\")*\""  # double-quoted string literal (with "" escapes)
+    r"|'(?:[^'\\]|''|\\.)*'"  # single-quoted string literal ('' and \\ escapes)
+    r"|\"(?:[^\"\\]|\"\"|\\.)*\""  # double-quoted string literal ('' and \\ escapes)
     r"|`(?:[^`]|``)*`",  # backtick-quoted identifier (with `` escapes)
     re.DOTALL,
 )
@@ -299,15 +301,20 @@ def is_sql_query_safe(query: str) -> bool:
     Returns:
         True if the query is free of destructive statement keywords, False otherwise.
     """
-    # Strip quoted literals/identifiers so keywords appearing as data are not flagged. Scan the query
-    # both with comments kept (catches a keyword hidden inside a comment) and with comments removed
-    # (catches a keyword split by an inline comment, e.g. dr/**/op). Lowercase for case-insensitive match.
+    # Strip quoted literals/identifiers so keywords appearing as data are not flagged, keeping comment
+    # text so a keyword hidden inside a comment (e.g. /* delete */) is still caught. Lowercase for a
+    # case-insensitive match.
     with_comments = _SQL_COMMENT_OR_LITERAL_PATTERN.sub(_strip_literals_keep_comments, query).lower()
+    if _FORBIDDEN_SQL_KEYWORDS_PATTERN.search(with_comments):
+        return False
+
+    # The first pass is clean. Only when a comment is present do we re-scan with comments removed, to
+    # catch a keyword split by an inline comment (e.g. dr/**/op). This second pass is skipped for the
+    # common comment-free query (this helper is on the LLM / rule-validation hot path).
+    if "--" not in with_comments and "/*" not in with_comments:
+        return True
     without_comments = _SQL_COMMENT_OR_LITERAL_PATTERN.sub(_strip_literals_and_comments, query).lower()
-    return not (
-        _FORBIDDEN_SQL_KEYWORDS_PATTERN.search(with_comments)
-        or _FORBIDDEN_SQL_KEYWORDS_PATTERN.search(without_comments)
-    )
+    return not _FORBIDDEN_SQL_KEYWORDS_PATTERN.search(without_comments)
 
 
 def safe_filter_expr(filter_expr: str | None) -> Column:
