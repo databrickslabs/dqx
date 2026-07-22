@@ -27,46 +27,40 @@ Your entitlement is your role in DQX Studio. It controls what you can do anywher
 Find yourself below, then read across.
 
 - **I just want to see the rules and results.** You're a **Viewer**. You can look at everything but change nothing.
-- **I write and edit rules.** You're a **Rule Author**. You can create rules and edit your own drafts, but someone else approves them.
-- **I sign off on other people's work.** You're a **Rule Approver**. You can approve or reject drafts from anyone.
+- **I write, edit, and run rules.** You're a **Rule Author**. You create rules, edit your own drafts, and run checks — but someone else approves your work before it goes live.
+- **I sign off on other people's work.** You're a **Rule Approver**. You approve or reject drafts from anyone. Approvers review; they don't author or run.
 - **I run the whole thing and change settings.** You're an **Admin**. You can do everything, including admin settings.
 
 Not sure which one you are? Your [Profile page](#how-to-find-your-role) tells you exactly.
 
 ### The four roles
 
-Every person has one primary role. Higher roles include everything the roles below them can do.
+Every person has one role. **Author and Approver are complementary, not ranked** — an author writes and runs rules, an approver signs off on them, and the two are deliberately kept apart (see [four-eyes approval](#keeping-authoring-and-approval-separate)). Only an **Admin** can do everything.
 
 | Task | Viewer | Rule Author | Rule Approver | Admin |
 |---|:---:|:---:|:---:|:---:|
 | View rules, tables, collections, and results | ✅ | ✅ | ✅ | ✅ |
-| Create rules and edit your own drafts | | ✅ | ✅ | ✅ |
-| Submit drafts for approval | | ✅ | ✅ | ✅ |
+| Create rules and edit your own drafts | | ✅ | | ✅ |
+| Submit drafts for approval | | ✅ | | ✅ |
+| Run checks (profiling & validation) | | ✅ | | ✅ |
 | Approve or reject anyone's drafts | | | ✅ | ✅ |
 | Change admin settings (entitlements, retention, tags) | | | | ✅ |
 
-### The Runner privilege (this one is separate)
-
-Running checks is controlled on its own, **in addition to** your role. It is not a fifth rank above Admin.
-
-<Admonition type="caution" title="Runner is additive, not a rank">
-The <strong>Runner</strong> privilege lets you trigger a run against a table or collection. It sits alongside your role rather than above it. A <strong>Viewer with Runner</strong> can run checks but still cannot author rules. A <strong>Rule Author without Runner</strong> can write rules but cannot run them. Admins are always runners automatically.
+<Admonition type="note" title="Who can run checks">
+Running checks is part of the **Rule Author** role (and Admins have it too). Approvers and Viewers cannot trigger runs. Running a particular table or collection also needs the **Execute** permission on that object — see [Permissions](#permissions) below.
 </Admonition>
-
-So when you look at what someone can do, read two things: their **role** (view / author / approve / admin) and whether they **also have Runner** (can trigger runs).
 
 ### Keeping authoring and approval separate
 
-DQX Studio uses **four-eyes approval**: the person who writes a rule can't be the only person who approves it. If you're a Rule Author, you submit your draft and someone with approver rights reviews it before it goes live. This keeps a second set of eyes on every change.
+DQX Studio uses **four-eyes approval**: the person who writes a rule can't be the only person who approves it. If you're a Rule Author, you submit your draft and someone with approver rights reviews it before it goes live. This keeps a second set of eyes on every change — which is why authoring and approving are separate roles.
 
-An approver or admin who writes a rule still can't approve their own draft in the same step — the review is meant to be independent. See [Approval workflow](/docs/studio/governance/approval-workflow) for the full draft → submit → review → approve → active path.
+An admin who writes a rule still can't approve their own draft in the same step — the review is meant to be independent. See [Approval workflow](/docs/studio/governance/approval-workflow) for the full draft → submit → review → approve → active path.
 
 ### How to find your role
 
 Open the menu in the top-right corner and go to your **Profile** page. It shows:
 
 - Your **role** (Viewer, Rule Author, Rule Approver, or Admin).
-- Whether you have the **Runner** privilege.
 - Which **workspace groups** mapped you to that role, so you know where your access comes from.
 
 ### How roles are assigned
@@ -107,22 +101,28 @@ Each object has a **Steward** — the person who owns data quality for it. The s
 
 ### The access list
 
-Below the steward is the list of who can use the object. You grant access to specific **principals** — individual users or whole workspace groups — and give each one a privilege on **that object only**:
+Below the steward is the list of who can use the object. You grant access to specific **principals** — individual users or whole workspace groups — and give each one one or more privileges on **that object only**:
 
-- **ALL PRIVILEGES** — full control, including managing the object and its permissions.
-- **APPLY** — can apply the object (for example, apply a rule to a table, or run checks).
-- **SELECT** — can view the object and its results.
+- **View** (SELECT) — can see the object and its results.
+- **Modify** — can edit the object's configuration and logic, and delete it.
+- **Apply** — can attach the object to others (apply a rule to a table, or add a table to a collection).
+- **Execute** — can run profiling and validation on this **table or collection**. (Execute doesn't apply to rules, so it isn't offered on a rule's Permissions tab.)
+- **ALL PRIVILEGES** — the full set above, including managing the object's permissions.
 
-For each principal you can **grant**, **edit**, or **revoke** access at any time.
+Anything you can act on, you can also see, so ticking **Modify**, **Apply**, or **Execute** automatically includes **View**. For each principal you can **grant**, **edit**, or **remove** access at any time.
+
+<Admonition type="note" title="Running needs both a role and Execute">
+Triggering a run takes two things: the **Rule Author** or **Admin** role (Approvers and Viewers can't run at all), *and* the **Execute** permission on the specific table or collection. Admins and approvers reach every object regardless of its permission list.
+</Admonition>
 
 ### The defaults (and how to narrow them)
 
 When you create an object, DQX Studio sets it up so nothing is blocked out of the box:
 
 - **You, the creator, become the owner** with ALL PRIVILEGES.
-- **All workspace users** get APPLY and SELECT, so your team can use it straight away.
+- **All workspace users** get View, Apply, and Execute, so your team can use and run it straight away. (Modify is held back — editing an object's logic is the privilege you grant deliberately.)
 
-You can tighten this whenever you like — narrow the "All workspace users" grant to specific groups, or revoke it entirely and add only the principals who should have access.
+These are real grant rows, so you can tighten them whenever you like — narrow the "All workspace users" row to specific groups, or remove it entirely and add only the principals who should have access. Every row, including the owner and the all-users defaults, can be edited or removed.
 
 <Admonition type="note" title="Admins and approvers always keep access">
 Workspace admins and rule approvers can always reach an object, whatever its permission list says. This makes sure someone can always review, approve, and step in — you can't accidentally lock governance out of an object.

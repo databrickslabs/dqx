@@ -164,16 +164,16 @@ two people touch every rule before it affects a run. See the
 What you can do depends on your **role**:
 
 - **Viewer** — browse rules, tables, and results. Read-only.
-- **Rule Author** — everything a viewer can do, plus create and edit their own
-  draft rules.
-- **Rule Approver** — everything an author can do, plus approve or reject
-  anyone's drafts.
+- **Rule Author** — create and edit their own draft rules, and run checks.
+- **Rule Approver** — approve or reject anyone's drafts. Approvers review; they
+  don't author or run.
 - **Admin** — everything, plus workspace settings.
 
-There's also a separate **Runner** privilege that lets someone trigger runs. It's
-added on top of any role — so a viewer can be given the ability to run checks
-without being able to author them. See
-[Roles & permissions](/docs/studio/governance/permissions-and-entitlements).
+Author and Approver are **complementary, not ranked**: authors write and run
+rules, approvers sign off on them, and keeping the two apart is what makes
+four-eyes review work. Running checks belongs to the Author role (Admins have it
+too) — Approvers and Viewers can't trigger runs. See
+[Permissions & entitlements](/docs/studio/governance/permissions-and-entitlements).
 
 ## A few reassurances
 
