@@ -129,31 +129,40 @@ def metric_view_fqn(catalog: str, schema: str) -> str:
 
 
 class ScoreViewService:
-    """Creates/refreshes the score shaping view + metric view (SP credentials)."""
+    """Creates/refreshes the score shaping view + metric view (SP credentials).
 
-    def __init__(self, sql: SqlExecutor) -> None:
+    The four derived views (attribution, shaping, as-of, metric) are
+    named in the *genie* schema so Genie can be pointed directly at them,
+    while the base tables they read (*dq_validation_runs*, *dq_metrics*)
+    stay in the main app schema. Pass the genie schema name explicitly —
+    the constructor does not fall back to the main schema so a missing
+    argument is a hard error rather than a silent misconfiguration.
+    """
+
+    def __init__(self, sql: SqlExecutor, genie_schema: str) -> None:
         self._sql = sql
         # Quoted forms so hyphenated catalog names (prod-east) stay
         # parseable in object-name positions — same convention as
         # MigrationRunner.
         self._catalog_q = sql.q(sql.catalog)
-        self._schema_q = sql.q(sql.schema)
+        self._schema_q = sql.q(sql.schema)           # main schema — base tables
+        self._genie_schema_q = sql.q(genie_schema)   # genie schema — derived views
 
     @property
     def attribution_view_fqn_quoted(self) -> str:
-        return f"{self._catalog_q}.{self._schema_q}.{ATTRIBUTION_VIEW_NAME}"
+        return f"{self._catalog_q}.{self._genie_schema_q}.{ATTRIBUTION_VIEW_NAME}"
 
     @property
     def shaping_view_fqn_quoted(self) -> str:
-        return f"{self._catalog_q}.{self._schema_q}.{SHAPING_VIEW_NAME}"
+        return f"{self._catalog_q}.{self._genie_schema_q}.{SHAPING_VIEW_NAME}"
 
     @property
     def asof_view_fqn_quoted(self) -> str:
-        return f"{self._catalog_q}.{self._schema_q}.{ASOF_VIEW_NAME}"
+        return f"{self._catalog_q}.{self._genie_schema_q}.{ASOF_VIEW_NAME}"
 
     @property
     def metric_view_fqn_quoted(self) -> str:
-        return f"{self._catalog_q}.{self._schema_q}.{METRIC_VIEW_NAME}"
+        return f"{self._catalog_q}.{self._genie_schema_q}.{METRIC_VIEW_NAME}"
 
     def attribution_view_ddl(self) -> str:
         """CREATE OR REPLACE VIEW statement for *v_dq_check_attribution*.

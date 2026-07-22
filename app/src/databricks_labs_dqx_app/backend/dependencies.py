@@ -833,7 +833,7 @@ async def get_score_cache_service(
     viewer-independent; catalog filtering happens at read time on the
     list endpoints.
     """
-    return ScoreCacheService(oltp=oltp, warehouse_sql=warehouse_sql)
+    return ScoreCacheService(oltp=oltp, warehouse_sql=warehouse_sql, genie_schema=conf.genie_schema_name)
 
 
 async def get_entitlement_service(
@@ -845,7 +845,7 @@ async def get_entitlement_service(
     view are SP-owned UC objects. The caller's OBO executor (for the
     self-verification probes) is passed per call, never stored.
     """
-    return EntitlementService(sql=sp_sql)
+    return EntitlementService(sql=sp_sql, genie_schema=conf.genie_schema_name)
 
 
 async def get_data_product_service(
@@ -946,7 +946,15 @@ async def get_demo_seed_service(
         catalog=conf.catalog,
         schema=DEMO_SOURCE_SCHEMA,
     )
-    sp_view = ViewService(sql=sp_sql, sp_sql=sp_sql)
+    sp_view = ViewService(
+        sql=SqlExecutor(
+            ws=sp_ws,
+            warehouse_id=warehouse_id,
+            catalog=conf.catalog,
+            schema=conf.tmp_schema_name,
+        ),
+        sp_sql=sp_sql,
+    )
     # Profiler temp views for the demo profiling phase are created on the tmp
     # schema (like the request-path ViewService), but as the SP — the seed runs
     # on a background thread with no OBO token.

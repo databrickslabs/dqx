@@ -132,9 +132,10 @@ class ScoreCacheService:
     warehouse.
     """
 
-    def __init__(self, oltp: OltpExecutorProtocol, warehouse_sql: SqlExecutor) -> None:
+    def __init__(self, oltp: OltpExecutorProtocol, warehouse_sql: SqlExecutor, genie_schema: str) -> None:
         self._oltp = oltp
         self._warehouse_sql = warehouse_sql
+        self._genie_schema = genie_schema
         self._cache_table = oltp.fqn("dq_score_cache")
         self._history_table = oltp.fqn("dq_score_history")
         self._members_table = oltp.fqn("dq_data_product_members")
@@ -190,7 +191,7 @@ class ScoreCacheService:
 
     def _query_latest_published_scores(self, table_fqns: list[str]) -> list[dict[str, str | None]]:
         """The batched metric-view query: latest published run per table."""
-        mv = metric_view_fqn(self._warehouse_sql.catalog, self._warehouse_sql.schema)
+        mv = metric_view_fqn(self._warehouse_sql.catalog, self._genie_schema)
         in_list = ", ".join(f"'{escape_sql_string(fqn)}'" for fqn in table_fqns)
         stmt = (
             f"SELECT input_location, run_id, run_time, score, failed_tests, total_tests FROM ("

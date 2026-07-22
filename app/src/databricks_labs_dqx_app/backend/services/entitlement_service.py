@@ -88,12 +88,13 @@ class EntitlementService:
     are passed per call to :meth:`verify_and_record` — never stored.
     """
 
-    def __init__(self, sql: SqlExecutor) -> None:
+    def __init__(self, sql: SqlExecutor, genie_schema: str) -> None:
         self._sql = sql
         # Quoted per part so hyphenated catalog/schema names stay parseable
         # in object-name positions — same convention as ScoreViewService.
         self._catalog_q = sql.q(sql.catalog)
         self._schema_q = sql.q(sql.schema)
+        self._genie_schema_q = sql.q(genie_schema)
 
     @property
     def entitlements_table_fqn_quoted(self) -> str:
@@ -101,7 +102,7 @@ class EntitlementService:
 
     @property
     def failing_rows_view_fqn_quoted(self) -> str:
-        return f"{self._catalog_q}.{self._schema_q}.{FAILING_ROWS_VIEW_NAME}"
+        return f"{self._catalog_q}.{self._genie_schema_q}.{FAILING_ROWS_VIEW_NAME}"
 
     # ------------------------------------------------------------------
     # DDL

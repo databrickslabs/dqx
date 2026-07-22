@@ -1391,3 +1391,31 @@ def test_run_profiling_failure_does_not_fail_the_whole_seed():
 
     last = deps["status"].set.call_args_list[-1].args[0]
     assert last.state == "succeeded"
+
+
+def test_view_service_names_views_from_its_sql_executor_schema():
+    """Regression guard: ViewService.create_view derives the view name from its
+    *sql* executor's schema, not from the sp_sql executor.  This is the invariant
+    that the demo-seed wiring fix (sp_view bound to tmp_schema) relies on."""
+    from unittest.mock import create_autospec
+    from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+    from databricks_labs_dqx_app.backend.services.view_service import (
+        ViewService,
+        mark_tmp_schema_ready,
+        reset_tmp_schema_ready,
+    )
+
+    sql = create_autospec(SqlExecutor, instance=True)
+    sql.catalog = "dqx"
+    sql.schema = "dqx_studio_tmp"
+    sp = create_autospec(SqlExecutor, instance=True)
+
+    mark_tmp_schema_ready()  # skip the CREATE SCHEMA path
+    try:
+        svc = ViewService(sql=sql, sp_sql=sp)
+        view_name = svc.create_view("dqx.sales.orders")
+        assert ".dqx_studio_tmp.tmp_view_" in view_name, (
+            f"Expected view to be created in dqx_studio_tmp, got: {view_name}"
+        )
+    finally:
+        reset_tmp_schema_ready()

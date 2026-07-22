@@ -33,6 +33,8 @@ from databricks_labs_dqx_app.backend.sql_executor import RawSql, SqlExecutor
 _CACHE = "dqx_test.dqx_app_test.dq_score_cache"
 _MEMBERS = "dqx_test.dqx_app_test.dq_data_product_members"
 _MONITORED = "dqx_test.dqx_app_test.dq_monitored_tables"
+_GENIE_SCHEMA = "genie_test"
+_MV_FQN = f"`dqx_test`.`{_GENIE_SCHEMA}`.mv_dq_scores"
 
 FQN_A = "main.sales.orders"
 FQN_B = "main.sales.customers"
@@ -62,7 +64,7 @@ def warehouse() -> MagicMock:
 
 @pytest.fixture
 def svc(oltp, warehouse) -> ScoreCacheService:
-    return ScoreCacheService(oltp=oltp, warehouse_sql=warehouse)
+    return ScoreCacheService(oltp=oltp, warehouse_sql=warehouse, genie_schema=_GENIE_SCHEMA)
 
 
 def _measure_row(
@@ -99,7 +101,7 @@ class TestRefreshForTables:
         svc.refresh_for_tables([FQN_A, FQN_B])
         assert warehouse.query_dicts.call_count == 1
         stmt = warehouse.query_dicts.call_args[0][0]
-        assert "`dqx_test`.`dqx_app_test`.mv_dq_scores" in stmt
+        assert _MV_FQN in stmt
         assert f"input_location IN ('{FQN_A}', '{FQN_B}')" in stmt
         assert "run_mode = 'published'" in stmt
         assert "MEASURE(score)" in stmt

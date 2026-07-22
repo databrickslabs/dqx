@@ -91,7 +91,7 @@ def _compute_score_for_table(
     mode. Raises the underlying exception on SQL failure — the caller
     maps it to an HTTP status.
     """
-    mv = metric_view_fqn(app_conf.catalog, app_conf.schema_name)
+    mv = metric_view_fqn(app_conf.catalog, app_conf.genie_schema_name)
     e_fqn = escape_sql_string(table_fqn)
     conds = [f"input_location = '{e_fqn}'"]
     if not include_drafts:

@@ -82,12 +82,14 @@ class MetadataDimService:
         sp_sql: SqlExecutor,
         registry: RegistryService,
         monitored_tables: MonitoredTableService,
+        genie_schema: str,
     ) -> None:
         self._sql = sp_sql
         self._registry = registry
         self._monitored_tables = monitored_tables
         self._catalog = sp_sql.catalog
         self._schema = sp_sql.schema
+        self._genie_schema = genie_schema
 
     def refresh(self) -> None:
         """Full-refresh both dims from the registry (SP credentials).
@@ -101,7 +103,7 @@ class MetadataDimService:
         self._refresh_monitored_tables()
 
     def _refresh_rules(self) -> None:
-        fqn = quote_object_fqn(self._catalog, self._schema, DIM_RULES_TABLE_NAME)
+        fqn = quote_object_fqn(self._catalog, self._genie_schema, DIM_RULES_TABLE_NAME)
         self._sql.execute(f"CREATE OR REPLACE TABLE {fqn} ({_RULES_COLUMNS_DDL})")
         rules = self._registry.list_rules()
         if not rules:
@@ -112,7 +114,7 @@ class MetadataDimService:
         logger.info("Refreshed %s with %d rule(s)", DIM_RULES_TABLE_NAME, len(rules))
 
     def _refresh_monitored_tables(self) -> None:
-        fqn = quote_object_fqn(self._catalog, self._schema, DIM_MONITORED_TABLES_TABLE_NAME)
+        fqn = quote_object_fqn(self._catalog, self._genie_schema, DIM_MONITORED_TABLES_TABLE_NAME)
         self._sql.execute(f"CREATE OR REPLACE TABLE {fqn} ({_MONITORED_TABLES_COLUMNS_DDL})")
         summaries = self._monitored_tables.list_monitored_tables()
         if not summaries:

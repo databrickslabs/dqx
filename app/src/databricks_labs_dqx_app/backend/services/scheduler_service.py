@@ -359,6 +359,7 @@ class SchedulerService:
         # next scheduled completion. Entries expire after
         # :data:`_SCORE_REFRESH_TTL`.
         self._pending_score_runs: dict[str, datetime] = {}
+        self._completed_view_fqns_buffer: list[str] = []
         self._runs_table = self._sql.fqn("dq_validation_runs")
         # Run-set sweep state (P5.3): run ids already tracked or
         # processed this boot, so the recurring 24h-window query never
@@ -1201,6 +1202,7 @@ class SchedulerService:
             )
 
         fqns = self._collect_completed_score_run_fqns(now)
+        self._drop_completed_run_views(self._completed_view_fqns_buffer)
 
         if self._reconcile_due():
             self._reconcile_scores(fqns)
@@ -1282,6 +1284,8 @@ class SchedulerService:
         """
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
+        self._completed_view_fqns_buffer = []
+
         if not self._pending_score_runs:
             return set()
 
@@ -1294,7 +1298,7 @@ class SchedulerService:
 
         in_list = ", ".join(f"'{escape_sql_string(rid)}'" for rid in self._pending_score_runs)
         sql = (
-            f"SELECT DISTINCT run_id, source_table_fqn FROM {self._runs_table} "  # noqa: S608
+            f"SELECT DISTINCT run_id, source_table_fqn, view_fqn FROM {self._runs_table} "  # noqa: S608
             f"WHERE run_id IN ({in_list}) AND UPPER(status) <> 'RUNNING'"
         )
         rows = self._sql.query(sql)
@@ -1308,7 +1312,35 @@ class SchedulerService:
             fqn = row[1]
             if fqn and not fqn.startswith(_SQL_CHECK_PREFIX):
                 fqns.add(fqn)
+            view_fqn = row[2] if len(row) > 2 else None
+            if isinstance(view_fqn, str) and view_fqn:
+                self._completed_view_fqns_buffer.append(view_fqn)
         return fqns
+
+    def _drop_completed_run_views(self, view_fqns: list[str]) -> None:
+        """Best-effort drop of temp views for runs observed terminal this tick.
+
+        Runs as the SP against the tmp-schema executor. Only drops
+        ``tmp_view_*`` FQNs (synthetic cross-table runs store the quoted
+        source table here, which must never be dropped). Each drop is
+        isolated: a failure — e.g. an OBO-owned view the SP lacks MANAGE on,
+        already covered by the browser status-poll — is logged, not raised,
+        so one bad drop can't wedge the tick or block score refresh.
+        """
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn
+
+        for view_fqn in view_fqns:
+            if "tmp_view_" not in view_fqn:
+                continue
+            try:
+                validate_fqn(view_fqn)
+            except Exception:
+                logger.warning("Skipping drop of malformed completed-run view fqn: %s", view_fqn)
+                continue
+            try:
+                self._tmp_sql.execute(f"DROP VIEW IF EXISTS {quote_fqn(view_fqn)}")
+            except Exception as exc:
+                logger.warning("Drop-on-completion failed for %s: %s", view_fqn, exc)
 
     def _reconcile_due(self) -> bool:
         """Whether this pass should run the startup score-cache reconcile."""
@@ -1949,11 +1981,12 @@ class SchedulerService:
 
         list_sql = (
             f"SELECT table_name "
-            f"FROM `{self._catalog}`.information_schema.views "
+            f"FROM `{self._catalog}`.information_schema.tables "
             f"WHERE table_schema = '{escape_sql_string(self._tmp_schema)}' "
+            f"  AND table_type = 'VIEW' "
             f"  AND table_name LIKE 'tmp\\_view\\_%' ESCAPE '\\\\' "
-            f"  AND created_at < current_timestamp() - INTERVAL {_GC_AGE_HOURS} HOUR "
-            f"ORDER BY created_at ASC "
+            f"  AND created < current_timestamp() - INTERVAL {_GC_AGE_HOURS} HOUR "
+            f"ORDER BY created ASC "
             f"LIMIT {_GC_MAX_DROPS_PER_RUN}"
         )
         try:

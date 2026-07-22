@@ -297,7 +297,7 @@ def _ensure_score_views(sp_sql: SqlExecutor) -> None:
     contract as the other post-migration startup steps.
     """
     try:
-        service = ScoreViewService(sql=sp_sql)
+        service = ScoreViewService(sql=sp_sql, genie_schema=conf.genie_schema_name)
         service.ensure_views()
         logger.info(
             "Ensured DQ score views exist: %s and %s",
@@ -327,7 +327,9 @@ def _ensure_metadata_dims(sp_sql: SqlExecutor, oltp: OltpExecutorProtocol) -> No
     try:
         registry = RegistryService(sql=oltp)
         monitored_tables = MonitoredTableService(sql=oltp, profiling_sql=sp_sql)
-        MetadataDimService(sp_sql=sp_sql, registry=registry, monitored_tables=monitored_tables).refresh()
+        MetadataDimService(
+            sp_sql=sp_sql, registry=registry, monitored_tables=monitored_tables, genie_schema=conf.genie_schema_name
+        ).refresh()
         logger.info("Ensured DQ metadata dims exist and are refreshed")
     except Exception as e:
         logger.warning(
@@ -349,7 +351,7 @@ def _ensure_entitlement_objects(sp_sql: SqlExecutor) -> None:
     it is deliberately NOT part of the Lakebase/OLTP data model.
     """
     try:
-        service = EntitlementService(sql=sp_sql)
+        service = EntitlementService(sql=sp_sql, genie_schema=conf.genie_schema_name)
         service.ensure_objects()
         logger.info(
             "Ensured entitlement objects exist: %s and %s",
@@ -391,11 +393,11 @@ def _grant_user_view_access(sp_sql: SqlExecutor) -> None:
     individually best-effort so one failing grant cannot block the rest.
     """
     cat = conf.catalog.replace("`", "")
-    sch = conf.schema_name.replace("`", "")
+    gen_sch = conf.genie_schema_name.replace("`", "")
     statements = [
-        f"GRANT USE SCHEMA ON SCHEMA `{cat}`.`{sch}` TO `account users`",
+        f"GRANT USE SCHEMA ON SCHEMA `{cat}`.`{gen_sch}` TO `account users`",
         *(
-            f"GRANT SELECT ON TABLE `{cat}`.`{sch}`.{view_name} TO `account users`"
+            f"GRANT SELECT ON TABLE `{cat}`.`{gen_sch}`.{view_name} TO `account users`"
             for view_name in _USER_READABLE_VIEWS
         ),
     ]
@@ -435,7 +437,7 @@ def _ensure_genie_space(sp_ws: WorkspaceClient, warehouse_id: str, settings_sql:
             warehouse_id=warehouse_id,
             parent_path=parent_path,
             catalog=conf.catalog,
-            schema=conf.schema_name,
+            schema=conf.genie_schema_name,
         )
     except Exception as e:
         logger.warning("Could not provision the DQ Genie space: %s", e, exc_info=True)
@@ -604,6 +606,19 @@ async def lifespan(app: FastAPI):
 
     # Best-effort below — the app can recover from these failing.
 
+    # Genie schema — must exist before the derived views, dims, and
+    # entitlement objects below are created inside it. Best-effort: a
+    # transient DDL failure degrades to genie-object creation errors
+    # on the same startup (which are also best-effort) rather than a
+    # crash-looping app.
+    try:
+        gen_cat = conf.catalog.replace("`", "")
+        gen_sch = conf.genie_schema_name.replace("`", "")
+        sp_sql.execute_no_schema(f"CREATE SCHEMA IF NOT EXISTS `{gen_cat}`.`{gen_sch}`")
+        logger.info("Ensured genie schema exists: %s.%s", gen_cat, gen_sch)
+    except Exception as gen_e:
+        logger.warning("Could not create genie schema %s.%s: %s", conf.catalog, conf.genie_schema_name, gen_e)
+
     # DQ score views (shaping view + UC metric view over dq_metrics) —
     # must come after the Delta migrations above so dq_metrics exists.
     _ensure_score_views(sp_sql)
@@ -745,6 +760,7 @@ async def lifespan(app: FastAPI):
                 sp_sql=sp_sql,
                 registry=scheduler_registry,
                 monitored_tables=scheduler_monitored_tables,
+                genie_schema=conf.genie_schema_name,
             )
 
             # Apply-on-tag reconcile sweep (Task 7): wired with the same
@@ -785,7 +801,9 @@ async def lifespan(app: FastAPI):
                 # recompute reads the metric view via the SP warehouse
                 # executor. Lets the scheduler refresh list scores when it
                 # observes a launched run complete server-side (no browser).
-                score_cache_service=ScoreCacheService(oltp=oltp_for_scheduler, warehouse_sql=sp_sql),
+                score_cache_service=ScoreCacheService(
+                    oltp=oltp_for_scheduler, warehouse_sql=sp_sql, genie_schema=conf.genie_schema_name
+                ),
                 # Denormalize each completed table's last_run_at/last_profiled_at
                 # server-side too (T-perf / B2-15), sharing the score-refresh and
                 # reconcile cadence so runs no browser observed still update the

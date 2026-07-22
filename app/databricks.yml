@@ -17,6 +17,9 @@ variables:
   tmp_schema_name:
     description: "Temp schema for per-user dry-run views"
     default: "dqx_studio_tmp"
+  genie_schema_name:
+    description: "Schema for Genie-facing derived views/dims"
+    default: "genie"
   admin_group:
     description: "Workspace group bootstrapped with the Admin role"
     default: "admins"
@@ -109,6 +112,8 @@ variables:
           value: "1"
         - name: "DQX_TMP_SCHEMA"
           value: "${var.tmp_schema_name}"
+        - name: "DQX_GENIE_SCHEMA"
+          value: "${var.genie_schema_name}"
         - name: "DQX_ADMIN_GROUP"
           value: "${var.admin_group}"
         - name: "DQX_WHEELS_VOLUME"
@@ -254,6 +259,25 @@ resources:
           privileges:
             - USE_SCHEMA
             - CREATE_TABLE
+      lifecycle:
+        prevent_destroy: true
+    genie_schema:
+      catalog_name: ${var.catalog_name}
+      name: ${var.genie_schema_name}
+      comment: "DQX Studio Genie-facing derived views + dims"
+      grants:
+        - principal: ${resources.apps.dqx-studio.service_principal_client_id}
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: ${var.dqx_service_principal_application_id}
+          privileges:
+            - ALL_PRIVILEGES
+        # The Genie space + end users read these derived views/dims. Schema-level
+        # SELECT covers current + future objects.
+        - principal: "account users"
+          privileges:
+            - USE_SCHEMA
+            - SELECT
       lifecycle:
         prevent_destroy: true
     demo_schema:

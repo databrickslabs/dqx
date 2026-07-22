@@ -355,6 +355,16 @@ class TestGcOrphanViews:
         # Must not have attempted the in-use cross-check either.
         mocks.sql.query.assert_not_called()
 
+    def test_list_query_targets_information_schema_tables_created(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        mocks.tmp.query.return_value = []
+        svc._gc_orphan_views()
+        list_sql = mocks.tmp.query.call_args_list[0].args[0]
+        assert "information_schema.tables" in list_sql
+        assert "table_type = 'VIEW'" in list_sql
+        assert "created_at" not in list_sql
+        assert "created <" in list_sql
+
 
 # ---------------------------------------------------------------------------
 # _maybe_gc_orphan_views — gate-keeper behaviour
@@ -1468,7 +1478,7 @@ class TestScoreCacheRefreshOnCompletion:
         svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
         svc._track_run_for_score_refresh("r1")
         svc._track_run_for_score_refresh("r2")
-        mocks.sql.query.return_value = [("r1", "main.sales.orders"), ("r2", "main.sales.customers")]
+        mocks.sql.query.return_value = [("r1", "main.sales.orders", ""), ("r2", "main.sales.customers", "")]
 
         svc._refresh_scores_for_completed_runs(self.NOW)
 
@@ -1486,7 +1496,7 @@ class TestScoreCacheRefreshOnCompletion:
         svc, mocks, score_cache = _make_score_scheduler(make_scheduler, monitored_table_service=monitored)
         svc._track_run_for_score_refresh("r1")
         svc._track_run_for_score_refresh("r2")
-        mocks.sql.query.return_value = [("r1", "main.sales.orders"), ("r2", "main.sales.customers")]
+        mocks.sql.query.return_value = [("r1", "main.sales.orders", ""), ("r2", "main.sales.customers", "")]
 
         svc._refresh_scores_for_completed_runs(self.NOW)
 
@@ -1497,7 +1507,7 @@ class TestScoreCacheRefreshOnCompletion:
         monitored.refresh_run_timestamps.side_effect = RuntimeError("warehouse hiccup")
         svc, mocks, _score_cache = _make_score_scheduler(make_scheduler, monitored_table_service=monitored)
         svc._track_run_for_score_refresh("r1")
-        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+        mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
 
         # Best-effort: a timestamp-write failure must not raise out of the tick.
         svc._refresh_scores_for_completed_runs(self.NOW)
@@ -1506,7 +1516,7 @@ class TestScoreCacheRefreshOnCompletion:
     def test_no_timestamp_refresh_without_collaborator(self, make_scheduler):
         svc, mocks, _score_cache = _make_score_scheduler(make_scheduler)  # no monitored_table_service
         svc._track_run_for_score_refresh("r1")
-        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+        mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
         # Must not raise when the collaborator is absent.
         svc._refresh_scores_for_completed_runs(self.NOW)
 
@@ -1524,7 +1534,7 @@ class TestScoreCacheRefreshOnCompletion:
         svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
         svc._track_run_for_score_refresh("r1")
         svc._track_run_for_score_refresh("r2")
-        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+        mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
 
         svc._refresh_scores_for_completed_runs(self.NOW)
 
@@ -1534,7 +1544,7 @@ class TestScoreCacheRefreshOnCompletion:
     def test_refresh_failure_is_swallowed_and_never_retried_in_a_loop(self, make_scheduler):
         svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
         svc._track_run_for_score_refresh("r1")
-        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+        mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
         score_cache.refresh_all_for_tables.side_effect = RuntimeError("warehouse hiccup")
 
         # Best-effort: must not raise out of the tick step.
@@ -1548,7 +1558,7 @@ class TestScoreCacheRefreshOnCompletion:
     def test_synthetic_sql_check_keys_never_trigger_a_refresh(self, make_scheduler):
         svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
         svc._track_run_for_score_refresh("r1")
-        mocks.sql.query.return_value = [("r1", "__sql_check__/my_check")]
+        mocks.sql.query.return_value = [("r1", "__sql_check__/my_check", "")]
 
         svc._refresh_scores_for_completed_runs(self.NOW)
 
@@ -1599,7 +1609,7 @@ class TestScoreCacheRefreshOnCompletion:
     def test_swept_run_completion_refreshes_once_and_never_reprocesses(self, make_scheduler):
         svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
         mocks.oltp.query.return_value = [("r1",)]
-        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+        mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
 
         svc._refresh_scores_for_completed_runs(self.NOW)
 
@@ -1628,7 +1638,7 @@ class TestScoreCacheRefreshOnCompletion:
     def test_seen_set_is_pruned_once_runs_leave_the_window(self, make_scheduler):
         svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
         mocks.oltp.query.return_value = [("r1",)]
-        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+        mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
         svc._refresh_scores_for_completed_runs(self.NOW)
         assert "r1" in svc._seen_score_runs
 
@@ -1655,7 +1665,7 @@ class TestScoreCacheRefreshOnCompletion:
         svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
         svc._track_run_for_score_refresh("r1")
         mocks.oltp.query.side_effect = RuntimeError("postgres down")
-        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+        mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
 
         svc._refresh_scores_for_completed_runs(self.NOW)  # must not raise
 
@@ -1685,7 +1695,7 @@ class TestScoreCacheRefreshOnCompletion:
         score_cache.list_monitored_table_fqns.return_value = ["main.sales.orders"]
         score_cache.refresh_all_for_tables.return_value = (2, 0)
         svc._track_run_for_score_refresh("r1")
-        mocks.sql.query.return_value = [("r1", "legacy.scope.table")]  # not a monitored table
+        mocks.sql.query.return_value = [("r1", "legacy.scope.table", "")]  # not a monitored table
 
         svc._refresh_scores_for_completed_runs(self.NOW)
 
@@ -1718,7 +1728,7 @@ class TestScoreCacheRefreshOnCompletion:
         score_cache.refresh_all_for_tables.side_effect = None
         score_cache.refresh_all_for_tables.return_value = (1, 0)
         svc._track_run_for_score_refresh("r1")
-        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+        mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
         svc._refresh_scores_for_completed_runs(self.NOW)
         assert score_cache.refresh_all_for_tables.call_count == _SCORE_RECONCILE_MAX_ATTEMPTS + 1
         assert score_cache.refresh_all_for_tables.call_args[0][0] == ["main.sales.orders"]
@@ -1808,7 +1818,7 @@ class TestScoreCacheRefreshOnCompletion:
         svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
         svc._track_run_for_score_refresh("r1")
         mocks.oltp.query.return_value = []  # no schedule configs
-        mocks.sql.query.return_value = [("r1", "main.sales.orders")]
+        mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
 
         asyncio.run(svc._tick())
         score_cache.refresh_all_for_tables.assert_called_once_with(["main.sales.orders"])
@@ -1817,3 +1827,82 @@ class TestScoreCacheRefreshOnCompletion:
         svc._track_run_for_score_refresh("r2")
         score_cache.refresh_all_for_tables.side_effect = RuntimeError("boom")
         asyncio.run(svc._tick())  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# _drop_completed_run_views — prompt (~60s) view cleanup via scheduler tick
+# ---------------------------------------------------------------------------
+
+
+class TestDropCompletedRunViews:
+    """The scheduler drops tmp_view_* FQNs observed terminal this tick."""
+
+    def test_drops_tmp_view(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        svc._drop_completed_run_views(["dqx.dqx_studio_tmp.tmp_view_abc123def456"])
+        executed = [c.args[0] for c in mocks.tmp.execute.call_args_list]
+        assert any("DROP VIEW IF EXISTS" in s and "tmp_view_abc123def456" in s for s in executed)
+
+    def test_skips_non_tmp_view_fqn(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        svc._drop_completed_run_views(["`dqx`.`sales`.`orders`"])
+        mocks.tmp.execute.assert_not_called()
+
+    def test_drop_failure_swallowed(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        mocks.tmp.execute.side_effect = RuntimeError("PERMISSION_DENIED")
+        svc._drop_completed_run_views(["dqx.dqx_studio_tmp.tmp_view_abc123def456"])  # must not raise
+
+    def test_empty_list_is_noop(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        svc._drop_completed_run_views([])
+        mocks.tmp.execute.assert_not_called()
+
+    def test_malformed_fqn_skipped(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        # Two-part name isn't a valid 3-part FQN — must not raise, must not DROP.
+        svc._drop_completed_run_views(["tmp_view_bad"])
+        mocks.tmp.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _collect_completed_score_run_fqns — view_fqn buffering
+# ---------------------------------------------------------------------------
+
+
+class TestCollectCompletedScoreRunFqnsBuffersViewFqns:
+    """_collect_completed_score_run_fqns must fill _completed_view_fqns_buffer."""
+
+    NOW = datetime(2026, 5, 1, 9, 5, 0, tzinfo=timezone.utc)
+
+    def test_buffers_view_fqn_of_completed_run(self, make_scheduler):
+        svc, mocks, _score_cache = _make_score_scheduler(make_scheduler)
+        svc._track_run_for_score_refresh("r1")
+        mocks.sql.query.return_value = [
+            ("r1", "main.sales.orders", "dqx.dqx_studio_tmp.tmp_view_abc123")
+        ]
+
+        result = svc._collect_completed_score_run_fqns(self.NOW)
+
+        assert "main.sales.orders" in result
+        assert "dqx.dqx_studio_tmp.tmp_view_abc123" in svc._completed_view_fqns_buffer
+
+    def test_buffer_cleared_at_start_of_each_collect(self, make_scheduler):
+        svc, mocks, _score_cache = _make_score_scheduler(make_scheduler)
+        # Prime with a stale value from a previous tick.
+        svc._completed_view_fqns_buffer = ["stale.view.fqn"]
+        svc._track_run_for_score_refresh("r1")
+        mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
+
+        svc._collect_completed_score_run_fqns(self.NOW)
+
+        assert "stale.view.fqn" not in svc._completed_view_fqns_buffer
+
+    def test_null_view_fqn_not_buffered(self, make_scheduler):
+        svc, mocks, _score_cache = _make_score_scheduler(make_scheduler)
+        svc._track_run_for_score_refresh("r1")
+        mocks.sql.query.return_value = [("r1", "main.sales.orders", None)]
+
+        svc._collect_completed_score_run_fqns(self.NOW)
+
+        assert svc._completed_view_fqns_buffer == []
