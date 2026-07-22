@@ -279,7 +279,10 @@ describe("compileJoinsToSql", () => {
     const joins: JoinAst[] = [
       { join_type: "LEFT", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "customer_id" }] },
     ];
-    expect(compileJoinsToSql(joins)).toBe("LEFT JOIN c.s.dim ON c.s.dim.id = {{customer_id}}");
+    // Default qualifies the own side to the input view (low-code path).
+    expect(compileJoinsToSql(joins)).toBe("LEFT JOIN c.s.dim ON c.s.dim.id = {{input_view}}.{{customer_id}}");
+    // Raw-SQL editor path opts out — own side stays a bare {{slot}}.
+    expect(compileJoinsToSql(joins, false)).toBe("LEFT JOIN c.s.dim ON c.s.dim.id = {{customer_id}}");
   });
 
   test("CROSS JOIN emits no ON clause", () => {
@@ -317,12 +320,15 @@ describe("compileLowcodeBody — folding", () => {
       { join_type: "LEFT", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "customer_id" }] },
     ];
     const body = compileLowcodeBody(ast([row({ column_ref: "customer_id", operator: "is not null" })], joins), "");
+    // Predicate + ON own-side qualified to the input view (unambiguous under join);
+    // SELECT projects the qualified source aliased back to the bare merge name.
     expect(body.sql_query).toBe(
-      "SELECT {{customer_id}}, (NOT ({{customer_id}} IS NOT NULL)) AS condition " +
-        "FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{customer_id}}",
+      "SELECT {{input_view}}.{{customer_id}} AS {{customer_id}}, " +
+        "(NOT ({{input_view}}.{{customer_id}} IS NOT NULL)) AS condition " +
+        "FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{input_view}}.{{customer_id}}",
     );
-    // merge_columns must exist on the input table -> the join keys, NOT absent
-    // (absent would route DQX to the dataset-level 1-row path and fail at run).
+    // merge_columns stay BARE — the library passes them verbatim to df.join(on=);
+    // an {{input_view}}-qualified value would be an invalid bare identifier at run.
     expect(body.merge_columns).toEqual(["{{customer_id}}"]);
   });
 
@@ -340,7 +346,8 @@ describe("compileLowcodeBody — folding", () => {
     };
     const body = compileLowcodeBody(ast([agg], joins), "{{region}}");
     expect(body.merge_columns).toEqual(["{{region}}"]);
-    expect(body.sql_query).toContain("INNER JOIN c.s.dim ON c.s.dim.id = {{cid}}");
+    // ON own-side qualified under the join; GROUP BY stays bare.
+    expect(body.sql_query).toContain("INNER JOIN c.s.dim ON c.s.dim.id = {{input_view}}.{{cid}}");
     expect(body.sql_query).toContain("GROUP BY {{region}}");
   });
 
@@ -353,8 +360,78 @@ describe("compileLowcodeBody — folding", () => {
 
   test("CROSS-join-only (no keys, no group-by) -> dataset-level query, no merge_columns", () => {
     const body = compileLowcodeBody(ast([row()], [{ join_type: "CROSS", target_table: "c.s.dim", keys: [] }]), "");
-    expect(body.sql_query).toBe("SELECT (NOT ({{email}} IS NOT NULL)) AS condition FROM {{input_view}} CROSS JOIN c.s.dim");
+    // A CROSS join still means a joined table is present, so own predicate
+    // columns are qualified to the input view (unambiguous). No merge key exists.
+    expect(body.sql_query).toBe(
+      "SELECT (NOT ({{input_view}}.{{email}} IS NOT NULL)) AS condition FROM {{input_view}} CROSS JOIN c.s.dim",
+    );
     expect(body.merge_columns).toBeUndefined();
+  });
+});
+
+describe("join column qualification (AMBIGUOUS_REFERENCE / INVALID_IDENTIFIER regression)", () => {
+  const JOIN: JoinAst[] = [
+    {
+      join_type: "INNER",
+      target_table: "dqx.dqx_studio_demo.customers",
+      keys: [{ joined_column: "customer_id", column_ref: "customer_id" }],
+    },
+  ];
+
+  test("no-join predicate stays bare (byte-identical)", () => {
+    const body = compileLowcodeBody(ast([row({ column_ref: "amount", operator: ">", value: 0 })]), "");
+    expect(body.predicate).toBe("{{amount}} > 0");
+    expect(body.sql_query).toBeUndefined();
+    expect(body.predicate).not.toContain("input_view");
+  });
+
+  test("join predicate + SELECT own column qualified; merge_columns bare", () => {
+    const body = compileLowcodeBody(ast([row({ column_ref: "customer_id", operator: ">", value: 0 })], JOIN), "");
+    expect(body.sql_query).toContain("NOT ({{input_view}}.{{customer_id}} > 0)");
+    expect(body.sql_query).toContain("SELECT {{input_view}}.{{customer_id}} AS {{customer_id}},");
+    expect(body.sql_query).toContain(
+      "ON dqx.dqx_studio_demo.customers.customer_id = {{input_view}}.{{customer_id}}",
+    );
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("joined-table column stays raw under a join", () => {
+    const body = compileLowcodeBody(
+      ast([row({ column_ref: "dqx.dqx_studio_demo.customers.tier", operator: "=", value: "gold" })], JOIN),
+      "",
+    );
+    expect(body.sql_query).toContain("dqx.dqx_studio_demo.customers.tier");
+    expect(body.sql_query).not.toContain("{{input_view}}.dqx.dqx_studio_demo.customers.tier");
+  });
+
+  test("$col value qualified under a join", () => {
+    const body = compileLowcodeBody(
+      ast([row({ column_ref: "start_date", operator: "before", value: { $col: "end_date" } })], JOIN),
+      "",
+    );
+    expect(body.sql_query).toContain("{{input_view}}.{{start_date}} < {{input_view}}.{{end_date}}");
+  });
+
+  // The check the v1 fix LACKED: reproduce BOTH runtime substitution layers and
+  // prove the executed query is valid AND merge_columns are bare.
+  test("end-to-end two-layer substitution yields valid SQL + bare merge_columns", () => {
+    const body = compileLowcodeBody(ast([row({ column_ref: "customer_id", operator: ">", value: 0 })], JOIN), "");
+    const cols = ["customer_id", "start_date", "end_date", "region"];
+    // Layer 1 — app materializer: substitute {{col}} slots in query AND merge_columns
+    // (does NOT touch {{input_view}}).
+    const app = (t: string) => cols.reduce((acc, c) => acc.replaceAll(`{{${c}}}`, c), t);
+    const q1 = app(body.sql_query ?? "");
+    const mc1 = (body.merge_columns ?? []).map(app);
+    // Layer 2 — DQX library: substitute {{input_view}} in the QUERY ONLY.
+    const view = "customer_id_query_condition_violation_input_view_deadbeef";
+    const q2 = q1.replace(/\{\{\s*input_view\s*\}\}/g, view);
+    // No residual placeholders anywhere in the executed query.
+    expect(q2).not.toContain("{{");
+    expect(q2).not.toContain("}}");
+    // merge_columns are BARE column names (valid for df.select / df.join(on=)).
+    expect(mc1).toEqual(["customer_id"]);
+    // Own column resolved qualified against the unique view (no ambiguity).
+    expect(q2).toContain(`${view}.customer_id`);
   });
 });
 
