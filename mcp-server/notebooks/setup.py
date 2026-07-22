@@ -8,6 +8,20 @@ One-time setup notebook for the DQX MCP server.
 Run after `databricks bundle deploy` to create the temp view schema and
 grant all required UC permissions. Safe to re-run (all statements are idempotent).
 
+The deploying principal must have MANAGE (or ownership) on the catalog: setup issues catalog-level
+GRANTs (below), and UC only lets a principal GRANT on a securable it owns, has MANAGE on, or is a
+metastore admin for. ALL PRIVILEGES alone is NOT enough — it conveys use, not the right to delegate
+to others. Deploy into a catalog you administer; a shared, foreign-owned catalog (e.g. `main`) will
+reject these grants. See the "Deploying-principal permissions" section of the DQX MCP Server
+installation docs.
+
+Why setup issues these grants rather than requiring them as a manual pre-deploy prerequisite: the
+**app service principal does not exist until `databricks bundle deploy` creates the app** — its
+application id is auto-assigned by the platform at deploy time, so no admin can pre-grant
+`USE CATALOG` to it beforehand (there is no id to name). setup runs *after* deploy, resolves the app
+SP id (`app.service_principal_client_id`, below), and grants it in one step — which is only possible
+if the identity running setup can delegate on the catalog, i.e. holds MANAGE/ownership.
+
 Grants:
   Catalog level:
     - users          → USE CATALOG
@@ -15,7 +29,7 @@ Grants:
     - runner SP      → USE CATALOG, CREATE SCHEMA (creates each caller's private per-user output
                        schema dqx_mcp_<user> on demand for save_checks / apply_checks_and_save_to_table).
                        Only granted when provided.
-  Schema level (catalog.tmp) — the deploy principal OWNS the schema (so setup can create the
+  Schema level (catalog.dqx_mcp_tmp) — the deploy principal OWNS the schema (so setup can create the
   results volume + manage grants on every run); the SPs get MANAGE, which is enough to DROP
   temp views in UC (owner / parent-schema owner / MANAGE can DROP):
     - users          → USE SCHEMA, CREATE TABLE (so OBO token can create views)
@@ -23,12 +37,19 @@ Grants:
     - runner SP      → USE SCHEMA, SELECT, MANAGE (the runner job runs as this dedicated
                        workspace SP: it reads through definer's-rights views and drops its own
                        temp view at the end of each run). Only granted when provided.
-  Volume level (catalog.tmp.mcp_results):
+  Volume level (catalog.dqx_mcp_tmp.mcp_results):
     - app SP, runner SP → READ VOLUME, WRITE VOLUME (result-file exchange)
-  Volume level (catalog.tmp.dqx_artifacts) — hosts the runner wheels (workspace.artifact_path):
+  Volume level (catalog.dqx_mcp_tmp.dqx_artifacts) — hosts the runner wheels (workspace.artifact_path):
     - runner SP → READ VOLUME (so the serverless env can install the runner wheel). The volume is
       created out-of-band before `bundle deploy` (scripts/ensure_artifacts_volume.sh); setup only
       ensures it exists and applies the grant.
+
+Schema name collision / takeover: the working schema is named `dqx_mcp_tmp` (DQX-namespaced to
+avoid clashing with a generic `tmp`). setup runs `CREATE SCHEMA IF NOT EXISTS` then unconditionally
+`ALTER SCHEMA ... OWNER TO <deployer>`. If a schema of this name ALREADY exists in the catalog, setup
+adopts it: it reassigns ownership to the deploying principal and grants the users group + SPs access.
+Re-running your own deploy is safe (idempotent); the caveat is only a pre-existing, non-DQX
+`dqx_mcp_tmp` — deploy into a catalog where that name is free or already DQX's.
 
 Note: outputs (apply_checks_and_save_to_table / save_checks) go to the caller's own SP-owned
 per-user schema (dqx_mcp_<user>), created on demand via the runner SP's CREATE SCHEMA grant — no
@@ -130,16 +151,25 @@ from databricks.sdk import WorkspaceClient
 
 ws = WorkspaceClient()
 app = ws.apps.get(app_name)
-sp_id = app.service_principal_id
 
-# Resolve SP application_id — UC GRANTs use application_id, not display_name
-sp = ws.service_principals.get(sp_id)
-sp_principal = sp.application_id
-logger.info(f"App SP: display_name={sp.display_name}, application_id={sp_principal} (id={sp_id})")
+# UC GRANTs use the SP's application id (client id), not its display_name or numeric SCIM id.
+# The Apps API returns it directly as service_principal_client_id — use that instead of a
+# ws.service_principals.get() SCIM lookup, which requires workspace-admin rights (the SCIM
+# GET /ServicePrincipals/{id} endpoint is admin-only) and would fail for a non-admin deployer.
+sp_principal = app.service_principal_client_id
+if not sp_principal:
+    raise ValueError(
+        f"App '{app_name}' has no service_principal_client_id — cannot resolve the app SP application id "
+        "for UC grants. Ensure the app is fully deployed before running setup."
+    )
+# Interpolated into the GRANT statements below, so validate it (backtick-breakout guard), same as
+# the runner SP application id.
+_validate_sp_id(sp_principal, "app service_principal_client_id")
+logger.info(f"App SP: name={app.service_principal_name}, application_id={sp_principal}")
 
 # COMMAND ----------
 
-schema_name = "tmp"
+schema_name = "dqx_mcp_tmp"
 # Constant today, but validated as defense-in-depth since it is interpolated into the DDL below.
 _validate_identifier(schema_name, "schema_name")
 

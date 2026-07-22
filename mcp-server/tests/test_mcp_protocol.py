@@ -20,7 +20,7 @@ def anyio_backend():
     return "asyncio"
 
 
-_ENV = {"DQX_RUNNER_JOB_ID": "42", "DQX_CATALOG": "dqx_mcp", "DQX_TMP_SCHEMA": "tmp"}
+_ENV = {"DQX_RUNNER_JOB_ID": "42", "DQX_CATALOG": "dqx_mcp", "DQX_TMP_SCHEMA": "dqx_mcp_tmp"}
 
 EXPECTED_TOOLS = {
     "get_table_schema",
@@ -77,7 +77,7 @@ class TestToolInvocation:
         with (
             patch("server.tools.utils.get_obo_client"),
             patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
-            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc"),
+            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.dqx_mcp_tmp.v_abc"),
             patch("server.tools.utils.submit_job_async", return_value=999) as mock_submit,
             patch.dict("os.environ", _ENV),
         ):
@@ -85,7 +85,7 @@ class TestToolInvocation:
                 res = await client.call_tool("profile_table", {"table_name": "catalog.schema.table"})
         op, params = mock_submit.call_args[0]
         assert op == "profile_table"
-        assert params["view_name"] == "dqx_mcp.tmp.v_abc"
+        assert params["view_name"] == "dqx_mcp.dqx_mcp_tmp.v_abc"
         assert params["table_name"] == "catalog.schema.table"
         assert res.data["run_id"] == 999
 

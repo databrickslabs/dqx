@@ -668,7 +668,7 @@ def _maybe_sweep_stale_views() -> None:
     _last_sweep_at = now
 
     catalog = os.environ.get("DQX_CATALOG", "")
-    schema = os.environ.get("DQX_TMP_SCHEMA", "tmp")
+    schema = os.environ.get("DQX_TMP_SCHEMA", "dqx_mcp_tmp")
     if not catalog:
         return
     try:
@@ -701,7 +701,7 @@ def _get_results_volume() -> str:
     (no SQL warehouse needed). Catalog/schema come from the same env the temp-view config uses.
     """
     catalog = os.environ.get("DQX_CATALOG", "")
-    schema = os.environ.get("DQX_TMP_SCHEMA", "tmp")
+    schema = os.environ.get("DQX_TMP_SCHEMA", "dqx_mcp_tmp")
     if not catalog:
         raise RuntimeError("DQX_CATALOG not set. Deploy the bundle first.")
     return f"/Volumes/{catalog}/{schema}/mcp_results"

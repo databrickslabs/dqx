@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 def _get_tmp_view_config() -> tuple[str, str]:
     """Get catalog and schema for temporary views from environment."""
     catalog = os.environ.get("DQX_CATALOG", "")
-    schema = os.environ.get("DQX_TMP_SCHEMA", "tmp")
+    schema = os.environ.get("DQX_TMP_SCHEMA", "dqx_mcp_tmp")
     if not catalog:
         raise RuntimeError("DQX_CATALOG not set. Deploy the bundle first.")
     return catalog, schema
@@ -25,7 +25,7 @@ def _submit_or_drop_view(
 
     The runner drops its own view in a ``finally``, but only if it actually starts. A submission that
     throws *after* ``create_temp_view`` (e.g. ``DQX_RUNNER_JOB_ID`` unset, a ``run_now`` RPC error, or
-    the throttled stale-view sweep raising) would otherwise leak the view in the shared ``tmp`` schema
+    the throttled stale-view sweep raising) would otherwise leak the view in the shared ``dqx_mcp_tmp`` schema
     until the TTL sweeper reaps it. Drop it here (as the caller/OBO client that created it) on failure.
     """
     try:

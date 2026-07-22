@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Create the UC volume that hosts the runner wheels, BEFORE `bundle deploy` uploads artifacts
-# into it. The bundle's workspace.artifact_path is /Volumes/<catalog>/tmp/dqx_artifacts, and DAB
+# into it. The bundle's workspace.artifact_path is /Volumes/<catalog>/dqx_mcp_tmp/dqx_artifacts, and DAB
 # uploads artifacts during deploy (before it would create any bundle-managed resources), so the
 # volume must already exist. Idempotent / safe to re-run — creating an existing schema or volume
 # is ignored. The runner job's run_as SP is later granted READ VOLUME here by the setup job.
 #
 # Env:
-#   DQX_MCP_CATALOG     catalog holding the tmp schema + artifacts volume (required)
+#   DQX_MCP_CATALOG     catalog holding the dqx_mcp_tmp schema + artifacts volume (required)
 #   DATABRICKS_PROFILE  optional CLI profile (else relies on DATABRICKS_HOST/TOKEN)
 set -euo pipefail
 
 : "${DQX_MCP_CATALOG:?DQX_MCP_CATALOG is not set (catalog that will host the dqx_artifacts volume)}"
-SCHEMA="tmp"
+SCHEMA="dqx_mcp_tmp"
 VOLUME="dqx_artifacts"
 
 PROFILE_ARG=()

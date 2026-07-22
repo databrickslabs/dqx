@@ -14,7 +14,7 @@ from databricks.sdk.service.jobs import (
     RunResultState,
 )
 
-_JOB_ID_ENV = {"DQX_RUNNER_JOB_ID": "42", "DQX_CATALOG": "cat", "DQX_TMP_SCHEMA": "tmp"}
+_JOB_ID_ENV = {"DQX_RUNNER_JOB_ID": "42", "DQX_CATALOG": "cat", "DQX_TMP_SCHEMA": "dqx_mcp_tmp"}
 
 
 def _make_terminated_run(result_state: RunResultState, run_id: int = 123) -> MagicMock:
@@ -235,11 +235,11 @@ class TestTempViews:
             ws,
             "my_catalog.my_schema.my_table",
             catalog="dqx_mcp",
-            schema="tmp",
+            schema="dqx_mcp_tmp",
             warehouse_id="wh123",
         )
 
-        assert view_fqn.startswith("dqx_mcp.tmp.v_")
+        assert view_fqn.startswith("dqx_mcp.dqx_mcp_tmp.v_")
         call_args = ws.statement_execution.execute_statement.call_args
         sql = call_args.kwargs["statement"]
         assert "CREATE VIEW" in sql
@@ -255,12 +255,12 @@ class TestTempViews:
         mock_result.result = None
         ws.statement_execution.execute_statement.return_value = mock_result
 
-        drop_view(ws, "dqx_mcp.tmp.v_abc123", warehouse_id="wh123")
+        drop_view(ws, "dqx_mcp.dqx_mcp_tmp.v_abc123", warehouse_id="wh123")
 
         call_args = ws.statement_execution.execute_statement.call_args
         sql = call_args.kwargs["statement"]
         assert "DROP VIEW IF EXISTS" in sql
-        assert "`dqx_mcp`.`tmp`.`v_abc123`" in sql
+        assert "`dqx_mcp`.`dqx_mcp_tmp`.`v_abc123`" in sql
 
     def test_create_temp_view_validates_table_name(self):
         from server.utils import create_temp_view
@@ -299,11 +299,11 @@ class TestTempViews:
         mock_result.result = None
         ws.statement_execution.execute_statement.return_value = mock_result
 
-        create_temp_view(ws, "my_cat.my_sch.my_table", catalog="dqx", schema="tmp", warehouse_id="wh")
+        create_temp_view(ws, "my_cat.my_sch.my_table", catalog="dqx", schema="dqx_mcp_tmp", warehouse_id="wh")
 
         sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
         assert "`my_cat`.`my_sch`.`my_table`" in sql
-        assert "`dqx`.`tmp`." in sql
+        assert "`dqx`.`dqx_mcp_tmp`." in sql
 
     def test_drop_view_swallows_errors(self):
         from server.utils import drop_view
@@ -312,7 +312,7 @@ class TestTempViews:
         ws.statement_execution.execute_statement.side_effect = RuntimeError("connection lost")
 
         # Should not raise
-        drop_view(ws, "dqx_mcp.tmp.v_abc123", warehouse_id="wh123")
+        drop_view(ws, "dqx_mcp.dqx_mcp_tmp.v_abc123", warehouse_id="wh123")
 
 
 class TestSubmitJobAsync:
@@ -350,7 +350,7 @@ class TestSubmitJobAsync:
         job_parameters = ws.jobs.run_now.call_args.kwargs["job_parameters"]
         assert job_parameters["operation"] == "profile_table"
         assert json.loads(job_parameters["params"]) == {"view_name": "c.s.v_abc", "columns": ["a"]}
-        assert job_parameters["results_volume"] == "/Volumes/cat/tmp/mcp_results"
+        assert job_parameters["results_volume"] == "/Volumes/cat/dqx_mcp_tmp/mcp_results"
         # requesting_user is recorded on the run so get_run_status can authorize the reader (IDOR guard).
         assert "requesting_user" in job_parameters
 
@@ -409,7 +409,7 @@ class TestGetRunStatus:
 
         with (
             patch("server.utils._get_sp_client", return_value=ws),
-            patch.dict("os.environ", {"DQX_CATALOG": "cat", "DQX_TMP_SCHEMA": "tmp"}),
+            patch.dict("os.environ", {"DQX_CATALOG": "cat", "DQX_TMP_SCHEMA": "dqx_mcp_tmp"}),
         ):
             result = get_run_status(123)
 
@@ -418,7 +418,7 @@ class TestGetRunStatus:
         assert result["result"]["profiles"] == []
         assert result["result"]["table_name"] == "c.s.t"
         # Result is read from the results volume, keyed by run id.
-        assert ws.files.download.call_args[0][0] == "/Volumes/cat/tmp/mcp_results/123.json"
+        assert ws.files.download.call_args[0][0] == "/Volumes/cat/dqx_mcp_tmp/mcp_results/123.json"
 
     def test_completed_but_missing_result_file_is_failed(self):
         from server.utils import get_run_status
@@ -429,7 +429,7 @@ class TestGetRunStatus:
 
         with (
             patch("server.utils._get_sp_client", return_value=ws),
-            patch.dict("os.environ", {"DQX_CATALOG": "cat", "DQX_TMP_SCHEMA": "tmp"}),
+            patch.dict("os.environ", {"DQX_CATALOG": "cat", "DQX_TMP_SCHEMA": "dqx_mcp_tmp"}),
         ):
             result = get_run_status(123)
 
@@ -619,10 +619,10 @@ class TestSweepStaleViews:
             patch("server.utils.execute_sql", return_value=rows),
             patch("server.utils.drop_view") as mock_drop,
         ):
-            dropped = sweep_stale_views(ws, "cat", "tmp", "wh", ttl_seconds=3600)
+            dropped = sweep_stale_views(ws, "cat", "dqx_mcp_tmp", "wh", ttl_seconds=3600)
 
         assert dropped == 1
-        mock_drop.assert_called_once_with(ws, f"cat.tmp.v_{now - 100000}_abc123", warehouse_id="wh")
+        mock_drop.assert_called_once_with(ws, f"cat.dqx_mcp_tmp.v_{now - 100000}_abc123", warehouse_id="wh")
 
     def test_returns_zero_when_listing_fails(self):
         from server.utils import sweep_stale_views
@@ -632,7 +632,7 @@ class TestSweepStaleViews:
             patch("server.utils.execute_sql", side_effect=RuntimeError("no warehouse")),
             patch("server.utils.drop_view") as mock_drop,
         ):
-            dropped = sweep_stale_views(ws, "cat", "tmp", "wh")
+            dropped = sweep_stale_views(ws, "cat", "dqx_mcp_tmp", "wh")
 
         assert dropped == 0
         mock_drop.assert_not_called()
@@ -908,12 +908,12 @@ class TestStageBytesToResultsVolume:
 
         sp = create_autospec(WorkspaceClient)
         with (
-            patch("server.utils._get_results_volume", return_value="/Volumes/c/tmp/mcp_results"),
+            patch("server.utils._get_results_volume", return_value="/Volumes/c/dqx_mcp_tmp/mcp_results"),
             patch("server.utils._get_sp_client", return_value=sp),
         ):
             path = stage_bytes_to_results_volume(b"payload", suffix=".yaml")
 
-        assert path.startswith("/Volumes/c/tmp/mcp_results/staged_")
+        assert path.startswith("/Volumes/c/dqx_mcp_tmp/mcp_results/staged_")
         assert path.endswith(".yaml")
         # Uploaded (as the app SP) to exactly the returned path.
         assert sp.files.upload.call_args[0][0] == path

@@ -15,7 +15,7 @@ variables:
     default: "mcp-dqx"
   # Catalog for temp views + per-user output schemas AND the UC volume that hosts the runner wheels.
   # REQUIRED at deploy time: workspace.artifact_path (below) is built from it and is resolved during
-  # `bundle deploy`, so an empty value produces an invalid `/Volumes//tmp/...` path. It is injected
+  # `bundle deploy`, so an empty value produces an invalid `/Volumes//dqx_mcp_tmp/...` path. It is injected
   # into the app as the DQX_CATALOG config env value (no secret scope — a catalog name isn't
   # sensitive). Pass e.g. --var catalog_name=<catalog> (or CATALOG=<catalog> via make mcp-deploy).
   # The placeholder default keeps the bundle syntactically valid but every real deploy must override it.
@@ -38,7 +38,7 @@ variables:
 # home directory. The volume MUST already exist before `bundle deploy` uploads artifacts into it
 # — scripts/ensure_artifacts_volume.sh (run by ci_deploy.sh and `make mcp-deploy`) creates it.
 workspace:
-  artifact_path: "/Volumes/${var.catalog_name}/tmp/dqx_artifacts"
+  artifact_path: "/Volumes/${var.catalog_name}/dqx_mcp_tmp/dqx_artifacts"
 
 resources:
   jobs:
@@ -96,7 +96,7 @@ resources:
           default: ""
         - name: params
           default: "{}"
-        # Full UC-volume path for result files, e.g. /Volumes/<catalog>/tmp/mcp_results. The app
+        # Full UC-volume path for result files, e.g. /Volumes/<catalog>/dqx_mcp_tmp/mcp_results. The app
         # sets this per-submit from its catalog config; the runner writes <run_id>.json there.
         - name: results_volume
           default: ""
@@ -118,7 +118,7 @@ resources:
               app_name: "${var.name_prefix}"
               catalog_name: "${var.catalog_name}"
               users_group: ${var.users_group}
-              # The runner job's run_as SP — setup grants it the tmp-schema access it needs.
+              # The runner job's run_as SP — setup grants it the dqx_mcp_tmp-schema access it needs.
               runner_service_principal_id: "${var.runner_service_principal_id}"
               # The runner job id — setup grants the app SP CAN_MANAGE_RUN on it so the app can
               # submit runs and poll results. (The app→job resource binding alone did not reliably
@@ -157,7 +157,7 @@ resources:
           - name: DQX_CATALOG
             value: "${var.catalog_name}"
           - name: DQX_TMP_SCHEMA
-            value: "tmp"
+            value: "dqx_mcp_tmp"
           # Resource-backed: the runner job id comes from the app→job binding below.
           - name: DQX_RUNNER_JOB_ID
             value_from: "dqx-runner-job"

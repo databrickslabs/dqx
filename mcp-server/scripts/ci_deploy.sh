@@ -50,7 +50,7 @@ VARS=(--var "name_prefix=${NAME_PREFIX}"
 
 cd "$(dirname "$0")/.."  # mcp-server/
 
-echo "::group::ensure artifacts volume (${DQX_MCP_TEST_CATALOG}.tmp.dqx_artifacts)"
+echo "::group::ensure artifacts volume (${DQX_MCP_TEST_CATALOG}.dqx_mcp_tmp.dqx_artifacts)"
 # workspace.artifact_path is a UC volume; it must exist before `bundle deploy` uploads the wheels.
 DQX_MCP_CATALOG="${DQX_MCP_TEST_CATALOG}" DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-}" \
   ./scripts/ensure_artifacts_volume.sh

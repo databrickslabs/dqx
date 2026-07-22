@@ -7,7 +7,7 @@ MCP's results UC volume, keyed by the job run id. The MCP server (app) submits t
 Why a wheel task (not a notebook): the job runs as a dedicated, least-privilege workspace service
 principal (``run_as``), and the runner is a proper, unit-testable package rather than a notebook
 full of ``dbutils`` — mirroring the DQX Studio task runner. The wheel is hosted in a UC volume
-(``{catalog}.tmp.dqx_artifacts``, the bundle's ``workspace.artifact_path``); the setup job grants
+(``{catalog}.dqx_mcp_tmp.dqx_artifacts``, the bundle's ``workspace.artifact_path``); the setup job grants
 the run_as SP ``READ VOLUME`` there so the serverless environment can install it (see
 notebooks/setup.py).
 

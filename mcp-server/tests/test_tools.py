@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 _ENV = {
     "DQX_RUNNER_JOB_ID": "42",
     "DQX_CATALOG": "dqx_mcp",
-    "DQX_TMP_SCHEMA": "tmp",
+    "DQX_TMP_SCHEMA": "dqx_mcp_tmp",
 }
 
 
@@ -103,7 +103,7 @@ class TestProfileTable:
         with (
             patch("server.tools.utils.get_obo_client") as mock_obo,
             patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
-            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc") as mock_create,
+            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.dqx_mcp_tmp.v_abc") as mock_create,
             patch("server.tools.utils.submit_job_async", return_value=999) as mock_submit,
             patch.dict("os.environ", _ENV),
         ):
@@ -113,7 +113,7 @@ class TestProfileTable:
         mock_create.assert_called_once()
         assert mock_submit.call_args[0][0] == "profile_table"
         job_params = mock_submit.call_args[0][1]
-        assert job_params["view_name"] == "dqx_mcp.tmp.v_abc"
+        assert job_params["view_name"] == "dqx_mcp.dqx_mcp_tmp.v_abc"
         # table_name travels in params (echoed back by the runner), not in server-side state.
         assert job_params["table_name"] == "catalog.schema.table"
         assert "metadata" not in mock_submit.call_args.kwargs
@@ -128,7 +128,7 @@ class TestProfileTable:
         with (
             patch("server.tools.utils.get_obo_client"),
             patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
-            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_leak"),
+            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.dqx_mcp_tmp.v_leak"),
             patch("server.tools.utils.submit_job_async", side_effect=RuntimeError("submit boom")),
             patch("server.tools.utils.drop_view") as mock_drop,
             patch.dict("os.environ", _ENV),
@@ -138,7 +138,7 @@ class TestProfileTable:
 
         # The exact view that was created is dropped (as the OBO client) on the submit failure.
         mock_drop.assert_called_once()
-        assert mock_drop.call_args[0][1] == "dqx_mcp.tmp.v_leak"
+        assert mock_drop.call_args[0][1] == "dqx_mcp.dqx_mcp_tmp.v_leak"
 
 
 class TestRunChecks:
@@ -150,7 +150,7 @@ class TestRunChecks:
         with (
             patch("server.tools.utils.get_obo_client"),
             patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
-            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc") as mock_create,
+            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.dqx_mcp_tmp.v_abc") as mock_create,
             patch("server.tools.utils.submit_job_async", return_value=999) as mock_submit,
             patch.dict("os.environ", _ENV),
         ):
@@ -159,7 +159,7 @@ class TestRunChecks:
         mock_create.assert_called_once()
         assert mock_submit.call_args[0][0] == "run_checks"
         job_params = mock_submit.call_args[0][1]
-        assert job_params["view_name"] == "dqx_mcp.tmp.v_abc"
+        assert job_params["view_name"] == "dqx_mcp.dqx_mcp_tmp.v_abc"
         assert job_params["table_name"] == "catalog.schema.table"
         assert job_params["checks"] == [{"check": "foo"}]
         assert job_params["sample_size"] == 50
@@ -241,7 +241,7 @@ class TestJobOnlyTools:
             patch("server.tools.utils.read_file_via_obo", return_value=b"contract-bytes") as mock_read,
             patch(
                 "server.tools.utils.stage_bytes_to_results_volume",
-                return_value="/Volumes/c/tmp/mcp_results/staged_x.yml",
+                return_value="/Volumes/c/dqx_mcp_tmp/mcp_results/staged_x.yml",
             ) as mock_stage,
             patch("server.tools.utils.submit_job_async", return_value=21) as mock_submit,
         ):
@@ -256,7 +256,7 @@ class TestJobOnlyTools:
         mock_submit.assert_called_once_with(
             "generate_rules_from_contract",
             {
-                "contract_file": "/Volumes/c/tmp/mcp_results/staged_x.yml",
+                "contract_file": "/Volumes/c/dqx_mcp_tmp/mcp_results/staged_x.yml",
                 "contract_format": "odcs",
                 "default_criticality": "error",
             },
@@ -270,7 +270,7 @@ class TestJobOnlyTools:
             patch("server.tools.utils.get_obo_client") as mock_obo,
             patch(
                 "server.tools.utils.stage_bytes_to_results_volume",
-                return_value="/Volumes/c/tmp/mcp_results/staged_y.yaml",
+                return_value="/Volumes/c/dqx_mcp_tmp/mcp_results/staged_y.yaml",
             ) as mock_stage,
             patch("server.tools.utils.submit_job_async", return_value=22) as mock_submit,
         ):
@@ -279,7 +279,7 @@ class TestJobOnlyTools:
         # Inline content needs no file access at all — no OBO client, just stage + submit.
         mock_obo.assert_not_called()
         assert mock_stage.call_args[0][0] == b"kind: DataContract"
-        assert mock_submit.call_args[0][1]["contract_file"] == "/Volumes/c/tmp/mcp_results/staged_y.yaml"
+        assert mock_submit.call_args[0][1]["contract_file"] == "/Volumes/c/dqx_mcp_tmp/mcp_results/staged_y.yaml"
         assert result["run_id"] == 22
 
     def test_generate_rules_from_contract_requires_exactly_one_source(self):
@@ -305,7 +305,7 @@ class TestJobOnlyTools:
         with (
             patch("server.tools.utils.get_obo_client"),
             patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
-            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_chk") as mock_create,
+            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.dqx_mcp_tmp.v_chk") as mock_create,
             patch("server.tools.utils.submit_job_async", return_value=22) as mock_submit,
             patch.dict("os.environ", _ENV),
         ):
@@ -317,8 +317,8 @@ class TestJobOnlyTools:
             "load_checks",
             {
                 "run_config_name": "default",
-                "location": "dqx_mcp.tmp.v_chk",
-                "view_name": "dqx_mcp.tmp.v_chk",
+                "location": "dqx_mcp.dqx_mcp_tmp.v_chk",
+                "view_name": "dqx_mcp.dqx_mcp_tmp.v_chk",
             },
         )
         assert result["run_id"] == 22
@@ -394,7 +394,7 @@ class TestApplyChecksAndSaveToTable:
         with (
             patch("server.tools.utils.get_obo_client"),
             patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
-            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.tmp.v_abc") as mock_create,
+            patch("server.tools.utils.create_temp_view", return_value="dqx_mcp.dqx_mcp_tmp.v_abc") as mock_create,
             patch("server.tools.utils.submit_job_async", return_value=24) as mock_submit,
             patch("server.tools.utils.get_user_email", return_value="user@example.com"),
             patch.dict("os.environ", _ENV),
@@ -409,7 +409,7 @@ class TestApplyChecksAndSaveToTable:
         mock_create.assert_called_once()
         assert mock_submit.call_args[0][0] == "apply_checks_and_save_to_table"
         job_params = mock_submit.call_args[0][1]
-        assert job_params["view_name"] == "dqx_mcp.tmp.v_abc"
+        assert job_params["view_name"] == "dqx_mcp.dqx_mcp_tmp.v_abc"
         assert job_params["checks"] == [{"check": "foo"}]
         # Bare output names + the configured catalog travel to the runner, which resolves them to
         # the caller's per-user schema. No caller-supplied FQN, no write pre-check.
