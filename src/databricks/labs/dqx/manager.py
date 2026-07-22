@@ -13,7 +13,7 @@ from databricks.labs.dqx.rule import (
     DQRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
-from databricks.labs.dqx.utils import get_column_name_or_alias, safe_filter_expr
+from databricks.labs.dqx.utils import get_column_name_or_alias, is_sql_query_safe, safe_filter_expr
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,31 @@ class DQRuleManager:
         """
         return safe_filter_expr(self.check.filter)
 
+    @property
+    def _effective_filter(self) -> str | None:
+        """
+        Returns the filter string that will be applied for this check, or None.
+
+        The check-level *filter* is pushed down as *row_filter* to check functions that support it, but a
+        *row_filter* can also be supplied directly via *check_func_kwargs*. Either can carry unsafe SQL, so
+        both are considered when deciding whether to skip the check.
+        """
+        return self.check.filter or self.check.check_func_kwargs.get("row_filter")
+
+    @cached_property
+    def has_unsafe_filter(self) -> bool:
+        """
+        Returns True if the check filter contains unsafe SQL (e.g. a destructive statement keyword).
+
+        This is a non-raising check: an unsafe filter causes the check to be skipped (like any other
+        invalid filter) rather than aborting evaluation of the whole rule set. Note this does not apply to
+        the *sql_query* check, whose query runs via *spark.sql* and is still hard-rejected in the executor.
+        """
+        filter_expr = self._effective_filter
+        if not filter_expr:
+            return False
+        return not is_sql_query_safe(filter_expr)
+
     @cached_property
     def invalid_columns(self) -> list[str]:
         """
@@ -97,7 +122,12 @@ class DQRuleManager:
     def has_invalid_filter(self) -> bool:
         """
         Returns a boolean indicating whether the filter is invalid in the input DataFrame.
+
+        An unsafe filter is short-circuited here so that ``filter_condition`` (which rejects unsafe SQL by
+        raising) is never compiled for it; the check is reported as skipped via ``_get_invalid_cols_message``.
         """
+        if self.has_unsafe_filter:
+            return True
         return self._is_invalid_column(self.filter_condition)
 
     @cached_property
@@ -221,7 +251,12 @@ class DQRuleManager:
                 f"Check evaluation skipped due to invalid check columns: {self.invalid_columns}"
             )
 
-        if self.has_invalid_filter:
+        if self.has_unsafe_filter:
+            logger.warning(f"Skipping check '{self.check.name}' due to unsafe check filter: '{self._effective_filter}'")
+            invalid_cols_message_parts.append(
+                f"Check evaluation skipped due to unsafe check filter: '{self._effective_filter}'"
+            )
+        elif self.has_invalid_filter:
             logger.warning(f"Skipping check '{self.check.name}' due to invalid check filter: '{self.check.filter}'")
             invalid_cols_message_parts.append(
                 f"Check evaluation skipped due to invalid check filter: '{self.check.filter}'"

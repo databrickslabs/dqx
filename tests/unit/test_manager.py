@@ -1,5 +1,4 @@
 from unittest.mock import create_autospec, PropertyMock
-import pytest
 
 from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
@@ -8,7 +7,6 @@ from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.executor import DQCheckResult
 from databricks.labs.dqx.manager import DQRuleManager
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
-from databricks.labs.dqx.errors import UnsafeSqlQueryError
 
 
 def _make_manager_with_missing_column(df: DataFrame, spark: SparkSession, *, suppress_skipped: bool) -> DQRuleManager:
@@ -59,26 +57,53 @@ def test_rule_manager_suppress_skipped_false_returns_struct_for_invalid_column()
     assert result.check_df is df_mock
 
 
-def test_rule_manager_raises_on_destructive_filter():
-    """A check whose filter contains a destructive statement (e.g. DROP) is rejected
-    end-to-end: process() raises UnsafeSqlQueryError via the wired safe_filter_expr guard."""
-    df_mock = create_autospec(DataFrame)
-    spark_mock = create_autospec(SparkSession)
-    manager = DQRuleManager(
-        check=DQRowRule(
-            check_func=check_funcs.is_not_null,
-            column="col1",
-            filter="id = 1 OR DROP TABLE users",
-        ),
-        df=df_mock,
-        spark=spark_mock,
+def _make_manager_with_filter(df: DataFrame, spark: SparkSession, check: DQRowRule | DQDatasetRule) -> DQRuleManager:
+    return DQRuleManager(
+        check=check,
+        df=df,
+        spark=spark,
         engine_user_metadata={},
         run_time_overwrite=None,
         run_id="test-run",
         suppress_skipped=False,
     )
-    with pytest.raises(UnsafeSqlQueryError):
-        manager.process()
+
+
+def test_rule_manager_skips_check_with_destructive_filter():
+    """A check whose filter contains a destructive statement (e.g. DROP) is skipped (not evaluated) rather
+    than aborting the whole rule set; the skip message identifies the unsafe filter."""
+    df_mock = create_autospec(DataFrame)
+    spark_mock = create_autospec(SparkSession)
+    manager = _make_manager_with_filter(
+        df_mock,
+        spark_mock,
+        DQRowRule(check_func=check_funcs.is_not_null, column="col1", filter="id = 1 OR DROP TABLE users"),
+    )
+
+    assert manager.has_unsafe_filter is True
+    # process() returns a skipped result struct instead of raising or running the executor
+    result = manager.process()
+    assert isinstance(result, DQCheckResult)
+    condition_str = str(result.condition)
+    assert "skipped" in condition_str.lower()
+    assert "unsafe check filter" in condition_str
+
+
+def test_rule_manager_suppress_skipped_removes_check_with_destructive_filter():
+    """With suppress_skipped=True, a check with an unsafe filter produces no _errors/_warnings entry."""
+    df_mock = create_autospec(DataFrame)
+    spark_mock = create_autospec(SparkSession)
+    manager = DQRuleManager(
+        check=DQRowRule(check_func=check_funcs.is_not_null, column="col1", filter="id = 1 OR DROP TABLE users"),
+        df=df_mock,
+        spark=spark_mock,
+        engine_user_metadata={},
+        run_time_overwrite=None,
+        run_id="test-run",
+        suppress_skipped=True,
+    )
+    result = manager.process()
+    assert "CAST(NULL AS STRUCT" in str(result.condition)
 
 
 def test_rule_manager_allows_safe_filter():
@@ -123,23 +148,36 @@ def test_rule_manager_allows_select_filter():
     assert manager.filter_condition is not None
 
 
-def test_rule_manager_raises_on_destructive_filter_for_dataset_check():
-    """A dataset check's filter is pushed down to row_filter; a destructive one is rejected
-    end-to-end through the check_funcs safe_filter_expr wiring."""
+def test_rule_manager_skips_dataset_check_with_destructive_filter():
+    """A dataset check's filter is pushed down to row_filter; a destructive one causes the check to be
+    skipped (not evaluated) rather than aborting the whole rule set."""
     df_mock = create_autospec(DataFrame)
     spark_mock = create_autospec(SparkSession)
-    manager = DQRuleManager(
-        check=DQDatasetRule(
+    manager = _make_manager_with_filter(
+        df_mock,
+        spark_mock,
+        DQDatasetRule(check_func=check_funcs.is_unique, columns=["col1"], filter="id = 1 OR DROP TABLE users"),
+    )
+
+    assert manager.has_unsafe_filter is True
+    result = manager.process()
+    assert "skipped" in str(result.condition).lower()
+
+
+def test_rule_manager_skips_check_with_destructive_row_filter_in_kwargs():
+    """An unsafe filter supplied directly as a row_filter kwarg (not the check-level filter) is also skipped."""
+    df_mock = create_autospec(DataFrame)
+    spark_mock = create_autospec(SparkSession)
+    manager = _make_manager_with_filter(
+        df_mock,
+        spark_mock,
+        DQDatasetRule(
             check_func=check_funcs.is_unique,
             columns=["col1"],
-            filter="id = 1 OR DROP TABLE users",
+            check_func_kwargs={"row_filter": "id = 1 OR DROP TABLE users"},
         ),
-        df=df_mock,
-        spark=spark_mock,
-        engine_user_metadata={},
-        run_time_overwrite=None,
-        run_id="test-run",
-        suppress_skipped=False,
     )
-    with pytest.raises(UnsafeSqlQueryError):
-        manager.process()
+
+    assert manager.has_unsafe_filter is True
+    result = manager.process()
+    assert "skipped" in str(result.condition).lower()
