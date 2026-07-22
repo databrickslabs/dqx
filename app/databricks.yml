@@ -23,11 +23,21 @@ variables:
   app_name:
     description: "Databricks App name (unique per workspace)"
     default: "dqx-studio"
+  sql_warehouse_id:
+    description: >
+      ID of the SQL warehouse the app queries. Every target MUST set this.
+      Mode A (bundle-managed): ``${resources.sql_warehouses.dqx_sql_warehouse.id}``
+      plus a ``sql_warehouses.dqx_sql_warehouse`` block under the target's
+      ``resources:``. Mode B (external / reuse): a literal warehouse ID; the
+      bundle never creates the warehouse. ``post_deploy_external_warehouse_grants.sh``
+      PATCHes CAN_USE on the external warehouse for the job SP and ``users``.
+      Default is empty so a target that forgets to set it fails fast at deploy.
+    default: ""
   sql_warehouse_name:
-    description: "Name of the bundle-managed SQL warehouse the app queries through."
+    description: "Name of the bundle-managed SQL warehouse (Mode A only)."
     default: "dqx-studio-sql-warehouse"
   sql_warehouse_size:
-    description: "Cluster size of the bundle-managed SQL warehouse (e.g. 2X-Small / Small / Medium)."
+    description: "Cluster size of the bundle-managed SQL warehouse (Mode A only)."
     default: "Small"
   wheels_volume_name:
     description: "UC volume for DQX wheel files"
@@ -163,11 +173,11 @@ resources:
         # PermissionDenied); do not re-add a `clusters` scope here (B2-105).
 
       resources:
-        # Binding the bundle-managed warehouse to the app grants the app SP CAN_USE.
+        # ``sql_warehouse_id`` is set per-target — see the variable docs above.
         - name: "dqx-sql-warehouse"
           description: "SQL Warehouse for DQX Studio queries"
           sql_warehouse:
-            id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
+            id: ${var.sql_warehouse_id}
             permission: "CAN_USE"
         - name: "dqx-task-runner-job"
           description: "Job for async profiler and dry-run tasks"
@@ -184,29 +194,11 @@ resources:
         - group_name: "users"
           level: "CAN_USE"
 
-  # Bundle-managed SQL warehouse. The app queries it (app SP via the binding above)
-  # and end-user OBO dry-run/preview queries run through it, so ``users`` needs CAN_USE.
-  sql_warehouses:
-    dqx_sql_warehouse:
-      name: ${var.sql_warehouse_name}
-      cluster_size: ${var.sql_warehouse_size}
-      max_num_clusters: 1
-      auto_stop_mins: 30
-      enable_serverless_compute: true
-      warehouse_type: PRO
-      tags:
-        custom_tags:
-          - key: app
-            value: "dqx-studio"
-      # List the app SP explicitly: with ``permissions`` set, the app's warehouse
-      # binding would otherwise override them and drop its access. Use workspace
-      # ``users`` — the warehouse permissions API can't resolve account-level
-      # ``account users`` (UC ``grants`` below can).
-      permissions:
-        - level: CAN_USE
-          service_principal_name: ${resources.apps.dqx-studio.service_principal_client_id}
-        - level: CAN_USE
-          group_name: "users"
+  # ``sql_warehouses.dqx_sql_warehouse`` is intentionally NOT declared here.
+  # Mode A targets declare it under their own ``resources.sql_warehouses`` block.
+  # Mode B targets set ``sql_warehouse_id`` to a literal ID and never touch the
+  # warehouse — see ``target.demo-v2.yml`` (Mode A) and ``target.kaizen-dev.yml``
+  # (Mode B).
 
   # Stateful storage. ``lifecycle.prevent_destroy: true`` makes ``bundle destroy``
   # (or a replacing deploy) fail fast instead of dropping data; to tear down, drop
@@ -344,7 +336,7 @@ resources:
     dqx_quality_overview:
       display_name: "[${bundle.target}] DQX Quality Overview"
       file_path: ./dashboards/dqx_quality_overview.lvdash.json
-      warehouse_id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
+      warehouse_id: ${var.sql_warehouse_id}
       dataset_catalog: ${var.catalog_name}
       dataset_schema: ${var.schema_name}
       embed_credentials: true
