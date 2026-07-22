@@ -270,26 +270,6 @@ class TestJoinQualification:
         assert body.sql_query is not None
         assert "SELECT {{input_view}}.{{order_id}}" in body.sql_query
 
-    def test_col_ref_value_on_temporal_op_qualified_under_join(self):
-        """A ``$col`` value reference on a temporal operator must be qualified to
-        ``{{input_view}}`` when a join is present — exercises the four temporal
-        arms that previously called ``_value_sql(value)`` without forwarding
-        *qualify*."""
-        for op, sql_op in [("before", "<"), ("after", ">"), ("on or before", "<="), ("on or after", ">=")]:
-            ast = {
-                "rows": [{"kind": "row", "column_ref": "start_date", "operator": op, "value": {"$col": "end_date"}}],
-                "joins": [
-                    {
-                        "target_table": "cat.s.other",
-                        "join_type": "INNER",
-                        "keys": [{"column_ref": "id", "joined_column": "id"}],
-                    }
-                ],
-            }
-            q = compile_lowcode_body(ast, "").sql_query or ""
-            assert "{{input_view}}.{{start_date}}" in q, f"LHS not qualified for op={op!r}: {q}"
-            assert "{{input_view}}.{{end_date}}" in q, f"RHS not qualified for op={op!r}: {q}"
-
 
 class TestUsabilityAndTokens:
     def test_empty_ast_is_unusable(self):

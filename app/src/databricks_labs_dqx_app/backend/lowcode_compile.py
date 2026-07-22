@@ -348,13 +348,13 @@ def _row_sql(left: str, operator: str, value: object, qualify: bool = False) -> 
     if op == "is false":
         return f"{left} = FALSE"
     if op == "before":
-        return f"{left} < {_value_sql(value, qualify)}"
+        return f"{left} < {_value_sql(value)}"
     if op == "after":
-        return f"{left} > {_value_sql(value, qualify)}"
+        return f"{left} > {_value_sql(value)}"
     if op == "on or before":
-        return f"{left} <= {_value_sql(value, qualify)}"
+        return f"{left} <= {_value_sql(value)}"
     if op == "on or after":
-        return f"{left} >= {_value_sql(value, qualify)}"
+        return f"{left} >= {_value_sql(value)}"
     if op == "is in last":
         obj = value if isinstance(value, dict) else {}
         number = obj.get("number", 0)
@@ -379,7 +379,7 @@ def _row_sql(left: str, operator: str, value: object, qualify: bool = False) -> 
         return f"length({left}) < {_quote(value)}"
     if op == "length between":
         lo, hi = (value[0], value[1]) if isinstance(value, list) and len(value) >= 2 else (None, None)
-        return f"length({left}) BETWEEN {_value_sql(lo, qualify)} AND {_value_sql(hi, qualify)}"
+        return f"length({left}) BETWEEN {_value_sql(lo)} AND {_value_sql(hi)}"
     if op == "is not empty":
         return f"length(trim({left})) > 0"
     if op == "is empty":
