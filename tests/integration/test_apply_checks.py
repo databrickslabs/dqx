@@ -10040,6 +10040,48 @@ def test_apply_checks_with_has_valid_schema_extra_columns_in_params(ws, spark):
     assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
 
 
+def test_apply_checks_unsafe_filter_is_skipped_and_other_checks_still_run(ws, spark):
+    """A check with an unsafe (destructive-SQL) filter is skipped through DQRuleManager while every other
+    check in the same rule set is still evaluated end-to-end — the run is not aborted."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, None], [2, "ok"]], "id int, b string")
+
+    checks = [
+        # unsafe filter (destructive keyword) -> this check is skipped, not evaluated
+        DQRowRule(
+            name="b_is_null_unsafe_filter",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="b",
+            filter="id = 1 OR DROP TABLE users",
+        ),
+        # a normal check that must still run and flag the null in row id=1
+        DQRowRule(
+            name="b_is_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="b",
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+    errors_by_row = {row["id"]: row["_errors"] for row in checked.select("id", "_errors").collect()}
+
+    # The unsafe-filter check is reported as skipped (not a hard failure of the whole run)
+    skipped = [e for e in (errors_by_row[1] or []) if e["name"] == "b_is_null_unsafe_filter"]
+    assert len(skipped) == 1
+    assert skipped[0]["skipped"] is True
+    assert skipped[0]["message"] == (
+        "Check evaluation skipped due to unsafe check filter: 'id = 1 OR DROP TABLE users'"
+    )
+
+    # The normal check still ran: it flags the null b for row id=1 and passes row id=2
+    normal_row1 = [e for e in (errors_by_row[1] or []) if e["name"] == "b_is_null"]
+    assert len(normal_row1) == 1
+    assert normal_row1[0]["skipped"] is None
+    assert errors_by_row[2] is None
+
+
 def test_apply_checks_and_save_in_tables_for_patterns_missing_output_suffix(ws, spark):
     dq_engine = DQEngine(ws)
 

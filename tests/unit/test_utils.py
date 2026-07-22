@@ -15,6 +15,7 @@ from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
     safe_filter_expr,
+    sanitize_for_logging,
     normalize_col_str,
     safe_json_load,
     get_columns_as_strings,
@@ -303,6 +304,19 @@ def test_safe_filter_expr_allows_select():
 def test_safe_filter_expr_raises_on_destructive():
     with pytest.raises(UnsafeSqlQueryError):
         safe_filter_expr("id = 1 OR DROP TABLE users")
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("a = 1", "a = 1"),
+        ("a\nb", "a\\nb"),
+        ("a\r\nb", "a\\r\\nb"),
+        ("forged\nINFO log line", "forged\\nINFO log line"),
+    ],
+)
+def test_sanitize_for_logging_escapes_newlines(value, expected):
+    assert sanitize_for_logging(value) == expected
 
 
 def test_safe_json_load_dict():

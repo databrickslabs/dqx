@@ -181,3 +181,24 @@ def test_rule_manager_skips_check_with_destructive_row_filter_in_kwargs():
     assert manager.has_unsafe_filter is True
     result = manager.process()
     assert "skipped" in str(result.condition).lower()
+
+
+def test_rule_manager_skips_check_with_destructive_row_filter_positional():
+    """An unsafe row_filter supplied positionally via check_func_args is also detected and skipped, so it
+    cannot slip past the manager gate and hard-raise in the executor."""
+    df_mock = create_autospec(DataFrame)
+    spark_mock = create_autospec(SparkSession)
+    # has_no_outliers(column, row_filter=None): pass row_filter positionally through check_func_args
+    manager = _make_manager_with_filter(
+        df_mock,
+        spark_mock,
+        DQDatasetRule(
+            check_func=check_funcs.has_no_outliers,
+            column="col1",
+            check_func_args=["id = 1 OR DROP TABLE users"],
+        ),
+    )
+
+    assert manager.has_unsafe_filter is True
+    result = manager.process()
+    assert "skipped" in str(result.condition).lower()

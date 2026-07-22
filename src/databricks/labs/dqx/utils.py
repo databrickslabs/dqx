@@ -335,8 +335,22 @@ def safe_filter_expr(filter_expr: str | None) -> Column:
         UnsafeSqlQueryError: If the filter contains a destructive statement such as DELETE or DROP.
     """
     if filter_expr and not is_sql_query_safe(filter_expr):
-        raise UnsafeSqlQueryError(f"Unsafe filter expression: '{filter_expr}'")
+        raise UnsafeSqlQueryError(f"Unsafe filter expression: '{sanitize_for_logging(filter_expr)}'")
     return F.expr(filter_expr) if filter_expr else F.lit(True)
+
+
+def sanitize_for_logging(value: str) -> str:
+    """
+    Escapes newline and carriage-return characters in a user-supplied string so it cannot forge or
+    corrupt log entries (CWE-117) when interpolated into a log message or user-facing result message.
+
+    Args:
+        value: The untrusted string to sanitize.
+
+    Returns:
+        The string with CR and LF replaced by their escaped literal representations.
+    """
+    return value.replace("\r", "\\r").replace("\n", "\\n")
 
 
 def safe_json_load(value: str):

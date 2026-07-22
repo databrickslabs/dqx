@@ -1965,8 +1965,7 @@ def has_no_aggr_outliers(
                 f"but got type '{time_col_type.simpleString()}' instead."
             )
 
-        filter_col = safe_filter_expr(row_filter)
-        filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
+        filtered_expr = F.when(safe_filter_expr(row_filter), aggr_col_expr) if row_filter else aggr_col_expr
         aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
 
         group_cols = [F.col(c) if isinstance(c, str) else c for c in (group_by or [])]
@@ -3363,8 +3362,7 @@ def _is_aggr_compare(
         Returns:
             The DataFrame with additional condition and metric columns for aggregation validation.
         """
-        filter_col = safe_filter_expr(row_filter)
-        filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
+        filtered_expr = F.when(safe_filter_expr(row_filter), aggr_col_expr) if row_filter else aggr_col_expr
 
         # Build aggregation expression
         aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
