@@ -146,7 +146,7 @@ const config: Config = {
               id: 'reference',
               name: 'DQX Core — Reference',
               description: 'DQX Core API reference, CLI commands, and technical documentation',
-              position: 4,
+              position: 5,
               routes: [
                 { route: '/dqx/docs/reference/**' }
               ],
@@ -155,7 +155,7 @@ const config: Config = {
               id: 'demos',
               name: 'DQX Core — Demos',
               description: 'DQX Core example implementations and demos',
-              position: 5,
+              position: 4,
               routes: [
                 { route: '/dqx/docs/demos' },
                 { route: '/dqx/docs/demos/**' }
