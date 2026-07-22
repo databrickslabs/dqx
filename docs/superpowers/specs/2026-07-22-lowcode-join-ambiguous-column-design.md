@@ -1,146 +1,161 @@
-# Low-code join rules: qualify own-table columns to remove AMBIGUOUS_REFERENCE — Design
+# Low-code join rules: qualify own-table columns to remove AMBIGUOUS_REFERENCE — Design (v2, corrected)
 
 **Date:** 2026-07-22
 **Worktree:** `/Users/oliver.gordon/Documents/Code/Other/dqx/.claude/worktrees/bug-bash-v4`
-**Branch:** new worktree branch off `dqx-dqlake-integration` (created at execution time)
+**Branch:** `dqx/bug-bash-v4`
 
-## Problem
+## History / why v2
 
-A condition-builder (low-code) rule that declares a JOIN fails at run time with:
+v1 of this fix qualified **all** own-column references to `{{input_view}}.{{col}}`,
+including the SELECT-list keys, `merge_columns`, and group-by columns. It was
+deployed and FAILED at runtime with:
 
 ```
-[AMBIGUOUS_REFERENCE] Reference `customer_id` is ambiguous, could be:
-[`customer_id_query_condition_violation_input_view_<hex>`.`customer_id`,
- `dqx`.`dqx_studio_demo`.`customers`.`customer_id`]. SQLSTATE: 42704
+[INVALID_IDENTIFIER] The unquoted identifier
+{{input_view}}.customer_id_query_condition_violation_input_view_<hex> is invalid…
 ```
 
-Root cause (confirmed in code):
+Root cause of the v1 failure, proven by simulating BOTH substitution layers:
 
-- The low-code compiler's `_ref(column)` (`backend/lowcode_compile.py:184`) compiles an
-  OWN-table column to a bare `{{column}}` slot placeholder (a joined-table column,
-  which contains a `.`, is emitted raw). The materializer's `_substitute_text`
-  (`backend/services/materializer.py:217`) replaces `{{column}}` with the real,
-  UNQUALIFIED column name (e.g. `customer_id`).
-- `compile_lowcode_body` builds `... FROM {{input_view}} <JOIN ...>` and the DQX
-  library's `sql_query` check (`check_funcs.py`) substitutes `{{input_view}}` with
-  a unique temp-view name that becomes the effective alias
-  (`customer_id_query_condition_violation_input_view_<hex>`).
-- So the generated SQL is `SELECT ... FROM <input_view> JOIN customers ... WHERE customer_id ...`.
-  When the JOINED table ALSO has a `customer_id` column, the bare `customer_id`
-  reference is ambiguous → the error.
+- The APP materializer (`services/materializer.py::_substitute_text`) substitutes
+  `{{col}}` slots in the query text AND in `merge_columns`, but it does NOT touch
+  `{{input_view}}` (not an app slot).
+- The DQX library's `sql_query` check (`check_funcs.py`) substitutes `{{input_view}}`
+  in the **query text only** — it never rewrites `merge_columns`.
+- So a `merge_columns` entry of `{{input_view}}.{{customer_id}}` becomes
+  `{{input_view}}.customer_id` and is passed VERBATIM to Spark's
+  `df.select(*merge_columns, …)` / `df.join(on=merge_columns)`. Spark treats the
+  whole thing as one unquoted column identifier → `[INVALID_IDENTIFIER]`.
 
-The frontend TS compiler (`ui/lib/lowcodeCompile.ts`) mirrors this Python compiler
-and has the SAME bug (its `ref()` emits a bare `{{col}}`), so a rule authored/tested
-in the UI compiles identically.
+So `merge_columns` (and the SELECT-list keys that feed it, and group-by columns)
+must remain BARE. Qualification is only valid inside the query TEXT, where
+`{{input_view}}` is substituted.
+
+## Problem (unchanged from v1)
+
+A condition-builder (low-code) rule with a JOIN fails at run time with
+`[AMBIGUOUS_REFERENCE] Reference 'customer_id' is ambiguous` when the rule's own
+table AND the joined table both have a `customer_id` column, because the compiler
+emits own-table columns as bare `{{customer_id}}` → unqualified `customer_id` in a
+joined query.
+
+## The compiled body (what `sql_query` mode produces)
+
+For a join rule, `compile_lowcode_body` emits (row-level, keys form merge_columns):
+
+```
+sql_query    = SELECT <key_refs>, (NOT (<predicate>)) AS condition FROM {{input_view}} <JOINS>
+merge_columns = <key_refs>
+```
+
+and for a group-by rule:
+
+```
+sql_query    = SELECT <gb_list>, (NOT (<predicate>)) AS condition FROM {{input_view}} <JOINS?> GROUP BY <gb_list>
+merge_columns = <gb_columns>
+```
+
+Ambiguity can appear in THREE positions when a join is present: the predicate, the
+join ON-clause own-side, and the SELECT-list key references. `merge_columns`,
+`GROUP BY`, and the SELECT OUTPUT column NAMES must stay bare.
+
+## Correct qualification rules (per position)
+
+Let `IV = {{input_view}}`. When (and only when) the rule has ≥1 join:
+
+1. **Predicate** (inside `NOT(...)`): own columns → `IV.{{col}}`. Lives only in the
+   query text; `{{input_view}}` is substituted by the library; unambiguous. ✅
+   (This is the position that actually causes the reported AMBIGUOUS_REFERENCE.)
+2. **Join ON-clause own side** (`compile_joins_to_sql`): own side → `IV.{{col}}`.
+   Query text only; correct. ✅
+3. **SELECT-list key references** (`_join_key_refs` output used in the SELECT): must
+   emit `IV.{{col}} AS {{col}}` — the SOURCE is qualified (unambiguous) but the
+   OUTPUT column is aliased back to the bare name so it matches `merge_columns`. ✅
+4. **`merge_columns`**: BARE `{{col}}` (→ substitutes to `customer_id`). Passed to
+   `df.select`/`df.join(on=…)`; must be a bare column name. **Never `IV.`-prefixed.**
+5. **GROUP BY list**: BARE `{{col}}` (grouping references the SELECT output columns).
+   The SELECT for a group-by rule likewise emits `IV.{{col}} AS {{col}}` for own
+   columns so the projected/grouped name is bare and unambiguous. (Confirm GROUP BY
+   references the bare output name; if Spark requires the grouping expr to match the
+   SELECT source, group by `IV.{{col}}` while the projection aliases — pin this in
+   the plan against a real compile + a runtime check.)
+6. Joined-table columns (already dotted, e.g. `customers.tier`) — unchanged everywhere.
+7. No-join rules — unchanged everywhere (bare `{{col}}`, no `IV.`).
+
+### Net: `merge_columns` stays bare; the SELECT list qualifies-source-and-aliases.
+
+So `_join_key_refs` must return TWO forms: the SELECT projection (`IV.{{col}} AS {{col}}`
+under join) and the merge-column list (bare `{{col}}`). Today it returns one list used
+for both — the plan splits them.
+
+## Why this is correct end-to-end (to verify with a simulation test)
+
+For the repro (own `customer_id` + join to `customers.customer_id`), the fixed body:
+```
+sql_query    = SELECT {{input_view}}.{{customer_id}} AS {{customer_id}},
+                      (NOT ({{input_view}}.{{customer_id}} > 0)) AS condition
+               FROM {{input_view}} INNER JOIN dqx.dqx_studio_demo.customers
+                 ON dqx.dqx_studio_demo.customers.customer_id = {{input_view}}.{{customer_id}}
+merge_columns = ['{{customer_id}}']
+```
+After APP substitution (`{{customer_id}}`→`customer_id`) then DQX substitution
+(`{{input_view}}`→`<view>`):
+```
+sql_query    = SELECT <view>.customer_id AS customer_id, (NOT (<view>.customer_id > 0)) AS condition
+               FROM <view> INNER JOIN dqx.dqx_studio_demo.customers
+                 ON dqx.dqx_studio_demo.customers.customer_id = <view>.customer_id
+merge_columns = ['customer_id']   # bare, valid for .select / .join(on=)
+```
+No AMBIGUOUS_REFERENCE (all own refs qualified), no INVALID_IDENTIFIER
+(merge_columns bare, SELECT output aliased to bare `customer_id`).
 
 ## Goal
 
-When a low-code rule has ONE OR MORE joins, qualify every OWN-table column
-reference to the input view so it is unambiguous, in BOTH compilers:
-
-- `{{column}}` → `{{input_view}}.{{column}}` (join present)
-- Joined-table columns (already qualified, e.g. `orders.total`) are unchanged.
-- Rules with NO joins are byte-identical to today (no qualification added).
-
-## Why `{{input_view}}.{{column}}` works (verified end-to-end)
-
-`_substitute_text` replaces each `{{slot}}` independently by string replace. Given
-`{{input_view}}.{{customer_id}}`:
-1. The APP materializer replaces the column slot: `{{customer_id}}` → `customer_id`,
-   leaving `{{input_view}}.customer_id`. (`{{input_view}}` is NOT an app slot, so it
-   is left intact by the app.)
-2. The DQX library's `sql_query` check replaces `{{input_view}}` → the unique
-   temp-view name → `<input_view>.customer_id` — fully qualified, unambiguous.
-
-The `{{input_view}}` marker is the reserved token both layers already understand
-(`extract_slot_tokens` explicitly skips it; the library substitutes it). So we reuse
-the existing mechanism — no new placeholder, no materializer change.
+Both compilers (`backend/lowcode_compile.py` + `ui/lib/lowcodeCompile.ts`), when a
+rule has joins:
+- qualify own columns in the predicate + join ON-clause own side;
+- qualify-and-alias own columns in the SELECT projection (`IV.{{col}} AS {{col}}`);
+- keep `merge_columns` and GROUP BY bare;
+- leave joined-table columns and no-join rules byte-identical.
 
 ## Non-goals
 
-- No change to rules WITHOUT joins (the vast majority) — they must compile
-  byte-identically.
-- No schema-awareness / collision detection (we qualify ALL own-table columns when
-  a join is present, not just colliding ones — simpler and always-correct).
-- No change to how joined-table columns (already `.`-qualified) are emitted, nor to
-  the `{{input_view}}` FROM-clause, join-key refs, or group-by handling beyond the
-  own-column qualification.
 - No materializer or DQX-library change.
+- No change to non-join rules (byte-identical).
+- No schema-aware collision detection (qualify all own columns under a join).
 
 ## Global Constraints
 
-- **Dual-compiler parity:** `backend/lowcode_compile.py` (Python) and
-  `ui/lib/lowcodeCompile.ts` (TypeScript) MUST produce equivalent SQL. Every change
-  to one is mirrored in the other; both have unit tests that must assert the new
-  qualified output.
-- Backend type hints; no `Any`; `make app-check` clean modulo the 5 known
-  pre-existing errors. Frontend `bun tsc -b` clean; `bun test` green.
-- SQL safety unchanged — the compiled body still flows through `is_sql_query_safe`
-  in the materializer; qualification adds only a `{{input_view}}.` prefix to an
-  existing slot, introducing no new injection surface (column names are
-  slot-substituted, not interpolated).
-- **Values/behaviour unchanged for non-join rules** — regression-guard with tests.
-
-## Approach
-
-### The qualification decision point
-
-Both compilers know, at compile time, whether the AST has joins (`ast.joins`).
-Thread that fact into the row/predicate compilation so `_ref`/`ref` can qualify:
-
-- **Python** (`lowcode_compile.py`): `compile_ast_to_sql` already reads the whole
-  ast. Determine `has_joins = bool(ast.get("joins"))` once, and pass a
-  `qualify_own_columns: bool` flag down through `_compile_row` → `_row_sql`/
-  aggregate handling → `_ref`. When true, `_ref(column)` for an own-table column
-  (no `.`) returns `{{input_view}}.{{column}}` instead of `{{column}}`. Joined-table
-  columns (with `.`) are returned raw as today. The join-key `ON` conditions
-  (`compile_joins_to_sql`) already qualify the joined side (`target.joined_column`)
-  and use `_ref(column_ref)` for the own side — those own-side refs must ALSO be
-  qualified (they live in a join context by definition), so route them through the
-  same qualified `_ref`.
-- **TypeScript** (`lowcodeCompile.ts`): mirror exactly — compute `hasJoins` from the
-  AST, thread it into `rowSql`/`ref`, emit `{{input_view}}.{{col}}` for own columns
-  when joins exist.
-
-### Column-ref values (item 42) interaction
-
-Item 42 lets a condition VALUE reference another column (`{"$col": "b"}` → `_ref("b")`).
-Those own-column value refs must be qualified under the SAME rule (join present →
-`{{input_view}}.{{b}}`), since they'd hit the identical ambiguity. Both compilers'
-`$col` value path routes through the same qualified `_ref`, so it's covered by
-threading the flag — verify with a test.
-
-### What stays bare
-
-- No-join rules: `_ref` returns `{{column}}` exactly as today.
-- Joined-table columns (`orders.total`): returned raw in both cases.
-- Group-by columns / merge columns: these are emitted for the SELECT/GROUP BY of the
-  dataset query; confirm whether they need qualification too when a join is present
-  (a group-by on an own column in a joined query is equally ambiguous). If so, apply
-  the same qualification; if the group-by list is only ever own-table columns and the
-  SELECT aliases them, qualify them consistently. The plan will pin this down against
-  the actual `compile_lowcode_body` SELECT/GROUP BY shape and add a test.
+- **Dual-compiler parity:** Python + TS emit equivalent SQL + merge_columns.
+- **The runtime is the real test.** A pure-string unit test is necessary but NOT
+  sufficient (v1 passed its unit tests and still failed at runtime). The plan MUST
+  include a substitution-simulation test that reproduces BOTH layers (app `{{col}}`
+  subst on query+merge_columns, then DQX `{{input_view}}` subst on query only) and
+  asserts the final `merge_columns` are bare and the final query has no residual
+  `{{` and no ambiguous bare own-column. AND a live post-deploy verification runs the
+  actual repro rule.
+- Backend type hints; no `Any`; `make app-check` clean modulo 5 known pre-existing.
+  `bun tsc -b` clean; `bun test` green.
+- SQL safety: the body still passes `is_sql_query_safe` post-substitution; aliasing
+  adds no injection surface (slot-substituted names only).
 
 ## Testing
 
-- Python (`tests/` for lowcode_compile): a rule WITH a join qualifies own columns
-  (`{{input_view}}.{{customer_id}}`) in the predicate, join-key own side, and any
-  `$col` value; a rule WITHOUT a join is byte-identical to today (bare `{{column}}`);
-  joined-table columns (`orders.total`) stay raw.
-- TypeScript (`lowcodeCompile.test.ts`): the mirrored assertions — same qualified
-  output for join rules, unchanged output for non-join rules.
-- End-to-end sanity (documented, not necessarily automated): the compiled body for
-  the repro (own `customer_id` + join to `customers.customer_id`) now yields
-  `... WHERE {{input_view}}.customer_id ...` → after substitution
-  `<view>.customer_id` → no AMBIGUOUS_REFERENCE.
-- Regression: existing lowcode_compile / lowcodeCompile tests pass unchanged for
-  non-join rules.
+- **Substitution simulation (the test v1 lacked):** for a join rule, apply the app
+  `{{col}}` substitution to `sql_query` AND `merge_columns`, then the DQX
+  `{{input_view}}` regex substitution to the query; assert: final `merge_columns`
+  contain NO `{{`, NO `.`-qualified `input_view`, are bare column names; final query
+  contains `<view>.customer_id` (qualified) and `AS customer_id`; no residual `{{`.
+- Compiler unit tests (Python + TS): predicate + ON own-side qualified; SELECT keys
+  `IV.{{col}} AS {{col}}`; `merge_columns` bare `{{col}}`; group-by bare; joined-table
+  cols raw; no-join byte-identical.
+- Regression: existing non-join tests unchanged.
 
 ## Deploy / verification
 
-- `make app-check` clean (modulo known); `make app-test` + `bun test` green; `bun tsc -b` clean.
-- Build wheel with `.cloud` pypi-proxy fallback; deploy to `fe-sandbox-dq-demo-2`.
-- Verify on fe-sandbox: re-run the failing condition-builder-with-join rule (own
-  `customer_id` + join to a `customer_id`-bearing table) — it runs without
-  AMBIGUOUS_REFERENCE; a no-join rule still runs correctly.
+- Gates green; build wheel with `.cloud` proxy fallback; deploy to fe-sandbox.
+- **Live verification (mandatory before hand-off):** re-run the actual failing
+  condition-builder-with-join rule on fe-sandbox and confirm it completes with no
+  AMBIGUOUS_REFERENCE and no INVALID_IDENTIFIER. A green unit suite is not enough —
+  v1 taught us the failure only shows at runtime.
 - Report for user verification BEFORE squash-merge.

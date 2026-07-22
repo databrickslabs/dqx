@@ -186,9 +186,110 @@ class TestCompileLowcodeBody:
             }
         ]
         body = compile_lowcode_body(_ast([_row(column_ref="cat.sch.dim.valid", operator="is not null")], joins), "")
+        # merge_columns stay BARE — the library passes them verbatim to Spark's
+        # df.join(on=...); an {{input_view}}-qualified value would be an invalid
+        # bare identifier at runtime.
         assert body.merge_columns == ["{{dim_id}}"]
         assert body.sql_query is not None
-        assert "LEFT JOIN cat.sch.dim ON cat.sch.dim.id = {{dim_id}}" in body.sql_query
+        # ON own-side qualified to the input view (query text; unambiguous under join).
+        assert "LEFT JOIN cat.sch.dim ON cat.sch.dim.id = {{input_view}}.{{dim_id}}" in body.sql_query
+        # SELECT projects the qualified source aliased back to the bare merge name.
+        assert "SELECT {{input_view}}.{{dim_id}} AS {{dim_id}}," in body.sql_query
+
+
+class TestJoinColumnQualification:
+    """Own-table columns are qualified to the input view when a rule has joins,
+    so a joined table sharing the column name doesn't cause AMBIGUOUS_REFERENCE —
+    WITHOUT breaking ``merge_columns`` (which must stay bare). Regression for the
+    reported ``[AMBIGUOUS_REFERENCE] customer_id`` and the v1 fix's
+    ``[INVALID_IDENTIFIER] {{input_view}}.customer_id`` follow-on.
+    """
+
+    _JOIN = [
+        {
+            "join_type": "INNER",
+            "target_table": "dqx.dqx_studio_demo.customers",
+            "keys": [{"joined_column": "customer_id", "column_ref": "customer_id"}],
+        }
+    ]
+
+    def test_no_join_predicate_is_byte_identical(self):
+        # Without joins nothing is qualified — the predicate stays exactly as before.
+        body = compile_lowcode_body(_ast([_row(column_ref="amount", operator=">", value=0)]), "")
+        assert body.predicate == "{{amount}} > 0"
+        assert body.sql_query is None
+        assert "input_view" not in (body.predicate or "")
+
+    def test_join_predicate_own_column_qualified(self):
+        body = compile_lowcode_body(_ast([_row(column_ref="customer_id", operator=">", value=0)], self._JOIN), "")
+        assert body.sql_query is not None
+        # predicate own column qualified to the input view
+        assert "NOT ({{input_view}}.{{customer_id}} > 0)" in body.sql_query
+        # ON own-side qualified; joined side raw
+        assert (
+            "ON dqx.dqx_studio_demo.customers.customer_id = {{input_view}}.{{customer_id}}" in body.sql_query
+        )
+        # SELECT projects qualified source aliased back to bare merge name
+        assert "SELECT {{input_view}}.{{customer_id}} AS {{customer_id}}," in body.sql_query
+        # merge_columns BARE
+        assert body.merge_columns == ["{{customer_id}}"]
+
+    def test_join_joined_table_column_stays_raw(self):
+        body = compile_lowcode_body(
+            _ast([_row(column_ref="dqx.dqx_studio_demo.customers.tier", operator="=", value="gold")], self._JOIN),
+            "",
+        )
+        assert body.sql_query is not None
+        assert "dqx.dqx_studio_demo.customers.tier" in body.sql_query
+        # never double-qualify a dotted column
+        assert "{{input_view}}.dqx.dqx_studio_demo.customers.tier" not in body.sql_query
+
+    def test_col_ref_value_qualified_under_join(self):
+        # item 42: a $col value on the RHS is an own column too -> qualified under a join.
+        body = compile_lowcode_body(
+            _ast([_row(column_ref="start_date", operator="before", value={"$col": "end_date"})], self._JOIN),
+            "",
+        )
+        assert body.sql_query is not None
+        assert "{{input_view}}.{{start_date}} < {{input_view}}.{{end_date}}" in body.sql_query
+
+    @staticmethod
+    def _simulate_substitution(sql_query: str, merge_columns: list[str]) -> tuple[str, list[str]]:
+        """Reproduce BOTH runtime substitution layers to prove the final SQL is valid.
+
+        Layer 1 (app materializer ``_substitute_text``): replace ``{{col}}`` slots
+        in the query text AND merge_columns; it does NOT touch ``{{input_view}}``.
+        Layer 2 (DQX library ``sql_query`` ``_replace_template``): replace
+        ``{{input_view}}`` in the query TEXT ONLY. This is the end-to-end check the
+        v1 fix lacked — v1 passed compiler-output unit tests but produced an
+        invalid ``merge_columns`` at runtime.
+        """
+        import re
+
+        cols = ["customer_id", "start_date", "end_date", "region"]
+
+        def app(text: str) -> str:
+            for c in cols:
+                text = text.replace("{{" + c + "}}", c)
+            return text
+
+        q1 = app(sql_query)
+        mc1 = [app(c) for c in merge_columns]
+        view = "customer_id_query_condition_violation_input_view_deadbeef"
+        q2 = re.sub(r"\{\{\s*input_view\s*\}\}", view, q1)
+        return q2, mc1
+
+    def test_end_to_end_substitution_yields_valid_sql(self):
+        body = compile_lowcode_body(_ast([_row(column_ref="customer_id", operator=">", value=0)], self._JOIN), "")
+        assert body.sql_query is not None
+        final_query, final_merge = self._simulate_substitution(body.sql_query, body.merge_columns or [])
+        # No residual placeholders anywhere in the executed query.
+        assert "{{" not in final_query and "}}" not in final_query
+        # merge_columns are BARE column names (valid for df.select / df.join(on=)).
+        assert final_merge == ["customer_id"]
+        assert all("{{" not in c and "." not in c for c in final_merge)
+        # Own column resolved qualified against the unique view (no ambiguity).
+        assert "customer_id_query_condition_violation_input_view_deadbeef.customer_id" in final_query
 
 
 class TestUsabilityAndTokens:
