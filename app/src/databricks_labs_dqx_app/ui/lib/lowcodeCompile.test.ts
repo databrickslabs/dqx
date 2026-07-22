@@ -1,14 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildSqlBody,
   compileAstToSql,
   compileJoinsToSql,
   compileLowcodeBody,
   lowcodeHasAdvancedShape,
   pruneStaleGroupByRefs,
+  rowStrandedByRetype,
 } from "./lowcodeCompile";
 import type { LowcodeColumnRef } from "./lowcodeCompile";
-import type { AnyRow, JoinAst, LowcodeAstV2 } from "./lowcodeAst";
-import { OPERATORS_BY_FAMILY } from "./lowcodeOperators";
+import { renameColumnInAst, type AnyRow, type JoinAst, type LowcodeAstV2 } from "./lowcodeAst";
+import { OPERATORS_BY_FAMILY, operatorAllowsColumnRef, type Family } from "./lowcodeOperators";
 
 // Unit tests for the low-code -> SQL compiler. This is the sole guard against
 // the class of bug that shipped the Advanced (joins / group-by) paths broken:
@@ -111,6 +113,41 @@ describe("operator SQL", () => {
     ["on or before", "2020-01-01", "{{c}} <= '2020-01-01'"],
     ["on or after", "2020-01-01", "{{c}} >= '2020-01-01'"],
     ["is in last", { number: 7, unit: "days" }, "{{c}} >= current_timestamp() - INTERVAL '7 days'"],
+    // Length
+    ["has length", 5, "length({{c}}) = 5"],
+    ["is longer than", 3, "length({{c}}) > 3"],
+    ["is shorter than", 8, "length({{c}}) < 8"],
+    ["length between", [2, 4], "length({{c}}) BETWEEN 2 AND 4"],
+    ["is not empty", null, "length(trim({{c}})) > 0"],
+    ["is empty", null, "length(trim({{c}})) = 0"],
+    // Text pattern / format
+    ["does not match regex", "^a$", "NOT ({{c}} RLIKE '^a$')"],
+    ["contains only digits", null, "{{c}} RLIKE '^[0-9]+$'"],
+    ["is uppercase", null, "{{c}} = upper({{c}})"],
+    ["is lowercase", null, "{{c}} = lower({{c}})"],
+    [
+      "is a valid uuid",
+      null,
+      "{{c}} RLIKE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'",
+    ],
+    [
+      "is a valid ipv4",
+      null,
+      "{{c}} RLIKE '^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])$'",
+    ],
+    // Numeric predicates
+    ["is positive", null, "{{c}} > 0"],
+    ["is negative", null, "{{c}} < 0"],
+    ["is non-negative", null, "{{c}} >= 0"],
+    ["is a whole number", null, "{{c}} = round({{c}})"],
+    ["is a multiple of", 5, "mod({{c}}, 5) = 0"],
+    // Temporal predicates
+    ["is in the future", null, "{{c}} > current_timestamp()"],
+    ["is in the past", null, "{{c}} < current_timestamp()"],
+    ["is today", null, "to_date({{c}}) = current_date()"],
+    // AI (Foundation Model)
+    ["has positive sentiment", null, "ai_analyze_sentiment({{c}}) = 'positive'"],
+    ["has negative sentiment", null, "ai_analyze_sentiment({{c}}) = 'negative'"],
   ];
 
   for (const [operator, value, expected] of OPERATOR_SQL) {
@@ -130,6 +167,13 @@ describe("operator SQL", () => {
     };
     expect(compileAstToSql(ast([agg]))).toBe("COUNT({{id}}) > 1");
   });
+
+  test("passes luhn check uses the built-in luhn_check with a normalized-digit length guard", () => {
+    const sql = compileAstToSql(ast([row({ column_ref: "card", operator: "passes luhn check", value: null })]));
+    // Non-digits are stripped (luhn_check returns false on any non-digit) and
+    // the length guard rejects empty input (which would trivially pass Luhn).
+    expect(sql).toBe("length(regexp_replace({{card}}, '[^0-9]', '')) > 0 AND luhn_check(regexp_replace({{card}}, '[^0-9]', ''))");
+  });
 });
 
 // Locks the type-dependent catalogue ported from dqlake (item 3): each family
@@ -138,8 +182,24 @@ describe("operator SQL", () => {
 // fails loudly rather than silently shipping an operator the compiler can't
 // emit SQL for.
 describe("OPERATORS_BY_FAMILY — ported dqlake catalogue", () => {
-  test("each family exposes exactly the dqlake operator set", () => {
-    expect(OPERATORS_BY_FAMILY.NUMERIC).toEqual(["between", "=", "!=", ">=", ">", "<=", "<", "in", "not in"]);
+  test("each family exposes exactly its operator set", () => {
+    expect(OPERATORS_BY_FAMILY.NUMERIC).toEqual([
+      "between",
+      "=",
+      "!=",
+      ">=",
+      ">",
+      "<=",
+      "<",
+      "in",
+      "not in",
+      "is positive",
+      "is negative",
+      "is non-negative",
+      "is a whole number",
+      "is a multiple of",
+      "passes luhn check",
+    ]);
     expect(OPERATORS_BY_FAMILY.TEXTUAL).toEqual([
       "equals",
       "not equals",
@@ -150,10 +210,25 @@ describe("OPERATORS_BY_FAMILY — ported dqlake catalogue", () => {
       "in",
       "not in",
       "matches regex",
+      "does not match regex",
+      "has length",
+      "is longer than",
+      "is shorter than",
+      "length between",
+      "is not empty",
+      "is empty",
+      "contains only digits",
+      "is uppercase",
+      "is lowercase",
+      "is a valid uuid",
+      "is a valid ipv4",
+      "passes luhn check",
       "has leading or trailing whitespace",
       "has no leading or trailing whitespace",
       "is a valid",
       "is not a valid",
+      "has positive sentiment",
+      "has negative sentiment",
     ]);
     expect(OPERATORS_BY_FAMILY.TEMPORAL).toEqual([
       "on or after",
@@ -162,19 +237,33 @@ describe("OPERATORS_BY_FAMILY — ported dqlake catalogue", () => {
       "before",
       "between",
       "is in last",
+      "is in the future",
+      "is in the past",
+      "is today",
       "=",
       "!=",
     ]);
     expect(OPERATORS_BY_FAMILY.BOOLEAN).toEqual(["is true", "is false"]);
-    expect(OPERATORS_BY_FAMILY.ANY).toEqual(["is null", "is not null", "=", "!=", "in", "not in"]);
+    expect(OPERATORS_BY_FAMILY.ANY).toEqual([
+      "is null",
+      "is not null",
+      "=",
+      "!=",
+      "in",
+      "not in",
+      "is not empty",
+      "is empty",
+    ]);
   });
 
   test("every catalogue operator compiles to non-empty SQL (no unhandled arm)", () => {
     const sampleValue = (op: string): unknown => {
-      if (op === "between") return [1, 2];
+      if (op === "between" || op === "length between") return [1, 2];
       if (op === "in" || op === "not in") return ["a"];
       if (op === "is in last") return { number: 1, unit: "days" };
       if (op === "is a valid" || op === "is not a valid") return "int";
+      if (op === "has length" || op === "is longer than" || op === "is shorter than" || op === "is a multiple of")
+        return 3;
       return "x";
     };
     const all = new Set(Object.values(OPERATORS_BY_FAMILY).flat());
@@ -317,5 +406,304 @@ describe("pruneStaleGroupByRefs", () => {
     const withJoinKey: LowcodeColumnRef[] = [...declared, col("orders.total")];
     const value = "{{region}}, orders.total";
     expect(pruneStaleGroupByRefs(value, withJoinKey)).toBe(value);
+  });
+});
+
+describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without corruption", () => {
+  const CROSS_TABLE_QUERY =
+    "SELECT {{customer_id}}, (NOT ({{amount}} > 0)) AS condition " +
+    "FROM {{input_view}} LEFT JOIN c.s.orders ON c.s.orders.cid = {{customer_id}}";
+
+  test("loaded cross-table rule, unedited resave -> stays sql_query (current text)", () => {
+    // No-edit resave reopens with sqlJoins=[] and the full SELECT in the editor.
+    // It must be persisted as sql_query, NOT flipped into { predicate: <SELECT> }.
+    const body = buildSqlBody({
+      sqlPredicate: CROSS_TABLE_QUERY,
+      sqlJoins: [],
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.sql_query).toBe(CROSS_TABLE_QUERY);
+    expect(body.predicate).toBeUndefined();
+  });
+
+  test("loaded cross-table rule, EDITED query text -> saves the edit AS sql_query (not sql_expression)", () => {
+    // The literal edit+resave case: the author tweaks the loaded SELECT. As long
+    // as the rule is still a loaded cross-table query, the edited text is saved
+    // as sql_query — never downgraded to a broken sql_expression.
+    const edited = CROSS_TABLE_QUERY.replace("> 0", "> 100");
+    const body = buildSqlBody({
+      sqlPredicate: edited,
+      sqlJoins: [],
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.sql_query).toBe(edited);
+    expect(body.predicate).toBeUndefined();
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("passthrough preserves merge_columns (row-level merge, not dataset-level)", () => {
+    const body = buildSqlBody({
+      sqlPredicate: CROSS_TABLE_QUERY,
+      sqlJoins: [],
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("passthrough without merge_columns stays dataset-level (no merge_columns key)", () => {
+    const q = "SELECT (NOT (COUNT(*) > 0)) AS condition FROM {{input_view}} CROSS JOIN c.s.dim";
+    const body = buildSqlBody({ sqlPredicate: q, sqlJoins: [], sqlQueryPassthrough: {} });
+    expect(body.sql_query).toBe(q);
+    expect(body.merge_columns).toBeUndefined();
+  });
+
+  test("joins re-declared -> recompiles a fresh sql_query from predicate + joins (passthrough ignored)", () => {
+    const joins: JoinAst[] = [
+      { join_type: "LEFT", target_table: "c.s.dim", keys: [{ joined_column: "id", column_ref: "customer_id" }] },
+    ];
+    const body = buildSqlBody({
+      sqlPredicate: "{{customer_id}} IS NOT NULL",
+      sqlJoins: joins,
+      sqlQueryPassthrough: { merge_columns: ["{{customer_id}}"] },
+    });
+    expect(body.sql_query).toBe(
+      "SELECT {{customer_id}}, (NOT ({{customer_id}} IS NOT NULL)) AS condition " +
+        "FROM {{input_view}} LEFT JOIN c.s.dim ON c.s.dim.id = {{customer_id}}",
+    );
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+  });
+
+  test("no joins, no passthrough -> plain single-table { predicate }", () => {
+    const body = buildSqlBody({ sqlPredicate: "{{email}} IS NOT NULL", sqlJoins: [] });
+    expect(body).toEqual({ predicate: "{{email}} IS NOT NULL" });
+  });
+
+  test("no joins, null passthrough (type changed away) -> falls back to { predicate }", () => {
+    expect(buildSqlBody({ sqlPredicate: "x > 0", sqlJoins: [], sqlQueryPassthrough: null })).toEqual({
+      predicate: "x > 0",
+    });
+  });
+
+  // Item 55: a SQL predicate authored WITH a join must become a runnable
+  // sql_query, not a bare predicate (which the backend renders as an
+  // unrunnable sql_expression).
+  test("bare boolean predicate + JOIN clause -> wraps into a dataset-level sql_query", () => {
+    const body = buildSqlBody({
+      sqlPredicate: "{{region}} IS NOT NULL\nLEFT JOIN c.s.dim a ON a.region = {{region}}",
+      sqlJoins: [],
+    });
+    expect(body.sql_query).toBe(
+      "SELECT (NOT ({{region}} IS NOT NULL)) AS condition FROM {{input_view}} LEFT JOIN c.s.dim a ON a.region = {{region}}",
+    );
+    expect(body.predicate).toBeUndefined();
+  });
+
+  test("a full SELECT … JOIN is persisted as sql_query as-is", () => {
+    const q = "SELECT (NOT (x > 0)) AS condition FROM {{input_view}} INNER JOIN c.s.d d ON d.k = {{k}}";
+    expect(buildSqlBody({ sqlPredicate: q, sqlJoins: [] })).toEqual({ sql_query: q });
+  });
+
+  test("bare 'JOIN' (defaults to INNER) is detected", () => {
+    const body = buildSqlBody({
+      sqlPredicate: "{{id}} IS NOT NULL JOIN c.s.d d ON d.id = {{id}}",
+      sqlJoins: [],
+    });
+    expect(body.sql_query).toContain("FROM {{input_view}} JOIN c.s.d d ON d.id = {{id}}");
+  });
+
+  test("a plain predicate with no join stays a { predicate } (sql_expression)", () => {
+    expect(buildSqlBody({ sqlPredicate: "{{amount}} > 0 AND {{amount}} < 1e9", sqlJoins: [] })).toEqual({
+      predicate: "{{amount}} > 0 AND {{amount}} < 1e9",
+    });
+  });
+
+  test("a '-- join ...' comment does NOT trip join detection", () => {
+    expect(buildSqlBody({ sqlPredicate: "{{a}} > 0 -- consider a join here", sqlJoins: [] })).toEqual({
+      predicate: "{{a}} > 0 -- consider a join here",
+    });
+  });
+
+});
+
+describe("item42: column-ref RHS in single-value operators", () => {
+  test("item42: comparison RHS column-ref emits {{col}} not a quoted literal", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "amount", operator: ">=", value: { $col: "credit_limit" } })])),
+    ).toBe("{{amount}} >= {{credit_limit}}");
+  });
+
+  test("item42: equals with a column-ref RHS compiles to = {{col}}", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "a", operator: "equals", value: { $col: "b" } })])),
+    ).toBe("{{a}} = {{b}}");
+  });
+
+  test("item42: temporal 'before' with a column-ref RHS compiles to < {{col}}", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "start_date", operator: "before", value: { $col: "end_date" } })])),
+    ).toBe("{{start_date}} < {{end_date}}");
+  });
+
+  test("item42: a qualified (join) column RHS emits raw table.col", () => {
+    expect(
+      compileAstToSql(ast([row({ column_ref: "amount", operator: ">=", value: { $col: "orders.total" } })])),
+    ).toBe("{{amount}} >= orders.total");
+  });
+
+  test("item42: literal RHS is unchanged (regression)", () => {
+    expect(compileAstToSql(ast([row({ column_ref: "amount", operator: ">=", value: 100 })]))).toBe(
+      "{{amount}} >= 100",
+    );
+  });
+});
+
+test("item42: between with a column upper bound mixes literal + {{col}}", () => {
+  expect(
+    compileAstToSql(ast([row({ column_ref: "x", operator: "between", value: [0, { $col: "cap" }] })])),
+  ).toBe("{{x}} BETWEEN 0 AND {{cap}}");
+});
+
+test("item42: 'in' with a column entry emits {{col}} alongside literals", () => {
+  expect(
+    compileAstToSql(ast([row({ column_ref: "code", operator: "in", value: ["A", { $col: "fallback_code" }] })])),
+  ).toBe("{{code}} IN ('A', {{fallback_code}})");
+});
+
+test("item42: length between literal bounds unchanged (regression)", () => {
+  expect(
+    compileAstToSql(ast([row({ column_ref: "name", operator: "length between", value: [1, 10] })])),
+  ).toBe("length({{name}}) BETWEEN 1 AND 10");
+});
+
+test("item42: a column-ref value survives JSON round-trip and still compiles", () => {
+  const original = ast([row({ column_ref: "amount", operator: ">=", value: { $col: "credit_limit" } })]);
+  const rehydrated = JSON.parse(JSON.stringify(original)) as typeof original;
+  expect(compileAstToSql(rehydrated)).toBe("{{amount}} >= {{credit_limit}}");
+});
+
+describe("operatorAllowsColumnRef", () => {
+  test("returns true for column-enabled single-value operators", () => {
+    expect(operatorAllowsColumnRef("<")).toBe(true);
+    expect(operatorAllowsColumnRef("<=")).toBe(true);
+    expect(operatorAllowsColumnRef(">")).toBe(true);
+    expect(operatorAllowsColumnRef(">=")).toBe(true);
+    expect(operatorAllowsColumnRef("=")).toBe(true);
+    expect(operatorAllowsColumnRef("!=")).toBe(true);
+    expect(operatorAllowsColumnRef("equals")).toBe(true);
+    expect(operatorAllowsColumnRef("not equals")).toBe(true);
+    expect(operatorAllowsColumnRef("before")).toBe(true);
+    expect(operatorAllowsColumnRef("after")).toBe(true);
+    expect(operatorAllowsColumnRef("on or before")).toBe(true);
+    expect(operatorAllowsColumnRef("on or after")).toBe(true);
+  });
+
+  test("returns true for range and set operators (column-enabled bounds/entries)", () => {
+    expect(operatorAllowsColumnRef("between")).toBe(true);
+    expect(operatorAllowsColumnRef("length between")).toBe(true);
+    expect(operatorAllowsColumnRef("in")).toBe(true);
+    expect(operatorAllowsColumnRef("not in")).toBe(true);
+  });
+
+  test("returns false for literal-only operators (LIKE / regex / length predicates)", () => {
+    expect(operatorAllowsColumnRef("contains")).toBe(false);
+    expect(operatorAllowsColumnRef("does not contain")).toBe(false);
+    expect(operatorAllowsColumnRef("starts with")).toBe(false);
+    expect(operatorAllowsColumnRef("ends with")).toBe(false);
+    expect(operatorAllowsColumnRef("matches regex")).toBe(false);
+    expect(operatorAllowsColumnRef("does not match regex")).toBe(false);
+    expect(operatorAllowsColumnRef("has length")).toBe(false);
+    expect(operatorAllowsColumnRef("is longer than")).toBe(false);
+    expect(operatorAllowsColumnRef("is shorter than")).toBe(false);
+    expect(operatorAllowsColumnRef("is a multiple of")).toBe(false);
+  });
+});
+
+describe("renameColumnInAst — slot rename propagation", () => {
+  const colRefRow = (over: Partial<AnyRow> = {}): AnyRow =>
+    ({ kind: "row", combinator: null, column_ref: "price", operator: "=", value: { $col: "cost" }, ...over }) as AnyRow;
+
+  test("rewrites the LHS column_ref stub", () => {
+    const before = ast([row({ column_ref: "email" })]);
+    const after = renameColumnInAst(before, "email", "contact_email");
+    expect(after.rows[0].column_ref).toBe("contact_email");
+  });
+
+  test("rewrites a { $col } RHS value", () => {
+    const after = renameColumnInAst(ast([colRefRow()]), "cost", "list_cost");
+    expect(after.rows[0].value).toEqual({ $col: "list_cost" });
+    expect(after.rows[0].column_ref).toBe("price"); // LHS untouched
+  });
+
+  test("rewrites both LHS and RHS in a single row", () => {
+    const after = renameColumnInAst(ast([colRefRow({ column_ref: "x", value: { $col: "x" } })]), "x", "y");
+    expect(after.rows[0].column_ref).toBe("y");
+    expect(after.rows[0].value).toEqual({ $col: "y" });
+  });
+
+  test("rewrites join key column_refs", () => {
+    const joins: JoinAst[] = [
+      { join_type: "INNER", target_table: "cat.sch.dim", keys: [{ joined_column: "id", column_ref: "region" }] },
+    ];
+    const after = renameColumnInAst(ast([row()], joins), "region", "region_code");
+    expect(after.joins[0].keys[0].column_ref).toBe("region_code");
+    expect(after.joins[0].keys[0].joined_column).toBe("id"); // joined side untouched
+  });
+
+  test("no-op when the old name is absent (structurally equal)", () => {
+    const before = ast([row({ column_ref: "email" })]);
+    const after = renameColumnInAst(before, "missing", "whatever");
+    expect(after).toEqual(before);
+  });
+
+  test("no-op when old === new (returns same reference)", () => {
+    const before = ast([row({ column_ref: "email" })]);
+    expect(renameColumnInAst(before, "email", "email")).toBe(before);
+  });
+
+  test("leaves literal values and qualified refs alone", () => {
+    const before = ast([row({ column_ref: "amount", operator: "=", value: 5 })]);
+    const after = renameColumnInAst(before, "other", "renamed");
+    expect(after.rows[0].value).toBe(5);
+  });
+});
+
+describe("rowStrandedByRetype — retype stranding predicate", () => {
+  const lookup = (m: Record<string, Family>) => (name: string): Family | undefined => m[name];
+
+  test("LHS: operator no longer offered for the new family strands the row", () => {
+    const r = row({ column_ref: "code", operator: "contains", value: "x" });
+    expect(rowStrandedByRetype(r, "code", "NUMERIC", "TEXTUAL", lookup({}))).toBe(true);
+  });
+
+  test("LHS: operator still valid for the new family does not strand", () => {
+    const r = row({ column_ref: "code", operator: "is not null", value: null });
+    expect(rowStrandedByRetype(r, "code", "NUMERIC", "TEXTUAL", lookup({}))).toBe(false);
+  });
+
+  test("RHS { $col }: retype breaks family match with LHS -> stranded", () => {
+    const r = row({ column_ref: "price", operator: "=", value: { $col: "cost" } });
+    // LHS price is NUMERIC, cost is being retyped to TEXTUAL -> mismatch.
+    expect(rowStrandedByRetype(r, "cost", "TEXTUAL", "NUMERIC", lookup({ price: "NUMERIC" }))).toBe(true);
+  });
+
+  test("RHS { $col }: retype keeps family match -> not stranded", () => {
+    const r = row({ column_ref: "price", operator: "=", value: { $col: "cost" } });
+    expect(rowStrandedByRetype(r, "cost", "NUMERIC", "TEMPORAL", lookup({ price: "NUMERIC" }))).toBe(false);
+  });
+
+  test("RHS { $col }: LHS family ANY never strands", () => {
+    const r = row({ column_ref: "anything", operator: "=", value: { $col: "cost" } });
+    expect(rowStrandedByRetype(r, "cost", "TEXTUAL", "NUMERIC", lookup({ anything: "ANY" }))).toBe(false);
+  });
+
+  test("RHS { $col }: unresolvable LHS falls back to differing-from-old", () => {
+    const r = row({ column_ref: "gone", operator: "=", value: { $col: "cost" } });
+    expect(rowStrandedByRetype(r, "cost", "TEXTUAL", "NUMERIC", lookup({}))).toBe(true);
+    expect(rowStrandedByRetype(r, "cost", "NUMERIC", "NUMERIC", lookup({}))).toBe(false);
+  });
+
+  test("row not referencing the retyped slot is never stranded", () => {
+    const r = row({ column_ref: "other", operator: "contains", value: "x" });
+    expect(rowStrandedByRetype(r, "code", "NUMERIC", "TEXTUAL", lookup({}))).toBe(false);
   });
 });

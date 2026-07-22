@@ -3,7 +3,7 @@ import type * as React from "react";
 import { QueryErrorResetBoundary, keepPreviousData } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import { Trans, useTranslation } from "react-i18next";
-import { ChevronDown, Loader2, Search } from "lucide-react";
+import { ChevronDown, Loader2, MessageSquare, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,12 +24,14 @@ import {
 } from "@/lib/api";
 import selector from "@/lib/selector";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
+import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 import { GenieChatProvider } from "@/components/results/AskGenieButton";
 import { ScoreBox } from "@/components/results/ScoreBox";
 import { RunPicker } from "@/components/results/RunPicker";
 import { RunModeSelect, includeDraftsParam } from "@/components/results/RunModeSelect";
 import { RunReviewStatusPanel } from "@/components/RunReviewStatusPanel";
-import { CommentThread } from "@/components/CommentThread";
+import { CommentsDialog } from "@/components/CommentThread";
+import { useListComments } from "@/lib/api-custom";
 import { RunInProgressBanner } from "@/components/results/RunInProgressBanner";
 import { CollapsibleSection } from "@/components/results/CollapsibleSection";
 import { CollapseRegion } from "@/components/results/CollapseRegion";
@@ -59,7 +61,7 @@ import { toCountSeries } from "@/components/results/countSeries";
  *  surfaces (product/global/rule — see MultiTableResults); this single-table
  *  tab never toggles it (a table facet is meaningless on a one-table scope),
  *  so its `filters.table` stays empty and the param is never sent. */
-export type Facet = "dimension" | "severity" | "rule" | "column" | "table";
+export type Facet = "dimension" | "severity" | "rule" | "column" | "table" | "catalog" | "schema";
 
 /** Help text shown behind the "?" icon on the two count charts. The rule /
  *  check / test terms are bold so the distinction reads at a glance. */
@@ -83,6 +85,11 @@ export type MultiFilters = {
   column: string[];
   /** Table FQNs (P7.2) — the multi-table surfaces' By-table cross-filter. */
   table: string[];
+  /** Catalog names — Global Results hierarchical scope (catalog → schema →
+   *  table). Unlike `table`, these narrow the By-table box too. */
+  catalog: string[];
+  /** Two-part `catalog.schema` identities — see backend `schema_of`. */
+  schema: string[];
   runId?: string | null;
 };
 
@@ -92,6 +99,8 @@ export const EMPTY_FILTERS: MultiFilters = {
   rule: [],
   column: [],
   table: [],
+  catalog: [],
+  schema: [],
 };
 
 /** Toggle a value in a facet's multi-select set: add if absent, remove if
@@ -108,10 +117,11 @@ export function toggleFacet(
   return { ...filters, [facet]: next };
 }
 
-/** undefined when the array is empty, else the array — so an empty facet is
- *  omitted from the query params (and stays backward-compatible). */
-function orUndef(values: string[]): string[] | undefined {
-  return values.length ? values : undefined;
+/** undefined when the array is empty or absent, else the array — so an empty
+ *  (or not-yet-present) facet is omitted from the query params and stays
+ *  backward-compatible with older/partial filter objects. */
+function orUndef(values: string[] | undefined): string[] | undefined {
+  return values && values.length ? values : undefined;
 }
 
 /** The facet chips → query params mapping shared by every FILTERED query on
@@ -125,6 +135,8 @@ export function facetQueryParams(filters: MultiFilters): {
   rule?: string[];
   column?: string[];
   table?: string[];
+  catalog?: string[];
+  schema?: string[];
 } {
   return {
     dimension: orUndef(filters.dimension),
@@ -134,6 +146,10 @@ export function facetQueryParams(filters: MultiFilters): {
     // Only ever populated on the multi-table surfaces; the single-table
     // endpoints don't accept it and this tab never sets it.
     table: orUndef(filters.table),
+    // Catalog/schema are Global-Results-only (only that endpoint accepts
+    // them); every other surface leaves them empty, so they drop out here.
+    catalog: orUndef(filters.catalog),
+    schema: orUndef(filters.schema),
   };
 }
 
@@ -338,14 +354,16 @@ function FacetSearch({
 }
 
 /** Facet → chip-label i18n key (static keys so the extractor sees them).
- *  `table` never chips on this tab (the facet is multi-table-surface-only)
- *  but the Record must cover the union. */
+ *  `table`/`catalog`/`schema` never chip on this single-table tab (those
+ *  facets are multi-table-surface-only) but the Record must cover the union. */
 const CHIP_LABEL_KEYS: Record<Facet, string> = {
   dimension: "resultsUi.chipDimension",
   severity: "resultsUi.chipSeverity",
   rule: "resultsUi.chipRule",
   column: "resultsUi.chipColumn",
   table: "resultsUi.chipTable",
+  catalog: "resultsUi.chipCatalog",
+  schema: "resultsUi.chipSchema",
 };
 
 function ResultsBody({
@@ -362,6 +380,7 @@ function ResultsBody({
   runInProgress?: boolean;
 }) {
   const { t } = useTranslation();
+  const thresholdEnabled = usePassThresholdEnabled();
   const [filters, setFilters] = useState<MultiFilters>(EMPTY_FILTERS);
   // Run mode: "Published only" (default) or "Published + Draft". Per-surface
   // state — every dq-results query on THIS tab gets `include_drafts` from it
@@ -380,6 +399,7 @@ function ResultsBody({
   const [colSearch, setColSearch] = useState("");
   // Shared collapse state — each boolean drives BOTH members of a pair so the
   // chevron on either one toggles them together.
+  const [showComments, setShowComments] = useState(false);
   const [scoreBreakdownOpen, setScoreBreakdownOpen] = useState(true);
   const [countChartsOpen, setCountChartsOpen] = useState(false);
   const [ruleColOpen, setRuleColOpen] = useState(true);
@@ -420,6 +440,13 @@ function ResultsBody({
   );
   const latestRunId = runs[0]?.run_id;
   const effectiveRunId = filters.runId ?? latestRunId;
+  // Comment count badge for the run comments trigger (items 8+29).
+  const { data: runCommentsResp } = useListComments(
+    "run",
+    effectiveRunId ?? "",
+    { query: { enabled: Boolean(effectiveRunId) } },
+  );
+  const runCommentCount = runCommentsResp?.data?.length ?? 0;
   // Failed-records run scope: the picked run, or omitted for "Latest" (the
   // backend resolves the latest run — records are per-run, never stacked).
   const failedRowsRunId = failedRowsRunParam(filters.runId, latestRunId);
@@ -482,6 +509,21 @@ function ResultsBody({
     by_rule: baseTable?.by_rule ?? [],
     by_column: baseTable?.by_column ?? [],
   };
+  // Rule name → breach criticality, for the failing-records cell hover's ⚠.
+  // Keyed by the by_rule row LABEL (the display rule name), which is what the
+  // failures carry as rule_name. Only breached rows contribute; suppressed when
+  // the threshold feature is off. Built from the base (unfiltered) rows so the
+  // hover reflects each rule's own breach regardless of the active drilldown
+  // filter.
+  const breachedRuleCriticality: Record<string, string> = {};
+  if (thresholdEnabled) {
+    for (const r of base.by_rule) {
+      if (r.breached && r.label && (r.breach_criticality === "error" || r.breach_criticality === "warn")) {
+        breachedRuleCriticality[r.label] = r.breach_criticality;
+      }
+    }
+  }
+
   const hasActiveFilter =
     filters.dimension.length > 0 ||
     filters.severity.length > 0 ||
@@ -545,6 +587,14 @@ function ResultsBody({
       rule_count: g.rule_count ?? null,
       check_count: g.check_count ?? null,
       total_tests: g.total_tests ?? null,
+      // Carry the per-row breach flag + criticality through so DimensionBreakdown
+      // can render the BreachIcon on each breached facet row (by dimension /
+      // severity / rule / column). Omitting these — as this mapper previously
+      // did — left r.breached undefined, so the icon never rendered on the
+      // single-table results page even though the API stamps them on every
+      // GroupRowOut. Mirrors MultiTableResults' toRows.
+      breached: g.breached ?? false,
+      breach_criticality: g.breach_criticality ?? null,
     }));
 
   // Build the rows + muted-label set for one facet box.
@@ -637,24 +687,46 @@ function ResultsBody({
     { key: "failed_records", label: "Rows" },
   ]);
 
-  // #65: mark the runs where the binding version incremented vs the previous
-  // point. The overall trend is sorted ascending by run; a point carries the
-  // version active as-of its run (backend-stamped), so a strict increase is a
-  // new approval. Kept subtle and only on this single-table overall trend.
+  // #65: mark the run where each binding version FIRST becomes active. The
+  // overall trend is sorted ascending by run; a point carries the version
+  // active as-of its run (backend-stamped). Emitting a marker at the first
+  // appearance of every distinct version — not only on increases from a prior
+  // non-null version — means v1 (a table's first approval) gets a marker too,
+  // not just v2+. Version 0 is the pre-freeze baseline ("before any approval"),
+  // so it never earns a marker. Kept subtle and only on this single-table trend.
   const versionMarkers: Array<{ run_date: string; label: string }> = [];
   {
-    let prevVersion: number | null = null;
+    const seen = new Set<number>();
     for (const point of trend?.trend ?? []) {
       const version = point.version ?? null;
-      if (version != null && prevVersion != null && version > prevVersion && point.run_date) {
-        versionMarkers.push({
-          run_date: String(point.run_date),
-          label: t("resultsUi.versionMarker", { version }),
-        });
-      }
-      if (version != null) prevVersion = version;
+      if (version == null || version < 1 || !point.run_date) continue;
+      if (seen.has(version)) continue;
+      seen.add(version);
+      versionMarkers.push({
+        run_date: String(point.run_date),
+        label: t("resultsUi.versionMarker", { version }),
+      });
     }
   }
+
+  // Breach markers on the single-table overall trend: a ⚠ icon at each run whose
+  // pass rate breached its (frozen per-run) threshold. score = pass_rate * 100
+  // so the icon anchors to the plotted point. Suppressed when the feature is off.
+  const breachMarkers = thresholdEnabled
+    ? (trend?.trend ?? []).flatMap((p) => {
+        if (!p.breached) return [];
+        const crit = p.breach_criticality;
+        if (crit !== "error" && crit !== "warn") return [];
+        const rate = toNum(p.pass_rate);
+        return [
+          {
+            run_date: String(p.run_date ?? ""),
+            criticality: crit as "error" | "warn",
+            score: rate == null ? null : rate * 100,
+          },
+        ];
+      })
+    : [];
 
   // Rule chips may carry a registry rule_id as their value — show the
   // matching by_rule row's (newest-run) label instead of the opaque id.
@@ -723,6 +795,7 @@ function ResultsBody({
             runs={runs}
             value={filters.runId ?? null}
             onChange={(id) => setFilters((f) => ({ ...f, runId: id }))}
+            breachEnabled={thresholdEnabled}
           />
         </div>
         <div className="sm:pr-2">
@@ -735,6 +808,7 @@ function ResultsBody({
               totalTests={totalTests}
               trend={scoreTrend}
               info={COUNT_INFO}
+              breachCriticality={thresholdEnabled ? selectedRun?.breach_criticality : null}
             />
           )}
         </div>
@@ -749,11 +823,31 @@ function ResultsBody({
           Runs History's expanded rows — so the steward can set the review
           status and discuss the run without leaving the page. */}
       {effectiveRunId && (
-        <div className="space-y-4 rounded-lg border bg-card p-4">
-          <RunReviewStatusPanel runId={effectiveRunId} />
-          <div className="border-t pt-4">
-            <CommentThread entityType="run" entityId={effectiveRunId} />
-          </div>
+        <div className="rounded-lg border bg-card p-4">
+          <RunReviewStatusPanel
+            runId={effectiveRunId}
+            trailingAction={
+              <button
+                type="button"
+                onClick={() => setShowComments(true)}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors ml-auto"
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                {t("commentThread.showComments")} {t("commentThread.commentsSuffix")}
+                {runCommentCount > 0 && (
+                  <span className="rounded-full bg-muted px-1.5 py-px text-[10px] font-medium">
+                    {runCommentCount}
+                  </span>
+                )}
+              </button>
+            }
+          />
+          <CommentsDialog
+            entityType="run"
+            entityId={effectiveRunId}
+            open={showComments}
+            onOpenChange={setShowComments}
+          />
         </div>
       )}
 
@@ -764,6 +858,7 @@ function ResultsBody({
               data={toTrend(trend?.trend)}
               title={t("resultsUi.overallDqScoreTitle")}
               versionMarkers={versionMarkers}
+              breachMarkers={breachMarkers}
             />
           </ChartFrame>
           <div className="grid gap-6 md:grid-cols-2">
@@ -832,6 +927,7 @@ function ResultsBody({
               colorMap={dimColors}
               selected={filters.dimension}
               onSelect={(label) => onRowToggle("dimension", label)}
+              breachEnabled={thresholdEnabled}
             />
             <DimensionBreakdown
               title={t("resultsUi.bySeverityTitle")}
@@ -842,6 +938,7 @@ function ResultsBody({
               colorMap={sevColors}
               selected={filters.severity}
               onSelect={(label) => onRowToggle("severity", label)}
+              breachEnabled={thresholdEnabled}
             />
             <DimensionBreakdown
               title={t("resultsUi.byRuleTitle")}
@@ -857,6 +954,7 @@ function ResultsBody({
               collapsed={!ruleColOpen}
               onToggleCollapse={() => setRuleColOpen((o) => !o)}
               pageSize={8}
+              breachEnabled={thresholdEnabled}
               headerRight={
                 <FacetSearch
                   label={t("resultsUi.facetRule")}
@@ -876,6 +974,7 @@ function ResultsBody({
               onSelect={(label) => onRowToggle("column", label)}
               collapsed={!ruleColOpen}
               onToggleCollapse={() => setRuleColOpen((o) => !o)}
+              breachEnabled={thresholdEnabled}
               headerRight={
                 <FacetSearch
                   label={t("resultsUi.facetColumn")}
@@ -927,6 +1026,7 @@ function ResultsBody({
                   severityColors={sevColors}
                   severityRanks={sevRanks}
                   dimensionColors={dimColors}
+                  breachedRuleCriticality={breachedRuleCriticality}
                 />
               )}
             </CollapseRegion>

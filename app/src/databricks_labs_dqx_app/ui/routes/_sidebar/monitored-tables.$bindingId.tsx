@@ -47,12 +47,15 @@ import {
   Clock,
   Columns3,
   Database,
+  Download,
   ExternalLink,
+  GitCompare,
   History,
   Info,
   KeyRound,
   LineChart,
   Loader2,
+  MessageSquare,
   MoreVertical,
   Play,
   Plus,
@@ -62,6 +65,7 @@ import {
   Send,
   Sparkles,
   Trash2,
+  Undo2,
   X,
   XCircle,
 } from "lucide-react";
@@ -78,6 +82,7 @@ import {
   useSubmitMonitoredTable,
   useApproveMonitoredTable,
   useRejectMonitoredTable,
+  useRevertMonitoredTable,
   useSaveAppliedRules,
   useListRegistryRules,
   useGetTableColumns,
@@ -108,7 +113,7 @@ import {
 import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
-import { CommentThread } from "@/components/CommentThread";
+import { CommentsDialog } from "@/components/CommentThread";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import {
@@ -117,13 +122,15 @@ import {
   useListPendingApplications,
   useWorkspaceHost,
 } from "@/lib/api-custom";
-import { ExportYamlMenu } from "@/components/ExportYamlMenu";
+import { ExportDialog } from "@/components/ExportDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { isRunStale, useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
 import { useMonitoredTableRunActivity } from "@/hooks/use-monitored-table-run-activity";
 import { useJobPolling } from "@/hooks/use-job-polling";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
+import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
+import { useDefaultPassThreshold } from "@/hooks/use-default-pass-threshold";
 import { formatDateShort } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
@@ -133,6 +140,10 @@ import { AiSuggestionDialog, type SuggestRulesState } from "@/components/apply-r
 import { suggestionKey } from "@/components/apply-rules/ai-suggestion-utils";
 import { RuleConfigCard, computeStatus } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
+import {
+  MonitoredTableDiffDialog,
+  type MonitoredTableDiffTarget,
+} from "@/components/drafts/ChangeDiffDialog";
 import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 import {
   RESERVED_SEVERITY_KEY,
@@ -140,6 +151,7 @@ import {
   computeRunGating,
   desiredApplicationsKey,
   extractApiError,
+  getRuleIdsForColumn,
   groupAppliedRulesByRuleId,
   mergeRuleRowGroup,
   nextLocalRowId,
@@ -332,36 +344,11 @@ function MonitoredTableDetailPage() {
     }
   }, [bindingId, appliedRules]);
 
-  const isDirty = desiredApplicationsKey(stagedRows) !== desiredApplicationsKey(baseline);
+  const adminDefaultThreshold = useDefaultPassThreshold();
+  const isDirty =
+    desiredApplicationsKey(stagedRows, adminDefaultThreshold) !==
+    desiredApplicationsKey(baseline, adminDefaultThreshold);
 
-  const runRuleMutation = useRunMonitoredTable();
-  const [runningRuleId, setRunningRuleId] = useState<string | null>(null);
-  const handleRunRule = useCallback(
-    (ruleId: string) => {
-      const source = table.status === "approved" && !isDirty ? "approved" : "draft";
-      setRunningRuleId(ruleId);
-      runRuleMutation.mutate(
-        { bindingId, data: { source, rule_ids: [ruleId] } },
-        {
-          onSuccess: (resp) => {
-            runActivity.registerRun(resp.data.run_set_id);
-            toast.success(t("monitoredTables.toastRunRuleStarted"), {
-              action: {
-                label: t("monitoredTables.toastRunStartedViewAction"),
-                onClick: () =>
-                  void navigate({ to: "/runs-history", search: { runSetId: resp.data.run_set_id } }),
-              },
-            });
-          },
-          onError: (err: unknown) => {
-            toast.error(extractApiError(err, t("monitoredTables.toastRunFailed")), { duration: 6000 });
-          },
-          onSettled: () => setRunningRuleId(null),
-        },
-      );
-    },
-    [bindingId, isDirty, navigate, runActivity, runRuleMutation, t, table.status],
-  );
   // Bypasses the nav guard right after a successful save/submit/approve so an
   // in-flight invalidate+refetch (which briefly leaves the page mid-settle)
   // can't fire a spurious "unsaved changes" prompt when the user JUST saved
@@ -377,9 +364,15 @@ function MonitoredTableDetailPage() {
   const submitMutation = useSubmitMonitoredTable();
   const approveMutation = useApproveMonitoredTable();
   const rejectMutation = useRejectMonitoredTable();
+  const revertMutation = useRevertMonitoredTable();
   const deleteMutation = useDeleteMonitoredTable();
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  // View-changes diff dialog target — mirrors the overview row's GitCompare
+  // action so the same review affordance is available on the detail banner.
+  const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
   const persistStagedRows = useCallback(
     () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
     [saveMutation, bindingId, stagedRows],
@@ -471,6 +464,20 @@ function MonitoredTableDetailPage() {
     );
   };
 
+  // Withdraw a pending submission back to draft — the author's counterpart to
+  // submit (reject is the approver's decision). Leaves no rejected audit trail.
+  const handleRevert = () => {
+    revertMutation.mutateAsync({ bindingId }).then(
+      () => {
+        toast.success(t("monitoredTables.toastReverted"));
+        invalidateLifecycleQueries();
+      },
+      (err: unknown) => {
+        toast.error(extractApiError(err, t("monitoredTables.toastRevertFailed")), { duration: 6000 });
+      },
+    );
+  };
+
   // Delete the binding, then leave for the list. `justSavedRef` bypasses the
   // unsaved-changes nav guard — staged edits on a just-deleted binding aren't
   // worth a "discard changes?" prompt.
@@ -497,6 +504,7 @@ function MonitoredTableDetailPage() {
     submitMutation.isPending ||
     approveMutation.isPending ||
     rejectMutation.isPending ||
+    revertMutation.isPending ||
     deleteMutation.isPending;
 
   // Nothing to resubmit: Save-as-draft is already disabled (no staged
@@ -607,13 +615,9 @@ function MonitoredTableDetailPage() {
                 {...computeRunGating(baseline.length, stagedRows.length)}
               />
             )}
-            <ExportYamlMenu
-              fetchDqx={() => exportMonitoredTable(bindingId, "dqx")}
-              fetchOdcs={() => exportMonitoredTable(bindingId, "odcs")}
-            />
-            {/* ⋮ menu — "View in Runs History" (all roles) + Delete (editors
-                only). Schedule moved back to its own tab (P25 item 1 reverted
-                P23 item 13). */}
+            {/* ⋮ menu — Export (DQX / ODCS) + "View in Runs History" (all
+                roles) + Delete (editors only). Export moved here off a
+                standalone header button. */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -627,6 +631,14 @@ function MonitoredTableDetailPage() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
+                  onClick={() => setExportOpen(true)}
+                  className="gap-2"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  {t("exportYaml.button")}…
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
                   onClick={() =>
                     void navigate({ to: "/runs-history", search: { tableFqn: table.table_fqn } })
                   }
@@ -635,18 +647,31 @@ function MonitoredTableDetailPage() {
                   <History className="h-3.5 w-3.5" />
                   {t("runsHistory.menuViewRuns")}
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setCommentsOpen(true)} className="gap-2">
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  {t("monitoredTables.actionComments")}
+                </DropdownMenuItem>
                 {perms.canCreateRules && (
-                  <DropdownMenuItem
-                    onClick={() => setDeleteConfirmOpen(true)}
-                    variant="destructive"
-                    className="gap-2"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    {t("monitoredTables.actionDelete")}
-                  </DropdownMenuItem>
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setDeleteConfirmOpen(true)}
+                      variant="destructive"
+                      className="gap-2"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {t("monitoredTables.actionDelete")}
+                    </DropdownMenuItem>
+                  </>
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+            <ExportDialog
+              open={exportOpen}
+              onOpenChange={setExportOpen}
+              fetchDqx={() => exportMonitoredTable(bindingId, "dqx")}
+              fetchOdcs={() => exportMonitoredTable(bindingId, "odcs")}
+            />
           </div>
         </div>
 
@@ -671,38 +696,72 @@ function MonitoredTableDetailPage() {
                   </p>
                 )}
               </div>
-              {perms.canApproveRules && (
-                <div className="flex items-center gap-2 ml-auto shrink-0">
+              <div className="flex items-center gap-2 ml-auto shrink-0">
+                {/* View changes — read-only diff of the pending vs. last-approved
+                    check set, matching the overview row's GitCompare action. */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={lifecycleBusy}
+                  onClick={() =>
+                    setDiffTarget({ bindingId, name: table.table_fqn, version: table.version ?? 0 })
+                  }
+                  className="gap-1.5 h-7 text-xs text-purple-700 border-purple-300 hover:bg-purple-50 dark:text-purple-300 dark:border-purple-700 dark:hover:bg-purple-950"
+                >
+                  <GitCompare className="h-3.5 w-3.5" />
+                  {t("rulesDrafts.diff.viewChanges")}
+                </Button>
+                {/* Revert — the author withdraws their own pending submission
+                    back to draft (authors-and-above; backend enforces owner). */}
+                {perms.canCreateRules && (
                   <Button
                     variant="outline"
                     size="sm"
                     disabled={lifecycleBusy}
-                    onClick={handleApprove}
-                    className="gap-1.5 h-7 text-xs text-emerald-700 border-emerald-400 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950"
+                    onClick={handleRevert}
+                    className="gap-1.5 h-7 text-xs text-amber-700 border-amber-400 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900"
                   >
-                    {approveMutation.isPending ? (
+                    {revertMutation.isPending ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
-                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      <Undo2 className="h-3.5 w-3.5" />
                     )}
-                    {t("monitoredTables.approveAction")}
+                    {t("monitoredTables.revertAction")}
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={lifecycleBusy}
-                    onClick={() => setRejectConfirmOpen(true)}
-                    className="gap-1.5 h-7 text-xs text-red-700 border-red-400 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
-                  >
-                    {rejectMutation.isPending ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <XCircle className="h-3.5 w-3.5" />
-                    )}
-                    {t("monitoredTables.rejectAction")}
-                  </Button>
-                </div>
-              )}
+                )}
+                {perms.canApproveRules && (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={lifecycleBusy}
+                      onClick={handleApprove}
+                      className="gap-1.5 h-7 text-xs text-emerald-700 border-emerald-400 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950"
+                    >
+                      {approveMutation.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      )}
+                      {t("monitoredTables.approveAction")}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={lifecycleBusy}
+                      onClick={() => setRejectConfirmOpen(true)}
+                      className="gap-1.5 h-7 text-xs text-red-700 border-red-400 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
+                    >
+                      {rejectMutation.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <XCircle className="h-3.5 w-3.5" />
+                      )}
+                      {t("monitoredTables.rejectAction")}
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -729,6 +788,8 @@ function MonitoredTableDetailPage() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           {/* Tab order (P23 item 14): About, Permissions first (View Data
@@ -775,7 +836,7 @@ function MonitoredTableDetailPage() {
           </div>
 
           <TabsContent value="about">
-            <AboutTab bindingId={bindingId} table={table} onColumnClick={handleColumnDeepLink} />
+            <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
           </TabsContent>
 
           {/* pt-4 matches the other tabs' top spacing (About/Schedule own it internally). */}
@@ -800,11 +861,6 @@ function MonitoredTableDetailPage() {
               stagedRows={stagedRows}
               setStagedRows={setStagedRows}
               canEdit={perms.canCreateRules}
-              canRunRules={perms.canRunRules}
-              isDirty={isDirty}
-              runInProgress={runActivity.hasActive || runRuleMutation.isPending}
-              runningRuleId={runningRuleId}
-              onRunRule={handleRunRule}
               initialJumpColumn={pendingColumnJump}
               onJumpColumnConsumed={() => setPendingColumnJump(null)}
             />
@@ -854,6 +910,13 @@ function MonitoredTableDetailPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <CommentsDialog
+        entityType="monitored_table"
+        entityId={bindingId}
+        open={commentsOpen}
+        onOpenChange={setCommentsOpen}
+      />
 
       <AlertDialog open={blocker.status === "blocked"}>
         <AlertDialogContent>
@@ -1195,11 +1258,9 @@ function ColumnTagsCell({ tags }: { tags: string[] }) {
 }
 
 function AboutTab({
-  bindingId,
   table,
   onColumnClick,
 }: {
-  bindingId: string;
   table: MonitoredTableOut;
   /** Deep-links to the Apply Rules "by column" lens, expanded to that
    *  column (item 1) — reuses the jump+expand handoff already wired
@@ -1432,13 +1493,6 @@ function AboutTab({
         <ViewDataTab tableFqn={table.table_fqn} />
       </section>
 
-      {/* Table-level notes (steward context, ownership, general discussion)
-          live here in About — moved off the header ⋮ menu. Run-specific
-          discussion instead lives with the run on the Results tab. */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold">{t("monitoredTables.commentsSectionTitle")}</h2>
-        <CommentThread entityType="monitored_table" entityId={bindingId} />
-      </section>
     </div>
   );
 }
@@ -1800,11 +1854,6 @@ function ApplyRulesTab({
   stagedRows,
   setStagedRows,
   canEdit,
-  canRunRules,
-  isDirty,
-  runInProgress,
-  runningRuleId,
-  onRunRule,
   initialJumpColumn,
   onJumpColumnConsumed,
 }: {
@@ -1819,11 +1868,6 @@ function ApplyRulesTab({
   stagedRows: AppliedRuleOut[];
   setStagedRows: (updater: (prev: AppliedRuleOut[]) => AppliedRuleOut[]) => void;
   canEdit: boolean;
-  canRunRules: boolean;
-  isDirty: boolean;
-  runInProgress: boolean;
-  runningRuleId: string | null;
-  onRunRule: (ruleId: string) => void;
   /** Column to land on when this tab is entered via the About-tab schema
    *  row's "deep link" (item 1 / P19-F chip-jump handoff, reused across
    *  tabs) — opens the by-column lens straight to that column's card. Radix
@@ -1845,6 +1889,10 @@ function ApplyRulesTab({
   // AddRulesDialog stages new rule(s), so the target card(s) auto-expand in
   // the by-rule lens instead of just scrolling into view.
   const [expandRuleIds, setExpandRuleIds] = useState<string[]>([]);
+  // Single-open accordion for the by-rule lens (item 26): exactly one card is
+  // expanded at a time, so opening one closes the others. Mirrors the
+  // by-column lens's `openColumnName`.
+  const [openRuleId, setOpenRuleId] = useState<string | null>(null);
   // 1-indexed page for the by-rule lens (item 51). Reset on search/filter
   // change below; jumped to the target rule's page when a card is
   // auto-expanded (after staging or a by-column "jump to rule").
@@ -2017,6 +2065,14 @@ function ApplyRulesTab({
   // these checked + disabled so they can't be applied twice (B2-115).
   const appliedRuleIds = useMemo(() => new Set(stagedRows.map((r) => r.rule_id)), [stagedRows]);
 
+  // When the dialog is opened from a specific column's "+ Add rule" CTA, only
+  // disable rules that are ALREADY mapped to that column — so a rule applied to
+  // column A is still selectable when adding to column B (item 4).
+  const appliedRuleIdsForDialog = useMemo(
+    () => (addColumnContext ? getRuleIdsForColumn(stagedRows, addColumnContext.name) : appliedRuleIds),
+    [stagedRows, addColumnContext, appliedRuleIds],
+  );
+
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
   const severityValues = useMemo(
@@ -2036,6 +2092,17 @@ function ApplyRulesTab({
     for (const r of publishedRules) m.set(r.rule_id, r);
     return m;
   }, [publishedRules]);
+
+  // Admin default threshold — used as the bottom of the precedence chain
+  // (rule_override ?? registry_default ?? admin_default) for the ThresholdPill
+  // placeholder. A non-admin user won't have write access to this setting but
+  // can always read it; the fallback (70) matches the compiled-in default.
+  // Read the workspace default from the VIEWER+ rules-registry settings hook —
+  // NOT the ADMIN-only getDefaultPassThreshold endpoint, which 403s for
+  // RULE_AUTHOR/RULE_APPROVER editors and would make the pill show a stale 70.
+  const adminDefaultThreshold = useDefaultPassThreshold();
+  // Feature gate — when disabled by admin, hide all threshold UI (pills).
+  const thresholdEnabled = usePassThresholdEnabled();
 
   // Applied governed tags per column — sourced from Unity Catalog
   // `information_schema.column_tags` via `get_table_tags`. Used to render
@@ -2120,10 +2187,28 @@ function ApplyRulesTab({
   // Jump to the page holding the first auto-expanded card so a rule freshly
   // staged (appended to the end) or targeted by a by-column "jump to rule"
   // is actually on-screen, not hidden behind pagination.
+  //
+  // One-shot: this must fire only on a GENUINELY NEW expand request (a new
+  // "+ Add rule" batch or a by-column "jump to rule"), not on every
+  // `visibleMergedRules` recompute. `visibleMergedRules` changes identity on
+  // every staged edit, so without this guard any later mutation (edit mapping,
+  // change severity/threshold, type in search) would re-fire and snap
+  // `openRuleId` back to the auto-expanded card, collapsing whatever the user
+  // had manually opened. We consume each `expandRuleIds` value once by
+  // remembering the last one we acted on.
+  const consumedExpandRef = useRef<string[] | null>(null);
   useEffect(() => {
     if (expandRuleIds.length === 0) return;
+    if (consumedExpandRef.current === expandRuleIds) return;
     const idx = visibleMergedRules.findIndex((r) => expandRuleIds.includes(r.rule_id));
-    if (idx >= 0) setRulePage(Math.floor(idx / RULE_PAGE_SIZE) + 1);
+    if (idx >= 0) {
+      consumedExpandRef.current = expandRuleIds;
+      setRulePage(Math.floor(idx / RULE_PAGE_SIZE) + 1);
+      // Single-open accordion (item 26): honour the auto-expand request by
+      // opening the target card (and closing any other) instead of leaving
+      // the accordion collapsed after a stage / by-column jump.
+      setOpenRuleId(visibleMergedRules[idx].rule_id);
+    }
   }, [expandRuleIds, visibleMergedRules]);
 
   const openAddDialog = (column?: ColumnRef) => {
@@ -2132,15 +2217,24 @@ function ApplyRulesTab({
   };
 
   // Every add path (AddRulesDialog, AiSuggestionDialog) hands up a batch of
-  // brand-new locally-staged rows — append them and jump straight to their
-  // mapping UI in the by-rule lens, mirroring the old "auto-expand after
-  // apply" behaviour but with zero network round-trips.
+  // brand-new locally-staged rows. When the add came from a column CTA
+  // (addColumnContext is non-null), stay in the by-column lens and expand
+  // the target column so the newly-mapped rule appears inline; otherwise
+  // jump to the by-rule lens and auto-expand the new rule cards for mapping.
   const stageNewRows = (rows: AppliedRuleOut[]) => {
     setStagedRows((prev) => [...prev, ...rows]);
     setFilter("all");
     setSearch("");
-    setLens("by-rule");
-    setExpandRuleIds(rows.map((r) => r.rule_id));
+    if (addColumnContext) {
+      // Origin was a column CTA — stay in by-column and show the column.
+      setLens("by-column");
+      setOpenColumnName(addColumnContext.name);
+    } else {
+      // Origin was the header "+ Add rule" button or AI suggestion — go to
+      // by-rule and auto-expand the newly-staged cards for mapping.
+      setLens("by-rule");
+      setExpandRuleIds(rows.map((r) => r.rule_id));
+    }
   };
 
   const confirmRemove = () => {
@@ -2218,15 +2312,30 @@ function ApplyRulesTab({
     setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, severity_override } : r)));
   };
 
-  // Per-rule WHERE filter + pass threshold — like severity/pin above, these are
-  // properties of the rule application (shared across all of a rule_id's staged
-  // rows), so update every row for that rule_id. Pure local staged mutation.
-  const handleRowFilterChange = (rule: AppliedRuleOut, value: string | null) => {
-    setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, row_filter: value } : r)));
-  };
-
+  // Per-rule pass threshold — like severity/pin above, this is a property of
+  // the rule application (shared across all of a rule_id's staged rows), so
+  // update every row for that rule_id. Pure local staged mutation.
   const handlePassThresholdChange = (rule: AppliedRuleOut, value: number | null) => {
     setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, pass_threshold: value } : r)));
+  };
+
+  // Per-column threshold override — update every staged row for the given
+  // rule_id, merging the new column value into each row's column_pass_thresholds
+  // map. `value === null` deletes the key (revert to rule default); `value === 0`
+  // is a real threshold and must be stored, not deleted. Uses === null strictly.
+  const handleColumnThresholdChange = (ruleId: string, column: string, value: number | null) => {
+    setStagedRows((prev) =>
+      prev.map((r) => {
+        if (r.rule_id !== ruleId) return r;
+        const existing = r.column_pass_thresholds ?? {};
+        if (value === null) {
+          // Remove the column key — spread and delete immutably.
+          const { [column]: _removed, ...rest } = existing;
+          return { ...r, column_pass_thresholds: rest };
+        }
+        return { ...r, column_pass_thresholds: { ...existing, [column]: value } };
+      }),
+    );
   };
 
   return (
@@ -2251,7 +2360,7 @@ function ApplyRulesTab({
             {/* Explicit "?" trigger (mirrors dqlake's ScoreBox help icon and
                 the app's own HelpTooltip pattern) instead of relying on the
                 text itself being hoverable — item 26. */}
-            <HelpTooltip text={t("monitoredTables.checksViaRulesTooltip")} />
+            <HelpTooltip text={t("monitoredTables.checksViaRulesTooltip")} rich />
           </div>
         )}
 
@@ -2410,15 +2519,13 @@ function ApplyRulesTab({
                 labelDefinitions={labelDefinitions}
                 severityValues={severityValues}
                 canEdit={canEdit}
-                canRunRule={canRunRules}
-                runRuleBusy={runInProgress || runningRuleId === rule.rule_id}
-                runRuleDisabled={isDirty || runInProgress}
-                onRunRule={() => onRunRule(rule.rule_id)}
                 busy={false}
                 onPinChange={(v) => handlePinChange(rule, v)}
                 onSeverityChange={(v) => handleSeverityChange(rule, v)}
-                onRowFilterChange={(v) => handleRowFilterChange(rule, v)}
                 onPassThresholdChange={(v) => handlePassThresholdChange(rule, v)}
+                onColumnThresholdChange={(column, value) => handleColumnThresholdChange(rule.rule_id, column, value)}
+                resolvedDefaultThreshold={rule.rule_pass_threshold ?? adminDefaultThreshold}
+                thresholdEnabled={thresholdEnabled}
                 onRemove={() => setRemoveTarget(rule)}
                 onRemoveMapping={(groupIdx) => handleRemoveMappingGroup(rule.rule_id, groupIdx)}
                 onChangeMapping={(groupIdx, slotName, colName) =>
@@ -2426,6 +2533,8 @@ function ApplyRulesTab({
                 }
                 onAddMapping={(group) => handleAddMapping(rule.rule_id, group)}
                 columns={columns}
+                isOpen={openRuleId === rule.rule_id}
+                onToggle={() => setOpenRuleId((prev) => (prev === rule.rule_id ? null : rule.rule_id))}
                 forceOpen={expandRuleIds.includes(rule.rule_id)}
                 columnTags={Object.keys(columnTags).length > 0 ? columnTags : undefined}
                 onJumpToColumn={(colName) => {
@@ -2475,6 +2584,9 @@ function ApplyRulesTab({
           onAddRule={(column) => openAddDialog(column)}
           columnTags={Object.keys(columnTags).length > 0 ? columnTags : undefined}
           ruleSlotTagsById={ruleSlotTagsById.size > 0 ? ruleSlotTagsById : undefined}
+          adminDefault={adminDefaultThreshold}
+          onColumnThresholdChange={handleColumnThresholdChange}
+          thresholdEnabled={thresholdEnabled}
           onJumpToRule={(ruleId) => {
             setFilter("all");
             setSearch("");
@@ -2508,7 +2620,7 @@ function ApplyRulesTab({
         bindingId={bindingId}
         publishedRules={publishedRules}
         labelDefinitions={labelDefinitions}
-        appliedRuleIds={appliedRuleIds}
+        appliedRuleIds={appliedRuleIdsForDialog}
         onAdd={stageNewRows}
         onApplied={() => {}}
         initialColumn={addColumnContext}

@@ -9,6 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Check, ChevronDown, ChevronUp, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -359,24 +360,38 @@ export function getDataProductsSortConfig(key: DataProductsSortKey): SortColumnC
   return { dir: def.defaultSortDir ?? "asc", nullsFirst: def.nullsFirst ?? false };
 }
 
+// Column order mirrors MonitoredTablesTable's DEFAULT_ORDER convention:
+// identity → description (hidden) → count metrics → dqScore → version →
+// lastRun → steward → status → Spaces-only trailing columns (schedule).
+// `tables` (member-table count) has no Tables analog and leads the count
+// group as the most Spaces-specific metric. `owner` has no Spaces analog
+// and is omitted. `schedule` (Spaces-only, hidden) trails at the end.
 const DEFAULT_ORDER: DataProductsSortKey[] = [
   "name",
   "description",
-  "status",
-  "version",
-  "steward",
   "tables",
   "rules",
   "checks",
   "dqScore",
+  "version",
   "lastRun",
+  "steward",
+  "status",
   "schedule",
 ];
 
-// v2: added the DQ Score column (visible by default) — bumping the key
-// slots it into its DEFAULT_ORDER position for users with a stored v1
-// layout (the dqlake `dqlake.products.layout.vN` convention).
-const LS_KEY_LAYOUT = "dqx.products.layout.v2";
+// v3: column order aligned with MonitoredTablesTable (item 51) — bumping
+// the key resets the stored layout so users see the updated defaults.
+const LS_KEY_LAYOUT = "dqx.products.layout.v3";
+
+/** Selection state for bulk operations — mirrors `RulesTableSelection` from
+ *  `RulesTable.tsx`. The id field is `product_id`. */
+export interface DataProductsTableSelection {
+  selectedIds: Set<string>;
+  selectableIds: Set<string>;
+  onToggle: (productId: string) => void;
+  onToggleAll: () => void;
+}
 
 export interface DataProductsTableProps {
   /** Rows to render — already filtered, sorted, and paginated by the caller. */
@@ -390,6 +405,8 @@ export interface DataProductsTableProps {
   /** Rendered to the left of the "Edit Columns" trigger — the filter row. */
   toolbarExtra?: ReactNode;
   emptyState?: ReactNode;
+  /** When set, renders a leading checkbox column for bulk actions. */
+  selection?: DataProductsTableSelection;
 }
 
 /**
@@ -412,8 +429,15 @@ export function DataProductsTable({
   pendingProductId,
   toolbarExtra,
   emptyState,
+  selection,
 }: DataProductsTableProps) {
   const { t } = useTranslation();
+  const showSelection = !!selection;
+  const selectableCount = selection?.selectableIds.size ?? 0;
+  const allSelected =
+    showSelection && selectableCount > 0 && selection!.selectedIds.size === selectableCount;
+  const someSelected = showSelection && selection!.selectedIds.size > 0 && !allSelected;
+  const anySelected = showSelection && selection!.selectedIds.size > 0;
 
   const {
     colOrder,
@@ -437,6 +461,7 @@ export function DataProductsTable({
   }
 
   const totalWidth =
+    (showSelection ? 40 : 0) +
     visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0) +
     (hasActions ? ACTIONS_COL_WIDTH : 0);
 
@@ -458,6 +483,7 @@ export function DataProductsTable({
       <div className="overflow-x-auto">
         <Table className="table-fixed" style={{ width: totalWidth, minWidth: totalWidth }}>
           <colgroup>
+            {showSelection && <col style={{ width: 40, minWidth: 40, maxWidth: 40 }} />}
             {visibleKeys.map((k) => (
               <col key={k} style={{ width: colWidths[k] ?? COLUMNS[k].defaultWidth }} />
             ))}
@@ -465,6 +491,16 @@ export function DataProductsTable({
           </colgroup>
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
+              {showSelection && (
+                <TableHead className="w-10 px-2">
+                  <Checkbox
+                    checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                    onCheckedChange={() => selection!.onToggleAll()}
+                    aria-label={t("common.selectAll")}
+                    disabled={selectableCount === 0}
+                  />
+                </TableHead>
+              )}
               {visibleKeys.map((k) => {
                 const def = COLUMNS[k];
                 const width = colWidths[k] ?? def.defaultWidth;
@@ -519,6 +555,26 @@ export function DataProductsTable({
               const busy = pendingProductId === p.product_id;
               return (
                 <TableRow key={p.product_id} className="group cursor-pointer" onClick={() => onRowClick(p)}>
+                  {showSelection && (
+                    <TableCell
+                      className="w-10 p-2 align-middle"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {selection!.selectableIds.has(p.product_id) ? (
+                        <Checkbox
+                          checked={selection!.selectedIds.has(p.product_id)}
+                          onCheckedChange={() => selection!.onToggle(p.product_id)}
+                          aria-label={t("dataProducts.selectRowAria", { name: p.name })}
+                          className={cn(
+                            "transition-opacity",
+                            !selection!.selectedIds.has(p.product_id) &&
+                              !anySelected &&
+                              "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+                          )}
+                        />
+                      ) : null}
+                    </TableCell>
+                  )}
                   {visibleKeys.map((k) => {
                     const width = colWidths[k] ?? COLUMNS[k].defaultWidth;
                     return (

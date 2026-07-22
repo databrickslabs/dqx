@@ -6,9 +6,11 @@ Allows admins to manage role-to-group mappings for RBAC.
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.apps import AppPermissionLevel
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.config import conf
 from databricks_labs_dqx_app.backend.dependencies import (
     get_obo_ws,
     get_sp_ws,
@@ -19,6 +21,7 @@ from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     CreateRoleMappingIn,
     GroupOut,
+    PrivilegedPrincipalOut,
     RoleMappingHistoryOut,
     RoleMappingOut,
 )
@@ -220,6 +223,103 @@ def list_workspace_groups(
     except Exception as e:
         logger.error(f"Failed to list workspace groups: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list workspace groups: {e}")
+
+
+@router.get(
+    "/privileged-principals",
+    response_model=list[PrivilegedPrincipalOut],
+    operation_id="listPrivilegedPrincipals",
+)
+def list_privileged_principals(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> list[PrivilegedPrincipalOut]:
+    """List workspace admins and app CAN_MANAGE holders (Admin only).
+
+    Returns two categories of privileged principals so the Entitlements UI
+    can display them as non-removable (disabled) rows:
+
+    - *workspace_admin*: members of the SCIM ``admins`` group.
+    - *app_owner*: principals with ``CAN_MANAGE`` permission on this app.
+
+    Both lookups run as the calling admin (``obo_ws``) first, falling back to
+    the app SP (``sp_ws``) only if the admin call fails. The app SP frequently
+    lacks ``apps.<name>/get`` on its own app and broad SCIM read, so an
+    SP-only implementation returned an empty list even when admins and
+    CAN_MANAGE owners exist (item 32). Group members come from ``groups.get``
+    (by id), since ``groups.list`` does not reliably populate the ``members``
+    sub-attribute.
+
+    De-duplication is intentionally omitted — a principal that is both a
+    workspace admin and an app owner appears twice (once per kind), which lets
+    the UI distinguish WHY they are privileged.
+
+    The app-permissions lookup is best-effort: if it fails (e.g. the SP lacks
+    the ``apps.get_permissions`` permission), the endpoint still returns
+    workspace admins with HTTP 200 rather than failing the whole request.
+    """
+    try:
+        results: list[PrivilegedPrincipalOut] = []
+
+        # --- Workspace admins via SCIM ---
+        # `groups.list` does NOT reliably populate the `members` sub-attribute,
+        # so resolve the group id first, then `groups.get(id)` for its members.
+        # Prefer the admin caller (obo_ws); fall back to the SP only on failure.
+        for client in (obo_ws, sp_ws):
+            try:
+                admin_groups = list(client.groups.list(filter='displayName eq "admins"', attributes="id"))
+                for g in admin_groups:
+                    if not g.id:
+                        continue
+                    detail = client.groups.get(g.id)
+                    for member in detail.members or []:
+                        name = member.display or member.value or ""
+                        if name:
+                            results.append(PrivilegedPrincipalOut(principal=name, kind="workspace_admin"))
+                if admin_groups:
+                    break  # succeeded (even if the group was empty) — don't double-list via the SP
+            except Exception as e:
+                # Strip newlines to prevent log injection (AGENTS.md §log-injection, CWE-117).
+                safe_err = str(e).replace(chr(10), " ").replace(chr(13), " ")
+                logger.warning(f"Failed to list workspace admins via {'OBO' if client is obo_ws else 'SP'}: {safe_err}")
+
+        # --- App owners via Databricks Apps permissions ---
+        # `conf.app_slug_name` is the registered app slug (e.g. "dqx-studio"),
+        # which is what the Apps permissions API expects — NOT the display name
+        # or the SP client id. Prefer the admin caller (obo_ws); the app SP
+        # commonly lacks `apps.<name>/get` on its own app, so fall back to it
+        # only if the admin call fails.
+        for client in (obo_ws, sp_ws):
+            try:
+                app_perms = client.apps.get_permissions(conf.app_slug_name)
+                acl = app_perms.access_control_list or []
+                for entry in acl:
+                    # A principal is an app owner only if it holds CAN_MANAGE.
+                    all_perms = entry.all_permissions or []
+                    if not any(p.permission_level == AppPermissionLevel.CAN_MANAGE for p in all_perms):
+                        continue
+                    # Prefer user_name → group_name → service_principal_name → display_name
+                    principal = (
+                        entry.user_name
+                        or entry.group_name
+                        or entry.service_principal_name
+                        or entry.display_name
+                        or ""
+                    )
+                    if principal:
+                        results.append(PrivilegedPrincipalOut(principal=principal, kind="app_owner"))
+                break  # succeeded — don't re-read via the SP
+            except Exception as e:
+                # Log a sanitised message — strip newlines to prevent log injection (AGENTS.md §log-injection).
+                safe_err = str(e).replace(chr(10), " ").replace(chr(13), " ")
+                logger.warning(
+                    f"Could not retrieve app permissions via {'OBO' if client is obo_ws else 'SP'} (degraded): {safe_err}"
+                )
+
+        return results
+    except Exception as e:
+        logger.error(f"Failed to list privileged principals: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list privileged principals: {e}")
 
 
 @router.get("/available-roles", response_model=list[str], operation_id="listAvailableRoles")

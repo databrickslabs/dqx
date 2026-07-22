@@ -376,10 +376,11 @@ class TestGet:
         assert svc.get("missing") is None
 
     def test_returns_binding_with_joined_applied_rules(self, svc, sql):
+        # _rule_tags selects (source, user_metadata) — rows[0][0]=source, rows[0][1]=metadata JSON
         sql.query.side_effect = [
             [_table_row(binding_id="b1")],
             [_applied_row(binding_id="b1", rule_id="r1")],
-            [[json.dumps({"name": "Not Null Check", "dimension": "Completeness", "severity": "High"})]],
+            [[None, json.dumps({"name": "Not Null Check", "dimension": "Completeness", "severity": "High"})]],
         ]
         detail = svc.get("b1")
         assert detail is not None
@@ -391,6 +392,29 @@ class TestGet:
         assert summary.rule_name == "Not Null Check"
         assert summary.rule_dimension == "Completeness"
         assert summary.rule_severity == "High"
+
+    def test_rule_pass_threshold_surfaced_on_summary(self, svc, sql):
+        # _rule_tags selects (source, user_metadata) — source=None here
+        sql.query.side_effect = [
+            [_table_row(binding_id="b1")],
+            [_applied_row(binding_id="b1", rule_id="r1")],
+            [[None, json.dumps({"name": "Not Null Check", "pass_threshold": 80})]],
+        ]
+        detail = svc.get("b1")
+        assert detail is not None
+        summary = detail.applied_rules[0]
+        assert summary.rule_pass_threshold == 80
+
+    def test_rule_pass_threshold_none_when_unset(self, svc, sql):
+        sql.query.side_effect = [
+            [_table_row(binding_id="b1")],
+            [_applied_row(binding_id="b1", rule_id="r1")],
+            [[None, json.dumps({"name": "Not Null Check"})]],
+        ]
+        detail = svc.get("b1")
+        assert detail is not None
+        summary = detail.applied_rules[0]
+        assert summary.rule_pass_threshold is None
 
     def test_applied_rule_with_missing_registry_rule_has_no_tags(self, svc, sql):
         sql.query.side_effect = [
@@ -404,6 +428,7 @@ class TestGet:
         assert summary.rule_name is None
         assert summary.rule_dimension is None
         assert summary.rule_severity is None
+        assert summary.rule_pass_threshold is None
 
 
 class TestRunTimestampsReadFromOltp:

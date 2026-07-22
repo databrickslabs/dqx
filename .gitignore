@@ -192,3 +192,7 @@ docs/dqx/docs/reference/api
 app/bun.lock
 app/package-lock.json
 /uv.toml
+.playwright-mcp/
+
+# Superpowers brainstorm scratch (mockups, session state)
+.superpowers/

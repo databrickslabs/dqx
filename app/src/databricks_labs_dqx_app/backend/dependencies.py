@@ -855,14 +855,18 @@ async def get_data_product_service(
     binding_run_service: Annotated[BindingRunService, Depends(get_binding_run_service)],
     version_service: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    materializer: Annotated[Materializer, Depends(get_materializer)],
 ) -> DataProductService:
     """Create a DataProductService routed at the OLTP executor.
 
-    Reuses the monitored-table listing (for per-member rules/checks counts
-    and live status), the run-set service (for the shared run set + last-run
-    lookups), ``BindingRunService`` (for per-member run submission), and the
-    version service (so version-pinned members report their frozen snapshot's
-    counts rather than the binding's live counts).
+    Reuses the monitored-table listing (for per-member rules count and live
+    status), the run-set service (for the shared run set + last-run lookups),
+    ``BindingRunService`` (for per-member run submission), the version service
+    (so version-pinned members report their frozen snapshot's counts rather
+    than the binding's live counts), and the ``Materializer`` (so an unpinned
+    member's ``# Checks`` reflects the checks its applied rules actually expand
+    to — non-zero even for a freshly-saved draft space, matching the
+    monitored-tables overview).
     """
     return DataProductService(
         sql=sql,
@@ -871,6 +875,7 @@ async def get_data_product_service(
         binding_run_service=binding_run_service,
         version_service=version_service,
         app_settings=app_settings,
+        materializer=materializer,
     )
 
 
@@ -942,6 +947,18 @@ async def get_demo_seed_service(
         schema=DEMO_SOURCE_SCHEMA,
     )
     sp_view = ViewService(sql=sp_sql, sp_sql=sp_sql)
+    # Profiler temp views for the demo profiling phase are created on the tmp
+    # schema (like the request-path ViewService), but as the SP — the seed runs
+    # on a background thread with no OBO token.
+    profiler_view = ViewService(
+        sql=SqlExecutor(
+            ws=sp_ws,
+            warehouse_id=warehouse_id,
+            catalog=conf.catalog,
+            schema=conf.tmp_schema_name,
+        ),
+        sp_sql=sp_sql,
+    )
     binding_run = BindingRunService(
         monitored_tables=monitored_tables,
         version_service=version_service,
@@ -969,6 +986,8 @@ async def get_demo_seed_service(
         status=status,
         reset_service=reset_service,
         embeddings=embeddings,
+        job_service=job_service,
+        profiler_view=profiler_view,
         catalog=conf.catalog,
     )
 
@@ -1018,10 +1037,20 @@ async def get_user_role(
     """
     try:
         user = await asyncio.to_thread(obo_ws.current_user.me)
-        user_groups = [g.display for g in (user.groups or []) if g.display]
-        logger.debug(f"Resolving role for {email} with groups: {user_groups}")
+        # Mappings match by string equality on the stored ``group_name`` column,
+        # which the Entitlements UI also uses for USER-level entitlements (it
+        # stores the picked user's display name / username there). So resolution
+        # matches against the user's own identity strings AS WELL AS their group
+        # memberships — otherwise a user-level entitlement would never take
+        # effect. Include display name, userName and email to cover whichever
+        # form the principal picker persisted.
+        principals = [g.display for g in (user.groups or []) if g.display]
+        for ident in (user.display_name, user.user_name, email):
+            if ident and ident not in principals:
+                principals.append(ident)
+        logger.debug(f"Resolving role for {email} with principals: {principals}")
 
-        role = role_svc.resolve_role(user_groups, conf.admin_group)
+        role = role_svc.resolve_role(principals, conf.admin_group)
         logger.debug(f"Resolved role for {email}: {role.value}")
         return role
     except Exception as e:
@@ -1099,8 +1128,13 @@ async def get_user_runner_flag(
     """
     try:
         user = await asyncio.to_thread(obo_ws.current_user.me)
-        user_groups = [g.display for g in (user.groups or []) if g.display]
-        return role_svc.has_runner_role(user_groups, conf.admin_group)
+        # Include the user's own identity strings alongside group memberships so
+        # a USER-level RUNNER entitlement resolves too (see get_user_role).
+        principals = [g.display for g in (user.groups or []) if g.display]
+        for ident in (user.display_name, user.user_name, email):
+            if ident and ident not in principals:
+                principals.append(ident)
+        return role_svc.has_runner_role(principals, conf.admin_group)
     except Exception as exc:
         logger.warning(
             f"Runner-flag resolution failed for {email}, falling back to False: {exc}",

@@ -276,7 +276,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
   source: {
     labelKey: "rulesRegistry.colSource",
     toggleable: true,
-    defaultVisible: true,
+    defaultVisible: false,
     defaultWidth: 100,
     sortable: true,
     renderHeader: (label) => label,
@@ -635,6 +635,12 @@ export function RulesTable({
                         aria-label={t("rulesRegistry.selectRowAria", {
                           name: getTag(r, RESERVED_NAME_KEY) || r.rule_id,
                         })}
+                        className={cn(
+                          "transition-opacity",
+                          !selection!.selectedIds.has(r.rule_id) &&
+                            selection!.selectedIds.size === 0 &&
+                            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+                        )}
                       />
                     ) : null}
                   </TableCell>

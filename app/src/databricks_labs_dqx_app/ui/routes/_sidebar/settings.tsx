@@ -4,10 +4,11 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, AlertTriangle, CheckCircle2, Circle, Clock, Cpu, Database, FlaskConical, Globe, KeyRound, LineChart, Loader2, Lock, Scale, Search, Tags, Plus, Trash2, X, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Clock, Cpu, Database, ExternalLink, FlaskConical, Globe, KeyRound, LineChart, Loader2, Lock, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, X, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
+import { SampleSelector, type SampleKind } from "@/components/rules/test/RuleTestPanel";
 import {
   Card,
   CardContent,
@@ -34,6 +35,7 @@ import {
   getRunReviewStatusesQueryKey,
   type RetentionSettingsOut,
   type RunReviewStatusOption,
+  useWorkspaceHost,
 } from "@/lib/api-custom";
 import {
   HEX_COLOR_RE,
@@ -43,6 +45,7 @@ import {
   type DraftDefinition,
 } from "@/lib/label-definition-drafts";
 import { resolveCriticality } from "@/lib/registry-rule-conversion";
+import { GovernedKeyPicker, type GovernedKeySeed } from "@/components/settings/GovernedKeyPicker";
 import {
   useGetAiSettings,
   useSaveAiSettings,
@@ -55,7 +58,7 @@ import {
   useGetApprovalsMode,
   useSaveApprovalsMode,
   getGetApprovalsModeQueryKey,
-  useGetComputeSettings,
+  useGetComputeSettingsSuspense,
   useSaveComputeSettings,
   getGetComputeSettingsQueryKey,
   useGetPermissionsDefaultInherit,
@@ -67,8 +70,8 @@ import {
   useGetRequireDraftRunSettings,
   useSaveRequireDraftRunSettings,
   getGetRequireDraftRunSettingsQueryKey,
-  useListComputeWarehouses,
-  useListComputeClusters,
+  useListComputeWarehousesSuspense,
+  useListComputeClustersSuspense,
   useGetWarehouseAccess,
   getGetWarehouseAccessQueryKey,
   useGrantWarehouseAccess,
@@ -84,7 +87,6 @@ import {
   type JobsComputeModel,
   type WarehouseOut,
   type ClusterOut,
-  useCurrentUserRole,
 } from "@/lib/api";
 import {
   Select,
@@ -107,7 +109,7 @@ import type { AxiosError } from "axios";
 import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
 import { usePermissions } from "@/hooks/use-permissions";
-import { Suspense, useMemo, useState, useRef, useEffect, type ComponentType, type ReactNode } from "react";
+import { Suspense, useMemo, useState, useRef, useEffect, useCallback, type ComponentType, type ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -124,9 +126,9 @@ import {
 } from "@/components/ui/tooltip";
 import { ChevronDown, Check } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { AI_BUTTON_BG, AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
+import { AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
 
-export const Route = createFileRoute("/_sidebar/config")({
+export const Route = createFileRoute("/_sidebar/settings")({
   component: () => <ConfigPage />,
 });
 
@@ -241,7 +243,7 @@ function TimezoneSettings() {
           {t("config.timezoneTitle")}
         </CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
         <div className="flex items-center gap-3">
           <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
@@ -360,21 +362,14 @@ function LabelDefinitionsSettings() {
     }
   }, [data, hydrated]);
 
-  const isDirty = useMemo(() => {
-    if (!data) return false;
-    const a = data.definitions ?? [];
-    const b = drafts.map(draftToDef);
-    if (a.length !== b.length) return true;
-    return JSON.stringify(a) !== JSON.stringify(b);
-  }, [data, drafts]);
-
   const validation = useMemo(() => {
     const errors: string[] = [];
     const seen = new Set<string>();
     for (const d of drafts) {
       const k = d.key.trim();
       if (!k) {
-        errors.push(t("config.labelKeyMissing"));
+        // A keyless draft is silently not-yet-saveable (the auto-save guard
+        // skips it); we don't surface a warning for it.
         continue;
       }
       if (!LABEL_KEY_RE.test(k)) {
@@ -386,121 +381,196 @@ function LabelDefinitionsSettings() {
     return errors;
   }, [drafts, t]);
 
+  // Auto-save: debounced 600ms after any change, guarded by validation.
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerAutoSave = useCallback(
+    (nextDrafts: DraftDefinition[]) => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      const errs: string[] = [];
+      const seen = new Set<string>();
+      for (const d of nextDrafts) {
+        const k = d.key.trim();
+        if (!k) { errs.push("missing"); continue; }
+        if (!LABEL_KEY_RE.test(k)) errs.push("invalid");
+        if (seen.has(k)) errs.push("dup");
+        seen.add(k);
+      }
+      if (errs.length > 0) return;
+      saveTimerRef.current = setTimeout(() => {
+        const definitions = nextDrafts.map(draftToDef);
+        saveMutation.mutate(
+          { data: { definitions } },
+          {
+            onSuccess: (resp) => {
+              queryClient.invalidateQueries({ queryKey: getLabelDefinitionsQueryKey() });
+              setDrafts(resp.data.definitions.map(defToDraft));
+              toast.success(
+                definitions.length === 0
+                  ? t("config.clearedLabels")
+                  : t("config.savedLabels", { count: definitions.length }),
+              );
+            },
+            onError: (err: unknown) => {
+              const axErr = err as AxiosError<{ detail?: string }>;
+              toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveLabels"));
+            },
+          },
+        );
+      }, 600);
+    },
+    [saveMutation, queryClient, t],
+  );
+
+  // Clean up timer on unmount.
+  useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); }, []);
+
   const updateDraft = (draftId: string, patch: Partial<DraftDefinition>) => {
-    setDrafts((prev) => prev.map((d) => (d.draftId === draftId ? { ...d, ...patch } : d)));
+    setDrafts((prev) => {
+      const next = prev.map((d) => (d.draftId === draftId ? { ...d, ...patch } : d));
+      triggerAutoSave(next);
+      return next;
+    });
   };
 
-  const removeDraft = (draftId: string) =>
-    setDrafts((prev) => prev.filter((d) => d.draftId !== draftId));
-
-  const addDraft = () =>
-    setDrafts((prev) => [
-      ...prev,
-      {
-        draftId: crypto.randomUUID(),
-        key: "",
-        description: "",
-        values: [],
-        allow_custom_values: false,
-        value_colors: null,
-        value_descriptions: null,
-        value_criticality: null,
-        is_builtin: false,
-      },
-    ]);
-
-  const handleSave = () => {
-    if (validation.length > 0) {
-      toast.error(validation[0]);
-      return;
-    }
-    const definitions = drafts.map(draftToDef);
-    saveMutation.mutate(
-      { data: { definitions } },
-      {
-        onSuccess: (resp) => {
-          queryClient.invalidateQueries({ queryKey: getLabelDefinitionsQueryKey() });
-          setDrafts(resp.data.definitions.map(defToDraft));
-          toast.success(
-            definitions.length === 0
-              ? t("config.clearedLabels")
-              : t("config.savedLabels", { count: definitions.length }),
-          );
-        },
-        onError: (err: unknown) => {
-          const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveLabels"));
-        },
-      },
-    );
+  const removeDraft = (draftId: string) => {
+    setDrafts((prev) => {
+      const next = prev.filter((d) => d.draftId !== draftId);
+      triggerAutoSave(next);
+      return next;
+    });
   };
 
-  const handleReset = () => {
-    setDrafts((data?.definitions ?? []).map(defToDraft));
+  const addDraft = () => {
+    setDrafts((prev) => {
+      const next = [
+        ...prev,
+        {
+          draftId: crypto.randomUUID(),
+          key: "",
+          description: "",
+          values: [],
+          allow_custom_values: false,
+          value_colors: null,
+          value_descriptions: null,
+          value_criticality: null,
+          is_builtin: false,
+        },
+      ];
+      // New draft has empty key — auto-save will be triggered once user fills it in.
+      return next;
+    });
+  };
+
+  // Seed a normal, editable custom-tag draft from a Unity Catalog governed tag.
+  // Import-time population only — the key/description/allowed values are copied
+  // once, then it behaves like any hand-authored draft (no ongoing sync).
+  const addGovernedDraft = (seed: GovernedKeySeed) => {
+    setDrafts((prev) => {
+      // Guard against a governed key that already exists as a draft.
+      if (prev.some((d) => d.key.trim() === seed.key.trim())) return prev;
+      const next: DraftDefinition[] = [
+        ...prev,
+        {
+          draftId: crypto.randomUUID(),
+          key: seed.key,
+          description: seed.description,
+          values: [...seed.values],
+          allow_custom_values: false,
+          value_colors: null,
+          value_descriptions: null,
+          value_criticality: null,
+          is_builtin: false,
+        },
+      ];
+      // Governed key is valid and non-empty, so a save can fire immediately.
+      triggerAutoSave(next);
+      return next;
+    });
   };
 
   if (isLoading) {
     return <Skeleton className="h-40 w-full" />;
   }
 
+  const isBuiltinDef = (d: DraftDefinition) =>
+    !!d.is_builtin || d.key === RESERVED_WEIGHT_KEY || d.key === RESERVED_SEVERITY_KEY;
+
+  const builtinDrafts = drafts.filter(isBuiltinDef);
+  const customDrafts = drafts.filter((d) => !isBuiltinDef(d));
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Tags className="h-5 w-5" />
-          {t("config.labelsTitle")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {drafts.length === 0 && (
-          <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-            {t("config.noLabelDefinitions")}
+    <div className="space-y-6">
+      {/* Built-in tags */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Tags className="h-5 w-5" />
+            {t("config.builtinTagsTitle")}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {builtinDrafts.length === 0 && (
+            <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+              {t("config.noLabelDefinitions")}
+            </div>
+          )}
+          {builtinDrafts.map((d) => (
+            <DefinitionEditorCard
+              key={d.draftId}
+              draft={d}
+              onChange={(patch) => updateDraft(d.draftId, patch)}
+              onRemove={() => removeDraft(d.draftId)}
+            />
+          ))}
+        </CardContent>
+      </Card>
+
+      {/* Custom tags */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Tags className="h-5 w-5" />
+            {t("config.customTagsTitle")}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {customDrafts.length === 0 && (
+            <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+              {t("config.noLabelDefinitions")}
+            </div>
+          )}
+          {customDrafts.map((d) => (
+            <DefinitionEditorCard
+              key={d.draftId}
+              draft={d}
+              onChange={(patch) => updateDraft(d.draftId, patch)}
+              onRemove={() => removeDraft(d.draftId)}
+            />
+          ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => addDraft()} className="gap-1.5">
+              <Plus className="h-3.5 w-3.5" />
+              {t("config.addLabelDefinition")}
+            </Button>
+            <GovernedKeyPicker
+              existingKeys={drafts.map((d) => d.key)}
+              onPick={addGovernedDraft}
+            />
           </div>
-        )}
-        {drafts.map((d) => (
-          <DefinitionEditorCard
-            key={d.draftId}
-            draft={d}
-            onChange={(patch) => updateDraft(d.draftId, patch)}
-            onRemove={() => removeDraft(d.draftId)}
-          />
-        ))}
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => addDraft()} className="gap-1.5">
-            <Plus className="h-3.5 w-3.5" />
-            {t("config.addLabelDefinition")}
-          </Button>
-        </div>
-        {validation.length > 0 && (
-          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
-            {validation.map((msg, i) => (
-              <p key={i} className="text-xs text-destructive flex items-start gap-1.5">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>{msg}</span>
-              </p>
-            ))}
-          </div>
-        )}
-        <div className="flex items-center gap-2 pt-2 border-t">
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={!isDirty || validation.length > 0 || saveMutation.isPending}
-          >
-            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-            {t("config.saveChanges")}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={handleReset}
-            disabled={!isDirty || saveMutation.isPending}
-          >
-            {t("config.reset")}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+          {validation.length > 0 && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
+              {validation.map((msg, i) => (
+                <p key={i} className="text-xs text-destructive flex items-start gap-1.5">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span>{msg}</span>
+                </p>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -727,9 +797,6 @@ function AllowedValuesEditor({
 
   return (
     <div ref={rootRef} className="space-y-1.5">
-      {values.length === 0 && (
-        <p className="text-[11px] italic text-muted-foreground py-1">{t("config.noValuesHint")}</p>
-      )}
       {displayIndices.map((i) => {
         const v = values[i];
         const isOpen = expanded === i;
@@ -754,7 +821,7 @@ function AllowedValuesEditor({
               <span className="flex items-baseline gap-2 min-w-0">
                 <span className="font-mono text-xs shrink-0">{v}</span>
                 {description && !isOpen && (
-                  <span className="truncate text-[11px] text-muted-foreground">{description}</span>
+                  <span className="truncate text-xs text-muted-foreground">{description}</span>
                 )}
               </span>
               {/* Severity values additionally carry the admin-editable DQX
@@ -810,26 +877,28 @@ function AllowedValuesEditor({
                   className="overflow-hidden"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <div className="space-y-2 border-t px-2.5 pb-2.5 pt-2">
-                    <div className="space-y-1">
-                      <Label className="text-[10px] text-muted-foreground">
-                        {t("config.valueLabel")} <RequiredAsterisk />
-                      </Label>
-                      <Input
-                        value={v}
-                        onChange={(e) => patchValue(i, { name: e.target.value })}
-                        className="h-7 w-40 text-xs font-mono"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[10px] text-muted-foreground">{t("config.descriptionLabel")}</Label>
-                      <Textarea
-                        value={description}
-                        onChange={(e) => patchValue(i, { description: e.target.value })}
-                        placeholder={t("config.valueDescriptionPlaceholder")}
-                        className="max-w-xs text-xs min-h-[28px] py-1 resize-none"
-                        rows={1}
-                      />
+                  <div className="border-t px-2.5 pb-2.5 pt-2">
+                    <div className="flex items-end gap-2">
+                      <div className="space-y-1 shrink-0">
+                        <Label className="text-xs text-muted-foreground">
+                          {t("config.valueLabel")} <RequiredAsterisk />
+                        </Label>
+                        <Input
+                          value={v}
+                          onChange={(e) => patchValue(i, { name: e.target.value })}
+                          className="h-7 w-40 text-xs font-mono"
+                        />
+                      </div>
+                      <div className="flex-1 space-y-1">
+                        <Label className="text-xs text-muted-foreground">{t("config.descriptionLabel")}</Label>
+                        <Textarea
+                          value={description}
+                          onChange={(e) => patchValue(i, { description: e.target.value })}
+                          placeholder={t("config.valueDescriptionPlaceholder")}
+                          className="w-full text-xs min-h-[28px] py-1 resize-none"
+                          rows={1}
+                        />
+                      </div>
                     </div>
                   </div>
                 </motion.div>
@@ -838,10 +907,28 @@ function AllowedValuesEditor({
           </div>
         );
       })}
-      <Button type="button" variant="outline" size="sm" onClick={addValue} className="h-7 gap-1.5 text-xs">
-        <Plus className="h-3.5 w-3.5" />
-        {t("config.addValue")}
-      </Button>
+      <div className="flex items-center gap-3">
+        <Button type="button" variant="outline" size="sm" onClick={addValue} className="h-7 gap-1.5 text-xs">
+          <Plus className="h-3.5 w-3.5" />
+          {t("config.addValue")}
+        </Button>
+        {/* Allow-custom-values sits immediately to the right of Add value.
+            Reserved keys (dimension/severity) always disallow custom values
+            server-side, so it's shown disabled/unchecked for built-ins. */}
+        <label
+          className={cn(
+            "flex items-center gap-1.5 text-sm",
+            draft.is_builtin ? "text-muted-foreground" : "cursor-pointer",
+          )}
+        >
+          <Checkbox
+            checked={draft.is_builtin ? false : draft.allow_custom_values}
+            onCheckedChange={(c) => onChange({ allow_custom_values: c === true })}
+            disabled={draft.is_builtin}
+          />
+          <span>{t("config.allowCustomValues")}</span>
+        </label>
+      </div>
     </div>
   );
 }
@@ -850,18 +937,22 @@ function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCar
   const { t } = useTranslation();
   const keyValid = !draft.key || LABEL_KEY_RE.test(draft.key.trim());
   const isWeight = draft.key.trim() === RESERVED_WEIGHT_KEY;
+  const isSeverityDef = draft.key.trim() === RESERVED_SEVERITY_KEY;
   const isBuiltin = !!draft.is_builtin;
   const isLocked = isWeight || isBuiltin;
+
+  const descriptionPlaceholder = isWeight
+    ? t("config.weightDescriptionPlaceholder")
+    : isSeverityDef
+      ? t("config.severityDescriptionPlaceholder")
+      : t("config.descriptionPlaceholder");
+
   return (
     <div className="rounded-md border bg-muted/30 p-3 space-y-3">
-      {/* Key + description + delete sit in one 3-column grid (rather than a
-          nested grid plus a flex sibling) so `items-end` aligns the delete
-          button with the bottom of the input/textarea row instead of the
-          top of the labels above them — keeps the bin icon inline with the
-          row it acts on instead of floating above it. */}
-      <div className="grid grid-cols-[180px_1fr_auto] gap-3 items-end">
-        <div className="space-y-1">
-          <Label className="text-xs flex items-center gap-1.5">
+      {/* Key + Description + delete on one row */}
+      <div className="flex items-end gap-2">
+        <div className="space-y-1 shrink-0">
+          <Label className="text-sm flex items-center gap-1.5">
             {t("config.key")}
             {!isLocked && <RequiredAsterisk />}
             {isLocked && (
@@ -875,20 +966,15 @@ function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCar
             disabled={isBuiltin}
             className={cn("h-8 w-40 text-xs font-mono", !keyValid && "border-destructive")}
           />
-          {!keyValid && (
-            <p className="text-[10px] text-destructive">
-              {t("config.keyHint")}
-            </p>
-          )}
         </div>
-        <div className="space-y-1">
-          <Label className="text-xs">{t("config.descriptionLabel")}</Label>
+        <div className="flex-1 space-y-1">
+          <Label className="text-sm">{t("config.descriptionLabel")}</Label>
           <Textarea
             value={draft.description ?? ""}
             onChange={(e) => onChange({ description: e.target.value })}
-            placeholder={isWeight ? t("config.weightDescriptionPlaceholder") : t("config.descriptionPlaceholder")}
+            placeholder={descriptionPlaceholder}
             disabled={isLocked}
-            className="max-w-xs text-xs min-h-[32px] py-1.5 resize-none"
+            className="w-full text-xs min-h-[32px] py-1.5 resize-none"
             rows={1}
           />
         </div>
@@ -896,7 +982,7 @@ function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCar
           type="button"
           variant="ghost"
           size="icon"
-          className="h-8 w-8 shrink-0 text-destructive hover:text-destructive disabled:opacity-30"
+          className="h-8 w-8 shrink-0 text-destructive hover:text-destructive disabled:opacity-30 mb-0"
           onClick={onRemove}
           disabled={isBuiltin}
           title={isBuiltin ? t("config.builtinCannotDelete") : undefined}
@@ -905,28 +991,11 @@ function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCar
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
       </div>
+      {!keyValid && <p className="text-xs text-destructive">{t("config.keyHint")}</p>}
+      {/* Allowed values (the allow-custom-values checkbox lives inline with the
+          "Add value" button inside AllowedValuesEditor). */}
       <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
-          <Label className="text-xs">{t("config.allowedValues")}</Label>
-          {/* Reserved keys (dimension/severity) always disallow custom
-              values server-side (see `_NO_CUSTOM_VALUE_BUILTIN_KEYS` in
-              routes.v1.config) — the checkbox stays visible so that's
-              legible at a glance, just disabled/unchecked rather than
-              hidden entirely. */}
-          <label
-            className={cn(
-              "flex items-center gap-1.5 text-xs",
-              isBuiltin ? "text-muted-foreground" : "cursor-pointer",
-            )}
-          >
-            <Checkbox
-              checked={isBuiltin ? false : draft.allow_custom_values}
-              onCheckedChange={(c) => onChange({ allow_custom_values: c === true })}
-              disabled={isBuiltin}
-            />
-            <span>{t("config.allowCustomValues")}</span>
-          </label>
-        </div>
+        <Label className="text-sm">{t("config.allowedValues")}</Label>
         <AllowedValuesEditor draft={draft} onChange={onChange} />
       </div>
     </div>
@@ -942,6 +1011,20 @@ function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCar
 // can age out faster than trend tables that the dashboards look back on.
 // ─────────────────────────────────────────────────────────────────────────────
 
+type RetentionUnit = "days" | "months" | "years";
+
+function daysToUnit(days: number): { value: number; unit: RetentionUnit } {
+  if (days % 365 === 0) return { value: days / 365, unit: "years" };
+  if (days % 30 === 0) return { value: days / 30, unit: "months" };
+  return { value: days, unit: "days" };
+}
+
+function toDays(value: number, unit: RetentionUnit): number {
+  if (unit === "years") return value * 365;
+  if (unit === "months") return value * 30;
+  return value;
+}
+
 function RetentionSettings() {
   const { t } = useTranslation();
   const { data, isLoading } = useRetentionSettings();
@@ -951,14 +1034,23 @@ function RetentionSettings() {
   const isAdmin = role?.data?.role === "admin";
 
   const settings = data as RetentionSettingsOut | undefined;
-  const [global, setGlobal] = useState<string>("");
-  const [quarantine, setQuarantine] = useState<string>("");
+
+  const [globalValue, setGlobalValue] = useState<string>("");
+  const [globalUnit, setGlobalUnit] = useState<RetentionUnit>("months");
+  const [quarantineValue, setQuarantineValue] = useState<string>("");
+  const [quarantineUnit, setQuarantineUnit] = useState<RetentionUnit>("months");
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     if (settings && !hydrated) {
-      setGlobal(String(settings.retention_days));
-      setQuarantine(String(settings.quarantine_retention_days));
+      const globalDays = settings.retention_days_set ? settings.retention_days : 90;
+      const quarantineDays = settings.quarantine_retention_days_set ? settings.quarantine_retention_days : 30;
+      const g = daysToUnit(globalDays);
+      const q = daysToUnit(quarantineDays);
+      setGlobalValue(String(g.value));
+      setGlobalUnit(g.unit);
+      setQuarantineValue(String(q.value));
+      setQuarantineUnit(q.unit);
       setHydrated(true);
     }
   }, [settings, hydrated]);
@@ -966,46 +1058,20 @@ function RetentionSettings() {
   const min = settings?.retention_days_min ?? 7;
   const max = settings?.retention_days_max ?? 3650;
 
-  const parsedGlobal = Number.parseInt(global, 10);
-  const parsedQuarantine = Number.parseInt(quarantine, 10);
-
-  const validation = useMemo(() => {
-    const errors: string[] = [];
-    const check = (label: string, value: number) => {
-      if (Number.isNaN(value)) {
-        errors.push(`${label} must be a whole number of days.`);
-        return;
-      }
-      if (value < min) errors.push(`${label} must be at least ${min} days.`);
-      if (value > max) errors.push(`${label} must be at most ${max} days.`);
-    };
-    check("Global retention", parsedGlobal);
-    check("Quarantine retention", parsedQuarantine);
-    return errors;
-  }, [parsedGlobal, parsedQuarantine, min, max]);
-
-  const isDirty = useMemo(() => {
-    if (!settings) return false;
-    return (
-      parsedGlobal !== settings.retention_days ||
-      parsedQuarantine !== settings.quarantine_retention_days
-    );
-  }, [settings, parsedGlobal, parsedQuarantine]);
-
-  const handleSave = () => {
-    if (!settings || validation.length > 0) return;
-    const payload: { retention_days?: number; quarantine_retention_days?: number } = {};
-    if (parsedGlobal !== settings.retention_days) payload.retention_days = parsedGlobal;
-    if (parsedQuarantine !== settings.quarantine_retention_days) {
-      payload.quarantine_retention_days = parsedQuarantine;
-    }
+  const saveField = (
+    field: "retention_days" | "quarantine_retention_days",
+    rawValue: string,
+    unit: RetentionUnit,
+  ) => {
+    if (!settings) return;
+    const parsed = Number.parseInt(rawValue, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) return;
+    const days = Math.min(max, Math.max(min, toDays(parsed, unit)));
     saveMutation.mutate(
-      { data: payload },
+      { data: { [field]: days } },
       {
-        onSuccess: (resp) => {
+        onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getRetentionSettingsQueryKey() });
-          setGlobal(String(resp.data.retention_days));
-          setQuarantine(String(resp.data.quarantine_retention_days));
           toast.success(t("config.retentionSaved"));
         },
         onError: (err: unknown) => {
@@ -1014,18 +1080,6 @@ function RetentionSettings() {
         },
       },
     );
-  };
-
-  const handleReset = () => {
-    if (!settings) return;
-    setGlobal(String(settings.retention_days));
-    setQuarantine(String(settings.quarantine_retention_days));
-  };
-
-  const resetToDefaults = () => {
-    if (!settings) return;
-    setGlobal(String(settings.retention_days_default));
-    setQuarantine(String(settings.quarantine_retention_days_default));
   };
 
   if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
@@ -1040,101 +1094,93 @@ function RetentionSettings() {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          How long runs and quarantined rows are kept before the daily cleanup
-          removes them. Quarantine defaults to a shorter window because it holds
-          full source rows. Both are floored at <code>{min}</code> days.
+          How long runs and quarantined rows are kept
         </p>
 
-        <div className="grid grid-cols-1 gap-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="retention-global" className="text-xs">
-              Global retention (days)
+        {/* Invalid results — mini card */}
+        <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="retention-quarantine" className="text-sm">
+              Invalid results
             </Label>
-            <Input
-              id="retention-global"
-              type="number"
-              min={min}
-              max={max}
-              step={1}
-              value={global}
-              disabled={!isAdmin || saveMutation.isPending}
-              onChange={(e) => setGlobal(e.target.value)}
-              className="h-8"
-            />
             <p className="text-[11px] text-muted-foreground">
-              Applies to run history, profiling results, and metrics.
-              <br />
-              Default: <code>{settings.retention_days_default}</code> days
-              {!settings.retention_days_set && " (not yet customised)"}
+              Applies to quarantined rows, which hold full source-row payloads.
             </p>
           </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="retention-quarantine" className="text-xs">
-              Quarantine retention (days)
-            </Label>
+          <div className="flex items-center gap-2 shrink-0">
             <Input
               id="retention-quarantine"
               type="number"
-              min={min}
-              max={max}
+              min={1}
               step={1}
-              value={quarantine}
+              value={quarantineValue}
               disabled={!isAdmin || saveMutation.isPending}
-              onChange={(e) => setQuarantine(e.target.value)}
-              className="h-8"
+              onChange={(e) => setQuarantineValue(e.target.value)}
+              onBlur={() => saveField("quarantine_retention_days", quarantineValue, quarantineUnit)}
+              className="h-8 w-20"
             />
-            <p className="text-[11px] text-muted-foreground">
-              Applies only to quarantined rows, which hold full source-row payloads.
-              <br />
-              Default: <code>{settings.quarantine_retention_days_default}</code> days
-              {!settings.quarantine_retention_days_set && " (not yet customised)"}
-            </p>
+            <Select
+              value={quarantineUnit}
+              onValueChange={(v) => {
+                const unit = v as RetentionUnit;
+                setQuarantineUnit(unit);
+                saveField("quarantine_retention_days", quarantineValue, unit);
+              }}
+              disabled={!isAdmin || saveMutation.isPending}
+            >
+              <SelectTrigger className="h-8 w-28">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="days">days</SelectItem>
+                <SelectItem value="months">months</SelectItem>
+                <SelectItem value="years">years</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
-        {validation.length > 0 && (
-          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
-            {validation.map((msg, i) => (
-              <p key={i} className="text-xs text-destructive flex items-start gap-1.5">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>{msg}</span>
-              </p>
-            ))}
+        {/* All other data — mini card */}
+        <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="retention-global" className="text-sm">
+              All other data
+            </Label>
+            <p className="text-[11px] text-muted-foreground">
+              Includes run profiling results, history, and metrics.
+            </p>
           </div>
-        )}
-
-        <div className="flex items-center gap-2 pt-2 border-t">
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={!isAdmin || !isDirty || validation.length > 0 || saveMutation.isPending}
-          >
-            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-            Save changes
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={handleReset}
-            disabled={!isAdmin || !isDirty || saveMutation.isPending}
-          >
-            Reset
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={resetToDefaults}
-            disabled={!isAdmin || saveMutation.isPending}
-            title="Restore both fields to the system defaults (does not save until you click Save changes)"
-          >
-            Restore defaults
-          </Button>
-          {!isAdmin && (
-            <span className="text-xs text-muted-foreground">
-              Only admins can change retention.
-            </span>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            <Input
+              id="retention-global"
+              type="number"
+              min={1}
+              step={1}
+              value={globalValue}
+              disabled={!isAdmin || saveMutation.isPending}
+              onChange={(e) => setGlobalValue(e.target.value)}
+              onBlur={() => saveField("retention_days", globalValue, globalUnit)}
+              className="h-8 w-20"
+            />
+            <Select
+              value={globalUnit}
+              onValueChange={(v) => {
+                const unit = v as RetentionUnit;
+                setGlobalUnit(unit);
+                saveField("retention_days", globalValue, unit);
+              }}
+              disabled={!isAdmin || saveMutation.isPending}
+            >
+              <SelectTrigger className="h-8 w-28">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="days">days</SelectItem>
+                <SelectItem value="months">months</SelectItem>
+                <SelectItem value="years">years</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -1147,6 +1193,20 @@ function RetentionSettings() {
 // always scan the full table, so there is deliberately no knob for them.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Convert draft_sample_limit rows → SampleSelector {kind, value}. */
+function limitToSample(limit: number): { kind: SampleKind; value: number } {
+  if (limit === 0) return { kind: "full", value: 1000 };
+  return { kind: "records", value: limit };
+}
+
+/** Convert SampleSelector {kind, value} → draft_sample_limit rows.
+ *  Any non-full kind maps to a row count (percent is disabled in this context
+ *  via disablePercent, but guard here as belt-and-suspenders). */
+function sampleToLimit(kind: SampleKind, value: number): number {
+  if (kind === "full") return 0;
+  return value; // both "records" and (guarded) "percent" store the numeric value as rows
+}
+
 function DraftRunSampleLimitSettings() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -1156,29 +1216,26 @@ function DraftRunSampleLimitSettings() {
   const { data: role } = useCurrentUserRoleSuspense();
   const isAdmin = role?.data?.role === "admin";
 
-  const [limit, setLimit] = useState<string>("");
+  const [sampleKind, setSampleKind] = useState<SampleKind>("records");
+  const [sampleValue, setSampleValue] = useState(1000);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     if (settings && !hydrated) {
-      setLimit(String(settings.draft_run_sample_limit));
+      const { kind, value } = limitToSample(settings.draft_run_sample_limit);
+      setSampleKind(kind);
+      setSampleValue(value);
       setHydrated(true);
     }
   }, [settings, hydrated]);
 
-  const max = settings?.draft_run_sample_limit_max ?? 10_000_000;
-  const parsed = Number.parseInt(limit, 10);
-  const isInvalid = Number.isNaN(parsed) || parsed < 0 || parsed > max;
-  const isDirty = settings != null && !Number.isNaN(parsed) && parsed !== settings.draft_run_sample_limit;
-
-  const handleSave = () => {
-    if (!settings || isInvalid || !isDirty) return;
+  const handleSave = useCallback((kind: SampleKind, value: number) => {
+    const limit = sampleToLimit(kind, value);
     saveMutation.mutate(
-      { data: { draft_run_sample_limit: parsed } },
+      { data: { draft_run_sample_limit: limit } },
       {
-        onSuccess: (saved) => {
+        onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetDraftRunSampleLimitQueryKey() });
-          setLimit(String(saved.data.draft_run_sample_limit));
           toast.success(t("config.draftSampleSaved"));
         },
         onError: (err: unknown) => {
@@ -1187,6 +1244,16 @@ function DraftRunSampleLimitSettings() {
         },
       },
     );
+  }, [saveMutation, queryClient, t]);
+
+  const handleKindChange = (k: SampleKind) => {
+    setSampleKind(k);
+    handleSave(k, sampleValue);
+  };
+
+  const handleValueChange = (n: number) => {
+    setSampleValue(n);
+    handleSave(sampleKind, n);
   };
 
   if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
@@ -1200,53 +1267,21 @@ function DraftRunSampleLimitSettings() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          {t("config.draftSampleDescription")}
-        </p>
-        <div className="space-y-1.5 max-w-sm">
-          <Label htmlFor="draft-sample-limit" className="text-xs">
-            {t("config.draftSampleLabel")}
-          </Label>
-          <Input
-            id="draft-sample-limit"
-            type="number"
-            min={0}
-            max={max}
-            step={1}
-            value={limit}
-            disabled={!isAdmin || saveMutation.isPending}
-            onChange={(e) => setLimit(e.target.value)}
-            className="h-8"
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label className="text-sm">{t("config.draftSampleLabel")}</Label>
+          </div>
+          <SampleSelector
+            kind={sampleKind}
+            value={sampleValue}
+            onKind={handleKindChange}
+            onValue={handleValueChange}
+            disablePercent
           />
-          <p className="text-[11px] text-muted-foreground">
-            {t("config.draftSampleDefaultHint", { value: settings.draft_run_sample_limit_default })}
-            {!settings.draft_run_sample_limit_set && ` ${t("config.draftSampleNotCustomised")}`}
-          </p>
         </div>
-        {isInvalid && (
-          <p className="text-xs text-destructive flex items-start gap-1.5">
-            <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-            <span>{t("config.draftSampleInvalid", { max })}</span>
-          </p>
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.draftSampleAdminOnlyHint")}</span>
         )}
-        <div className="flex items-center gap-2 pt-2 border-t">
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={!isAdmin || !isDirty || isInvalid || saveMutation.isPending}
-          >
-            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-            {t("config.draftSampleSave")}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setLimit(String(settings.draft_run_sample_limit))}
-            disabled={!isAdmin || !isDirty || saveMutation.isPending}
-          >
-            {t("config.draftSampleReset")}
-          </Button>
-        </div>
       </CardContent>
     </Card>
   );
@@ -1267,35 +1302,10 @@ function DraftRunSampleLimitSettings() {
 
 // Token → tailwind classes. Adding a new color elsewhere in the UI
 // means adding one entry here; everything else stays data-only.
+// Legacy named tokens — retained only to resolve pre-hex stored values to a
+// concrete hex (see REVIEW_STATUS_TOKEN_HEX). New colors are stored as #RRGGBB.
 const REVIEW_STATUS_COLOR_TOKENS = ["gray", "amber", "green", "blue", "red", "purple"] as const;
 type ReviewStatusColorToken = (typeof REVIEW_STATUS_COLOR_TOKENS)[number];
-
-const REVIEW_STATUS_COLOR_CLASSES: Record<ReviewStatusColorToken, { swatch: string; badge: string }> = {
-  gray: {
-    swatch: "bg-gray-300 dark:bg-gray-700 border-gray-400 dark:border-gray-600",
-    badge: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 border-gray-300 dark:border-gray-700",
-  },
-  amber: {
-    swatch: "bg-amber-400 border-amber-500",
-    badge: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 border-amber-300 dark:border-amber-800",
-  },
-  green: {
-    swatch: "bg-green-500 border-green-600",
-    badge: "bg-green-100 text-green-900 dark:bg-green-950 dark:text-green-200 border-green-300 dark:border-green-800",
-  },
-  blue: {
-    swatch: "bg-blue-500 border-blue-600",
-    badge: "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200 border-blue-300 dark:border-blue-800",
-  },
-  red: {
-    swatch: "bg-red-500 border-red-600",
-    badge: "bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200 border-red-300 dark:border-red-800",
-  },
-  purple: {
-    swatch: "bg-purple-500 border-purple-600",
-    badge: "bg-purple-100 text-purple-900 dark:bg-purple-950 dark:text-purple-200 border-purple-300 dark:border-purple-800",
-  },
-};
 
 /** Normalise an arbitrary color string to a known token; unknown values fall back to gray. */
 function normaliseReviewStatusColor(value: string | undefined | null): ReviewStatusColorToken {
@@ -1305,26 +1315,46 @@ function normaliseReviewStatusColor(value: string | undefined | null): ReviewSta
     : "gray";
 }
 
-function ReviewStatusColorSwatch({ color }: { color: string }) {
-  const token = normaliseReviewStatusColor(color);
-  return (
-    <span
-      className={cn(
-        "inline-block h-3.5 w-3.5 rounded-full border",
-        REVIEW_STATUS_COLOR_CLASSES[token].swatch,
-      )}
-      aria-hidden
-    />
-  );
+// Concrete hex for each legacy token, so a stored token ("gray", "amber", …)
+// and a hex value ("#ef4444") both resolve to a hex we can render inline.
+const REVIEW_STATUS_TOKEN_HEX: Record<ReviewStatusColorToken, string> = {
+  gray: "#94a3b8",
+  amber: "#f59e0b",
+  green: "#22c55e",
+  blue: "#3b82f6",
+  red: "#ef4444",
+  purple: "#a855f7",
+};
+
+/** Resolve a stored review-status color (hex OR legacy token) to a #RRGGBB hex. */
+export function reviewStatusColorHex(color: string | undefined | null): string {
+  const trimmed = (color || "").trim();
+  if (HEX_COLOR_RE.test(trimmed)) return trimmed;
+  return REVIEW_STATUS_TOKEN_HEX[normaliseReviewStatusColor(trimmed)];
 }
 
-// Exported helpers — re-used by the Runs detail dropdown and the
-// Runs History badge so all three places render consistent colors
-// without each one duplicating the token table.
-export function reviewStatusBadgeClasses(color: string) {
-  return REVIEW_STATUS_COLOR_CLASSES[normaliseReviewStatusColor(color)].badge;
+/** Inline badge style derived from the resolved hex — a subtle tint that works
+ *  for arbitrary hex colors (Tailwind classes can't encode a runtime hex). */
+export function reviewStatusBadgeStyle(color: string | undefined | null): React.CSSProperties {
+  const hex = reviewStatusColorHex(color);
+  return { backgroundColor: `${hex}1f`, color: hex, borderColor: `${hex}66` };
 }
+
 export { REVIEW_STATUS_COLOR_TOKENS };
+
+/** Normalise a draft array so exactly one entry has is_default=true.
+ *  Priority: (1) "Pending review" row (case-insensitive trim),
+ *            (2) first existing default,
+ *            (3) first row.
+ *  Returns a new array; safe to call with empty arrays (returns []).
+ */
+function normaliseReviewStatusDefaults(statuses: RunReviewStatusOption[]): RunReviewStatusOption[] {
+  if (statuses.length === 0) return [];
+  const pendingIdx = statuses.findIndex((s) => s.value.trim().toLowerCase() === "pending review");
+  const existingDefaultIdx = statuses.findIndex((s) => s.is_default);
+  const defaultIdx = pendingIdx >= 0 ? pendingIdx : existingDefaultIdx >= 0 ? existingDefaultIdx : 0;
+  return statuses.map((s, i) => ({ ...s, is_default: i === defaultIdx }));
+}
 
 function RunReviewStatusesSettings() {
   const { t } = useTranslation();
@@ -1334,40 +1364,37 @@ function RunReviewStatusesSettings() {
   const { data: role } = useCurrentUserRoleSuspense();
   const isAdmin = role?.data?.role === "admin";
 
-  // Local working copy; never mutated in-place. We re-hydrate from
-  // the server response on first load and after every successful save
-  // so concurrent edits from another admin don't get clobbered if the
-  // user navigates away and back.
+  // Local working copy; never mutated in-place.
   const [draft, setDraft] = useState<RunReviewStatusOption[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (data && !hydrated) {
-      setDraft(data.statuses.map((s) => ({ ...s })));
+      // Normalise on hydration: ensure exactly one default, preferring
+      // "Pending review" → first existing default → first row.
+      setDraft(normaliseReviewStatusDefaults(data.statuses.map((s) => ({ ...s }))));
       setHydrated(true);
     }
   }, [data, hydrated]);
 
-  // Re-derive whether the form has unsaved changes from the canonical
-  // server response rather than tracking a separate dirty flag —
-  // cheaper and avoids drift after a partial save.
-  const isDirty = useMemo(() => {
-    if (!data) return false;
-    if (data.statuses.length !== draft.length) return true;
-    return data.statuses.some((s, i) => {
-      const d = draft[i];
-      return (
-        !d ||
-        d.value !== s.value ||
-        d.description !== s.description ||
-        d.color !== s.color ||
-        d.is_default !== s.is_default
-      );
-    });
-  }, [data, draft]);
+  // Collapse expanded row when clicking outside.
+  useEffect(() => {
+    if (expanded === null) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (rootRef.current?.contains(target)) return;
+      if (target.closest("[data-radix-popper-content-wrapper]")) return;
+      setExpanded(null);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [expanded]);
 
   // The save endpoint enforces exactly-one-default; mirror that in the
-  // UI so the button stays disabled when the constraint can't be met.
+  // UI so auto-save is only triggered when the constraint is met.
   const validationError = useMemo<string | null>(() => {
     if (draft.length === 0) {
       return "At least one status is required.";
@@ -1388,54 +1415,75 @@ function RunReviewStatusesSettings() {
     return null;
   }, [draft]);
 
+  // Auto-save: debounced 600ms after any change, guarded by validation.
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerAutoSave = useCallback(
+    (nextDraft: RunReviewStatusOption[]) => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      // Run validation inline — same rules as validationError memo.
+      if (nextDraft.length === 0) return;
+      const seen = new Set<string>();
+      for (const entry of nextDraft) {
+        const trimmed = entry.value.trim();
+        if (!trimmed) return;
+        if (!/^[A-Za-z0-9][A-Za-z0-9 _\-/.]{0,79}$/.test(trimmed)) return;
+        if (seen.has(trimmed)) return;
+        seen.add(trimmed);
+      }
+      const defaults = nextDraft.filter((d) => d.is_default).length;
+      if (defaults !== 1) return;
+      saveTimerRef.current = setTimeout(() => {
+        const cleaned = nextDraft.map((entry) => ({
+          value: entry.value.trim(),
+          description: (entry.description || "").trim(),
+          // Persist a concrete #RRGGBB hex (resolving any legacy token too) so
+          // the picker round-trips and the badges render the chosen color.
+          color: reviewStatusColorHex(entry.color),
+          is_default: Boolean(entry.is_default),
+        }));
+        saveMutation.mutate(
+          { data: { statuses: cleaned } },
+          {
+            onSuccess: (resp) => {
+              queryClient.invalidateQueries({ queryKey: getRunReviewStatusesQueryKey() });
+              setDraft(resp.data.statuses.map((s) => ({ ...s })));
+              toast.success(t("config.reviewStatusesSaved"));
+            },
+            onError: (err: unknown) => {
+              const axErr = err as AxiosError<{ detail?: string }>;
+              toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveReviewStatuses"));
+            },
+          },
+        );
+      }, 600);
+    },
+    [saveMutation, queryClient, t],
+  );
+
+  // Clean up timer on unmount.
+  useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); }, []);
+
   const handleAdd = () => {
-    setDraft((d) => [
-      ...d,
-      { value: "", description: "", color: "gray", is_default: false },
-    ]);
+    const next = [...draft, { value: "", description: "", color: "gray", is_default: false }];
+    setDraft(next);
+    setExpanded(next.length - 1);
+    triggerAutoSave(next);
   };
 
   const handleRemove = (idx: number) => {
-    setDraft((d) => d.filter((_, i) => i !== idx));
+    const filtered = draft.filter((_, i) => i !== idx);
+    // Re-assign default if we removed the default row.
+    const next = normaliseReviewStatusDefaults(filtered);
+    setDraft(next);
+    if (expanded === idx) setExpanded(null);
+    triggerAutoSave(next);
   };
 
   const handlePatch = (idx: number, patch: Partial<RunReviewStatusOption>) => {
-    setDraft((d) => d.map((entry, i) => (i === idx ? { ...entry, ...patch } : entry)));
-  };
-
-  // Radio-group semantics on top of an array — selecting a default
-  // unsets the previous one rather than allowing the constraint
-  // violation to slip into the validation message.
-  const handleMakeDefault = (idx: number) => {
-    setDraft((d) => d.map((entry, i) => ({ ...entry, is_default: i === idx })));
-  };
-
-  const handleSave = () => {
-    if (validationError) return;
-    const cleaned = draft.map((entry) => ({
-      value: entry.value.trim(),
-      description: (entry.description || "").trim(),
-      color: normaliseReviewStatusColor(entry.color),
-      is_default: Boolean(entry.is_default),
-    }));
-    saveMutation.mutate(
-      { data: { statuses: cleaned } },
-      {
-        onSuccess: (resp) => {
-          queryClient.invalidateQueries({ queryKey: getRunReviewStatusesQueryKey() });
-          setDraft(resp.data.statuses.map((s) => ({ ...s })));
-          toast.success(t("config.reviewStatusesSaved"));
-        },
-        onError: (err: unknown) => {
-          const axErr = err as AxiosError<{ detail?: string }>;
-          toast.error(axErr?.response?.data?.detail ?? t("config.failedSaveReviewStatuses"));
-        },
-      },
-    );
-  };
-
-  const handleReset = () => {
-    if (data) setDraft(data.statuses.map((s) => ({ ...s })));
+    const next = draft.map((entry, i) => (i === idx ? { ...entry, ...patch } : entry));
+    setDraft(next);
+    triggerAutoSave(next);
   };
 
   if (isLoading || !data) {
@@ -1452,119 +1500,101 @@ function RunReviewStatusesSettings() {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          The values reviewers can tag a run with, and filter by on the Runs
-          History page. Mark one as the default so every run starts with a status.
+          Statuses used when reviewing results of each run via the Results tab
         </p>
 
-        <div className="space-y-2">
+        <div ref={rootRef} className="space-y-1.5">
           {draft.map((entry, idx) => {
-            const colorToken = normaliseReviewStatusColor(entry.color);
+            const isOpen = expanded === idx;
             return (
               <div
                 key={idx}
                 className={cn(
-                  "rounded-md border p-3 space-y-2",
-                  entry.is_default && "border-primary/40 bg-primary/5",
+                  "rounded-md border bg-muted/30 cursor-pointer transition-colors",
+                  isOpen && "bg-background border-primary/40",
                 )}
+                onClick={() => setExpanded(isOpen ? null : idx)}
               >
-                <div className="grid grid-cols-1 sm:grid-cols-[1fr_2fr_auto_auto] gap-2 items-start">
-                  <div className="space-y-1">
-                    <Label className="text-[11px] text-muted-foreground">Value</Label>
-                    <Input
-                      value={entry.value}
-                      onChange={(e) => handlePatch(idx, { value: e.target.value })}
-                      placeholder="e.g. Confirmed"
-                      maxLength={80}
-                      disabled={!isAdmin || saveMutation.isPending}
-                      className="h-8 text-xs"
-                      autoComplete="off"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-[11px] text-muted-foreground">Description (optional)</Label>
-                    <Input
-                      value={entry.description}
-                      onChange={(e) => handlePatch(idx, { description: e.target.value })}
-                      placeholder="Shown as a tooltip on the dropdown"
-                      maxLength={200}
-                      disabled={!isAdmin || saveMutation.isPending}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-[11px] text-muted-foreground">Color</Label>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={!isAdmin || saveMutation.isPending}
-                          className="h-8 gap-1.5 text-xs"
-                        >
-                          <ReviewStatusColorSwatch color={colorToken} />
-                          <span className="capitalize">{colorToken}</span>
-                          <ChevronDown className="h-3 w-3 opacity-60" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent align="end" className="w-44 p-1">
-                        <div className="space-y-0.5">
-                          {REVIEW_STATUS_COLOR_TOKENS.map((tok) => (
-                            <button
-                              key={tok}
-                              type="button"
-                              className={cn(
-                                "flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted",
-                                colorToken === tok && "bg-muted font-medium",
-                              )}
-                              onClick={() => handlePatch(idx, { color: tok })}
-                            >
-                              <ReviewStatusColorSwatch color={tok} />
-                              <span className="capitalize">{tok}</span>
-                              {colorToken === tok && <Check className="h-3 w-3 ml-auto" />}
-                            </button>
-                          ))}
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-[11px] text-muted-foreground sm:opacity-0 sm:pointer-events-none">.</Label>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleRemove(idx)}
-                      disabled={!isAdmin || saveMutation.isPending || draft.length <= 1}
-                      title={draft.length <= 1 ? "At least one status is required" : "Remove this status"}
-                      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
+                {/* Collapsed row — swatch is a click-to-pick hex color, like the
+                    Tags allowed-values editor. */}
+                <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 px-2.5 py-1.5">
+                  <ValueColorEditor
+                    value={entry.value || t("config.reviewStatusFallback")}
+                    color={reviewStatusColorHex(entry.color)}
+                    onSetColor={(c) => handlePatch(idx, { color: c ?? reviewStatusColorHex(null) })}
+                  />
+                  <span className="flex items-baseline gap-2 min-w-0">
+                    <span className="font-mono text-xs shrink-0">{entry.value || <span className="italic text-muted-foreground">{t("config.reviewStatusUnnamed")}</span>}</span>
+                    {entry.description && !isOpen && (
+                      <span className="truncate text-[11px] text-muted-foreground">{entry.description}</span>
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={t("config.reviewStatusRemoveAria", { value: entry.value || t("config.reviewStatusFallback") })}
+                    className="text-muted-foreground hover:text-destructive transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRemove(idx);
+                    }}
+                    disabled={!isAdmin || saveMutation.isPending || draft.length <= 1}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  className={cn(
-                    "flex items-center gap-1.5 text-xs",
-                    entry.is_default
-                      ? "text-primary font-medium"
-                      : "text-muted-foreground hover:text-foreground",
+                {/* Expanded inline editor */}
+                <AnimatePresence initial={false}>
+                  {isOpen && (
+                    <motion.div
+                      key="expanded"
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.18, ease: "easeInOut" }}
+                      className="overflow-hidden"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="border-t px-2.5 pb-2.5 pt-2 space-y-2">
+                        <div className="flex items-end gap-2">
+                          {/* Value input (color is picked via the swatch on the
+                              collapsed row, matching the Tags editor) */}
+                          <div className="space-y-1 shrink-0">
+                            <Label className="text-xs text-muted-foreground">
+                              Value <RequiredAsterisk />
+                            </Label>
+                            <Input
+                              value={entry.value}
+                              onChange={(e) => handlePatch(idx, { value: e.target.value })}
+                              placeholder="e.g. Confirmed"
+                              maxLength={80}
+                              disabled={!isAdmin || saveMutation.isPending}
+                              className="h-7 w-40 text-xs font-mono"
+                              autoComplete="off"
+                            />
+                          </div>
+                          {/* Description input */}
+                          <div className="flex-1 space-y-1">
+                            <Label className="text-xs text-muted-foreground">Description</Label>
+                            <Input
+                              value={entry.description}
+                              onChange={(e) => handlePatch(idx, { description: e.target.value })}
+                              placeholder="Shown as a tooltip on the dropdown"
+                              maxLength={200}
+                              disabled={!isAdmin || saveMutation.isPending}
+                              className="h-7 text-xs"
+                            />
+                          </div>
+                        </div>
+                        {/* Default indicator — locked ON for the default row, hidden for all others */}
+                        {entry.is_default && (
+                          <span className="flex items-center gap-1.5 text-xs text-primary font-medium">
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Default for new runs
+                          </span>
+                        )}
+                      </div>
+                    </motion.div>
                   )}
-                  onClick={() => handleMakeDefault(idx)}
-                  disabled={!isAdmin || saveMutation.isPending || entry.is_default}
-                  title={entry.is_default ? "Default for new runs" : "Make this the default"}
-                >
-                  {entry.is_default ? (
-                    <>
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Default for new runs
-                    </>
-                  ) : (
-                    <>
-                      <Circle className="h-3.5 w-3.5" /> Make default
-                    </>
-                  )}
-                </button>
+                </AnimatePresence>
               </div>
             );
           })}
@@ -1576,7 +1606,7 @@ function RunReviewStatusesSettings() {
           size="sm"
           onClick={handleAdd}
           disabled={!isAdmin || saveMutation.isPending}
-          className="gap-1.5"
+          className="h-7 gap-1.5 text-xs"
         >
           <Plus className="h-3.5 w-3.5" />
           Add status
@@ -1588,39 +1618,6 @@ function RunReviewStatusesSettings() {
             {validationError}
           </p>
         )}
-
-        <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={!isAdmin || !isDirty || !!validationError || saveMutation.isPending}
-          >
-            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-            Save changes
-          </Button>
-          {isDirty && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleReset}
-              disabled={!isAdmin || saveMutation.isPending}
-              className="gap-1.5"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              Reset
-            </Button>
-          )}
-          {!isAdmin && (
-            <span className="text-xs text-muted-foreground">Only admins can change this setting</span>
-          )}
-        </div>
-
-        <div className="rounded-md border border-muted-foreground/20 bg-muted/40 p-3 text-[11px] text-muted-foreground space-y-1">
-          <p>
-            Renaming a value doesn't change past runs — they keep the label they
-            were tagged with.
-          </p>
-        </div>
       </CardContent>
     </Card>
   );
@@ -1645,9 +1642,11 @@ const NO_WAREHOUSE_VALUE = "__default__";
 const NO_CLUSTER_VALUE = "__none__";
 
 /**
- * SQL-warehouse dropdown. Always includes the currently-configured id even
- * when the workspace list hasn't loaded yet (or the warehouse was since
- * deleted), so Radix Select never receives a value with no matching item.
+ * SQL-warehouse dropdown. Groups warehouses into Serverless and Classic with
+ * green/red status dots (mirrors dqlake EvalWarehouseCard). Always includes
+ * the currently-configured id even when the workspace list hasn't loaded yet
+ * (or the warehouse was since deleted), so Radix Select never receives a
+ * value with no matching item.
  */
 function WarehouseSelect({
   value,
@@ -1661,12 +1660,17 @@ function WarehouseSelect({
   disabled?: boolean;
 }) {
   const { t } = useTranslation();
-  const options = useMemo(() => {
+  const { serverless, classic } = useMemo(() => {
     const byId = new Map(warehouses.map((w) => [w.id, w]));
+    // Ensure saved id is always present in the list even if not in workspace
     if (value && !byId.has(value)) {
       byId.set(value, { id: value, name: value, serverless: false, running: false });
     }
-    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+    const all = Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return {
+      serverless: all.filter((w) => w.serverless),
+      classic: all.filter((w) => !w.serverless),
+    };
   }, [warehouses, value]);
 
   return (
@@ -1675,25 +1679,52 @@ function WarehouseSelect({
       onValueChange={(v) => onChange(v === NO_WAREHOUSE_VALUE ? "" : v)}
       disabled={disabled}
     >
-      <SelectTrigger className="h-8 text-xs font-mono w-full">
+      <SelectTrigger className="h-8 text-xs w-52">
         <SelectValue placeholder={t("config.computeWarehousePlaceholder")} />
       </SelectTrigger>
       <SelectContent>
         <SelectItem value={NO_WAREHOUSE_VALUE} className="text-xs">
           {t("config.computeWarehouseDefault")}
         </SelectItem>
-        {options.length === 0 && (
+        {serverless.length > 0 && (
+          <>
+            <SelectLabel className="text-[10px] uppercase tracking-wide text-muted-foreground px-2 pt-1">
+              {t("config.computeWarehouseServerlessGroup")}
+            </SelectLabel>
+            {serverless.map((w) => (
+              <SelectItem key={w.id} value={w.id} className="text-xs">
+                <span className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
+                  {w.name}
+                  {w.id === value && !warehouses.some((x) => x.id === value)
+                    ? ` (${t("config.computeWarehouseCustomOption")})`
+                    : ""}
+                </span>
+              </SelectItem>
+            ))}
+          </>
+        )}
+        {classic.length > 0 && (
+          <>
+            <SelectLabel className="text-[10px] uppercase tracking-wide text-muted-foreground px-2 pt-1">
+              {t("config.computeWarehouseClassicGroup")}
+            </SelectLabel>
+            {classic.map((w) => (
+              <SelectItem key={w.id} value={w.id} className="text-xs">
+                <span className="flex items-center gap-1.5">
+                  <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", w.running ? "bg-green-500" : "bg-red-500")} />
+                  {w.name}
+                  {w.id === value && !warehouses.some((x) => x.id === value)
+                    ? ` (${t("config.computeWarehouseCustomOption")})`
+                    : ""}
+                </span>
+              </SelectItem>
+            ))}
+          </>
+        )}
+        {serverless.length === 0 && classic.length === 0 && warehouses.length === 0 && (
           <SelectLabel className="font-normal">{t("config.computeNoWarehouses")}</SelectLabel>
         )}
-        {options.map((w) => (
-          <SelectItem key={w.id} value={w.id} className="text-xs font-mono">
-            {w.name}
-            {w.serverless ? " · serverless" : ""}
-            {w.id === value && !warehouses.some((x) => x.id === value)
-              ? ` (${t("config.computeWarehouseCustomOption")})`
-              : ""}
-          </SelectItem>
-        ))}
       </SelectContent>
     </Select>
   );
@@ -1732,7 +1763,7 @@ function ClusterSelect({
       onValueChange={(v) => onChange(v === NO_CLUSTER_VALUE ? "" : v)}
       disabled={disabled}
     >
-      <SelectTrigger className="h-8 text-xs font-mono w-full mt-1.5">
+      <SelectTrigger className="h-8 text-xs w-52 mt-1.5">
         <SelectValue placeholder={t("config.computeClusterPlaceholder")} />
       </SelectTrigger>
       <SelectContent>
@@ -1745,11 +1776,14 @@ function ClusterSelect({
           </SelectLabel>
         )}
         {options.map((c) => (
-          <SelectItem key={c.cluster_id} value={c.cluster_id} className="text-xs font-mono">
-            {c.cluster_name}
-            {c.cluster_id === value && !clusters.some((x) => x.cluster_id === value)
-              ? ` (${t("config.computeClusterCustomOption")})`
-              : ""}
+          <SelectItem key={c.cluster_id} value={c.cluster_id} className="text-xs">
+            <span className="flex items-center gap-1.5">
+              <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", c.state === "RUNNING" ? "bg-green-500" : "bg-red-500")} />
+              {c.cluster_name}
+              {c.cluster_id === value && !clusters.some((x) => x.cluster_id === value)
+                ? ` (${t("config.computeClusterCustomOption")})`
+                : ""}
+            </span>
           </SelectItem>
         ))}
       </SelectContent>
@@ -1821,6 +1855,8 @@ function AiSettingsCard() {
   const isAdmin = role?.data?.role === "admin";
   const { data: servingEndpointsResp } = useListServingEndpoints();
   const servingEndpoints = useMemo(() => servingEndpointsResp?.data.names ?? [], [servingEndpointsResp]);
+  const { data: workspace } = useWorkspaceHost();
+  const host = workspace?.workspace_host;
 
   const [aiEnabled, setAiEnabled] = useState(false);
   const [aiEndpoint, setAiEndpoint] = useState("");
@@ -1834,16 +1870,7 @@ function AiSettingsCard() {
     }
   }, [data, hydrated]);
 
-  const isDirty = useMemo(() => {
-    if (!data) return false;
-    return aiEnabled !== data.ai_enabled || aiEndpoint.trim() !== data.ai_endpoint_name;
-  }, [data, aiEnabled, aiEndpoint]);
-
-  const handleSave = () => {
-    const payload: AiSettingsIn = {
-      ai_enabled: aiEnabled,
-      ai_endpoint_name: aiEndpoint.trim(),
-    };
+  const doSave = (payload: AiSettingsIn, enabledForVS: boolean) => {
     saveMutation.mutate(
       { data: payload },
       {
@@ -1857,7 +1884,7 @@ function AiSettingsCard() {
           // the UI — the suggester reports readiness separately once the
           // index comes online. Silently ignore failures; this is
           // best-effort.
-          if (aiEnabled) {
+          if (enabledForVS) {
             ensureVectorStoreMutation.mutate(undefined, { onError: () => {} });
           }
         },
@@ -1869,15 +1896,25 @@ function AiSettingsCard() {
     );
   };
 
-  const handleReset = () => {
-    if (!data) return;
-    setAiEnabled(data.ai_enabled);
-    setAiEndpoint(data.ai_endpoint_name);
+  const handleEnabledChange = (checked: boolean) => {
+    setAiEnabled(checked);
+    doSave({ ai_enabled: checked, ai_endpoint_name: aiEndpoint.trim() }, checked);
+  };
+
+  const handleEndpointChange = (value: string) => {
+    setAiEndpoint(value);
+    doSave({ ai_enabled: aiEnabled, ai_endpoint_name: value.trim() }, aiEnabled);
   };
 
   if (isLoading || !data) {
     return <Skeleton className="h-40 w-full" />;
   }
+
+  const manageHref = host
+    ? aiEndpoint
+      ? `${host}/ml/endpoints/${encodeURIComponent(aiEndpoint)}`
+      : `${host}/ml/endpoints`
+    : undefined;
 
   return (
     <Card className="border-fuchsia-500/30 dark:border-fuchsia-400/30">
@@ -1888,9 +1925,7 @@ function AiSettingsCard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-xs text-muted-foreground leading-relaxed">{t("config.aiSettingsDescription")}</p>
-
-        <div className="flex items-center justify-between rounded-md border p-3">
+        <div className="flex items-center justify-between rounded-md border border-fuchsia-500/30 dark:border-fuchsia-400/30 p-3">
           <div className="space-y-0.5 pr-4">
             <Label htmlFor="ai-settings-enabled" className="text-sm">{t("config.aiSettingsEnabledLabel")}</Label>
             <p className="text-[11px] text-muted-foreground">{t("config.aiSettingsEnabledHint")}</p>
@@ -1898,44 +1933,39 @@ function AiSettingsCard() {
           <Switch
             id="ai-settings-enabled"
             checked={aiEnabled}
-            onCheckedChange={setAiEnabled}
+            onCheckedChange={handleEnabledChange}
             disabled={!isAdmin || saveMutation.isPending}
+            className="data-[state=checked]:bg-fuchsia-500"
           />
         </div>
 
-        <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+        <div className="flex items-center justify-between gap-4 rounded-md border border-fuchsia-500/30 dark:border-fuchsia-400/30 p-3">
           <div className="space-y-0.5">
             <Label className="text-sm">{t("config.aiSettingsEndpointLabel")}</Label>
             <p className="text-[11px] text-muted-foreground">{t("config.aiSettingsEndpointHint")}</p>
+            {manageHref && (
+              <a
+                href={manageHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+              >
+                {t("config.aiSettingsManageLink")}
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
           </div>
           <div className="w-64 shrink-0">
             <ServingEndpointSelect
               value={aiEndpoint}
-              onChange={setAiEndpoint}
+              onChange={handleEndpointChange}
               endpoints={servingEndpoints}
-              disabled={!isAdmin || saveMutation.isPending}
+              disabled={!isAdmin || !aiEnabled || saveMutation.isPending}
             />
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={!isAdmin || !isDirty || saveMutation.isPending}
-            className={AI_BUTTON_BG}
-          >
-            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-            {t("config.aiSettingsSaveButton")}
-          </Button>
-          {isDirty && (
-            <Button size="sm" variant="ghost" onClick={handleReset} disabled={!isAdmin || saveMutation.isPending} className="gap-1.5">
-              <RotateCcw className="h-3.5 w-3.5" />
-              {t("common.reset")}
-            </Button>
-          )}
-          {!isAdmin && <span className="text-xs text-muted-foreground">{t("config.aiSettingsAdminOnlyHint")}</span>}
-        </div>
+        {!isAdmin && <span className="text-xs text-muted-foreground">{t("config.aiSettingsAdminOnlyHint")}</span>}
       </CardContent>
     </Card>
   );
@@ -1996,27 +2026,16 @@ function RulesRegistrySettingsCard() {
             <Label htmlFor="default-auto-upgrade" className="text-sm">
               {t("config.defaultAutoUpgradeLabel")}
             </Label>
-            <p className="text-[11px] text-muted-foreground">{t("config.defaultAutoUpgradeHint")}</p>
+            <p className="text-[11px] text-muted-foreground">
+              {settings.default_auto_upgrade
+                ? t("config.defaultAutoUpgradeHint")
+                : t("config.defaultAutoUpgradeHintOff")}
+            </p>
           </div>
           <Switch
             id="default-auto-upgrade"
             checked={settings.default_auto_upgrade}
             onCheckedChange={(checked) => save({ default_auto_upgrade: checked })}
-            disabled={!isAdmin || saveMutation.isPending}
-          />
-        </div>
-
-        <div className="flex items-center justify-between rounded-md border p-3">
-          <div className="space-y-0.5 pr-4">
-            <Label htmlFor="auto-upgrade-without-approval" className="text-sm">
-              {t("config.autoUpgradeWithoutApprovalLabel")}
-            </Label>
-            <p className="text-[11px] text-muted-foreground">{t("config.autoUpgradeWithoutApprovalHint")}</p>
-          </div>
-          <Switch
-            id="auto-upgrade-without-approval"
-            checked={settings.auto_upgrade_without_approval}
-            onCheckedChange={(checked) => save({ auto_upgrade_without_approval: checked })}
             disabled={!isAdmin || saveMutation.isPending}
           />
         </div>
@@ -2044,6 +2063,125 @@ function RulesRegistrySettingsCard() {
   );
 }
 
+// Pass-threshold quality gates — its own settings card (split out of the Rules
+// Registry card so the warn-when-<X%-pass gate is discoverable on its own).
+// Shares the same GET/SAVE endpoint as the registry settings; the two fields
+// (pass_threshold_enabled, default_pass_threshold) are independent columns, so
+// a partial PATCH of just these keys is safe.
+function PassThresholdSettingsCard() {
+  const { t } = useTranslation();
+  const { data, isLoading } = useGetRulesRegistrySettings();
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveRulesRegistrySettings();
+  const { isAdmin } = usePermissions();
+
+  const settings = data?.data;
+
+  // Local state for the threshold number input — hydrate once from server data.
+  const [thresholdValue, setThresholdValue] = useState(70);
+  const [thresholdHydrated, setThresholdHydrated] = useState(false);
+
+  useEffect(() => {
+    if (settings && !thresholdHydrated) {
+      setThresholdValue(settings.default_pass_threshold);
+      setThresholdHydrated(true);
+    }
+  }, [settings, thresholdHydrated]);
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  const save = (payload: RulesRegistrySettingsIn) => {
+    saveMutation.mutate(
+      { data: payload },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetRulesRegistrySettingsQueryKey() });
+          toast.success(t("config.rulesRegistrySettingsSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.rulesRegistrySettingsFailedSave"));
+        },
+      },
+    );
+  };
+
+  const handleThresholdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const parsed = parseInt(e.target.value, 10);
+    if (!isNaN(parsed)) {
+      const clamped = Math.min(100, Math.max(0, parsed));
+      setThresholdValue(clamped);
+      save({ default_pass_threshold: clamped });
+    }
+  };
+
+  const handleThresholdBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    const parsed = parseInt(e.target.value, 10);
+    const clamped = isNaN(parsed) ? thresholdValue : Math.min(100, Math.max(0, parsed));
+    setThresholdValue(clamped);
+    save({ default_pass_threshold: clamped });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <AlertTriangle className="h-5 w-5" />
+          {t("config.passThresholdSettingsTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.passThresholdSettingsDescription")}
+        </p>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="pass-threshold-enabled" className="text-sm">
+              {t("config.rulesRegistryPassThresholdEnabledLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.rulesRegistryPassThresholdEnabledHint")}</p>
+          </div>
+          <Switch
+            id="pass-threshold-enabled"
+            checked={settings.pass_threshold_enabled}
+            onCheckedChange={(checked) => save({ pass_threshold_enabled: checked })}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="default-pass-threshold" className="text-sm">
+              {t("config.rulesRegistryDefaultPassThresholdLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.rulesRegistryDefaultPassThresholdHint")}</p>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <Input
+              id="default-pass-threshold"
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              value={thresholdValue}
+              onChange={handleThresholdChange}
+              onBlur={handleThresholdBlur}
+              disabled={!isAdmin || saveMutation.isPending || !settings.pass_threshold_enabled}
+              className="h-8 w-20 text-right"
+            />
+            <span className="text-sm text-muted-foreground">%</span>
+          </div>
+        </div>
+
+        {!isAdmin && (
+          <span className="text-xs text-muted-foreground">{t("config.rulesRegistrySettingsAdminOnlyHint")}</span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Approvals mode (#94) — the app-wide submit→approve gate. A 3-state select:
 // enabled (author submits, approver approves), auto_bypass (submit auto-approves
@@ -2056,13 +2194,16 @@ const APPROVAL_MODES = ["enabled", "auto_bypass", "disabled"] as const;
 function ApprovalsModeCard() {
   const { t } = useTranslation();
   const { data, isLoading } = useGetApprovalsMode();
+  const { data: registryData, isLoading: registryLoading } = useGetRulesRegistrySettings();
   const queryClient = useQueryClient();
   const saveMutation = useSaveApprovalsMode();
+  const saveRegistryMutation = useSaveRulesRegistrySettings();
   const { isAdmin } = usePermissions();
 
   const mode = data?.data?.mode;
+  const registrySettings = registryData?.data;
 
-  if (isLoading || !mode) return <Skeleton className="h-40 w-full" />;
+  if (isLoading || !mode || registryLoading || !registrySettings) return <Skeleton className="h-40 w-full" />;
 
   const save = (next: string) => {
     saveMutation.mutate(
@@ -2071,6 +2212,21 @@ function ApprovalsModeCard() {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetApprovalsModeQueryKey() });
           toast.success(t("config.approvalsModeSaved"));
+          // When approvals mode is disabled, turn off bypass setting
+          if (next === "disabled") {
+            saveRegistryMutation.mutate(
+              { data: { auto_upgrade_without_approval: false } },
+              {
+                onSuccess: () => {
+                  queryClient.invalidateQueries({ queryKey: getGetRulesRegistrySettingsQueryKey() });
+                },
+                onError: (err: unknown) => {
+                  const axErr = err as AxiosError<{ detail?: string }>;
+                  toast.error(axErr?.response?.data?.detail ?? t("config.rulesRegistrySettingsFailedSave"));
+                },
+              },
+            );
+          }
         },
         onError: (err: unknown) => {
           const axErr = err as AxiosError<{ detail?: string }>;
@@ -2079,6 +2235,24 @@ function ApprovalsModeCard() {
       },
     );
   };
+
+  const saveBypass = (checked: boolean) => {
+    saveRegistryMutation.mutate(
+      { data: { auto_upgrade_without_approval: checked } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetRulesRegistrySettingsQueryKey() });
+          toast.success(t("config.rulesRegistrySettingsSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.rulesRegistrySettingsFailedSave"));
+        },
+      },
+    );
+  };
+
+  const approvalsDisabled = mode === "disabled";
 
   return (
     <Card>
@@ -2114,6 +2288,23 @@ function ApprovalsModeCard() {
               ))}
             </SelectContent>
           </Select>
+        </div>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="auto-upgrade-without-approval" className="text-sm">
+              {t("config.autoUpgradeWithoutApprovalLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">
+              {t("config.autoUpgradeWithoutApprovalHint")}
+            </p>
+          </div>
+          <Switch
+            id="auto-upgrade-without-approval"
+            checked={approvalsDisabled ? false : registrySettings.auto_upgrade_without_approval}
+            onCheckedChange={saveBypass}
+            disabled={!isAdmin || saveMutation.isPending || saveRegistryMutation.isPending || approvalsDisabled}
+          />
         </div>
 
         {!isAdmin && (
@@ -2166,10 +2357,6 @@ function RequireDraftRunSettingsCard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          {t("config.requireDraftRunDescription")}
-        </p>
-
         <div className="flex items-center justify-between rounded-md border p-3">
           <div className="space-y-0.5 pr-4">
             <Label htmlFor="require-draft-run" className="text-sm">
@@ -2233,10 +2420,6 @@ function PermissionsSettingsCard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          {t("config.permissionsDefaultInheritHelp")}
-        </p>
-
         <div className="flex items-center justify-between rounded-md border p-3">
           <div className="space-y-0.5 pr-4">
             <Label htmlFor="permissions-default-inherit" className="text-sm">
@@ -2277,9 +2460,12 @@ function GlobalResultsSettingsCard() {
 
   if (isLoading || !data) return <Skeleton className="h-40 w-full" />;
 
-  const save = (enabled: boolean) => {
+  // Each toggle is saved independently — the PUT body only carries the field
+  // that changed (the backend leaves the other untouched), so flipping one
+  // never clobbers the other's value.
+  const save = (patch: { global_results_enabled?: boolean; rules_results_tab_enabled?: boolean }) => {
     saveMutation.mutate(
-      { data: { global_results_enabled: enabled } },
+      { data: patch },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetGlobalResultsSettingsQueryKey() });
@@ -2302,10 +2488,6 @@ function GlobalResultsSettingsCard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          {t("config.globalResultsDescription")}
-        </p>
-
         <div className="flex items-center justify-between rounded-md border p-3">
           <div className="space-y-0.5 pr-4">
             <Label htmlFor="global-results-enabled" className="text-sm">
@@ -2316,7 +2498,24 @@ function GlobalResultsSettingsCard() {
           <Switch
             id="global-results-enabled"
             checked={data.global_results_enabled}
-            onCheckedChange={(checked) => save(checked)}
+            onCheckedChange={(checked) => save({ global_results_enabled: checked })}
+            disabled={!isAdmin || saveMutation.isPending}
+          />
+        </div>
+
+        {/* Item 35: separate admin toggle for the per-rule Results tab (OFF by
+            default), distinct from the app-wide global Results surface above. */}
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="rules-results-tab-enabled" className="text-sm">
+              {t("config.rulesResultsTabLabel")}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.rulesResultsTabHint")}</p>
+          </div>
+          <Switch
+            id="rules-results-tab-enabled"
+            checked={data.rules_results_tab_enabled}
+            onCheckedChange={(checked) => save({ rules_results_tab_enabled: checked })}
             disabled={!isAdmin || saveMutation.isPending}
           />
         </div>
@@ -2329,69 +2528,59 @@ function GlobalResultsSettingsCard() {
   );
 }
 
-function ComputeSettingsCard() {
+/** Inner content rendered after all suspense data is available. */
+function ComputeSettingsContent() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data: settingsResp, isLoading, isError: settingsError, refetch: refetchSettings } = useGetComputeSettings();
-  const settings = settingsResp?.data;
-  const { data: role } = useCurrentUserRole();
-  const isAdmin = role?.data?.role === "admin";
+  const { data: settingsResp } = useGetComputeSettingsSuspense();
+  const settings = settingsResp.data;
+  const { data: warehousesResp } = useListComputeWarehousesSuspense();
+  const warehouses = useMemo(() => warehousesResp.data ?? [], [warehousesResp]);
+  // The clusters list is best-effort: the backend swallows a missing-scope /
+  // permission error to `[]` (200). Hard transport errors are caught by the
+  // Suspense error boundary. Either way we degrade gracefully.
+  const { data: clustersResp } = useListComputeClustersSuspense();
+  const clusters = useMemo(() => clustersResp.data ?? [], [clustersResp]);
+  const { isAdmin } = usePermissions();
 
   const saveMutation = useSaveComputeSettings();
   const grantMutation = useGrantWarehouseAccess();
-  const { data: warehousesResp } = useListComputeWarehouses();
-  const warehouses = useMemo(() => warehousesResp?.data ?? [], [warehousesResp]);
-  // The clusters list is best-effort: the backend swallows a missing-scope /
-  // permission error to `[]` (200), so a genuinely empty list and a
-  // permission-blocked list both surface here as `[]`. `clustersError` only
-  // trips on a hard transport error (network / 500). Either way we degrade to a
-  // subtle inline note in the picker — never a hard section failure.
-  const { data: clustersResp, isError: clustersError } = useListComputeClusters();
-  const clusters = useMemo(() => clustersResp?.data ?? [], [clustersResp]);
 
-  const [warehouseId, setWarehouseId] = useState("");
-  const [jobsKind, setJobsKind] = useState<JobsComputeModel["kind"]>("serverless");
-  const [clusterId, setClusterId] = useState("");
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => {
-    if (settings && !hydrated) {
-      setWarehouseId(settings.sql_warehouse_id ?? "");
-      setJobsKind(settings.jobs_compute?.kind ?? "serverless");
-      setClusterId(settings.jobs_compute?.cluster_id ?? "");
-      setHydrated(true);
-    }
-  }, [settings, hydrated]);
+  // Local state mirrors the saved settings — initialised directly from
+  // suspense data (always available by the time this component renders).
+  const [warehouseId, setWarehouseId] = useState(() => settings.sql_warehouse_id ?? "");
+  const [jobsKind, setJobsKind] = useState<JobsComputeModel["kind"]>(() => settings.jobs_compute?.kind ?? "serverless");
+  const [clusterId, setClusterId] = useState(() => settings.jobs_compute?.cluster_id ?? "");
+
+  // Keep a ref to current field values so save() never reads stale closure state.
+  const currentRef = useRef({ warehouseId: settings.sql_warehouse_id ?? "", jobsKind: settings.jobs_compute?.kind ?? "serverless" as JobsComputeModel["kind"], clusterId: settings.jobs_compute?.cluster_id ?? "" });
+  currentRef.current = { warehouseId, jobsKind, clusterId };
 
   // The warehouse whose SP access we check: the picked one, else the effective
   // (env-fallback) warehouse. Re-runs whenever the pick changes.
-  const checkWarehouseId = warehouseId || settings?.effective_warehouse_id || "";
+  const checkWarehouseId = warehouseId || settings.effective_warehouse_id || "";
   const { data: accessResp } = useGetWarehouseAccess(
     { warehouse_id: checkWarehouseId },
     { query: { enabled: !!checkWarehouseId } },
   );
   const access = accessResp?.data;
 
-  const isDirty = useMemo(() => {
-    if (!settings) return false;
-    return (
-      warehouseId !== (settings.sql_warehouse_id ?? "") ||
-      jobsKind !== (settings.jobs_compute?.kind ?? "serverless") ||
-      (jobsKind === "existing_cluster" && clusterId !== (settings.jobs_compute?.cluster_id ?? ""))
-    );
-  }, [settings, warehouseId, jobsKind, clusterId]);
-
-  const handleSave = () => {
+  const save = useCallback((patch: { warehouseId?: string; kind?: JobsComputeModel["kind"]; clusterId?: string }) => {
+    // Read siblings from the ref so we never close over stale state.
+    const resolvedKind = patch.kind ?? currentRef.current.jobsKind;
+    const resolvedCluster = patch.clusterId ?? currentRef.current.clusterId;
+    const resolvedWarehouse = patch.warehouseId ?? currentRef.current.warehouseId;
     const jobs_compute: JobsComputeModel =
-      jobsKind === "existing_cluster"
-        ? { kind: "existing_cluster", cluster_id: clusterId || null }
+      resolvedKind === "existing_cluster"
+        ? { kind: "existing_cluster", cluster_id: resolvedCluster || null }
         : { kind: "serverless", cluster_id: null };
-    const payload: ComputeSettingsIn = { sql_warehouse_id: warehouseId, jobs_compute };
+    const payload: ComputeSettingsIn = { sql_warehouse_id: resolvedWarehouse, jobs_compute };
     saveMutation.mutate(
       { data: payload },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetComputeSettingsQueryKey() });
-          queryClient.invalidateQueries({ queryKey: getGetWarehouseAccessQueryKey({ warehouse_id: checkWarehouseId }) });
+          queryClient.invalidateQueries({ queryKey: getGetWarehouseAccessQueryKey({ warehouse_id: resolvedWarehouse }) });
           toast.success(t("config.computeSaved"));
         },
         onError: (err: unknown) => {
@@ -2400,6 +2589,22 @@ function ComputeSettingsCard() {
         },
       },
     );
+  }, [saveMutation, queryClient, t]); // currentRef is stable — no need in deps
+
+  const handleWarehouseChange = (v: string) => {
+    setWarehouseId(v);
+    save({ warehouseId: v });
+  };
+
+  const handleJobsKindChange = (v: string) => {
+    const kind = v as JobsComputeModel["kind"];
+    setJobsKind(kind);
+    save({ kind });
+  };
+
+  const handleClusterChange = (v: string) => {
+    setClusterId(v);
+    save({ clusterId: v });
   };
 
   const handleGrant = () => {
@@ -2419,113 +2624,82 @@ function ComputeSettingsCard() {
     );
   };
 
-  if (isLoading) return <Skeleton className="h-40 w-full" />;
-
-  // Only the compute *settings* fetch is load-bearing for this card. If it
-  // fails we degrade to a soft, in-card notice with a retry rather than an
-  // infinite skeleton (which reads as the whole section "failing to load").
-  // The warehouse / cluster lists are best-effort and handled inline below.
-  if (settingsError || !settings) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Cpu className="h-4 w-4" />
-            {t("config.computeTitle")}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col items-start gap-2">
-            <p className="text-sm text-muted-foreground flex items-center gap-1.5">
-              <AlertCircle className="h-4 w-4" /> {t("config.computeSettingsLoadFailed")}
-            </p>
-            <Button variant="outline" size="sm" onClick={() => refetchSettings()}>
-              {t("common.retry")}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Cpu className="h-4 w-4" />
-          {t("config.computeTitle")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        <p className="text-xs text-muted-foreground leading-relaxed">{t("config.computeDescription")}</p>
-
-        {/* SQL warehouse */}
-        <div className="space-y-1.5">
-          <Label className="text-[11px] text-muted-foreground flex items-center gap-1.5">
-            <Database className="h-3.5 w-3.5" />
-            {t("config.computeWarehouseLabel")}
-          </Label>
-          <WarehouseSelect
-            value={warehouseId}
-            onChange={setWarehouseId}
-            warehouses={warehouses}
-            disabled={!isAdmin || saveMutation.isPending}
-          />
+    <CardContent className="space-y-4">
+      {/* SQL warehouse */}
+      <div className="flex items-center justify-between rounded-md border p-3">
+        <div className="space-y-0.5 pr-4">
+          <Label className="text-sm">{t("config.computeWarehouseLabel")}</Label>
+          <p className="text-[11px] text-muted-foreground">{t("config.computeWarehouseHint")}</p>
         </div>
+        <WarehouseSelect
+          value={warehouseId}
+          onChange={handleWarehouseChange}
+          warehouses={warehouses}
+          disabled={!isAdmin || saveMutation.isPending}
+        />
+      </div>
 
-        {/* SP access warning */}
-        {access?.status === "missing" && checkWarehouseId && (
-          <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
-            <div className="space-y-1.5">
-              <p>{t("config.computeSpAccessMissing")}</p>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-block">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={handleGrant}
-                        disabled={!isAdmin || grantMutation.isPending}
-                        className="gap-1.5 h-7 text-xs border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900"
-                      >
-                        {grantMutation.isPending ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <ShieldCheck className="h-3.5 w-3.5" />
-                        )}
-                        {t("config.computeGrantButton")}
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  {!isAdmin && <TooltipContent>{t("config.computeGrantAdminOnly")}</TooltipContent>}
-                </Tooltip>
-              </TooltipProvider>
-            </div>
+      {/* SP access warning */}
+      {access?.status === "missing" && checkWarehouseId && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+          <div className="space-y-1.5">
+            <p>{t("config.computeSpAccessMissing")}</p>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-block">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleGrant}
+                      disabled={!isAdmin || grantMutation.isPending}
+                      className="gap-1.5 h-7 text-xs border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900"
+                    >
+                      {grantMutation.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                      )}
+                      {t("config.computeGrantButton")}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                {!isAdmin && <TooltipContent>{t("config.computeGrantAdminOnly")}</TooltipContent>}
+              </Tooltip>
+            </TooltipProvider>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Jobs compute */}
+      {/* Jobs compute */}
+      <div className="flex items-start justify-between rounded-md border p-3">
+        <div className="space-y-0.5 pr-4">
+          <Label className="text-sm">{t("config.computeJobsLabel")}</Label>
+          <p className="text-[11px] text-muted-foreground">{t("config.computeJobsHint")}</p>
+        </div>
         <div className="space-y-1.5">
-          <Label className="text-[11px] text-muted-foreground flex items-center gap-1.5">
-            <Cpu className="h-3.5 w-3.5" />
-            {t("config.computeJobsLabel")}
-          </Label>
           <Select
             value={jobsKind}
-            onValueChange={(v) => setJobsKind(v as JobsComputeModel["kind"])}
+            onValueChange={handleJobsKindChange}
             disabled={!isAdmin || saveMutation.isPending}
           >
-            <SelectTrigger className="h-8 text-xs w-full">
+            <SelectTrigger className="h-8 text-xs w-52">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="serverless" className="text-xs">
-                {t("config.computeJobsServerless")}
+                <span className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
+                  {t("config.computeJobsServerless")}
+                </span>
               </SelectItem>
               <SelectItem value="existing_cluster" className="text-xs">
-                {t("config.computeJobsCluster")}
+                <span className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full border border-muted-foreground/50 shrink-0" />
+                  {t("config.computeJobsCluster")}
+                </span>
               </SelectItem>
             </SelectContent>
           </Select>
@@ -2533,9 +2707,8 @@ function ComputeSettingsCard() {
             <>
               <ClusterSelect
                 value={clusterId}
-                onChange={setClusterId}
+                onChange={handleClusterChange}
                 clusters={clusters}
-                clustersError={clustersError}
                 disabled={!isAdmin || saveMutation.isPending}
               />
               <p className="text-[11px] text-muted-foreground leading-relaxed pt-1">
@@ -2544,15 +2717,24 @@ function ComputeSettingsCard() {
             </>
           )}
         </div>
+      </div>
 
-        <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
-          <Button size="sm" onClick={handleSave} disabled={!isAdmin || !isDirty || saveMutation.isPending}>
-            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-            {t("config.computeSaveButton")}
-          </Button>
-          {!isAdmin && <span className="text-xs text-muted-foreground">{t("config.computeAdminOnlyHint")}</span>}
-        </div>
-      </CardContent>
+      {!isAdmin && <span className="text-xs text-muted-foreground">{t("config.computeAdminOnlyHint")}</span>}
+    </CardContent>
+  );
+}
+
+function ComputeSettingsCard() {
+  const { t } = useTranslation();
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Cpu className="h-5 w-5" />
+          {t("config.computeTitle")}
+        </CardTitle>
+      </CardHeader>
+      <ComputeSettingsContent />
     </Card>
   );
 }
@@ -2630,7 +2812,6 @@ function DangerZoneCard() {
             {t("config.resetDbWarningHeading")}
           </p>
           <p className="text-xs leading-relaxed text-muted-foreground dark:text-red-100/80">{t("config.resetDbWarningBody")}</p>
-          <p className="text-xs text-muted-foreground dark:text-red-100/70">{t("config.resetDbPreservedNote")}</p>
         </div>
         <div className="flex items-center gap-3">
           <Button
@@ -2828,7 +3009,7 @@ function DeployDemoCard() {
 // The individual setting cards above are unchanged; this only regroups them.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type SettingsTabId = "general" | "ai" | "governance" | "tags" | "entitlements" | "compute" | "danger";
+type SettingsTabId = "general" | "ai" | "compute" | "entitlements" | "governance" | "tags" | "danger";
 
 /** ErrorBoundary + Suspense wrapper shared by every setting card. */
 function SettingSection({ reset, children }: { reset: () => void; children: ReactNode }) {
@@ -2854,12 +3035,12 @@ function ConfigPage() {
 
   const tabs = useMemo<{ id: SettingsTabId; label: string; icon: ComponentType<{ className?: string }> }[]>(
     () => [
-      { id: "general", label: t("config.tabGeneral"), icon: Globe },
+      { id: "general", label: t("config.tabGeneral"), icon: SlidersHorizontal },
       { id: "ai", label: t("config.tabAi"), icon: Sparkles },
+      { id: "compute", label: t("config.tabCompute"), icon: Cpu },
+      { id: "entitlements", label: t("config.tabEntitlements"), icon: KeyRound },
       { id: "governance", label: t("config.tabGovernance"), icon: Scale },
       { id: "tags", label: t("config.tabTags"), icon: Tags },
-      { id: "entitlements", label: t("config.tabEntitlements"), icon: KeyRound },
-      { id: "compute", label: t("config.tabCompute"), icon: Cpu },
       { id: "danger", label: t("config.tabDanger"), icon: AlertTriangle },
     ],
     [t],
@@ -2870,11 +3051,12 @@ function ConfigPage() {
   >(
     () => [
       { id: "timezone", tab: "general", title: t("config.timezoneTitle"), keywords: t("config.kwTimezone"), render: () => <TimezoneSettings /> },
-      { id: "reviewStatuses", tab: "general", title: t("config.reviewStatusesTitle"), keywords: t("config.kwReviewStatuses"), render: () => <RunReviewStatusesSettings /> },
+      { id: "reviewStatuses", tab: "governance", title: t("config.reviewStatusesTitle"), keywords: t("config.kwReviewStatuses"), render: () => <RunReviewStatusesSettings /> },
       { id: "globalResults", tab: "general", title: t("config.globalResultsTitle"), keywords: t("config.kwGlobalResults"), render: () => <GlobalResultsSettingsCard /> },
       { id: "ai", tab: "ai", title: t("config.aiSettingsTitle"), keywords: t("config.kwAi"), render: () => <AiSettingsCard /> },
       { id: "labels", tab: "tags", title: t("config.labelsTitle"), keywords: t("config.kwLabels"), render: () => <LabelDefinitionsSettings /> },
       { id: "rulesRegistry", tab: "governance", title: t("config.rulesRegistrySettingsTitle"), keywords: t("config.kwRulesRegistry"), render: () => <RulesRegistrySettingsCard /> },
+      { id: "passThreshold", tab: "governance", title: t("config.passThresholdSettingsTitle"), keywords: t("config.kwPassThreshold"), render: () => <PassThresholdSettingsCard /> },
       { id: "approvalsMode", tab: "governance", title: t("config.approvalsModeTitle"), keywords: t("config.kwApprovalsMode"), render: () => <ApprovalsModeCard /> },
       { id: "requireDraftRun", tab: "governance", title: t("config.requireDraftRunTitle"), keywords: t("config.kwRequireDraftRun"), render: () => <RequireDraftRunSettingsCard /> },
       { id: "retention", tab: "governance", title: t("config.retentionTitle"), keywords: t("config.kwRetention"), render: () => <RetentionSettings /> },
@@ -2973,8 +3155,17 @@ function ConfigPage() {
                           "text-destructive dark:text-red-400 data-[state=active]:text-destructive dark:data-[state=active]:text-red-400",
                       )}
                     >
-                      <Icon className="h-4 w-4 shrink-0" />
-                      {tab.label}
+                      <Icon
+                        className={cn(
+                          "h-4 w-4 shrink-0",
+                          tab.id === "ai" && AI_ICON_COLOR,
+                        )}
+                      />
+                      {tab.id === "ai" ? (
+                        <span className={AI_TEXT_GRADIENT}>{tab.label}</span>
+                      ) : (
+                        tab.label
+                      )}
                     </TabsTrigger>
                   );
                 })}
@@ -2983,6 +3174,8 @@ function ConfigPage() {
                 <TabsContent key={tab.id} value={tab.id} className="mt-4 space-y-6 pb-8">
                   {entries
                     .filter((e) => e.tab === tab.id)
+                    // Cards within each tab are ordered alphabetically by title.
+                    .sort((a, b) => a.title.localeCompare(b.title))
                     .map((e) => (
                       <FadeIn key={e.id}>
                         <SettingSection reset={reset}>{e.render()}</SettingSection>

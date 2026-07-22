@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from databricks_labs_dqx_app.backend.lowcode_compile import (
+    OPERATORS_BY_FAMILY,
     compile_ast_to_sql,
     compile_lowcode_body,
     extract_slot_tokens,
@@ -57,6 +60,104 @@ class TestCompileAstToSql:
     def test_aggregated_row_compiles_count(self):
         row = {"kind": "aggregated", "combinator": None, "aggregate": "count", "column_ref": "id", "operator": "<=", "value": 5}
         assert compile_ast_to_sql(_ast([row])) == "COUNT({{id}}) <= 5"
+
+
+class TestColumnRefValue:
+    """A row value of ``{"$col": "<column>"}`` compiles the RHS to a column
+    reference (item 42), mirroring ``valueSql`` in ``lowcodeCompile.ts`` — so a
+    col-vs-col comparison yields ``{{a}} < {{b}}``, never a blank RHS."""
+
+    def test_comparison_rhs_is_slot_placeholder(self):
+        sql = compile_ast_to_sql(_ast([_row(column_ref="a", operator="<", value={"$col": "b"})]))
+        assert sql == "{{a}} < {{b}}"
+
+    def test_qualified_rhs_column_passes_through_raw(self):
+        sql = compile_ast_to_sql(_ast([_row(column_ref="a", operator="=", value={"$col": "orders.total"})]))
+        assert sql == "{{a}} = orders.total"
+
+    def test_between_bounds_may_be_column_refs(self):
+        sql = compile_ast_to_sql(
+            _ast([_row(column_ref="x", operator="between", value=[{"$col": "lo"}, {"$col": "hi"}])])
+        )
+        assert sql == "{{x}} BETWEEN {{lo}} AND {{hi}}"
+
+    def test_in_list_may_mix_columns_and_literals(self):
+        sql = compile_ast_to_sql(_ast([_row(column_ref="s", operator="in", value=[{"$col": "b"}, "x"])]))
+        assert sql == "{{s}} IN ({{b}}, 'x')"
+
+    def test_rhs_column_slot_is_extracted_as_token(self):
+        body = compile_lowcode_body(_ast([_row(column_ref="a", operator="<", value={"$col": "b"})]), "")
+        assert body.predicate == "{{a}} < {{b}}"
+        assert extract_slot_tokens(body.predicate) == ["a", "b"]
+
+
+class TestExpandedOperatorCatalog:
+    """The DQ-steward operator additions must compile identically to the
+    frontend (``ui/lib/lowcodeCompile.ts``) so an AI-proposed rule using one
+    round-trips through the visual builder unchanged."""
+
+    @pytest.mark.parametrize(
+        ("operator", "value", "expected"),
+        [
+            ("has length", 5, "length({{c}}) = 5"),
+            ("is longer than", 3, "length({{c}}) > 3"),
+            ("is shorter than", 8, "length({{c}}) < 8"),
+            ("length between", [2, 4], "length({{c}}) BETWEEN 2 AND 4"),
+            ("is not empty", None, "length(trim({{c}})) > 0"),
+            ("is empty", None, "length(trim({{c}})) = 0"),
+            ("does not match regex", "^a$", "NOT ({{c}} RLIKE '^a$')"),
+            ("contains only digits", None, "{{c}} RLIKE '^[0-9]+$'"),
+            ("is uppercase", None, "{{c}} = upper({{c}})"),
+            ("is lowercase", None, "{{c}} = lower({{c}})"),
+            ("is positive", None, "{{c}} > 0"),
+            ("is negative", None, "{{c}} < 0"),
+            ("is non-negative", None, "{{c}} >= 0"),
+            ("is a whole number", None, "{{c}} = round({{c}})"),
+            ("is a multiple of", 5, "mod({{c}}, 5) = 0"),
+            ("is in the future", None, "{{c}} > current_timestamp()"),
+            ("is in the past", None, "{{c}} < current_timestamp()"),
+            ("is today", None, "to_date({{c}}) = current_date()"),
+            ("has positive sentiment", None, "ai_analyze_sentiment({{c}}) = 'positive'"),
+            ("has negative sentiment", None, "ai_analyze_sentiment({{c}}) = 'negative'"),
+            (
+                "passes luhn check",
+                None,
+                "length(regexp_replace({{c}}, '[^0-9]', '')) > 0 AND luhn_check(regexp_replace({{c}}, '[^0-9]', ''))",
+            ),
+        ],
+    )
+    def test_operator_compiles_to_expected_sql(self, operator, value, expected):
+        assert compile_ast_to_sql(_ast([_row(column_ref="c", operator=operator, value=value)])) == expected
+
+    def test_uuid_and_ipv4_regexes(self):
+        assert compile_ast_to_sql(_ast([_row(column_ref="c", operator="is a valid uuid")])) == (
+            "{{c}} RLIKE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'"
+        )
+        assert compile_ast_to_sql(_ast([_row(column_ref="c", operator="is a valid ipv4")])) == (
+            "{{c}} RLIKE '^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])$'"
+        )
+
+    def test_every_catalog_operator_compiles_to_non_empty_sql(self):
+        """No operator advertised to the AI can be one the compiler drops to ''
+        (which would silently produce a broken rule)."""
+
+        def sample(op: str) -> Any:
+            if op in ("between", "length between"):
+                return [1, 2]
+            if op in ("in", "not in"):
+                return ["a"]
+            if op == "is in last":
+                return {"number": 1, "unit": "days"}
+            if op in ("is a valid", "is not a valid"):
+                return "int"
+            if op in ("has length", "is longer than", "is shorter than", "is a multiple of"):
+                return 3
+            return "x"
+
+        seen = {op for ops in OPERATORS_BY_FAMILY.values() for op in ops}
+        for op in seen:
+            sql = compile_ast_to_sql(_ast([_row(column_ref="c", operator=op, value=sample(op))]))
+            assert sql, f"operator {op!r} compiled to empty SQL"
 
 
 class TestCompileLowcodeBody:

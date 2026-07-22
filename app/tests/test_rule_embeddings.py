@@ -25,15 +25,22 @@ from databricks_labs_dqx_app.backend.services.rule_embeddings import (
 def _rule(
     rule_id: str = "r1",
     slot_names: list[str] | None = None,
+    slot_families: list[str] | None = None,
+    slot_cardinalities: list[str] | None = None,
     body: dict | None = None,
     user_metadata: dict | None = None,
     version: int = 1,
 ) -> RegistryRule:
     slot_names = slot_names if slot_names is not None else ["column"]
+    slot_families = slot_families if slot_families is not None else ["any"] * len(slot_names)
+    slot_cardinalities = slot_cardinalities if slot_cardinalities is not None else ["one"] * len(slot_names)
     definition = RuleDefinition.model_validate(
         {
             "body": body or {"function": "is_not_null", "arguments": {n: f"{{{{{n}}}}}" for n in slot_names}},
-            "slots": [{"name": n, "family": "any", "position": i, "cardinality": "one"} for i, n in enumerate(slot_names)],
+            "slots": [
+                {"name": n, "family": f, "position": i, "cardinality": c}
+                for i, (n, f, c) in enumerate(zip(slot_names, slot_families, slot_cardinalities))
+            ],
             "parameters": [],
         }
     )
@@ -48,7 +55,7 @@ def _rule(
 
 
 class TestBuildRuleEmbedText:
-    def test_includes_name_description_dimension_severity(self):
+    def test_includes_name_description_dimension(self):
         rule = _rule(
             user_metadata={
                 "name": "Email is valid",
@@ -63,14 +70,71 @@ class TestBuildRuleEmbedText:
         assert "Email is valid" in text
         assert "Checks the email column matches a valid format" in text
         assert "dimension: Validity" in text
-        assert "severity: High" in text
 
-    def test_includes_slot_names(self):
+    def test_omits_severity_even_when_rule_has_severity_tag(self):
+        rule = _rule(
+            user_metadata={
+                "name": "Not Null",
+                "severity": "Critical",
+            }
+        )
+
+        text = build_rule_embed_text(rule)
+
+        assert "severity:" not in text
+
+    def test_includes_slot_family_and_cardinality_with_input_columns_label(self):
+        rule = _rule(
+            slot_names=["column"],
+            slot_families=["text"],
+            slot_cardinalities=["one"],
+        )
+
+        text = build_rule_embed_text(rule)
+
+        assert "input columns:" in text
+        assert "column (text, one)" in text
+
+    def test_includes_multiple_slots_with_different_families(self):
+        rule = _rule(
+            slot_names=["start_date", "end_date"],
+            slot_families=["temporal", "temporal"],
+            slot_cardinalities=["one", "one"],
+        )
+
+        text = build_rule_embed_text(rule)
+
+        assert "input columns:" in text
+        assert "start_date (temporal, one)" in text
+        assert "end_date (temporal, one)" in text
+
+    def test_does_not_include_old_slots_format(self):
         rule = _rule(slot_names=["column_a", "column_b"])
 
         text = build_rule_embed_text(rule)
 
-        assert "slots: column_a, column_b" in text
+        assert "slots: column_a, column_b" not in text
+
+    def test_includes_check_function_name(self):
+        rule = _rule(body={"function": "is_not_null", "arguments": {}})
+
+        text = build_rule_embed_text(rule)
+
+        assert "check: is_not_null" in text
+
+    def test_includes_check_function_for_regexp_match(self):
+        rule = _rule(body={"function": "regexp_match", "arguments": {"column": "{{column}}", "regex": ".*@.*"}})
+
+        text = build_rule_embed_text(rule)
+
+        assert "check: regexp_match" in text
+
+    def test_no_check_line_when_body_has_no_function(self):
+        rule = _rule(body={"sql_query": "SELECT 1", "arguments": {}}, slot_names=[])
+
+        text = build_rule_embed_text(rule)
+
+        assert "check:" not in text
 
     def test_includes_free_text_tags_but_not_reserved_keys_twice(self):
         rule = _rule(user_metadata={"name": "Rule", "team": "data-platform"})

@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BreachIcon } from "./BreachIcon";
 import { pickTopSeverity } from "./severityRank";
 import { columnsFromRows } from "./failedRecordsExport";
 
@@ -101,6 +102,7 @@ export function FailingRecordsTable({
   severityColors,
   severityRanks,
   dimensionColors,
+  breachedRuleCriticality,
 }: {
   rows: FailingRecord[];
   /** True total matching failed records (may exceed `rows.length` when the
@@ -117,6 +119,11 @@ export function FailingRecordsTable({
   severityRanks?: Record<string, number>;
   /** dimension name → hex colour. Used to tint the dimension text. */
   dimensionColors?: Record<string, string>;
+  /** Rule name → breach criticality ("error"/"warn") for rules whose pass rate
+   *  breached their threshold this run. Drives the ⚠ BreachIcon shown next to a
+   *  matching rule in the cell-hover tooltip. Empty/absent = no breach icons
+   *  (feature off or no breaches). */
+  breachedRuleCriticality?: Record<string, string>;
 }) {
   const { t } = useTranslation();
   // Hovered row index + cursor position. The detail panel is a `fixed`
@@ -346,6 +353,12 @@ export function FailingRecordsTable({
                       <span className="font-semibold italic text-muted-foreground">
                         {t("resultsUi.unknownRuleFallback")}
                       </span>
+                    )}
+                    {/* ⚠ when this rule breached its pass threshold this run —
+                        surfaces the breach right on the failing record's hover,
+                        next to the rule that triggered it. */}
+                    {f.rule_name && breachedRuleCriticality?.[f.rule_name] && (
+                      <BreachIcon criticality={breachedRuleCriticality[f.rule_name]} />
                     )}
                     {f.severity && (
                       <span

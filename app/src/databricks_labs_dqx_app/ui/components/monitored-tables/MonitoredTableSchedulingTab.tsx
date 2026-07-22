@@ -132,7 +132,7 @@ export function MonitoredTableSchedulingTab({
                   </div>
                 </div>
                 <Button variant="outline" size="sm" asChild className="shrink-0">
-                  <Link to="/table-spaces/$productId" params={{ productId: sp.product_id }} search={{ tab: "scheduling" }}>
+                  <Link to="/collections/$productId" params={{ productId: sp.product_id }} search={{ tab: "scheduling" }}>
                     {t("monitoredTables.scheduleCrossManage")}
                   </Link>
                 </Button>

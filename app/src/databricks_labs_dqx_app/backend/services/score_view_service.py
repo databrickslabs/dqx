@@ -38,11 +38,18 @@ architecture):
   notes.
 - *mv_dq_scores* — a UC metric view (CREATE VIEW ... WITH METRICS
   LANGUAGE YAML) over the shaping view with dimensions
-  (input_location, run_id, run_time, is_latest_run, check_name,
-  severity, dimension, criticality) and
-  measures *failed_tests* / *total_tests* / *score*. The score measure
-  uses TRY_DIVIDE so a zero or NULL denominator yields SQL NULL — the
-  exact analogue of ScoreService.compute_table_score returning None.
+  (input_location, run_id, run_time, is_latest_run, run_mode,
+  pass_threshold, binding_version, check_name, registry_rule_id,
+  rule_name, severity, dimension, criticality) and measures
+  *failed_tests* / *error_tests* / *warning_tests* / *total_tests* /
+  *score* / *failed_checks* / *total_checks* / *rule_count* /
+  *failed_rule_count*. The score measure uses TRY_DIVIDE so a zero or
+  NULL denominator yields SQL NULL — the exact analogue of
+  ScoreService.compute_table_score returning None. The count measures
+  answer authoring/coverage questions ("how many rules", "how many
+  rules are failing") directly at the run x table grain. The
+  run-picker route reads MEASURE(score) / MEASURE(failed_tests) /
+  MEASURE(total_tests), so those three names are load-bearing.
 
 The score formula is numerically identical to
 *ScoreService.compute_table_score* (including the approved filter
@@ -207,6 +214,11 @@ class ScoreViewService:
             "  user_metadata['dimension'] AS dimension,\n"
             "  user_metadata['registry_rule_id'] AS registry_rule_id,\n"
             "  user_metadata['name'] AS rule_name,\n"
+            # The resolved effective pass threshold the runner FROZE per-run
+            # into user_metadata at materialization time — breach eval reads
+            # this frozen value so a later admin/rule setting change never
+            # re-judges a past run. NULL for legacy runs predating the stamp.
+            "  TRY_CAST(user_metadata['pass_threshold'] AS INT) AS pass_threshold,\n"
             "  COALESCE(\n"
             "    arg_columns,\n"
             "    CASE WHEN arg_column IS NOT NULL THEN array(arg_column) END,\n"
@@ -317,6 +329,7 @@ class ScoreViewService:
             "  a.dimension,\n"
             "  a.registry_rule_id,\n"
             "  a.rule_name,\n"
+            "  a.pass_threshold,\n"
             "  a.columns\n"
             "FROM exploded e\n"
             f"LEFT JOIN {self.attribution_view_fqn_quoted} a\n"
@@ -407,6 +420,7 @@ class ScoreViewService:
             "  c.dimension,\n"
             "  c.registry_rule_id,\n"
             "  c.rule_name,\n"
+            "  c.pass_threshold,\n"
             "  c.columns\n"
             "FROM asof a\n"
             f"JOIN {v} c\n"
@@ -415,47 +429,115 @@ class ScoreViewService:
         )
 
     def metric_view_ddl(self) -> str:
-        """CREATE OR REPLACE VIEW ... WITH METRICS LANGUAGE YAML for *mv_dq_scores*."""
+        """CREATE OR REPLACE VIEW ... WITH METRICS LANGUAGE YAML for *mv_dq_scores*.
+
+        The grain is one source row per CHECK (a rule-to-column application
+        at a run x table); a TEST is one record-level evaluation of a check.
+        Every DQ concept is a DENORMALIZED DIMENSION with a rich comment (the
+        comments ARE the Genie grounding) and every number a
+        re-aggregation-safe MEASURE read via MEASURE() — never AVG a rate,
+        always recompute pass rate from the summed failed/total tests.
+
+        Compatibility contract: the run-picker route (dq_results.py) reads
+        MEASURE(score) / MEASURE(failed_tests) / MEASURE(total_tests), so
+        those three measure NAMES must never change.
+        """
         yaml_body = (
             "version: 1.1\n"
             # Double-quoted: a backtick may not start a YAML plain scalar
             # (it is a reserved indicator character).
             f'source: "{self.shaping_view_fqn_quoted}"\n'
-            "comment: Row-weighted DQ score measures over dq_metrics check results\n"
+            "comment: Per-check DQ results — row-weighted pass-rate and test/check/rule counts "
+            "over run x table x check, at test grain\n"
             "dimensions:\n"
             "  - name: input_location\n"
             "    expr: input_location\n"
+            "    comment: Fully-qualified name (catalog.schema.table) of the monitored source table\n"
             "  - name: run_id\n"
             "    expr: run_id\n"
+            "    comment: Internal id of the run that produced these check results (joins only — never show it)\n"
             "  - name: run_time\n"
             "    expr: run_time\n"
+            "    comment: Timestamp the run executed — group by it for trends over runs\n"
             "  - name: is_latest_run\n"
             "    expr: is_latest_run\n"
+            "    comment: True on rows from the table's most recent run (any run_mode)\n"
             # Run provenance ('draft' | 'published') — the stamped tag,
             # with untagged legacy runs resolved to 'published' in the
             # shaping view.
             "  - name: run_mode\n"
             "    expr: run_mode\n"
+            "    comment: Run provenance, 'published' or 'draft' — filter to 'published' by default\n"
+            # The frozen effective pass-threshold and the monitored-table
+            # (rule set) version, both existing shaping-view columns.
+            "  - name: pass_threshold\n"
+            "    expr: pass_threshold\n"
+            "    comment: Frozen per-run pass-threshold (percent, 0-100). A check BREACHES when its "
+            "pass rate falls below this. NULL = no threshold set (legacy runs cannot be judged)\n"
+            "  - name: binding_version\n"
+            "    expr: binding_version\n"
+            "    comment: Monitored-table (rule set) version in effect for this run. NULL for draft/legacy runs\n"
             "  - name: check_name\n"
             "    expr: check_name\n"
+            "    comment: Display name of the check AS OF the run — a rule applied to N columns fans out into "
+            "N check_names sharing one registry_rule_id, and can change on rename\n"
+            # Rule identity — registry_rule_id is the rule's STABLE id
+            # (survives renames); rule_name is the underlying rule name
+            # (the per-column check_name is suffixed). Both already emitted
+            # by the shaping view's attribution join, so surfacing them as
+            # dimensions lets a metric-view query scope to one rule across
+            # all the tables it runs on (rename-safe on registry_rule_id).
+            "  - name: registry_rule_id\n"
+            "    expr: registry_rule_id\n"
+            "    comment: Rule's STABLE registry id (survives renames) — group on it to compare a rule across runs\n"
+            "  - name: rule_name\n"
+            "    expr: rule_name\n"
+            "    comment: Underlying rule name — scope to one rule by this (the per-column check_name is it suffixed)\n"
             # As-of-run attribution (frozen into checks_json at
             # materialization time — later tag edits never rewrite these).
             "  - name: severity\n"
             "    expr: severity\n"
+            "    comment: APPLIED severity the check ran with (Critical/High/Medium/Low, post-override). "
+            "NULL for untagged checks\n"
             "  - name: dimension\n"
             "    expr: dimension\n"
+            "    comment: Quality dimension of the check (Completeness, Validity, ...). NULL when untagged\n"
             "  - name: criticality\n"
             "    expr: criticality\n"
+            "    comment: DQX criticality the check ran with ('error' | 'warn') — internal framing, prefer severity\n"
             "measures:\n"
             "  - name: failed_tests\n"
             "    expr: SUM(error_count + warning_count)\n"
-            "    comment: Total failed tests (errors + warnings) across the grouped check rows\n"
+            "    comment: Total failed tests (errors + warnings) across the grouped check rows. "
+            "Report as a share of total_tests, never a bare count\n"
+            "  - name: error_tests\n"
+            "    expr: SUM(error_count)\n"
+            "    comment: Failed tests from ERROR-criticality checks across the grouped rows\n"
+            "  - name: warning_tests\n"
+            "    expr: SUM(warning_count)\n"
+            "    comment: Failed tests from WARNING-criticality (active-warning) checks across the grouped rows\n"
             "  - name: total_tests\n"
             "    expr: SUM(input_row_count)\n"
             "    comment: Total evaluated tests (input rows x checks) across the grouped check rows\n"
             "  - name: score\n"
             "    expr: 1 - TRY_DIVIDE(SUM(error_count + warning_count), SUM(input_row_count))\n"
-            "    comment: Row-weighted DQ score between 0 and 1 (NULL when no rows or no checks)\n"
+            "    comment: Row-weighted pass rate between 0 and 1 (NULL when no rows or no checks). "
+            "Report as a percentage and never AVG it across runs/tables — recompute from the sums\n"
+            "  - name: failed_checks\n"
+            "    expr: COUNT(1) FILTER (WHERE (error_count + warning_count) > 0)\n"
+            "    comment: Number of checks with at least one failing test across the grouped rows\n"
+            "  - name: total_checks\n"
+            "    expr: COUNT(check_name)\n"
+            "    comment: Number of checks (rule-to-column applications) across the grouped rows. "
+            "Counts check_name so a no-check placeholder run reports 0, not 1\n"
+            "  - name: rule_count\n"
+            "    expr: COUNT(DISTINCT registry_rule_id)\n"
+            "    comment: Distinct rules (by stable registry id) that ran across the grouped rows — "
+            "answers 'how many rules'\n"
+            "  - name: failed_rule_count\n"
+            "    expr: COUNT(DISTINCT registry_rule_id) FILTER (WHERE (error_count + warning_count) > 0)\n"
+            "    comment: Distinct rules with at least one failing test across the grouped rows — "
+            "answers 'how many rules are failing'\n"
         )
         return (
             f"CREATE OR REPLACE VIEW {self.metric_view_fqn_quoted}\nWITH METRICS\nLANGUAGE YAML\nAS $$\n{yaml_body}$$"

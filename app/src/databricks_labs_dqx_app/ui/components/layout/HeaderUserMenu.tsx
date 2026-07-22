@@ -150,7 +150,7 @@ function HeaderUserMenuContent() {
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <Link to="/config">
+              <Link to="/settings">
                 <Settings />
                 {t("userMenu.adminSettings")}
               </Link>

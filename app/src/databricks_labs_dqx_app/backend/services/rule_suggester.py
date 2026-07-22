@@ -41,12 +41,16 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRu
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService, TableColumn
 from databricks_labs_dqx_app.backend.services.monitored_table_service import LatestProfile, MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
-from databricks_labs_dqx_app.backend.services.rule_retriever import RuleRetrievalUnavailableError, RuleRetriever
+from databricks_labs_dqx_app.backend.services.rule_retriever import (
+    RetrievedRule,
+    RuleRetrievalUnavailableError,
+    RuleRetriever,
+)
 from databricks_labs_dqx_app.backend.services.tag_mapping_service import family_for_type as _family_for_type
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TOP_K = 8
+DEFAULT_TOP_K = 20  # Per-column retrieval unions per column; cap = max(top_k, top_k*3) in _retrieve_per_column
 
 # Human-readable reasons for the genuine "available, but nothing to show"
 # outcomes. Kept as constants so the exact wording is asserted by tests and
@@ -56,10 +60,19 @@ _NO_MATCH_REASON = "No published rules matched this table's columns."
 _NO_CLEAN_MAPPING_REASON = "Found related rules, but none mapped cleanly to this table's columns."
 
 _JUDGE_SYSTEM_PROMPT = (
-    "You are a conservative data-quality rule mapping assistant. Given a table's columns (each with a name, "
+    "You are a precise data-quality rule mapping assistant. Given a table's columns (each with a name, "
     "type, family, and optional comment) and a list of candidate published rules (each with input slots that "
-    "declare a family), suggest which rules apply to which columns. Be conservative: it is correct to reject "
-    "most candidates and to return an empty list when nothing genuinely fits.\n"
+    "declare a family), suggest which rules apply to which columns. Favour precision, but do NOT be so "
+    "conservative that you omit obviously-correct mappings: propose EVERY mapping that genuinely fits, and "
+    "return an empty list only when nothing fits at all.\n"
+    "Apply universal data-integrity checks broadly, not narrowly. A single-slot 'any'-family rule that checks "
+    "for null/emptiness/presence (e.g. 'Not Null Check', 'Value is present') fits EVERY column that should "
+    "always be populated — at minimum every identifier/key column (names ending in _id, _key, or named id/"
+    "key/code) and every column a reasonable analyst would consider required (amounts, statuses, timestamps, "
+    "names, emails). Emit a separate entry for each such column. A uniqueness rule (e.g. 'Key is unique', "
+    "'Unique values in target column') fits every column that identifies a row — primary keys and natural "
+    "keys (columns named id, *_id, key, *_key, or clearly unique like email/username/code). Suggest these "
+    "universal checks even when the column is domain-specific; a not-null check on order_id is correct.\n"
     "Every slot of a multi-slot rule MUST be filled with a distinct existing column before you suggest it — "
     "never suggest a partial mapping that leaves a slot empty; if you cannot fill all of a rule's slots well, "
     "reject that rule. Only suggest a rule when it is a good structural AND semantic match: a slot's family "
@@ -181,10 +194,9 @@ class RuleSuggester:
         table_fqn = detail.table.table_fqn
         profile = self._monitored_tables.get_latest_profile(table_fqn)
         columns = await self._resolve_columns(table_fqn, profile)
-        query_text = self._build_query_text(table_fqn, columns)
 
         try:
-            candidates = self._retriever.retrieve(query_text, self._top_k)
+            candidates = self._retrieve_per_column(table_fqn, columns)
         except RuleRetrievalUnavailableError as e:
             return SuggestRulesResult(available=False, reason=str(e))
         except Exception:
@@ -291,6 +303,37 @@ class RuleSuggester:
                 columns.update(c for c in cols if isinstance(c, str))
         return sorted(columns)
 
+    def _retrieve_per_column(self, table_fqn: str, columns: list[ColumnMeta]) -> list[RetrievedRule]:
+        """Retrieve candidate rules PER COLUMN, then union (dedup, best score wins).
+
+        Prior behaviour embedded ONE blended query for the whole table and took
+        the global top-K — so on a wide table a column-specific rule (e.g. an
+        email-format rule for an ``email`` column) rarely made the global top-K
+        and the judge never saw it for that column. Retrieving top-K per column
+        and unioning guarantees each column's strongest matches reach the judge,
+        while the judge still decides the final per-column fit. Scores are kept
+        so the union can be capped deterministically (highest-scoring first).
+
+        Falls back to a single table-level query when the column list is empty
+        (no profile yet) so behaviour degrades to the old path rather than
+        returning nothing.
+        """
+        if not columns:
+            return self._retriever.retrieve(self._build_query_text(table_fqn, columns), self._top_k)
+
+        best_by_rule: dict[str, RetrievedRule] = {}
+        for column in columns:
+            query_text = self._build_column_query_text(table_fqn, column)
+            for hit in self._retriever.retrieve(query_text, self._top_k):
+                existing = best_by_rule.get(hit.rule_id)
+                if existing is None or hit.score > existing.score:
+                    best_by_rule[hit.rule_id] = hit
+        # Cap the unioned candidate set so a very wide table can't hand the judge
+        # an unbounded prompt; keep the highest-scoring across all columns. The
+        # cap scales with top_k so more columns still surface more candidates.
+        union_cap = max(self._top_k, self._top_k * 3)
+        return sorted(best_by_rule.values(), key=lambda c: c.score, reverse=True)[:union_cap]
+
     @staticmethod
     def _build_query_text(table_fqn: str, columns: list[ColumnMeta]) -> str:
         parts = [f"table: {table_fqn}"]
@@ -300,6 +343,15 @@ class RuleSuggester:
                 line += f": {column.comment}"
             parts.append(line)
         return "\n".join(parts)
+
+    @staticmethod
+    def _build_column_query_text(table_fqn: str, column: ColumnMeta) -> str:
+        """Single-column query text so retrieval matches rules to THIS column's
+        name/type/family/comment (email → email-format rule, id → not-null/unique)."""
+        line = f"table: {table_fqn}\ncolumn: {column.name} ({column.type or 'unknown'}, {column.family})"
+        if column.comment:
+            line += f": {column.comment}"
+        return line
 
     # ------------------------------------------------------------------
     # LLM judge
@@ -386,6 +438,12 @@ class RuleSuggester:
             # Multi-slot completeness: mapping keys must exactly equal the rule's slot names.
             expected_slots = {slot.name for slot in rule.definition.slots}
             if set(mapping.keys()) != expected_slots:
+                continue
+
+            # Reject same-column multi-slot mappings: two or more distinct slot keys bound to the
+            # same column value (e.g. {"start_ts": "order_ts", "end_ts": "order_ts"}) are always
+            # wrong for a comparison/range rule and indicate the LLM forced a rule onto one column.
+            if len(set(mapping.values())) < len(mapping):
                 continue
 
             mapping_typed: ColumnMappingGroup = {str(k): str(v) for k, v in mapping.items()}

@@ -36,6 +36,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     ScheduleKind,
     get_rule_dimension,
     get_rule_name,
+    get_rule_pass_threshold,
     get_rule_severity,
 )
 from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
@@ -68,6 +69,7 @@ class AppliedRuleSummary:
     rule_name: str | None = None
     rule_dimension: str | None = None
     rule_severity: str | None = None
+    rule_pass_threshold: int | None = None
     rule_source: str | None = None
 
 
@@ -629,13 +631,14 @@ class MonitoredTableService:
         applied_rules = [self._row_to_applied_rule(row) for row in rows]
         summaries: list[AppliedRuleSummary] = []
         for applied_rule in applied_rules:
-            name, dimension, severity, source = self._rule_tags(applied_rule.rule_id)
+            name, dimension, severity, pass_threshold, source = self._rule_tags(applied_rule.rule_id)
             summaries.append(
                 AppliedRuleSummary(
                     applied_rule=applied_rule,
                     rule_name=name,
                     rule_dimension=dimension,
                     rule_severity=severity,
+                    rule_pass_threshold=pass_threshold,
                     rule_source=source,
                 )
             )
@@ -670,10 +673,10 @@ class MonitoredTableService:
             grouped.setdefault(applied.binding_id, []).append(applied)
         return grouped
 
-    def _rule_tags(self, rule_id: str) -> tuple[str | None, str | None, str | None, str | None]:
-        """Look up name/dimension/severity/source for *rule_id* from ``dq_rules``.
+    def _rule_tags(self, rule_id: str) -> tuple[str | None, str | None, str | None, int | None, str | None]:
+        """Look up name/dimension/severity/pass_threshold/source for *rule_id* from ``dq_rules``.
 
-        Returns ``(None, None, None, None)`` if the rule row is missing (e.g. a
+        Returns ``(None, None, None, None, None)`` if the rule row is missing (e.g. a
         registry rule was hard-deleted out from under an application) —
         callers display a graceful blank rather than failing the whole
         monitored-table detail view.
@@ -683,10 +686,16 @@ class MonitoredTableService:
         sql = f"SELECT source, {user_metadata} FROM {self._rules_table} WHERE rule_id = '{e}'"  # noqa: S608
         rows = self._sql.query(sql)
         if not rows or not rows[0]:
-            return None, None, None, None
+            return None, None, None, None, None
         source = rows[0][0] if rows[0][0] else None
         metadata = self._parse_json_dict(rows[0][1])
-        return get_rule_name(metadata), get_rule_dimension(metadata), get_rule_severity(metadata), source
+        return (
+            get_rule_name(metadata),
+            get_rule_dimension(metadata),
+            get_rule_severity(metadata),
+            get_rule_pass_threshold(metadata),
+            source,
+        )
 
     # ------------------------------------------------------------------
     # Submit-for-review lifecycle (draft -> pending_approval -> approved/rejected)

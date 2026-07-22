@@ -318,6 +318,11 @@ export type AppliedRuleOutRowFilter = string | null;
  */
 export type AppliedRuleOutPassThreshold = number | null;
 
+/**
+ * Per-column minimum-pass-rate overrides ({column: pct 0-100}); read from user_metadata.
+ */
+export type AppliedRuleOutColumnPassThresholds = {[key: string]: number};
+
 export type AppliedRuleOutColumnMappingItem = {[key: string]: string};
 
 export type AppliedRuleOutUserMetadata = { [key: string]: unknown };
@@ -334,6 +339,8 @@ export type AppliedRuleOutRuleDimension = string | null;
 
 export type AppliedRuleOutRuleSeverity = string | null;
 
+export type AppliedRuleOutRulePassThreshold = number | null;
+
 export type AppliedRuleOutRuleSource = string | null;
 
 /**
@@ -349,6 +356,8 @@ export interface AppliedRuleOut {
   row_filter?: AppliedRuleOutRowFilter;
   /** Per-rule minimum % of rows that must pass; None = no per-rule threshold. */
   pass_threshold?: AppliedRuleOutPassThreshold;
+  /** Per-column minimum-pass-rate overrides ({column: pct 0-100}); read from user_metadata. */
+  column_pass_thresholds?: AppliedRuleOutColumnPassThresholds;
   column_mapping?: AppliedRuleOutColumnMappingItem[];
   user_metadata?: AppliedRuleOutUserMetadata;
   mapping_hash?: AppliedRuleOutMappingHash;
@@ -357,6 +366,7 @@ export interface AppliedRuleOut {
   rule_name?: AppliedRuleOutRuleName;
   rule_dimension?: AppliedRuleOutRuleDimension;
   rule_severity?: AppliedRuleOutRuleSeverity;
+  rule_pass_threshold?: AppliedRuleOutRulePassThreshold;
   rule_source?: AppliedRuleOutRuleSource;
 }
 
@@ -676,6 +686,8 @@ export interface CheckDuplicatesOut {
 export interface CheckFunctionDef {
   /** Function name as registered in CHECK_FUNC_REGISTRY */
   name: string;
+  /** Human-readable display name for the UI (e.g. 'Is Not Null') */
+  label: string;
   /** 'row' or 'dataset' */
   rule_type: string;
   /** UX grouping bucket (e.g. 'Null & Empty', 'Numeric & Comparable', 'Aggregates'). Used to group entries in the UI dropdown. */
@@ -1150,6 +1162,23 @@ export interface DataProductRunSubmissionOut {
   binding_version?: DataProductRunSubmissionOutBindingVersion;
 }
 
+export interface DefaultPassThresholdIn {
+  /**
+   * Org-wide default minimum pass rate (%); checks warn when pass rate drops below this.
+   * @minimum 0
+   * @maximum 100
+   */
+  default_pass_threshold: number;
+}
+
+/**
+ * Effective default pass threshold + the compiled default for the UI.
+ */
+export interface DefaultPassThresholdOut {
+  default_pass_threshold: number;
+  default_pass_threshold_default: number;
+}
+
 /**
  * Current state of the long-running demo-content seed job.
  */
@@ -1211,6 +1240,13 @@ export type DesiredAppliedRuleInPassThreshold = number | null;
  */
 export type DesiredAppliedRuleInTags = { [key: string]: unknown };
 
+export type DesiredAppliedRuleInColumnPassThresholdsAnyOf = {[key: string]: number};
+
+/**
+ * Per-column minimum-pass-rate overrides ({column: pct 0-100}); merged into user_metadata.
+ */
+export type DesiredAppliedRuleInColumnPassThresholds = DesiredAppliedRuleInColumnPassThresholdsAnyOf | null;
+
 /**
  * One entry in the full desired set of applications for ``saveAppliedRules``.
  */
@@ -1229,6 +1265,8 @@ export interface DesiredAppliedRuleIn {
   pass_threshold?: DesiredAppliedRuleInPassThreshold;
   /** Per-application free-text tags */
   tags?: DesiredAppliedRuleInTags;
+  /** Per-column minimum-pass-rate overrides ({column: pct 0-100}); merged into user_metadata. */
+  column_pass_thresholds?: DesiredAppliedRuleInColumnPassThresholds;
 }
 
 /**
@@ -1675,19 +1713,29 @@ export interface GenieVerifyEntitlementsOut {
   results?: GenieVerifyEntitlementsOutResults;
 }
 
+export type GlobalResultsSettingsInGlobalResultsEnabled = boolean | null;
+
+export type GlobalResultsSettingsInRulesResultsTabEnabled = boolean | null;
+
 /**
- * Update payload for the global-Results-tab gating setting.
+ * Update payload for the global-Results-tab gating settings.
+
+Both fields are optional so a caller can flip just one toggle without
+having to echo the other's current value back.
  */
 export interface GlobalResultsSettingsIn {
-  global_results_enabled: boolean;
+  global_results_enabled?: GlobalResultsSettingsInGlobalResultsEnabled;
+  rules_results_tab_enabled?: GlobalResultsSettingsInRulesResultsTabEnabled;
 }
 
 /**
- * Effective global-Results-tab gating setting.
+ * Effective global-Results-tab gating settings.
  */
 export interface GlobalResultsSettingsOut {
   /** Whether the app-wide, all-tables Results surface (nav item + homepage overall-score explainer) is enabled. Defaults to False (hidden). */
   global_results_enabled: boolean;
+  /** Whether the per-rule Results tab is shown inside the Rules Registry rule dialog. Distinct from global_results_enabled. Defaults to False (hidden). */
+  rules_results_tab_enabled?: boolean;
 }
 
 /**
@@ -1739,6 +1787,8 @@ export type GroupRowOutCheckCount = number | null;
 
 export type GroupRowOutTotalTests = number | null;
 
+export type GroupRowOutBreachCriticality = string | null;
+
 /**
  * One breakdown row (by dimension / severity / rule / column / table).
 
@@ -1763,6 +1813,8 @@ export interface GroupRowOut {
   rule_count?: GroupRowOutRuleCount;
   check_count?: GroupRowOutCheckCount;
   total_tests?: GroupRowOutTotalTests;
+  breached?: boolean;
+  breach_criticality?: GroupRowOutBreachCriticality;
 }
 
 export interface HTTPValidationError {
@@ -2377,6 +2429,28 @@ export interface PrincipalSearchOut {
   secondary?: PrincipalSearchOutSecondary;
 }
 
+/**
+ * Why this principal is privileged: 'workspace_admin' (member of the SCIM admins group) or 'app_owner' (CAN_MANAGE on the Databricks App)
+ */
+export type PrivilegedPrincipalOutKind = typeof PrivilegedPrincipalOutKind[keyof typeof PrivilegedPrincipalOutKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const PrivilegedPrincipalOutKind = {
+  workspace_admin: 'workspace_admin',
+  app_owner: 'app_owner',
+} as const;
+
+/**
+ * A principal that holds elevated access — either a workspace admin or an app CAN_MANAGE holder.
+ */
+export interface PrivilegedPrincipalOut {
+  /** Display name or email of the privileged principal */
+  principal: string;
+  /** Why this principal is privileged: 'workspace_admin' (member of the SCIM admins group) or 'app_owner' (CAN_MANAGE on the Databricks App) */
+  kind: PrivilegedPrincipalOutKind;
+}
+
 export type ProfileResultsOutRowsProfiled = number | null;
 
 export type ProfileResultsOutColumnsProfiled = number | null;
@@ -2706,6 +2780,11 @@ export interface RegistryRuleOut {
   display_status: RegistryRuleOutDisplayStatus;
 }
 
+/**
+ * Authoring mode frozen at publish time (dqx_native/lowcode/sql). Exposed so a version's diff renders its frozen check JSON as-of-the-version rather than relying on the live rule's (admin-mutable) mode. ``None`` only for legacy snapshots written before mode was frozen — consumers fall back to the live rule's mode for those.
+ */
+export type RegistryRuleVersionOutMode = 'dqx_native' | 'lowcode' | 'sql' | null;
+
 export type RegistryRuleVersionOutPolarity = 'pass' | 'fail' | null;
 
 export type RegistryRuleVersionOutUserMetadata = { [key: string]: unknown };
@@ -2720,6 +2799,8 @@ export type RegistryRuleVersionOutCreatedAt = string | null;
 export interface RegistryRuleVersionOut {
   rule_id: string;
   version: number;
+  /** Authoring mode frozen at publish time (dqx_native/lowcode/sql). Exposed so a version's diff renders its frozen check JSON as-of-the-version rather than relying on the live rule's (admin-mutable) mode. ``None`` only for legacy snapshots written before mode was frozen — consumers fall back to the live rule's mode for those. */
+  mode?: RegistryRuleVersionOutMode;
   definition: RuleDefinition;
   polarity?: RegistryRuleVersionOutPolarity;
   user_metadata?: RegistryRuleVersionOutUserMetadata;
@@ -2920,6 +3001,11 @@ export type RuleDefinitionBody = { [key: string]: unknown };
 export type RuleDefinitionErrorMessage = string | null;
 
 /**
+ * Optional rule-level row filter (a SQL WHERE predicate), mirroring DQRule.filter. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'filter' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty.
+ */
+export type RuleDefinitionFilter = string | null;
+
+/**
  * Mode-specific rule body plus its typed slots/params.
 
 ``body`` holds the mode-specific payload (native: ``{function,
@@ -2936,6 +3022,8 @@ export interface RuleDefinition {
   parameters?: RuleParameter[];
   /** Optional custom failure message (a Spark SQL expression string), mirroring DQRule.message_expr. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'message_expr' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty. */
   error_message?: RuleDefinitionErrorMessage;
+  /** Optional rule-level row filter (a SQL WHERE predicate), mirroring DQRule.filter. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'filter' key on the rendered dq_quality_rules check when set; omitted entirely when None or empty. */
+  filter?: RuleDefinitionFilter;
 }
 
 export type RuleHistoryEntryOutRuleId = string | null;
@@ -3158,6 +3246,10 @@ export type RulesRegistrySettingsInDefaultAutoUpgrade = boolean | null;
 
 export type RulesRegistrySettingsInTagAutoApply = boolean | null;
 
+export type RulesRegistrySettingsInDefaultPassThreshold = number | null;
+
+export type RulesRegistrySettingsInPassThresholdEnabled = boolean | null;
+
 /**
  * Update payload — omitted fields are left unchanged.
  */
@@ -3165,18 +3257,24 @@ export interface RulesRegistrySettingsIn {
   auto_upgrade_without_approval?: RulesRegistrySettingsInAutoUpgradeWithoutApproval;
   default_auto_upgrade?: RulesRegistrySettingsInDefaultAutoUpgrade;
   tag_auto_apply?: RulesRegistrySettingsInTagAutoApply;
+  default_pass_threshold?: RulesRegistrySettingsInDefaultPassThreshold;
+  pass_threshold_enabled?: RulesRegistrySettingsInPassThresholdEnabled;
 }
 
 /**
  * Effective Rules Registry governance settings.
  */
 export interface RulesRegistrySettingsOut {
-  /** Re-approval behaviour: silently re-approve a following application's re-rendered check (True) vs. send it back to pending_approval (False, default). */
+  /** Re-approval behaviour: silently re-approve a following application's re-rendered check (True, default) vs. send it back to pending_approval (False). */
   auto_upgrade_without_approval: boolean;
   /** Attach-time default pin for new applications/members: follow latest (True, default) vs. pin to the current version (False). */
   default_auto_upgrade: boolean;
   /** Tag-mapping apply behaviour: eagerly auto-attach tag-mapped rules across monitored tables (True) vs. only surface them as suggestions (False, default). */
   tag_auto_apply: boolean;
+  /** Org-wide default minimum pass rate (%) below which a check warns. Overridable per rule and per column. Clamped to [0, 100]. */
+  default_pass_threshold: number;
+  /** Master switch for the pass-threshold feature. When False, all threshold UI is hidden and breach evaluation is disabled server-side. Default True. */
+  pass_threshold_enabled: boolean;
 }
 
 export type RunConfigInputConfig = InputConfig | null;
@@ -3336,6 +3434,8 @@ export type RunRowOutTotalTests = number | null;
 
 export type RunRowOutRunMode = string | null;
 
+export type RunRowOutBreachCriticality = string | null;
+
 /**
  * One run's rollup for the run picker (newest first).
 
@@ -3352,6 +3452,8 @@ export interface RunRowOut {
   failed_tests?: RunRowOutFailedTests;
   total_tests?: RunRowOutTotalTests;
   run_mode?: RunRowOutRunMode;
+  breached?: boolean;
+  breach_criticality?: RunRowOutBreachCriticality;
 }
 
 export type RunSetDetailOutProductId = string | null;
@@ -3931,6 +4033,8 @@ export type TrendPointOutTotalTests = number | null;
 
 export type TrendPointOutVersion = number | null;
 
+export type TrendPointOutBreachCriticality = string | null;
+
 /**
  * One over-time point; *series* is set on grouped trends only.
 
@@ -3956,6 +4060,8 @@ export interface TrendPointOut {
   total_tests?: TrendPointOutTotalTests;
   version?: TrendPointOutVersion;
   is_draft?: boolean;
+  breached?: boolean;
+  breach_criticality?: TrendPointOutBreachCriticality;
 }
 
 export type UpdateDataProductInName = string | null;
@@ -4506,6 +4612,8 @@ severity?: string[] | null;
 rule?: string[] | null;
 column?: string[] | null;
 table?: string[] | null;
+catalog?: string[] | null;
+schema?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
@@ -4602,6 +4710,10 @@ steward?: string | null;
  * Filter by presence of a free-text tag key
  */
 tag?: string | null;
+/**
+ * Restrict export to this explicit set of rule ids (repeatable)
+ */
+rule_id?: string[] | null;
 };
 
 export type ExportMonitoredTablesParams = {
@@ -4629,6 +4741,10 @@ schema?: string | null;
  * Filter by table name
  */
 name?: string | null;
+/**
+ * Restrict export to these binding ids (selection action bar)
+ */
+binding_id?: string[] | null;
 };
 
 export type ExportMonitoredTablesFormat = typeof ExportMonitoredTablesFormat[keyof typeof ExportMonitoredTablesFormat];
@@ -4661,6 +4777,10 @@ export type ExportDataProductsParams = {
  * Export format: 'dqx' or 'odcs'.
  */
 format?: ExportDataProductsFormat;
+/**
+ * Restrict export to these product ids (selection action bar)
+ */
+product_id?: string[] | null;
 };
 
 export type ExportDataProductsFormat = typeof ExportDataProductsFormat[keyof typeof ExportDataProductsFormat];
@@ -6265,6 +6385,216 @@ export const useSaveDraftRunSampleLimit = <TError = AxiosError<HTTPValidationErr
       > => {
 
       const mutationOptions = getSaveDraftRunSampleLimitMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Return the current default pass threshold (admin only).
+ * @summary Get Default Pass Threshold
+ */
+export const getDefaultPassThreshold = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DefaultPassThresholdOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/config/default-pass-threshold`,options
+    );
+  }
+
+
+
+
+export const getGetDefaultPassThresholdQueryKey = () => {
+    return [
+    `/api/v1/config/default-pass-threshold`
+    ] as const;
+    }
+
+    
+export const getGetDefaultPassThresholdQueryOptions = <TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDefaultPassThresholdQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDefaultPassThreshold>>> = ({ signal }) => getDefaultPassThreshold({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDefaultPassThresholdQueryResult = NonNullable<Awaited<ReturnType<typeof getDefaultPassThreshold>>>
+export type GetDefaultPassThresholdQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetDefaultPassThreshold<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDefaultPassThreshold>>,
+          TError,
+          Awaited<ReturnType<typeof getDefaultPassThreshold>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDefaultPassThreshold<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDefaultPassThreshold>>,
+          TError,
+          Awaited<ReturnType<typeof getDefaultPassThreshold>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDefaultPassThreshold<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Default Pass Threshold
+ */
+
+export function useGetDefaultPassThreshold<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDefaultPassThresholdQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetDefaultPassThresholdSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDefaultPassThresholdQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDefaultPassThreshold>>> = ({ signal }) => getDefaultPassThreshold({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDefaultPassThresholdSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getDefaultPassThreshold>>>
+export type GetDefaultPassThresholdSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetDefaultPassThresholdSuspense<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDefaultPassThresholdSuspense<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDefaultPassThresholdSuspense<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Default Pass Threshold
+ */
+
+export function useGetDefaultPassThresholdSuspense<TData = Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDefaultPassThreshold>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDefaultPassThresholdSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Update the default pass threshold (admin only).
+ * @summary Save Default Pass Threshold
+ */
+export const saveDefaultPassThreshold = (
+    defaultPassThresholdIn: DefaultPassThresholdIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DefaultPassThresholdOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/default-pass-threshold`,
+      defaultPassThresholdIn,options
+    );
+  }
+
+
+
+export const getSaveDefaultPassThresholdMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveDefaultPassThreshold>>, TError,{data: DefaultPassThresholdIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveDefaultPassThreshold>>, TError,{data: DefaultPassThresholdIn}, TContext> => {
+
+const mutationKey = ['saveDefaultPassThreshold'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveDefaultPassThreshold>>, {data: DefaultPassThresholdIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveDefaultPassThreshold(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveDefaultPassThresholdMutationResult = NonNullable<Awaited<ReturnType<typeof saveDefaultPassThreshold>>>
+    export type SaveDefaultPassThresholdMutationBody = DefaultPassThresholdIn
+    export type SaveDefaultPassThresholdMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Default Pass Threshold
+ */
+export const useSaveDefaultPassThreshold = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveDefaultPassThreshold>>, TError,{data: DefaultPassThresholdIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveDefaultPassThreshold>>,
+        TError,
+        {data: DefaultPassThresholdIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveDefaultPassThresholdMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
@@ -7881,7 +8211,8 @@ export const useSaveApprovalsMode = <TError = AxiosError<HTTPValidationError>,
 
 Available to any authenticated user — the sidebar and homepage both read
 it to decide whether to surface the global Results nav item and the
-overall-score "?" explainer.
+overall-score "?" explainer, and the rule dialog reads it to decide
+whether to surface the per-rule Results tab.
  * @summary Get Global Results Settings
  */
 export const getGlobalResultsSettings = (
@@ -8028,7 +8359,10 @@ export function useGetGlobalResultsSettingsSuspense<TData = Awaited<ReturnType<t
 
 
 /**
- * Enable or disable the global Results tab (admin only).
+ * Enable or disable the global Results tab and/or the per-rule Results tab (admin only).
+
+Each toggle is updated only when its field is present in the body, so a
+caller can flip one without echoing the other's current value.
  * @summary Save Global Results Settings
  */
 export const saveGlobalResultsSettings = (
@@ -9519,6 +9853,175 @@ export function useListWorkspaceGroupsSuspense<TData = Awaited<ReturnType<typeof
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListWorkspaceGroupsSuspenseQueryOptions(params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * List workspace admins and app CAN_MANAGE holders (Admin only).
+
+Returns two categories of privileged principals so the Entitlements UI
+can display them as non-removable (disabled) rows:
+
+- *workspace_admin*: members of the SCIM ``admins`` group.
+- *app_owner*: principals with ``CAN_MANAGE`` permission on this app.
+
+Both lookups run as the calling admin (``obo_ws``) first, falling back to
+the app SP (``sp_ws``) only if the admin call fails. The app SP frequently
+lacks ``apps.<name>/get`` on its own app and broad SCIM read, so an
+SP-only implementation returned an empty list even when admins and
+CAN_MANAGE owners exist (item 32). Group members come from ``groups.get``
+(by id), since ``groups.list`` does not reliably populate the ``members``
+sub-attribute.
+
+De-duplication is intentionally omitted — a principal that is both a
+workspace admin and an app owner appears twice (once per kind), which lets
+the UI distinguish WHY they are privileged.
+
+The app-permissions lookup is best-effort: if it fails (e.g. the SP lacks
+the ``apps.get_permissions`` permission), the endpoint still returns
+workspace admins with HTTP 200 rather than failing the whole request.
+ * @summary List Privileged Principals
+ */
+export const listPrivilegedPrincipals = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<PrivilegedPrincipalOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/roles/privileged-principals`,options
+    );
+  }
+
+
+
+
+export const getListPrivilegedPrincipalsQueryKey = () => {
+    return [
+    `/api/v1/roles/privileged-principals`
+    ] as const;
+    }
+
+    
+export const getListPrivilegedPrincipalsQueryOptions = <TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPrivilegedPrincipalsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPrivilegedPrincipals>>> = ({ signal }) => listPrivilegedPrincipals({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListPrivilegedPrincipalsQueryResult = NonNullable<Awaited<ReturnType<typeof listPrivilegedPrincipals>>>
+export type ListPrivilegedPrincipalsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListPrivilegedPrincipals<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPrivilegedPrincipals>>,
+          TError,
+          Awaited<ReturnType<typeof listPrivilegedPrincipals>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPrivilegedPrincipals<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPrivilegedPrincipals>>,
+          TError,
+          Awaited<ReturnType<typeof listPrivilegedPrincipals>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPrivilegedPrincipals<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Privileged Principals
+ */
+
+export function useListPrivilegedPrincipals<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListPrivilegedPrincipalsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListPrivilegedPrincipalsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPrivilegedPrincipalsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPrivilegedPrincipals>>> = ({ signal }) => listPrivilegedPrincipals({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListPrivilegedPrincipalsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listPrivilegedPrincipals>>>
+export type ListPrivilegedPrincipalsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListPrivilegedPrincipalsSuspense<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPrivilegedPrincipalsSuspense<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPrivilegedPrincipalsSuspense<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Privileged Principals
+ */
+
+export function useListPrivilegedPrincipalsSuspense<TData = Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listPrivilegedPrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListPrivilegedPrincipalsSuspenseQueryOptions(options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -15606,6 +16109,79 @@ export const useRejectMonitoredTable = <TError = AxiosError<HTTPValidationError>
     }
     
 /**
+ * Withdraw a pending submission — walk the binding back to ``draft``.
+
+The counterpart to submit: an author who submitted a binding for review can
+pull it back to keep editing before an approver acts, without a reject
+(which is the approver's decision and leaves a ``rejected`` audit trail).
+Every ``pending_approval`` check mapped to the binding is walked back to
+``draft`` (a legal per-rule transition), then the binding itself flips to
+``draft``.
+
+Only a binding currently ``pending_approval`` can be reverted — 409
+otherwise. Gated to authors-and-above; the front end only surfaces it to
+the submission's owner (or an approver), matching the per-rule revoke.
+ * @summary Revert Monitored Table
+ */
+export const revertMonitoredTable = (
+    bindingId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableReviewOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/monitored-tables/${bindingId}/revert`,undefined,options
+    );
+  }
+
+
+
+export const getRevertMonitoredTableMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revertMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof revertMonitoredTable>>, TError,{bindingId: string}, TContext> => {
+
+const mutationKey = ['revertMonitoredTable'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revertMonitoredTable>>, {bindingId: string}> = (props) => {
+          const {bindingId} = props ?? {};
+
+          return  revertMonitoredTable(bindingId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RevertMonitoredTableMutationResult = NonNullable<Awaited<ReturnType<typeof revertMonitoredTable>>>
+    
+    export type RevertMonitoredTableMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Revert Monitored Table
+ */
+export const useRevertMonitoredTable = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revertMonitoredTable>>, TError,{bindingId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof revertMonitoredTable>>,
+        TError,
+        {bindingId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRevertMonitoredTableMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * Suggest published registry rules (with a complete column mapping) for a monitored table.
 
 Always returns HTTP 200 with ``available=False`` + a ``reason`` for every
@@ -19732,7 +20308,8 @@ export function useGetRuleResultsSuspense<TData = Awaited<ReturnType<typeof getR
 Rolled up per RUN BATCH (``dq_run_set_members`` join): concurrent
 member runs of one Table-Space "Run now" collapse to a single picker
 entry, so the picker offers coherent product-level batches rather than
-per-member-table runs.
+per-member-table runs. Each batch is stamped with a threshold-breach
+badge (worst member run's breach).
  * @summary Get Product Results Runs
  */
 export const getProductResultsRuns = (
@@ -20251,7 +20828,8 @@ export function useGetDqResultsFailedRowsSuspense<TData = Awaited<ReturnType<typ
 
 Accepts either a three-part table FQN or a monitored-table binding id
 (resolved to its bound table). Draft runs are excluded unless
-*include_drafts*.
+*include_drafts*. Each run is stamped with a threshold-breach badge
+computed from its per-check rows.
  * @summary Get Dq Results Runs
  */
 export const getDqResultsRuns = (
@@ -22927,6 +23505,71 @@ export const useRejectDataProduct = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
+ * Withdraw a pending submission — ``pending_approval`` -> ``draft``.
+
+Lets an author pull their own space back to keep editing before an approver
+acts. 409 if the space is not ``pending_approval``.
+ * @summary Revert Data Product
+ */
+export const revertDataProduct = (
+    productId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DataProductOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/data-products/${productId}/revert`,undefined,options
+    );
+  }
+
+
+
+export const getRevertDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revertDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof revertDataProduct>>, TError,{productId: string}, TContext> => {
+
+const mutationKey = ['revertDataProduct'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revertDataProduct>>, {productId: string}> = (props) => {
+          const {productId} = props ?? {};
+
+          return  revertDataProduct(productId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RevertDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof revertDataProduct>>>
+    
+    export type RevertDataProductMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Revert Data Product
+ */
+export const useRevertDataProduct = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revertDataProduct>>, TError,{productId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof revertDataProduct>>,
+        TError,
+        {productId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRevertDataProductMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * Run every runnable member of a data product through a shared run set.
  * @summary Run Data Product
  */
@@ -23597,7 +24240,7 @@ export function useExportMonitoredTableSuspense<TData = Awaited<ReturnType<typeo
 
 
 /**
- * Export every table space's member checks as DQX or ODCS YAML.
+ * Export every (filtered) table space's member checks as DQX or ODCS YAML.
  * @summary Export Data Products
  */
 export const exportDataProducts = (

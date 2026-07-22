@@ -75,6 +75,27 @@ describe("columnsFromRows", () => {
   it("returns the union of row_values keys in first-seen order", () => {
     expect(columnsFromRows(rows)).toEqual(["id", "note", "extra"]);
   });
+
+  it("includes a failed column absent from row_values (item 63: null-valued failing column)", () => {
+    // The backend renders row_values from `to_json(row_data)`, which omits
+    // null fields — so a column that is null on every failing row (e.g. the
+    // not-null / is-present check that failed) never appears among the
+    // row_values keys. Filtering by it must NOT drop it from the table; the
+    // fold over failed_columns keeps it visible (rendered as a "—" cell).
+    const nullColRows: FailingRecord[] = [
+      {
+        record_key: "q1",
+        row_values: { order_id: "65", status: "unknown" }, // customer_id is null → absent
+        failed_columns: ["customer_id"],
+        failures: [{ rule_name: "Value is present", columns: ["customer_id"] }],
+      },
+    ];
+    expect(columnsFromRows(nullColRows)).toEqual([
+      "order_id",
+      "status",
+      "customer_id",
+    ]);
+  });
 });
 
 describe("distinctRules", () => {

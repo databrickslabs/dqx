@@ -109,6 +109,19 @@ class TestListAndGet:
         result = list_registry_rule_versions("r1", svc=svc)
         assert [v.version for v in result] == [2, 1]
 
+    def test_list_versions_exposes_frozen_mode(self):
+        # The version diff (bug-bash-v4 item 43) renders each snapshot's frozen
+        # check JSON as-of-the-version, so the frozen ``mode`` must reach the DTO.
+        from databricks_labs_dqx_app.backend.registry_models import RuleVersion
+
+        svc = MagicMock()
+        svc.list_versions.return_value = [
+            RuleVersion(rule_id="r1", version=2, mode="sql", definition=_definition()),
+            RuleVersion(rule_id="r1", version=1, mode=None, definition=_definition()),
+        ]
+        result = list_registry_rule_versions("r1", svc=svc)
+        assert [v.mode for v in result] == ["sql", None]
+
 
 class TestCreateAndUpdate:
     def test_create_returns_rule_and_warning(self):

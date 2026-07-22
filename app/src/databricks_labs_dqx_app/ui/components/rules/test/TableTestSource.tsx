@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CatalogBrowser } from "@/components/CatalogBrowser";
+import { SingleTableScopePicker } from "@/components/monitored-tables/SingleTableScopePicker";
 import { SingleColumnPicker } from "@/components/apply-rules/ColumnPicker";
 import { useGetTableColumns, type RuleSlot } from "@/lib/api";
 
@@ -63,7 +63,7 @@ export function TableTestSource({
     <div className="space-y-4">
       <div className="space-y-2">
         <h4 className="text-sm font-medium leading-none">{t("ruleTest.pickTable")}</h4>
-        <CatalogBrowser value={fqn} onChange={setFqn} />
+        <SingleTableScopePicker value={fqn} onChange={setFqn} />
       </div>
       {parts && slots.length > 0 && (
         <div className="space-y-2">

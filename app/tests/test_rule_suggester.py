@@ -34,6 +34,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_retriever import RetrievedRule, RuleRetrievalUnavailableError
 from databricks_labs_dqx_app.backend.services.rule_suggester import (
+    DEFAULT_TOP_K,
     _NO_CLEAN_MAPPING_REASON,
     _NO_MATCH_REASON,
     _NO_PUBLISHED_RULES_REASON,
@@ -250,6 +251,45 @@ class TestHappyPath:
         assert suggestion.explanation == "email looks nullable-checkable"
         assert suggestion.dimension == "Completeness"
         assert suggestion.severity == "High"
+
+    async def test_per_column_retrieval_unions_column_specific_candidates(
+        self, monitored_tables, registry, apply_rules
+    ):
+        """Per-column retrieval must surface EACH column's strongest rules.
+
+        A query-aware retriever returns different rules depending on which
+        column's query text it sees: ``r_email`` only for the email column,
+        ``r_id`` only for the id column. The suggester retrieves per column and
+        unions, so BOTH reach the judge — whereas the old single blended
+        top-K query would have returned only one set. Regression guard for
+        "sales_customers.email never gets email rules on a wide table".
+        """
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}, "email": {}})
+        registry.get_rule.side_effect = lambda rid: _rule(rid, ["column"])
+
+        class ColumnAwareRetriever:
+            def is_available(self):
+                return True, ""
+
+            def retrieve(self, query_text: str, top_k: int):
+                if "email" in query_text:
+                    return [RetrievedRule(rule_id="r_email", score=0.95)]
+                if "id" in query_text:
+                    return [RetrievedRule(rule_id="r_id", score=0.90)]
+                return []
+
+        gateway = _gateway({"suggestions": []})
+        suggester = _suggester(monitored_tables, registry, apply_rules, ColumnAwareRetriever(), gateway)
+
+        await suggester.suggest("b1", "user@x")
+
+        # The suggester resolves each unioned candidate via registry.get_rule,
+        # so both column-specific rules must have been looked up (→ handed to
+        # the judge). A single blended query would have surfaced only one.
+        looked_up = {call.args[0] for call in registry.get_rule.call_args_list}
+        assert "r_email" in looked_up
+        assert "r_id" in looked_up
 
     async def test_judge_requests_deterministic_temperature(self, monitored_tables, registry, apply_rules):
         monitored_tables.get.return_value = _binding_detail()
@@ -481,3 +521,81 @@ class TestColumnResolution:
 
         assert len(result.suggestions) == 1
         assert result.suggestions[0].column_mapping == {"column": "legacy_col"}
+
+
+class TestTopKAndSameColumnGuard:
+    """Tests for Change A (DEFAULT_TOP_K=20) and Change B (same-column multi-slot rejection)."""
+
+    def test_default_top_k_is_20(self):
+        assert DEFAULT_TOP_K == 20
+
+    async def test_per_column_retrieval_uses_top_k_20(self, monitored_tables, registry, apply_rules):
+        """_retrieve_per_column must call retrieve() with DEFAULT_TOP_K=20."""
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"a": {}})
+        registry.get_rule.return_value = _rule("r1", ["column"])
+
+        calls: list[int] = []
+
+        class RecordingRetriever:
+            def is_available(self):
+                return True, ""
+
+            def retrieve(self, query_text: str, top_k: int) -> list[RetrievedRule]:
+                calls.append(top_k)
+                return [RetrievedRule(rule_id="r1", score=0.9)]
+
+        gateway = _gateway({"suggestions": []})
+        suggester = _suggester(monitored_tables, registry, apply_rules, RecordingRetriever(), gateway)
+
+        await suggester.suggest("b1", "user@x")
+
+        assert calls, "retriever was never called"
+        assert all(k == 20 for k in calls), f"expected top_k=20, got {calls}"
+
+    async def test_same_column_multi_slot_mapping_is_rejected(self, monitored_tables, registry, apply_rules):
+        """A mapping binding two slots to the same column must be dropped."""
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"order_ts": {}})
+        rule = _rule("r1", ["start_ts", "end_ts"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        # Both slots map to the same column — the exact bad pattern from the screenshot.
+        gateway = _gateway(
+            {"suggestions": [{"rule_id": "r1", "mapping": {"start_ts": "order_ts", "end_ts": "order_ts"}}]}
+        )
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.suggestions == [], "same-column multi-slot mapping should be dropped"
+
+    async def test_distinct_column_multi_slot_mapping_is_kept(self, monitored_tables, registry, apply_rules):
+        """A mapping with distinct columns for each slot must be kept."""
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"a": {}, "b": {}})
+        rule = _rule("r1", ["start_ts", "end_ts"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": [{"rule_id": "r1", "mapping": {"start_ts": "a", "end_ts": "b"}}]})
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert len(result.suggestions) == 1
+        assert result.suggestions[0].column_mapping == {"start_ts": "a", "end_ts": "b"}
+
+    async def test_single_slot_mapping_is_kept(self, monitored_tables, registry, apply_rules):
+        """A single-slot mapping (len==1) must not be rejected by the same-column guard."""
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"a": {}})
+        rule = _rule("r1", ["column"])
+        registry.get_rule.return_value = rule
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway({"suggestions": [{"rule_id": "r1", "mapping": {"column": "a"}}]})
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert len(result.suggestions) == 1
+        assert result.suggestions[0].column_mapping == {"column": "a"}

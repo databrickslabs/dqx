@@ -829,7 +829,13 @@ export const useTimezone = <
     queryKey: queryOptions?.queryKey ?? getTimezoneQueryKey(),
     queryFn: () => getTimezone(axiosOptions),
     select: ((resp: Awaited<ReturnType<typeof getTimezone>>) => resp.data) as never,
-    staleTime: 5 * 60 * 1000,
+    // Session-stable app config: the workspace timezone doesn't change within a
+    // session, so pin to Infinity (matching role/version/approvals-mode) rather
+    // than the 5-minute default — otherwise every component that mounts this
+    // after the window lapses re-fetches config/timezone. The settings page
+    // invalidates getTimezoneQueryKey() on save, so an actual change still
+    // refreshes it.
+    staleTime: Infinity,
     ...queryOptions,
   }) as UseQueryResult<TData, TError>;
 };
@@ -1481,6 +1487,9 @@ export interface RegistryRuleExportParams {
   severity?: string | null;
   steward?: string | null;
   tag?: string | null;
+  /** Restrict export to this explicit set of rule ids (serialized as repeated
+   * `rule_id` query params) — used by the overview's selection action bar. */
+  rule_id?: string[];
 }
 
 export interface MonitoredTableExportParams {
@@ -1490,6 +1499,16 @@ export interface MonitoredTableExportParams {
   catalog?: string | null;
   schema?: string | null;
   name?: string | null;
+  /** Restrict export to this explicit set of binding ids (serialized as repeated
+   * `binding_id` query params) — used by the overview's selection action bar. */
+  binding_id?: string[];
+}
+
+export interface DataProductExportParams {
+  format?: ExportFormat;
+  /** Restrict export to this explicit set of product ids (serialized as repeated
+   * `product_id` query params) — used by the overview's selection action bar. */
+  product_id?: string[];
 }
 
 export const exportRegistryRules = (
@@ -1521,10 +1540,10 @@ export const exportMonitoredTable = (
   });
 
 export const exportDataProducts = (
-  format: ExportFormat,
+  params?: DataProductExportParams,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<ExportOut>> =>
-  axios.default.get(`/api/v1/export/data-products`, { ...options, params: { format } });
+  axios.default.get(`/api/v1/export/data-products`, { ...options, params });
 
 export const exportDataProduct = (
   productId: string,

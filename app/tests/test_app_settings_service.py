@@ -184,6 +184,40 @@ class TestGlobalResultsEnabled:
         assert svc.get_global_results_enabled() is True
 
 
+class TestRulesResultsTabEnabled:
+    """Per-rule Results tab gating (item 35) — OFF by default; explicit opt-in only."""
+
+    def test_defaults_to_false_when_unset(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []
+
+        assert svc.get_rules_results_tab_enabled() is False
+
+    def test_explicit_true_reads_on(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["true"]]
+
+        assert svc.get_rules_results_tab_enabled() is True
+
+    def test_non_true_value_reads_off(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["false"]]
+
+        assert svc.get_rules_results_tab_enabled() is False
+
+    def test_save_and_read_round_trips(self, settings_service):
+        svc, sql_executor_mock = settings_service
+
+        svc.save_rules_results_tab_enabled(True, user_email="admin@x")
+
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["key_cols"] == {"setting_key": "rules_results_tab_enabled"}
+        assert kwargs["value_cols"]["setting_value"] == "true"
+
+        sql_executor_mock.query.return_value = [["true"]]
+        assert svc.get_rules_results_tab_enabled() is True
+
+
 class TestVectorSearchSettings:
     """Vector Search / embeddings settings (Rules Registry Phase 4B/4C, auto-derived since 8B).
 
@@ -402,3 +436,68 @@ class TestTagAutoApply:
         assert kwargs["value_cols"]["setting_value"] == "true"
         sql_executor_mock.query.return_value = [["true"]]
         assert svc.get_tag_auto_apply() is True
+
+
+class TestDefaultPassThreshold:
+    """``default_pass_threshold`` — org-wide minimum pass-rate default; 70 when unset."""
+
+    def test_default_pass_threshold_defaults_to_70(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []
+        assert svc.get_default_pass_threshold() == 70
+
+    def test_save_and_get_default_pass_threshold(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        svc.save_default_pass_threshold(85, user_email="a@x")
+        sql_executor_mock.query.return_value = [["85"]]
+        assert svc.get_default_pass_threshold() == 85
+
+    def test_save_persists_under_expected_key(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        svc.save_default_pass_threshold(60, user_email="admin@x")
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["key_cols"] == {"setting_key": "default_pass_threshold"}
+        assert kwargs["value_cols"]["setting_value"] == "60"
+
+    def test_value_clamped_to_100_on_get(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["150"]]
+        assert svc.get_default_pass_threshold() == 100
+
+    def test_value_clamped_to_0_on_get(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["-10"]]
+        assert svc.get_default_pass_threshold() == 0
+
+    def test_garbage_value_returns_default(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["not-a-number"]]
+        assert svc.get_default_pass_threshold() == 70
+
+
+class TestPassThresholdEnabled:
+    """``pass_threshold_enabled`` — master switch for the pass-threshold feature; default ON."""
+
+    def test_defaults_to_true_when_unset(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = []
+        assert svc.get_pass_threshold_enabled() is True
+
+    def test_save_false_then_get_returns_false(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        svc.save_pass_threshold_enabled(False, user_email="admin@x")
+        sql_executor_mock.query.return_value = [["false"]]
+        assert svc.get_pass_threshold_enabled() is False
+
+    def test_save_true_then_get_returns_true(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        svc.save_pass_threshold_enabled(True, user_email="admin@x")
+        sql_executor_mock.query.return_value = [["true"]]
+        assert svc.get_pass_threshold_enabled() is True
+
+    def test_save_persists_under_expected_key(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        svc.save_pass_threshold_enabled(False, user_email="admin@x")
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["key_cols"] == {"setting_key": "pass_threshold_enabled"}
+        assert kwargs["value_cols"]["setting_value"] == "false"

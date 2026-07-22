@@ -58,6 +58,21 @@ class AppConfig(BaseSettings):
         validation_alias="DQX_ADMIN_GROUP",
         description="Databricks workspace group name for bootstrap Admin access",
     )
+    # Registered Databricks App slug — the unique per-workspace name the app is
+    # registered under (e.g. "dqx-studio"). Distinct from ``app_name`` which is
+    # the human-readable display title ("DQX Studio"). Used by the
+    # privileged-principals endpoint to call ``apps.get_permissions(slug)``.
+    # Resolution order: DQX_APP_NAME env var → DATABRICKS_APP_NAME (injected by
+    # the Apps runtime) → "dqx-studio" (default matching the bundle var default).
+    app_slug_name: str = Field(
+        default_factory=lambda: (
+            os.environ.get("DQX_APP_NAME")
+            or os.environ.get("DATABRICKS_APP_NAME")
+            or "dqx-studio"
+        ),
+        validation_alias="DQX_APP_NAME",
+        description="Registered Databricks App slug used for app-permissions lookups.",
+    )
     profiler_max_sample_limit: int = Field(default=100_000)
     profiler_default_sample_limit: int = Field(default=50_000)
     dryrun_max_sample_size: int = Field(default=10_000)

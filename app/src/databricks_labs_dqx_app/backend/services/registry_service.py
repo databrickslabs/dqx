@@ -120,13 +120,16 @@ class RegistryService:
         severity: str | None = None,
         steward: str | None = None,
         tag: str | None = None,
+        rule_ids: list[str] | None = None,
     ) -> list[RegistryRule]:
         """List registry rules, optionally filtered.
 
         ``status`` and ``steward`` are pushed down into SQL; ``dimension``,
-        ``severity``, and ``tag`` filter over ``user_metadata`` in Python
-        (it's a JSON blob, not a column), matching how
-        :class:`RulesCatalogService` handles free-text metadata.
+        ``severity``, ``tag``, and ``rule_ids`` filter in Python (``dimension`` /
+        ``severity`` / ``tag`` live in the ``user_metadata`` JSON blob rather
+        than columns, matching how :class:`RulesCatalogService` handles
+        free-text metadata; ``rule_ids`` narrows to an explicit selection —
+        e.g. exporting the rows a user ticked in the overview table).
         """
         clauses: list[str] = []
         if status:
@@ -145,6 +148,9 @@ class RegistryService:
             rules = [r for r in rules if get_rule_severity(r.user_metadata) == severity]
         if tag:
             rules = [r for r in rules if tag in r.user_metadata]
+        if rule_ids is not None:
+            wanted = set(rule_ids)
+            rules = [r for r in rules if r.rule_id in wanted]
         self._attach_modified(rules)
         return rules
 
@@ -706,6 +712,20 @@ class RegistryService:
             if not is_sql_query_safe(strip_sql_line_comments(candidate)):
                 raise UnsafeSqlQueryError(
                     "The rule's SQL contains prohibited statements (e.g. DROP, INSERT, UPDATE) and cannot be saved."
+                )
+        # Validate the rule-level filter (definition.filter) using the same
+        # is_sql_query_safe wrapper as the per-applied-rule row_filter validator
+        # in apply_rules_service. Blank/None is always allowed.
+        filter_value = definition.filter
+        if filter_value and filter_value.strip():
+            _ROW_FILTER_MAX_LEN = 4000
+            if len(filter_value.strip()) > _ROW_FILTER_MAX_LEN:
+                raise UnsafeSqlQueryError(
+                    f"Rule filter is too long (max {_ROW_FILTER_MAX_LEN} characters)."
+                )
+            if not is_sql_query_safe(f"SELECT * FROM _t WHERE ({filter_value.strip()})"):
+                raise UnsafeSqlQueryError(
+                    "The rule's filter contains prohibited SQL and cannot be saved."
                 )
 
     def _dedup_warning(self, rule: RegistryRule) -> str | None:

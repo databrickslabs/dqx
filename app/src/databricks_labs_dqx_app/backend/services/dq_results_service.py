@@ -37,7 +37,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
-from databricks_labs_dqx_app.backend.metrics_utils import safe_int
+from databricks_labs_dqx_app.backend.metrics_utils import catalog_of, safe_int, schema_of
 from databricks_labs_dqx_app.backend.models import (
     EntityResultsOut,
     GroupRowOut,
@@ -48,6 +48,60 @@ from databricks_labs_dqx_app.backend.models import (
 from databricks_labs_dqx_app.backend.services.score_view_service import RUN_MODE_DRAFT
 
 VALID_AXES = ("all", "trend", "breakdown")
+
+# A resolver maps a check row to its effective pass threshold (%) — built
+# per-request in the route handlers, which know the scope (see plan Task 4).
+ThresholdResolver = Callable[["CheckResultRow"], int]
+
+
+def _breach_criticality(row: CheckResultRow, threshold: int) -> str | None:
+    """The criticality of *row*'s breach ("error"/"warn"), or None if no breach.
+
+    A check breaches when it HAS rows (``total`` truthy) and its pass rate
+    is strictly below *threshold*. ``total`` of 0/None never breaches. The
+    breach carries the check's DQX criticality; a check with no criticality
+    attribution defaults to "error" (DQX's default criticality for a failing
+    check).
+
+    Uses EXACT integer arithmetic — ``passed*100 < threshold*total`` — rather
+    than ``(1 - failed/total)*100 < threshold``: IEEE-754 float math makes a
+    pass rate that exactly equals the threshold compute to e.g.
+    ``19.999999999999996`` and wrongly flag a breach. The tie must NOT breach
+    (spec: breach only when pass rate is strictly ``<`` threshold), and small
+    row counts (10/20/25/50/100) from sample-limited draft runs hit it.
+    """
+    if not row.total:
+        return None
+    if (row.total - row.failed) * 100 >= threshold * row.total:
+        return None
+    return "warn" if (row.criticality or "error").lower() in ("warn", "warning") else "error"
+
+
+def _worse_criticality(a: str | None, b: str | None) -> str | None:
+    """Combine two breach criticalities — error beats warn beats None."""
+    if a == "error" or b == "error":
+        return "error"
+    if a == "warn" or b == "warn":
+        return "warn"
+    return None
+
+
+def breach_criticality_by_run(
+    rows: Iterable[CheckResultRow],
+    resolve_threshold: ThresholdResolver,
+) -> dict[str | None, str | None]:
+    """run_id -> worst breach criticality over that run's checks (None if none).
+
+    Backs the run-picker breach badge: a run breaches if any of its checks
+    breached, carrying the worst breaching check's criticality (error beats
+    warn). Runs with no breaching check are absent from the map.
+    """
+    out: dict[str | None, str | None] = {}
+    for row in rows:
+        crit = _breach_criticality(row, resolve_threshold(row))
+        if crit is not None:
+            out[row.run_id] = _worse_criticality(out.get(row.run_id), crit)
+    return out
 
 
 def _rows_have_draft(rows: Iterable[CheckResultRow]) -> bool:
@@ -83,6 +137,19 @@ class CheckResultRow:
     rule_id: str | None = None
     run_mode: str | None = None
     rule_name: str | None = None
+    # DQX criticality of the check ("error"/"warn"); None for untagged rows
+    # (defaults to "error" — DQX's default — when evaluating a breach).
+    # error_count/warning_count are kept SEPARATE from the collapsed *failed*
+    # (their sum) so a breach can carry the breaching check's criticality.
+    error_count: int = 0
+    warning_count: int = 0
+    criticality: str | None = None
+    # The effective pass threshold (%) FROZEN into the run's checks_json at
+    # materialization time (user_metadata['pass_threshold']). When present it
+    # is the immutable source of truth for this run's breach verdict — a later
+    # admin/rule/registry setting change can never re-judge it. None for legacy
+    # runs predating the stamp, which fall back to the live resolver chain.
+    pass_threshold: int | None = None
 
 
 @dataclass(frozen=True)
@@ -93,6 +160,13 @@ class ResultFacets:
     set of member table FQNs. It participates in the AND like the other
     four facets everywhere EXCEPT the ``by_table`` breakdown itself,
     which self-excludes it (see ``compute_entity_results``).
+
+    *catalogs* / *schemas* are the Global Results hierarchical scope
+    (catalog → schema → table). Unlike *tables* they are NOT self-excluded
+    from ``by_table`` — narrowing to a catalog/schema is meant to shrink the
+    By-table row set too. *schemas* values are the two-part ``catalog.schema``
+    identity (see ``metrics_utils.schema_of``) so a ``sales`` schema in two
+    catalogs stays distinct.
     """
 
     dimensions: tuple[str, ...] = ()
@@ -100,9 +174,19 @@ class ResultFacets:
     rules: tuple[str, ...] = ()
     columns: tuple[str, ...] = ()
     tables: tuple[str, ...] = ()
+    catalogs: tuple[str, ...] = ()
+    schemas: tuple[str, ...] = ()
 
     def any_active(self) -> bool:
-        return bool(self.dimensions or self.severities or self.rules or self.columns or self.tables)
+        return bool(
+            self.dimensions
+            or self.severities
+            or self.rules
+            or self.columns
+            or self.tables
+            or self.catalogs
+            or self.schemas
+        )
 
 
 def _parse_columns_json(raw: str | None) -> tuple[str, ...]:
@@ -132,14 +216,15 @@ def parse_check_rows(raw_rows: list[dict[str, str | None]]) -> list[CheckResultR
         fqn = row.get("input_location")
         if not check_name or not fqn:
             continue
-        failed = (safe_int(row.get("error_count")) or 0) + (safe_int(row.get("warning_count")) or 0)
+        error_count = safe_int(row.get("error_count")) or 0
+        warning_count = safe_int(row.get("warning_count")) or 0
         out.append(
             CheckResultRow(
                 table_fqn=fqn,
                 run_id=row.get("run_id"),
                 run_date=row.get("run_date"),
                 check_name=check_name,
-                failed=failed,
+                failed=error_count + warning_count,
                 total=safe_int(row.get("input_row_count")),
                 severity=row.get("severity"),
                 dimension=row.get("dimension"),
@@ -147,6 +232,10 @@ def parse_check_rows(raw_rows: list[dict[str, str | None]]) -> list[CheckResultR
                 rule_id=row.get("registry_rule_id"),
                 run_mode=row.get("run_mode"),
                 rule_name=row.get("rule_name"),
+                error_count=error_count,
+                warning_count=warning_count,
+                criticality=row.get("criticality"),
+                pass_threshold=safe_int(row.get("pass_threshold")),
             )
         )
     return out
@@ -174,6 +263,10 @@ def row_matches_facets(row: CheckResultRow, facets: ResultFacets) -> bool:
     """
     if facets.tables and row.table_fqn not in facets.tables:
         return False
+    if facets.catalogs and catalog_of(row.table_fqn) not in facets.catalogs:
+        return False
+    if facets.schemas and schema_of(row.table_fqn) not in facets.schemas:
+        return False
     if facets.dimensions and row.dimension not in facets.dimensions:
         return False
     if facets.severities and row.severity not in facets.severities:
@@ -191,13 +284,23 @@ class _GroupAcc:
     total: int | None = None
     rule_keys: set[str] = field(default_factory=set)
     check_rows: int = 0
+    # Breach roll-up: any child check breached, and the worst breaching
+    # child's criticality ("error" beats "warn"). Both stay falsy/None when
+    # no resolver is supplied (breach evaluation is off).
+    breached: bool = False
+    breach_criticality: str | None = None
 
-    def add(self, row: CheckResultRow) -> None:
+    def add(self, row: CheckResultRow, resolve: ThresholdResolver | None = None) -> None:
         self.failed += row.failed
         if row.total is not None:
             self.total = (self.total or 0) + row.total
         self.rule_keys.add(_rule_key(row))
         self.check_rows += 1
+        if resolve is not None:
+            crit = _breach_criticality(row, resolve(row))
+            if crit is not None:
+                self.breached = True
+                self.breach_criticality = _worse_criticality(self.breach_criticality, crit)
 
     @property
     def pass_rate(self) -> float | None:
@@ -212,10 +315,11 @@ def _group_rows(
     key_of: Callable[[CheckResultRow], str | None],
     *,
     with_check_count: bool = True,
+    resolve_threshold: ThresholdResolver | None = None,
 ) -> list[GroupRowOut]:
     groups: dict[str | None, _GroupAcc] = defaultdict(_GroupAcc)
     for row in rows:
-        groups[key_of(row)].add(row)
+        groups[key_of(row)].add(row, resolve_threshold)
     out = [
         GroupRowOut(
             label=label,
@@ -224,6 +328,8 @@ def _group_rows(
             rule_count=len(acc.rule_keys),
             check_count=acc.check_rows if with_check_count else None,
             total_tests=acc.total,
+            breached=acc.breached,
+            breach_criticality=acc.breach_criticality,
         )
         for label, acc in groups.items()
     ]
@@ -232,7 +338,10 @@ def _group_rows(
     return out
 
 
-def _by_rule_rows(rows: list[CheckResultRow]) -> list[GroupRowOut]:
+def _by_rule_rows(
+    rows: list[CheckResultRow],
+    resolve_threshold: ThresholdResolver | None = None,
+) -> list[GroupRowOut]:
     """By-rule breakdown grouped by RULE IDENTITY, not display name.
 
     The grouping key is ``_rule_key``: the frozen registry rule id when
@@ -254,7 +363,7 @@ def _by_rule_rows(rows: list[CheckResultRow]) -> list[GroupRowOut]:
             newest[key] = candidate
         if row.rule_id is not None:
             identity_ids[key] = row.rule_id
-    out = _group_rows(rows, _rule_key)
+    out = _group_rows(rows, _rule_key, resolve_threshold=resolve_threshold)
     for group in out:
         if group.label is None:  # defensive: _rule_key never yields None
             continue
@@ -264,17 +373,29 @@ def _by_rule_rows(rows: list[CheckResultRow]) -> list[GroupRowOut]:
     return out
 
 
-def _by_column_rows(rows: list[CheckResultRow]) -> list[GroupRowOut]:
+def _by_column_rows(
+    rows: list[CheckResultRow],
+    resolve_threshold: ThresholdResolver | None = None,
+) -> list[GroupRowOut]:
     """By-column breakdown EXPLODES the mapped columns: a check spanning N
     columns attributes to each of them (rows can sum above the total —
     dqlake's intended "involvement" view). Checks with no mapped columns
     don't appear (SQL analogue: explode of a NULL array yields no rows).
-    dqlake's by_column query computes no check_count."""
+    dqlake's by_column query computes no check_count.
+
+    Breach is evaluated AFTER explosion: each exploded row carries exactly
+    one column, so the resolver sees a single-column row and can apply that
+    column's per-column threshold override."""
     exploded = [replace(row, columns=(column,)) for row in rows for column in row.columns]
-    return _group_rows(exploded, lambda row: row.columns[0], with_check_count=False)
+    return _group_rows(
+        exploded, lambda row: row.columns[0], with_check_count=False, resolve_threshold=resolve_threshold
+    )
 
 
-def _trend_asof(rows: list[CheckResultRow]) -> list[TrendPointOut]:
+def _trend_asof(
+    rows: list[CheckResultRow],
+    resolve_threshold: ThresholdResolver | None = None,
+) -> list[TrendPointOut]:
     """The overall "Average" series over AS-OF-EXPANDED rows.
 
     The carry-forward itself now lives in the UC view
@@ -302,18 +423,28 @@ def _trend_asof(rows: list[CheckResultRow]) -> list[TrendPointOut]:
     # instant -> table -> pooled accumulator.
     per_instant: dict[str | None, dict[str, _GroupAcc]] = defaultdict(lambda: defaultdict(_GroupAcc))
     draft_instants: set[str | None] = set()
+    # Per-instant breach roll-up across every table's rows at that instant
+    # (a point breaches if any contributing check breached).
+    breach_by_instant: dict[str | None, str | None] = defaultdict(lambda: None)
     for row in rows:
-        per_instant[row.run_date][row.table_fqn].add(row)
+        per_instant[row.run_date][row.table_fqn].add(row, resolve_threshold)
+        if resolve_threshold is not None:
+            crit = _breach_criticality(row, resolve_threshold(row))
+            if crit is not None:
+                breach_by_instant[row.run_date] = _worse_criticality(breach_by_instant[row.run_date], crit)
         if row.run_mode == RUN_MODE_DRAFT:
             draft_instants.add(row.run_date)
     out: list[TrendPointOut] = []
     for run_date in sorted(per_instant, key=lambda d: d or ""):
         rates = [acc.pass_rate for acc in per_instant[run_date].values() if acc.pass_rate is not None]
+        breach_crit = breach_by_instant.get(run_date)
         out.append(
             TrendPointOut(
                 run_date=run_date,
                 pass_rate=sum(rates) / len(rates) if rates else None,
                 is_draft=run_date in draft_instants,
+                breached=breach_crit is not None,
+                breach_criticality=breach_crit,
             )
         )
     return out
@@ -376,6 +507,7 @@ def _trend_grouped(
     series_of: Callable[[CheckResultRow], str | None],
     *,
     instant_of: Callable[[CheckResultRow], str | None] | None = None,
+    resolve_threshold: ThresholdResolver | None = None,
 ) -> list[TrendPointOut]:
     """Per-instant grouped series: one point per (instant, series), each
     pooling the rows AT that instant (1 - SUM(failed)/SUM(total)).
@@ -408,7 +540,7 @@ def _trend_grouped(
     draft_groups: set[tuple[str | None, str | None]] = set()
     for row in rows:
         key = (instant(row), series_of(row))
-        groups[key].add(row)
+        groups[key].add(row, resolve_threshold)
         if row.run_mode == RUN_MODE_DRAFT:
             draft_groups.add(key)
     return [
@@ -419,6 +551,8 @@ def _trend_grouped(
             rule_count=len(acc.rule_keys),
             total_tests=acc.total,
             is_draft=(run_date, series) in draft_groups,
+            breached=acc.breached,
+            breach_criticality=acc.breach_criticality,
         )
         for (run_date, series), acc in sorted(groups.items(), key=lambda kv: (kv[0][0] or "", kv[0][1] or ""))
     ]
@@ -510,8 +644,18 @@ def compute_entity_results(
     asof_rows: list[CheckResultRow] | None = None,
     run_set_by_run_id: dict[str, str] | None = None,
     as_of_batch: str | None = None,
+    resolve_threshold: ThresholdResolver | None = None,
 ) -> EntityResultsOut:
     """Assemble the full EntityResultsOut from raw check rows.
+
+    *resolve_threshold*, when supplied, maps each check row to its effective
+    pass threshold (%) so per-check breach can be evaluated and rolled up
+    into every breakdown group and over-time point (``breached`` /
+    ``breach_criticality``). None disables breach evaluation (those fields
+    stay falsy) — the backward-compatible default. Built per-request in the
+    route handler, which knows the scope's applied/registry/admin thresholds
+    (see plan Task 4). The by-column path applies it AFTER column explosion,
+    so a single-column exploded row can carry its per-column override.
 
     *table_axis* selects where the per-table grouping lands: ``"tables"``
     for the table endpoint, ``"by_table"`` for product/global/rule
@@ -637,11 +781,13 @@ def compute_entity_results(
                 else matched
             )
             table_box_rows = [row for row in matched_sans_table if instant_of(row) == latest.get(row.table_fqn)]
-        result.by_dimension = _group_rows(breakdown_rows, lambda row: row.dimension)
-        result.by_severity = _group_rows(breakdown_rows, lambda row: row.severity)
-        result.by_rule = _by_rule_rows(breakdown_rows)
-        result.by_column = _by_column_rows(breakdown_rows)
-        table_groups = _group_rows(table_box_rows, lambda row: row.table_fqn)
+        result.by_dimension = _group_rows(
+            breakdown_rows, lambda row: row.dimension, resolve_threshold=resolve_threshold
+        )
+        result.by_severity = _group_rows(breakdown_rows, lambda row: row.severity, resolve_threshold=resolve_threshold)
+        result.by_rule = _by_rule_rows(breakdown_rows, resolve_threshold)
+        result.by_column = _by_column_rows(breakdown_rows, resolve_threshold)
+        table_groups = _group_rows(table_box_rows, lambda row: row.table_fqn, resolve_threshold=resolve_threshold)
         if table_axis == "by_table":
             if binding_ids_by_table:
                 for group in table_groups:
@@ -673,15 +819,21 @@ def compute_entity_results(
             # chosen batch (dqlake's `<=` HAVING on the batches CTE).
             scope_instants = {row.run_date for row in capped_rows}
             expansion = [row for row in asof_rows if row.run_date in scope_instants and row_matches_facets(row, facets)]
-        result.trend = _trend_asof(expansion)
-        result.trend_by_dimension = _trend_grouped(expansion, lambda row: row.dimension)
-        result.trend_by_severity = _trend_grouped(expansion, lambda row: row.severity)
+        result.trend = _trend_asof(expansion, resolve_threshold)
+        result.trend_by_dimension = _trend_grouped(
+            expansion, lambda row: row.dimension, resolve_threshold=resolve_threshold
+        )
+        result.trend_by_severity = _trend_grouped(
+            expansion, lambda row: row.severity, resolve_threshold=resolve_threshold
+        )
         if table_axis == "by_table":
             # Per-table markers plotted at their RUN-BATCH instant so every
             # member of one Table-Space run shares the Average point's x —
             # this is what makes the trend tooltip list ALL members (B2-5)
             # and stops the markers spreading across the axis (B2-18).
-            result.trend_by_table = _trend_grouped(matched, lambda row: row.table_fqn, instant_of=instant_of)
+            result.trend_by_table = _trend_grouped(
+                matched, lambda row: row.table_fqn, instant_of=instant_of, resolve_threshold=resolve_threshold
+            )
         result.trend_counts = _trend_counts(matched)
         result.trend_failures = _trend_failures(failure_rows, records_by_run)
     return result

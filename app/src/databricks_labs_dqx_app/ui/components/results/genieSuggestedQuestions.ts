@@ -153,6 +153,7 @@ export function buildSuggestedQuestions(
       questions: [
         `Which rules are failing?`,
         `Which columns have the most failures?`,
+        `Why do I have alerts on this run?`,
         `What are my most severe issues right now?`,
       ],
     },

@@ -130,6 +130,7 @@ class TestDeriveSlotsAndParametersSynthetic:
     def test_unknown_kind_falls_back_to_string_parameter(self):
         check_function = CheckFunctionDef(
             name="hypothetical_check",
+            label="Hypothetical Check",
             rule_type="row",
             category="Other",
             doc="",
@@ -141,6 +142,7 @@ class TestDeriveSlotsAndParametersSynthetic:
     def test_preserves_parameter_order(self):
         check_function = CheckFunctionDef(
             name="hypothetical_check",
+            label="Hypothetical Check",
             rule_type="row",
             category="Other",
             doc="",
@@ -157,6 +159,7 @@ class TestDeriveSlotsAndParametersSynthetic:
     def test_no_column_params_yields_no_slots(self):
         check_function = CheckFunctionDef(
             name="hypothetical_check",
+            label="Hypothetical Check",
             rule_type="dataset",
             category="Other",
             doc="",

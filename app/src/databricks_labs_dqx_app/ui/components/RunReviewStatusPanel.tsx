@@ -17,6 +17,7 @@
  *   line answers 95% of questions and the panel sits inside an already
  *   expanded run row.
  */
+import type * as React from "react";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -53,13 +54,15 @@ import {
 } from "@/lib/api-custom";
 // Re-use the colour token table from the Configuration page so the
 // badge here is visually identical to the swatch admins picked there.
-import { reviewStatusBadgeClasses } from "@/routes/_sidebar/config";
+import { reviewStatusBadgeStyle } from "@/routes/_sidebar/settings";
 
 interface RunReviewStatusPanelProps {
   runId: string;
+  /** Optional element rendered at the trailing end of the picker row. */
+  trailingAction?: React.ReactNode;
 }
 
-export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
+export function RunReviewStatusPanel({ runId, trailingAction }: RunReviewStatusPanelProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -157,7 +160,8 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
             >
               <Badge
                 variant="outline"
-                className={cn("text-[10px] font-normal", reviewStatusBadgeClasses(badgeColor))}
+                className="text-[10px] font-normal"
+                style={reviewStatusBadgeStyle(badgeColor)}
               >
                 {current.status || t("runReviewPanel.none")}
               </Badge>
@@ -187,10 +191,8 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
                   <span className="flex w-full items-center gap-2">
                     <Badge
                       variant="outline"
-                      className={cn(
-                        "text-[10px] font-normal shrink-0",
-                        reviewStatusBadgeClasses(opt.color),
-                      )}
+                      className="text-[10px] font-normal shrink-0"
+                      style={reviewStatusBadgeStyle(opt.color)}
                     >
                       {opt.value}
                     </Badge>
@@ -222,6 +224,8 @@ export function RunReviewStatusPanel({ runId }: RunReviewStatusPanelProps) {
             {t("runReviewPanel.revert")}
           </Button>
         )}
+
+        {trailingAction}
 
         {/* Inline "who & when" line — only meaningful for an explicit
             value. The default is virtual so updated_by/updated_at are

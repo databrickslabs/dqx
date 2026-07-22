@@ -241,7 +241,7 @@ function RegistryApprovalsSection({
                         ruleId: rule.rule_id,
                         name,
                         version: rule.version,
-                        definition: rule.definition,
+                        proposed: rule,
                       })
                     }
                     className="gap-1 h-7 text-xs"
@@ -586,7 +586,7 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
                   type="button"
                   className="font-medium hover:underline text-left"
                   onClick={() =>
-                    navigate({ to: "/table-spaces/$productId", params: { productId: p.product_id } })
+                    navigate({ to: "/collections/$productId", params: { productId: p.product_id } })
                   }
                 >
                   {p.name}

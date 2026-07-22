@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from pydantic import BaseModel, Field
@@ -16,6 +16,7 @@ from .registry_models import RuleDisplayStatus as RegistryRuleStatusDisplay
 from .registry_models import registry_display_status
 from .registry_models import AppliedRule as AppliedRuleDomain
 from .registry_models import ColumnMappingGroup
+from .registry_models import get_applied_column_pass_thresholds
 from .registry_models import MonitoredTable as MonitoredTableDomain
 from .registry_models import MonitoredTableStatus as MonitoredTableStatusDomain
 from .registry_models import ScheduleKind as RegistryScheduleKind
@@ -479,6 +480,15 @@ class RegistryRuleVersionOut(BaseModel):
 
     rule_id: str
     version: int
+    mode: RegistryRuleMode | None = Field(
+        default=None,
+        description=(
+            "Authoring mode frozen at publish time (dqx_native/lowcode/sql). Exposed so a version's "
+            "diff renders its frozen check JSON as-of-the-version rather than relying on the live "
+            "rule's (admin-mutable) mode. ``None`` only for legacy snapshots written before mode was "
+            "frozen — consumers fall back to the live rule's mode for those."
+        ),
+    )
     definition: RegistryRuleDefinition
     polarity: RegistryPolarity | None = None
     user_metadata: dict[str, Any] = Field(default_factory=dict)
@@ -490,6 +500,7 @@ class RegistryRuleVersionOut(BaseModel):
         return cls(
             rule_id=version.rule_id,
             version=version.version,
+            mode=version.mode,
             definition=version.definition,
             polarity=version.polarity,
             user_metadata=version.user_metadata,
@@ -693,6 +704,10 @@ class AppliedRuleOut(BaseModel):
         default=None,
         description="Per-rule minimum % of rows that must pass; None = no per-rule threshold.",
     )
+    column_pass_thresholds: dict[str, int] = Field(
+        default_factory=dict,
+        description="Per-column minimum-pass-rate overrides ({column: pct 0-100}); read from user_metadata.",
+    )
     column_mapping: list[dict[str, str]] = Field(default_factory=list)
     user_metadata: dict[str, Any] = Field(default_factory=dict)
     mapping_hash: str | None = None
@@ -701,6 +716,7 @@ class AppliedRuleOut(BaseModel):
     rule_name: str | None = None
     rule_dimension: str | None = None
     rule_severity: str | None = None
+    rule_pass_threshold: int | None = None
     rule_source: str | None = None
 
     @classmethod
@@ -714,6 +730,7 @@ class AppliedRuleOut(BaseModel):
             severity_override=applied_rule.severity_override,
             row_filter=applied_rule.row_filter,
             pass_threshold=applied_rule.pass_threshold,
+            column_pass_thresholds=get_applied_column_pass_thresholds(applied_rule.user_metadata),
             column_mapping=applied_rule.column_mapping,
             user_metadata=applied_rule.user_metadata,
             mapping_hash=applied_rule.mapping_hash,
@@ -722,6 +739,7 @@ class AppliedRuleOut(BaseModel):
             rule_name=summary.rule_name,
             rule_dimension=summary.rule_dimension,
             rule_severity=summary.rule_severity,
+            rule_pass_threshold=summary.rule_pass_threshold,
             rule_source=summary.rule_source,
         )
 
@@ -739,6 +757,7 @@ class AppliedRuleOut(BaseModel):
             severity_override=applied.severity_override,
             row_filter=applied.row_filter,
             pass_threshold=applied.pass_threshold,
+            column_pass_thresholds=get_applied_column_pass_thresholds(applied.user_metadata),
             column_mapping=applied.column_mapping,
             user_metadata=applied.user_metadata,
             mapping_hash=applied.mapping_hash,
@@ -804,6 +823,10 @@ class DesiredAppliedRuleIn(BaseModel):
         description="Per-rule minimum % of rows that must pass; None = no per-rule threshold.",
     )
     tags: dict[str, Any] = Field(default_factory=dict, description="Per-application free-text tags")
+    column_pass_thresholds: dict[str, int] | None = Field(
+        default=None,
+        description="Per-column minimum-pass-rate overrides ({column: pct 0-100}); merged into user_metadata.",
+    )
 
 
 class SaveAppliedRulesIn(BaseModel):
@@ -1868,6 +1891,8 @@ class GroupRowOut(BaseModel):
     rule_count: int | None = None
     check_count: int | None = None
     total_tests: int | None = None
+    breached: bool = False
+    breach_criticality: str | None = None
 
 
 class TrendPointOut(BaseModel):
@@ -1895,6 +1920,8 @@ class TrendPointOut(BaseModel):
     total_tests: int | None = None
     version: int | None = None
     is_draft: bool = False
+    breached: bool = False
+    breach_criticality: str | None = None
 
 
 class TrendCountPointOut(BaseModel):
@@ -1959,6 +1986,8 @@ class RunRowOut(BaseModel):
     failed_tests: int | None = None
     total_tests: int | None = None
     run_mode: str | None = None
+    breached: bool = False
+    breach_criticality: str | None = None
 
 
 class RunsOut(BaseModel):
@@ -2176,6 +2205,15 @@ class GroupOut(BaseModel):
     id: str | None = Field(default=None, description="Group ID")
 
 
+class PrivilegedPrincipalOut(BaseModel):
+    """A principal that holds elevated access — either a workspace admin or an app CAN_MANAGE holder."""
+
+    principal: str = Field(description="Display name or email of the privileged principal")
+    kind: Literal["workspace_admin", "app_owner"] = Field(
+        description="Why this principal is privileged: 'workspace_admin' (member of the SCIM admins group) or 'app_owner' (CAN_MANAGE on the Databricks App)"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Unity Catalog tags models
 # ---------------------------------------------------------------------------
@@ -2270,6 +2308,7 @@ class CheckFunctionDef(BaseModel):
     """A DQX check function as advertised by the backend to the UI."""
 
     name: str = Field(description="Function name as registered in CHECK_FUNC_REGISTRY")
+    label: str = Field(description="Human-readable display name for the UI (e.g. 'Is Not Null')")
     rule_type: str = Field(description="'row' or 'dataset'")
     category: str = Field(
         description=(

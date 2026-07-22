@@ -57,6 +57,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
+from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
     MonitoredTableSummary,
@@ -201,6 +202,7 @@ class DataProductService:
         binding_run_service: BindingRunService,
         version_service: MonitoredTableVersionService,
         app_settings: AppSettingsService,
+        materializer: Materializer,
     ) -> None:
         self._sql = sql
         self._monitored_tables = monitored_tables
@@ -208,6 +210,7 @@ class DataProductService:
         self._binding_run_service = binding_run_service
         self._version_service = version_service
         self._app_settings = app_settings
+        self._materializer = materializer
         self._products_table = sql.fqn("dq_data_products")
         self._members_table = sql.fqn("dq_data_product_members")
         self._score_cache_table = sql.fqn("dq_score_cache")
@@ -241,6 +244,7 @@ class DataProductService:
         members_by_product = self._fetch_members_by_product(product_ids)
         all_members = [m for members in members_by_product.values() for m in members]
         pinned_counts = self._pinned_snapshot_counts(all_members)
+        live_check_counts = self._live_check_counts(all_members, table_map, pinned_counts)
         return [
             self._build_detail(
                 product,
@@ -248,6 +252,7 @@ class DataProductService:
                 cached,
                 member_rows=members_by_product.get(product.product_id, []),
                 pinned_counts=pinned_counts,
+                live_check_counts=live_check_counts,
             )
             for product, cached in scored
         ]
@@ -259,12 +264,15 @@ class DataProductService:
             return None
         product, cached = scored
         member_rows = self._fetch_members(product_id)
+        table_map = self._table_summary_map()
+        pinned_counts = self._pinned_snapshot_counts(member_rows)
         return self._build_detail(
             product,
-            self._table_summary_map(),
+            table_map,
             cached,
             member_rows=member_rows,
-            pinned_counts=self._pinned_snapshot_counts(member_rows),
+            pinned_counts=pinned_counts,
+            live_check_counts=self._live_check_counts(member_rows, table_map, pinned_counts),
         )
 
     # ------------------------------------------------------------------
@@ -544,6 +552,27 @@ class DataProductService:
             )
         return self._set_status(product_id, "rejected", updated_by, _prefetched=product)
 
+    def revert(self, product_id: str, updated_by: str) -> DataProduct:
+        """Withdraw a pending submission: ``pending_approval`` -> ``draft``.
+
+        The counterpart to :meth:`submit` — an author pulls their own pending
+        space back to keep editing, without a reject (the approver's decision,
+        which leaves a ``rejected`` trail). Guards against reverting a
+        non-pending space out of band.
+
+        Raises:
+            LookupError: *product_id* does not exist.
+            InvalidStatusTransitionError: the space is not ``pending_approval`` (HTTP 409).
+        """
+        product = self._fetch_product(product_id)
+        if product is None:
+            raise LookupError(f"Data product not found: {product_id}")
+        if product.status != "pending_approval":
+            raise InvalidStatusTransitionError(
+                f"Cannot revert Table Space {product_id}: status is '{product.status}', expected 'pending_approval'"
+            )
+        return self._set_status(product_id, "draft", updated_by, _prefetched=product)
+
     def _set_status(
         self, product_id: str, status: str, updated_by: str, _prefetched: DataProduct | None = None
     ) -> DataProduct:
@@ -706,14 +735,15 @@ class DataProductService:
         *,
         member_rows: list[_MemberRow],
         pinned_counts: dict[tuple[str, int], tuple[int, int]],
+        live_check_counts: dict[str, int],
     ) -> DataProductDetail:
         """Assemble one product's detail from PRE-FETCHED batch data.
 
-        Takes the member rows and pinned-snapshot-count map the caller already
-        fetched (batched across all products on the list path) so building N
-        details issues zero additional queries. The product's ``last_run_at``
-        is derived here from the members' denormalized ``last_run_at`` — no
-        separate query.
+        Takes the member rows, pinned-snapshot-count map, and live check-count
+        map the caller already fetched (batched across all products on the list
+        path) so building N details issues zero additional queries. The
+        product's ``last_run_at`` is derived here from the members' denormalized
+        ``last_run_at`` — no separate query.
         """
         members: list[DataProductMemberDetail] = []
         member_last_runs: list[datetime] = []
@@ -730,7 +760,9 @@ class DataProductService:
             table = summary.table
             if table.last_run_at is not None:
                 member_last_runs.append(table.last_run_at)
-            rules_count, checks_count = self._member_counts(summary, row.pinned_version, pinned_counts)
+            rules_count, checks_count = self._member_counts(
+                summary, row.pinned_version, pinned_counts, live_check_counts
+            )
             members.append(
                 DataProductMemberDetail(
                     id=row.id,
@@ -772,25 +804,37 @@ class DataProductService:
         summary: MonitoredTableSummary,
         pinned_version: int | None,
         pinned_counts: dict[tuple[str, int], tuple[int, int]],
+        live_check_counts: dict[str, int],
     ) -> tuple[int, int]:
         """Return ``(rules_count, checks_count)`` for a member.
 
         An UNPINNED member tracks the binding's latest approved state, so it
-        reports the live summary counts. A member PINNED to a specific version
-        enforces that version's FROZEN snapshot, so it must report the
-        snapshot's counts (its ``dq_monitored_table_versions.state_json``
-        reference count + cached ``check_count``) — resolved from the
-        pre-fetched *pinned_counts* map (see :meth:`_pinned_snapshot_counts`), not the
-        binding's current (possibly newer or emptied) live count, which would
-        otherwise mislead the owner about what the pin actually enforces.
-        Falls back to the live counts if the pinned snapshot can't be resolved
-        (defensive: a pin should always have a matching frozen row).
+        reports the binding's applied-rule count and — for ``# Checks`` — the
+        number of checks its applied rules actually expand to. That "live" check
+        count comes from the SAME source as the monitored-tables overview
+        (:meth:`_live_check_counts`): a rule expands to one check per mapping
+        group (e.g. per column for a for-each-column rule), so a saved space
+        shows the real non-zero count instead of ``summary.check_count`` — which
+        counts ``dq_quality_rules`` rows that only exist after
+        approval/materialization and is therefore ``0`` for a freshly-saved
+        draft (P-item 44).
+
+        A member PINNED to a specific version enforces that version's FROZEN
+        snapshot, so it must report the snapshot's counts (its
+        ``dq_monitored_table_versions.state_json`` reference count + cached
+        ``check_count``) — resolved from the pre-fetched *pinned_counts* map (see
+        :meth:`_pinned_snapshot_counts`), not the binding's current (possibly
+        newer or emptied) live count, which would otherwise mislead the owner
+        about what the pin actually enforces. Falls back to the live counts if
+        the pinned snapshot can't be resolved (defensive: a pin should always
+        have a matching frozen row).
         """
         if pinned_version is not None:
             snapshot = pinned_counts.get((summary.table.binding_id, pinned_version))
             if snapshot is not None:
                 return snapshot
-        return summary.applied_rule_count, summary.check_count
+        checks_count = live_check_counts.get(summary.table.binding_id, summary.check_count)
+        return summary.applied_rule_count, checks_count
 
     def _pinned_snapshot_counts(self, member_rows: list[_MemberRow]) -> dict[tuple[str, int], tuple[int, int]]:
         """Resolve every pinned member's frozen-snapshot counts in one batched query."""
@@ -798,6 +842,49 @@ class DataProductService:
         if not pins:
             return {}
         return self._version_service.snapshot_counts_many(pins)
+
+    def _live_check_counts(
+        self,
+        member_rows: list[_MemberRow],
+        table_map: dict[str, MonitoredTableSummary],
+        pinned_counts: dict[tuple[str, int], tuple[int, int]],
+    ) -> dict[str, int]:
+        """Batched ``# Checks`` for every UNPINNED member, from its applied rules' expansion.
+
+        ``# Checks`` must be the number of DQ checks a member's applied rules
+        actually produce — one per mapping group, so a for-each-column rule
+        expands to several checks. ``MonitoredTableSummary.check_count`` counts
+        materialized ``dq_quality_rules`` rows, which only exist after
+        approval/run, so a freshly-saved DRAFT space reported ``0`` (P-item 44).
+
+        Mirrors the monitored-tables overview's
+        ``routes/v1/monitored_tables.py:_apply_snapshot_check_counts`` live-render
+        branch: resolves the render count for ALL relevant bindings in ONE
+        batched :meth:`Materializer.render_binding_checks_counts_many` call
+        (query-bounded regardless of member count). Only UNPINNED members need
+        it — a pinned member reports its frozen snapshot's cached count via
+        :meth:`_pinned_snapshot_counts`. A binding whose applied rules all fail
+        to resolve counts ``0``; on any materialization error every member
+        falls back to the live summary count.
+        """
+        live_bindings: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for row in member_rows:
+            if row.pinned_version is not None and pinned_counts.get((row.binding_id, row.pinned_version)) is not None:
+                continue
+            if row.binding_id in seen:
+                continue
+            summary = table_map.get(row.binding_id)
+            if summary is None:
+                continue
+            seen.add(row.binding_id)
+            live_bindings.append((row.binding_id, summary.table.table_fqn))
+        if not live_bindings:
+            return {}
+        try:
+            return self._materializer.render_binding_checks_counts_many(live_bindings)
+        except MaterializationError:
+            return {}
 
     def _table_summary_map(self) -> dict[str, MonitoredTableSummary]:
         summaries = self._monitored_tables.list_monitored_tables()

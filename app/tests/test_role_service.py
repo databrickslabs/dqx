@@ -97,6 +97,26 @@ class TestResolveRolePrimary:
         )
         assert role_service.resolve_role(["platform-admins", "approvers"]) == UserRole.ADMIN
 
+    def test_user_level_entitlement_resolves(self, role_service):
+        # USER-level entitlements store the user's own identity string in the
+        # ``group_name`` column. The caller (get_user_role) folds the user's
+        # identity into the list it passes, so a mapping keyed on the user's
+        # email/username must resolve the same as a group mapping would.
+        _seed_mappings(role_service, [(UserRole.RULE_APPROVER.value, "alice@example.com")])
+        assert role_service.resolve_role(["alice@example.com"]) == UserRole.RULE_APPROVER
+
+    def test_user_level_entitlement_beats_group_when_higher(self, role_service):
+        # A user's direct ADMIN entitlement out-ranks a lower group mapping.
+        _seed_mappings(
+            role_service,
+            [
+                (UserRole.ADMIN.value, "alice@example.com"),
+                (UserRole.RULE_AUTHOR.value, "writers"),
+            ],
+        )
+        # Caller passes both group memberships and the user's own identity.
+        assert role_service.resolve_role(["writers", "alice@example.com"]) == UserRole.ADMIN
+
 
 # ---------------------------------------------------------------------------
 # resolve_role — RUNNER must NOT show up as a primary role

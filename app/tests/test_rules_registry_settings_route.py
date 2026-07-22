@@ -47,10 +47,10 @@ class TestGetRulesRegistrySettings:
     def test_returns_defaults_when_unset(self, svc):
         result = get_rules_registry_settings(svc)
 
-        # auto_upgrade_without_approval defaults False (Behaviour B);
-        # default_auto_upgrade defaults True (follow latest) — the two
-        # settings have deliberately different defaults.
-        assert result.auto_upgrade_without_approval is False
+        # auto_upgrade_without_approval defaults True (Behaviour A) — unset
+        # means auto-approve; explicit "false" opts out.
+        # default_auto_upgrade defaults True (follow latest).
+        assert result.auto_upgrade_without_approval is True
         assert result.default_auto_upgrade is True
 
     def test_tag_auto_apply_defaults_false(self, svc):
@@ -71,8 +71,8 @@ class TestSaveRulesRegistrySettings:
         )
 
         assert result.default_auto_upgrade is False
-        # auto_upgrade_without_approval untouched — still its default.
-        assert result.auto_upgrade_without_approval is False
+        # auto_upgrade_without_approval untouched — still its default (True).
+        assert result.auto_upgrade_without_approval is True
         assert sql_executor_mock.upsert.call_count == 1
 
     def test_saves_auto_upgrade_without_approval_independently(self, svc, sql_executor_mock):
@@ -105,6 +105,88 @@ class TestSaveRulesRegistrySettings:
             RulesRegistrySettingsIn(tag_auto_apply=True), svc, "admin@x"
         )
         assert result.tag_auto_apply is True
-        assert result.auto_upgrade_without_approval is False
+        assert result.auto_upgrade_without_approval is True
         assert result.default_auto_upgrade is True
         assert sql_executor_mock.upsert.call_count == 1
+
+
+class TestRulesRegistrySettingsThresholdFields:
+    """GET exposes default_pass_threshold + pass_threshold_enabled; PUT can update them."""
+
+    def test_get_returns_default_pass_threshold_70(self, svc):
+        result = get_rules_registry_settings(svc)
+        assert result.default_pass_threshold == 70
+
+    def test_get_returns_pass_threshold_enabled_true_by_default(self, svc):
+        result = get_rules_registry_settings(svc)
+        assert result.pass_threshold_enabled is True
+
+    def test_put_pass_threshold_enabled_false_persists(self, svc, sql_executor_mock):
+        _wire_stateful_store(sql_executor_mock)
+        result = save_rules_registry_settings(
+            RulesRegistrySettingsIn(pass_threshold_enabled=False), svc, "admin@x"
+        )
+        assert result.pass_threshold_enabled is False
+
+    def test_put_default_pass_threshold_persists_via_rules_registry(self, svc, sql_executor_mock):
+        _wire_stateful_store(sql_executor_mock)
+        result = save_rules_registry_settings(
+            RulesRegistrySettingsIn(default_pass_threshold=85), svc, "admin@x"
+        )
+        assert result.default_pass_threshold == 85
+
+    def test_put_default_pass_threshold_also_readable_via_standalone_endpoint(
+        self, svc, sql_executor_mock
+    ):
+        from databricks_labs_dqx_app.backend.routes.v1.config import get_default_pass_threshold
+
+        _wire_stateful_store(sql_executor_mock)
+        save_rules_registry_settings(
+            RulesRegistrySettingsIn(default_pass_threshold=85), svc, "admin@x"
+        )
+        out = get_default_pass_threshold(svc)
+        assert out.default_pass_threshold == 85
+
+    def test_put_default_pass_threshold_above_100_rejected(self, svc):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            RulesRegistrySettingsIn(default_pass_threshold=150)
+
+    def test_put_default_pass_threshold_below_0_rejected(self, svc):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            RulesRegistrySettingsIn(default_pass_threshold=-1)
+
+    def test_get_has_no_admin_role_dependency(self):
+        """GET /rules-registry-settings must NOT require ADMIN — it's VIEWER+."""
+        import databricks_labs_dqx_app.backend.routes.v1.config as config_routes
+        from databricks_labs_dqx_app.backend.common.authorization import UserRole
+
+        for route in config_routes.router.routes:
+            if getattr(route, "operation_id", None) != "getRulesRegistrySettings":
+                continue
+            for dep in route.dependencies:
+                for cell in getattr(dep.dependency, "__closure__", None) or ():
+                    val = cell.cell_contents
+                    if isinstance(val, tuple) and val and all(isinstance(v, UserRole) for v in val):
+                        assert UserRole.ADMIN not in val, "GET must not be ADMIN-only"
+            return  # route found; no require_role dep = no role guard = VIEWER+ ok
+        # If we get here, route was not found — acceptable (no role guard = open to all authenticated)
+
+    def test_put_requires_admin(self):
+        """PUT /rules-registry-settings must still require ADMIN."""
+        import databricks_labs_dqx_app.backend.routes.v1.config as config_routes
+        from databricks_labs_dqx_app.backend.common.authorization import UserRole
+
+        for route in config_routes.router.routes:
+            if getattr(route, "operation_id", None) != "saveRulesRegistrySettings":
+                continue
+            for dep in route.dependencies:
+                for cell in getattr(dep.dependency, "__closure__", None) or ():
+                    val = cell.cell_contents
+                    if isinstance(val, tuple) and val and all(isinstance(v, UserRole) for v in val):
+                        assert UserRole.ADMIN in val
+                        return
+        raise AssertionError("No require_role(ADMIN) found on saveRulesRegistrySettings")

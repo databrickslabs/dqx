@@ -53,8 +53,30 @@ VALIDITY_SQL_TYPE: dict[str, str] = {
 # Operators legal per column family (families here are lowercase to match the
 # Rules-Registry ``SlotFamily`` vocabulary — the builder uses uppercase, but the
 # AI proposal declares slots with the lowercase family names).
+# Kept in lock-step with the frontend catalog in ``ui/lib/lowcodeOperators.ts``
+# (OPERATORS_BY_FAMILY there, uppercase families). If you add/remove an operator
+# here, mirror it there and add its ``_row_sql`` arm below — the AI generator
+# proposes only operators listed here and its output is compiled + safety-checked
+# through this module, so an operator missing from either side is silently
+# unusable.
 OPERATORS_BY_FAMILY: dict[str, list[str]] = {
-    "numeric": ["between", "=", "!=", ">=", ">", "<=", "<", "in", "not in"],
+    "numeric": [
+        "between",
+        "=",
+        "!=",
+        ">=",
+        ">",
+        "<=",
+        "<",
+        "in",
+        "not in",
+        "is positive",
+        "is negative",
+        "is non-negative",
+        "is a whole number",
+        "is a multiple of",
+        "passes luhn check",
+    ],
     "text": [
         "equals",
         "not equals",
@@ -65,14 +87,41 @@ OPERATORS_BY_FAMILY: dict[str, list[str]] = {
         "in",
         "not in",
         "matches regex",
+        "does not match regex",
+        "has length",
+        "is longer than",
+        "is shorter than",
+        "length between",
+        "is not empty",
+        "is empty",
+        "contains only digits",
+        "is uppercase",
+        "is lowercase",
+        "is a valid uuid",
+        "is a valid ipv4",
+        "passes luhn check",
         "has leading or trailing whitespace",
         "has no leading or trailing whitespace",
         "is a valid",
         "is not a valid",
+        "has positive sentiment",
+        "has negative sentiment",
     ],
-    "temporal": ["on or after", "on or before", "after", "before", "between", "is in last", "=", "!="],
+    "temporal": [
+        "on or after",
+        "on or before",
+        "after",
+        "before",
+        "between",
+        "is in last",
+        "is in the future",
+        "is in the past",
+        "is today",
+        "=",
+        "!=",
+    ],
     "boolean": ["is true", "is false"],
-    "any": ["is null", "is not null", "=", "!=", "in", "not in"],
+    "any": ["is null", "is not null", "=", "!=", "in", "not in", "is not empty", "is empty"],
 }
 
 # Aggregate name -> the column families it accepts ("any" = every family).
@@ -150,8 +199,34 @@ def _quote(value: object) -> str:
     return f"'{escaped}'"
 
 
+def _column_ref_name(value: object) -> str | None:
+    """The referenced column name when *value* is a column reference, else None.
+
+    A column reference is ``{"$col": "<column>"}`` with a non-empty string name
+    (item 42); mirrors ``isColumnRef`` in ``lowcodeAst.ts``. Returned so callers
+    can both test for and read the name in one narrowing step.
+    """
+    if isinstance(value, dict):
+        name = value.get("$col")
+        if isinstance(name, str) and name:
+            return name
+    return None
+
+
+def _value_sql(value: object) -> str:
+    """Render a comparison RHS operand — a column reference OR a literal.
+
+    Mirrors ``valueSql`` in ``lowcodeCompile.ts`` (item 42): a column reference
+    ``{"$col": "b"}`` emits ``_ref("b")`` (a plain name -> ``{{b}}`` placeholder,
+    a joined-table column -> raw), so one column can be compared against another;
+    anything else is quoted as a literal.
+    """
+    name = _column_ref_name(value)
+    return _ref(name) if name is not None else _quote(value)
+
+
 def _quote_list(values: list[object]) -> str:
-    return ", ".join(_quote(v) for v in values)
+    return ", ".join(_value_sql(v) for v in values)
 
 
 def _like_literal(value: object) -> str:
@@ -222,11 +297,11 @@ def _agg_expr(spec: dict[str, Any]) -> str:
 def _row_sql(left: str, operator: str, value: object) -> str:
     op = operator
     if op in _COMPARISON_OPS:
-        return f"{left} {op} {_quote(value)}"
+        return f"{left} {op} {_value_sql(value)}"
     if op == "equals":
-        return f"{left} = {_quote(value)}"
+        return f"{left} = {_value_sql(value)}"
     if op == "not equals":
-        return f"{left} != {_quote(value)}"
+        return f"{left} != {_value_sql(value)}"
     if op == "contains":
         return f"{left} LIKE '%{_like_literal(value)}%'"
     if op == "does not contain":
@@ -239,7 +314,7 @@ def _row_sql(left: str, operator: str, value: object) -> str:
         return f"{left} RLIKE {_quote(value)}"
     if op == "between":
         lo, hi = (value[0], value[1]) if isinstance(value, list) and len(value) >= 2 else (None, None)
-        return f"{left} BETWEEN {_quote(lo)} AND {_quote(hi)}"
+        return f"{left} BETWEEN {_value_sql(lo)} AND {_value_sql(hi)}"
     if op == "in":
         return f"{left} IN ({_quote_list(value if isinstance(value, list) else [])})"
     if op == "not in":
@@ -253,13 +328,13 @@ def _row_sql(left: str, operator: str, value: object) -> str:
     if op == "is false":
         return f"{left} = FALSE"
     if op == "before":
-        return f"{left} < {_quote(value)}"
+        return f"{left} < {_value_sql(value)}"
     if op == "after":
-        return f"{left} > {_quote(value)}"
+        return f"{left} > {_value_sql(value)}"
     if op == "on or before":
-        return f"{left} <= {_quote(value)}"
+        return f"{left} <= {_value_sql(value)}"
     if op == "on or after":
-        return f"{left} >= {_quote(value)}"
+        return f"{left} >= {_value_sql(value)}"
     if op == "is in last":
         obj = value if isinstance(value, dict) else {}
         number = obj.get("number", 0)
@@ -275,6 +350,60 @@ def _row_sql(left: str, operator: str, value: object) -> str:
         return f"{left} != TRIM({left})"
     if op == "has no leading or trailing whitespace":
         return f"{left} = TRIM({left})"
+    # --- Length (mirror lowcodeCompile.ts) ---
+    if op == "has length":
+        return f"length({left}) = {_quote(value)}"
+    if op == "is longer than":
+        return f"length({left}) > {_quote(value)}"
+    if op == "is shorter than":
+        return f"length({left}) < {_quote(value)}"
+    if op == "length between":
+        lo, hi = (value[0], value[1]) if isinstance(value, list) and len(value) >= 2 else (None, None)
+        return f"length({left}) BETWEEN {_value_sql(lo)} AND {_value_sql(hi)}"
+    if op == "is not empty":
+        return f"length(trim({left})) > 0"
+    if op == "is empty":
+        return f"length(trim({left})) = 0"
+    # --- Text pattern / format ---
+    if op == "does not match regex":
+        return f"NOT ({left} RLIKE {_quote(value)})"
+    if op == "contains only digits":
+        return f"{left} RLIKE '^[0-9]+$'"
+    if op == "is uppercase":
+        return f"{left} = upper({left})"
+    if op == "is lowercase":
+        return f"{left} = lower({left})"
+    if op == "is a valid uuid":
+        return f"{left} RLIKE '^[0-9a-fA-F]{{8}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{12}}$'"
+    if op == "is a valid ipv4":
+        return f"{left} RLIKE '^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){{3}}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])$'"
+    # --- Numeric predicates ---
+    if op == "is positive":
+        return f"{left} > 0"
+    if op == "is negative":
+        return f"{left} < 0"
+    if op == "is non-negative":
+        return f"{left} >= 0"
+    if op == "is a whole number":
+        return f"{left} = round({left})"
+    if op == "is a multiple of":
+        return f"mod({left}, {_quote(value)}) = 0"
+    # --- Temporal predicates ---
+    if op == "is in the future":
+        return f"{left} > current_timestamp()"
+    if op == "is in the past":
+        return f"{left} < current_timestamp()"
+    if op == "is today":
+        return f"to_date({left}) = current_date()"
+    # --- AI (Foundation Model) checks ---
+    if op == "has positive sentiment":
+        return f"ai_analyze_sentiment({left}) = 'positive'"
+    if op == "has negative sentiment":
+        return f"ai_analyze_sentiment({left}) = 'negative'"
+    # --- Luhn checksum via the Databricks built-in luhn_check() ---
+    if op == "passes luhn check":
+        digits = f"regexp_replace({left}, '[^0-9]', '')"
+        return f"length({digits}) > 0 AND luhn_check({digits})"
     return ""
 
 
@@ -449,13 +578,18 @@ def lowcode_prompt_vocab() -> str:
         "The 'any'-family operators work on every column.\n"
         f"Legal operators by family:\n{ops}\n"
         "Operator value shapes:\n"
-        "  - between -> [lo, hi] (two-element list)\n"
+        "  - between / length between -> [lo, hi] (two-element list)\n"
         "  - in / not in -> list of literals, e.g. ['a', 'b']\n"
-        "  - is null / is not null / is true / is false / has (no) leading or trailing whitespace "
-        "-> null (value ignored)\n"
+        "  - has length / is longer than / is shorter than / is a multiple of -> a single number\n"
+        "  - is null / is not null / is true / is false / has (no) leading or trailing whitespace / "
+        "is empty / is not empty / contains only digits / is uppercase / is lowercase / "
+        "is a valid uuid / is a valid ipv4 / passes luhn check / is positive / is negative / "
+        "is non-negative / is a whole number / is in the future / is in the past / is today / "
+        "has positive sentiment / has negative sentiment -> null (value ignored)\n"
         "  - is a valid / is not a valid -> value is the type name (one of: "
         f"{', '.join(VALIDITY_SQL_TYPE)})\n"
         '  - is in last -> {"number": int, "unit": "days|weeks|months|years|hours|minutes"}\n'
+        "  - matches regex / does not match regex -> a single regex string literal\n"
         "  - everything else -> a single literal\n"
         "Common phrasings:\n"
         '  - "must be X or Y" -> operator "in", value ["X", "Y"]\n'

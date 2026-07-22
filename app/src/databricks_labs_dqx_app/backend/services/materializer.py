@@ -75,10 +75,13 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RuleParameter,
     RuleSlot,
     RuleVersion,
+    get_applied_column_pass_thresholds,
     get_rule_dimension,
     get_rule_name,
+    get_rule_pass_threshold,
     get_rule_severity,
     resolve_criticality,
+    resolve_pass_threshold,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
@@ -130,11 +133,28 @@ def _substitute_value(value: Any, group: ColumnMappingGroup, slots: list[RuleSlo
     return value
 
 
+def _filter_only_slot_names(slots: list[RuleSlot], definition_filter: str | None) -> frozenset[str]:
+    """Return the set of slot names that are referenced ONLY in the filter, not in body.arguments.
+
+    A slot is "filter-only" when its ``{{name}}`` placeholder appears in
+    *definition_filter* AND the caller has explicitly designated it as such
+    by including it in the filter text.  This set is used by
+    :func:`_substitute_arguments` to exclude those slots from the rendered
+    function arguments (arity-aware binding, spec §B3).
+
+    Returns an empty frozenset when there is no filter or no slots.
+    """
+    if not definition_filter or not slots:
+        return frozenset()
+    return frozenset(slot.name for slot in slots if f"{{{{{slot.name}}}}}" in definition_filter)
+
+
 def _substitute_arguments(
     body_arguments: dict[str, Any],
     group: ColumnMappingGroup,
     slots: list[RuleSlot],
     parameters: list[RuleParameter],
+    definition_filter: str | None = None,
 ) -> dict[str, Any]:
     """Render a ``dqx_native`` rule's frozen ``arguments`` template against one mapping group.
 
@@ -146,6 +166,12 @@ def _substitute_arguments(
     and mapped in *group* — a slot with no entry in *group* always raises,
     even if (in a malformed definition) its placeholder isn't actually
     referenced anywhere in *body_arguments*.
+
+    Arity-aware binding (spec §B3): after substitution, filter-only columns
+    — those whose ``{{slot}}`` placeholder is referenced in *definition_filter*
+    — are stripped from any list-typed argument value.  This implements the
+    contract that filter-only columns are used solely in the row filter, never
+    in the function arguments.
     """
     arguments = {key: _substitute_value(value, group, slots) for key, value in body_arguments.items()}
     for slot in slots:
@@ -154,6 +180,26 @@ def _substitute_arguments(
     for param in parameters:
         if param.value is not None:
             arguments[param.name] = param.value
+
+    # Strip filter-only columns from list-typed argument values (§B3).
+    filter_only = _filter_only_slot_names(slots, definition_filter)
+    if filter_only:
+        # Build the set of real column values that belong exclusively to
+        # filter-only slots so we can remove them from list arguments.
+        filter_only_columns: set[str] = set()
+        for slot in slots:
+            if slot.name not in filter_only:
+                continue
+            mapped = group.get(slot.name, "")
+            if slot.cardinality == "many":
+                filter_only_columns.update(c.strip() for c in mapped.split(",") if c.strip())
+            elif mapped.strip():
+                filter_only_columns.add(mapped.strip())
+        if filter_only_columns:
+            for key, val in arguments.items():
+                if isinstance(val, list):
+                    arguments[key] = [item for item in val if item not in filter_only_columns]
+
     return arguments
 
 
@@ -269,7 +315,11 @@ def render_check(
     if mode == "dqx_native":
         function = str(body.get("function", ""))
         arguments = _substitute_arguments(
-            dict(body.get("arguments", {})), group, definition.slots, definition.parameters
+            dict(body.get("arguments", {})),
+            group,
+            definition.slots,
+            definition.parameters,
+            definition_filter=definition.filter,
         )
         # A native check that accepts a ``negate`` argument surfaces it in the
         # authoring UI as the PASS/FAIL polarity switcher rather than a raw
@@ -342,10 +392,23 @@ def render_check(
         applied_rule_id=applied_rule_id,
     )
 
-    # Per-applied-rule ``pass_threshold`` is carried on the check's user_metadata
-    # (stored/surfaced now; run-time enforcement wired later — store_display).
-    if pass_threshold is not None:
-        user_metadata = {**user_metadata, "pass_threshold": str(pass_threshold)}
+    # Resolve and always-emit the effective pass threshold (per-column →
+    # per-rule → registry-rule default → admin default) so the check's
+    # user_metadata always carries a concrete value for breach evaluation.
+    # When the feature is disabled, emit nothing (breach eval is skipped
+    # server-side by passing resolve_threshold=None in dq_results.py).
+    if app_settings.get_pass_threshold_enabled():
+        cols = _mapped_columns(group, definition.slots)
+        col_map = get_applied_column_pass_thresholds(per_application_tags)
+        overrides = [col_map[c] for c in cols if c in col_map]
+        column_override = max(overrides) if overrides else None
+        effective = resolve_pass_threshold(
+            column_override=column_override,
+            rule_override=pass_threshold,
+            registry_default=get_rule_pass_threshold(version.user_metadata) if version else None,
+            admin_default=app_settings.get_default_pass_threshold(),
+        )
+        user_metadata = {**user_metadata, "pass_threshold": str(effective)}
 
     check_dict: dict[str, Any] = {
         "criticality": resolve_criticality(effective_severity, app_settings),
@@ -358,13 +421,30 @@ def render_check(
     error_message = definition.error_message
     if error_message:
         check_dict["message_expr"] = error_message
-    # Per-applied-rule ``row_filter`` scopes which rows THIS check validates —
+    # Rule-level filter (definition.filter) scopes which rows THIS check validates —
     # rendered straight into DQX's native per-check ``filter`` (a SQL WHERE
-    # predicate). Blank/None = validate every row. Safety was validated before
-    # the filter was persisted (ApplyRulesService.validate_row_filter).
-    row_filter_clean = row_filter.strip() if row_filter and row_filter.strip() else None
-    if row_filter_clean:
-        check_dict["filter"] = row_filter_clean
+    # predicate). Slot placeholders ({{slot}}) are substituted via _substitute_text
+    # so the filter can reference the rule's mapped columns. Blank/None = validate
+    # every row. Safety was validated at rule create/update time (RegistryService).
+    # NOTE: per-applied-rule ``row_filter`` (applied.row_filter) is intentionally
+    # NOT read here — rule filter only (user decision, Task 5).
+    definition_filter = definition.filter
+    if definition_filter and definition_filter.strip():
+        substituted_filter = _substitute_text(definition_filter, group, definition.slots)
+        # SECURITY: the stored filter was validated as safe at rule
+        # create/update time, but {{slot}} placeholders are substituted here
+        # with column_mapping VALUES that are free-form and never sanitized —
+        # a malicious APPLY-holder could inject a prohibited statement through
+        # them. Re-validate the SUBSTITUTED filter (mirrors the predicate /
+        # sql_query paths above), scanning it as the WHERE clause it becomes at
+        # runtime so a bare boolean predicate is judged like real SQL. Comments
+        # are inert (Spark's F.expr lexer skips `--` lines) so strip them first.
+        wrapped_filter = f"SELECT * FROM _t WHERE ({strip_sql_line_comments(substituted_filter)})"
+        if not is_sql_query_safe(wrapped_filter):
+            raise UnsafeSqlQueryError(
+                "The registry rule's filter contains prohibited statements and cannot be materialized."
+            )
+        check_dict["filter"] = substituted_filter
     # Stamp the mapped columns into user_metadata as a JSON array so the results
     # attribution view can recover a check's columns uniformly across modes —
     # essential for sql_query, whose check function rejects a `columns` argument

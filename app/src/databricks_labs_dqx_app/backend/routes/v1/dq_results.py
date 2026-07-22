@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
@@ -45,6 +46,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_monitored_table_service,
     get_obo_ws,
     get_preview_sql_executor,
+    get_registry_service,
     get_run_set_service,
     get_score_cache_service,
     get_sp_sql_executor,
@@ -52,6 +54,12 @@ from databricks_labs_dqx_app.backend.dependencies import (
     require_role,
 )
 from databricks_labs_dqx_app.backend.metrics_utils import catalog_of, safe_float, safe_int
+from databricks_labs_dqx_app.backend.registry_models import (
+    AppliedRule,
+    get_applied_column_pass_thresholds,
+    get_rule_pass_threshold,
+    resolve_pass_threshold,
+)
 from databricks_labs_dqx_app.backend.models import (
     DimensionOut,
     EntityResultsOut,
@@ -69,12 +77,15 @@ from databricks_labs_dqx_app.backend.services.data_product_service import DataPr
 from databricks_labs_dqx_app.backend.services.dq_results_service import (
     CheckResultRow,
     ResultFacets,
+    ThresholdResolver,
     annotate_trend_versions,
+    breach_criticality_by_run,
     compute_entity_results,
     parse_check_rows,
 )
 from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
+from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.quarantine_sample_service import (
@@ -98,6 +109,11 @@ router = APIRouter()
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 
 _RUNS_LIMIT = 50
+# Upper bound on failing-row scans (matches the failed-rows endpoint's
+# ``limit`` ceiling and the UI download cap). Bounds both the preview
+# window and the true-filtered-count pass so neither can pull an unbounded
+# result set on a pathologically large run.
+_FAILED_ROWS_MAX = 100000
 # Fallback swatch for label values missing a configured colour (matches
 # the UI's muted gray).
 _DEFAULT_LABEL_COLOR = "#6B7280"
@@ -189,7 +205,8 @@ def _fetch_check_rows(
         f"check_name, error_count, warning_count, input_row_count, run_mode, "
         # As-of-run attribution baked into the view rows (frozen
         # checks_json payload — see score_view_service).
-        f"severity, dimension, registry_rule_id, rule_name, to_json(columns) AS columns_json "
+        f"severity, dimension, criticality, registry_rule_id, rule_name, pass_threshold, "
+        f"to_json(columns) AS columns_json "
         f"FROM {view} "  # noqa: S608
         f"{where}"
         f"ORDER BY run_time"
@@ -230,7 +247,8 @@ def _fetch_asof_check_rows(
     stmt = (
         f"SELECT input_location, run_id, CAST(as_of_time AS STRING) AS run_date, "
         f"check_name, error_count, warning_count, input_row_count, run_mode, "
-        f"severity, dimension, registry_rule_id, rule_name, to_json(columns) AS columns_json "
+        f"severity, dimension, criticality, registry_rule_id, rule_name, pass_threshold, "
+        f"to_json(columns) AS columns_json "
         f"FROM {view} "  # noqa: S608
         f"WHERE {' AND '.join(conds)} "
         f"ORDER BY as_of_time"
@@ -286,12 +304,65 @@ def _fetch_failed_records_by_run(
     return out
 
 
+def _count_filtered_failed_rows(
+    sql: SqlExecutor,
+    quarantine_table: str,
+    escaped_fqn: str,
+    run_cond: str,
+    facets: ResultFacets,
+) -> int | None:
+    """True count of a run's failing rows matching the active facets.
+
+    The facet predicates (dimension/severity/rule/column) are evaluated
+    app-side over each row's parsed failure structs — they are not SQL
+    predicates — so the filtered *total* cannot come from the mode-wide
+    ``dq_metrics`` number (that counts every failing row of the run,
+    whatever check failed). This scans the WHOLE run's failure structs
+    (``errors``/``warnings`` only — never the wide ``row_data`` payload)
+    and counts matches, so a capped preview window can't undercount a
+    selective filter. Returns None on any error (the caller then keeps the
+    scan-window count rather than surfacing a wrong headline).
+    """
+    # ORDER BY created_at DESC to MATCH the preview scan's window: both are
+    # capped, so aligning their order guarantees the count covers the same
+    # top-N rows the preview shows — otherwise, on a run larger than the cap,
+    # the two scans could pull disjoint windows and report total < len(rows)
+    # (breaking the "N of M" display).
+    stmt = (
+        f"SELECT to_json(errors) AS errors, to_json(warnings) AS warnings "
+        f"FROM {quarantine_table} WHERE source_table_fqn = '{escaped_fqn}' "  # noqa: S608
+        f"{run_cond}"
+        f"ORDER BY created_at DESC LIMIT {_FAILED_ROWS_MAX}"
+    )
+    try:
+        rows = sql.query_dicts(stmt)
+    except Exception:
+        logger.warning("Filtered failing-row count failed; keeping scan-window total", exc_info=True)
+        return None
+    count = 0
+    for raw in rows:
+        parsed_failures = parse_failures(raw)
+        failed_columns = sorted({c for f in parsed_failures for c in f.columns})
+        if QuarantineSampleService.row_matches_filters(
+            enrich_failures(parsed_failures),
+            failed_columns,
+            dimensions=facets.dimensions,
+            severities=facets.severities,
+            rules=facets.rules,
+            columns=facets.columns,
+        ):
+            count += 1
+    return count
+
+
 def _facets(
     dimension: list[str] | None,
     severity: list[str] | None,
     rule: list[str] | None,
     column: list[str] | None,
     table: list[str] | None = None,
+    catalog: list[str] | None = None,
+    schema: list[str] | None = None,
 ) -> ResultFacets:
     return ResultFacets(
         dimensions=tuple(dimension or ()),
@@ -299,6 +370,8 @@ def _facets(
         rules=tuple(rule or ()),
         columns=tuple(column or ()),
         tables=tuple(table or ()),
+        catalogs=tuple(catalog or ()),
+        schemas=tuple(schema or ()),
     )
 
 
@@ -347,6 +420,142 @@ def _run_set_map(run_sets: RunSetService, run_ids: list[str]) -> dict[str, str]:
         return {}
 
 
+def _rule_ids_of(*row_lists: list[CheckResultRow] | None) -> set[str]:
+    """Distinct non-null registry rule ids across the given row lists."""
+    ids: set[str] = set()
+    for rows in row_lists:
+        for row in rows or ():
+            if row.rule_id is not None:
+                ids.add(row.rule_id)
+    return ids
+
+
+def _registry_defaults(registry: RegistryService, rule_ids: set[str]) -> dict[str, int | None]:
+    """rule_id -> registry-rule default pass threshold (%), best-effort.
+
+    A registry-lookup hiccup degrades to no registry defaults (the resolver
+    falls back to the admin default), never a 500 on the results path.
+    """
+    if not rule_ids:
+        return {}
+    try:
+        rules = registry.get_rules_many(rule_ids)
+    except Exception:
+        logger.warning("Failed to load registry rules for threshold resolution", exc_info=True)
+        return {}
+    return {rid: get_rule_pass_threshold(rule.user_metadata) for rid, rule in rules.items()}
+
+
+def _build_threshold_resolver(
+    *,
+    admin_default: int,
+    registry_defaults: dict[str, int | None],
+    rule_overrides: dict[str, int] | None = None,
+    column_overrides: dict[str, dict[str, int]] | None = None,
+) -> ThresholdResolver:
+    """Compose the per-check pass-threshold resolver for one results request.
+
+    The precedence chain (per-column -> per-rule -> registry -> admin) is
+    fixed in :func:`resolve_pass_threshold`. For scoped results the caller
+    supplies the applied-rule overrides via
+    :func:`_applied_threshold_overrides`; global (org-wide) results pass none,
+    so the chain degenerates to registry-default -> admin-default (there is
+    no single per-binding value org-wide — a deliberate controller choice).
+
+    When a check spans several mapped columns, the STRICTEST (max) column
+    override among its columns is used so one lax column can't hide a breach.
+    """
+    rule_overrides = rule_overrides or {}
+    column_overrides = column_overrides or {}
+
+    def resolve(row: CheckResultRow) -> int:
+        # The per-run frozen threshold wins outright: the runner resolved the
+        # effective threshold at materialization time and stamped it into the
+        # run's checks_json, so a stamped run's breach verdict is immutable —
+        # changing the live admin/rule/registry setting never re-judges it.
+        if row.pass_threshold is not None:
+            return row.pass_threshold
+        # Legacy runs predating the stamp: fall back to the live precedence
+        # chain (per-column -> per-rule -> registry -> admin).
+        rid = row.rule_id or ""
+        col_map = column_overrides.get(rid, {})
+        col_candidates = [col_map[col] for col in row.columns if col in col_map]
+        column_override = max(col_candidates) if col_candidates else None
+        return resolve_pass_threshold(
+            column_override=column_override,
+            rule_override=rule_overrides.get(rid),
+            registry_default=registry_defaults.get(rid),
+            admin_default=admin_default,
+        )
+
+    return resolve
+
+
+def _applied_threshold_overrides(
+    applied_rules: Iterable[AppliedRule],
+) -> tuple[dict[str, int], dict[str, dict[str, int]]]:
+    """Fold applied rules into (rule_id -> per-rule threshold, rule_id -> per-column map).
+
+    Keyed by rule id (not binding) per the plan's scoped-resolution design.
+    When the same rule is applied on several bindings with different values,
+    the STRICTEST (max) per-rule threshold and the max per-column override
+    win — a single lax binding can't mask a breach.
+    """
+    rule_overrides: dict[str, int] = {}
+    column_overrides: dict[str, dict[str, int]] = {}
+    for applied in applied_rules:
+        if applied.pass_threshold is not None:
+            prev = rule_overrides.get(applied.rule_id)
+            rule_overrides[applied.rule_id] = (
+                applied.pass_threshold if prev is None else max(prev, applied.pass_threshold)
+            )
+        col_map = get_applied_column_pass_thresholds(applied.user_metadata)
+        if col_map:
+            merged = column_overrides.setdefault(applied.rule_id, {})
+            for col, pct in col_map.items():
+                merged[col] = pct if col not in merged else max(merged[col], pct)
+    return rule_overrides, column_overrides
+
+
+def _table_breach_by_run(
+    sql: SqlExecutor,
+    app_conf: AppConfig,
+    table_fqns: list[str],
+    include_drafts: bool,
+    monitored_tables: MonitoredTableService,
+    apply_rules: ApplyRulesService,
+    app_settings: AppSettingsService,
+    registry: RegistryService,
+) -> dict[str | None, str | None]:
+    """run_id -> worst breach criticality for *table_fqns*' runs (run picker badge).
+
+    Fetches the tables' per-check rows and builds the scope's threshold
+    resolver from the tables' applied rules (per-rule + per-column overrides),
+    then evaluates each run's breach. Best-effort: any lookup failure yields
+    an empty map (no badges), never a 500 on the runs path.
+    """
+    try:
+        rows = _fetch_check_rows(sql, app_conf, table_fqns, None, include_drafts)
+        binding_by_fqn = monitored_tables.get_binding_ids_by_table_fqn(table_fqns)
+        applied: list[AppliedRule] = []
+        for binding_id in dict.fromkeys(binding_by_fqn.values()):
+            if binding_id:
+                applied.extend(apply_rules.list_applied(binding_id))
+        if not app_settings.get_pass_threshold_enabled():
+            return {}
+        rule_overrides, column_overrides = _applied_threshold_overrides(applied)
+        resolver = _build_threshold_resolver(
+            admin_default=app_settings.get_default_pass_threshold(),
+            registry_defaults=_registry_defaults(registry, _rule_ids_of(rows)),
+            rule_overrides=rule_overrides,
+            column_overrides=column_overrides,
+        )
+        return breach_criticality_by_run(rows, resolver)
+    except Exception:
+        logger.warning("Failed to compute per-run breach badges; leaving runs unbadged", exc_info=True)
+        return {}
+
+
 def _consolidate_runs(rows: list[RunRowOut], run_set_by_run_id: dict[str, str]) -> list[RunRowOut]:
     """Roll up per-run rows into one row per RUN BATCH, newest first.
 
@@ -372,6 +581,11 @@ def _consolidate_runs(rows: list[RunRowOut], run_set_by_run_id: dict[str, str]) 
         rates = [m.pass_rate for m in members if m.pass_rate is not None]
         failed = [m.failed_tests for m in members if m.failed_tests is not None]
         totals = [m.total_tests for m in members if m.total_tests is not None]
+        # A batch breaches if any member run breached; carries the worst.
+        batch_crit: str | None = None
+        for m in members:
+            if m.breached:
+                batch_crit = "error" if batch_crit == "error" or m.breach_criticality == "error" else "warn"
         out.append(
             RunRowOut(
                 run_id=latest.run_id,
@@ -384,6 +598,8 @@ def _consolidate_runs(rows: list[RunRowOut], run_set_by_run_id: dict[str, str]) 
                 run_mode=RUN_MODE_PUBLISHED
                 if any(m.run_mode == RUN_MODE_PUBLISHED for m in members)
                 else next((m.run_mode for m in members if m.run_mode), None),
+                breached=batch_crit is not None,
+                breach_criticality=batch_crit,
             )
         )
     out.sort(key=lambda r: r.run_ts or "", reverse=True)
@@ -396,6 +612,7 @@ def _runs_from_metric_view(
     table_fqns: list[str],
     include_drafts: bool = False,
     run_sets: RunSetService | None = None,
+    breach_by_run: dict[str | None, str | None] | None = None,
 ) -> RunsOut:
     """Per-run rollup from ``mv_dq_scores``, newest first (dqlake RunsOut).
 
@@ -407,9 +624,14 @@ def _runs_from_metric_view(
     RUN BATCH (the Table-Space runs picker) via a best-effort
     ``dq_run_set_members`` join over the rows just fetched. None keeps the
     raw per-run rollup (the single-table / binding runs picker).
+
+    *breach_by_run* (run_id -> worst breach criticality), when supplied,
+    stamps each run's ``breached``/``breach_criticality`` so the picker can
+    badge threshold breaches; batches inherit the worst member's breach.
     """
     if not table_fqns:
         return RunsOut()
+    breaches = breach_by_run or {}
     mv = metric_view_fqn(app_conf.catalog, app_conf.schema_name)
     conds = [f"input_location IN ({_in_list(table_fqns)})"]
     if not include_drafts:
@@ -432,6 +654,8 @@ def _runs_from_metric_view(
             failed_tests=safe_int(row.get("failed_tests")),
             total_tests=safe_int(row.get("total_tests")),
             run_mode=row.get("run_mode"),
+            breached=breaches.get(row.get("run_id")) is not None,
+            breach_criticality=breaches.get(row.get("run_id")),
         )
         for row in rows
     ]
@@ -580,11 +804,15 @@ def get_global_results(
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     run_sets: Annotated[RunSetService, Depends(get_run_set_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
     table: Annotated[list[str] | None, Query()] = None,
+    catalog: Annotated[list[str] | None, Query()] = None,
+    schema: Annotated[list[str] | None, Query()] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
@@ -636,9 +864,20 @@ def get_global_results(
     except Exception:
         logger.warning("Failed to resolve binding ids for global by_table rows", exc_info=True)
         binding_ids = {}
+    # Org-wide scope: no single per-binding threshold applies, so the chain
+    # degenerates to registry-default -> admin-default (see plan Task 4 — a
+    # deliberate controller decision, not a per-binding join).
+    resolver = (
+        _build_threshold_resolver(
+            admin_default=app_settings.get_default_pass_threshold(),
+            registry_defaults=_registry_defaults(registry, _rule_ids_of(rows, asof_rows)),
+        )
+        if app_settings.get_pass_threshold_enabled()
+        else None
+    )
     return compute_entity_results(
         rows,
-        _facets(dimension, severity, rule, column, table),
+        _facets(dimension, severity, rule, column, table, catalog, schema),
         axes=axes,
         table_axis="by_table",
         failed_records_by_run=failed_records,
@@ -646,6 +885,7 @@ def get_global_results(
         asof_rows=asof_rows,
         run_set_by_run_id=run_set_by_run_id,
         as_of_batch=as_of_batch,
+        resolve_threshold=resolver,
     )
 
 
@@ -667,6 +907,8 @@ def get_rule_results(
     apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     run_sets: Annotated[RunSetService, Depends(get_run_set_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -733,6 +975,19 @@ def get_rule_results(
     except Exception as exc:
         logger.exception(f"Failed to compute results for rule {rule_id}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    # Scoped resolver: the rule's applications carry the per-rule and
+    # per-column overrides (folded across every binding, strictest wins).
+    rule_overrides, column_overrides = _applied_threshold_overrides(applications)
+    resolver = (
+        _build_threshold_resolver(
+            admin_default=app_settings.get_default_pass_threshold(),
+            registry_defaults=_registry_defaults(registry, {rule_id} | _rule_ids_of(rows, asof_rows)),
+            rule_overrides=rule_overrides,
+            column_overrides=column_overrides,
+        )
+        if app_settings.get_pass_threshold_enabled()
+        else None
+    )
     return compute_entity_results(
         rows,
         _facets(dimension, severity, rule, column, _scope_table_facet(table, table_fqns)),
@@ -742,6 +997,7 @@ def get_rule_results(
         asof_rows=asof_rows,
         run_set_by_run_id=run_set_by_run_id,
         as_of_batch=as_of_batch,
+        resolve_threshold=resolver,
     )
 
 
@@ -788,6 +1044,10 @@ def get_product_results_runs(
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     data_products: Annotated[DataProductService, Depends(get_data_product_service)],
     run_sets: Annotated[RunSetService, Depends(get_run_set_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
     include_drafts: bool = Query(False),
 ) -> RunsOut:
     """Run rollups across the product's accessible member tables, newest first.
@@ -795,11 +1055,17 @@ def get_product_results_runs(
     Rolled up per RUN BATCH (``dq_run_set_members`` join): concurrent
     member runs of one Table-Space "Run now" collapse to a single picker
     entry, so the picker offers coherent product-level batches rather than
-    per-member-table runs.
+    per-member-table runs. Each batch is stamped with a threshold-breach
+    badge (worst member run's breach).
     """
     try:
         fqns, _ = _accessible_member_fqns(data_products, product_id, user_catalogs)
-        return _runs_from_metric_view(sql, app_conf, fqns, include_drafts, run_sets=run_sets)
+        breach_by_run = _table_breach_by_run(
+            sql, app_conf, fqns, include_drafts, monitored_tables, apply_rules, app_settings, registry
+        )
+        return _runs_from_metric_view(
+            sql, app_conf, fqns, include_drafts, run_sets=run_sets, breach_by_run=breach_by_run
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -819,6 +1085,9 @@ def get_product_results(
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     data_products: Annotated[DataProductService, Depends(get_data_product_service)],
     run_sets: Annotated[RunSetService, Depends(get_run_set_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -851,11 +1120,32 @@ def get_product_results(
         failed_records = _fetch_failed_records_by_run(sql, app_conf, fqns)
         asof_rows = _fetch_asof_check_rows(sql, app_conf, fqns, run_id, include_drafts) if _wants_trends(axes) else None
         run_set_by_run_id = _run_set_map(run_sets, [row.run_id for row in rows if row.run_id])
+        # Applied rules across every accessible member binding carry the
+        # per-rule + per-column overrides for this scope's resolver.
+        member_applied: list[AppliedRule] = []
+        for binding_id in binding_ids:
+            try:
+                member_applied.extend(apply_rules.list_applied(binding_id))
+            except Exception:
+                logger.warning(
+                    f"Skipping applied-rule thresholds for binding {binding_id} in product results", exc_info=True
+                )
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception(f"Failed to compute results for product {product_id}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    rule_overrides, column_overrides = _applied_threshold_overrides(member_applied)
+    resolver = (
+        _build_threshold_resolver(
+            admin_default=app_settings.get_default_pass_threshold(),
+            registry_defaults=_registry_defaults(registry, _rule_ids_of(rows, asof_rows)),
+            rule_overrides=rule_overrides,
+            column_overrides=column_overrides,
+        )
+        if app_settings.get_pass_threshold_enabled()
+        else None
+    )
     return compute_entity_results(
         rows,
         _facets(dimension, severity, rule, column, _scope_table_facet(table, fqns)),
@@ -867,6 +1157,7 @@ def get_product_results(
         asof_rows=asof_rows,
         run_set_by_run_id=run_set_by_run_id,
         as_of_batch=as_of_batch,
+        resolve_threshold=resolver,
     )
 
 
@@ -945,9 +1236,10 @@ def get_dq_results_failed_rows(
 
     facets = _facets(dimension, severity, rule, column)
     # When filters are active, scan a wider window than the page size so a
-    # selective filter can still fill the page; *total* counts the matches
-    # within the scanned window (a lower bound when the window is capped).
-    scan_limit = limit if not facets.any_active() else min(max(limit * 5, 1000), 100000)
+    # selective filter can still fill the page. *total* is corrected to the
+    # TRUE filtered count below (a dedicated count pass), so this window only
+    # governs how many rows the preview itself renders.
+    scan_limit = limit if not facets.any_active() else min(max(limit * 5, 1000), _FAILED_ROWS_MAX)
 
     # (4) SP-side fetch of the precomputed failing rows, with created_at
     # surfaced as the run_ts.
@@ -1012,16 +1304,20 @@ def get_dq_results_failed_rows(
         )
 
     # *total* must reflect the TRUE number of failing records for the
-    # resolved run, not the size of the (capped) preview scan. With NO
-    # active facets, read the run's authoritative distinct failing-row
-    # count from dq_metrics (input_row_count - valid_row_count) so the
-    # "download to view all N" headline is correct even when *rows* is
-    # capped at *limit*. With active facets the filters are applied
-    # app-side over each row's parsed failure structs (not a SQL
-    # predicate), so a true FILTERED count can't come from the mode-wide
-    # metrics number; there *total* stays the count of matches found
-    # within the scanned window (a lower bound when the window is capped)
-    # — the documented pre-existing behaviour.
+    # resolved run — never the size of the (capped) preview scan.
+    #  - No active facets: read the run's authoritative distinct
+    #    failing-row count from dq_metrics (input_row_count -
+    #    valid_row_count) so the "download to view all N" headline is
+    #    correct even when *rows* is capped at *limit*.
+    #  - Active facets: the filters are applied app-side over each row's
+    #    parsed failure structs (not a SQL predicate), so the metrics
+    #    number — which counts EVERY failing row of the run regardless of
+    #    which check failed — would over-report. Instead count the true
+    #    matches across the WHOLE run (a dedicated errors/warnings-only
+    #    scan), not just the capped preview window. Without this the
+    #    filtered headline reported the scan-window match count, a lower
+    #    bound that badly undershot a selective filter on a large run
+    #    (item 63: a single-check filter showed 307 of its real 1183).
     total = len(matched)
     if not facets.any_active() and raw_rows:
         # Every returned row belongs to exactly ONE run (the WHERE clause
@@ -1033,6 +1329,13 @@ def get_dq_results_failed_rows(
             true_total = failed_by_run.get((table_fqn, resolved_run_id))
             if true_total is not None:
                 total = true_total
+    elif facets.any_active() and raw_rows:
+        # len(matched) counts only the capped preview window; count the true
+        # filtered total across the FULL run so a selective filter's headline
+        # isn't a scan-window lower bound.
+        exact = _count_filtered_failed_rows(sp_sql, quarantine_table, e_fqn, run_cond, facets)
+        if exact is not None:
+            total = exact
     return FailedRowsOut(rows=matched[:limit], total=total, suppressed=False)
 
 
@@ -1052,13 +1355,17 @@ def get_dq_results_runs(
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
     include_drafts: bool = Query(False),
 ) -> RunsOut:
     """Per-run rollup for one table, newest first (backs the run picker).
 
     Accepts either a three-part table FQN or a monitored-table binding id
     (resolved to its bound table). Draft runs are excluded unless
-    *include_drafts*.
+    *include_drafts*. Each run is stamped with a threshold-breach badge
+    computed from its per-check rows.
     """
     table_fqn = binding_or_table
     try:
@@ -1084,7 +1391,10 @@ def get_dq_results_runs(
         raise HTTPException(status_code=403, detail="You do not have access to this table's catalog")
 
     try:
-        return _runs_from_metric_view(sql, app_conf, [table_fqn], include_drafts)
+        breach_by_run = _table_breach_by_run(
+            sql, app_conf, [table_fqn], include_drafts, monitored_tables, apply_rules, app_settings, registry
+        )
+        return _runs_from_metric_view(sql, app_conf, [table_fqn], include_drafts, breach_by_run=breach_by_run)
     except Exception as exc:
         logger.exception(f"Failed to list runs for {table_fqn}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1101,6 +1411,9 @@ def get_table_results(
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -1128,9 +1441,29 @@ def get_table_results(
     try:
         rows = _fetch_check_rows(sql, app_conf, [table_fqn], run_id, include_drafts)
         failed_records = _fetch_failed_records_by_run(sql, app_conf, [table_fqn])
+        # Resolve the table's binding once — reused for both the threshold
+        # resolver (applied-rule overrides) and the trend version markers.
+        binding_id = monitored_tables.get_binding_ids_by_table_fqn([table_fqn]).get(table_fqn)
+        applied: list[AppliedRule] = []
+        if binding_id:
+            try:
+                applied = apply_rules.list_applied(binding_id)
+            except Exception:
+                logger.warning(f"Skipping applied-rule thresholds for {table_fqn}: lookup failed", exc_info=True)
     except Exception as exc:
         logger.exception(f"Failed to compute results for {table_fqn}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    rule_overrides, column_overrides = _applied_threshold_overrides(applied)
+    resolver = (
+        _build_threshold_resolver(
+            admin_default=app_settings.get_default_pass_threshold(),
+            registry_defaults=_registry_defaults(registry, _rule_ids_of(rows)),
+            rule_overrides=rule_overrides,
+            column_overrides=column_overrides,
+        )
+        if app_settings.get_pass_threshold_enabled()
+        else None
+    )
     result = compute_entity_results(
         rows,
         _facets(dimension, severity, rule, column),
@@ -1138,15 +1471,14 @@ def get_table_results(
         table_axis="tables",
         failed_records_by_run=failed_records,
         failures_ignore_facets=True,
+        resolve_threshold=resolver,
     )
     # Stamp the overall-score trend with the binding version active at each
     # run (#65) so the UI can mark version increments. Best-effort: a lookup
     # failure or an unmonitored table just leaves version=None.
-    if _wants_trends(axes) and result.trend:
+    if _wants_trends(axes) and result.trend and binding_id:
         try:
-            binding_id = monitored_tables.get_binding_ids_by_table_fqn([table_fqn]).get(table_fqn)
-            if binding_id:
-                annotate_trend_versions(result.trend, monitored_tables.get_version_freezes(binding_id))
+            annotate_trend_versions(result.trend, monitored_tables.get_version_freezes(binding_id))
         except Exception:
             logger.warning(f"Skipping trend version markers for {table_fqn}: lookup failed", exc_info=True)
     return result

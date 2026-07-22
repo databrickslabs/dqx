@@ -4,12 +4,23 @@
 // conventions instead of re-deriving them.
 
 import { Badge } from "@/components/ui/badge";
-import type { AppliedRuleOut, AppliedRuleOutColumnMappingItem, DesiredAppliedRuleIn, RegistryRuleOut } from "@/lib/api";
+import type { AppliedRuleOut, AppliedRuleOutColumnMappingItem, DesiredAppliedRuleIn, RegistryRuleOut, RuleSlot } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
+import type { ColumnFamily } from "./ColumnPicker";
 
 export const RESERVED_NAME_KEY = "name";
 export const RESERVED_DIMENSION_KEY = "dimension";
 export const RESERVED_SEVERITY_KEY = "severity";
+export const RESERVED_PASS_THRESHOLD_KEY = "pass_threshold";
+
+/** Read a registry rule's default pass threshold from its user_metadata,
+ *  clamped to [0,100] (tolerating a stringified int), or null when unset. */
+export function getRulePassThreshold(rule: RegistryRuleOut): number | null {
+  const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
+  const v = md[RESERVED_PASS_THRESHOLD_KEY];
+  const n = typeof v === "number" ? v : typeof v === "string" ? parseInt(v, 10) : NaN;
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null;
+}
 
 export function getTag(rule: RegistryRuleOut, key: string): string {
   const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
@@ -181,7 +192,37 @@ export function newStagedRow(
     rule_name: getTag(rule, RESERVED_NAME_KEY) || null,
     rule_dimension: getTag(rule, RESERVED_DIMENSION_KEY) || null,
     rule_severity: getTag(rule, RESERVED_SEVERITY_KEY) || null,
+    // Seed the registry-rule default so a freshly-added rule's threshold pill
+    // shows the rule's own default (not just the admin default) before its
+    // first save — matches how rule_severity/rule_dimension are seeded above.
+    rule_pass_threshold: getRulePassThreshold(rule),
+    // Fresh staged rows start with no per-column threshold overrides.
+    column_pass_thresholds: {},
   };
+}
+
+/** Merge per-column threshold overrides from every row in a rule_id group into
+ *  one `{col: pct}` map. Later rows win on key conflict (last-write wins, which
+ *  is harmless since all rows for a rule_id share the same overrides in normal
+ *  use). Returns `undefined` (not an empty object) when no overrides exist so
+ *  the field round-trips as absent rather than `{}`, matching the API contract.
+ *
+ *  Correctness: `0` is a valid threshold (never breach). Only `undefined` map
+ *  values (missing keys) indicate "no override" — never use truthiness. */
+export function mergeColumnThresholds(
+  rows: AppliedRuleOut[],
+): Record<string, number> | undefined {
+  const merged: Record<string, number> = {};
+  let hasAny = false;
+  for (const row of rows) {
+    const map = row.column_pass_thresholds;
+    if (!map) continue;
+    for (const [col, pct] of Object.entries(map)) {
+      merged[col] = pct;
+      hasAny = true;
+    }
+  }
+  return hasAny ? merged : undefined;
 }
 
 /** Turn the flat staged row list into the FULL desired-set payload for
@@ -200,8 +241,11 @@ export function buildDesiredApplications(stagedRows: AppliedRuleOut[]): DesiredA
       severity_override: first?.severity_override ?? null,
       // Per-rule overrides live on the rule (all of a rule_id's rows share one
       // value), so read them off the first row like pin/severity above.
-      row_filter: first?.row_filter ?? null,
       pass_threshold: first?.pass_threshold ?? null,
+      // Per-column threshold overrides — merge across all rows for this
+      // rule_id; returns undefined when there are no overrides so the field
+      // is absent in the payload rather than an empty object.
+      column_pass_thresholds: mergeColumnThresholds(rows) ?? null,
       tags: (first?.user_metadata ?? {}) as Record<string, unknown>,
     };
   });
@@ -213,20 +257,61 @@ export function buildDesiredApplications(stagedRows: AppliedRuleOut[]): DesiredA
  *  `stableStringify(currentSnapshot) !== stableStringify(snapshotFromRule(...))`
  *  pattern). Sorts by `rule_id` and, within each application, by mapping
  *  group so row insertion order and mapping-group order never cause a false
- *  "dirty" positive. */
-export function desiredApplicationsKey(stagedRows: AppliedRuleOut[]): string {
+ *  "dirty" positive.
+ *
+ *  Threshold dirty-detection (item 33): a per-rule/per-column threshold that
+ *  equals its *effective default* is normalized to the same key as `null`
+ *  ("follow default"), because they mean the same thing to the checker. This
+ *  keeps two facts from producing false diffs against each other: (a) an
+ *  explicit last-saved override equal to the default and a null-follow-default
+ *  are treated as EQUAL, so re-entering the saved value never marks dirty, and
+ *  (b) it never rewrites the persisted payload — `buildDesiredApplications`
+ *  still carries the explicit value, so saving can't silently downgrade an
+ *  explicit override to follow-default.
+ *
+ *  *adminDefault* is the workspace-wide default pass threshold used to resolve
+ *  a rule's effective default when the rule carries no registry default. */
+export function desiredApplicationsKey(stagedRows: AppliedRuleOut[], adminDefault: number): string {
+  // Resolve each rule_id's registry-level default from its rows (dropped by
+  // buildDesiredApplications, so read it off the grouped source rows here).
+  const ruleDefaultById = new Map<string, number>();
+  for (const { ruleId, rows } of groupAppliedRulesByRuleId(stagedRows)) {
+    ruleDefaultById.set(ruleId, rows[0]?.rule_pass_threshold ?? adminDefault);
+  }
+
   const normalized = buildDesiredApplications(stagedRows)
-    .map((application) => ({
-      rule_id: application.rule_id,
-      column_mapping: (application.column_mapping ?? [])
-        .map((group) => JSON.stringify(Object.fromEntries(Object.entries(group).sort())))
-        .sort(),
-      pinned_version: application.pinned_version ?? null,
-      severity_override: application.severity_override ?? null,
-      row_filter: application.row_filter ?? null,
-      pass_threshold: application.pass_threshold ?? null,
-      tags: JSON.stringify(Object.fromEntries(Object.entries(application.tags ?? {}).sort())),
-    }))
+    .map((application) => {
+      // Effective per-rule default (registry default ?? admin default). A
+      // per-rule override equal to it means "follow default" → normalize to null.
+      const ruleDefault = ruleDefaultById.get(application.rule_id) ?? adminDefault;
+      const rawPass = application.pass_threshold ?? null;
+      const normPass = rawPass === null || rawPass === ruleDefault ? null : rawPass;
+
+      // Effective per-COLUMN default = the rule-level effective threshold
+      // (explicit per-rule override ?? rule default), mirroring the pill's
+      // `columnEffectiveDefault`. Drop any column override equal to it.
+      const columnDefault = rawPass ?? ruleDefault;
+      const colThresholds = application.column_pass_thresholds;
+      const normColThresholds = colThresholds
+        ? Object.fromEntries(Object.entries(colThresholds).filter(([, pct]) => pct !== columnDefault))
+        : null;
+      const colThresholdsStr =
+        normColThresholds && Object.keys(normColThresholds).length > 0
+          ? JSON.stringify(Object.fromEntries(Object.entries(normColThresholds).sort()))
+          : null;
+
+      return {
+        rule_id: application.rule_id,
+        column_mapping: (application.column_mapping ?? [])
+          .map((group) => JSON.stringify(Object.fromEntries(Object.entries(group).sort())))
+          .sort(),
+        pinned_version: application.pinned_version ?? null,
+        severity_override: application.severity_override ?? null,
+        pass_threshold: normPass,
+        column_pass_thresholds: colThresholdsStr,
+        tags: JSON.stringify(Object.fromEntries(Object.entries(application.tags ?? {}).sort())),
+      };
+    })
     .sort((a, b) => a.rule_id.localeCompare(b.rule_id));
   return JSON.stringify(normalized);
 }
@@ -262,6 +347,72 @@ export function computeRunGating(baselineCount: number, stagedCount: number): Ru
     runNowHasRules: baselineCount > 0,
     runDraftHasRules: stagedCount > 0,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Slot selection helper — used by AddRulesDialog when a rule is added from
+// the by-column lens's per-column "+ Add rule" CTA. Given the rule's slot
+// list and the clicked column's family, returns the best slot name to bind
+// that column to: prefer a slot whose family matches (or is "any"), else
+// fall back to the first slot. Returns null when there are no slots (the
+// rule has no column arguments and needs no mapping).
+// ---------------------------------------------------------------------------
+
+/** Rule ids already mapped to a specific column across all staged rows.
+ *  Used by the by-column Add Rule dialog to compute a column-scoped
+ *  "already applied" set: a rule applied to column A is not disabled when
+ *  adding to column B — only rules that ALREADY target that exact column are
+ *  locked (item 4). Multi-value slot values (comma-joined) are parsed the
+ *  same way as `getUsedColumnsForRule` above. */
+export function getRuleIdsForColumn(rows: AppliedRuleOut[], columnName: string): Set<string> {
+  const result = new Set<string>();
+  for (const row of rows) {
+    for (const group of row.column_mapping ?? []) {
+      for (const value of Object.values(group)) {
+        if (!value) continue;
+        for (const col of value.split(",")) {
+          if (col.trim() === columnName) {
+            result.add(row.rule_id);
+          }
+        }
+      }
+    }
+  }
+  return result;
+}
+
+/** Pick the slot name to bind a column to when adding a rule from the
+ *  by-column view. Returns the name of the first slot whose family matches
+ *  `columnFamily` (or whose family is "any"), falling back to the first slot
+ *  regardless of family, or null when no slots exist. */
+export function pickSlotForColumn(slots: RuleSlot[], columnFamily: ColumnFamily): string | null {
+  if (slots.length === 0) return null;
+  // Prefer the first slot whose family is compatible (exact match or "any").
+  const match = slots.find((s) => s.family === columnFamily || s.family === "any");
+  return (match ?? slots[0]).name;
+}
+
+/** True when a rule can be applied to a column of the given family — i.e. it
+ *  has at least one column slot whose family is compatible (exact match, or an
+ *  "any"-family slot, or the column itself is untyped "any"). Rules with no
+ *  slots (dataset-level / SQL checks that take no column argument) are NOT
+ *  column-applicable, so they're excluded from the by-column picker. Mirrors
+ *  the slot↔column family rule used by `columnsForSlot` / `pickSlotForColumn`,
+ *  reinstating the by-column data-type compatibility filter. */
+export function isRuleCompatibleWithColumn(rule: RegistryRuleOut, columnFamily: ColumnFamily): boolean {
+  const slots = rule.definition?.slots ?? [];
+  if (slots.length === 0) return false;
+  return slots.some((s) => s.family === "any" || columnFamily === "any" || s.family === columnFamily);
+}
+
+/** Filter published rules to those applicable to a column of `columnFamily`
+ *  (see `isRuleCompatibleWithColumn`). Used by AddRulesDialog when opened from
+ *  a per-column "+ Add rule" CTA so only compatible-type rules are selectable. */
+export function compatibleRulesForColumn(
+  rules: RegistryRuleOut[],
+  columnFamily: ColumnFamily,
+): RegistryRuleOut[] {
+  return rules.filter((r) => isRuleCompatibleWithColumn(r, columnFamily));
 }
 
 export function TagBadge({ label, color }: { label: string; color?: string }) {

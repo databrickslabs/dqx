@@ -109,6 +109,13 @@ class TestAttributionViewDdl:
         assert "user_metadata['dimension'] AS dimension" in ddl
         assert "user_metadata['registry_rule_id'] AS registry_rule_id" in ddl
 
+    def test_extracts_frozen_pass_threshold_as_int(self, svc):
+        # The resolved effective threshold is frozen per-run into
+        # user_metadata['pass_threshold'] by the materializer — extract it
+        # as an INT (NULL when absent, e.g. legacy runs).
+        ddl = svc.attribution_view_ddl()
+        assert "TRY_CAST(user_metadata['pass_threshold'] AS INT) AS pass_threshold" in ddl
+
     def test_columns_stay_an_array_merging_column_and_columns(self, svc):
         # A single-column check renders arguments.column, a multi-column
         # one arguments.columns — the view exposes ONE array column.
@@ -208,6 +215,11 @@ class TestShapingViewDdl:
     def test_shaping_view_carries_rule_name(self, svc):
         assert "a.rule_name" in svc.shaping_view_ddl()
 
+    def test_shaping_view_carries_frozen_pass_threshold(self, svc):
+        # The per-run frozen threshold flows through so breach eval reads it
+        # instead of recomputing from live settings.
+        assert "a.pass_threshold" in svc.shaping_view_ddl()
+
     def test_reads_run_provenance_tags_from_the_run_level_metadata_map(self, svc):
         # dq_metrics is long-format: the run-level user_metadata map repeats
         # per metric row, so MAX over the grouped rows picks it from any row.
@@ -305,6 +317,10 @@ class TestAsofViewDdl:
     def test_asof_view_carries_rule_name(self, svc):
         assert "c.rule_name" in svc.asof_view_ddl()
 
+    def test_asof_view_carries_frozen_pass_threshold(self, svc):
+        # Trend/as-of breach eval must read the same frozen threshold.
+        assert "c.pass_threshold" in svc.asof_view_ddl()
+
     def test_null_run_times_never_enter_the_expansion(self, svc):
         assert "WHERE run_time IS NOT NULL" in svc.asof_view_ddl()
 
@@ -344,13 +360,30 @@ class TestMetricViewDdl:
             # untagged legacy runs resolved to 'published' in the
             # shaping view.
             "run_mode": "run_mode",
+            # Frozen per-run pass-threshold and monitored-table (rule set)
+            # version — existing shaping-view columns surfaced for breach
+            # and version drill-down.
+            "pass_threshold": "pass_threshold",
+            "binding_version": "binding_version",
             "check_name": "check_name",
+            # Rule identity — stable id survives renames; rule_name scopes
+            # to one rule.
+            "registry_rule_id": "registry_rule_id",
+            "rule_name": "rule_name",
             # As-of-run attribution dimensions (frozen at materialization
             # time in checks_json — never rewritten by later tag edits).
             "severity": "severity",
             "dimension": "dimension",
             "criticality": "criticality",
         }
+
+    def test_yaml_every_dimension_and_measure_has_a_comment(self, svc):
+        # The comments ARE the Genie grounding — every dim/measure must carry one.
+        body = _yaml_body(svc.metric_view_ddl())
+        for d in body["dimensions"]:
+            assert d.get("comment"), d["name"]
+        for m in body["measures"]:
+            assert m.get("comment"), m["name"]
 
     def test_yaml_measures_match_the_score_formula(self, svc):
         body = _yaml_body(svc.metric_view_ddl())
@@ -360,6 +393,25 @@ class TestMetricViewDdl:
         # TRY_DIVIDE (not /) so a zero/NULL denominator yields NULL —
         # the SQL equivalent of ScoreService's None-when-no-rows.
         assert measures["score"] == "1 - TRY_DIVIDE(SUM(error_count + warning_count), SUM(input_row_count))"
+
+    def test_yaml_carries_the_count_and_severity_split_measures(self, svc):
+        # dqlake-style composing measures that answer authoring/coverage
+        # questions directly. The run-picker names (score/failed_tests/
+        # total_tests) stay; these are additive.
+        body = _yaml_body(svc.metric_view_ddl())
+        measures = {m["name"]: m["expr"] for m in body["measures"]}
+        assert measures["error_tests"] == "SUM(error_count)"
+        assert measures["warning_tests"] == "SUM(warning_count)"
+        # FILTER (WHERE ...) form (docs-preferred over COUNT_IF for metric-view measures).
+        assert measures["failed_checks"] == "COUNT(1) FILTER (WHERE (error_count + warning_count) > 0)"
+        # COUNT(check_name) so a no-check placeholder run reports 0, not 1.
+        assert measures["total_checks"] == "COUNT(check_name)"
+        # "How many rules do I have" — the acceptance smoke test.
+        assert measures["rule_count"] == "COUNT(DISTINCT registry_rule_id)"
+        assert (
+            measures["failed_rule_count"]
+            == "COUNT(DISTINCT registry_rule_id) FILTER (WHERE (error_count + warning_count) > 0)"
+        )
 
 
 class TestEnsureViews:

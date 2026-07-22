@@ -30,8 +30,8 @@ function RegistryRulesBulkImportPageInner() {
           page={t("rulesBulkImport.breadcrumb")}
         />
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">{t("rulesBulkImport.title")}</h1>
-          <p className="text-muted-foreground">{t("rulesBulkImport.subtitle")}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("rulesBulkImport.title")}</h1>
+          <p className="text-sm text-muted-foreground mt-1">{t("rulesBulkImport.subtitle")}</p>
         </div>
         <BulkContractImportWorkspace onDone={() => navigate({ to: "/registry-rules" })} />
       </div>

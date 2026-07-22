@@ -33,6 +33,7 @@ from databricks_labs_dqx_app.backend.routes.v1.check_functions import (
     _classify_param_kind,
     _family_for_column_param,
     _first_doc_line,
+    _friendly_label,
     _introspect_check_functions,
     _serialize_default,
 )
@@ -389,6 +390,75 @@ class TestIntrospectCheckFunctions:
         second = _introspect_check_functions()
         # Same tuple object thanks to lru_cache.
         assert first is second
+
+
+# ---------------------------------------------------------------------------
+# _friendly_label — human-readable labels
+# ---------------------------------------------------------------------------
+
+
+class TestFriendlyLabel:
+    """``_friendly_label`` should produce title-cased labels with acronym fixups
+    and curated overrides for the is_aggr_* family."""
+
+    def test_plain_check_is_title_cased(self) -> None:
+        assert _friendly_label("is_not_null") == "Is Not Null"
+
+    def test_aggr_equal_override(self) -> None:
+        assert _friendly_label("is_aggr_equal") == "Is Aggregate Equal"
+
+    def test_aggr_not_equal_override(self) -> None:
+        assert _friendly_label("is_aggr_not_equal") == "Is Aggregate Not Equal"
+
+    def test_aggr_not_greater_than_override(self) -> None:
+        assert _friendly_label("is_aggr_not_greater_than") == "Is Aggregate Not Greater Than"
+
+    def test_aggr_not_less_than_override(self) -> None:
+        assert _friendly_label("is_aggr_not_less_than") == "Is Aggregate Not Less Than"
+
+    def test_ip_acronym_upcased(self) -> None:
+        # is_valid_ipv4_address → "Is Valid Ipv4 Address" without fixup,
+        # with fixup the IP token should be upper-cased.
+        label = _friendly_label("is_valid_ipv4_address")
+        assert "IP" in label
+
+    def test_sql_acronym_upcased(self) -> None:
+        label = _friendly_label("sql_expression")
+        assert label.startswith("SQL")
+
+    def test_json_acronym_upcased(self) -> None:
+        label = _friendly_label("is_valid_json")
+        assert "JSON" in label
+
+
+class TestIntrospectCheckFunctionsLabel:
+    """Every introspected function should carry a non-empty label."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self) -> None:
+        _introspect_check_functions.cache_clear()
+
+    def _by_name(self, name: str) -> CheckFunctionDef:
+        for fn in _introspect_check_functions():
+            if fn.name == name:
+                return fn
+        pytest.fail(f"Check function {name!r} not found in introspected registry")
+
+    def test_is_not_null_has_label(self) -> None:
+        fn = self._by_name("is_not_null")
+        assert fn.label == "Is Not Null"
+
+    def test_is_aggr_equal_has_friendly_label(self) -> None:
+        fn = self._by_name("is_aggr_equal")
+        assert fn.label == "Is Aggregate Equal"
+
+    def test_is_valid_ipv4_address_has_ip_in_label(self) -> None:
+        fn = self._by_name("is_valid_ipv4_address")
+        assert "IP" in fn.label
+
+    def test_all_functions_have_non_empty_label(self) -> None:
+        for fn in _introspect_check_functions():
+            assert fn.label, f"{fn.name!r} has an empty label"
 
 
 # ---------------------------------------------------------------------------

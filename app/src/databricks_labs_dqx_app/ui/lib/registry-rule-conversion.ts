@@ -33,7 +33,7 @@ import type {
   RuleParameterType,
   RuleSlot,
 } from "@/lib/api";
-import { RESERVED_NAME_KEY, RESERVED_SEVERITY_KEY, getTag } from "@/components/RegistryRuleBadges";
+import { RESERVED_NAME_KEY, RESERVED_SEVERITY_KEY } from "@/components/RegistryRuleBadges";
 
 export const COLUMN_KINDS = new Set(["column", "columns"]);
 
@@ -240,6 +240,17 @@ export function deriveSlotsAndParameters(fn: ApiCheckFunctionDef | undefined): {
       });
     }
   }
+  // Surface `ref_table` before `ref_columns`: a steward picks the reference
+  // TABLE first, then the columns on it (the DQX signature declares
+  // `ref_columns` first, but that reads backwards in the editor — you can't
+  // meaningfully choose reference columns before the table they live on).
+  // Stable: only this one pair is swapped when both are present.
+  const refTableIdx = parameters.findIndex((p) => p.name === "ref_table");
+  const refColumnsIdx = parameters.findIndex((p) => p.name === "ref_columns");
+  if (refTableIdx > -1 && refColumnsIdx > -1 && refTableIdx > refColumnsIdx) {
+    const [refTable] = parameters.splice(refTableIdx, 1);
+    parameters.splice(refColumnsIdx, 0, refTable);
+  }
   return { slots, parameters };
 }
 
@@ -273,9 +284,21 @@ export function listColumnArgKey(fn: ApiCheckFunctionDef | undefined): string | 
  */
 export function nativeArguments(slots: RuleSlot[], fn?: ApiCheckFunctionDef): Record<string, unknown> {
   const listArgKey = listColumnArgKey(fn);
+  // The set of real column-kind parameter names the selected function actually
+  // accepts. A slot whose key isn't one of these is an EXTRA (filter-only)
+  // slot — e.g. a column added via "+ Add column" on a single-column function,
+  // which carries no `arg_key`, so its key falls back to its own `column_N`
+  // name. Such slots exist solely for the advanced filter (spec §B3, single-
+  // column arity UX) and must NEVER surface as their own top-level argument, or
+  // the rendered check becomes e.g. `is_not_null(column=…, column_2=…)` and the
+  // runner throws a TypeError. When `fn` is unknown (raw JSON editor for an
+  // unrecognized function) we can't classify parameters, so every slot binds —
+  // preserving the pre-existing pass-through behaviour.
+  const columnArgKeys = fn ? new Set((fn.params ?? []).filter((p) => COLUMN_KINDS.has(p.kind)).map((p) => p.name)) : null;
   const groups = new Map<string, RuleSlot[]>();
   for (const s of slots) {
     const key = s.arg_key ?? s.name;
+    if (columnArgKeys && !columnArgKeys.has(key)) continue; // extra/filter-only slot
     const members = groups.get(key);
     if (members) members.push(s);
     else groups.set(key, [s]);
@@ -344,6 +367,23 @@ export function paramValueToRaw(value: RuleParameter["value"]): string {
 const SQL_FUNCTION_NAMES = new Set(["sql_query", "sql_expression"]);
 
 /**
+ * The minimal shape {@link buildDqxCheckJson} materializes: a rule's authoring
+ * `mode`/`polarity`, its structured `definition`, and its tag `user_metadata`.
+ * Widened from `RegistryRuleOut` so a FROZEN `dq_rule_versions` snapshot
+ * (`RegistryRuleVersionOut`, which carries the same four fields) can be
+ * materialized as-of-its-version too — used by the version diff so an old
+ * version renders its own frozen check JSON, not the live rule's. A snapshot
+ * with a `null`/absent frozen `mode` (legacy rows) falls back to the caller-
+ * supplied live mode.
+ */
+export interface MaterializableRule {
+  mode: RegistryRuleOut["mode"] | null;
+  polarity?: RegistryRuleOut["polarity"] | null;
+  definition?: RuleDefinition;
+  user_metadata?: Record<string, unknown> | null;
+}
+
+/**
  * Derive the native DQX check-dict for *rule* — the exact shape
  * `apply_checks_by_metadata` consumes, with slots left as `{{slot}}`
  * placeholders (mirrors `materializer.render_check` before column
@@ -355,18 +395,21 @@ const SQL_FUNCTION_NAMES = new Set(["sql_query", "sql_expression"]);
  *
  * Pass *severityCriticality* (see {@link severityValueCriticality}) so the
  * rendered `criticality` reflects the admin-edited severity mapping rather
- * than only the built-in defaults.
+ * than only the built-in defaults. *fallbackMode* is used only when *rule*'s
+ * own `mode` is null/absent (a legacy frozen version snapshot).
  */
 export function buildDqxCheckJson(
-  rule: RegistryRuleOut,
+  rule: MaterializableRule,
   severityCriticality?: Record<string, string> | null,
+  fallbackMode?: RegistryRuleOut["mode"],
 ): Record<string, unknown> {
+  const mode = rule.mode ?? fallbackMode ?? "dqx_native";
   const definition = rule.definition ?? ({} as RuleDefinition);
   const body = (definition.body ?? {}) as Record<string, unknown>;
   const parameters = definition.parameters ?? [];
 
   let checkInner: Record<string, unknown>;
-  if (rule.mode === "dqx_native") {
+  if (mode === "dqx_native") {
     const args: Record<string, unknown> = { ...(body.arguments as Record<string, unknown> | undefined) };
     for (const p of parameters) {
       if (p.value !== null && p.value !== undefined) args[p.name] = p.value;
@@ -401,13 +444,15 @@ export function buildDqxCheckJson(
     checkInner = { function: functionName, arguments: args };
   }
 
-  const severity = getTag(rule, RESERVED_SEVERITY_KEY);
+  const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
+  const readTag = (key: string): string => (typeof md[key] === "string" ? (md[key] as string) : "");
+  const severity = readTag(RESERVED_SEVERITY_KEY);
   const check: Record<string, unknown> = {
     criticality: resolveCriticality(severity || undefined, severityCriticality),
     check: checkInner,
     user_metadata: rule.user_metadata ?? {},
   };
-  const name = getTag(rule, RESERVED_NAME_KEY);
+  const name = readTag(RESERVED_NAME_KEY);
   if (name) check.name = name;
   if (definition.error_message) check.message_expr = definition.error_message;
   return check;

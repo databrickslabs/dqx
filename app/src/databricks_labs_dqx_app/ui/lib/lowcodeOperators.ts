@@ -37,8 +37,29 @@ export const VALIDITY_SQL_TYPE: Record<string, string> = Object.fromEntries(
 // Order within each family mirrors what a Data Quality steward reaches for
 // first. Universal operators (is null / is not null, generic equality) live
 // in ANY only and are not duplicated into every family.
+// Operators that invoke a Databricks AI (Foundation Model) SQL function —
+// real per-row cost + latency, and only available on AI-Functions-enabled
+// workspaces. Grouped + flagged separately in the operator dropdown.
+export const AI_OPS = new Set(["has positive sentiment", "has negative sentiment"]);
+
 export const OPERATORS_BY_FAMILY: Record<Family, string[]> = {
-  NUMERIC: ["between", "=", "!=", ">=", ">", "<=", "<", "in", "not in"],
+  NUMERIC: [
+    "between",
+    "=",
+    "!=",
+    ">=",
+    ">",
+    "<=",
+    "<",
+    "in",
+    "not in",
+    "is positive",
+    "is negative",
+    "is non-negative",
+    "is a whole number",
+    "is a multiple of",
+    "passes luhn check",
+  ],
   TEXTUAL: [
     "equals",
     "not equals",
@@ -49,13 +70,40 @@ export const OPERATORS_BY_FAMILY: Record<Family, string[]> = {
     "in",
     "not in",
     "matches regex",
+    "does not match regex",
+    "has length",
+    "is longer than",
+    "is shorter than",
+    "length between",
+    "is not empty",
+    "is empty",
+    "contains only digits",
+    "is uppercase",
+    "is lowercase",
+    "is a valid uuid",
+    "is a valid ipv4",
+    "passes luhn check",
     "has leading or trailing whitespace",
     "has no leading or trailing whitespace",
     ...VALIDITY_OPS,
+    "has positive sentiment",
+    "has negative sentiment",
   ],
-  TEMPORAL: ["on or after", "on or before", "after", "before", "between", "is in last", "=", "!="],
+  TEMPORAL: [
+    "on or after",
+    "on or before",
+    "after",
+    "before",
+    "between",
+    "is in last",
+    "is in the future",
+    "is in the past",
+    "is today",
+    "=",
+    "!=",
+  ],
   BOOLEAN: ["is true", "is false"],
-  ANY: ["is null", "is not null", "=", "!=", "in", "not in"],
+  ANY: ["is null", "is not null", "=", "!=", "in", "not in", "is not empty", "is empty"],
 };
 
 // Ordered by how often a DQ steward reaches for them.
@@ -152,18 +200,57 @@ const NONE_OPS = new Set([
   "is false",
   "has leading or trailing whitespace",
   "has no leading or trailing whitespace",
+  // Valueless validators / predicates added to the catalog — each is a
+  // self-contained SQL test against the column alone (no operand).
+  "is not empty",
+  "is empty",
+  "contains only digits",
+  "is uppercase",
+  "is lowercase",
+  "is a valid uuid",
+  "is a valid ipv4",
+  "passes luhn check",
+  "is positive",
+  "is negative",
+  "is non-negative",
+  "is a whole number",
+  "is in the future",
+  "is in the past",
+  "is today",
+  "has positive sentiment",
+  "has negative sentiment",
 ]);
 const TYPE_PICKER_OPS = new Set(VALIDITY_OPS);
+
+// Operators whose operand is a NUMBER even though the column is TEXTUAL
+// (length comparisons, multiple-of). Without this they'd fall through to the
+// TEXTUAL text-input default and offer a text box for a numeric threshold.
+const NUMBER_VALUE_OPS = new Set(["has length", "is longer than", "is shorter than", "is a multiple of"]);
 
 export function valueCellShape(operator: string, family: Family): ValueCellShape {
   if (NONE_OPS.has(operator)) return { kind: "none" };
   if (TYPE_PICKER_OPS.has(operator)) return { kind: "type-picker" };
-  if (operator === "between") return { kind: "double" };
+  if (operator === "between" || operator === "length between") return { kind: "double" };
   if (operator === "in" || operator === "not in") return { kind: "chip" };
   if (operator === "is in last") return { kind: "interval" };
+  if (NUMBER_VALUE_OPS.has(operator)) return { kind: "single", type: "number" };
   if (family === "NUMERIC") return { kind: "single", type: "number" };
   if (family === "TEMPORAL") return { kind: "single", type: "date" };
   return { kind: "single", type: "text" };
+}
+
+/**
+ * Whether *operator* is offered for a column of *family* — i.e. it appears in
+ * that family's operator list OR the universal (ANY) list. Used to detect when
+ * changing a column's data type would strand an already-picked operator that
+ * the new type doesn't support (e.g. "contains" on a column retyped to
+ * numeric). A "type it as ANY" family accepts every operator.
+ */
+export function operatorValidForFamily(operator: string, family: Family): boolean {
+  if (family === "ANY") {
+    return Object.values(OPERATORS_BY_FAMILY).some((ops) => ops.includes(operator));
+  }
+  return OPERATORS_BY_FAMILY[family].includes(operator) || OPERATORS_BY_FAMILY.ANY.includes(operator);
 }
 
 export const FAMILY_LABEL: Record<Family, string> = {
@@ -173,3 +260,47 @@ export const FAMILY_LABEL: Record<Family, string> = {
   BOOLEAN: "Boolean",
   ANY: "Any",
 };
+
+// Operators whose scalar operand(s) are compiled via `valueSql()` in
+// `lowcodeCompile.ts`'s `rowSql` — i.e. the compiler honours a ColumnRefValue
+// and emits a `{{slot}}` reference instead of a quoted literal. The two MUST
+// stay in sync: adding an operator to `rowSql` that calls `valueSql()` requires
+// a matching addition here, and vice versa.
+//
+// Operators NOT in this set are compiled with `quote()` / `likeLiteral()` which
+// stringify any object value as `[object Object]` — so we must prevent the user
+// from entering a column reference into those value cells.
+const COLUMN_REF_ALLOWED_OPS = new Set<string>([
+  // Arithmetic comparisons
+  "=",
+  "!=",
+  "<",
+  "<=",
+  ">",
+  ">=",
+  // Textual aliases
+  "equals",
+  "not equals",
+  // Temporal aliases (compile to <, >, <=, >= via valueSql)
+  "before",
+  "after",
+  "on or before",
+  "on or after",
+  // Range — bounds are each passed through valueSql
+  "between",
+  "length between",
+  // Set membership — each entry is passed through valueSql
+  "in",
+  "not in",
+]);
+
+/**
+ * Whether *operator*'s value operand(s) are compiled via `valueSql()` in
+ * `lowcodeCompile.ts`, meaning a ColumnRefValue (`{ $col }`) is honoured and
+ * emits a `{{slot}}` SQL reference. When false the compiler uses `quote()` /
+ * `likeLiteral()`, which stringify an object as `[object Object]` — so the UI
+ * must not offer the column-reference picker for those operators.
+ */
+export function operatorAllowsColumnRef(operator: string): boolean {
+  return COLUMN_REF_ALLOWED_OPS.has(operator);
+}

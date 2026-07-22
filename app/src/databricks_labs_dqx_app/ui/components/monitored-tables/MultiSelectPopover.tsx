@@ -38,6 +38,9 @@ interface MultiSelectPopoverProps {
   disabled?: boolean;
   emptyText: string;
   disabledHint?: string;
+  /** When true, behaves as a single-select: no checkboxes, no select-all,
+   *  selecting an item always replaces the selection and closes the popover. */
+  single?: boolean;
 }
 
 /**
@@ -57,6 +60,7 @@ export function MultiSelectPopover({
   disabled,
   emptyText,
   disabledHint,
+  single = false,
 }: MultiSelectPopoverProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -109,9 +113,11 @@ export function MultiSelectPopover({
   // multi-select by row-clicking doesn't collapse it down to one. Keyboard
   // Enter goes through this same handler (cmdk's `onSelect` fires for both
   // click and Enter), so the two stay consistent by construction.
+  // In `single` mode this always replaces-and-closes regardless of how many
+  // items are already selected.
   const selectRow = (o: MultiSelectOption) => {
     if (o.disabled) return;
-    if (selected.length > 1) {
+    if (!single && selected.length > 1) {
       toggle(o);
       return;
     }
@@ -263,22 +269,26 @@ export function MultiSelectPopover({
                   </CommandEmpty>
                   {filteredOptions.length > 0 && (
                     <CommandGroup>
-                      <CommandItem onSelect={toggleSelectAll} className="border-b rounded-none">
-                        <Checkbox checked={selectAllState} className="shrink-0 pointer-events-none" />
-                        <span className="text-xs text-muted-foreground">
-                          {t("monitoredTables.wizard.selectAllVisible")}
-                        </span>
-                      </CommandItem>
+                      {/* Select-all row is hidden in single mode — there's
+                          nothing to multi-select and the affordance would be
+                          confusing. */}
+                      {!single && (
+                        <CommandItem onSelect={toggleSelectAll} className="border-b rounded-none">
+                          <Checkbox checked={selectAllState} className="shrink-0 pointer-events-none" />
+                          <span className="text-xs text-muted-foreground">
+                            {t("monitoredTables.wizard.selectAllVisible")}
+                          </span>
+                        </CommandItem>
+                      )}
                       {filteredOptions.map((o) => {
                         const isSelected = selectedSet.has(o.value) || !!o.disabled;
                         // Interaction matrix (mouse and Enter are kept
                         // consistent — both end up calling `selectRow`,
                         // since cmdk fires `onSelect` for either):
-                        //   - Click the checkbox itself: always toggles that
-                        //     one option and keeps the popover open, no
-                        //     matter how many are already selected — this is
-                        //     the explicit "building a multi-selection" tool,
-                        //     so it never auto-closes.
+                        //   - Click the checkbox itself (multi mode only):
+                        //     always toggles that one option and keeps the
+                        //     popover open — the explicit "building a
+                        //     multi-selection" tool, so it never auto-closes.
                         //   - Click the row label / press Enter while it's
                         //     highlighted, with 0 or 1 option(s) currently
                         //     selected: replaces the selection with just this
@@ -286,17 +296,14 @@ export function MultiSelectPopover({
                         //     single-pick case shouldn't need a second
                         //     dismissal click.
                         //   - Same row-label/Enter gesture, but >1 option
-                        //     already selected: falls back to plain
-                        //     toggle-and-stay-open (matches dqlake's
-                        //     multi-select `Command` behavior, e.g.
-                        //     `GroupByField`), so row-clicking to extend an
-                        //     existing multi-selection doesn't collapse it
-                        //     down to one.
-                        // Disabled (already-monitored) rows are unselectable
-                        // via keyboard, click, or the checkbox — cmdk skips
-                        // `disabled` items during arrow-key navigation and
-                        // never fires `onSelect` for them, and `toggle`/
-                        // `selectRow` both no-op on `o.disabled`.
+                        //     already selected (multi mode only): falls back
+                        //     to plain toggle-and-stay-open (matches dqlake's
+                        //     multi-select `Command` behavior).
+                        //   - In `single` mode: always replaces-and-closes
+                        //     regardless of current selection count.
+                        // Disabled rows are unselectable via keyboard, click,
+                        // or the checkbox — cmdk skips `disabled` items during
+                        // arrow-key navigation.
                         const item = (
                           <CommandItem
                             key={o.value}
@@ -305,21 +312,25 @@ export function MultiSelectPopover({
                             onSelect={() => selectRow(o)}
                             className={cn(o.disabled ? "opacity-70" : undefined, isSelected && "bg-primary/10")}
                           >
-                            <Checkbox
-                              checked={isSelected}
-                              disabled={o.disabled}
-                              className="shrink-0"
-                              onClick={(e) => {
-                                // Stops the click from bubbling to the
-                                // CommandItem's own `onClick` (cmdk's
-                                // selection trigger) — the checkbox handles
-                                // its own toggle-and-stay-open semantics
-                                // instead of the row's close-on-single-pick
-                                // behavior above.
-                                e.stopPropagation();
-                                toggle(o);
-                              }}
-                            />
+                            {/* Checkboxes are hidden in single mode — the
+                                radio-style highlight is enough visual feedback. */}
+                            {!single && (
+                              <Checkbox
+                                checked={isSelected}
+                                disabled={o.disabled}
+                                className="shrink-0"
+                                onClick={(e) => {
+                                  // Stops the click from bubbling to the
+                                  // CommandItem's own `onClick` (cmdk's
+                                  // selection trigger) — the checkbox handles
+                                  // its own toggle-and-stay-open semantics
+                                  // instead of the row's close-on-single-pick
+                                  // behavior above.
+                                  e.stopPropagation();
+                                  toggle(o);
+                                }}
+                              />
+                            )}
                             <span className="truncate text-sm" title={o.label}>
                               {o.label}
                             </span>

@@ -68,13 +68,23 @@ function WarehouseWaitTooltip({ show, label, children }: { show: boolean; label:
   );
 }
 
-function AiDisabledTooltip({ disabled, label, children }: { disabled: boolean; label: string; children: React.ReactNode }) {
+function AiDisabledTooltip({
+  disabled,
+  label,
+  children,
+  className,
+}: {
+  disabled: boolean;
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   if (!disabled) return <>{children}</>;
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className="inline-flex">{children}</span>
+          <span className={cn("inline-flex", className)}>{children}</span>
         </TooltipTrigger>
         <TooltipContent>{label}</TooltipContent>
       </Tooltip>
@@ -284,18 +294,6 @@ export function RuleTestPanel({
             {t("ruleTest.tableTest")}
           </button>
         </div>
-        {mode === "adhoc" && (
-          <AiDisabledTooltip disabled={!ai.available} label={ai.reason ?? t("ruleTest.aiDisabled")}>
-            <Button variant="outline" size="sm" onClick={onGenerate} disabled={!ai.available || generating}>
-              {generating ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Sparkles className="mr-1.5 h-3.5 w-3.5" stroke={AI_GRADIENT_URL} />
-              )}
-              {t("ruleTest.generateData")}
-            </Button>
-          </AiDisabledTooltip>
-        )}
       </div>
 
       {mode === "adhoc" ? (
@@ -309,6 +307,26 @@ export function RuleTestPanel({
         />
       ) : (
         <TableTestSource slots={slots} onReady={setTablePayload} />
+      )}
+
+      {/* "Generate test data" sits BETWEEN the manual-entry grid and the Run
+          test button (not off to the side) — the natural step: fill the grid
+          with AI-generated rows, then run. Each control is wrapped in its own
+          block-level flex row so the (inline-flex) buttons stack vertically
+          and left-align instead of floating up beside the grid. */}
+      {mode === "adhoc" && (
+        <div className="flex">
+          <AiDisabledTooltip disabled={!ai.available} label={ai.reason ?? t("ruleTest.aiDisabled")}>
+            <Button variant="outline" onClick={onGenerate} disabled={!ai.available || generating}>
+              {generating ? (
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="mr-1.5 h-4 w-4" stroke={AI_GRADIENT_URL} />
+              )}
+              {t("ruleTest.generateData")}
+            </Button>
+          </AiDisabledTooltip>
+        </div>
       )}
 
       <div className="flex items-center justify-between">
@@ -350,16 +368,22 @@ export function RuleTestPanel({
   );
 }
 
-function SampleSelector({
+export type { SampleKind };
+
+export function SampleSelector({
   kind,
   value,
   onKind,
   onValue,
+  disablePercent = false,
 }: {
   kind: SampleKind;
   value: number;
   onKind: (k: SampleKind) => void;
   onValue: (n: number) => void;
+  /** When true, hides the "percent" unit option so only records/full are available.
+   *  Use in contexts where the underlying setting is rows-only (e.g. draft_sample_limit). */
+  disablePercent?: boolean;
 }) {
   const { t } = useTranslation();
   return (
@@ -386,15 +410,19 @@ function SampleSelector({
               onValue(kind === "percent" ? Math.min(100, Math.max(1, n)) : n);
             }}
           />
-          <Select value={kind} onValueChange={(v) => onKind(v as "records" | "percent")}>
-            <SelectTrigger className="h-8 w-28 text-xs font-normal text-muted-foreground">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="records">{t("ruleTest.records")}</SelectItem>
-              <SelectItem value="percent">{t("ruleTest.percent")}</SelectItem>
-            </SelectContent>
-          </Select>
+          {!disablePercent ? (
+            <Select value={kind} onValueChange={(v) => onKind(v as "records" | "percent")}>
+              <SelectTrigger className="h-8 w-28 text-xs font-normal text-muted-foreground">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="records">{t("ruleTest.records")}</SelectItem>
+                <SelectItem value="percent">{t("ruleTest.percent")}</SelectItem>
+              </SelectContent>
+            </Select>
+          ) : (
+            <span className="text-xs text-muted-foreground w-28 px-1">{t("ruleTest.records")}</span>
+          )}
         </>
       )}
     </div>

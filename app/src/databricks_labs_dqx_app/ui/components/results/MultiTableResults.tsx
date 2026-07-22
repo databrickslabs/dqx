@@ -25,6 +25,7 @@ import { CollapseRegion } from "@/components/results/CollapseRegion";
 import { ScoreTrendChart, type OverallStep } from "@/components/results/ScoreTrendChart";
 import { DimensionBreakdown, TruncatedText } from "@/components/results/DimensionBreakdown";
 import { FilterChips } from "@/components/results/FilterChips";
+import { ResultsFacetFilter, type FacetFilterOption } from "@/components/results/ResultsFacetFilters";
 import { FailingRecordsTable } from "@/components/results/FailingRecordsTable";
 import { DownloadFailedRecordsMenu } from "@/components/results/DownloadFailedRecordsMenu";
 import {
@@ -46,6 +47,7 @@ import {
   type Facet,
   type MultiFilters,
 } from "@/components/monitored-tables/BindingResultsTab";
+import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 
 // The multi-table results composition, extracted from the reviewed
 // `components/data-products/ProductResultsTab.tsx` (itself a 1:1 port of
@@ -142,6 +144,25 @@ export const DULL_TABLE_COLORS = [
 /** Friendly table name = last segment of the `catalog.schema.table` FQN. */
 export function friendlyTableName(fqn: string | null | undefined): string {
   return (fqn ?? "").split(".").pop() ?? "";
+}
+
+/** Catalog part of a `catalog.schema.table` FQN (mirrors backend catalog_of). */
+export function catalogOfFqn(fqn: string | null | undefined): string {
+  return (fqn ?? "").split(".")[0] ?? "";
+}
+
+/** Two-part `catalog.schema` identity of an FQN (mirrors backend schema_of):
+ *  unambiguous across catalogs. Empty when the FQN has fewer than two parts. */
+export function schemaOfFqn(fqn: string | null | undefined): string {
+  const parts = (fqn ?? "").split(".");
+  return parts.length >= 2 ? `${parts[0]}.${parts[1]}` : "";
+}
+
+/** Display name for a schema identity = its bare schema segment (the part
+ *  after the catalog); the catalog is shown by its own chip/filter. */
+export function friendlySchemaName(schemaIdentity: string): string {
+  const parts = schemaIdentity.split(".");
+  return parts.length >= 2 ? parts[1] : schemaIdentity;
 }
 
 /** Distinct per-table series names (first-seen order), each given a stable
@@ -242,6 +263,8 @@ const CHIP_LABEL_KEYS: Record<Facet, string> = {
   rule: "resultsUi.chipRule",
   column: "resultsUi.chipColumn",
   table: "resultsUi.chipTable",
+  catalog: "resultsUi.chipCatalog",
+  schema: "resultsUi.chipSchema",
 };
 
 export interface MultiTableResultsSectionProps {
@@ -293,6 +316,14 @@ export interface MultiTableResultsSectionProps {
    *  omitted = newest (no cap). Only the table-space tab supplies it (it
    *  owns the RunPicker); the global and rule surfaces omit it. */
   asOfBatch?: string | null;
+  /** Item 35: when true, a row of top-level facet dropdowns (Tables /
+   *  Dimensions / Severities / Rules / Columns) renders just below the score
+   *  card, letting the viewer filter the whole surface without hunting through
+   *  the breakdown boxes. Only the Global Results page passes this — the
+   *  per-object surfaces keep their scope implicit. The dropdown options are
+   *  derived from the BASE (unfiltered) breakdown rows so the choice list is
+   *  the full facet universe regardless of the active filter. */
+  showTopLevelFilters?: boolean;
 }
 
 /**
@@ -313,8 +344,13 @@ export function MultiTableResultsSection({
   onBaseByTable,
   reviewStatusRunId,
   asOfBatch,
+  showTopLevelFilters,
 }: MultiTableResultsSectionProps) {
   const { t } = useTranslation();
+  // Belt-and-suspenders: the backend returns no breaches when the feature is
+  // disabled (Task 2), but we also hide all breach UI client-side to avoid
+  // any stale-cache flash when the setting was recently changed.
+  const thresholdEnabled = usePassThresholdEnabled();
   // Published-only surfaces (hideRunMode) never send `include_drafts`,
   // regardless of the controlled prop — the dropdown that would flip it is
   // suppressed, so this just hard-guards the query params too.
@@ -399,9 +435,21 @@ export function MultiTableResultsSection({
     filters.severity.length > 0 ||
     filters.rule.length > 0 ||
     filters.column.length > 0 ||
-    filters.table.length > 0;
+    filters.table.length > 0 ||
+    filters.catalog.length > 0 ||
+    filters.schema.length > 0;
 
-  const accessibleTableCount = (baseResults?.by_table ?? []).length;
+  // The score label's "against N tables" count reflects the CURRENT scope:
+  // when any facet is active it counts the tables actually in the filtered
+  // result (so narrowing catalog/schema/table live-updates N), falling back to
+  // the full accessible set when nothing is filtered. by_table self-excludes
+  // the table facet, so re-apply it here the same way sumTestCounts does.
+  const filteredTableRows = (results?.by_table ?? []).filter(
+    (g) => filters.table.length === 0 || (g.label != null && filters.table.includes(g.label)),
+  );
+  const accessibleTableCount = hasActiveFilter
+    ? filteredTableRows.length
+    : (baseResults?.by_table ?? []).length;
   // By table shows the FRIENDLY table name (last FQN segment), so the selection
   // is keyed on that. Map it back to the full FQN to resolve the table.
   const fqnByFriendly = new Map(
@@ -493,6 +541,8 @@ export function MultiTableResultsSection({
       rule_count: g.rule_count ?? null,
       check_count: g.check_count ?? null,
       total_tests: g.total_tests ?? null,
+      breached: g.breached ?? false,
+      breach_criticality: g.breach_criticality ?? null,
     }));
 
   // Registry order for the By dimension / By severity default sort: dimensions
@@ -542,6 +592,25 @@ export function MultiTableResultsSection({
   const dimFacet = buildFacet(results?.by_dimension, baseResults?.by_dimension);
   const sevFacet = buildFacet(results?.by_severity, baseResults?.by_severity);
   const ruleFacet = buildFacet(results?.by_rule, baseResults?.by_rule);
+  // By table honors the Applicable/All toggle like every other facet box:
+  // Applicable hides rows excluded by the active chips; All keeps the base
+  // rows and greys the excluded ones (with their base numbers + breach icon),
+  // so a breached-but-filtered-out table still surfaces. Its labels are
+  // remapped to the friendly (last-segment) name at render, so the muted-label
+  // set is remapped the same way to stay matched.
+  const tableFacet = buildFacet(results?.by_table, baseResults?.by_table);
+
+  // Rule name → breach criticality for the failing-records cell hover's ⚠.
+  // Keyed by the by_rule row label (what failures carry as rule_name); only
+  // breached rows contribute; suppressed when the threshold feature is off.
+  const breachedRuleCriticality: Record<string, string> = {};
+  if (thresholdEnabled) {
+    for (const r of [...(baseResults?.by_rule ?? []), ...(results?.by_rule ?? [])]) {
+      if (r.breached && r.label && (r.breach_criticality === "error" || r.breach_criticality === "warn")) {
+        breachedRuleCriticality[r.label] = r.breach_criticality;
+      }
+    }
+  }
   // By column rows come from the selected table (empty until picked).
   const tableColRows = selectedTable
     ? toRows(tableColumnsQuery.data?.data?.by_column)
@@ -555,21 +624,118 @@ export function MultiTableResultsSection({
   const chipDisplay = (facet: Facet, value: string) => {
     if (facet === "rule") return ruleChipDisplay(value, ruleChipRows);
     if (facet === "table") return friendlyTableName(value);
+    // Schema chips show the bare schema name (the catalog has its own chip).
+    if (facet === "schema") return friendlySchemaName(value);
     return value;
   };
-  const chips = (["dimension", "severity", "rule", "column", "table"] as const).flatMap(
-    (facet) =>
-      filters[facet].map((value) => ({
-        key: `${facet}:${value}`,
-        label: t(CHIP_LABEL_KEYS[facet], { value: chipDisplay(facet, value) }),
-      })),
+  const chips = (
+    ["dimension", "severity", "rule", "column", "table", "catalog", "schema"] as const
+  ).flatMap((facet) =>
+    filters[facet].map((value) => ({
+      key: `${facet}:${value}`,
+      label: t(CHIP_LABEL_KEYS[facet], { value: chipDisplay(facet, value) }),
+    })),
   );
+
+  // Item 35: option lists for the top-level Global Results filter dropdowns.
+  // Derived from the BASE (unfiltered) breakdown rows so the choice universe
+  // is the full facet set regardless of the active filter. Tables carry the
+  // FQN as value but display the friendly (last-segment) name; rules key on
+  // their registry rule identity (rule_id when present) and display the label.
+  // Deduped + sorted by display label for a stable, scannable list.
+  const dedupeSortOptions = (opts: FacetFilterOption[]): FacetFilterOption[] => {
+    const byValue = new Map<string, FacetFilterOption>();
+    for (const o of opts) {
+      if (o.value && !byValue.has(o.value)) byValue.set(o.value, o);
+    }
+    return [...byValue.values()].sort((a, b) => a.label.localeCompare(b.label));
+  };
+  // Every accessible table FQN (base by_table row set) — the universe the
+  // catalog → schema → table dropdowns are derived and cascaded from.
+  const allTableFqns = (baseResults?.by_table ?? [])
+    .map((g) => g.label)
+    .filter((l): l is string => l != null);
+  const selectedCatalogs = new Set(filters.catalog);
+  const selectedSchemas = new Set(filters.schema);
+  // Catalog options: every distinct catalog. Schema options: narrowed to the
+  // selected catalog(s) (all catalogs when none picked). Table options:
+  // narrowed to the selected catalog(s) AND schema(s). This is the hierarchical
+  // cascade — a narrower level's option list only offers what the wider levels
+  // allow, matching the discovery browser's catalog → schema → table flow.
+  const catalogFilterOptions = dedupeSortOptions(
+    allTableFqns.map((fqn) => ({ value: catalogOfFqn(fqn), label: catalogOfFqn(fqn) })),
+  );
+  const schemaFilterOptions = dedupeSortOptions(
+    allTableFqns
+      .filter((fqn) => selectedCatalogs.size === 0 || selectedCatalogs.has(catalogOfFqn(fqn)))
+      .map((fqn) => ({ value: schemaOfFqn(fqn), label: friendlySchemaName(schemaOfFqn(fqn)) })),
+  );
+  const tableFilterOptions = dedupeSortOptions(
+    allTableFqns
+      .filter((fqn) => selectedCatalogs.size === 0 || selectedCatalogs.has(catalogOfFqn(fqn)))
+      .filter((fqn) => selectedSchemas.size === 0 || selectedSchemas.has(schemaOfFqn(fqn)))
+      .map((fqn) => ({ value: fqn, label: friendlyTableName(fqn) })),
+  );
+  const ruleFilterOptions = dedupeSortOptions(
+    (baseResults?.by_rule ?? [])
+      .map((g) => {
+        const value = ruleFacetValue(g);
+        if (value == null) return null;
+        return { value, label: g.label ?? value };
+      })
+      .filter((o): o is FacetFilterOption => o != null),
+  );
+
+  // Setting the Tables dropdown drives the `table` facet directly (multi-select
+  // filter). It intentionally does NOT touch `selectedTable` — that single
+  // selection (from a By-table row click) still owns the invalid-samples /
+  // By-column drilldown; picking multiple tables here just scopes the shared
+  // breakdowns/trends. Clearing the dropdown to empty also clears any lingering
+  // single selection so the two never disagree.
+  const onTableFilterChange = (values: string[]) => {
+    setFilters((f) => ({ ...f, table: values }));
+    if (values.length === 0) setSelectedTable(null);
+  };
+  const onFacetFilterChange = (facet: Facet, values: string[]) =>
+    setFilters((f) => ({ ...f, [facet]: values }));
+
+  // Catalog/schema cascade: narrowing a WIDER level prunes any downstream
+  // selection it no longer permits, so the active filters can never disagree
+  // with the (now-narrowed) option lists. Widening (adding a catalog) leaves
+  // downstream picks untouched.
+  const onCatalogFilterChange = (values: string[]) => {
+    const allow = new Set(values);
+    setFilters((f) => {
+      const keepSchema = allow.size === 0 ? f.schema : f.schema.filter((s) => allow.has(catalogOfFqn(s)));
+      const keepTable = allow.size === 0 ? f.table : f.table.filter((t) => allow.has(catalogOfFqn(t)));
+      if (keepTable.length === 0) setSelectedTable(null);
+      return { ...f, catalog: values, schema: keepSchema, table: keepTable };
+    });
+  };
+  const onSchemaFilterChange = (values: string[]) => {
+    const allow = new Set(values);
+    setFilters((f) => {
+      const keepTable = allow.size === 0 ? f.table : f.table.filter((t) => allow.has(schemaOfFqn(t)));
+      if (keepTable.length === 0) setSelectedTable(null);
+      return { ...f, schema: values, table: keepTable };
+    });
+  };
 
   const onRemoveChip = (key: string) => {
     const [facet, value] = key.split(/:(.+)/) as [Facet, string];
     // The table facet mirrors the invalid-samples selection — removing its
     // chip clears both, exactly like re-clicking the selected By table row.
     if (facet === "table") setSelectedTable(null);
+    // Catalog/schema chips route through the cascade handlers so removing a
+    // wider level also prunes the downstream picks it no longer permits.
+    if (facet === "catalog") {
+      onCatalogFilterChange(filters.catalog.filter((v) => v !== value));
+      return;
+    }
+    if (facet === "schema") {
+      onSchemaFilterChange(filters.schema.filter((v) => v !== value));
+      return;
+    }
     setFilters((f) => toggleFacet(f, facet, value));
   };
 
@@ -606,6 +772,28 @@ export function MultiTableResultsSection({
   const perTable = toTrendSeries(trends?.trend_by_table);
   const tableColorMap = buildTableColorMap(trends?.trend_by_table);
   const overallPoints = computeOverallPoints(trends?.trend);
+
+  // Breach markers for the overall trend chart: one entry per breaching point
+  // on the entity-level `trend` (the overall average). Null/non-"error"/"warn"
+  // criticalities are filtered out so only real breaches render a marker.
+  // Suppressed entirely when the pass-threshold feature is disabled.
+  const overallBreachMarkers = thresholdEnabled
+    ? (trends?.trend ?? []).flatMap((p) => {
+        if (!p.breached) return [];
+        const crit = p.breach_criticality;
+        if (crit !== "error" && crit !== "warn") return [];
+        // score = the point's 0–100 y-value (pass_rate * 100) so the ⚠ icon
+        // anchors to the trend line at that run, matching how the series plots.
+        const rate = toNum(p.pass_rate);
+        return [
+          {
+            run_date: String(p.run_date ?? ""),
+            criticality: crit as "error" | "warn",
+            score: rate == null ? null : rate * 100,
+          },
+        ];
+      })
+    : [];
 
   // Series keys are the ENGLISH canonical names — the chart's ordering/legend
   // logic pins on ["Rules","Checks","Tests","Rows"]; do not translate them here.
@@ -646,6 +834,7 @@ export function MultiTableResultsSection({
       totalTests={totalTests}
       info={COUNT_INFO}
       label={scoreLabel(accessibleTableCount)}
+      breachCriticality={thresholdEnabled ? lastTrend?.breach_criticality : null}
     />
   );
 
@@ -666,6 +855,62 @@ export function MultiTableResultsSection({
         </div>
         <div className="sm:pr-2">{scoreBox}</div>
       </FadeIn>
+
+      {/* Item 35: top-level facet dropdowns just below the overall score card
+          (Global Results only). They set the same facet filters the breakdown
+          rows toggle, so they re-scope every trend + breakdown box. Styled to
+          match the overview filter bubbles (shared FILTER_TRIGGER_CLASS). The
+          active-chip row below the drilldown still mirrors the selection, so a
+          filter set here is also removable there.
+
+          Order is the discovery hierarchy — catalog → schema → table → rule.
+          Catalog/schema cascade: each narrows the next level's option list.
+          Dimension/severity dropdowns were removed here (still reachable by
+          clicking a By-dimension / By-severity breakdown row). Column is
+          absent — columns are table-specific (only populated once a single
+          table is selected), so there is no cross-table column universe. */}
+      {showTopLevelFilters && (
+        <FadeIn delay={0.04}>
+          <div className="flex flex-wrap items-center gap-2">
+            <ResultsFacetFilter
+              allLabel={t("resultsUi.filterAllCatalogs")}
+              options={catalogFilterOptions}
+              selected={filters.catalog}
+              onChange={onCatalogFilterChange}
+              searchPlaceholder={t("resultsUi.filterSearchCatalogs")}
+              emptyText={t("resultsUi.filterNoCatalogs")}
+              ariaLabel={t("resultsUi.filterAllCatalogs")}
+            />
+            <ResultsFacetFilter
+              allLabel={t("resultsUi.filterAllSchemas")}
+              options={schemaFilterOptions}
+              selected={filters.schema}
+              onChange={onSchemaFilterChange}
+              searchPlaceholder={t("resultsUi.filterSearchSchemas")}
+              emptyText={t("resultsUi.filterNoSchemas")}
+              ariaLabel={t("resultsUi.filterAllSchemas")}
+            />
+            <ResultsFacetFilter
+              allLabel={t("resultsUi.filterAllTables")}
+              options={tableFilterOptions}
+              selected={filters.table}
+              onChange={onTableFilterChange}
+              searchPlaceholder={t("resultsUi.filterSearchTables")}
+              emptyText={t("resultsUi.filterNoTables")}
+              ariaLabel={t("resultsUi.filterAllTables")}
+            />
+            <ResultsFacetFilter
+              allLabel={t("resultsUi.filterAllRules")}
+              options={ruleFilterOptions}
+              selected={filters.rule}
+              onChange={(v) => onFacetFilterChange("rule", v)}
+              searchPlaceholder={t("resultsUi.filterSearchRules")}
+              emptyText={t("resultsUi.filterNoRules")}
+              ariaLabel={t("resultsUi.filterAllRules")}
+            />
+          </div>
+        </FadeIn>
+      )}
 
       {/* B2-8: the pinned run's review status in its own full-width
           INTERACTABLE card between the score and the over-time trend (the
@@ -688,6 +933,7 @@ export function MultiTableResultsSection({
               overall={overallPoints}
               overallLabel={t("resultsUi.averageSeries")}
               title={t("resultsUi.averageDqScoreTitle")}
+              breachMarkers={overallBreachMarkers}
             />
           </ChartFrame>
           <div className="grid gap-6 md:grid-cols-2">
@@ -767,6 +1013,7 @@ export function MultiTableResultsSection({
               colorMap={dimColors}
               selected={filters.dimension}
               onSelect={(label) => onRowToggle("dimension", label)}
+              breachEnabled={thresholdEnabled}
             />
             <DimensionBreakdown
               title={t("resultsUi.bySeverityTitle")}
@@ -777,6 +1024,7 @@ export function MultiTableResultsSection({
               colorMap={sevColors}
               selected={filters.severity}
               onSelect={(label) => onRowToggle("severity", label)}
+              breachEnabled={thresholdEnabled}
             />
             {!hideRuleBreakdown && (
               <div className="md:col-span-2" data-testid="breakdown-by-rule">
@@ -794,6 +1042,7 @@ export function MultiTableResultsSection({
                   collapsed={!ruleColOpen}
                   onToggleCollapse={() => setRuleColOpen((o) => !o)}
                   pageSize={8}
+                  breachEnabled={thresholdEnabled}
                   // The rule NAME navigates to that registry rule's detail
                   // (only for rows with a genuine registry rule_id); clicking
                   // elsewhere on the row still toggles the rule facet — the
@@ -818,7 +1067,7 @@ export function MultiTableResultsSection({
               <DimensionBreakdown
                 title={t("resultsUi.byTableTitle")}
                 valueHeader={t("resultsUi.tableHeader")}
-                rows={toRows(results?.by_table).map((r) => ({
+                rows={tableFacet.rows.map((r) => ({
                   ...r,
                   label: r.label == null ? null : friendlyTableName(r.label),
                   // Selection is keyed on the friendly name (see
@@ -826,10 +1075,14 @@ export function MultiTableResultsSection({
                   // fall back to the friendly label, not the full FQN.
                   value: null,
                 }))}
+                // Muted labels come back as FQNs; remap to the friendly name
+                // so they match the remapped row labels above.
+                mutedLabels={tableFacet.mutedLabels.map((l) => friendlyTableName(l))}
                 loading={breakdownRefetching}
                 selected={selectedTable ? [selectedTable] : []}
                 onSelect={onTableSelect}
                 pageSize={8}
+                breachEnabled={thresholdEnabled}
                 // The table NAME navigates to that monitored table's Results
                 // tab (rows with a binding); clicking elsewhere on the row
                 // still drives the invalid-samples selection / table facet —
@@ -869,6 +1122,7 @@ export function MultiTableResultsSection({
                 onSelect={(label) => onRowToggle("column", label)}
                 collapsed={!ruleColOpen}
                 onToggleCollapse={() => setRuleColOpen((o) => !o)}
+                breachEnabled={thresholdEnabled}
               />
             </div>
           </div>
@@ -922,6 +1176,7 @@ export function MultiTableResultsSection({
                     severityColors={sevColors}
                     severityRanks={sevRanks}
                     dimensionColors={dimColors}
+                    breachedRuleCriticality={breachedRuleCriticality}
                   />
                 )}
               </CollapseRegion>

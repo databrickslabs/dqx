@@ -152,3 +152,43 @@ class TestIgnoresDescriptiveMetadataAndLifecycle:
         rule_a = _native_rule(status="draft", steward="alice@x.com")
         rule_b = _native_rule(status="approved", steward="bob@x.com", version=3, is_builtin=True)
         assert compute_registry_rule_fingerprint(rule_a) == compute_registry_rule_fingerprint(rule_b)
+
+
+class TestFilterInFingerprint:
+    """Task 5: filter field must be included in the fingerprint so a
+    filter-only edit registers as a content change (modified-since-publish)."""
+
+    def test_filter_none_vs_set_different_fingerprints(self):
+        rule_no_filter = _native_rule(definition=RuleDefinition(
+            body={"function": "is_not_null", "arguments": {"column": "{{column}}"}},
+            slots=[RuleSlot(name="column", family="any", position=0)],
+            filter=None,
+        ))
+        rule_with_filter = _native_rule(definition=RuleDefinition(
+            body={"function": "is_not_null", "arguments": {"column": "{{column}}"}},
+            slots=[RuleSlot(name="column", family="any", position=0)],
+            filter="amount > 0",
+        ))
+        assert compute_registry_rule_fingerprint(rule_no_filter) != compute_registry_rule_fingerprint(rule_with_filter)
+
+    def test_different_filters_different_fingerprints(self):
+        rule_a = _native_rule(definition=RuleDefinition(
+            body={"function": "is_not_null", "arguments": {}},
+            filter="amount > 0",
+        ))
+        rule_b = _native_rule(definition=RuleDefinition(
+            body={"function": "is_not_null", "arguments": {}},
+            filter="status = 'active'",
+        ))
+        assert compute_registry_rule_fingerprint(rule_a) != compute_registry_rule_fingerprint(rule_b)
+
+    def test_same_filter_same_fingerprint(self):
+        rule_a = _native_rule(definition=RuleDefinition(
+            body={"function": "is_not_null", "arguments": {}},
+            filter="amount > 0",
+        ))
+        rule_b = _native_rule(definition=RuleDefinition(
+            body={"function": "is_not_null", "arguments": {}},
+            filter="amount > 0",
+        ))
+        assert compute_registry_rule_fingerprint(rule_a) == compute_registry_rule_fingerprint(rule_b)

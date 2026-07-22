@@ -17,6 +17,12 @@ import {
   useGetDataProductReviewChanges,
   useGetRuleHistory,
 } from "@/lib/api";
+import { useLabelDefinitions } from "@/lib/api-custom";
+import {
+  buildDqxCheckJson,
+  severityValueCriticality,
+  type MaterializableRule,
+} from "@/lib/registry-rule-conversion";
 
 /**
  * Shared previous-vs-proposed change-diff popout for the Drafts & Review
@@ -128,8 +134,8 @@ function DiffLine({ cell }: { cell: DiffCell | null }) {
     <div
       className={cn(
         "w-full h-[1.125rem] leading-[1.125rem] whitespace-pre border-l-2",
-        cell.tag === "removed" && "bg-destructive/10 border-destructive/50",
-        cell.tag === "added" && "bg-emerald-500/10 border-emerald-500/50",
+        cell.tag === "removed" && "bg-red-500/20 border-red-500/60",
+        cell.tag === "added" && "bg-emerald-500/20 border-emerald-500/60",
         cell.tag === "equal" && "border-transparent",
       )}
     >
@@ -350,7 +356,15 @@ export interface RegistryDiffTarget {
   ruleId: string;
   name: string;
   version: number;
-  definition: unknown;
+  /**
+   * The LIVE (proposed) rule, carrying everything :func:`buildDqxCheckJson`
+   * needs to render its fully-materialized check dict — mode, polarity,
+   * structured definition, and tag user_metadata. Rendering the materialized
+   * check (not the trimmed structured `definition`) makes the rule diff show
+   * every field — function, arguments, criticality, name, message, tags —
+   * exactly like the monitored-table diff does (bug-bash-v4 item 43).
+   */
+  proposed: MaterializableRule;
 }
 
 export function RegistryRuleDiffDialog({
@@ -365,20 +379,53 @@ export function RegistryRuleDiffDialog({
   const { data, isLoading, isError } = useListRegistryRuleVersions(target?.ruleId ?? "", {
     query: { enabled },
   });
+  // The rendered `criticality` honours the admin-edited severity -> criticality
+  // mapping (config page), matching the "View JSON" dialog and the materializer.
+  const { data: labelDefsData } = useLabelDefinitions();
+  const severityCriticality = useMemo(
+    () => severityValueCriticality(labelDefsData?.definitions),
+    [labelDefsData],
+  );
   const versions = data?.data ?? [];
   const published = useMemo(
     () => (target ? versions.find((v) => v.version === target.version) : undefined),
     [versions, target],
   );
   const hasPrior = !!target && target.version > 0 && !!published;
+
+  // Materialize BOTH sides into the full DQX check dict so every field renders.
+  // The proposed side uses the live rule; the previous side uses the FROZEN
+  // vN snapshot (its own frozen mode/polarity/definition/tags) so a past
+  // version's diff reflects that version's frozen JSON, not live metadata.
+  const proposedCheck = useMemo(
+    () => (target ? buildDqxCheckJson(target.proposed, severityCriticality) : {}),
+    [target, severityCriticality],
+  );
+  const previousCheck = useMemo(
+    () =>
+      hasPrior
+        ? buildDqxCheckJson(
+            {
+              mode: published!.mode ?? null,
+              polarity: published!.polarity ?? null,
+              definition: published!.definition,
+              user_metadata: published!.user_metadata,
+            },
+            severityCriticality,
+            target?.proposed.mode ?? undefined,
+          )
+        : null,
+    [hasPrior, published, severityCriticality, target],
+  );
+
   return (
     <ChangeDiffDialog
       open={enabled}
       onOpenChange={(o) => !o && onClose()}
       title={t("rulesDrafts.diff.title")}
       itemName={target?.name ?? ""}
-      previous={hasPrior ? published!.definition : null}
-      proposed={target?.definition ?? {}}
+      previous={previousCheck}
+      proposed={proposedCheck}
       previousLabel={hasPrior ? t("rulesDrafts.diff.versionLabel", { version: target!.version }) : undefined}
       proposedLabel={t("rulesDrafts.diff.proposedDefinition")}
       note={target && !hasPrior ? t("rulesDrafts.diff.rrNoPrior") : null}

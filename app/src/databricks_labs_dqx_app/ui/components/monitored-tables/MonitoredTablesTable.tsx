@@ -8,6 +8,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -340,6 +341,15 @@ export function getMonitoredTablesSortConfig(key: MonitoredTablesSortKey): SortC
 // `dqlake.products.layout.vN` convention).
 const LS_KEY_LAYOUT = "dqx.monitoredTables.layout.v2";
 
+/** Selection state for bulk operations — mirrors `RulesTableSelection` from
+ *  `RulesTable.tsx`. The id field is `binding_id`. */
+export interface MonitoredTablesTableSelection {
+  selectedIds: Set<string>;
+  selectableIds: Set<string>;
+  onToggle: (bindingId: string) => void;
+  onToggleAll: () => void;
+}
+
 export interface MonitoredTablesTableProps {
   /** Rows to render — already filtered, sorted, and paginated by the caller. */
   rows: MonitoredTableSummaryOut[];
@@ -352,6 +362,8 @@ export interface MonitoredTablesTableProps {
   /** Rendered to the left of the "Edit Columns" trigger — the filter row. */
   toolbarExtra?: ReactNode;
   emptyState?: ReactNode;
+  /** When set, renders a leading checkbox column for bulk actions. */
+  selection?: MonitoredTablesTableSelection;
 }
 
 /**
@@ -371,8 +383,15 @@ export function MonitoredTablesTable({
   pendingBindingId,
   toolbarExtra,
   emptyState,
+  selection,
 }: MonitoredTablesTableProps) {
   const { t } = useTranslation();
+  const showSelection = !!selection;
+  const selectableCount = selection?.selectableIds.size ?? 0;
+  const allSelected =
+    showSelection && selectableCount > 0 && selection!.selectedIds.size === selectableCount;
+  const someSelected = showSelection && selection!.selectedIds.size > 0 && !allSelected;
+  const anySelected = showSelection && selection!.selectedIds.size > 0;
 
   const {
     colOrder,
@@ -396,6 +415,7 @@ export function MonitoredTablesTable({
   }
 
   const totalWidth =
+    (showSelection ? 40 : 0) +
     visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0) +
     (hasActions ? ACTIONS_COL_WIDTH : 0);
 
@@ -417,6 +437,7 @@ export function MonitoredTablesTable({
       <div className="overflow-x-auto">
         <Table className="table-fixed" style={{ width: totalWidth, minWidth: totalWidth }}>
           <colgroup>
+            {showSelection && <col style={{ width: 40, minWidth: 40, maxWidth: 40 }} />}
             {visibleKeys.map((k) => (
               <col key={k} style={{ width: colWidths[k] ?? COLUMNS[k].defaultWidth }} />
             ))}
@@ -424,6 +445,16 @@ export function MonitoredTablesTable({
           </colgroup>
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
+              {showSelection && (
+                <TableHead className="w-10 px-2">
+                  <Checkbox
+                    checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                    onCheckedChange={() => selection!.onToggleAll()}
+                    aria-label={t("common.selectAll")}
+                    disabled={selectableCount === 0}
+                  />
+                </TableHead>
+              )}
               {visibleKeys.map((k) => {
                 const def = COLUMNS[k];
                 const width = colWidths[k] ?? def.defaultWidth;
@@ -481,6 +512,26 @@ export function MonitoredTablesTable({
               const busy = pendingBindingId === bindingId;
               return (
                 <TableRow key={bindingId} className="group cursor-pointer" onClick={() => onRowClick(r)}>
+                  {showSelection && (
+                    <TableCell
+                      className="w-10 p-2 align-middle"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {selection!.selectableIds.has(bindingId) ? (
+                        <Checkbox
+                          checked={selection!.selectedIds.has(bindingId)}
+                          onCheckedChange={() => selection!.onToggle(bindingId)}
+                          aria-label={t("monitoredTables.selectRowAria", { name: r.table.table_fqn })}
+                          className={cn(
+                            "transition-opacity",
+                            !selection!.selectedIds.has(bindingId) &&
+                              !anySelected &&
+                              "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+                          )}
+                        />
+                      ) : null}
+                    </TableCell>
+                  )}
                   {visibleKeys.map((k) => {
                     const width = colWidths[k] ?? COLUMNS[k].defaultWidth;
                     return (

@@ -24,9 +24,11 @@ from datetime import datetime
 import pytest
 
 from databricks_labs_dqx_app.backend.models import TrendPointOut
+from databricks_labs_dqx_app.backend.routes.v1.dq_results import _build_threshold_resolver
 from databricks_labs_dqx_app.backend.services.dq_results_service import (
     CheckResultRow,
     ResultFacets,
+    _breach_criticality,
     _by_rule_rows,
     annotate_trend_versions,
     compute_entity_results,
@@ -48,6 +50,10 @@ def make_row(
     columns: tuple[str, ...] = (),
     rule_id: str | None = None,
     run_mode: str | None = None,
+    error_count: int = 0,
+    warning_count: int = 0,
+    criticality: str | None = None,
+    pass_threshold: int | None = None,
 ) -> CheckResultRow:
     return CheckResultRow(
         table_fqn=fqn,
@@ -61,6 +67,10 @@ def make_row(
         columns=columns,
         rule_id=rule_id,
         run_mode=run_mode,
+        error_count=error_count,
+        warning_count=warning_count,
+        criticality=criticality,
+        pass_threshold=pass_threshold,
     )
 
 
@@ -179,6 +189,43 @@ class TestParseCheckRows:
         assert rows[0].dimension is None
         assert rows[0].rule_id is None
         assert rows[0].columns == ()
+
+    def test_parses_frozen_pass_threshold_as_int(self):
+        # The per-run frozen threshold arrives as a string from the
+        # Statement Execution API; parse tolerates str -> int.
+        rows = parse_check_rows(
+            [
+                {
+                    "input_location": FQN,
+                    "run_id": "r1",
+                    "run_date": "d",
+                    "check_name": "c1",
+                    "error_count": "0",
+                    "warning_count": "0",
+                    "input_row_count": "10",
+                    "pass_threshold": "90",
+                }
+            ]
+        )
+        assert rows[0].pass_threshold == 90
+
+    def test_absent_pass_threshold_is_none(self):
+        # Legacy runs predating the stamp carry no pass_threshold column value.
+        rows = parse_check_rows(
+            [
+                {
+                    "input_location": FQN,
+                    "run_id": "r1",
+                    "run_date": "d",
+                    "check_name": "c1",
+                    "error_count": "0",
+                    "warning_count": "0",
+                    "input_row_count": "10",
+                    "pass_threshold": None,
+                }
+            ]
+        )
+        assert rows[0].pass_threshold is None
 
     def test_malformed_columns_json_degrades_to_empty(self):
         rows = parse_check_rows(
@@ -525,6 +572,50 @@ class TestTableFacet:
     def test_table_facet_counts_as_active(self):
         assert ResultFacets(tables=(FQN,)).any_active()
         assert not ResultFacets().any_active()
+
+
+class TestCatalogSchemaFacets:
+    """The Global Results hierarchical scope (catalog -> schema -> table).
+
+    Unlike the table facet, catalog/schema are NOT self-excluded from the
+    by_table box: narrowing to a catalog/schema is meant to shrink the By
+    table row set too. FQN is ``main.sales.orders`` (catalog ``main``,
+    schema identity ``main.sales``)."""
+
+    OTHER_SCHEMA = "main.ops.events"  # same catalog, different schema
+    OTHER_CATALOG = "prod.sales.orders"  # different catalog
+
+    def _rows(self):
+        return [
+            make_row("c1", failed=10, total=100, dimension="Completeness", rule_id="rule-1"),
+            make_row("c2", failed=20, total=100, fqn=self.OTHER_SCHEMA, dimension="Validity", rule_id="rule-2"),
+            make_row("c3", failed=30, total=100, fqn=self.OTHER_CATALOG, dimension="Accuracy", rule_id="rule-3"),
+        ]
+
+    def test_catalog_facet_restricts_to_that_catalog(self):
+        out = compute_entity_results(self._rows(), ResultFacets(catalogs=("main",)), table_axis="by_table")
+        assert {g.label for g in out.by_table} == {FQN, self.OTHER_SCHEMA}
+
+    def test_schema_facet_restricts_to_that_schema(self):
+        out = compute_entity_results(self._rows(), ResultFacets(schemas=("main.sales",)), table_axis="by_table")
+        assert {g.label for g in out.by_table} == {FQN}
+
+    def test_catalog_and_schema_and_together(self):
+        # main catalog AND main.ops schema -> only the ops table.
+        out = compute_entity_results(
+            self._rows(), ResultFacets(catalogs=("main",), schemas=("main.ops",)), table_axis="by_table"
+        )
+        assert {g.label for g in out.by_table} == {self.OTHER_SCHEMA}
+
+    def test_catalog_facet_is_not_self_excluded_from_by_table(self):
+        # Contrast with the table facet: a catalog chip DOES shrink the By
+        # table box (foreign-catalog rows drop out).
+        out = compute_entity_results(self._rows(), ResultFacets(catalogs=("main",)), table_axis="by_table")
+        assert self.OTHER_CATALOG not in {g.label for g in out.by_table}
+
+    def test_catalog_schema_count_as_active(self):
+        assert ResultFacets(catalogs=("main",)).any_active()
+        assert ResultFacets(schemas=("main.sales",)).any_active()
 
 
 class TestTrends:
@@ -1265,3 +1356,222 @@ class TestByRuleRowsRuleName:
         ]
         groups = _by_rule_rows(rows)
         assert groups[0].label == "a_is_null"
+
+
+class TestBreach:
+    """Per-check breach evaluation + criticality-aware group/run/trend roll-ups.
+
+    A check breaches when its pass rate (``1 - failed/total``) falls below
+    the resolved threshold. Breaches roll up into every drill-down group
+    ("any child breached"), carrying the worst breaching child's DQX
+    criticality (error beats warn). A fixed resolver keeps these tests
+    DB-free.
+    """
+
+    @staticmethod
+    def _resolver(threshold: int):
+        return lambda _row: threshold
+
+    def test_check_below_threshold_breaches_group(self):
+        # 20 failed / 100 -> 80% pass < 90 threshold -> breach.
+        rows = [make_row(check="c1", failed=20, total=100, error_count=20, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is True
+        assert out.by_rule[0].breach_criticality == "error"
+
+    def test_check_at_or_above_threshold_does_not_breach(self):
+        # 10 failed / 100 -> 90% pass, threshold 90 -> pass_rate*100 == threshold, NOT < -> no breach.
+        rows = [make_row(check="c1", failed=10, total=100, error_count=10, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is False
+        assert out.by_rule[0].breach_criticality is None
+
+    def test_exact_tie_does_not_breach_small_counts(self):
+        # 8 failed / 10 -> 20% pass EXACTLY meets a 20 threshold; strict-< means
+        # NOT a breach. Float math ((1 - 8/10)*100 = 19.999...) would wrongly
+        # breach — this pins the integer-arithmetic fix on the small counts
+        # sample-limited draft runs produce.
+        rows = [make_row(check="c1", failed=8, total=10, error_count=8, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(20))
+        assert out.by_rule[0].breached is False
+        assert out.by_rule[0].breach_criticality is None
+
+    def test_just_below_tie_breaches_small_counts(self):
+        # 9 failed / 10 -> 10% pass < 20 threshold -> breach.
+        rows = [make_row(check="c1", failed=9, total=10, error_count=9, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(20))
+        assert out.by_rule[0].breached is True
+        assert out.by_rule[0].breach_criticality == "error"
+
+    def test_warn_criticality_breach_yields_warn(self):
+        rows = [make_row(check="c1", failed=20, total=100, warning_count=20, criticality="warn")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is True
+        assert out.by_rule[0].breach_criticality == "warn"
+
+    def test_none_criticality_defaults_to_error(self):
+        # A check with no criticality attribution defaults to DQX's "error".
+        rows = [make_row(check="c1", failed=20, total=100, error_count=20, criticality=None)]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is True
+        assert out.by_rule[0].breach_criticality == "error"
+
+    def test_mixed_error_and_warn_breaches_yield_error(self):
+        # Two checks share a dimension; one breaches as warn, one as error.
+        rows = [
+            make_row(check="c1", failed=20, total=100, warning_count=20, criticality="warn", dimension="Completeness"),
+            make_row(check="c2", failed=20, total=100, error_count=20, criticality="error", dimension="Completeness"),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_dimension[0].breached is True
+        assert out.by_dimension[0].breach_criticality == "error"
+
+    def test_clean_group_not_breached(self):
+        rows = [
+            make_row(check="c1", failed=0, total=100, criticality="error"),
+            make_row(check="c2", failed=5, total=100, criticality="error"),  # 95% >= 90
+        ]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is False
+        assert out.by_rule[0].breach_criticality is None
+
+    def test_total_zero_never_breaches(self):
+        rows = [make_row(check="c1", failed=0, total=0, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is False
+        assert out.by_rule[0].breach_criticality is None
+
+    def test_total_none_never_breaches(self):
+        rows = [make_row(check="c1", failed=0, total=None, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is False
+        assert out.by_rule[0].breach_criticality is None
+
+    def test_by_column_breach_uses_per_column_threshold_after_explosion(self):
+        # One check maps two columns; on the by-column path the resolver keys
+        # off the EXPLODED single-column row so each column is evaluated with
+        # its own threshold. (Other axes call the resolver with the full row,
+        # so the resolver must tolerate a multi-column row too.)
+        seen_by_column: list[int] = []
+
+        def resolver(row: CheckResultRow) -> int:
+            if len(row.columns) == 1:
+                seen_by_column.append(len(row.columns))
+                return 95 if row.columns[0] == "strict_col" else 50
+            return 0  # multi-column rows (other axes) — never breach here
+
+        rows = [
+            make_row(
+                check="c1", failed=20, total=100, error_count=20, criticality="error", columns=("strict_col", "lax_col")
+            ),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=resolver)
+        by_col = {g.label: g for g in out.by_column}
+        # 80% pass: breaches under 95 (strict_col) but not under 50 (lax_col).
+        assert by_col["strict_col"].breached is True
+        assert by_col["strict_col"].breach_criticality == "error"
+        assert by_col["lax_col"].breached is False
+        assert seen_by_column  # the exploded single-column path was exercised
+
+    def test_run_and_trend_points_carry_breach(self):
+        rows = [
+            make_row(
+                check="c1", failed=20, total=100, error_count=20, criticality="error", run_date="2026-07-01 00:00:00"
+            ),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="tables", resolve_threshold=self._resolver(90))
+        assert out.trend[0].breached is True
+        assert out.trend[0].breach_criticality == "error"
+
+    def test_default_resolver_never_breaches(self):
+        # No resolver passed -> backward-compatible: breach fields stay falsy.
+        rows = [make_row(check="c1", failed=99, total=100, error_count=99, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.by_rule[0].breached is False
+        assert out.by_rule[0].breach_criticality is None
+
+    def test_disabled_resolver_none_no_breach_even_with_failing_checks(self):
+        # Simulates the server-side disable path: dq_results.py passes
+        # resolve_threshold=None when pass_threshold_enabled is False.
+        # Even a 99%-failed check must produce no breach fields.
+        rows = [make_row(check="c1", failed=99, total=100, error_count=99, criticality="error")]
+        out = compute_entity_results(rows, ResultFacets(), resolve_threshold=None)
+        assert out.by_rule[0].breached is False
+        assert out.by_rule[0].breach_criticality is None
+
+
+class TestFrozenThreshold:
+    """The per-run frozen ``pass_threshold`` is the source of truth for a
+    breach verdict — changing the live admin/rule/registry settings must
+    NEVER re-judge a stamped run. Legacy (unstamped) runs fall back to the
+    live precedence chain, preserving today's behaviour.
+    """
+
+    def test_frozen_row_threshold_wins_over_live_admin_default(self):
+        # A run stamped with pass_threshold=90. The resolver is built with a
+        # DIFFERENT live admin default (50). The frozen 90 must be used.
+        resolve = _build_threshold_resolver(
+            admin_default=50,
+            registry_defaults={},
+        )
+        # 15 failed / 100 -> 85% pass. Breaches under 90 (frozen), NOT under 50.
+        stamped = make_row(check="c1", failed=15, total=100, error_count=15, criticality="error", pass_threshold=90)
+        assert resolve(stamped) == 90
+        assert _breach_criticality(stamped, resolve(stamped)) == "error"
+
+    def test_frozen_row_threshold_below_pass_rate_does_not_breach(self):
+        # Same 85%-passing run stamped at 80: 85% >= 80 -> no breach, even
+        # though the live admin default (90) would breach it.
+        resolve = _build_threshold_resolver(
+            admin_default=90,
+            registry_defaults={},
+        )
+        stamped = make_row(check="c1", failed=15, total=100, error_count=15, criticality="error", pass_threshold=80)
+        assert resolve(stamped) == 80
+        assert _breach_criticality(stamped, resolve(stamped)) is None
+
+    def test_frozen_wins_even_over_column_and_rule_overrides(self):
+        # Live overrides (per-column 30, per-rule 40) and registry 60 all lose
+        # to the run's frozen 90 — the stamped verdict is immutable.
+        resolve = _build_threshold_resolver(
+            admin_default=50,
+            registry_defaults={"rule-1": 60},
+            rule_overrides={"rule-1": 40},
+            column_overrides={"rule-1": {"amount": 30}},
+        )
+        stamped = make_row(
+            check="c1",
+            failed=15,
+            total=100,
+            error_count=15,
+            criticality="error",
+            rule_id="rule-1",
+            columns=("amount",),
+            pass_threshold=90,
+        )
+        assert resolve(stamped) == 90
+        assert _breach_criticality(stamped, resolve(stamped)) == "error"
+
+    def test_legacy_unstamped_row_falls_back_to_live_chain(self):
+        # pass_threshold=None -> the resolver computes from the live
+        # precedence chain (per-column -> per-rule -> registry -> admin).
+        resolve = _build_threshold_resolver(
+            admin_default=90,
+            registry_defaults={},
+        )
+        legacy = make_row(check="c1", failed=15, total=100, error_count=15, criticality="error", pass_threshold=None)
+        assert resolve(legacy) == 90
+        assert _breach_criticality(legacy, resolve(legacy)) == "error"
+
+    def test_legacy_fallback_respects_rule_override(self):
+        # No frozen value -> the live per-rule override still applies.
+        resolve = _build_threshold_resolver(
+            admin_default=90,
+            registry_defaults={},
+            rule_overrides={"rule-1": 80},
+        )
+        legacy = make_row(
+            check="c1", failed=15, total=100, error_count=15, criticality="error", rule_id="rule-1", pass_threshold=None
+        )
+        assert resolve(legacy) == 80
+        assert _breach_criticality(legacy, resolve(legacy)) is None

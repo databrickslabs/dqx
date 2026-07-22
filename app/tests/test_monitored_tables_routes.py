@@ -47,6 +47,7 @@ from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     register_monitored_table,
     reject_monitored_table,
     remove_applied_rule,
+    revert_monitored_table,
     run_monitored_table,
     save_applied_rules,
     set_applied_rule_pin,
@@ -675,6 +676,110 @@ class TestSaveAppliedRules:
             )
         assert excinfo.value.status_code == 404
 
+    def test_column_pass_thresholds_merged_into_tags(self):
+        """column_pass_thresholds from the request body are merged into tags under the reserved key."""
+        from databricks_labs_dqx_app.backend.registry_models import RESERVED_COLUMN_PASS_THRESHOLDS_KEY
+
+        svc = MagicMock()
+        applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "email"}])
+        svc.save_applied_rules.return_value = [applied]
+        svc.rule_display_tags.return_value = (None, None, None, None)
+        body = SaveAppliedRulesIn(
+            applications=[
+                DesiredAppliedRuleIn(
+                    rule_id="r1",
+                    column_mapping=[{"column": "email"}],
+                    column_pass_thresholds={"email": 90},
+                )
+            ]
+        )
+        save_applied_rules(
+            "b1",
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+        )
+        (_binding_id, called_desired, _user_email), _kwargs = svc.save_applied_rules.call_args
+        assert called_desired[0].tags[RESERVED_COLUMN_PASS_THRESHOLDS_KEY] == {"email": 90}
+
+    def test_empty_column_pass_thresholds_omits_key_from_tags(self):
+        """When column_pass_thresholds is None or empty the reserved key is NOT added to tags."""
+        from databricks_labs_dqx_app.backend.registry_models import RESERVED_COLUMN_PASS_THRESHOLDS_KEY
+
+        svc = MagicMock()
+        applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}])
+        svc.save_applied_rules.return_value = [applied]
+        svc.rule_display_tags.return_value = (None, None, None, None)
+        for thresholds in [None, {}]:
+            svc.reset_mock()
+            svc.save_applied_rules.return_value = [applied]
+            svc.rule_display_tags.return_value = (None, None, None, None)
+            body = SaveAppliedRulesIn(
+                applications=[
+                    DesiredAppliedRuleIn(
+                        rule_id="r1",
+                        column_mapping=[{"column": "id"}],
+                        column_pass_thresholds=thresholds,
+                    )
+                ]
+            )
+            save_applied_rules(
+                "b1",
+                body=body,
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+            )
+            (_binding_id, called_desired, _user_email), _kwargs = svc.save_applied_rules.call_args
+            assert RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in called_desired[0].tags, (
+                f"Expected key absent for thresholds={thresholds!r}"
+            )
+
+    def test_clearing_column_pass_thresholds_drops_stale_key_from_prior_metadata(self):
+        """Regression: clearing every per-column override ("Use rule default") must remove
+        the stale reserved key even when the row's user_metadata (sent as `tags`) still
+        carries a previously-saved column_pass_thresholds map. The frontend sends
+        column_pass_thresholds=None but `tags` echoes the old user_metadata, so the route
+        must pop the reserved key before conditionally re-adding it."""
+        from databricks_labs_dqx_app.backend.registry_models import RESERVED_COLUMN_PASS_THRESHOLDS_KEY
+
+        svc = MagicMock()
+        applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "email"}])
+        svc.save_applied_rules.return_value = [applied]
+        svc.rule_display_tags.return_value = (None, None, None, None)
+        body = SaveAppliedRulesIn(
+            applications=[
+                DesiredAppliedRuleIn(
+                    rule_id="r1",
+                    column_mapping=[{"column": "email"}],
+                    # Cleared on the client → None, but the row's user_metadata still
+                    # carries the old map plus a genuine free-text tag.
+                    column_pass_thresholds=None,
+                    tags={RESERVED_COLUMN_PASS_THRESHOLDS_KEY: {"email": 90}, "team": "growth"},
+                )
+            ]
+        )
+        save_applied_rules(
+            "b1",
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+        )
+        (_binding_id, called_desired, _user_email), _kwargs = svc.save_applied_rules.call_args
+        assert RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in called_desired[0].tags, (
+            "Stale column_pass_thresholds must be dropped when the override is cleared"
+        )
+        # A real free-text tag alongside it must survive.
+        assert called_desired[0].tags["team"] == "growth"
+
 
 class TestRemoveAppliedRule:
     def test_remove_success(self):
@@ -1052,6 +1157,40 @@ class TestRejectMonitoredTable:
         svc.set_status.assert_not_called()
 
 
+class TestRevertMonitoredTable:
+    def test_reverts_pending_checks_and_flips_binding_to_draft(self):
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_table(status="pending_approval"), applied_rules=[])
+        svc.list_materialized_rule_statuses.return_value = [("r1", "pending_approval")]
+        svc.set_status.return_value = _table(status="draft")
+        rules_catalog = MagicMock()
+        result = revert_monitored_table(
+            "b1", monitored_tables_svc=svc, rules_catalog=rules_catalog, obo_ws=_mock_obo_ws()
+        )
+        assert result.table.status == "draft"
+        assert result.affected_check_count == 1
+        rules_catalog.set_status.assert_called_once_with("r1", "draft", "alice@x")
+        svc.set_status.assert_called_once_with("b1", "draft", "alice@x")
+
+    def test_missing_binding_raises_404(self):
+        svc = MagicMock()
+        svc.get.return_value = None
+        with pytest.raises(HTTPException) as excinfo:
+            revert_monitored_table("b1", monitored_tables_svc=svc, rules_catalog=MagicMock(), obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 404
+        svc.set_status.assert_not_called()
+
+    def test_revert_on_approved_binding_raises_409_and_state_unchanged(self):
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_table(status="approved"), applied_rules=[])
+        rules_catalog = MagicMock()
+        with pytest.raises(HTTPException) as excinfo:
+            revert_monitored_table("b1", monitored_tables_svc=svc, rules_catalog=rules_catalog, obo_ws=_mock_obo_ws())
+        assert excinfo.value.status_code == 409
+        rules_catalog.set_status.assert_not_called()
+        svc.set_status.assert_not_called()
+
+
 class TestLifecycleRbac:
     """RBAC is declared on the routes via ``require_role`` — authors submit,
     only approvers/admins approve or reject (mirrors ``routes/v1/rules.py``)."""
@@ -1072,6 +1211,15 @@ class TestLifecycleRbac:
         roles = _route_required_roles("rejectMonitoredTable")
         assert roles == {UserRole.ADMIN, UserRole.RULE_APPROVER}
         assert UserRole.RULE_AUTHOR not in roles
+
+    def test_revert_allows_authors_and_above(self):
+        # Revert is submit's counterpart — an author withdraws their own
+        # submission, so it must NOT be approvers-only.
+        assert _route_required_roles("revertMonitoredTable") == {
+            UserRole.ADMIN,
+            UserRole.RULE_APPROVER,
+            UserRole.RULE_AUTHOR,
+        }
 
 
 class TestSuggestRulesForTable:

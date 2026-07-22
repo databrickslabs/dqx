@@ -37,8 +37,9 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
     MonitoredTableSummary,
 )
+from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
-from databricks_labs_dqx_app.backend.services.run_sets import RunSetService, RunSetSummary
+from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 _PRODUCTS = "dqx_test.dqx_app_test.dq_data_products"
@@ -175,6 +176,15 @@ def version_service():
 
 
 @pytest.fixture
+def materializer():
+    mock = create_autospec(Materializer, instance=True)
+    # Default: no live render counts resolve, so unpinned members fall back to
+    # the binding's live summary ``check_count`` (existing count assertions).
+    mock.render_binding_checks_counts_many.return_value = {}
+    return mock
+
+
+@pytest.fixture
 def app_settings():
     mock = create_autospec(AppSettingsService, instance=True)
     # Default matches production default: new members follow latest unless
@@ -187,7 +197,7 @@ def app_settings():
 
 
 @pytest.fixture
-def service(sql, monitored_tables, run_set_service, binding_run_service, version_service, app_settings):
+def service(sql, monitored_tables, run_set_service, binding_run_service, version_service, app_settings, materializer):
     return DataProductService(
         sql=sql,
         monitored_tables=monitored_tables,
@@ -195,6 +205,7 @@ def service(sql, monitored_tables, run_set_service, binding_run_service, version
         binding_run_service=binding_run_service,
         version_service=version_service,
         app_settings=app_settings,
+        materializer=materializer,
     )
 
 
@@ -452,6 +463,60 @@ class TestListAndGet:
         assert detail.members[0].checks_count == 5
         # No pin -> never consults the frozen snapshot.
         version_service.snapshot_counts_many.assert_not_called()
+
+    def test_unpinned_member_checks_count_from_live_render_not_stale_zero(
+        self, service, sql, monitored_tables, materializer
+    ):
+        """P-item 44: a freshly-saved DRAFT space's ``# Checks`` must reflect the
+        checks its applied rules expand to, NOT the materialized ``dq_quality_rules``
+        row count (0 until approval/run). ``# Rules`` stays the applied-rule count."""
+        sql.query.side_effect = [
+            [_product_row(product_id="p1", status="draft", version="0")],
+            [_member_row("m1", "b1", pinned_version=None)],
+        ]
+        monitored_tables.list_monitored_tables.return_value = [
+            # Live summary.check_count is 0 (nothing materialized yet), but the
+            # 2 applied rules expand to 5 checks (e.g. a for-each-column rule).
+            _table_summary(binding_id="b1", status="draft", version=0, applied_rule_count=2, check_count=0)
+        ]
+        materializer.render_binding_checks_counts_many.return_value = {"b1": 5}
+        detail = service.get("p1")
+        assert detail is not None
+        assert detail.members[0].rules_count == 2
+        assert detail.members[0].checks_count == 5  # live render, not the stale 0
+        materializer.render_binding_checks_counts_many.assert_called_once_with([("b1", "cat.schema.tbl")])
+
+    def test_unpinned_member_checks_count_falls_back_to_summary_on_render_error(
+        self, service, sql, monitored_tables, materializer
+    ):
+        from databricks_labs_dqx_app.backend.services.materializer import MaterializationError
+
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [_member_row("m1", "b1", pinned_version=None)],
+        ]
+        monitored_tables.list_monitored_tables.return_value = [
+            _table_summary(binding_id="b1", status="approved", version=2, applied_rule_count=3, check_count=5)
+        ]
+        materializer.render_binding_checks_counts_many.side_effect = MaterializationError("boom")
+        detail = service.get("p1")
+        assert detail is not None
+        assert detail.members[0].checks_count == 5  # graceful fallback to summary count
+
+    def test_pinned_member_skips_live_render(self, service, sql, monitored_tables, version_service, materializer):
+        sql.query.side_effect = [
+            [_product_row(product_id="p1")],
+            [_member_row("m1", "b1", pinned_version="1")],
+        ]
+        monitored_tables.list_monitored_tables.return_value = [
+            _table_summary(binding_id="b1", status="approved", version=2, applied_rule_count=0, check_count=0)
+        ]
+        version_service.snapshot_counts_many.return_value = {("b1", 1): (1, 2)}
+        detail = service.get("p1")
+        assert detail is not None
+        assert detail.members[0].checks_count == 2  # frozen snapshot
+        # A resolved pin reports its frozen snapshot -> no live render needed.
+        materializer.render_binding_checks_counts_many.assert_not_called()
 
     def test_pinned_member_reports_pinned_snapshot_counts(self, service, sql, monitored_tables, version_service):
         # Live binding has moved on to v2 and its live counts differ from the
@@ -874,6 +939,28 @@ class TestReject:
         sql.query.return_value = []
         with pytest.raises(LookupError):
             service.reject("missing", "bob@x")
+
+
+class TestRevert:
+    def test_revert_pending_to_draft_without_version_bump(self, service, sql):
+        sql.query.return_value = [_product_row(product_id="p1", status="pending_approval", version="2")]
+        product = service.revert("p1", "bob@x")
+        assert product.status == "draft"
+        assert product.version == 2  # unchanged — revert only withdraws
+        update_sql = sql.execute.call_args[0][0]
+        assert "status = 'draft'" in update_sql
+        assert "version =" not in update_sql
+
+    def test_revert_non_pending_raises_409(self, service, sql):
+        sql.query.return_value = [_product_row(product_id="p1", status="approved", version="1")]
+        with pytest.raises(InvalidStatusTransitionError):
+            service.revert("p1", "bob@x")
+        sql.execute.assert_not_called()
+
+    def test_revert_missing_raises(self, service, sql):
+        sql.query.return_value = []
+        with pytest.raises(LookupError):
+            service.revert("missing", "bob@x")
 
 
 class TestRun:

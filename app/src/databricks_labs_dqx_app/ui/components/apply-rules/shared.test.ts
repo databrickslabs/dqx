@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import type { RegistryRuleOut } from "@/lib/api";
-import { computeRunGating, newStagedRow } from "./shared";
+import type { AppliedRuleOut, RegistryRuleOut, RuleSlot } from "@/lib/api";
+import {
+  buildDesiredApplications,
+  compatibleRulesForColumn,
+  computeRunGating,
+  desiredApplicationsKey,
+  getRuleIdsForColumn,
+  isRuleCompatibleWithColumn,
+  mergeColumnThresholds,
+  newStagedRow,
+  pickSlotForColumn,
+} from "./shared";
 
 // Minimal RegistryRuleOut for newStagedRow — only rule_id, version, and
 // user_metadata (reserved name/dimension/severity tags) are read.
@@ -32,6 +42,259 @@ describe("newStagedRow pin seeding", () => {
     expect(row.rule_id).toBe("r1");
     expect(row.rule_name).toBe("Not Null");
     expect(row.rule_severity).toBe("High");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergeColumnThresholds
+// ---------------------------------------------------------------------------
+
+// Minimal AppliedRuleOut factory — only the fields mergeColumnThresholds reads.
+function fakeRow(
+  ruleId: string,
+  colThresholds?: Record<string, number>,
+): AppliedRuleOut {
+  return {
+    id: ruleId,
+    binding_id: "b1",
+    rule_id: ruleId,
+    column_mapping: [],
+    column_pass_thresholds: colThresholds,
+  } as unknown as AppliedRuleOut;
+}
+
+describe("mergeColumnThresholds", () => {
+  test("returns undefined when no rows have overrides", () => {
+    expect(mergeColumnThresholds([fakeRow("r1"), fakeRow("r1", {})])).toBeUndefined();
+  });
+
+  test("returns the single column's threshold", () => {
+    const result = mergeColumnThresholds([fakeRow("r1", { email: 90 })]);
+    expect(result).toEqual({ email: 90 });
+  });
+
+  test("0 is a valid threshold — stored, not treated as absent", () => {
+    const result = mergeColumnThresholds([fakeRow("r1", { col: 0 })]);
+    expect(result).toEqual({ col: 0 });
+  });
+
+  test("merges multiple rows — later rows win on key conflict", () => {
+    const result = mergeColumnThresholds([
+      fakeRow("r1", { email: 80, name: 70 }),
+      fakeRow("r1", { email: 95 }),
+    ]);
+    expect(result).toEqual({ email: 95, name: 70 });
+  });
+
+  test("returns undefined when rows list is empty", () => {
+    expect(mergeColumnThresholds([])).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildDesiredApplications — column_pass_thresholds round-trip
+// ---------------------------------------------------------------------------
+
+describe("buildDesiredApplications column_pass_thresholds", () => {
+  test("carries column_pass_thresholds into the payload", () => {
+    const rows: AppliedRuleOut[] = [
+      {
+        id: "row1",
+        binding_id: "b1",
+        rule_id: "r1",
+        pinned_version: null,
+        severity_override: null,
+        pass_threshold: null,
+        column_pass_thresholds: { email: 90 },
+        column_mapping: [{ col: "email" }],
+        user_metadata: {},
+        mapping_hash: null,
+        created_by: null,
+        created_at: null,
+      } as unknown as AppliedRuleOut,
+    ];
+    const payload = buildDesiredApplications(rows);
+    expect(payload[0]?.column_pass_thresholds).toEqual({ email: 90 });
+  });
+
+  test("column_pass_thresholds is null (not {}) when no overrides exist", () => {
+    const rows: AppliedRuleOut[] = [
+      {
+        id: "row1",
+        binding_id: "b1",
+        rule_id: "r1",
+        pinned_version: null,
+        severity_override: null,
+        pass_threshold: null,
+        column_pass_thresholds: {},
+        column_mapping: [{ col: "email" }],
+        user_metadata: {},
+        mapping_hash: null,
+        created_by: null,
+        created_at: null,
+      } as unknown as AppliedRuleOut,
+    ];
+    const payload = buildDesiredApplications(rows);
+    // Empty map → mergeColumnThresholds returns undefined → null in payload
+    expect(payload[0]?.column_pass_thresholds).toBeNull();
+  });
+
+  test("value 0 persists as 0 in the payload (not dropped)", () => {
+    const rows: AppliedRuleOut[] = [
+      {
+        id: "row1",
+        binding_id: "b1",
+        rule_id: "r1",
+        pinned_version: null,
+        severity_override: null,
+        pass_threshold: null,
+        column_pass_thresholds: { col: 0 },
+        column_mapping: [{ col: "col" }],
+        user_metadata: {},
+        mapping_hash: null,
+        created_by: null,
+        created_at: null,
+      } as unknown as AppliedRuleOut,
+    ];
+    const payload = buildDesiredApplications(rows);
+    expect(payload[0]?.column_pass_thresholds).toEqual({ col: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pickSlotForColumn
+// ---------------------------------------------------------------------------
+
+function fakeSlot(name: string, family: RuleSlot["family"]): RuleSlot {
+  return { name, family, position: 0 } as RuleSlot;
+}
+
+describe("pickSlotForColumn", () => {
+  test("returns null when slots is empty", () => {
+    expect(pickSlotForColumn([], "numeric")).toBeNull();
+  });
+
+  test("returns the first slot when only one slot exists (any family)", () => {
+    expect(pickSlotForColumn([fakeSlot("col", "any")], "numeric")).toBe("col");
+  });
+
+  test("prefers slot whose family matches the column family", () => {
+    const slots = [fakeSlot("col1", "text"), fakeSlot("col2", "numeric")];
+    expect(pickSlotForColumn(slots, "numeric")).toBe("col2");
+  });
+
+  test("treats 'any' family slot as compatible with any column family", () => {
+    const slots = [fakeSlot("col1", "text"), fakeSlot("col2", "any")];
+    expect(pickSlotForColumn(slots, "numeric")).toBe("col2");
+  });
+
+  test("falls back to first slot when no slot matches", () => {
+    const slots = [fakeSlot("col1", "text"), fakeSlot("col2", "temporal")];
+    expect(pickSlotForColumn(slots, "numeric")).toBe("col1");
+  });
+
+  test("match wins over first-slot fallback when match is not first", () => {
+    const slots = [fakeSlot("col1", "temporal"), fakeSlot("col2", "boolean"), fakeSlot("col3", "numeric")];
+    expect(pickSlotForColumn(slots, "numeric")).toBe("col3");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isRuleCompatibleWithColumn / compatibleRulesForColumn — item 52
+// (by-column data-type compatibility filter)
+// ---------------------------------------------------------------------------
+
+function ruleWithSlots(id: string, slots: RuleSlot[]): RegistryRuleOut {
+  return { rule_id: id, version: 1, definition: { slots } } as unknown as RegistryRuleOut;
+}
+
+describe("isRuleCompatibleWithColumn", () => {
+  test("compatible when a slot family exactly matches the column family", () => {
+    expect(isRuleCompatibleWithColumn(ruleWithSlots("r", [fakeSlot("c", "numeric")]), "numeric")).toBe(true);
+  });
+
+  test("incompatible when no slot family matches the column family", () => {
+    expect(isRuleCompatibleWithColumn(ruleWithSlots("r", [fakeSlot("c", "text")]), "numeric")).toBe(false);
+  });
+
+  test("an 'any'-family slot is compatible with any column family", () => {
+    expect(isRuleCompatibleWithColumn(ruleWithSlots("r", [fakeSlot("c", "any")]), "numeric")).toBe(true);
+  });
+
+  test("an 'any'-family column is compatible with any slot", () => {
+    expect(isRuleCompatibleWithColumn(ruleWithSlots("r", [fakeSlot("c", "text")]), "any")).toBe(true);
+  });
+
+  test("rules with no column slots (dataset-level / SQL) are NOT column-applicable", () => {
+    expect(isRuleCompatibleWithColumn(ruleWithSlots("r", []), "numeric")).toBe(false);
+  });
+});
+
+describe("compatibleRulesForColumn", () => {
+  test("keeps only rules with a slot compatible with the column family", () => {
+    const rules = [
+      ruleWithSlots("num", [fakeSlot("c", "numeric")]),
+      ruleWithSlots("txt", [fakeSlot("c", "text")]),
+      ruleWithSlots("any", [fakeSlot("c", "any")]),
+      ruleWithSlots("dataset", []),
+    ];
+    const ids = compatibleRulesForColumn(rules, "numeric").map((r) => r.rule_id);
+    expect(ids).toEqual(["num", "any"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getRuleIdsForColumn — item 4 (column-aware selectability)
+// ---------------------------------------------------------------------------
+
+describe("getRuleIdsForColumn", () => {
+  function mappedRow(ruleId: string, mapping: Record<string, string>[]): AppliedRuleOut {
+    return {
+      id: ruleId,
+      binding_id: "b1",
+      rule_id: ruleId,
+      column_mapping: mapping,
+      column_pass_thresholds: null,
+    } as unknown as AppliedRuleOut;
+  }
+
+  test("returns rule id when it is mapped to the target column", () => {
+    const rows = [mappedRow("r1", [{ col: "email" }])];
+    expect(getRuleIdsForColumn(rows, "email")).toEqual(new Set(["r1"]));
+  });
+
+  test("does NOT return rule id mapped to a different column (item 4 core invariant)", () => {
+    const rows = [mappedRow("r1", [{ col: "email" }])];
+    // rule r1 is on column "email" but we're asking about "name"
+    expect(getRuleIdsForColumn(rows, "name")).toEqual(new Set());
+  });
+
+  test("rule on column A is not in set for column B, but same rule applied to B is in set for B", () => {
+    const rows = [
+      mappedRow("r1", [{ col: "email" }]),
+      mappedRow("r2", [{ col: "email" }, { col: "name" }]),
+    ];
+    // r1 only on email → not in set for "name"
+    // r2 has mapping to "name" → is in set for "name"
+    const forName = getRuleIdsForColumn(rows, "name");
+    expect(forName.has("r1")).toBe(false);
+    expect(forName.has("r2")).toBe(true);
+  });
+
+  test("handles multi-value comma-joined slot values", () => {
+    const rows = [mappedRow("r1", [{ col: "email,name" }])];
+    expect(getRuleIdsForColumn(rows, "email")).toEqual(new Set(["r1"]));
+    expect(getRuleIdsForColumn(rows, "name")).toEqual(new Set(["r1"]));
+    expect(getRuleIdsForColumn(rows, "other")).toEqual(new Set());
+  });
+
+  test("returns empty set when no rows are mapped to the column", () => {
+    const rows = [mappedRow("r1", [{ col: "email" }]), mappedRow("r2", [{}])];
+    expect(getRuleIdsForColumn(rows, "unrelated")).toEqual(new Set());
+  });
+
+  test("returns empty set for empty rows list", () => {
+    expect(getRuleIdsForColumn([], "email")).toEqual(new Set());
   });
 });
 
@@ -74,5 +337,95 @@ describe("computeRunGating", () => {
   test("dirty + staged rules present: Run draft rules-gate reports enabled regardless of baseline", () => {
     const gating = computeRunGating(1, 2); // baseline=1 rule, staged diverged to 2 rules
     expect(gating.runDraftHasRules).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// desiredApplicationsKey — threshold dirty-detection (item 33)
+//
+// Invariant: (i) re-entering the same saved value (explicit override OR
+// null-follow-default) is NOT dirty; (ii) a genuine change IS dirty; (iii)
+// an explicit override equal to the effective default and null-follow-default
+// normalize to the same key so saving can't silently downgrade the override.
+// ---------------------------------------------------------------------------
+
+function thresholdRow(
+  overrides: Partial<AppliedRuleOut>,
+): AppliedRuleOut {
+  return {
+    id: "row1",
+    binding_id: "b1",
+    rule_id: "r1",
+    pinned_version: null,
+    severity_override: null,
+    pass_threshold: null,
+    column_pass_thresholds: null,
+    column_mapping: [{ col: "email" }],
+    user_metadata: {},
+    mapping_hash: null,
+    created_by: null,
+    created_at: null,
+    rule_pass_threshold: null,
+    ...overrides,
+  } as unknown as AppliedRuleOut;
+}
+
+describe("desiredApplicationsKey threshold dirty-detection", () => {
+  const ADMIN_DEFAULT = 70;
+
+  test("explicit per-rule override equal to effective default equals null-follow-default", () => {
+    const baseline = [thresholdRow({ pass_threshold: 70 })]; // saved explicit 70 (== admin default)
+    const followDefault = [thresholdRow({ pass_threshold: null })];
+    expect(desiredApplicationsKey(baseline, ADMIN_DEFAULT)).toBe(
+      desiredApplicationsKey(followDefault, ADMIN_DEFAULT),
+    );
+  });
+
+  test("re-entering the saved-override-equal-to-default value is NOT dirty", () => {
+    // Saved value was explicit 70; committing 70 again keeps pass_threshold=70.
+    const baseline = [thresholdRow({ pass_threshold: 70 })];
+    const reentered = [thresholdRow({ pass_threshold: 70 })];
+    expect(desiredApplicationsKey(reentered, ADMIN_DEFAULT)).toBe(
+      desiredApplicationsKey(baseline, ADMIN_DEFAULT),
+    );
+  });
+
+  test("a genuine change to a different value IS dirty", () => {
+    const baseline = [thresholdRow({ pass_threshold: 70 })];
+    const changed = [thresholdRow({ pass_threshold: 85 })];
+    expect(desiredApplicationsKey(changed, ADMIN_DEFAULT)).not.toBe(
+      desiredApplicationsKey(baseline, ADMIN_DEFAULT),
+    );
+  });
+
+  test("uses the rule's registry default over the admin default when present", () => {
+    // Rule default 90; explicit override 90 should read as follow-default.
+    const explicit = [thresholdRow({ rule_pass_threshold: 90, pass_threshold: 90 })];
+    const followDefault = [thresholdRow({ rule_pass_threshold: 90, pass_threshold: null })];
+    expect(desiredApplicationsKey(explicit, ADMIN_DEFAULT)).toBe(
+      desiredApplicationsKey(followDefault, ADMIN_DEFAULT),
+    );
+    // ...but 70 (the admin default, not the rule default) is a real override → dirty.
+    const realOverride = [thresholdRow({ rule_pass_threshold: 90, pass_threshold: 70 })];
+    expect(desiredApplicationsKey(realOverride, ADMIN_DEFAULT)).not.toBe(
+      desiredApplicationsKey(followDefault, ADMIN_DEFAULT),
+    );
+  });
+
+  test("per-column override equal to the effective default is not dirty vs no override", () => {
+    // Effective column default = admin default 70 (no per-rule override).
+    const withColOverride = [thresholdRow({ column_pass_thresholds: { email: 70 } })];
+    const noOverride = [thresholdRow({ column_pass_thresholds: null })];
+    expect(desiredApplicationsKey(withColOverride, ADMIN_DEFAULT)).toBe(
+      desiredApplicationsKey(noOverride, ADMIN_DEFAULT),
+    );
+  });
+
+  test("per-column override differing from the effective default IS dirty", () => {
+    const withColOverride = [thresholdRow({ column_pass_thresholds: { email: 55 } })];
+    const noOverride = [thresholdRow({ column_pass_thresholds: null })];
+    expect(desiredApplicationsKey(withColOverride, ADMIN_DEFAULT)).not.toBe(
+      desiredApplicationsKey(noOverride, ADMIN_DEFAULT),
+    );
   });
 });

@@ -147,6 +147,22 @@ class TestFreezeNewVersion:
         # cached rendered count = the scoped approved checks (excludes the direct rule)
         assert state["check_count"] == 2
 
+    def test_ref_carries_per_rule_pass_threshold(self, service, sql, monitored_tables, rules_catalog):
+        # The frozen ref must record pass_threshold (incl. a literal 0) so an
+        # approved-version run re-renders with the intended per-rule threshold
+        # rather than the admin default. Pair with
+        # TestGetChecks.test_pass_threshold_zero_round_trips_through_ref.
+        detail = _detail(["ar1"])
+        detail.applied_rules[0].applied_rule.pass_threshold = 0
+        monitored_tables.get.return_value = detail
+        rules_catalog.get_approved_checks_for_table.return_value = [_check("ar1", "id")]
+        _dispatch(sql, {f"SELECT version FROM {_TABLES}": [["0"]]})
+
+        service.freeze_new_version("b1", "alice@x")
+
+        state = json.loads(sql.json_literal_expr.call_args_list[0].args[0])
+        assert state["rule_refs"][0]["pass_threshold"] == 0
+
     def test_state_json_carries_applied_rule_display_metadata(self, service, sql, monitored_tables, rules_catalog):
         monitored_tables.get.return_value = _detail(["ar1"])
         rules_catalog.get_approved_checks_for_table.return_value = [_check("ar1", "id")]
@@ -318,6 +334,67 @@ class TestGetChecks:
         applied = args.args[1]
         assert applied[0].id == "ar1"
         assert applied[0].pinned_version == 2
+
+    def test_pass_threshold_zero_round_trips_through_ref(self, service, sql, materializer):
+        # Regression: a per-rule pass_threshold of 0 ("never warn") must survive
+        # the freeze->reconstruct round-trip. Previously rule_refs omitted
+        # pass_threshold and _ref_to_applied never restored it, so an
+        # approved-version run re-rendered with pass_threshold=None and the
+        # resolver fell through to the admin default (e.g. 70) — silently
+        # re-freezing 0% rules at the default on every approved run.
+        state = {
+            "rule_refs": [
+                {
+                    "applied_rule_id": "ar1",
+                    "rule_id": "r1",
+                    "registry_version": 2,
+                    "pass_threshold": 0,
+                    "column_mapping": [{"column": "id"}],
+                }
+            ],
+            "check_count": 1,
+        }
+        _dispatch(
+            sql,
+            {
+                f"FROM {_VERSIONS}": [[json.dumps(state)]],
+                f"SELECT table_fqn FROM {_TABLES}": [["cat.schema.customers"]],
+            },
+        )
+        materializer.render_applied_checks.return_value = []
+
+        service.get_checks("b1", 1)
+
+        applied = materializer.render_applied_checks.call_args.args[1]
+        # literal 0 preserved, not coerced to None (which would resolve to admin default)
+        assert applied[0].pass_threshold == 0
+
+    def test_missing_pass_threshold_in_legacy_ref_is_none(self, service, sql, materializer):
+        # Snapshots frozen before pass_threshold was recorded carry no such key;
+        # reconstruct as None so the resolver falls back to registry/admin default.
+        state = {
+            "rule_refs": [
+                {
+                    "applied_rule_id": "ar1",
+                    "rule_id": "r1",
+                    "registry_version": 2,
+                    "column_mapping": [{"column": "id"}],
+                }
+            ],
+        }
+        _dispatch(
+            sql,
+            {
+                f"FROM {_VERSIONS}": [[json.dumps(state)]],
+                f"SELECT table_fqn FROM {_TABLES}": [["cat.schema.customers"]],
+            },
+        )
+        materializer.render_applied_checks.return_value = []
+
+        service.get_checks("b1", 1)
+
+        applied = materializer.render_applied_checks.call_args.args[1]
+        assert applied[0].pass_threshold is None
 
     def test_missing_snapshot_raises_lookup_error(self, service, sql):
         _dispatch(sql, {f"FROM {_VERSIONS}": []})

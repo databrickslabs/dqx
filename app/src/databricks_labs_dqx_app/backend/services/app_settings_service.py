@@ -19,6 +19,11 @@ _CONFIG_KEY = "workspace_config"
 # the ``/config/draft-run-sample-limit`` admin endpoints.
 DRAFT_RUN_SAMPLE_LIMIT_DEFAULT = 1000
 
+# Compiled-in fallback for the ``default_pass_threshold`` setting — the
+# org-wide minimum pass rate (%) below which a check warns. Shared by
+# the breach evaluator (results service) and the admin settings endpoint.
+DEFAULT_PASS_THRESHOLD_DEFAULT = 70
+
 # Module-level adapter so we pay the type-tree walk once at import time
 # rather than on every ``get_config`` call. ``TypeAdapter`` is Pydantic's
 # public v2 surface for validating non-BaseModel types against a target
@@ -258,9 +263,9 @@ class AppSettingsService:
     _AUTO_UPGRADE_WITHOUT_APPROVAL_KEY = "auto_upgrade_without_approval"
 
     def get_auto_upgrade_without_approval(self) -> bool:
-        """Return the configured auto-upgrade behaviour; defaults to ``False`` (Behaviour B) when unset."""
+        """Return the configured auto-upgrade behaviour; defaults to ``True`` (Behaviour A) when unset."""
         raw = self.get_setting(self._AUTO_UPGRADE_WITHOUT_APPROVAL_KEY)
-        return raw is not None and raw.strip().lower() == "true"
+        return raw is None or raw.strip().lower() == "true"
 
     def save_auto_upgrade_without_approval(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Persist the auto-upgrade-without-approval setting. Returns the saved value."""
@@ -305,18 +310,25 @@ class AppSettingsService:
     # Object permissions — default per-grant inheritance (P22-D item 10).
     #
     # Governs the DEFAULT state of the per-grant "inherit to child objects"
-    # toggle in the Permissions tab. Defaults to ``False`` (each new grant is
-    # scoped to just its object unless the granter opts in). An admin can flip
-    # this to ``True`` so new grants inherit down the hierarchy by default —
-    # convenient for teams that manage access at the table-space level.
+    # toggle in the Permissions tab ("Cascade permissions by default"). Defaults
+    # to ``True`` (new grants cascade down the hierarchy — granting on a table
+    # space or monitored table also grants SELECT on underlying tables/rules),
+    # which is the common intent. An admin can flip this to ``False`` so each new
+    # grant is scoped to just its object unless the granter opts in.
     # ------------------------------------------------------------------
 
     _PERMISSIONS_DEFAULT_INHERIT_KEY = "permissions_default_inherit"
 
     def get_permissions_default_inherit(self) -> bool:
-        """Return the admin default for the per-grant inheritance toggle (default ``False``)."""
+        """Return the admin default for the per-grant inheritance toggle (default ``True``).
+
+        When the setting has never been persisted (``raw is None``) we default to
+        ``True`` — cascading is the expected behaviour for most deployments.
+        """
         raw = self.get_setting(self._PERMISSIONS_DEFAULT_INHERIT_KEY)
-        return raw is not None and raw.strip().lower() == "true"
+        if raw is None:
+            return True
+        return raw.strip().lower() == "true"
 
     def save_permissions_default_inherit(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Persist the default per-grant inheritance setting. Returns the saved value."""
@@ -414,6 +426,28 @@ class AppSettingsService:
     def save_global_results_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Persist the global-Results-tab setting. Returns the saved value."""
         self.save_setting(self._GLOBAL_RESULTS_ENABLED_KEY, "true" if enabled else "false", user_email=user_email)
+        return enabled
+
+    # ------------------------------------------------------------------
+    # Rules Results tab (item 35) — whether the per-rule "Results" tab is
+    # surfaced inside the Rules Registry rule dialog. Distinct from
+    # ``global_results_enabled`` above (that gates the app-wide, all-tables
+    # Results SURFACE + its sidebar entry); this gates only the Results TAB on
+    # an individual rule. OFF by default — a fresh deploy hides the rule
+    # Results tab until an admin explicitly opts in. Only an explicit
+    # ``"true"`` reads as on; an unset or any other value reads as off.
+    # ------------------------------------------------------------------
+
+    _RULES_RESULTS_TAB_ENABLED_KEY = "rules_results_tab_enabled"
+
+    def get_rules_results_tab_enabled(self) -> bool:
+        """Return whether the per-rule Results tab is enabled; defaults to ``False`` (off) when unset."""
+        raw = self.get_setting(self._RULES_RESULTS_TAB_ENABLED_KEY)
+        return raw is not None and raw.strip().lower() == "true"
+
+    def save_rules_results_tab_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the rules-Results-tab setting. Returns the saved value."""
+        self.save_setting(self._RULES_RESULTS_TAB_ENABLED_KEY, "true" if enabled else "false", user_email=user_email)
         return enabled
 
     # ------------------------------------------------------------------
@@ -803,6 +837,53 @@ class AppSettingsService:
         """Persist the per-user hourly AI call cap. Returns the saved value."""
         self.save_setting(self._AI_RATE_LIMIT_KEY, str(int(limit)), user_email=user_email)
         return int(limit)
+
+    # ------------------------------------------------------------------
+    # Pass-threshold setting — org-wide default minimum pass rate (%).
+    # Resolution order: per-column override → per-rule override →
+    # registry-rule default → this admin default (compiled fallback 70).
+    # ------------------------------------------------------------------
+
+    _DEFAULT_PASS_THRESHOLD_KEY = "default_pass_threshold"
+
+    def get_default_pass_threshold(self) -> int:
+        """Org-wide default minimum pass rate (%) below which a check warns.
+
+        Returns the compiled default (70) when unset or unparseable. Clamped to
+        [0, 100] defensively so a hand-edited row can never escape the range.
+        """
+        value = self._get_int_setting(self._DEFAULT_PASS_THRESHOLD_KEY)
+        if value is None:
+            return DEFAULT_PASS_THRESHOLD_DEFAULT
+        return max(0, min(100, value))
+
+    def save_default_pass_threshold(self, value: int, *, user_email: str | None = None) -> int:
+        """Persist the org-wide default pass threshold. Returns the clamped value."""
+        clamped = max(0, min(100, int(value)))
+        self.save_setting(self._DEFAULT_PASS_THRESHOLD_KEY, str(clamped), user_email=user_email)
+        return clamped
+
+    # ------------------------------------------------------------------
+    # Pass-threshold feature toggle — master switch. When False, the UI
+    # hides all threshold controls and the materializer emits no threshold
+    # metadata; breach evaluation is also disabled server-side.
+    # ------------------------------------------------------------------
+
+    _PASS_THRESHOLD_ENABLED_KEY = "pass_threshold_enabled"
+
+    def get_pass_threshold_enabled(self) -> bool:
+        """Master switch for the pass-threshold feature (default ON).
+
+        Returns *True* when the setting has never been persisted (``raw is
+        None``) so the feature is enabled by default across all deployments.
+        """
+        raw = self.get_setting(self._PASS_THRESHOLD_ENABLED_KEY)
+        return raw is None or raw.strip().lower() == "true"
+
+    def save_pass_threshold_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
+        """Persist the pass-threshold feature toggle. Returns the saved value."""
+        self.save_setting(self._PASS_THRESHOLD_ENABLED_KEY, "true" if enabled else "false", user_email=user_email)
+        return enabled
 
     # ------------------------------------------------------------------
     # Vector Search / embeddings settings — Rules Registry Phase 4B/4C,

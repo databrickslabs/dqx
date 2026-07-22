@@ -3,11 +3,12 @@ import {
   computeMatchedTagsForSlot,
   deriveSlotsAndParameters,
   fnSupportsNegate,
+  nativeArguments,
   slotTagsFromUserMetadata,
   userMetadataWithSlotTags,
 } from "./registry-rule-conversion";
 import { familyForSparkType } from "./slot-mapping";
-import type { CheckFunctionDef } from "./api";
+import type { CheckFunctionDef, RuleSlot } from "./api";
 
 // Unit tests for the registry-rule <-> DQX-check conversion helpers touched by
 // P19-D items 10 (typed slot families + ARRAY) and 11 (negate -> polarity).
@@ -57,6 +58,22 @@ describe("deriveSlotsAndParameters — item 10 family seeding + item 11 negate s
       fn({ params: [param("column", "column"), param("regex", "string"), param("negate", "boolean")] }),
     );
     expect(parameters.map((p) => p.name)).toEqual(["regex"]);
+  });
+
+  test("orders ref_table before ref_columns (a steward picks the table first)", () => {
+    // foreign_key's signature declares ref_columns before ref_table, which
+    // reads backwards in the editor — you can't choose reference columns
+    // before the table they live on.
+    const { parameters } = deriveSlotsAndParameters(
+      fn({
+        params: [
+          param("column", "column"),
+          param("ref_columns", "ref_columns"),
+          param("ref_table", "ref_table"),
+        ],
+      }),
+    );
+    expect(parameters.map((p) => p.name)).toEqual(["ref_table", "ref_columns"]);
   });
 });
 
@@ -148,6 +165,57 @@ describe("buildDqxCheckJson — criticality honours the admin mapping", () => {
 
   test("stored mapping wins when provided", () => {
     expect(buildDqxCheckJson(rule("Critical"), { Critical: "warn" }).criticality).toBe("warn");
+  });
+});
+
+// The rule "View changes" diff (bug-bash-v4 item 43) materializes BOTH sides
+// through buildDqxCheckJson so every field renders like the table diff. The
+// previous side feeds a FROZEN version snapshot, which carries its own frozen
+// `mode` and must render as-of-that-version.
+describe("buildDqxCheckJson — materializes a full check for a frozen version snapshot", () => {
+  test("renders every field the diff needs (function/arguments/criticality/name/message/tags)", () => {
+    const version = {
+      mode: "dqx_native" as const,
+      polarity: null,
+      definition: {
+        body: { function: "is_not_null", arguments: { column: "{{column_1}}" } },
+        slots: [],
+        parameters: [],
+        error_message: "col must not be null",
+      },
+      user_metadata: { severity: "High", name: "id_not_null", team: "data-eng" },
+    };
+    const check = buildDqxCheckJson(version) as Record<string, unknown>;
+    expect(check.criticality).toBe("error");
+    expect(check.name).toBe("id_not_null");
+    expect(check.message_expr).toBe("col must not be null");
+    expect(check.user_metadata).toEqual({ severity: "High", name: "id_not_null", team: "data-eng" });
+    expect(check.check).toEqual({ function: "is_not_null", arguments: { column: "{{column_1}}" } });
+  });
+
+  test("uses the frozen mode over the live fallback for a versioned snapshot", () => {
+    const sqlVersion = {
+      mode: "sql" as const,
+      polarity: "fail" as const,
+      definition: { body: { predicate: "amount > 0" }, slots: [], parameters: [] },
+      user_metadata: {},
+    };
+    // fallback is dqx_native, but the frozen mode (sql) must win.
+    const check = buildDqxCheckJson(sqlVersion, undefined, "dqx_native").check as Record<string, unknown>;
+    expect(check.function).toBe("sql_expression");
+    expect((check.arguments as Record<string, unknown>).expression).toBe("amount > 0");
+    expect((check.arguments as Record<string, unknown>).negate).toBe(true);
+  });
+
+  test("falls back to the caller-supplied live mode for a legacy null-mode snapshot", () => {
+    const legacy = {
+      mode: null,
+      polarity: null,
+      definition: { body: { function: "is_not_null", arguments: { column: "{{c}}" } }, slots: [], parameters: [] },
+      user_metadata: {},
+    };
+    const check = buildDqxCheckJson(legacy, undefined, "dqx_native").check as Record<string, unknown>;
+    expect(check.function).toBe("is_not_null");
   });
 });
 
@@ -340,5 +408,38 @@ describe("computeMatchedTagsForSlot — governed tag intersection for demo chips
       "class.z",
       "class.a",
     ]);
+  });
+});
+
+describe("nativeArguments — CRIT-1: single-column fn extra slots are filter-only", () => {
+  const slot = (name: string, over: Partial<RuleSlot> = {}): RuleSlot =>
+    ({ name, family: "any", position: 0, cardinality: "one", ...over }) as RuleSlot;
+
+  test("single-column fn: the sole signature slot binds the function argument", () => {
+    const isNotNull = fn({ params: [param("column", "column")] });
+    const slots: RuleSlot[] = [slot("column_1", { arg_key: "column", position: 0 })];
+    expect(nativeArguments(slots, isNotNull)).toEqual({ column: "{{column_1}}" });
+  });
+
+  test("single-column fn: an added extra slot (arg_key undefined) does NOT leak a scalar argument", () => {
+    // The "+ Add column" path on a single-column fn appends a slot with no
+    // arg_key — it exists only for the advanced filter. It must NOT become its
+    // own top-level argument key (e.g. column_2=...) or the runner throws a
+    // TypeError (is_not_null(column=..., column_2=...)).
+    const isNotNull = fn({ params: [param("column", "column")] });
+    const slots: RuleSlot[] = [
+      slot("column_1", { arg_key: "column", position: 0 }),
+      slot("column_2", { arg_key: undefined, position: 1 }),
+    ];
+    expect(nativeArguments(slots, isNotNull)).toEqual({ column: "{{column_1}}" });
+  });
+
+  test("list-arg fn: multiple slots sharing the list arg_key still render as a list", () => {
+    const foreignKey = fn({ params: [param("columns", "columns")] });
+    const slots: RuleSlot[] = [
+      slot("column_1", { arg_key: "columns", position: 0 }),
+      slot("column_2", { arg_key: "columns", position: 1 }),
+    ];
+    expect(nativeArguments(slots, foreignKey)).toEqual({ columns: ["{{column_1}}", "{{column_2}}"] });
   });
 });

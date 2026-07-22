@@ -28,6 +28,7 @@ from databricks_labs_dqx_app.backend.models import (
     RunConfigOut,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    DEFAULT_PASS_THRESHOLD_DEFAULT,
     DRAFT_RUN_SAMPLE_LIMIT_DEFAULT,
     AppSettingsService,
 )
@@ -467,6 +468,61 @@ def save_draft_run_sample_limit(
     svc.save_draft_run_sample_limit(body.draft_run_sample_limit, user_email=email)
     logger.info("Saved draft_run_sample_limit=%d", body.draft_run_sample_limit)
     return get_draft_run_sample_limit(svc)
+
+
+# ---------------------------------------------------------------------------
+# Default pass threshold — org-wide minimum pass rate (%) below which a
+# check warns. Resolution order: per-column → per-rule → registry default →
+# this admin default (compiled fallback 70).
+# ---------------------------------------------------------------------------
+
+
+class DefaultPassThresholdOut(BaseModel):
+    """Effective default pass threshold + the compiled default for the UI."""
+
+    default_pass_threshold: int
+    default_pass_threshold_default: int
+
+
+class DefaultPassThresholdIn(BaseModel):
+    default_pass_threshold: int = Field(
+        ge=0,
+        le=100,
+        description="Org-wide default minimum pass rate (%); checks warn when pass rate drops below this.",
+    )
+
+
+@router.get(
+    "/default-pass-threshold",
+    response_model=DefaultPassThresholdOut,
+    operation_id="getDefaultPassThreshold",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def get_default_pass_threshold(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> DefaultPassThresholdOut:
+    """Return the current default pass threshold (admin only)."""
+    return DefaultPassThresholdOut(
+        default_pass_threshold=svc.get_default_pass_threshold(),
+        default_pass_threshold_default=DEFAULT_PASS_THRESHOLD_DEFAULT,
+    )
+
+
+@router.put(
+    "/default-pass-threshold",
+    response_model=DefaultPassThresholdOut,
+    operation_id="saveDefaultPassThreshold",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_default_pass_threshold(
+    body: DefaultPassThresholdIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> DefaultPassThresholdOut:
+    """Update the default pass threshold (admin only)."""
+    svc.save_default_pass_threshold(body.default_pass_threshold, user_email=email)
+    logger.info("Saved default_pass_threshold=%d", body.default_pass_threshold)
+    return get_default_pass_threshold(svc)
 
 
 # ---------------------------------------------------------------------------
@@ -1118,7 +1174,7 @@ class RulesRegistrySettingsOut(BaseModel):
 
     auto_upgrade_without_approval: bool = Field(
         description="Re-approval behaviour: silently re-approve a following application's "
-        "re-rendered check (True) vs. send it back to pending_approval (False, default)."
+        "re-rendered check (True, default) vs. send it back to pending_approval (False)."
     )
     default_auto_upgrade: bool = Field(
         description="Attach-time default pin for new applications/members: follow latest "
@@ -1128,6 +1184,14 @@ class RulesRegistrySettingsOut(BaseModel):
         description="Tag-mapping apply behaviour: eagerly auto-attach tag-mapped rules "
         "across monitored tables (True) vs. only surface them as suggestions (False, default)."
     )
+    default_pass_threshold: int = Field(
+        description="Org-wide default minimum pass rate (%) below which a check warns. "
+        "Overridable per rule and per column. Clamped to [0, 100]."
+    )
+    pass_threshold_enabled: bool = Field(
+        description="Master switch for the pass-threshold feature. When False, all threshold "
+        "UI is hidden and breach evaluation is disabled server-side. Default True."
+    )
 
 
 class RulesRegistrySettingsIn(BaseModel):
@@ -1136,6 +1200,8 @@ class RulesRegistrySettingsIn(BaseModel):
     auto_upgrade_without_approval: bool | None = None
     default_auto_upgrade: bool | None = None
     tag_auto_apply: bool | None = None
+    default_pass_threshold: int | None = Field(default=None, ge=0, le=100)
+    pass_threshold_enabled: bool | None = None
 
 
 def _rules_registry_settings_out(svc: AppSettingsService) -> RulesRegistrySettingsOut:
@@ -1143,6 +1209,8 @@ def _rules_registry_settings_out(svc: AppSettingsService) -> RulesRegistrySettin
         auto_upgrade_without_approval=svc.get_auto_upgrade_without_approval(),
         default_auto_upgrade=svc.get_default_auto_upgrade(),
         tag_auto_apply=svc.get_tag_auto_apply(),
+        default_pass_threshold=svc.get_default_pass_threshold(),
+        pass_threshold_enabled=svc.get_pass_threshold_enabled(),
     )
 
 
@@ -1178,10 +1246,13 @@ def save_rules_registry_settings(
         body.auto_upgrade_without_approval is None
         and body.default_auto_upgrade is None
         and body.tag_auto_apply is None
+        and body.default_pass_threshold is None
+        and body.pass_threshold_enabled is None
     ):
         raise HTTPException(
             status_code=400,
-            detail="At least one of auto_upgrade_without_approval, default_auto_upgrade, or tag_auto_apply must be provided.",
+            detail="At least one of auto_upgrade_without_approval, default_auto_upgrade, "
+            "tag_auto_apply, default_pass_threshold, or pass_threshold_enabled must be provided.",
         )
     if body.auto_upgrade_without_approval is not None:
         svc.save_auto_upgrade_without_approval(body.auto_upgrade_without_approval, user_email=email)
@@ -1189,6 +1260,10 @@ def save_rules_registry_settings(
         svc.save_default_auto_upgrade(body.default_auto_upgrade, user_email=email)
     if body.tag_auto_apply is not None:
         svc.save_tag_auto_apply(body.tag_auto_apply, user_email=email)
+    if body.default_pass_threshold is not None:
+        svc.save_default_pass_threshold(body.default_pass_threshold, user_email=email)
+    if body.pass_threshold_enabled is not None:
+        svc.save_pass_threshold_enabled(body.pass_threshold_enabled, user_email=email)
     logger.info("Saved Rules Registry governance settings (by=%s)", email)
     return _rules_registry_settings_out(svc)
 
@@ -1264,18 +1339,28 @@ def save_approvals_mode(
 
 
 class GlobalResultsSettingsOut(BaseModel):
-    """Effective global-Results-tab gating setting."""
+    """Effective global-Results-tab gating settings."""
 
     global_results_enabled: bool = Field(
         description="Whether the app-wide, all-tables Results surface (nav item + homepage "
         "overall-score explainer) is enabled. Defaults to False (hidden)."
     )
+    rules_results_tab_enabled: bool = Field(
+        default=False,
+        description="Whether the per-rule Results tab is shown inside the Rules Registry rule "
+        "dialog. Distinct from global_results_enabled. Defaults to False (hidden).",
+    )
 
 
 class GlobalResultsSettingsIn(BaseModel):
-    """Update payload for the global-Results-tab gating setting."""
+    """Update payload for the global-Results-tab gating settings.
 
-    global_results_enabled: bool
+    Both fields are optional so a caller can flip just one toggle without
+    having to echo the other's current value back.
+    """
+
+    global_results_enabled: bool | None = None
+    rules_results_tab_enabled: bool | None = None
 
 
 @router.get(
@@ -1290,9 +1375,13 @@ def get_global_results_settings(
 
     Available to any authenticated user — the sidebar and homepage both read
     it to decide whether to surface the global Results nav item and the
-    overall-score "?" explainer.
+    overall-score "?" explainer, and the rule dialog reads it to decide
+    whether to surface the per-rule Results tab.
     """
-    return GlobalResultsSettingsOut(global_results_enabled=svc.get_global_results_enabled())
+    return GlobalResultsSettingsOut(
+        global_results_enabled=svc.get_global_results_enabled(),
+        rules_results_tab_enabled=svc.get_rules_results_tab_enabled(),
+    )
 
 
 @router.put(
@@ -1306,10 +1395,25 @@ def save_global_results_settings(
     svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     email: Annotated[str, Depends(get_user_email)],
 ) -> GlobalResultsSettingsOut:
-    """Enable or disable the global Results tab (admin only)."""
-    saved = svc.save_global_results_enabled(body.global_results_enabled, user_email=email)
-    logger.info("Saved global_results_enabled = %s (by=%s)", saved, email)
-    return GlobalResultsSettingsOut(global_results_enabled=saved)
+    """Enable or disable the global Results tab and/or the per-rule Results tab (admin only).
+
+    Each toggle is updated only when its field is present in the body, so a
+    caller can flip one without echoing the other's current value.
+    """
+    if body.global_results_enabled is not None:
+        saved_global = svc.save_global_results_enabled(body.global_results_enabled, user_email=email)
+        logger.info("Saved global_results_enabled = %s (by=%s)", saved_global, email)
+    else:
+        saved_global = svc.get_global_results_enabled()
+    if body.rules_results_tab_enabled is not None:
+        saved_rules = svc.save_rules_results_tab_enabled(body.rules_results_tab_enabled, user_email=email)
+        logger.info("Saved rules_results_tab_enabled = %s (by=%s)", saved_rules, email)
+    else:
+        saved_rules = svc.get_rules_results_tab_enabled()
+    return GlobalResultsSettingsOut(
+        global_results_enabled=saved_global,
+        rules_results_tab_enabled=saved_rules,
+    )
 
 
 # ----------------------------------------------------------------------

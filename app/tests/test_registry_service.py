@@ -659,6 +659,17 @@ class TestListAndGet:
         result = svc.list_rules(dimension="Validity")
         assert [r.rule_id for r in result] == ["a"]
 
+    def test_list_filters_by_rule_ids_in_python(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        a = RegistryRule(rule_id="a", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        b = RegistryRule(rule_id="b", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        c = RegistryRule(rule_id="c", mode="dqx_native", status="approved", version=1, definition=_native_definition())
+        # First query: the list; second: the modified-snapshot batch (empty).
+        sql.query.side_effect = [[_row_for(a), _row_for(b), _row_for(c)], []]
+        result = svc.list_rules(rule_ids=["a", "c"])
+        assert {r.rule_id for r in result} == {"a", "c"}
+
     def test_get_rule_returns_none_when_missing(self, svc, sql):
         sql.query.return_value = []
         assert svc.get_rule("missing") is None
@@ -1063,3 +1074,91 @@ class TestMatchOrCreateApprovedRule:
         # make the auto-created rule auditable.
         assert "'profiling'" in insert
         assert "'ai_assisted'" in insert
+
+
+# ---------------------------------------------------------------------------
+# filter field on RuleDefinition (Task 5)
+# ---------------------------------------------------------------------------
+
+
+class TestFilterFieldOnCreateRule:
+    def test_safe_filter_persists_on_definition(self, svc, sql):
+        """A safe SQL filter on RuleDefinition threads through create_rule
+        and is stored in the definition blob."""
+        definition = _native_definition()
+        definition.filter = "amount > 0"
+        rule, _ = svc.create_rule(mode="dqx_native", definition=definition, user_email="alice@x")
+        assert rule.definition.filter == "amount > 0"
+
+    def test_safe_filter_freezes_into_version_snapshot(self, svc, sql):
+        """On approve, the filter survives into the frozen version snapshot."""
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        definition = _native_definition()
+        definition.filter = "status = 'active'"
+        rule, _ = svc.create_rule(mode="dqx_native", definition=definition, user_email="alice@x")
+        # Manufacture pending rule in sql.query so approve() can find it
+        pending = RegistryRule(
+            rule_id=rule.rule_id,
+            mode="dqx_native",
+            status="pending_approval",
+            version=0,
+            definition=rule.definition,
+        )
+        sql.query.return_value = [_row_for(pending, status="pending_approval")]
+        sql.execute.reset_mock()
+        svc.approve(rule.rule_id, "approver@x")
+        # The approve call should have written a version snapshot — check the SQL
+        calls = [c.args[0] for c in sql.execute.call_args_list]
+        version_insert = next(c for c in calls if "dq_rule_versions" in c and c.startswith("INSERT"))
+        start = version_insert.index("parse_json('") + len("parse_json('")
+        end = version_insert.index("')", start)
+        stored_def = json.loads(version_insert[start:end])
+        assert stored_def["filter"] == "status = 'active'"
+
+    def test_unsafe_filter_semicolon_rejected_on_create(self, svc, sql):
+        """A filter containing ';' (statement terminator) must be rejected."""
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        definition = _native_definition()
+        definition.filter = "amount > 0; DROP TABLE users"
+        with pytest.raises(UnsafeSqlQueryError):
+            svc.create_rule(mode="dqx_native", definition=definition, user_email="alice@x")
+
+    def test_unsafe_filter_ddl_rejected_on_create(self, svc, sql):
+        """A filter containing DDL keywords must be rejected."""
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        definition = _native_definition()
+        definition.filter = "DROP TABLE users"
+        with pytest.raises(UnsafeSqlQueryError):
+            svc.create_rule(mode="dqx_native", definition=definition, user_email="alice@x")
+
+
+class TestFilterFieldOnUpdateDraft:
+    def test_safe_filter_persists_on_update(self, svc, sql):
+        """Updating a draft with a safe filter persists it."""
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        definition = _native_definition()
+        definition.filter = "region = 'US'"
+        draft = RegistryRule(
+            rule_id="r1", mode="dqx_native", status="draft", version=0, definition=_native_definition()
+        )
+        sql.query.return_value = [_row_for(draft)]
+        updated = svc.update_draft("r1", user_email="alice@x", definition=definition)
+        assert updated.definition.filter == "region = 'US'"
+
+    def test_unsafe_filter_rejected_on_update(self, svc, sql):
+        """A filter with unsafe SQL must be rejected on update_draft."""
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+        from databricks.labs.dqx.errors import UnsafeSqlQueryError
+
+        definition = _native_definition()
+        definition.filter = "1=1; INSERT INTO bad_table VALUES (1)"
+        draft = RegistryRule(
+            rule_id="r1", mode="dqx_native", status="draft", version=0, definition=_native_definition()
+        )
+        sql.query.return_value = [_row_for(draft)]
+        with pytest.raises(UnsafeSqlQueryError):
+            svc.update_draft("r1", user_email="alice@x", definition=definition)
