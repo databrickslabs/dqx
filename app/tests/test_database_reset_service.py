@@ -298,3 +298,58 @@ class TestAudit:
 def test_every_registered_table_is_a_dq_prefixed_app_table(name):
     # Sanity pin: the registry must only ever contain app-owned dq_* tables.
     assert name.startswith("dq_")
+
+
+# ---------------------------------------------------------------------------
+# Guard: reset must never directly touch the 7 Genie-derived objects
+# ---------------------------------------------------------------------------
+
+# These objects live in the `genie` schema and are re-created via delegated
+# genie_reprovision / seed methods.  The reset service must never build a FQN
+# for them directly — doing so would either target the wrong schema or reveal
+# a refactor that broke the delegation model.
+_GENIE_DERIVED_OBJECTS = (
+    "mv_dq_scores",
+    "v_dq_check_results",
+    "v_dq_check_results_asof",
+    "v_dq_check_attribution",
+    "v_dq_failing_rows",
+    "dim_dq_rules",
+    "dim_dq_monitored_tables",
+)
+
+
+def test_reset_does_not_touch_derived_genie_objects_directly():
+    """Reset must not issue any statement that directly names a Genie-derived object.
+
+    These 7 objects (mv_dq_scores, v_dq_check_results, etc.) live in the
+    ``genie`` schema.  Recreation is delegated to ``genie_reprovision`` /
+    seed callables — the reset service itself must never build a FQN for
+    them.  This test locks that delegation contract in so a future change
+    cannot accidentally make reset touch a genie object directly.
+    """
+    genie_calls: list[str] = []
+
+    def _genie_reprovision() -> object:
+        # Simulate genie reprovision; does NOT execute SQL through the executors.
+        genie_calls.append("called")
+        return "space-123"
+
+    delta = _FakeExecutor()
+    oltp = _FakeExecutor()
+    svc = DatabaseResetService(
+        delta_sql=delta,
+        oltp_sql=oltp,
+        genie_reprovision=_genie_reprovision,
+    )
+
+    svc.reset_all_data(performed_by="admin@example.com")
+
+    # Collect every SQL statement the executors actually received.
+    blob = " ".join(delta.executed + oltp.executed)
+
+    for name in _GENIE_DERIVED_OBJECTS:
+        assert name not in blob, (
+            f"reset should not directly reference derived genie object '{name}' — "
+            f"recreation must be delegated to genie_reprovision / seed methods"
+        )
