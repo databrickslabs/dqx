@@ -3,7 +3,6 @@ import re
 import warnings
 
 import databricks.sdk.useragent as ua
-from databricks.labs.blueprint.logger import install_logger
 from databricks.labs.dqx.__about__ import __version__
 
 # Suppress Databricks notebook LSP warning
@@ -13,7 +12,9 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-install_logger()
+# Do not reconfigure the root logger on import (issue #1136); a library should leave logging
+# configuration to the application, so we attach a NullHandler to our own logger instead.
+logging.getLogger("databricks.labs.dqx").addHandler(logging.NullHandler())
 
 # Route Python warnings through logging for consistent formatting
 # (Some modules like check_funcs still use warnings.warn for backward compatibility)
