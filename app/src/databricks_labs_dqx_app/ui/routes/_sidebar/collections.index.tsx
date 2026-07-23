@@ -677,7 +677,7 @@ function DataProductsPage() {
                 onChange={applyFilter(setStewardFilter)}
                 options={stewardOptions.map((s) => ({ value: s, label: s }))}
                 allValue={ALL}
-                allLabel={t("dataProducts.allStewards")}
+                allLabel={t("dataProducts.allOwners")}
                 searchPlaceholder={t("common.search")}
                 emptyText={t("common.noMatches")}
                 ariaLabel={t("dataProducts.colSteward")}

@@ -148,7 +148,7 @@ function DataProductDetailPage() {
           {{
             about: (
               <TabBoundary label={t("dataProducts.tabAbout")}>
-                <ProductAboutTab editState={editState} canEdit={canEdit} />
+                <ProductAboutTab product={product} editState={editState} canEdit={canEdit} />
               </TabBoundary>
             ),
             permissions: (

@@ -235,6 +235,7 @@ app-deploy: app-check-cli app-build ## Build, deploy bundle, and start app (FORC
 	@test -n "$(PROFILE)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET) $(if $(FORCE),--force) $(BUNDLE_VARS)
+	cd app && chmod +x scripts/post_deploy_external_warehouse_grants.sh && ./scripts/post_deploy_external_warehouse_grants.sh -p $(PROFILE) -t $(TARGET) -- $(BUNDLE_VARS)
 	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET) $(BUNDLE_VARS)
 
 APP_NAME ?= dqx-studio

@@ -15,8 +15,9 @@ invent a deliberate mix of passing/failing rows for the manual grid.
 Security rails (AGENTS.md): the rule's SQL predicate must pass DQX's
 :func:`is_sql_query_safe` after slot substitution — the same gate the
 materializer applies before a rule ever runs — else :class:`UnsafeSqlQueryError`
-is raised. ``dqx_native`` rules are not testable and are rejected by the route
-before reaching this service. AI-generated data is inserted as escaped string
+is raised. ``dqx_native`` rules are compiled to a row-level SQL predicate by
+:mod:`native_test_predicate` before evaluation; dataset / geo / UDF checks are
+rejected by the route.
 literals (never executed as SQL) and the raw model response is never relayed.
 """
 

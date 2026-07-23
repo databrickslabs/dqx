@@ -690,6 +690,8 @@ export interface CheckFunctionDef {
   label: string;
   /** 'row' or 'dataset' */
   rule_type: string;
+  /** Whether the Rules Registry Test tab can evaluate this function against sample rows via a compiled SQL predicate. */
+  rule_testable?: boolean;
   /** UX grouping bucket (e.g. 'Null & Empty', 'Numeric & Comparable', 'Aggregates'). Used to group entries in the UI dropdown. */
   category: string;
   /** First line of the function docstring */
@@ -1524,6 +1526,12 @@ export interface GenerateChecksOut {
   validation_errors?: string[];
 }
 
+export type GenerateDataInFunction = string | null;
+
+export type GenerateDataInNativeArgumentsAnyOf = { [key: string]: unknown };
+
+export type GenerateDataInNativeArguments = GenerateDataInNativeArgumentsAnyOf | null;
+
 export type GenerateDataInPolarity = typeof GenerateDataInPolarity[keyof typeof GenerateDataInPolarity];
 
 
@@ -1534,8 +1542,9 @@ export const GenerateDataInPolarity = {
 } as const;
 
 export interface GenerateDataIn {
-  /** @minLength 1 */
-  predicate: string;
+  predicate?: string;
+  function?: GenerateDataInFunction;
+  native_arguments?: GenerateDataInNativeArguments;
   polarity?: GenerateDataInPolarity;
   columns?: SlotIn[];
   /**
@@ -2222,6 +2231,10 @@ export interface MonitoredTableSummaryOut {
   total_tests?: MonitoredTableSummaryOutTotalTests;
   /** When the cached score was last recomputed */
   score_computed_at?: MonitoredTableSummaryOutScoreComputedAt;
+  /** Distinct quality-dimension tags across applied rules. */
+  dimensions?: string[];
+  /** Distinct effective severities across applied rules (override-aware). */
+  severities?: string[];
 }
 
 export type MonitoredTableVersionChecksOutChecksItem = { [key: string]: unknown };
@@ -3195,6 +3208,12 @@ export const RuleTestRunInMode = {
   sql: 'sql',
 } as const;
 
+export type RuleTestRunInFunction = string | null;
+
+export type RuleTestRunInNativeArgumentsAnyOf = { [key: string]: unknown };
+
+export type RuleTestRunInNativeArguments = RuleTestRunInNativeArgumentsAnyOf | null;
+
 export type RuleTestRunInPolarity = typeof RuleTestRunInPolarity[keyof typeof RuleTestRunInPolarity];
 
 
@@ -3219,8 +3238,9 @@ export type RuleTestRunInTable = TableRunIn | null;
 
 export interface RuleTestRunIn {
   mode: RuleTestRunInMode;
-  /** @minLength 1 */
-  predicate: string;
+  predicate?: string;
+  function?: RuleTestRunInFunction;
+  native_arguments?: RuleTestRunInNativeArguments;
   polarity?: RuleTestRunInPolarity;
   slots?: SlotIn[];
   source_kind: RuleTestRunInSourceKind;
@@ -4091,6 +4111,17 @@ export interface UpdateDataProductIn {
   schedule_cron?: UpdateDataProductInScheduleCron;
   schedule_tz?: UpdateDataProductInScheduleTz;
   schedule_kind?: UpdateDataProductInScheduleKind;
+}
+
+/**
+ * Request body for updating a monitored table's owner (persisted as ``steward``).
+ */
+export interface UpdateMonitoredTableOwnerIn {
+  /**
+   * Owner's email/username
+   * @minLength 1
+   */
+  owner: string;
 }
 
 /**
@@ -14700,6 +14731,73 @@ export const useBulkRegisterMonitoredTables = <TError = AxiosError<HTTPValidatio
       > => {
 
       const mutationOptions = getBulkRegisterMonitoredTablesMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Set a monitored table's owner (stored as ``steward``).
+
+Requires ``MODIFY`` on the monitored table unless the caller is an
+admin/approver. Does not change the binding's review status.
+ * @summary Update Monitored Table Owner
+ */
+export const updateMonitoredTableOwner = (
+    bindingId: string,
+    updateMonitoredTableOwnerIn: UpdateMonitoredTableOwnerIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableOut>> => {
+    
+    
+    return axios.default.patch(
+      `/api/v1/monitored-tables/${bindingId}/owner`,
+      updateMonitoredTableOwnerIn,options
+    );
+  }
+
+
+
+export const getUpdateMonitoredTableOwnerMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMonitoredTableOwner>>, TError,{bindingId: string;data: UpdateMonitoredTableOwnerIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof updateMonitoredTableOwner>>, TError,{bindingId: string;data: UpdateMonitoredTableOwnerIn}, TContext> => {
+
+const mutationKey = ['updateMonitoredTableOwner'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateMonitoredTableOwner>>, {bindingId: string;data: UpdateMonitoredTableOwnerIn}> = (props) => {
+          const {bindingId,data} = props ?? {};
+
+          return  updateMonitoredTableOwner(bindingId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateMonitoredTableOwnerMutationResult = NonNullable<Awaited<ReturnType<typeof updateMonitoredTableOwner>>>
+    export type UpdateMonitoredTableOwnerMutationBody = UpdateMonitoredTableOwnerIn
+    export type UpdateMonitoredTableOwnerMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Update Monitored Table Owner
+ */
+export const useUpdateMonitoredTableOwner = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMonitoredTableOwner>>, TError,{bindingId: string;data: UpdateMonitoredTableOwnerIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateMonitoredTableOwner>>,
+        TError,
+        {bindingId: string;data: UpdateMonitoredTableOwnerIn},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateMonitoredTableOwnerMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

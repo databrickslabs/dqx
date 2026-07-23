@@ -2,8 +2,8 @@
 // dqlake's `test/TestRuleTab.tsx` in spirit, adapted to DQX's registry rule
 // model: a rule is tested by evaluating its effective SQL predicate over manual
 // rows (inline VALUES) or a real UC table sample on the configured warehouse
-// (OBO). Only `sql` / `lowcode` rules reach here — `dqx_native` shows the
-// "not available" notice in the parent.
+// rows (OBO). `sql` / `lowcode` rules send a predicate; `dqx_native` rules send
+// `function` + `native_arguments` which the backend compiles to SQL.
 //
 // Subtle behaviours carried over from dqlake:
 //  - Manual / Table mode toggle; switching resets the last result.
@@ -106,19 +106,25 @@ export function RuleTestPanel({
   canTest,
   ruleMode = "sql",
   lowcodeAdvanced = false,
+  nativeFunction,
+  nativeArguments,
 }: {
-  /** Effective SQL predicate: raw in SQL mode, compiled AST in Low-Code mode. */
+  /** Effective SQL predicate: raw in SQL mode, compiled AST in Low-Code mode. Unused for dqx_native. */
   predicate: string;
   polarity: "pass" | "fail";
   slots: RuleSlot[];
-  /** Whether there is a non-empty predicate to test against. */
+  /** Whether there is enough definition to test against. */
   canTest: boolean;
   /** Rule authoring mode — forwarded to the run route so it records the real mode. */
-  ruleMode?: "sql" | "lowcode";
+  ruleMode?: "sql" | "lowcode" | "dqx_native";
   /** True when a Low-Code rule folds joins/group-by into a dataset-level query;
    *  forwarded so the route can reject a mis-testable rule (belt-and-braces —
    *  the parent already hides the surface for these). */
   lowcodeAdvanced?: boolean;
+  /** DQX Native check function name (required when ruleMode is dqx_native). */
+  nativeFunction?: string;
+  /** Frozen native body.arguments with {{slot}} placeholders. */
+  nativeArguments?: Record<string, unknown>;
 }) {
   const { t } = useTranslation();
   const ai = useAiAvailability();
@@ -137,7 +143,13 @@ export function RuleTestPanel({
   );
 
   // Logic hash: rebuild a fresh grid whenever the rule's testable logic changes.
-  const logicHash = JSON.stringify({ p: predicate, pol: polarity, s: slots.map((s) => [s.name, s.family]) });
+  const logicHash = JSON.stringify({
+    p: predicate,
+    pol: polarity,
+    s: slots.map((s) => [s.name, s.family]),
+    fn: nativeFunction,
+    args: nativeArguments,
+  });
   const [manual, setManualState] = useState<ManualState>(
     () => getManual(CACHE_KEY, logicHash) ?? buildInitialManual(slots),
   );
@@ -186,14 +198,24 @@ export function RuleTestPanel({
 
   const onGenerate = () => {
     setGenerating(true);
+    const generateBody =
+      ruleMode === "dqx_native"
+        ? {
+            function: nativeFunction,
+            native_arguments: nativeArguments,
+            polarity,
+            row_count: 8,
+            columns: manual.columns.map((c) => ({ name: c, family: famBySlot[c] ?? "any" })),
+          }
+        : {
+            predicate,
+            polarity,
+            row_count: 8,
+            columns: manual.columns.map((c) => ({ name: c, family: famBySlot[c] ?? "any" })),
+          };
     generateMutation.mutate(
       {
-        data: {
-          predicate,
-          polarity,
-          row_count: 8,
-          columns: manual.columns.map((c) => ({ name: c, family: famBySlot[c] ?? "any" })),
-        },
+        data: generateBody,
       },
       {
         onSuccess: (res) => {
@@ -215,7 +237,14 @@ export function RuleTestPanel({
   };
 
   const onRun = () => {
-    const common = { mode: ruleMode, predicate, polarity, lowcode_advanced: lowcodeAdvanced };
+    const common = {
+      mode: ruleMode,
+      predicate: ruleMode === "dqx_native" ? "" : predicate,
+      function: ruleMode === "dqx_native" ? nativeFunction : undefined,
+      native_arguments: ruleMode === "dqx_native" ? nativeArguments : undefined,
+      polarity,
+      lowcode_advanced: lowcodeAdvanced,
+    };
     if (mode === "adhoc") {
       runMutation.mutate(
         {

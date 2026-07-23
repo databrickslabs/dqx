@@ -45,6 +45,18 @@ from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validat
 
 logger = logging.getLogger(__name__)
 
+# Display / list sort order for severity labels (most severe first).
+_SEVERITY_RANK: dict[str, int] = {
+    "critical": 0,
+    "high": 1,
+    "medium": 2,
+    "low": 3,
+}
+
+
+def _severity_list_sort_key(label: str) -> tuple[int, str]:
+    return (_SEVERITY_RANK.get(label.lower(), len(_SEVERITY_RANK)), label.lower())
+
 
 class DuplicateMonitoredTableError(ValueError):
     """Raised by :meth:`MonitoredTableService.register` for an already-bound ``table_fqn``."""
@@ -97,6 +109,10 @@ class MonitoredTableSummary:
     failed_tests: int | None = None
     total_tests: int | None = None
     score_computed_at: str | None = None
+    # Distinct dimension / severity tags across the binding's applied rules
+    # (effective severity honours per-application ``severity_override``).
+    dimensions: list[str] = field(default_factory=list)
+    severities: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -355,6 +371,8 @@ class MonitoredTableService:
             tables = [(t, s) for t, s in tables if needle in t.table_fqn.lower()]
         applied_counts = self._applied_rule_counts([t.binding_id for t, _ in tables])
         check_counts = self._materialized_check_counts([t.table_fqn for t, _ in tables])
+        bindings_with_rules = [bid for bid in applied_counts if applied_counts[bid] > 0]
+        tag_facets = self._applied_rule_tag_facets(bindings_with_rules) if bindings_with_rules else {}
         return [
             MonitoredTableSummary(
                 table=t,
@@ -364,6 +382,8 @@ class MonitoredTableService:
                 failed_tests=cached.failed_tests,
                 total_tests=cached.total_tests,
                 score_computed_at=cached.computed_at,
+                dimensions=tag_facets.get(t.binding_id, ([], []))[0],
+                severities=tag_facets.get(t.binding_id, ([], []))[1],
             )
             for t, cached in tables
         ]
@@ -384,6 +404,46 @@ class MonitoredTableService:
         )
         rows = self._sql.query(sql)
         return {row[0]: int(row[1]) for row in rows if row and row[0] is not None and row[1] is not None}
+
+    def _applied_rule_tag_facets(self, binding_ids: list[str]) -> dict[str, tuple[list[str], list[str]]]:
+        """Distinct dimension / effective-severity tags per binding (one joined query).
+
+        Effective severity is ``severity_override`` when set, otherwise the
+        registry rule's reserved ``severity`` tag. Bindings with no tagged
+        applied rules are absent from the result — callers default to ``[]``.
+        """
+        if not binding_ids:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(b)}'" for b in binding_ids)
+        user_metadata = self._sql.select_json_text("r.user_metadata")
+        sql = (
+            f"SELECT ar.binding_id, ar.severity_override, {user_metadata} "
+            f"FROM {self._applied_table} ar "
+            f"LEFT JOIN {self._rules_table} r ON ar.rule_id = r.rule_id "
+            f"WHERE ar.binding_id IN ({in_list})"
+        )
+        rows = self._sql.query(sql)
+        dims: dict[str, set[str]] = {}
+        sevs: dict[str, set[str]] = {}
+        for row in rows:
+            if not row or not row[0]:
+                continue
+            binding_id = str(row[0])
+            override = (row[1] or "").strip() if isinstance(row[1], str) else ""
+            metadata = self._parse_json_dict(row[2])
+            dimension = get_rule_dimension(metadata)
+            if dimension:
+                dims.setdefault(binding_id, set()).add(dimension)
+            severity = override or (get_rule_severity(metadata) or "")
+            if severity:
+                sevs.setdefault(binding_id, set()).add(severity)
+        out: dict[str, tuple[list[str], list[str]]] = {}
+        for binding_id in binding_ids:
+            out[binding_id] = (
+                sorted(dims.get(binding_id, set())),
+                sorted(sevs.get(binding_id, set()), key=_severity_list_sort_key),
+            )
+        return out
 
     def _materialized_check_counts(self, table_fqns: list[str]) -> dict[str, int]:
         """Count active ``dq_quality_rules`` rows per *table_fqns* entry, regardless of authoring source.
@@ -787,6 +847,40 @@ class MonitoredTableService:
             cron,
             tz,
             kind,
+            user_email,
+        )
+        return table
+
+    def update_owner(self, binding_id: str, owner: str, user_email: str) -> MonitoredTable:
+        """Set the binding's owner (stored in the ``steward`` column).
+
+        Owner is operational metadata orthogonal to the rule-review lifecycle, so
+        this does NOT flip the binding's ``status``. Only ``steward`` and the
+        ``updated_*`` audit fields move.
+
+        Raises:
+            RuntimeError: *binding_id* does not exist.
+            ValueError: *owner* is blank after trimming.
+        """
+        owner = owner.strip()
+        if not owner:
+            raise ValueError("Owner must not be empty")
+        table = self._get(binding_id)
+        if table is None:
+            raise RuntimeError(f"Monitored table not found: {binding_id}")
+        e = escape_sql_string(binding_id)
+        self._sql.execute(
+            f"UPDATE {self._table} SET steward = {self._opt_str(owner)}, "
+            f"updated_by = {self._opt_str(user_email)}, updated_at = now() "
+            f"WHERE binding_id = '{e}'"
+        )
+        table.steward = owner
+        table.updated_by = user_email
+        logger.info(
+            "Set monitored table %s (binding_id=%s) owner to %s (by %s)",
+            table.table_fqn,
+            binding_id,
+            owner,
             user_email,
         )
         return table

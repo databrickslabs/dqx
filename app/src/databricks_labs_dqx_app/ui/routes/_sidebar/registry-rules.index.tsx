@@ -862,7 +862,7 @@ function RegistryRulesPage() {
         onChange={applyFilter(setStewardFilter)}
         options={stewardValues.map((v) => ({ value: v, label: v }))}
         allValue={ALL}
-        allLabel={t("rulesRegistry.allStewards")}
+        allLabel={t("rulesRegistry.allOwners")}
         searchPlaceholder={t("common.search")}
         emptyText={t("common.noMatches")}
         ariaLabel={t("rulesRegistry.stewardPlaceholder")}

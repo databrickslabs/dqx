@@ -464,8 +464,8 @@ export function PermissionsTab({
       {showSteward && (
         <section className="flex flex-col gap-3">
           <div className="flex items-center gap-1.5">
-            <p className="text-sm font-medium leading-none">{t("permissions.stewardLabel")}</p>
-            <HelpTooltip text={t("permissions.stewardHelp")} />
+            <p className="text-sm font-medium leading-none">{t("permissions.ownerLabel")}</p>
+            <HelpTooltip text={t("permissions.ownerHelp")} />
           </div>
           {canEditSteward && onStewardChange ? (
             <PrincipalPicker
@@ -477,7 +477,7 @@ export function PermissionsTab({
           ) : steward ? (
             <p className="text-sm">{steward}</p>
           ) : (
-            <p className="text-sm text-muted-foreground italic">{t("permissions.stewardNone")}</p>
+            <p className="text-sm text-muted-foreground italic">{t("permissions.ownerNone")}</p>
           )}
         </section>
       )}

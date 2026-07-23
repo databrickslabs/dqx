@@ -58,7 +58,7 @@ import {
   useGetApprovalsMode,
   useSaveApprovalsMode,
   getGetApprovalsModeQueryKey,
-  useGetComputeSettingsSuspense,
+  useGetComputeSettings,
   useSaveComputeSettings,
   getGetComputeSettingsQueryKey,
   useGetPermissionsDefaultInherit,
@@ -70,8 +70,8 @@ import {
   useGetRequireDraftRunSettings,
   useSaveRequireDraftRunSettings,
   getGetRequireDraftRunSettingsQueryKey,
-  useListComputeWarehousesSuspense,
-  useListComputeClustersSuspense,
+  useListComputeWarehouses,
+  useListComputeClusters,
   useGetWarehouseAccess,
   getGetWarehouseAccessQueryKey,
   useGrantWarehouseAccess,
@@ -1213,8 +1213,7 @@ function DraftRunSampleLimitSettings() {
   const { data: resp, isLoading } = useGetDraftRunSampleLimit();
   const settings = resp?.data;
   const saveMutation = useSaveDraftRunSampleLimit();
-  const { data: role } = useCurrentUserRoleSuspense();
-  const isAdmin = role?.data?.role === "admin";
+  const { isAdmin } = usePermissions();
 
   const [sampleKind, setSampleKind] = useState<SampleKind>("records");
   const [sampleValue, setSampleValue] = useState(1000);
@@ -2528,37 +2527,46 @@ function GlobalResultsSettingsCard() {
   );
 }
 
-/** Inner content rendered after all suspense data is available. */
-function ComputeSettingsContent() {
+function ComputeSettingsCard() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data: settingsResp } = useGetComputeSettingsSuspense();
-  const settings = settingsResp.data;
-  const { data: warehousesResp } = useListComputeWarehousesSuspense();
-  const warehouses = useMemo(() => warehousesResp.data ?? [], [warehousesResp]);
+  const { data: settingsResp, isLoading, isError: settingsError, refetch: refetchSettings } = useGetComputeSettings();
+  const settings = settingsResp?.data;
+  const { data: warehousesResp } = useListComputeWarehouses();
+  const warehouses = useMemo(() => warehousesResp?.data ?? [], [warehousesResp]);
   // The clusters list is best-effort: the backend swallows a missing-scope /
-  // permission error to `[]` (200). Hard transport errors are caught by the
-  // Suspense error boundary. Either way we degrade gracefully.
-  const { data: clustersResp } = useListComputeClustersSuspense();
-  const clusters = useMemo(() => clustersResp.data ?? [], [clustersResp]);
+  // permission error to `[]` (200), so a genuinely empty list and a
+  // permission-blocked list both surface here as `[]`. `clustersError` only
+  // trips on a hard transport error (network / 500). Either way we degrade to a
+  // subtle inline note in the picker — never a hard section failure.
+  const { data: clustersResp, isError: clustersError } = useListComputeClusters();
+  const clusters = useMemo(() => clustersResp?.data ?? [], [clustersResp]);
   const { isAdmin } = usePermissions();
 
   const saveMutation = useSaveComputeSettings();
   const grantMutation = useGrantWarehouseAccess();
 
-  // Local state mirrors the saved settings — initialised directly from
-  // suspense data (always available by the time this component renders).
-  const [warehouseId, setWarehouseId] = useState(() => settings.sql_warehouse_id ?? "");
-  const [jobsKind, setJobsKind] = useState<JobsComputeModel["kind"]>(() => settings.jobs_compute?.kind ?? "serverless");
-  const [clusterId, setClusterId] = useState(() => settings.jobs_compute?.cluster_id ?? "");
+  const [warehouseId, setWarehouseId] = useState("");
+  const [jobsKind, setJobsKind] = useState<JobsComputeModel["kind"]>("serverless");
+  const [clusterId, setClusterId] = useState("");
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (settings && !hydrated) {
+      setWarehouseId(settings.sql_warehouse_id ?? "");
+      setJobsKind(settings.jobs_compute?.kind ?? "serverless");
+      setClusterId(settings.jobs_compute?.cluster_id ?? "");
+      setHydrated(true);
+    }
+  }, [settings, hydrated]);
 
   // Keep a ref to current field values so save() never reads stale closure state.
-  const currentRef = useRef({ warehouseId: settings.sql_warehouse_id ?? "", jobsKind: settings.jobs_compute?.kind ?? "serverless" as JobsComputeModel["kind"], clusterId: settings.jobs_compute?.cluster_id ?? "" });
+  const currentRef = useRef({ warehouseId: "", jobsKind: "serverless" as JobsComputeModel["kind"], clusterId: "" });
   currentRef.current = { warehouseId, jobsKind, clusterId };
 
   // The warehouse whose SP access we check: the picked one, else the effective
   // (env-fallback) warehouse. Re-runs whenever the pick changes.
-  const checkWarehouseId = warehouseId || settings.effective_warehouse_id || "";
+  const checkWarehouseId = warehouseId || settings?.effective_warehouse_id || "";
   const { data: accessResp } = useGetWarehouseAccess(
     { warehouse_id: checkWarehouseId },
     { query: { enabled: !!checkWarehouseId } },
@@ -2624,8 +2632,57 @@ function ComputeSettingsContent() {
     );
   };
 
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Cpu className="h-5 w-5" />
+            {t("config.computeTitle")}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Skeleton className="h-40 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Only the compute *settings* fetch is load-bearing for this card. If it
+  // fails we degrade to a soft, in-card notice with a retry rather than the
+  // section-level error boundary (which reads as the whole tab failing).
+  if (settingsError || !settings) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Cpu className="h-5 w-5" />
+            {t("config.computeTitle")}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col items-start gap-2">
+            <p className="text-sm text-muted-foreground flex items-center gap-1.5">
+              <AlertCircle className="h-4 w-4" /> {t("config.computeSettingsLoadFailed")}
+            </p>
+            <Button variant="outline" size="sm" onClick={() => refetchSettings()}>
+              {t("common.retry")}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
-    <CardContent className="space-y-4">
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Cpu className="h-5 w-5" />
+          {t("config.computeTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
       {/* SQL warehouse */}
       <div className="flex items-center justify-between rounded-md border p-3">
         <div className="space-y-0.5 pr-4">
@@ -2709,6 +2766,7 @@ function ComputeSettingsContent() {
                 value={clusterId}
                 onChange={handleClusterChange}
                 clusters={clusters}
+                clustersError={clustersError}
                 disabled={!isAdmin || saveMutation.isPending}
               />
               <p className="text-[11px] text-muted-foreground leading-relaxed pt-1">
@@ -2720,21 +2778,7 @@ function ComputeSettingsContent() {
       </div>
 
       {!isAdmin && <span className="text-xs text-muted-foreground">{t("config.computeAdminOnlyHint")}</span>}
-    </CardContent>
-  );
-}
-
-function ComputeSettingsCard() {
-  const { t } = useTranslation();
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Cpu className="h-5 w-5" />
-          {t("config.computeTitle")}
-        </CardTitle>
-      </CardHeader>
-      <ComputeSettingsContent />
+      </CardContent>
     </Card>
   );
 }

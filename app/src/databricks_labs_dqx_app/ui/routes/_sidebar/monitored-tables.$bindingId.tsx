@@ -70,6 +70,7 @@ import {
   XCircle,
 } from "lucide-react";
 import {
+  useUpdateMonitoredTableOwner,
   useGetMonitoredTableSuspense,
   useDeleteMonitoredTable,
   useGetMonitoredTableProfile,
@@ -113,6 +114,7 @@ import {
 import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
+import { PrincipalPicker, type PickedPrincipal } from "@/components/permissions/PrincipalPicker";
 import { CommentsDialog } from "@/components/CommentThread";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
@@ -836,7 +838,7 @@ function MonitoredTableDetailPage() {
           </div>
 
           <TabsContent value="about">
-            <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
+            <AboutTab table={table} bindingId={bindingId} canEdit={perms.canCreateRules} onColumnClick={handleColumnDeepLink} />
           </TabsContent>
 
           {/* pt-4 matches the other tabs' top spacing (About/Schedule own it internally). */}
@@ -1259,15 +1261,21 @@ function ColumnTagsCell({ tags }: { tags: string[] }) {
 
 function AboutTab({
   table,
+  bindingId,
+  canEdit,
   onColumnClick,
 }: {
   table: MonitoredTableOut;
+  bindingId: string;
+  canEdit: boolean;
   /** Deep-links to the Apply Rules "by column" lens, expanded to that
    *  column (item 1) — reuses the jump+expand handoff already wired
    *  between the by-rule/by-column lenses in ApplyRulesTab. */
   onColumnClick: (columnName: string) => void;
 }) {
   const { t } = useTranslation();
+  const qc = useQueryClient();
+  const updateOwnerMut = useUpdateMonitoredTableOwner({ mutation: { onError: () => {} } });
   const [filter, setFilter] = useState("");
   // 1-indexed schema page (P26 item 2) — the shared `Pagination` footer
   // convention. Reset to 1 whenever the filter changes so a narrowed
@@ -1312,6 +1320,23 @@ function AboutTab({
     return `${host}/explore/data/${catalog}/${schema}/${tableName}`;
   }, [workspaceHostQuery.data?.workspace_host, parts.length, catalog, schema, tableName]);
 
+  const effectiveOwner = table.steward || table.created_by || "";
+  const ownerValue: PickedPrincipal | null = effectiveOwner
+    ? { principal_id: "", principal_type: "user", principal_name: effectiveOwner }
+    : null;
+
+  const handleOwnerSelect = async (owner: string) => {
+    const trimmed = owner.trim();
+    if (!trimmed || trimmed === effectiveOwner) return;
+    try {
+      await updateOwnerMut.mutateAsync({ bindingId, data: { owner: trimmed } });
+      invalidateAfterMonitoredTableChange(qc, bindingId);
+      toast.success(t("monitoredTables.aboutOwnerUpdated"));
+    } catch (err) {
+      toast.error(extractApiError(err, t("monitoredTables.aboutOwnerUpdateFailed")), { duration: 6000 });
+    }
+  };
+
   return (
     <div className="space-y-6 pt-4">
       {/* About (metadata) : Schema (columns table) — the schema table gets the
@@ -1335,8 +1360,32 @@ function AboutTab({
               <StatusBadge status={table.status} />
             </dd>
 
-            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutSteward")}</dt>
-            <dd>{table.steward || <span className="text-muted-foreground italic">{t("monitoredTables.aboutStewardNone")}</span>}</dd>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutOwner")}</dt>
+            <dd>
+              {canEdit ? (
+                <PrincipalPicker
+                  value={ownerValue}
+                  disabled={updateOwnerMut.isPending}
+                  className="w-full max-w-xs h-8 text-xs"
+                  suggestion={
+                    table.created_by && table.created_by !== effectiveOwner
+                      ? {
+                          displayName: table.created_by,
+                          onPick: () => void handleOwnerSelect(table.created_by!),
+                        }
+                      : null
+                  }
+                  onSelect={(p) => void handleOwnerSelect(p.display_name)}
+                  onClear={() => {
+                    if (table.created_by) void handleOwnerSelect(table.created_by);
+                  }}
+                />
+              ) : effectiveOwner ? (
+                effectiveOwner
+              ) : (
+                <span className="text-muted-foreground italic">{t("monitoredTables.aboutOwnerNone")}</span>
+              )}
+            </dd>
 
             <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutLastProfiled")}</dt>
             <dd>{table.last_profiled_at ? formatDateShort(table.last_profiled_at) : t("monitoredTables.neverProfiled")}</dd>
@@ -1885,10 +1934,12 @@ function ApplyRulesTab({
   const [removeTarget, setRemoveTarget] = useState<AppliedRuleOut | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "needs-attention">("all");
-  // Set by the by-column lens's "jump to rule" action, or right after
-  // AddRulesDialog stages new rule(s), so the target card(s) auto-expand in
-  // the by-rule lens instead of just scrolling into view.
+  // Set by the by-column lens's "jump to rule" action, after AddRulesDialog
+  // stages new rule(s), or when a by-column add still needs slot mapping in
+  // the by-rule lens — so the target card(s) auto-expand with the origin
+  // column pre-selected instead of asking again.
   const [expandRuleIds, setExpandRuleIds] = useState<string[]>([]);
+  const [mappingPrefillColumn, setMappingPrefillColumn] = useState<ColumnRef | null>(null);
   // Single-open accordion for the by-rule lens (item 26): exactly one card is
   // expanded at a time, so opening one closes the others. Mirrors the
   // by-column lens's `openColumnName`.
@@ -2218,22 +2269,27 @@ function ApplyRulesTab({
 
   // Every add path (AddRulesDialog, AiSuggestionDialog) hands up a batch of
   // brand-new locally-staged rows. When the add came from a column CTA
-  // (addColumnContext is non-null), stay in the by-column lens and expand
-  // the target column so the newly-mapped rule appears inline; otherwise
-  // jump to the by-rule lens and auto-expand the new rule cards for mapping.
-  const stageNewRows = (rows: AppliedRuleOut[]) => {
+  // (*columnContext*), stay in the by-column lens when every row already
+  // maps that column; otherwise open the by-rule lens with the column
+  // pre-selected in the mapping picker.
+  const stageNewRows = (rows: AppliedRuleOut[], columnContext?: ColumnRef | null) => {
+    const rowNeedsMapping = (row: AppliedRuleOut) => {
+      const groups = row.column_mapping ?? [];
+      return groups.length === 0 || groups.every((g) => Object.keys(g).length === 0);
+    };
+
     setStagedRows((prev) => [...prev, ...rows]);
     setFilter("all");
     setSearch("");
-    if (addColumnContext) {
-      // Origin was a column CTA — stay in by-column and show the column.
+    if (columnContext && !rows.some(rowNeedsMapping)) {
       setLens("by-column");
-      setOpenColumnName(addColumnContext.name);
+      setOpenColumnName(columnContext.name);
+      setMappingPrefillColumn(null);
+      setExpandRuleIds([]);
     } else {
-      // Origin was the header "+ Add rule" button or AI suggestion — go to
-      // by-rule and auto-expand the newly-staged cards for mapping.
       setLens("by-rule");
       setExpandRuleIds(rows.map((r) => r.rule_id));
+      setMappingPrefillColumn(columnContext ?? null);
     }
   };
 
@@ -2536,6 +2592,9 @@ function ApplyRulesTab({
                 isOpen={openRuleId === rule.rule_id}
                 onToggle={() => setOpenRuleId((prev) => (prev === rule.rule_id ? null : rule.rule_id))}
                 forceOpen={expandRuleIds.includes(rule.rule_id)}
+                mappingPrefillColumn={
+                  expandRuleIds.includes(rule.rule_id) ? mappingPrefillColumn : null
+                }
                 columnTags={Object.keys(columnTags).length > 0 ? columnTags : undefined}
                 onJumpToColumn={(colName) => {
                   setFilter("all");

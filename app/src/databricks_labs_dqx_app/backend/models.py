@@ -664,6 +664,12 @@ class UpdateMonitoredTableScheduleIn(BaseModel):
     )
 
 
+class UpdateMonitoredTableOwnerIn(BaseModel):
+    """Request body for updating a monitored table's owner (persisted as ``steward``)."""
+
+    owner: str = Field(min_length=1, description="Owner's email/username")
+
+
 
 
 class BulkRegisterMonitoredTablesIn(BaseModel):
@@ -971,6 +977,14 @@ class MonitoredTableSummaryOut(BaseModel):
     failed_tests: int | None = None
     total_tests: int | None = None
     score_computed_at: str | None = Field(default=None, description="When the cached score was last recomputed")
+    dimensions: list[str] = Field(
+        default_factory=list,
+        description="Distinct quality-dimension tags across applied rules.",
+    )
+    severities: list[str] = Field(
+        default_factory=list,
+        description="Distinct effective severities across applied rules (override-aware).",
+    )
 
     @classmethod
     def from_domain(cls, summary: MonitoredTableSummary) -> "MonitoredTableSummaryOut":
@@ -982,6 +996,8 @@ class MonitoredTableSummaryOut(BaseModel):
             failed_tests=summary.failed_tests,
             total_tests=summary.total_tests,
             score_computed_at=summary.score_computed_at,
+            dimensions=list(summary.dimensions),
+            severities=list(summary.severities),
         )
 
 
@@ -2310,6 +2326,13 @@ class CheckFunctionDef(BaseModel):
     name: str = Field(description="Function name as registered in CHECK_FUNC_REGISTRY")
     label: str = Field(description="Human-readable display name for the UI (e.g. 'Is Not Null')")
     rule_type: str = Field(description="'row' or 'dataset'")
+    rule_testable: bool = Field(
+        default=False,
+        description=(
+            "Whether the Rules Registry Test tab can evaluate this function "
+            "against sample rows via a compiled SQL predicate."
+        ),
+    )
     category: str = Field(
         description=(
             "UX grouping bucket (e.g. 'Null & Empty', 'Numeric & Comparable', "

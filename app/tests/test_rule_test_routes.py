@@ -56,9 +56,37 @@ class TestRun:
         assert out.rows[1].passed is False
 
     @pytest.mark.asyncio
-    async def test_native_rejected_without_calling_service(self, svc):
-        body = _adhoc_body()
-        body.mode = "dqx_native"
+    async def test_native_compiles_and_runs(self, svc):
+        async def _run(**kwargs):
+            assert kwargs["predicate"] == "({{a}} IS NOT NULL)"
+            return TestRunResult(
+                columns=["a"],
+                rows=[TestRow(cells={"a": "x"}, passed=True, row_idx=0)],
+                truncated=False,
+            )
+
+        svc.run_adhoc.side_effect = _run
+        body = RuleTestRunIn(
+            mode="dqx_native",
+            function="is_not_null",
+            native_arguments={"column": "{{a}}"},
+            slots=[SlotIn(name="a", family="text")],
+            source_kind="adhoc",
+            adhoc=AdhocRunIn(columns=["a"], rows=[["x"]]),
+        )
+        out = await run_rule_test(body, svc)
+        assert out.rows[0].passed is True
+
+    @pytest.mark.asyncio
+    async def test_unsupported_native_rejected_without_calling_service(self, svc):
+        body = RuleTestRunIn(
+            mode="dqx_native",
+            function="is_unique",
+            native_arguments={"columns": ["{{a}}"]},
+            slots=[SlotIn(name="a", family="text")],
+            source_kind="adhoc",
+            adhoc=AdhocRunIn(columns=["a"], rows=[["x"]]),
+        )
         with pytest.raises(HTTPException) as exc:
             await run_rule_test(body, svc)
         assert exc.value.status_code == 400

@@ -66,6 +66,7 @@ from databricks_labs_dqx_app.backend.models import (
     RegisterMonitoredTableIn,
     RunMonitoredTableIn,
     RunMonitoredTableOut,
+    UpdateMonitoredTableOwnerIn,
     UpdateMonitoredTableScheduleIn,
     SaveAppliedRulesIn,
     SetAppliedRulePinIn,
@@ -385,6 +386,47 @@ def delete_monitored_table(
     except Exception as e:
         logger.error(f"Failed to delete monitored table {binding_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to delete monitored table: {e}")
+
+
+@router.patch(
+    "/{binding_id}/owner",
+    response_model=MonitoredTableOut,
+    operation_id="updateMonitoredTableOwner",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def update_monitored_table_owner(
+    binding_id: str,
+    body: UpdateMonitoredTableOwnerIn,
+    svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+) -> MonitoredTableOut:
+    """Set a monitored table's owner (stored as ``steward``).
+
+    Requires ``MODIFY`` on the monitored table unless the caller is an
+    admin/approver. Does not change the binding's review status.
+    """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.MODIFY,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
+    )
+    try:
+        table = svc.update_owner(binding_id, body.owner, user_email)
+        return MonitoredTableOut.from_domain(table)
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to update monitored table owner {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update monitored table owner: {e}")
 
 
 @router.patch(

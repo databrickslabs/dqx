@@ -4,7 +4,7 @@ import asyncio
 import base64
 import json
 import logging
-from unittest.mock import create_autospec
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 
@@ -1338,6 +1338,19 @@ class TestViewService:
 
         # Should not raise
         svc.drop_view("cat.sch.tmp_view_gone")
+
+    def test_drop_view_falls_back_to_service_principal(self, ws: WorkspaceClient) -> None:
+        sp_ws = MagicMock()
+        sp_ws.statement_execution.execute_statement.return_value = _ok_response()
+        obo_sql = SqlExecutor(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
+        sp_sql = SqlExecutor(ws=sp_ws, warehouse_id="w", catalog="cat", schema="sch")
+        svc = ViewService(sql=obo_sql, sp_sql=sp_sql)
+        ws.statement_execution.execute_statement.return_value = _failed_response("permission denied")  # type: ignore[attr-defined]
+
+        svc.drop_view("cat.sch.tmp_view_abc")
+
+        sp_sql_stmt = sp_ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "DROP VIEW IF EXISTS" in sp_sql_stmt
 
     # ---------- create_view: FQN validation ----------
 

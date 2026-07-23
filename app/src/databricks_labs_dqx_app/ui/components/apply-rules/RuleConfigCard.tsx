@@ -36,7 +36,8 @@ import selector from "@/lib/selector";
 import { MappingChips } from "./MappingChips";
 import { ThresholdPill } from "./ThresholdPill";
 import { RESERVED_DESCRIPTION_KEY } from "@/components/RegistryRuleBadges";
-import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag, getUsedColumnsForRule } from "./shared";
+import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag, getUsedColumnsForRule, pickSlotForColumn } from "./shared";
+import type { ColumnRef } from "./RulesByColumn";
 import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 
 // ---------------------------------------------------------------------------
@@ -554,6 +555,10 @@ interface RuleConfigCardProps {
    *  its column picker; the open state itself is now controlled via
    *  `isOpen`/`onToggle`. */
   forceOpen?: boolean;
+  /** When a rule is staged from the by-column "+ Add rule" flow but still
+   *  needs slot mapping in the by-rule lens, pre-select this column in the
+   *  first matching slot instead of starting from a blank picker. */
+  mappingPrefillColumn?: ColumnRef | null;
   /** Applied governed tags per column for the table, keyed by column name.
    *  From `useGetTableTags`. When provided, matched governed tag chips are
    *  shown alongside each column chip in the mapping display. */
@@ -583,6 +588,7 @@ export function RuleConfigCard({
   isOpen,
   onToggle,
   forceOpen,
+  mappingPrefillColumn = null,
   columnTags,
   thresholdEnabled = true,
 }: RuleConfigCardProps) {
@@ -613,10 +619,19 @@ export function RuleConfigCard({
   // pointing `openRuleId` at it; this effect only handles the extra step of
   // starting the "add mapping group" flow when the rule has no mapping groups
   // yet, so the user lands directly on the first slot's column picker instead
-  // of needing an extra click on "+ Apply to another column".
+  // of needing an extra click on "+ Apply to another column". When the add
+  // originated from a by-column CTA, seed the picker with that column.
   useEffect(() => {
-    if (forceOpen && needsFirstMapping) setPendingGroup({});
-  }, [forceOpen, needsFirstMapping]);
+    if (!forceOpen || !needsFirstMapping) return;
+    if (mappingPrefillColumn && slots.length > 0) {
+      const slotName = pickSlotForColumn(slots, mappingPrefillColumn.family);
+      if (slotName) {
+        setPendingGroup({ [slotName]: mappingPrefillColumn.name });
+        return;
+      }
+    }
+    setPendingGroup({});
+  }, [forceOpen, needsFirstMapping, mappingPrefillColumn, slots]);
 
   // Folds a newly-picked slot value into the in-progress group. Once every
   // slot has a value the group is complete: stage it via `onAddMapping`

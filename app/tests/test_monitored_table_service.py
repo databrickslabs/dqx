@@ -269,6 +269,7 @@ class TestListMonitoredTables:
             ],
             [["b1", "2"]],  # grouped applied-rule counts (b2 absent -> 0)
             [["cat.schema.t1", "3"]],  # grouped materialized-check counts (t2 absent -> 0)
+            [],  # tag facets — only bindings with applied rules are queried
         ]
         summaries = svc.list_monitored_tables()
         assert len(summaries) == 2
@@ -276,9 +277,12 @@ class TestListMonitoredTables:
         assert summaries[0].check_count == 3
         assert summaries[1].applied_rule_count == 0
         assert summaries[1].check_count == 0
+        assert summaries[0].dimensions == []
+        assert summaries[0].severities == []
         # Counts are batched: bindings query + ONE grouped query per count
-        # kind, regardless of how many bindings are listed (no per-binding N+1).
-        assert sql.query.call_count == 3
+        # kind + tag facets for bindings with rules, regardless of how many
+        # bindings are listed (no per-binding N+1).
+        assert sql.query.call_count == 4
         applied_sql = sql.query.call_args_list[1][0][0]
         assert "GROUP BY binding_id" in applied_sql
         assert "IN ('b1', 'b2')" in applied_sql
@@ -340,6 +344,7 @@ class TestListMonitoredTables:
             ],
             [["b1", "2"]],  # grouped applied-rule counts
             [["cat.schema.tbl", "3"]],  # grouped materialized-check counts
+            [],  # tag facets
         ]
         summaries = svc.list_monitored_tables()
         list_sql = sql.query.call_args_list[0][0][0]
@@ -351,6 +356,20 @@ class TestListMonitoredTables:
         assert summary.failed_tests == 12
         assert summary.total_tests == 1000
         assert summary.score_computed_at == "2026-07-10T00:00:00"
+
+    def test_list_aggregates_dimension_and_severity_tags(self, svc, sql):
+        sql.query.side_effect = [
+            [_table_row(binding_id="b1", table_fqn="cat.schema.t1")],
+            [["b1", "2"]],
+            [],
+            [
+                ["b1", None, json.dumps({"dimension": "Completeness", "severity": "High"})],
+                ["b1", "Critical", json.dumps({"dimension": "Validity", "severity": "Low"})],
+            ],
+        ]
+        summary = svc.list_monitored_tables()[0]
+        assert summary.dimensions == ["Completeness", "Validity"]
+        assert summary.severities == ["Critical", "High"]
 
     def test_list_score_fields_none_when_never_scored(self, svc, sql):
         sql.query.side_effect = [
@@ -651,6 +670,33 @@ class TestUpdateSchedule:
         sql.query.return_value = []
         with pytest.raises(RuntimeError):
             svc.update_schedule("missing", "0 6 * * *", "UTC", "alice@x")
+        sql.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# update_owner
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateOwner:
+    def test_sets_owner_without_touching_status(self, svc, sql):
+        sql.query.return_value = [_table_row(binding_id="b1", status="approved", steward="alice@x")]
+        table = svc.update_owner("b1", "bob@x", "alice@x")
+        assert table.steward == "bob@x"
+        assert table.updated_by == "alice@x"
+        update_sql = sql.execute.call_args[0][0]
+        assert "steward = 'bob@x'" in update_sql
+        assert "status =" not in update_sql
+
+    def test_rejects_blank_owner(self, svc, sql):
+        with pytest.raises(ValueError, match="Owner must not be empty"):
+            svc.update_owner("b1", "   ", "alice@x")
+        sql.execute.assert_not_called()
+
+    def test_raises_when_missing(self, svc, sql):
+        sql.query.return_value = []
+        with pytest.raises(RuntimeError):
+            svc.update_owner("missing", "bob@x", "alice@x")
         sql.execute.assert_not_called()
 
 

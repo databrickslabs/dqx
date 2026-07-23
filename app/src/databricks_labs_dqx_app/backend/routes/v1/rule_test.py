@@ -2,11 +2,12 @@
 
 Ports dqlake's "Test rule" backend, adapted to DQX:
 
-- ``POST /rule-tests/run`` evaluates a ``sql`` / ``lowcode`` rule's effective SQL
-  predicate over an inline VALUES grid (manual test) or a real UC table sample,
-  returning per-row pass/fail. Runs OBO on the configured SQL warehouse. DQX
-  Native (``dqx_native``) rules are NOT testable and are rejected here (the UI
-  shows the "not available" notice and never calls this).
+- ``POST /rule-tests/run`` evaluates a rule's effective SQL predicate over an
+  inline VALUES grid (manual test) or a real UC table sample, returning per-row
+  pass/fail. Runs OBO on the configured SQL warehouse. ``sql`` / ``lowcode``
+  rules send a predicate directly; ``dqx_native`` rules send ``function`` +
+  ``native_arguments`` which are compiled to a row-level SQL predicate here
+  (dataset / geo / UDF checks are rejected).
 - ``POST /rule-tests/generate-data`` asks the AI gateway (OBO) for a mix of
   passing/failing rows for the manual grid; degrades cleanly when AI is off.
 - ``POST /rule-tests/warehouse/prewarm`` fire-and-forget starts the configured
@@ -33,6 +34,11 @@ from databricks_labs_dqx_app.backend.dependencies import (
     require_role,
 )
 from databricks_labs_dqx_app.backend.logger import logger
+from databricks_labs_dqx_app.backend.native_test_predicate import (
+    NativeTestCompileError,
+    NativeTestNotSupportedError,
+    compile_native_test_predicate,
+)
 from databricks_labs_dqx_app.backend.rule_test_sql import AdhocSource, TableSource, TestRunResult
 from databricks_labs_dqx_app.backend.services.ai_gateway import (
     AIRateLimitExceededError,
@@ -72,7 +78,9 @@ class TableRunIn(BaseModel):
 
 class RuleTestRunIn(BaseModel):
     mode: Literal["dqx_native", "lowcode", "sql"]
-    predicate: str = Field(min_length=1)
+    predicate: str = ""
+    function: str | None = None
+    native_arguments: dict[str, Any] | None = None
     polarity: Literal["pass", "fail"] = "pass"
     slots: list[SlotIn] = Field(default_factory=list)
     source_kind: Literal["adhoc", "table"]
@@ -85,6 +93,16 @@ class RuleTestRunIn(BaseModel):
     # yield a MISLEADING verdict — the UI hides the test surface and the route
     # rejects it (belt-and-braces) rather than silently testing the wrong thing.
     lowcode_advanced: bool = False
+
+
+def _resolve_predicate(body: RuleTestRunIn) -> str:
+    if body.mode == "dqx_native":
+        if not body.function:
+            raise ValueError("A check function is required for DQX Native rule tests.")
+        return compile_native_test_predicate(body.function, body.native_arguments or {})
+    if not body.predicate.strip():
+        raise ValueError("A predicate is required.")
+    return body.predicate
 
 
 class TestRowOut(BaseModel):
@@ -113,14 +131,13 @@ async def run_rule_test(
     svc: Annotated[RuleTestService, Depends(get_rule_test_service)],
 ) -> RuleTestRunOut:
     """Run a rule's SQL predicate against manual rows or a UC table sample."""
-    if body.mode == "dqx_native":
-        raise HTTPException(status_code=400, detail="Rule tests aren't available for DQX Native rules.")
     if body.lowcode_advanced:
         raise HTTPException(
             status_code=400,
             detail="Rule tests aren't available for rules with joins or grouping yet.",
         )
     try:
+        predicate = _resolve_predicate(body)
         if body.source_kind == "adhoc":
             if body.adhoc is None:
                 raise ValueError("Manual test rows are required.")
@@ -133,7 +150,7 @@ async def run_rule_test(
                 column_mapping=mapping,
                 display_cap=body.display_cap,
             )
-            result = await svc.run_adhoc(predicate=body.predicate, polarity=body.polarity, source=source)
+            result = await svc.run_adhoc(predicate=predicate, polarity=body.polarity, source=source)
         else:
             if body.table is None:
                 raise ValueError("A table and column mapping are required.")
@@ -147,7 +164,9 @@ async def run_rule_test(
                 sample_value=body.table.sample_value,
                 display_cap=body.display_cap,
             )
-            result = await svc.run_table(predicate=body.predicate, polarity=body.polarity, source=table_source)
+            result = await svc.run_table(predicate=predicate, polarity=body.polarity, source=table_source)
+    except (NativeTestNotSupportedError, NativeTestCompileError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except UnsafeSqlQueryError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
@@ -168,7 +187,9 @@ async def run_rule_test(
 
 
 class GenerateDataIn(BaseModel):
-    predicate: str = Field(min_length=1)
+    predicate: str = ""
+    function: str | None = None
+    native_arguments: dict[str, Any] | None = None
     polarity: Literal["pass", "fail"] = "pass"
     columns: list[SlotIn] = Field(default_factory=list)
     row_count: int = Field(default=8, ge=5, le=20)
@@ -187,13 +208,24 @@ async def generate_rule_test_data(
 ) -> GenerateDataOut:
     """Generate a passing/failing mix of manual test rows via the AI gateway."""
     try:
+        predicate = _resolve_predicate(
+            RuleTestRunIn(
+                mode="dqx_native" if body.function else "sql",
+                predicate=body.predicate,
+                function=body.function,
+                native_arguments=body.native_arguments,
+                source_kind="adhoc",
+            )
+        )
         result = await svc.generate_test_data(
-            predicate=body.predicate,
+            predicate=predicate,
             polarity=body.polarity,
             columns=[(c.name, c.family) for c in body.columns],
             row_count=body.row_count,
             user_email=user_email,
         )
+    except (NativeTestNotSupportedError, NativeTestCompileError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except AIUnavailableError as e:
         raise HTTPException(status_code=503, detail=e.reason)
     except AIRateLimitExceededError as e:

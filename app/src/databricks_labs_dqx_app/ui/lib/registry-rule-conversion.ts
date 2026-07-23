@@ -316,6 +316,27 @@ export function nativeArguments(slots: RuleSlot[], fn?: ApiCheckFunctionDef): Re
   return args;
 }
 
+/**
+ * Column placeholders plus scalar parameters for rule-test / generate-data.
+ * Mirrors ``materializer._substitute_arguments``, which merges
+ * ``definition.parameters`` into the frozen ``body.arguments`` template at
+ * apply time — without this, list params like ``is_in_list``'s ``allowed``
+ * never reach ``compile_native_test_predicate``.
+ */
+export function nativeArgumentsForTest(
+  slots: RuleSlot[],
+  fn: ApiCheckFunctionDef | undefined,
+  parameters: Array<Pick<RuleParameter, "name" | "type">>,
+  paramRawValues: Record<string, string>,
+): Record<string, unknown> {
+  const args = nativeArguments(slots, fn);
+  for (const p of parameters) {
+    const value = parseParamValue(p.type, paramRawValues[p.name] ?? "");
+    if (value !== null) args[p.name] = value;
+  }
+  return args;
+}
+
 const SLOT_TOKEN_RE = /^\{\{\s*(.+?)\s*\}\}$/;
 
 /**

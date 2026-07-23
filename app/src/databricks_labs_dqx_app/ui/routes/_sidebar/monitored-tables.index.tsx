@@ -11,6 +11,7 @@ import {
   MonitoredTablesTable,
   getMonitoredTablesSortValue,
   getMonitoredTablesSortConfig,
+  monitoredTableOwner,
   type MonitoredTablesSortKey,
   type MonitoredTablesTableSelection,
 } from "@/components/monitored-tables/MonitoredTablesTable";
@@ -55,6 +56,7 @@ import {
 } from "@/components/drafts/ChangeDiffDialog";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useLabelDefinitions } from "@/lib/api-custom";
 import {
   DQ_SCORE_BUCKETS,
   DQ_SCORE_FILTER_ALL,
@@ -129,8 +131,10 @@ function MonitoredTablesPage() {
   const perms = usePermissions();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { data: labelDefsData } = useLabelDefinitions();
+  const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
 
-  const [stewardFilter, setStewardFilter] = useState<string>(ALL);
+  const [ownerFilter, setOwnerFilter] = useState<string>(ALL);
   const [catalogFilter, setCatalogFilter] = useState<string>(ALL);
   const [schemaFilter, setSchemaFilter] = useState<string>(ALL);
   const [scoreFilter, setScoreFilter] = useState<string>(DQ_SCORE_FILTER_ALL);
@@ -141,7 +145,7 @@ function MonitoredTablesPage() {
   const [page, setPage] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
 
-  // ONE list fetch, unfiltered — every facet (catalog, schema, name, steward,
+  // ONE list fetch, unfiltered — every facet (catalog, schema, name, owner,
   // DQ-score) is applied CLIENT-SIDE over this single row set (T-perf/B2-3).
   // The page previously fired TWO `useListMonitoredTables` calls — a
   // server-filtered one for the rows plus an unfiltered one for the facet
@@ -161,14 +165,14 @@ function MonitoredTablesPage() {
         (catalogFilter === ALL || catalog === catalogFilter) &&
         (schemaFilter === ALL || schema === schemaFilter) &&
         (!needle || r.table.table_fqn.toLowerCase().includes(needle)) &&
-        (stewardFilter === ALL || (r.table.steward ?? "") === stewardFilter) &&
+        (ownerFilter === ALL || monitoredTableOwner(r) === ownerFilter) &&
         matchesDqScoreBucket(r.score, scoreFilter)
       );
     });
-  }, [tables, catalogFilter, schemaFilter, nameSearch, stewardFilter, scoreFilter]);
+  }, [tables, catalogFilter, schemaFilter, nameSearch, ownerFilter, scoreFilter]);
 
   // Facet options are derived from the full fetched row set — always the
-  // complete catalog/steward lists regardless of the active filters, with the
+  // complete catalog/owner lists regardless of the active filters, with the
   // schema list cascading to the selected catalog.
   const catalogOptions = useMemo(
     () => Array.from(new Set(tables.map((r) => splitFqn(r.table.table_fqn).catalog))).sort(),
@@ -178,9 +182,9 @@ function MonitoredTablesPage() {
     const rows = catalogFilter === ALL ? tables : tables.filter((r) => splitFqn(r.table.table_fqn).catalog === catalogFilter);
     return Array.from(new Set(rows.map((r) => splitFqn(r.table.table_fqn).schema))).sort();
   }, [tables, catalogFilter]);
-  const stewardOptions = useMemo(
+  const ownerOptions = useMemo(
     () =>
-      Array.from(new Set(tables.map((r) => r.table.steward).filter((s): s is string => !!s))).sort(),
+      Array.from(new Set(tables.map(monitoredTableOwner).filter((s): s is string => !!s))).sort(),
     [tables],
   );
 
@@ -189,7 +193,7 @@ function MonitoredTablesPage() {
 
   const handleHeaderClick = useCallback(
     (key: MonitoredTablesSortKey) => {
-      // First click uses the column's steward-first default direction (B2-92);
+      // First click uses the column's owner-first default direction (B2-92);
       // repeat clicks toggle to the opposite direction, then clear.
       const { dir } = getMonitoredTablesSortConfig(key);
       if (sortKey !== key) {
@@ -227,7 +231,7 @@ function MonitoredTablesPage() {
   }, [sortedTables, page]);
 
   const hasActiveFilters =
-    stewardFilter !== ALL ||
+    ownerFilter !== ALL ||
     catalogFilter !== ALL ||
     schemaFilter !== ALL ||
     scoreFilter !== DQ_SCORE_FILTER_ALL ||
@@ -571,6 +575,7 @@ function MonitoredTablesPage() {
           sortKey={sortKey}
           sortDir={sortDir}
           onHeaderClick={handleHeaderClick}
+          labelDefinitions={labelDefinitions}
           onRowClick={(summary) =>
             navigate({ to: "/monitored-tables/$bindingId", params: { bindingId: summary.table.binding_id } })
           }
@@ -608,14 +613,14 @@ function MonitoredTablesPage() {
                 ariaLabel={t("monitoredTables.colSchema")}
               />
               <SearchableSelect
-                value={stewardFilter}
-                onChange={applyFilter(setStewardFilter)}
-                options={stewardOptions.map((s) => ({ value: s, label: s }))}
+                value={ownerFilter}
+                onChange={applyFilter(setOwnerFilter)}
+                options={ownerOptions.map((s) => ({ value: s, label: s }))}
                 allValue={ALL}
-                allLabel={t("monitoredTables.allStewards")}
+                allLabel={t("monitoredTables.allOwners")}
                 searchPlaceholder={t("common.search")}
                 emptyText={t("common.noMatches")}
-                ariaLabel={t("monitoredTables.colSteward")}
+                ariaLabel={t("monitoredTables.colOwner")}
               />
               <Select value={scoreFilter} onValueChange={applyFilter(setScoreFilter)}>
                 <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colDqScore")}>

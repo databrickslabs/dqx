@@ -54,10 +54,12 @@ from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     set_applied_rule_severity_override,
     submit_monitored_table,
     suggest_rules_for_table,
+    update_monitored_table_owner,
     update_monitored_table_schedule,
 )
 from databricks_labs_dqx_app.backend.models import (
     RunMonitoredTableIn,
+    UpdateMonitoredTableOwnerIn,
     UpdateMonitoredTableScheduleIn,
 )
 from databricks_labs_dqx_app.backend.services.binding_run_service import (
@@ -404,6 +406,58 @@ class TestDelete:
                 "b1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock()
             )
         assert excinfo.value.status_code == 404
+
+
+class TestUpdateOwner:
+    def test_sets_owner(self):
+        svc = MagicMock()
+        table = _table()
+        table.steward = "bob@x"
+        svc.update_owner.return_value = table
+        body = UpdateMonitoredTableOwnerIn(owner="bob@x")
+        result = update_monitored_table_owner(
+            "b1",
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+        )
+        assert result.steward == "bob@x"
+        svc.update_owner.assert_called_once_with("b1", "bob@x", "alice@x")
+
+    def test_missing_raises_404(self):
+        svc = MagicMock()
+        svc.update_owner.side_effect = RuntimeError("Monitored table not found: b1")
+        body = UpdateMonitoredTableOwnerIn(owner="bob@x")
+        with pytest.raises(HTTPException) as excinfo:
+            update_monitored_table_owner(
+                "b1",
+                body=body,
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+            )
+        assert excinfo.value.status_code == 404
+
+    def test_blank_owner_raises_400(self):
+        svc = MagicMock()
+        svc.update_owner.side_effect = ValueError("Owner must not be empty")
+        body = UpdateMonitoredTableOwnerIn(owner="   ")
+        with pytest.raises(HTTPException) as excinfo:
+            update_monitored_table_owner(
+                "b1",
+                body=body,
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+            )
+        assert excinfo.value.status_code == 400
 
 
 class TestUpdateSchedule:

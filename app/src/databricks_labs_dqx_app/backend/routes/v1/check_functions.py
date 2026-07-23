@@ -29,6 +29,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from databricks_labs_dqx_app.backend.logger import logger
+from databricks_labs_dqx_app.backend.native_test_predicate import is_native_rule_testable
 from databricks_labs_dqx_app.backend.models import (
     CheckFunctionDef,
     CheckFunctionParam,
@@ -441,6 +442,7 @@ def _introspect_check_functions() -> tuple[CheckFunctionDef, ...]:
                 name=name,
                 label=_friendly_label(name),
                 rule_type=rule_type,
+                rule_testable=is_native_rule_testable(name),
                 category=_category_for(name),
                 doc=_first_doc_line(inspect.getdoc(func)),
                 params=params,

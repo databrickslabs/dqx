@@ -295,6 +295,7 @@ class TestIntrospectCheckFunctions:
     def test_is_not_null_has_single_required_column_param(self) -> None:
         fn = self._by_name("is_not_null")
         assert fn.rule_type == "row"
+        assert fn.rule_testable is True
         assert fn.category == "Null & Empty"
         assert len(fn.params) == 1
         param = fn.params[0]

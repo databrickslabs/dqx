@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Table,
@@ -13,6 +13,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
+import {
+  RESERVED_DIMENSION_KEY,
+  RESERVED_SEVERITY_KEY,
+  SeverityBadge,
+  TagBadge,
+  colorFor,
+  type LabelColorDefinition,
+} from "@/components/RegistryRuleBadges";
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
@@ -26,6 +34,11 @@ import {
 import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
 import type { MonitoredTableSummaryOut } from "@/lib/api";
 
+/** Effective owner for display/filter/sort — explicit ``steward`` wins, else creator. */
+export function monitoredTableOwner(r: MonitoredTableSummaryOut): string {
+  return r.table.steward || r.table.created_by || "";
+}
+
 /** Column keys that carry a comparable value and can drive client sort. */
 export type MonitoredTablesSortKey =
   | "catalog"
@@ -38,7 +51,8 @@ export type MonitoredTablesSortKey =
   | "version"
   | "lastRun"
   | "owner"
-  | "steward"
+  | "dimension"
+  | "severity"
   | "status";
 
 interface ColumnDef {
@@ -56,7 +70,11 @@ interface ColumnDef {
   resizable?: boolean;
   headClassName?: string;
   renderHeader(label: string): ReactNode;
-  renderCell(r: MonitoredTableSummaryOut): ReactNode;
+  renderCell(r: MonitoredTableSummaryOut, ctx?: MonitoredTablesRenderContext): ReactNode;
+}
+
+interface MonitoredTablesRenderContext {
+  labelDefinitions: LabelColorDefinition[];
 }
 
 /**
@@ -111,6 +129,48 @@ function VersionCell({ version }: { version: number }) {
     <Badge variant="secondary" className="font-mono text-[10px]">
       {t("monitoredTables.versionBadge", { version })}
     </Badge>
+  );
+}
+
+function DimensionBadges({
+  labels,
+  labelDefinitions,
+}: {
+  labels: string[];
+  labelDefinitions: LabelColorDefinition[];
+}) {
+  if (!labels.length) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {labels.map((label) => (
+        <TagBadge
+          key={label}
+          label={label}
+          color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, label)}
+        />
+      ))}
+    </span>
+  );
+}
+
+function SeverityBadges({
+  labels,
+  labelDefinitions,
+}: {
+  labels: string[];
+  labelDefinitions: LabelColorDefinition[];
+}) {
+  if (!labels.length) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {labels.map((label) => (
+        <SeverityBadge
+          key={label}
+          severity={label}
+          color={colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, label)}
+        />
+      ))}
+    </span>
   );
 }
 
@@ -230,21 +290,38 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
   owner: {
     labelKey: "monitoredTables.colOwner",
     toggleable: true,
-    defaultVisible: false,
-    defaultWidth: 180,
-    sortable: true,
-    renderHeader: (label) => label,
-    renderCell: (r) => <TruncatedCell text={r.table.created_by || "—"} className="text-muted-foreground" />,
-  },
-  steward: {
-    labelKey: "monitoredTables.colSteward",
-    toggleable: true,
     defaultVisible: true,
     defaultWidth: 180,
     sortable: true,
-    // A→Z through the named stewards (B2-92); un-stewarded tables sort last.
+    // A→Z through named owners (B2-92); unassigned tables sort last.
     renderHeader: (label) => label,
-    renderCell: (r) => <TruncatedCell text={r.table.steward || "—"} className="text-muted-foreground" />,
+    renderCell: (r) => (
+      <TruncatedCell text={monitoredTableOwner(r) || "—"} className="text-muted-foreground" />
+    ),
+  },
+  dimension: {
+    labelKey: "monitoredTables.colDimension",
+    toggleable: true,
+    defaultVisible: false,
+    defaultWidth: 160,
+    sortable: true,
+    renderHeader: (label) => label,
+    renderCell: (r, ctx) => (
+      <DimensionBadges labels={r.dimensions ?? []} labelDefinitions={ctx?.labelDefinitions ?? []} />
+    ),
+  },
+  severity: {
+    labelKey: "monitoredTables.colSeverity",
+    toggleable: true,
+    defaultVisible: false,
+    defaultWidth: 140,
+    sortable: true,
+    // Most severe tag first (B2-92); untagged tables sort last.
+    defaultSortDir: "desc",
+    renderHeader: (label) => label,
+    renderCell: (r, ctx) => (
+      <SeverityBadges labels={r.severities ?? []} labelDefinitions={ctx?.labelDefinitions ?? []} />
+    ),
   },
   status: {
     labelKey: "monitoredTables.colStatus",
@@ -264,7 +341,7 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
 };
 
 // Checks/Rules column order matches dqlake's `BindingsTable` DEFAULT_ORDER
-// (steward, owner, rulesCount, checksCount, ...) — Rules before Checks.
+// (owner, rulesCount, checksCount, ...) — Rules before Checks.
 const DEFAULT_ORDER: MonitoredTablesSortKey[] = [
   "catalog",
   "schema",
@@ -276,7 +353,8 @@ const DEFAULT_ORDER: MonitoredTablesSortKey[] = [
   "version",
   "lastRun",
   "owner",
-  "steward",
+  "dimension",
+  "severity",
   "status",
 ];
 
@@ -289,6 +367,14 @@ const STATUS_RANK: Record<string, number> = {
   draft: 2,
   rejected: 3,
   deprecated: 4,
+};
+
+/** Severity sort rank (B2-92): most-severe tags lead on a first-click ASC sort. */
+const SEVERITY_RANK: Record<string, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
 };
 
 /** Returns the sortable value for a given column + row, shared between this
@@ -320,9 +406,16 @@ export function getMonitoredTablesSortValue(
     case "lastRun":
       return r.table.last_run_at || null;
     case "owner":
-      return (r.table.created_by ?? "").toLowerCase() || null;
-    case "steward":
-      return (r.table.steward ?? "").toLowerCase() || null;
+      return monitoredTableOwner(r).toLowerCase() || null;
+    case "dimension": {
+      const dims = r.dimensions ?? [];
+      return dims.length ? dims.join(", ").toLowerCase() : null;
+    }
+    case "severity": {
+      const sevs = r.severities ?? [];
+      if (!sevs.length) return null;
+      return Math.min(...sevs.map((s) => SEVERITY_RANK[s.toLowerCase()] ?? Object.keys(SEVERITY_RANK).length));
+    }
     case "status":
       return STATUS_RANK[r.table.status] ?? Object.keys(STATUS_RANK).length;
   }
@@ -339,7 +432,7 @@ export function getMonitoredTablesSortConfig(key: MonitoredTablesSortKey): SortC
 // makes the new default visibility take effect for users whose stored
 // layout still carries the old hidden-placeholder preference (the dqlake
 // `dqlake.products.layout.vN` convention).
-const LS_KEY_LAYOUT = "dqx.monitoredTables.layout.v2";
+const LS_KEY_LAYOUT = "dqx.monitoredTables.layout.v4";
 
 /** Selection state for bulk operations — mirrors `RulesTableSelection` from
  *  `RulesTable.tsx`. The id field is `binding_id`. */
@@ -364,6 +457,8 @@ export interface MonitoredTablesTableProps {
   emptyState?: ReactNode;
   /** When set, renders a leading checkbox column for bulk actions. */
   selection?: MonitoredTablesTableSelection;
+  /** Label-definition colors for dimension / severity badge cells. */
+  labelDefinitions?: LabelColorDefinition[];
 }
 
 /**
@@ -384,8 +479,10 @@ export function MonitoredTablesTable({
   toolbarExtra,
   emptyState,
   selection,
+  labelDefinitions = [],
 }: MonitoredTablesTableProps) {
   const { t } = useTranslation();
+  const ctx = useMemo<MonitoredTablesRenderContext>(() => ({ labelDefinitions }), [labelDefinitions]);
   const showSelection = !!selection;
   const selectableCount = selection?.selectableIds.size ?? 0;
   const allSelected =
@@ -545,7 +642,7 @@ export function MonitoredTablesTable({
                         // vertically centered in the row.
                         className="overflow-hidden p-2 align-middle"
                       >
-                        {COLUMNS[k].renderCell(r)}
+                        {COLUMNS[k].renderCell(r, ctx)}
                       </TableCell>
                     );
                   })}

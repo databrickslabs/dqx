@@ -50,6 +50,7 @@ from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _TAG_RECONCILE_INTERVAL_HOURS,
     _TMP_VIEW_ID_LEN,
     _TMP_VIEW_NAME_RE,
+    _TMP_VIEW_SWEEP_INTERVAL_HOURS,
     SchedulerService,
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
@@ -398,6 +399,34 @@ class TestMaybeGcOrphanViews:
         # Must not raise; just log and reschedule.
         await svc._maybe_gc_orphan_views(due + timedelta(minutes=1))
         assert svc._next_view_gc_at > due
+
+
+class TestSweepStaleTmpViews:
+    def test_drops_views_for_terminal_runs(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        mocks.sql.query.side_effect = [
+            [("main.dqx_tmp.tmp_view_dead",)],  # terminal profiling
+            [],  # running profiling
+            [],  # terminal validation
+            [],  # running validation
+        ]
+
+        svc._sweep_stale_tmp_views()
+
+        mocks.tmp.execute.assert_called_once()
+        sql = mocks.tmp.execute.call_args.args[0]
+        assert "tmp_view_dead" in sql
+
+    @pytest.mark.asyncio
+    async def test_maybe_sweep_advances_schedule(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        now = datetime(2026, 5, 2, 12, 0, tzinfo=timezone.utc)
+        svc._next_tmp_view_sweep_at = now - timedelta(minutes=1)
+        mocks.sql.query.return_value = []
+
+        await svc._maybe_sweep_stale_tmp_views(now)
+
+        assert svc._next_tmp_view_sweep_at == now + timedelta(hours=_TMP_VIEW_SWEEP_INTERVAL_HOURS)
 
 
 # ---------------------------------------------------------------------------

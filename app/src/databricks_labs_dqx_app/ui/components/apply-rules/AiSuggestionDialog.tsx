@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { useListRegistryRules, type RegistryRuleOut, type SuggestedRuleMappingOut } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
+import type { ColumnRef } from "./RulesByColumn";
 import { AI_BUTTON_BG, AI_GRADIENT_URL, AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
 import { SeverityBadge } from "@/components/RegistryRuleBadges";
 import { useDefaultAutoUpgrade } from "@/hooks/use-default-auto-upgrade";
@@ -78,7 +79,7 @@ interface AiSuggestionDialogProps {
   appliedRules: AppliedRuleMappingLike[];
   /** Appends one locally-staged row per accepted suggestion. Pure
    *  local-state mutation — no network call. */
-  onAdd: (rows: ReturnType<typeof newStagedRow>[]) => void;
+  onAdd: (rows: ReturnType<typeof newStagedRow>[], columnContext?: ColumnRef | null) => void;
   onApplied: () => void;
 }
 

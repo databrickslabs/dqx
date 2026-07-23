@@ -163,6 +163,12 @@ _GC_HOUR_UTC = 1
 _GC_AGE_HOURS = 48
 _GC_MAX_DROPS_PER_RUN = 500
 
+# Hourly sweep for tmp views whose runs finished (or were abandoned) but
+# whose per-run status poll never fired ``drop_view``. This is the main
+# safety net — the weekly age-based GC below is belt-and-braces.
+_TMP_VIEW_SWEEP_INTERVAL_HOURS = 1
+_TMP_VIEW_SWEEP_MAX_RUNS = 50
+
 # Retention sweep — daily DELETE pass against the high-volume tables to
 # keep them from growing without bound. Each (table, time-column) pair
 # in :data:`_RETENTION_TABLES` is trimmed to ``RETENTION_DAYS`` worth of
@@ -383,6 +389,11 @@ class SchedulerService:
         # and orphans only accumulate slowly.
         self._next_view_gc_at: datetime = self._next_saturday_01_utc(datetime.now(timezone.utc))
 
+        # Hourly tmp-view sweep: drops views for terminal/abandoned runs.
+        # Fires on the first scheduler tick after boot so a redeploy
+        # quickly reaps anything a browser never polled to completion.
+        self._next_tmp_view_sweep_at: datetime = datetime.now(timezone.utc)
+
         # Retention sweep: fires every ``_RETENTION_INTERVAL_HOURS``
         # (default 24h). Held in process memory like the view GC; a
         # missed sweep is harmless since the next one catches up.
@@ -444,6 +455,7 @@ class SchedulerService:
                 self._force_recalc = False
                 await self._tick(recalc=recalc)
                 await self._maybe_gc_orphan_views(datetime.now(timezone.utc))
+                await self._maybe_sweep_stale_tmp_views(datetime.now(timezone.utc))
                 await self._maybe_run_retention(datetime.now(timezone.utc))
                 await self._maybe_run_tag_reconcile(datetime.now(timezone.utc))
                 await self._maybe_refresh_metadata_dims(datetime.now(timezone.utc))
@@ -1890,6 +1902,119 @@ class SchedulerService:
             if fn == "sql_query":
                 return (check.get("check") or {}).get("arguments", {}).get("query")
         return None
+
+    # ------------------------------------------------------------------
+    # Stale tmp-view sweep (hourly)
+    # ------------------------------------------------------------------
+
+    async def _maybe_sweep_stale_tmp_views(self, now: datetime) -> None:
+        """Drop tmp views whose runs finished but were never polled to cleanup."""
+        if now < self._next_tmp_view_sweep_at:
+            return
+        self._next_tmp_view_sweep_at = now + timedelta(hours=_TMP_VIEW_SWEEP_INTERVAL_HOURS)
+        try:
+            await asyncio.to_thread(self._sweep_stale_tmp_views)
+        except Exception:
+            logger.exception("Tmp-view sweep failed (non-fatal)")
+
+    def _sweep_stale_tmp_views(self) -> None:
+        """Reap tmp views left behind when status polling never ran ``drop_view``.
+
+        Three sources:
+        1. Runs already marked terminal in ``dq_profiling_results`` /
+           ``dq_validation_runs`` but whose view still exists.
+        2. Rows still ``RUNNING`` in those tables whose Databricks job has
+           already reached a terminal lifecycle state (abandoned poll).
+        3. Age-based orphans (delegates to :meth:`_gc_orphan_views` logic
+           with a shorter threshold) — catches views with no metadata row.
+        """
+        from databricks_labs_dqx_app.backend.run_status_manager import update_run_status
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
+
+        views_to_drop: set[str] = set()
+
+        for table_name in ("dq_profiling_results", "dq_validation_runs"):
+            table = f"`{self._catalog}`.`{self._schema}`.{table_name}"
+            terminal_sql = (
+                f"SELECT DISTINCT view_fqn FROM {table} "
+                f"WHERE view_fqn IS NOT NULL AND status IN ('SUCCESS', 'FAILED', 'CANCELED')"
+            )
+            try:
+                for row in self._sql.query(terminal_sql) or []:
+                    fqn = row[0] if row else None
+                    if isinstance(fqn, str) and fqn.strip():
+                        views_to_drop.add(fqn.strip())
+            except Exception as exc:
+                logger.warning("Tmp-view sweep: failed to list terminal views from %s: %s", table_name, exc)
+
+            running_sql = (
+                f"SELECT run_id, view_fqn, CAST(job_run_id AS STRING) FROM {table} "
+                f"WHERE status = 'RUNNING' AND view_fqn IS NOT NULL AND job_run_id IS NOT NULL "
+                f"ORDER BY created_at DESC LIMIT {_TMP_VIEW_SWEEP_MAX_RUNS}"
+            )
+            try:
+                for row in self._sql.query(running_sql) or []:
+                    if not row or len(row) < 3:
+                        continue
+                    run_id, view_fqn, job_run_id_raw = row[0], row[1], row[2]
+                    if not isinstance(view_fqn, str) or not view_fqn.strip():
+                        continue
+                    try:
+                        job_run_id = int(job_run_id_raw)
+                    except (TypeError, ValueError):
+                        continue
+                    try:
+                        run = self._ws.jobs.get_run(job_run_id)
+                        state = run.state
+                        lifecycle = state.life_cycle_state.value if state and state.life_cycle_state else "UNKNOWN"
+                    except Exception as exc:
+                        logger.warning(
+                            "Tmp-view sweep: could not fetch job status for run %s (job_run_id=%s): %s",
+                            run_id,
+                            job_run_id,
+                            exc,
+                        )
+                        continue
+                    if lifecycle not in {"TERMINATED", "INTERNAL_ERROR", "SKIPPED"}:
+                        continue
+                    views_to_drop.add(view_fqn.strip())
+                    result_state = state.result_state.value if state and state.result_state else None
+                    if result_state != "SUCCESS" and isinstance(run_id, str) and run_id:
+                        new_status = "CANCELED" if result_state == "CANCELED" else "FAILED"
+                        message = (state.state_message if state else None) or f"Run finished with state: {lifecycle}"
+                        try:
+                            from databricks_labs_dqx_app.backend.config import AppConfig
+
+                            update_run_status(
+                                self._sql,
+                                AppConfig(catalog=self._catalog, schema_name=self._schema),
+                                table_name,
+                                run_id,
+                                status=new_status,
+                                error_message=message,
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "Tmp-view sweep: failed to reconcile RUNNING row %s in %s: %s",
+                                run_id,
+                                table_name,
+                                exc,
+                            )
+            except Exception as exc:
+                logger.warning("Tmp-view sweep: failed to list RUNNING views from %s: %s", table_name, exc)
+
+        dropped = 0
+        failed = 0
+        for view_fqn in sorted(views_to_drop):
+            try:
+                self._tmp_sql.execute(f"DROP VIEW IF EXISTS {quote_fqn(view_fqn)}")
+                dropped += 1
+            except Exception as exc:
+                failed += 1
+                logger.warning("Tmp-view sweep: failed to drop %s: %s", view_fqn, exc)
+
+        if dropped or failed:
+            logger.info("Tmp-view sweep complete: targeted=%d dropped=%d failed=%d", len(views_to_drop), dropped, failed)
 
     # ------------------------------------------------------------------
     # Orphan tmp-view GC (weekly, Saturday 01:00 UTC)

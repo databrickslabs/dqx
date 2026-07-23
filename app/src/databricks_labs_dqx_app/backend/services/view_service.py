@@ -166,12 +166,29 @@ class ViewService:
         return view_name
 
     def drop_view(self, view_fqn: str) -> None:
-        """Drop a temporary view.  Best-effort -- logs warnings on failure."""
+        """Drop a temporary view.  Best-effort -- logs warnings on failure.
+
+        Tries the caller's OBO credentials first (views are created OBO so
+        the creating user is the owner). Falls back to the service principal
+        when wired — the SP holds ALL_PRIVILEGES on the tmp schema and can
+        reap orphans the hourly sweep discovers after a client never polled
+        run status to terminal.
+        """
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
         sql = f"DROP VIEW IF EXISTS {quote_fqn(view_fqn)}"
         try:
             self._sql.execute(sql)
             logger.info("Dropped view %s", view_fqn)
+            return
         except Exception:
-            logger.warning("Failed to drop view %s", view_fqn, exc_info=True)
+            logger.warning("OBO DROP failed for %s; trying service principal", view_fqn, exc_info=True)
+        if self._sp_sql is not None:
+            try:
+                self._sp_sql.execute(sql)
+                logger.info("Dropped view %s via service principal", view_fqn)
+                return
+            except Exception:
+                logger.warning("Failed to drop view %s via service principal", view_fqn, exc_info=True)
+        else:
+            logger.warning("Failed to drop view %s and no service principal is available", view_fqn)

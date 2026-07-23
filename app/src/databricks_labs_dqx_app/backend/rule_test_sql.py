@@ -19,8 +19,9 @@ per-row "passed" expression is:
 
 which is exactly dqlake's ``_passed_expr``. There is no aggregate / group-by /
 join predicate classifier in DQX's registry model, so — unlike dqlake — only
-the ROW evaluation shape is reproduced here. ``dqx_native`` rules are not
-testable at all (the caller rejects them before reaching this module).
+the ROW evaluation shape is reproduced here. ``dqx_native`` rules are compiled
+to a row-level SQL predicate by :mod:`native_test_predicate` before reaching
+this module; dataset / geo / UDF checks are rejected upstream.
 
 All functions here are pure: they take dicts/dataclasses and return SQL text.
 No SDK, no DB, no I/O — so they are exhaustively unit-tested.

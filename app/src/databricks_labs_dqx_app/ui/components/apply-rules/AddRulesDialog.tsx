@@ -47,8 +47,10 @@ interface AddRulesDialogProps {
    *  lens, auto-expanding those cards. */
   onApplied: (ruleIds: string[]) => void;
   /** Appends one locally-staged row per selected rule to the tab's staged
-   *  row list. Pure local-state mutation — no network call. */
-  onAdd: (rows: ReturnType<typeof newStagedRow>[]) => void;
+   *  row list. Pure local-state mutation — no network call.
+   *  *columnContext* is the by-column "+ Add rule" origin column, passed
+   *  explicitly so the caller doesn't rely on dialog-close state timing. */
+  onAdd: (rows: ReturnType<typeof newStagedRow>[], columnContext?: ColumnRef | null) => void;
   /** Loading/error state of the published-rules query, so the picker can tell
    *  "still loading / fetch failed" apart from "genuinely no approved rules"
    *  instead of always showing a misleading empty state (A3). */
@@ -132,13 +134,17 @@ export function AddRulesDialog({
       let columnMapping: Record<string, string>[];
       if (hasSlots && initialColumn) {
         const slotName = pickSlotForColumn(slots, initialColumn.family);
+        // Always bind the clicked column to the best-matching slot — the
+        // by-column workflow already chose the column, so never stage an empty
+        // mapping that forces a second pick in the by-rule lens.
         columnMapping = slotName ? [{ [slotName]: initialColumn.name }] : [];
       } else {
         columnMapping = hasSlots ? [] : [{}];
       }
       return newStagedRow(bindingId, rule, columnMapping, defaultAutoUpgrade);
     });
-    onAdd(rows);
+    const columnContext = initialColumn;
+    onAdd(rows, columnContext);
     toast.success(t("monitoredTables.toastAppliedCount", { count: rows.length }));
     onApplied(selectedRules.map((r) => r.rule_id));
     handleClose(false);

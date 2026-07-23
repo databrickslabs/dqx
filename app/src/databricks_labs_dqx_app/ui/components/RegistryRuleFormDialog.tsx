@@ -149,6 +149,7 @@ import {
   fnSupportsNegate,
   listColumnArgKey,
   nativeArguments,
+  nativeArgumentsForTest,
   parseParamValue,
   paramValueToRaw,
   severityValueCriticality,
@@ -3862,11 +3863,24 @@ export function RegistryRuleFormDialog({
 
   // Effective SQL predicate to test: the typed predicate in SQL mode, the
   // compiled AST in Low-Code mode (dqlake's draftForTest convention). DQX
-  // Native rules are not testable — they show the P19-D notice instead.
+  // Native rules compile on the backend from function + arguments when testable.
+  const nativeTestable = mode === "dqx_native" && Boolean(selectedFn?.rule_testable);
+  const nativeTestArguments = useMemo(
+    () =>
+      mode === "dqx_native"
+        ? nativeArgumentsForTest(nativeSlots, selectedFn, derivedParams, paramRawValues)
+        : undefined,
+    [mode, nativeSlots, selectedFn, derivedParams, paramRawValues],
+  );
+  const testSlots = mode === "dqx_native" ? nativeSlots : sqlSlots;
   const testEffectivePredicate = mode === "sql" ? sqlPredicate.trim() : mode === "lowcode" ? lowcodePredicate : "";
+  const testCanRun =
+    mode === "dqx_native"
+      ? nativeTestable && functionName.trim().length > 0 && slotsHaveValidNames(nativeSlots) && nativeRequiredParamsFilled
+      : testEffectivePredicate.length > 0 && (mode !== "sql" || sqlError === null);
   const testTabContent = (
     <div className="space-y-3 pt-2">
-      {mode === "dqx_native" ? (
+      {mode === "dqx_native" && !nativeTestable ? (
         <div className="rounded-lg border bg-muted/30 p-4 flex items-center gap-3">
           <FlaskConical className="h-4 w-4 text-muted-foreground shrink-0" />
           <p className="text-xs text-muted-foreground">{t("rulesRegistry.testNotAvailableDqxNative")}</p>
@@ -3880,10 +3894,12 @@ export function RegistryRuleFormDialog({
         <RuleTestPanel
           predicate={testEffectivePredicate}
           polarity={polarity}
-          slots={sqlSlots}
-          ruleMode={mode === "lowcode" ? "lowcode" : "sql"}
+          slots={testSlots}
+          ruleMode={mode === "lowcode" ? "lowcode" : mode === "dqx_native" ? "dqx_native" : "sql"}
+          nativeFunction={mode === "dqx_native" ? functionName : undefined}
+          nativeArguments={nativeTestArguments}
           lowcodeAdvanced={lowcodeAdvanced}
-          canTest={testEffectivePredicate.length > 0 && (mode !== "sql" || sqlError === null)}
+          canTest={testCanRun}
         />
       )}
     </div>

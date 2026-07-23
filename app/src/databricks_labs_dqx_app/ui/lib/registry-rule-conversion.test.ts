@@ -4,6 +4,7 @@ import {
   deriveSlotsAndParameters,
   fnSupportsNegate,
   nativeArguments,
+  nativeArgumentsForTest,
   slotTagsFromUserMetadata,
   userMetadataWithSlotTags,
 } from "./registry-rule-conversion";
@@ -408,6 +409,33 @@ describe("computeMatchedTagsForSlot — governed tag intersection for demo chips
       "class.z",
       "class.a",
     ]);
+  });
+});
+
+describe("nativeArgumentsForTest — merges scalar parameters for rule test", () => {
+  const slot = (name: string, over: Partial<RuleSlot> = {}): RuleSlot =>
+    ({ name, family: "any", position: 0, cardinality: "one", ...over }) as RuleSlot;
+  const isInList = {
+    name: "is_in_list",
+    params: [
+      { name: "column", kind: "column", required: true },
+      { name: "allowed", kind: "list", required: true },
+      { name: "case_sensitive", kind: "boolean", required: false },
+    ],
+  } as const;
+
+  test("includes parsed list parameters alongside column placeholders", () => {
+    const slots = [slot("column_1", { arg_key: "column", position: 0 })];
+    expect(
+      nativeArgumentsForTest(slots, isInList as never, [
+        { name: "allowed", type: "list" },
+        { name: "case_sensitive", type: "boolean" },
+      ], { allowed: "1,2,3", case_sensitive: "false" }),
+    ).toEqual({
+      column: "{{column_1}}",
+      allowed: ["1", "2", "3"],
+      case_sensitive: false,
+    });
   });
 });
 
