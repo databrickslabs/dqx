@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+.databricks/
+*.egg-info/
+uv.lock

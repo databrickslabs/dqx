@@ -14,6 +14,8 @@ from databricks.labs.dqx.io import read_input_data, get_reference_dataframes
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
+    safe_filter_expr,
+    sanitize_for_logging,
     normalize_col_str,
     safe_json_load,
     get_columns_as_strings,
@@ -24,7 +26,7 @@ from databricks.labs.dqx.utils import (
     resolve_variables,
 )
 from databricks.labs.dqx.rule import normalize_bound_args
-from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
+from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError, UnsafeSqlQueryError
 from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
 
@@ -237,9 +239,14 @@ def test_case_insensitivity():
 
 
 def test_query_with_comments_containing_keywords():
-    # Should still be safe because we're not removing SQL comments
-    # but in practice this would be flagged — optional to allow or disallow
+    # A forbidden keyword hidden inside a comment is still rejected.
     assert not is_sql_query_safe("SELECT * FROM users -- delete everything later")
+    assert not is_sql_query_safe("SELECT 1 /* delete trick */")
+
+
+def test_query_with_block_comment_splitting_keyword_is_unsafe():
+    # An obfuscated keyword split by an inline comment (dr/**/op) still resolves to DROP once removed.
+    assert not is_sql_query_safe("dr/**/op table users")
 
 
 def test_keyword_as_substring():
@@ -256,6 +263,60 @@ def test_blank_query():
 
 def test_mixed_content():
     assert not is_sql_query_safe("WITH cte AS (UPDATE users SET x=1) SELECT * FROM cte")
+
+
+def test_select_allowed():
+    # SELECT / subqueries are allowed (trusted-operator feature), never flagged.
+    assert is_sql_query_safe("SELECT id FROM users WHERE active = true")
+    assert is_sql_query_safe("customer_id IN (SELECT customer_id FROM main.ref.active_customers)")
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "status = 'drop'",
+        "action IN ('DELETE','UPDATE')",
+        "event_type = 'merge'",
+        "note LIKE '%replace%'",
+        "col = 'use case'",
+        'label = "truncate now"',
+        "`drop` = 1",
+        # backslash-escaped quote inside a literal must not end the literal early (Spark default parser)
+        r"comment = 'can\'t drop this' AND active = true",
+        r'note = "a \" delete b"',
+    ],
+)
+def test_keyword_inside_quoted_literal_or_identifier_is_safe(predicate):
+    # Forbidden keywords appearing only as data or as a quoted identifier are not statements.
+    assert is_sql_query_safe(predicate), f"Predicate with keyword as data should be safe: {predicate}"
+
+
+def test_keyword_outside_literal_still_unsafe_alongside_literal():
+    # A genuine statement keyword outside quotes is still flagged even when a literal also contains one.
+    assert not is_sql_query_safe("status = 'ok' OR DROP TABLE users")
+
+
+def test_safe_filter_expr_allows_select():
+    # SELECT / subqueries are allowed in filters (trusted-operator feature)
+    assert safe_filter_expr("id IN (SELECT id FROM users)") is not None
+
+
+def test_safe_filter_expr_raises_on_destructive():
+    with pytest.raises(UnsafeSqlQueryError):
+        safe_filter_expr("id = 1 OR DROP TABLE users")
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("a = 1", "a = 1"),
+        ("a\nb", "a\\nb"),
+        ("a\r\nb", "a\\r\\nb"),
+        ("forged\nINFO log line", "forged\\nINFO log line"),
+    ],
+)
+def test_sanitize_for_logging_escapes_newlines(value, expected):
+    assert sanitize_for_logging(value) == expected
 
 
 def test_safe_json_load_dict():
