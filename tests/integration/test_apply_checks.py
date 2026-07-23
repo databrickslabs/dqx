@@ -10067,19 +10067,23 @@ def test_apply_checks_unsafe_filter_is_skipped_and_other_checks_still_run(ws, sp
     checked = dq_engine.apply_checks(test_df, checks)
     errors_by_row = {row["id"]: row["_errors"] for row in checked.select("id", "_errors").collect()}
 
-    # The unsafe-filter check is reported as skipped (not a hard failure of the whole run)
-    skipped = [e for e in (errors_by_row[1] or []) if e["name"] == "b_is_null_unsafe_filter"]
-    assert len(skipped) == 1
-    assert skipped[0]["skipped"] is True
-    assert skipped[0]["message"] == (
-        "Check evaluation skipped due to unsafe check filter: 'id = 1 OR DROP TABLE users'"
-    )
+    # The unsafe-filter check couldn't be evaluated, so it's reported as skipped on every row
+    # (a dataset-wide "not evaluated" marker, consistent with other skipped checks) rather than
+    # aborting the whole run.
+    for row_id in (1, 2):
+        skipped = [e for e in (errors_by_row[row_id] or []) if e["name"] == "b_is_null_unsafe_filter"]
+        assert len(skipped) == 1, f"row {row_id}: {errors_by_row[row_id]}"
+        assert skipped[0]["skipped"] is True
+        assert skipped[0]["message"] == (
+            "Check evaluation skipped due to unsafe check filter: 'id = 1 OR DROP TABLE users'"
+        )
 
-    # The normal check still ran: it flags the null b for row id=1 and passes row id=2
+    # The normal check still ran end-to-end: it flags the null b for row id=1 and passes row id=2.
     normal_row1 = [e for e in (errors_by_row[1] or []) if e["name"] == "b_is_null"]
     assert len(normal_row1) == 1
     assert normal_row1[0]["skipped"] is None
-    assert errors_by_row[2] is None
+    normal_row2 = [e for e in (errors_by_row[2] or []) if e["name"] == "b_is_null"]
+    assert len(normal_row2) == 0
 
 
 def test_apply_checks_and_save_in_tables_for_patterns_missing_output_suffix(ws, spark):
