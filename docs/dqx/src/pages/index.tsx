@@ -7,7 +7,7 @@ import Button from '../components/Button';
 import {
   AppWindow, Code, Sparkles, BarChart2, ShieldCheck, LineChart, ScrollText,
   PlusCircle, HeartPulse, Settings2, Boxes, Store, ArrowRight, Library,
-  Info, FileText, Activity, AlertTriangle, Grid, PieChart, Radar,
+  Info, FileText, Activity, AlertTriangle, Grid, PieChart, Radar, Calculator,
 } from 'lucide-react';
 
 const Hero = (): JSX.Element => {
@@ -285,6 +285,63 @@ const Marketplace = (): JSX.Element => {
   );
 };
 
+const CostCalculator = (): JSX.Element => {
+  // Placeholder inputs — the calculator itself is not wired up yet.
+  const inputs = [
+    { label: 'Table size', value: '250 GB', min: '1 GB', max: '10 TB' },
+    { label: 'Results views per user per day', value: '20', min: '1', max: '200' },
+    { label: 'Number of users', value: '50', min: '1', max: '1,000' },
+  ];
+
+  return (
+    <div className="px-4 md:px-10 py-12 w-full">
+      <div className="max-w-5xl mx-auto rounded-2xl border border-dashed border-emerald-300 dark:border-emerald-800/60 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950/20 dark:to-teal-950/20 p-8 md:p-12">
+        <div className="text-center">
+          <span className="inline-flex items-center gap-2 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-xs font-semibold px-3 py-1 mb-4">
+            <Calculator className="w-3.5 h-3.5" /> COMING SOON
+          </span>
+          <h2 className="text-2xl md:text-3xl font-semibold mb-3">
+            Cost Calculator
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400 max-w-2xl mx-auto text-balance mb-8">
+            Estimate what running DQX Studio will cost for your workspace. Set your
+            table size, how often people look at results, and how many users you
+            have — we’ll do the maths. We’re working on it.
+          </p>
+        </div>
+
+        {/* Preview of the inputs — disabled until the calculator ships */}
+        <div
+          className="max-w-2xl mx-auto flex flex-col gap-6 opacity-60 select-none pointer-events-none"
+          aria-hidden="true"
+        >
+          {inputs.map((input, i) => (
+            <div key={i}>
+              <div className="flex items-baseline justify-between mb-2">
+                <span className="text-sm font-medium text-gray-900 dark:text-white">{input.label}</span>
+                <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">{input.value}</span>
+              </div>
+              <input
+                type="range"
+                disabled
+                readOnly
+                min={0}
+                max={100}
+                defaultValue={i === 0 ? 30 : i === 1 ? 45 : 55}
+                className="w-full accent-emerald-500 cursor-not-allowed"
+              />
+              <div className="flex justify-between text-xs text-gray-500 dark:text-gray-500 mt-1">
+                <span>{input.min}</span>
+                <span>{input.max}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function Home(): JSX.Element {
   const [tab, setTab] = useState<'core' | 'studio'>('core');
   return (
@@ -297,6 +354,7 @@ export default function Home(): JSX.Element {
             <>
               <TaskLauncher />
               <Marketplace />
+              <CostCalculator />
             </>
           )}
         </div>
