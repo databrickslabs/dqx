@@ -1315,6 +1315,49 @@ def test_benchmark_compare_datasets(benchmark, ws, generated_df, make_ref_df):
     assert actual_count == EXPECTED_ROWS
 
 
+def test_benchmark_aggr_matches_dataset(benchmark, ws, generated_df, make_ref_df):
+    """Benchmark dataset-wide row-count comparison against a reference DataFrame (crossJoin path)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.aggr_matches_dataset,
+            column="*",
+            check_func_kwargs={
+                "aggr_type": "count",
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+    refs_df = {"ref_df": make_ref_df}
+    checked = dq_engine.apply_checks(generated_df, checks, refs_df)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_aggr_matches_dataset_count_distinct_with_group_by(benchmark, ws, generated_df, make_ref_df):
+    """Benchmark count_distinct with group_by (window-incompatible aggregate -> two-stage groupBy + join)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.aggr_matches_dataset,
+            column="col2",
+            check_func_kwargs={
+                "aggr_type": "count_distinct",
+                "group_by": ["col3"],
+                "ref_column": "ref_col2",
+                "ref_group_by": ["ref_col3"],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+    refs_df = {"ref_df": make_ref_df}
+    checked = dq_engine.apply_checks(generated_df, checks, refs_df)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
 @pytest.mark.parametrize(
     "generated_integer_df",
     [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],

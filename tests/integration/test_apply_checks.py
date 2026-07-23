@@ -7065,6 +7065,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col6",
             check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
         ),
+        # aggr_matches_dataset check — row count matches the reference dataset
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.aggr_matches_dataset,
+            column="*",
+            check_func_kwargs={"aggr_type": "count", "ref_df_name": "ref_df_key"},
+        ),
         # is_valid_json check
         DQRowRule(
             criticality="error",
@@ -7153,7 +7160,10 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         schema,
     )
 
-    checked = dq_engine.apply_checks(test_df, checks)
+    ref_df = test_df.withColumnRenamed("col1", "ref_col1").withColumnRenamed("col2", "ref_col2")
+    ref_dfs = {"ref_df_key": ref_df}
+
+    checked = dq_engine.apply_checks(test_df, checks, ref_dfs=ref_dfs)
 
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
