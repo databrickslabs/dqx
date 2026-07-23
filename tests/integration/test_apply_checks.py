@@ -7065,6 +7065,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col6",
             check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
         ),
+        # has_no_gaps_per_time_window check
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.has_no_gaps_per_time_window,
+            column="col6",
+            check_func_kwargs={"window_minutes": 1440},
+        ),
         # aggr_matches_dataset check — row count matches the reference dataset
         DQDatasetRule(
             criticality="error",

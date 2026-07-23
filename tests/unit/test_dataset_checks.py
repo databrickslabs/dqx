@@ -1,7 +1,7 @@
 import pytest
 
 from databricks.labs.dqx import check_funcs
-from databricks.labs.dqx.check_funcs import sql_query, is_data_fresh_per_time_window
+from databricks.labs.dqx.check_funcs import sql_query, is_data_fresh_per_time_window, has_no_gaps_per_time_window
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryError, MissingParameterError
 
@@ -229,6 +229,12 @@ def test_is_data_fresh_per_time_window_exceptions(
             min_records_per_window=min_records_per_window,
             lookback_windows=lookback_windows,
         )
+
+
+@pytest.mark.parametrize("window_minutes", [0, -1, None])
+def test_has_no_gaps_per_time_window_exceptions(window_minutes):
+    with pytest.raises(InvalidParameterError, match="window_minutes must be a positive integer"):
+        has_no_gaps_per_time_window(column="event_date", window_minutes=window_minutes)
 
 
 @pytest.mark.parametrize(
