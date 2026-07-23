@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 from tempfile import TemporaryDirectory
 
+import pytest
 import yaml
 
 from databricks.sdk.service.workspace import ImportFormat
@@ -186,17 +187,18 @@ def test_run_dqx_demo_pii_detection(ws, make_notebook, make_job, library_ref):
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_pii_detection")
 
 
+@pytest.mark.parametrize("demo_notebook", ["dqx_dlt_demo.py", "dqx_dlt_demo_quarantine.py"])
 def test_run_dqx_dlt_demo(
-    skip_if_classic_compute, ws, make_notebook, make_schema, make_pipeline, make_job, library_ref
+    skip_if_classic_compute, ws, make_notebook, make_schema, make_pipeline, make_job, library_ref, demo_notebook
 ):
     """
-    Test running the DLT demo notebook in a serverless pipeline.
+    Test running the DLT demo notebooks (report-as-columns and quarantine variants) in a serverless pipeline.
     No need to trigger from non-serverless runtime, since the dlt pipeline use own cluster anyway.
     """
     catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
 
-    path = Path(__file__).parent.parent.parent / "demos" / "dqx_dlt_demo.py"
+    path = Path(__file__).parent.parent.parent / "demos" / demo_notebook
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
@@ -215,7 +217,8 @@ def test_run_dqx_dlt_demo(
         environment=PipelinesEnvironment(dependencies=[library_ref]),
     )
     pipeline_task = PipelineTask(pipeline_id=pipeline.pipeline_id)
-    job = make_job(tasks=[Task(task_key="dqx_dlt_demo", pipeline_task=pipeline_task)])
+    task_key = demo_notebook.removesuffix(".py")
+    job = make_job(tasks=[Task(task_key=task_key, pipeline_task=pipeline_task)])
 
     waiter = ws.jobs.run_now_and_wait(job.job_id, timeout=timedelta(minutes=30))
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
@@ -223,7 +226,7 @@ def test_run_dqx_dlt_demo(
         timeout=timedelta(minutes=30),
         callback=lambda r: validate_run_status(r, ws),
     )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_dlt_demo")
+    logging.info(f"Job run {run.run_id} completed successfully for {demo_notebook}")
 
 
 def test_run_dqx_demo_tool(ws, installation_ctx, make_schema, make_notebook, make_job):
@@ -515,11 +518,12 @@ def test_run_dqx_row_anomaly_detection_demo(ws, make_notebook, make_schema, make
     job = make_job(tasks=[Task(task_key="dqx_row_anomaly_detection_demo", notebook_task=notebook_task)])
 
     # This demo trains two IsolationForest models and scores with contributions + AI explanations
-    # (on by default), so it runs past run_now_and_wait's 20-minute SDK default
-    waiter = ws.jobs.run_now_and_wait(job.job_id, timeout=timedelta(minutes=30))
+    # (on by default), so it is the slowest e2e demo and can exceed 30 minutes on a cold serverless
+    # start. Use a 45-minute wait (still well within the e2e CI job's 2h wrapper).
+    waiter = ws.jobs.run_now_and_wait(job.job_id, timeout=timedelta(minutes=45))
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
+        timeout=timedelta(minutes=45),
         callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_row_anomaly_detection_demo")

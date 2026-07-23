@@ -113,7 +113,7 @@ tests/
 - **Cover all changes with tests.** New check functions and rule logic → unit tests. Workspace interactions → integration tests. Bug fixes → regression tests.
 - **Unit tests** (`tests/unit/`) run without Spark or a live workspace and must stay fast.
 - **Integration tests** (`tests/integration/`) require a real workspace and spark session; do not add workspace API calls to unit tests.
-- Test **behaviour, not implementation details**: assert on outputs and observable state, not on private methods or internal data structures.
+- Test **behaviour, not implementation details**: assert on outputs and observable state, not on private methods or internal data structures. Do not call or access private/protected members (e.g. `obj._helper`) from tests — exercise the public API instead. If something is only reachable via a private member, that is a design smell: make it public or extract a shared helper, do not reach past the boundary (and never silence the resulting `protected-access` lint — see Critical Rule 6).
 - Use **dependency injection to enable testing**: construct dependencies with `create_autospec` rather than patching internal module state.
 - Use **pytest fixtures** (`conftest.py`) to share setup and teardown logic across tests. Unit-level fixtures live in `tests/unit/conftest.py`; integration-level fixtures in `tests/integration/conftest.py`. Do not duplicate fixture logic inline in individual tests.
 - For workspace resource creation and cleanup in integration tests, use the pytester `factory` helper — see [## Testing](#testing) for the established patterns.
@@ -159,6 +159,8 @@ Use `ConfigSerializer` — it preserves nested types. `dataclasses.asdict()` los
 ### 6. Never disable linting to silence issues
 
 Fix the code instead of adding `# pylint: disable`, `# type: ignore`, `# noqa`, or per-file ignores. Use project-wide exceptions in `pyproject.toml` only when there is no viable fix (e.g., third-party API compatibility).
+
+In particular, never disable `protected-access` (pylint `W0212`) — inline, per-file, or globally in `pyproject.toml` — to let tests or callers reach private/protected members (`_name`). That is a hack that masks a design smell and is technical debt. Instead, exercise the public API, or if a member genuinely needs outside access, make it public or extract a shared helper.
 
 ---
 

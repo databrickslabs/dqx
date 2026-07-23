@@ -529,3 +529,54 @@ def test_apply_checks_parses_dbr_version_with_suffix(dbr_version, required_check
         match=rf"require Databricks Runtime >= .*but the current version is {re.escape(dbr_version)}",
     ):
         engine.apply_checks(df, [DQRowRule(check_func=required_check, column="a")])
+
+
+def _observer_core_with_pipeline_conf(pipelines_id: str | None) -> DQEngineCore:
+    """Build a DQEngineCore with an observer and a spark whose 'pipelines.id' conf is (un)set."""
+    spark_mock = create_autospec(SparkSession)
+    spark_mock.conf = Mock()
+    spark_mock.conf.get.return_value = pipelines_id  # None => not a pipeline; a value => inside a pipeline
+    ws = create_autospec(WorkspaceClient)
+    observer = DQMetricsObserver(name="test_observer")
+    return DQEngineCore(spark=spark_mock, workspace_client=ws, observer=observer)
+
+
+def test_apply_checks_skips_observe_in_declarative_pipeline():
+    """Inside a Spark Declarative Pipeline, apply_checks returns a bare DataFrame and does not wire observe()."""
+    core = _observer_core_with_pipeline_conf("pipeline-123")
+
+    checked_df = Mock()
+    checked_df.observe.return_value = Mock()
+    df = Mock()
+    df.columns = ["id", "name"]
+    df.select.return_value = checked_df  # _append_empty_checks builds the checked df via df.select(...)
+
+    result = core.apply_checks(df, [])
+
+    # observe() is inaccessible in a pipeline, so it is skipped: bare DataFrame, no observation, no observe() call.
+    assert not isinstance(result, tuple)
+    checked_df.observe.assert_not_called()
+
+
+def test_apply_checks_wires_observe_outside_declarative_pipeline():
+    """Outside a Spark Declarative Pipeline, apply_checks wires observe() and returns a (DataFrame, Observation)."""
+    core = _observer_core_with_pipeline_conf(None)
+
+    checked_df = Mock()
+    checked_df.isStreaming = False
+    checked_df.observe.return_value = Mock()
+    df = Mock()
+    df.columns = ["id", "name"]
+    df.select.return_value = checked_df
+
+    result = core.apply_checks(df, [])
+
+    assert isinstance(result, tuple)
+    checked_df.observe.assert_called_once()
+
+
+def test_compute_summary_metrics_raises_without_observer(mock_workspace_client, mock_spark):
+    """compute_summary_metrics requires an observer on the engine and raises when none is configured."""
+    engine = DQEngine(mock_workspace_client, mock_spark)
+    with pytest.raises(InvalidParameterError, match="no observer"):
+        engine.compute_summary_metrics(Mock(), checks=[])

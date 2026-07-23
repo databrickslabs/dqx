@@ -5,12 +5,12 @@ import dlt
 
 # MAGIC
 # MAGIC %md
-# MAGIC ## DQX in a Lakeflow Pipeline (formerly Delta Live Tables - DLT)
+# MAGIC ## DQX in a Lakeflow Pipeline (formerly Delta Live Tables - DLT) — data quality with quarantine pattern
 # MAGIC
-# MAGIC This demo applies DQX checks and reports issues as additional columns (`_errors` / `_warnings`),
-# MAGIC persisting the checked data as a `silver` table. Summary metrics are then computed as a materialized
-# MAGIC view over that table. For a pipeline that quarantines invalid records into a separate table, see
-# MAGIC `dqx_dlt_demo_quarantine.py`.
+# MAGIC This demo applies DQX checks and **splits** the data into a valid `silver` table and a `quarantine`
+# MAGIC table. It also persists the checked layer (`bronze_dq_check`) so summary metrics can be computed as
+# MAGIC a materialized view over all rows. For a simpler pipeline that reports issues as columns without
+# MAGIC quarantining, see `dqx_dlt_demo.py`.
 # MAGIC
 # MAGIC Create new ETL Pipeline to execute this notebook (see [here](https://docs.databricks.com/aws/en/getting-started/data-pipeline-get-started)):
 # MAGIC 1. Upload the notebook to a Databricks Workspace
@@ -43,7 +43,7 @@ dq_engine = DQEngine(WorkspaceClient(), observer=DQMetricsObserver())
 
 # COMMAND ----------
 
-# Define checks in YAML format. They can also be defined using classes or loaded from a file or table.
+# Define checks in YAML format. They can also be defined using classes or loaded from a file or a table.
 checks = yaml.safe_load("""
 - check:
     function: is_not_null
@@ -109,7 +109,7 @@ checks = yaml.safe_load("""
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Define Lakeflow Pipeline (bronze -> silver -> metrics)
+# MAGIC ## Define Lakeflow Pipeline (bronze -> silver + quarantine -> metrics)
 
 # COMMAND ----------
 
@@ -121,16 +121,32 @@ def bronze():
 
 # COMMAND ----------
 
-# Silver: apply checks and report issues as additional columns (_errors / _warnings).
-# Persist as a table so it can be used downstream (including by the metrics view below).
+# Apply checks and persist the checked data as a table so the summary-metrics materialized view
+# below can read the result columns (_errors/_warnings) after the pipeline writes them.
 @dlt.table
-def silver():
+def bronze_dq_check():
   df = dlt.read_stream("bronze")
   return dq_engine.apply_checks_by_metadata(df, checks)
 
 # COMMAND ----------
 
-# Summary Metrics: materialized view computed by aggregation over the silver table.
+# Silver: rows without errors or warnings, with the auxiliary result columns dropped.
+@dlt.table
+def silver():
+  df = dlt.read_stream("bronze_dq_check")
+  return dq_engine.get_valid(df)
+
+# COMMAND ----------
+
+# Quarantine: only rows with errors or warnings.
+@dlt.table
+def quarantine():
+  df = dlt.read_stream("bronze_dq_check")
+  return dq_engine.get_invalid(df)
+
+# COMMAND ----------
+
+# Summary Metrics: materialized view computed by aggregation over the checked table.
 # One row per metric (input / error / warning / valid row counts and per-check breakdown).
 # Note: this MV is a cumulative snapshot over the whole table (input_row_count is the running
 # total, not a per-run count). It refreshes incrementally only when the query is deterministic —
@@ -139,5 +155,5 @@ def silver():
 # (see the "Snapshot vs. history" section of the Summary Metrics guide).
 @dlt.table
 def dq_summary_metrics():
-  df = dlt.read("silver")
+  df = dlt.read("bronze_dq_check")
   return dq_engine.compute_summary_metrics(df, checks=checks)

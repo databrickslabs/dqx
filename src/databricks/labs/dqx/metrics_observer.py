@@ -211,3 +211,77 @@ class DQMetricsObserver:
             df = df.withColumn("run_time", F.current_timestamp())
 
         return df
+
+    @staticmethod
+    def build_metrics_df_from_aggregation(aggregated_df: DataFrame, observation: DQMetricsObservation) -> DataFrame:
+        """
+        Reshapes a one-row wide aggregation of metric expressions into the long-format
+        *OBSERVATION_TABLE_SCHEMA*, without triggering a Spark action.
+
+        Used by *DQEngine.compute_summary_metrics* to keep a lazily-computed aggregation lazy, so the
+        result can back a materialized view or table in a Spark Declarative Pipeline (where the pipeline
+        runtime — not the caller — triggers the write). The already-collected path uses *build_metrics_df*.
+
+        The input must be a **single-row global aggregation** (the output of *get_metrics* selected with no
+        *groupBy*). A multi-row input would emit one metrics row-set per input row, each stamped with the
+        same run metadata and no grouping key, so this must not be used for windowed/grouped aggregations.
+
+        Args:
+            aggregated_df: A single-row DataFrame whose columns are the metric expressions produced by
+                *DQMetricsObserver.get_metrics* (e.g. *input_row_count*, *error_row_count*, *check_metrics*).
+            observation: *DQMetricsObservation* carrying the run metadata (locations, fingerprint, run time).
+
+        Returns:
+            A lazy Spark DataFrame matching *OBSERVATION_TABLE_SCHEMA* with one row per metric.
+        """
+        # Unpivot the wide one-row aggregation into (metric_name, metric_value) rows using the DataFrame
+        # API: build one struct per metric (name literal + value cast to string) and explode.
+        #
+        # Reference the metric columns by safe positional names, not by their real names: a metric name
+        # can contain a dot (e.g. a user-supplied custom_metrics alias), and `aggregated_df["a.b"]` would
+        # parse the dot as nested-field access ("field b of column a") rather than a top-level column,
+        # misresolving or raising. `toDF` renames the columns positionally (without resolving the old
+        # names), so the value lookup uses a dot-free name; the real name is only used as a literal for
+        # metric_name, where a dot is harmless. This avoids SQL-string building and identifier escaping.
+        metric_names = aggregated_df.columns
+        renamed = aggregated_df.toDF(*[f"metric_{i}" for i in range(len(metric_names))])
+        metric_pairs = F.array(
+            *[
+                F.struct(
+                    F.lit(metric_names[i]).alias("metric_name"),
+                    renamed[f"metric_{i}"].cast("string").alias("metric_value"),
+                )
+                for i in range(len(metric_names))
+            ]
+        )
+        long_df = renamed.select(F.explode(metric_pairs).alias("metric"))
+
+        # run_time_overwrite is a datetime, so F.lit produces a timestamp literal via the same
+        # Python->Spark conversion createDataFrame uses in build_metrics_df — run_time is therefore
+        # identical across both builders. Fall back to current_timestamp() when it is not set.
+        if observation.run_time_overwrite is not None:
+            run_time = F.lit(observation.run_time_overwrite).cast("timestamp")
+        else:
+            run_time = F.current_timestamp()
+
+        if observation.user_metadata:
+            map_entries = [F.lit(item) for pair in observation.user_metadata.items() for item in pair]
+            user_metadata = F.create_map(*map_entries)
+        else:
+            user_metadata = F.lit(None).cast("map<string, string>")
+
+        return long_df.select(
+            F.lit(observation.run_id).cast("string").alias("run_id"),
+            F.lit(observation.run_name).cast("string").alias("run_name"),
+            F.lit(observation.input_location).cast("string").alias("input_location"),
+            F.lit(observation.output_location).cast("string").alias("output_location"),
+            F.lit(observation.quarantine_location).cast("string").alias("quarantine_location"),
+            F.lit(observation.checks_location).cast("string").alias("checks_location"),
+            F.lit(observation.rule_set_fingerprint).cast("string").alias("rule_set_fingerprint"),
+            F.col("metric.metric_name").alias("metric_name"),
+            F.col("metric.metric_value").alias("metric_value"),
+            run_time.alias("run_time"),
+            F.lit(observation.error_column_name).cast("string").alias("error_column_name"),
+            F.lit(observation.warning_column_name).cast("string").alias("warning_column_name"),
+            user_metadata.alias("user_metadata"),
+        )
