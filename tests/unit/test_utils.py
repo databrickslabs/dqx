@@ -340,6 +340,8 @@ def test_is_simple_column_expression(column: str, expected: bool):
         # Collections
         ([1, 2, 3], [1, 2, 3]),
         ((4, 5, 6), [4, 5, 6]),
+        ({1, 2, 3}, [1, 2, 3]),
+        (frozenset({1, 2, 3}), [1, 2, 3]),
         # PySpark Column
         (F.col("col_name"), "col_name"),
         (F.col("a").alias("b"), "b"),
