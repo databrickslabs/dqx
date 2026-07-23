@@ -153,7 +153,7 @@ class TestRuleScore:
         client.get("/api/v1/dq-score/rule/r1")
         stmt = sql_mock.query_dicts.call_args[0][0]
         # Catalog/schema are backtick-quoted (hyphenated-catalog support).
-        assert f"`{app_config.catalog}`.`{app_config.schema_name}`.{METRIC_VIEW_NAME}" in stmt
+        assert f"`{app_config.catalog}`.`{app_config.genie_schema_name}`.{METRIC_VIEW_NAME}" in stmt
         assert "'main.sales.orders'" in stmt
         assert "MEASURE(score)" in stmt
         assert "MEASURE(failed_tests)" in stmt
@@ -301,6 +301,8 @@ class TestRuleScore:
     def test_hyphenated_app_catalog_is_quoted_in_the_measure_query(
         self, client, sql_mock, apply_rules_mock, monitored_tables_mock, app_config
     ):
+        # The metric view is a genie-schema derived object — uses genie_schema_name
+        # (default "genie"), NOT schema_name. Verify the catalog is still quoted.
         client.app.dependency_overrides[get_conf] = lambda: app_config.model_copy(
             update={"catalog": "prod-east", "schema_name": "dqx-studio"}
         )
@@ -309,7 +311,7 @@ class TestRuleScore:
         resp = client.get("/api/v1/dq-score/rule/r1")
         assert resp.status_code == 200
         stmt = sql_mock.query_dicts.call_args[0][0]
-        assert f"`prod-east`.`dqx-studio`.{METRIC_VIEW_NAME}" in stmt
+        assert f"`prod-east`.`genie`.{METRIC_VIEW_NAME}" in stmt
 
     def test_binding_with_invalid_fqn_is_skipped_before_interpolation(
         self, client, sql_mock, apply_rules_mock, monitored_tables_mock

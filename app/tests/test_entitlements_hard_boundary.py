@@ -24,7 +24,7 @@ The proofs are structural + behavioural, no workspace required:
    privileges and never confers a role capability; the caller's role is
    unchanged, so the role-gated route still 403s.
 4. Only ``ADMIN``/``RULE_APPROVER`` bypass object grants; ``RULE_AUTHOR`` /
-   ``VIEWER`` / ``RUNNER`` do not.
+   ``VIEWER`` do not.
 """
 
 from __future__ import annotations
@@ -129,7 +129,7 @@ async def test_require_role_rejects_low_role_regardless_of_grants():
     # input is the resolved role — no object-grant parameter exists that could
     # flip the decision, so a broad grant elsewhere is irrelevant here.
     check = require_role(UserRole.ADMIN, UserRole.RULE_APPROVER).dependency
-    for low_role in (UserRole.VIEWER, UserRole.RULE_AUTHOR, UserRole.RUNNER):
+    for low_role in (UserRole.VIEWER, UserRole.RULE_AUTHOR):
         with pytest.raises(HTTPException) as exc:
             await check(role=low_role)
         assert exc.value.status_code == 403
@@ -149,9 +149,9 @@ async def test_require_role_admits_listed_roles():
 def test_all_privileges_grant_tops_out_at_object_privileges(svc):
     svc.fake.add_grant("registry_rule", "r1", "u1", "ALL_PRIVILEGES")
     eff = svc.service.effective_privileges("registry_rule", "r1", principal_ids={"u1"})
-    # The widest possible grant confers exactly the three concrete object
-    # privileges — nothing role-shaped, and never MANAGE.
-    assert eff == {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY}
+    # The widest possible grant confers exactly the concrete object privileges
+    # (SELECT + MODIFY + APPLY + EXECUTE) — nothing role-shaped, never MANAGE.
+    assert eff == {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY, Privilege.EXECUTE}
 
 
 async def test_broad_grant_does_not_let_low_role_pass_role_gate(svc):
@@ -209,7 +209,7 @@ def test_governance_roles_bypass_object_grants(svc, role):
     )
 
 
-@pytest.mark.parametrize("role", [UserRole.RULE_AUTHOR, UserRole.VIEWER, UserRole.RUNNER])
+@pytest.mark.parametrize("role", [UserRole.RULE_AUTHOR, UserRole.VIEWER])
 def test_non_governance_roles_do_not_bypass_object_grants(svc, role):
     # Without a grant and without ownership, a non-governance role is denied a
     # gated object privilege — the object layer bites for everyone below the
@@ -229,3 +229,118 @@ def test_object_type_values_unchanged(svc):
     # Guard the object-grant surface: the grantable object types are exactly the
     # three securables — a grant can never target a role or a route.
     assert {ot.value for ot in ObjectType} == {"registry_rule", "monitored_table", "data_product"}
+
+
+# ---------------------------------------------------------------------------
+# A2: CAN_RUN gate — only ADMIN + RULE_AUTHOR may trigger runs.
+# ---------------------------------------------------------------------------
+
+
+async def test_can_run_gate_rejects_viewer():
+    """VIEWER is rejected by the CAN_RUN gate."""
+    from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES
+
+    check = require_role(*CAN_RUN_ROLES).dependency
+    with pytest.raises(HTTPException) as exc:
+        await check(role=UserRole.VIEWER)
+    assert exc.value.status_code == 403
+
+
+async def test_can_run_gate_rejects_approver():
+    """RULE_APPROVER is rejected by the CAN_RUN gate (no run_rules permission)."""
+    from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES
+
+    check = require_role(*CAN_RUN_ROLES).dependency
+    with pytest.raises(HTTPException) as exc:
+        await check(role=UserRole.RULE_APPROVER)
+    assert exc.value.status_code == 403
+
+
+async def test_can_run_gate_admits_author():
+    """RULE_AUTHOR is admitted by the CAN_RUN gate."""
+    from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES
+
+    check = require_role(*CAN_RUN_ROLES).dependency
+    result = await check(role=UserRole.RULE_AUTHOR)
+    assert result == UserRole.RULE_AUTHOR
+
+
+async def test_can_run_gate_admits_admin():
+    """ADMIN is admitted by the CAN_RUN gate."""
+    from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES
+
+    check = require_role(*CAN_RUN_ROLES).dependency
+    result = await check(role=UserRole.ADMIN)
+    assert result == UserRole.ADMIN
+
+
+# ---------------------------------------------------------------------------
+# B4: EXECUTE object-privilege enforced on run routes.
+# ---------------------------------------------------------------------------
+
+
+def test_author_denied_execute_on_narrowed_table_cannot_run(svc: _Svc) -> None:
+    """Author has the run-rules role but EXECUTE was not granted on this specific
+    monitored_table — ``require_object(EXECUTE)`` must raise 403."""
+    # No grant seeded for this object → the author is denied.
+    with pytest.raises(HTTPException) as exc:
+        svc.service.require_object(
+            ObjectType.MONITORED_TABLE.value,
+            "t1",
+            Privilege.EXECUTE,
+            role=UserRole.RULE_AUTHOR,
+            principal_ids={"authorid"},
+            principal_email="author@x.com",
+        )
+    assert exc.value.status_code == 403
+
+
+def test_admin_bypasses_execute_on_monitored_table(svc: _Svc) -> None:
+    """ADMIN bypasses the EXECUTE object check — no raise even without a grant."""
+    svc.service.require_object(
+        ObjectType.MONITORED_TABLE.value,
+        "t1",
+        Privilege.EXECUTE,
+        role=UserRole.ADMIN,
+        principal_ids=set(),
+        principal_email="admin@x.com",
+    )  # must not raise
+
+
+def test_author_with_execute_grant_can_run(svc: _Svc) -> None:
+    """Author who holds an explicit EXECUTE grant on the monitored_table passes."""
+    svc.fake.add_grant(ObjectType.MONITORED_TABLE.value, "t1", "authorid", "EXECUTE")
+    svc.service.require_object(
+        ObjectType.MONITORED_TABLE.value,
+        "t1",
+        Privilege.EXECUTE,
+        role=UserRole.RULE_AUTHOR,
+        principal_ids={"authorid"},
+        principal_email="author@x.com",
+    )  # must not raise
+
+
+def test_author_denied_execute_on_data_product_cannot_run(svc: _Svc) -> None:
+    """Author denied EXECUTE on a specific data_product → 403 from require_object."""
+    with pytest.raises(HTTPException) as exc:
+        svc.service.require_object(
+            ObjectType.DATA_PRODUCT.value,
+            "dp1",
+            Privilege.EXECUTE,
+            role=UserRole.RULE_AUTHOR,
+            principal_ids={"authorid"},
+            principal_email="author@x.com",
+        )
+    assert exc.value.status_code == 403
+
+
+def test_admin_bypasses_execute_on_data_product(svc: _Svc) -> None:
+    """ADMIN bypasses EXECUTE check on data_product without any grant."""
+    svc.service.require_object(
+        ObjectType.DATA_PRODUCT.value,
+        "dp1",
+        Privilege.EXECUTE,
+        role=UserRole.ADMIN,
+        principal_ids=set(),
+        principal_email="admin@x.com",
+    )  # must not raise

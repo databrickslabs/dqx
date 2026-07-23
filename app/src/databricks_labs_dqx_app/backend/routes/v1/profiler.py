@@ -7,7 +7,7 @@ from uuid import uuid4
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentUserRole,
@@ -184,7 +184,7 @@ def list_profile_runs(
     "/run",
     response_model=ProfileRunOut,
     operation_id="submitProfileRun",
-    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def submit_profile_run(
     body: ProfileRunIn,
@@ -259,7 +259,7 @@ def submit_profile_run(
     "/batch-run",
     response_model=BatchProfileRunOut,
     operation_id="submitBatchProfileRun",
-    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def submit_batch_profile_run(
     body: BatchProfileRunIn,
@@ -468,7 +468,7 @@ def get_profile_run_status(
 @router.post(
     "/runs/{run_id}/cancel",
     operation_id="cancelProfileRun",
-    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def cancel_profile_run(
     run_id: str,

@@ -118,6 +118,7 @@ def _table_summary(
     version: int = 2,
     applied_rule_count: int = 3,
     check_count: int = 5,
+    applied_check_count: int | None = None,
     score: float | None = None,
     failed_tests: int | None = None,
     total_tests: int | None = None,
@@ -129,6 +130,7 @@ def _table_summary(
             binding_id=binding_id, table_fqn=table_fqn, status=status, version=version, last_run_at=last_run_at
         ),
         applied_rule_count=applied_rule_count,
+        applied_check_count=applied_check_count,
         check_count=check_count,
         score=score,
         failed_tests=failed_tests,
@@ -554,6 +556,64 @@ class TestListAndGet:
         assert detail.members[0].rules_count == 3
         assert detail.members[0].checks_count == 5
 
+    def test_list_renders_only_draft_members_uses_snapshot_for_approved(
+        self, service, sql, monitored_tables, materializer
+    ):
+        """perf/C2: approved members read their frozen ``applied_check_count`` from
+        the summary (no render); only never-approved drafts (version==0) trigger a
+        live render — mirroring the Tables overview's snapshot/live split."""
+        sql.query.side_effect = [
+            [
+                _product_row(product_id="p1"),
+            ],
+            [
+                _list_member_row("ma", "p1", "ba"),  # approved
+                _list_member_row("mb", "p1", "bb"),  # draft
+            ],
+        ]
+        monitored_tables.list_monitored_tables.return_value = [
+            # Approved member: version > 0, applied_check_count set.
+            _table_summary(
+                binding_id="ba",
+                table_fqn="cat.s.ta",
+                status="approved",
+                version=2,
+                applied_rule_count=3,
+                check_count=5,
+                applied_check_count=9,
+            ),
+            # Draft member: version == 0, applied_check_count absent.
+            _table_summary(
+                binding_id="bb",
+                table_fqn="cat.s.tb",
+                status="draft",
+                version=0,
+                applied_rule_count=2,
+                check_count=0,
+                applied_check_count=None,
+            ),
+        ]
+        # Render returns a count only for the draft binding.
+        recorded_args: list[list[tuple[str, str]]] = []
+
+        def _capture(live_bindings: list[tuple[str, str]]) -> dict[str, int]:
+            recorded_args.append(list(live_bindings))
+            return {"bb": 4}
+
+        materializer.render_binding_checks_counts_many.side_effect = _capture
+
+        result = service.list_products()
+
+        # Render was called with ONLY the draft binding, not the approved one.
+        assert len(recorded_args) == 1
+        assert recorded_args[0] == [("bb", "cat.s.tb")]
+
+        by_binding = {m.binding_id: m for m in result[0].members}
+        # Approved member: checks_count from applied_check_count (9), not rendered.
+        assert by_binding["ba"].checks_count == 9
+        # Draft member: checks_count from render (4).
+        assert by_binding["bb"].checks_count == 4
+
 
 class TestCreate:
     def test_create_success(self, service, sql):
@@ -579,6 +639,41 @@ class TestCreate:
     def test_create_empty_name_raises(self, service):
         with pytest.raises(ValueError):
             service.create("   ", None, None, "alice@x")
+
+    def test_create_seeds_default_grants(
+        self, sql, monitored_tables, run_set_service, binding_run_service,
+        version_service, app_settings, materializer
+    ):
+        """DataProductService.create seeds default grants via the injected PermissionsService."""
+        from unittest.mock import create_autospec
+        from databricks_labs_dqx_app.backend.common.permissions import ObjectType
+        from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+
+        perms = create_autospec(PermissionsService, instance=True)
+        svc = DataProductService(
+            sql=sql,
+            monitored_tables=monitored_tables,
+            run_set_service=run_set_service,
+            binding_run_service=binding_run_service,
+            version_service=version_service,
+            app_settings=app_settings,
+            materializer=materializer,
+            permissions=perms,
+        )
+        sql.query.return_value = []  # name available
+        product = svc.create("Orders", None, None, "alice@x")
+        perms.seed_default_grants.assert_called_once_with(
+            ObjectType.DATA_PRODUCT.value,
+            product.product_id,
+            owner_email="alice@x",
+            grantor="alice@x",
+        )
+
+    def test_create_skips_seeding_when_no_permissions_service(self, service, sql):
+        """DataProductService.create is safe with no PermissionsService injected (None default)."""
+        sql.query.return_value = []
+        product = service.create("Orders", None, None, "alice@x")
+        assert product.status == "draft"
 
 
 class TestUpdate:

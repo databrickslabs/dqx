@@ -43,7 +43,7 @@ PLAIN_TABLE = TableInfo(row_filter=None, columns=[ColumnInfo(name="id"), ColumnI
 def svc(sql_executor_mock) -> EntitlementService:
     sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
     sql_executor_mock.query.return_value = []
-    return EntitlementService(sql=sql_executor_mock)
+    return EntitlementService(sql=sql_executor_mock, genie_schema="genie")
 
 
 @pytest.fixture
@@ -83,7 +83,7 @@ class TestConstants:
 
     def test_quoted_fqns(self, svc):
         assert svc.entitlements_table_fqn_quoted == "`dqx_test`.`dqx_app_test`.dq_user_table_entitlements"
-        assert svc.failing_rows_view_fqn_quoted == "`dqx_test`.`dqx_app_test`.v_dq_failing_rows"
+        assert svc.failing_rows_view_fqn_quoted == "`dqx_test`.`genie`.v_dq_failing_rows"
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ class TestFailingRowsViewDdl:
 
     def test_targets_view_and_reads_quarantine_records(self, svc):
         ddl = svc.failing_rows_view_ddl()
-        assert f"`dqx_test`.`dqx_app_test`.{FAILING_ROWS_VIEW_NAME}" in ddl
+        assert f"`dqx_test`.`genie`.{FAILING_ROWS_VIEW_NAME}" in ddl
         assert "`dqx_test`.`dqx_app_test`.dq_quarantine_records" in ddl
 
     def test_gate_is_current_user_exists_with_ttl(self, svc):
@@ -436,15 +436,17 @@ class TestStartupWiring:
         sql_executor_mock.execute.side_effect = RuntimeError("no CREATE TABLE privilege")
         _ensure_entitlement_objects(sql_executor_mock)  # must not propagate
 
-    def test_grants_use_schema_plus_select_on_the_five_views(self, sql_executor_mock):
+    def test_grants_use_genie_schema_plus_select_on_the_five_views(self, sql_executor_mock):
+        # The 5 readable views live in the genie schema (default "genie"), not the
+        # main app schema. USE SCHEMA and SELECT must reference genie_schema_name.
         from databricks_labs_dqx_app.backend.app import _grant_user_view_access
 
         _grant_user_view_access(sql_executor_mock)
         executed = [call.args[0] for call in sql_executor_mock.execute_no_schema.call_args_list]
-        assert executed[0] == "GRANT USE SCHEMA ON SCHEMA `dqx_test`.`dqx_app_test` TO `account users`"
+        assert executed[0] == "GRANT USE SCHEMA ON SCHEMA `dqx_test`.`genie` TO `account users`"
         select_grants = executed[1:]
         assert [
-            f"GRANT SELECT ON TABLE `dqx_test`.`dqx_app_test`.{name} TO `account users`"
+            f"GRANT SELECT ON TABLE `dqx_test`.`genie`.{name} TO `account users`"
             for name in (
                 "mv_dq_scores",
                 "v_dq_check_results",

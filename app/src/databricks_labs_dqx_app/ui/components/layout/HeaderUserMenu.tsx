@@ -40,6 +40,14 @@ import {
 
 const GITHUB_URL = "https://github.com/databrickslabs/dqx";
 
+/** Maps backend role identifiers to their i18n label keys. */
+const ROLE_LABEL_KEYS: Record<string, string> = {
+  admin: "roleManagement.roleAdmin",
+  rule_approver: "roleManagement.roleApprover",
+  rule_author: "roleManagement.roleAuthor",
+  viewer: "roleManagement.roleViewer",
+};
+
 function HeaderUserMenuSkeleton() {
   return (
     <div className="flex items-center gap-2">
@@ -111,6 +119,11 @@ function HeaderUserMenuContent() {
           <p className="text-xs text-muted-foreground truncate">
             {user.user_name}
           </p>
+          {role && (
+            <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">
+              {t(ROLE_LABEL_KEYS[role] ?? "roleManagement.roleViewer")}
+            </p>
+          )}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>

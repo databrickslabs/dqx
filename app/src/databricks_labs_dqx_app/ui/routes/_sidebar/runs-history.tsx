@@ -37,6 +37,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  RefreshCw,
   X,
 } from "lucide-react";
 import {
@@ -373,14 +374,32 @@ function RunHistoryContent() {
   const {
     data: validationResp,
     isLoading: validationLoading,
+    isFetching: validationFetching,
     error: validationError,
     refetch: refetchValidation,
-  } = useListValidationRuns();
+  } = useListValidationRuns({
+    query: {
+      refetchInterval: (query) => {
+        const rows = (query.state.data as { data?: ValidationRunSummaryOut[] } | undefined)?.data;
+        return Array.isArray(rows) && rows.some((r) => r.status === "RUNNING") ? 5000 : false;
+      },
+      refetchIntervalInBackground: false,
+    },
+  });
   const {
     data: profileResp,
     isLoading: profileLoading,
+    isFetching: profileFetching,
     refetch: refetchProfile,
-  } = useListProfileRuns();
+  } = useListProfileRuns(undefined, {
+    query: {
+      refetchInterval: (query) => {
+        const rows = (query.state.data as { data?: ProfileRunSummaryOut[] } | undefined)?.data;
+        return Array.isArray(rows) && rows.some((r) => r.status === "RUNNING") ? 5000 : false;
+      },
+      refetchIntervalInBackground: false,
+    },
+  });
 
   const isLoading = validationLoading || profileLoading;
   const error = validationError;
@@ -422,18 +441,6 @@ function RunHistoryContent() {
       }
     }
   }, [now, allRuns]);
-
-  // Poll the listings while any run is in flight (page-visible only) so a
-  // RUNNING row settles without a manual refresh.
-  useEffect(() => {
-    if (!hasRunning) return;
-    const id = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      void refetchValidation();
-      void refetchProfile();
-    }, 5000);
-    return () => window.clearInterval(id);
-  }, [hasRunning, refetchValidation, refetchProfile]);
 
   // Run-completion detection: the score / failing-records queries never
   // refetch on their own (staleTime: Infinity), so when a validation run this
@@ -623,6 +630,16 @@ function RunHistoryContent() {
           <h1 className="text-2xl font-semibold tracking-tight">{t("runsHistory.title")}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t("runsHistory.subtitle")}</p>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => { void refetchValidation(); void refetchProfile(); }}
+          disabled={validationFetching || profileFetching}
+          aria-label={t("runsHistory.refresh")}
+        >
+          <RefreshCw className={cn("h-4 w-4 mr-2", (validationFetching || profileFetching) && "animate-spin")} />
+          {t("runsHistory.refresh")}
+        </Button>
       </div>
 
       {surfaceChip && (

@@ -29,6 +29,7 @@ class AppConfig(BaseSettings):
     catalog: str = Field(default="dqx")
     schema_name: str = Field(default="dqx_studio", validation_alias="DQX_SCHEMA")
     tmp_schema_name: str = Field(default="dqx_studio_tmp", validation_alias="DQX_TMP_SCHEMA")
+    genie_schema_name: str = Field(default="genie", validation_alias="DQX_GENIE_SCHEMA")
     job_id: str = Field(default="", validation_alias="DQX_JOB_ID")
     wheels_volume: str = Field(default="", validation_alias="DQX_WHEELS_VOLUME")
     # Production deploys bind ``job_id`` and ``wheels_volume`` from

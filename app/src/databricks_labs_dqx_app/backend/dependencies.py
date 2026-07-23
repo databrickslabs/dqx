@@ -375,14 +375,16 @@ async def get_rules_catalog_service(
 
 async def get_registry_service(
     sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> RegistryService:
     """Create a RegistryService routed at the OLTP executor."""
-    return RegistryService(sql=sql)
+    return RegistryService(sql=sql, permissions=perms)
 
 
 async def get_monitored_table_service(
     sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     profiling_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> MonitoredTableService:
     """Create a MonitoredTableService.
 
@@ -392,7 +394,7 @@ async def get_monitored_table_service(
     SQL executor, since that table is written by the profiler job
     regardless of whether Lakebase is enabled.
     """
-    return MonitoredTableService(sql=sql, profiling_sql=profiling_sql)
+    return MonitoredTableService(sql=sql, profiling_sql=profiling_sql, permissions=perms)
 
 
 async def get_apply_rules_service(
@@ -833,7 +835,7 @@ async def get_score_cache_service(
     viewer-independent; catalog filtering happens at read time on the
     list endpoints.
     """
-    return ScoreCacheService(oltp=oltp, warehouse_sql=warehouse_sql)
+    return ScoreCacheService(oltp=oltp, warehouse_sql=warehouse_sql, genie_schema=conf.genie_schema_name)
 
 
 async def get_entitlement_service(
@@ -845,7 +847,7 @@ async def get_entitlement_service(
     view are SP-owned UC objects. The caller's OBO executor (for the
     self-verification probes) is passed per call, never stored.
     """
-    return EntitlementService(sql=sp_sql)
+    return EntitlementService(sql=sp_sql, genie_schema=conf.genie_schema_name)
 
 
 async def get_data_product_service(
@@ -856,6 +858,7 @@ async def get_data_product_service(
     version_service: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     materializer: Annotated[Materializer, Depends(get_materializer)],
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> DataProductService:
     """Create a DataProductService routed at the OLTP executor.
 
@@ -876,6 +879,7 @@ async def get_data_product_service(
         version_service=version_service,
         app_settings=app_settings,
         materializer=materializer,
+        permissions=perms,
     )
 
 
@@ -946,7 +950,15 @@ async def get_demo_seed_service(
         catalog=conf.catalog,
         schema=DEMO_SOURCE_SCHEMA,
     )
-    sp_view = ViewService(sql=sp_sql, sp_sql=sp_sql)
+    sp_view = ViewService(
+        sql=SqlExecutor(
+            ws=sp_ws,
+            warehouse_id=warehouse_id,
+            catalog=conf.catalog,
+            schema=conf.tmp_schema_name,
+        ),
+        sp_sql=sp_sql,
+    )
     # Profiler temp views for the demo profiling phase are created on the tmp
     # schema (like the request-path ViewService), but as the SP — the seed runs
     # on a background thread with no OBO token.
@@ -1109,65 +1121,6 @@ async def get_current_principal_ids(
 CurrentPrincipalIds = Annotated[frozenset[str], Depends(get_current_principal_ids)]
 
 
-# ---------------------------------------------------------------------------
-# Runner role — orthogonal to the primary-role hierarchy
-# ---------------------------------------------------------------------------
-
-
-async def get_user_runner_flag(
-    email: Annotated[str, Depends(get_user_email)],
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    role_svc: Annotated[RoleService, Depends(get_role_service)],
-) -> bool:
-    """Return True iff the caller holds the orthogonal RUNNER role.
-
-    Admins are implicit runners (handled inside ``has_runner_role``).
-    On transient failures we degrade to ``False`` rather than 5xx so a
-    SCIM hiccup doesn't break the whole UI; gated endpoints will then
-    return 403 with a clearer message until the upstream recovers.
-    """
-    try:
-        user = await asyncio.to_thread(obo_ws.current_user.me)
-        # Include the user's own identity strings alongside group memberships so
-        # a USER-level RUNNER entitlement resolves too (see get_user_role).
-        principals = [g.display for g in (user.groups or []) if g.display]
-        for ident in (user.display_name, user.user_name, email):
-            if ident and ident not in principals:
-                principals.append(ident)
-        return role_svc.has_runner_role(principals, conf.admin_group)
-    except Exception as exc:
-        logger.warning(
-            f"Runner-flag resolution failed for {email}, falling back to False: {exc}",
-            exc_info=True,
-        )
-        return False
-
-
-CurrentUserRunner = Annotated[bool, Depends(get_user_runner_flag)]
-
-
-def require_runner():
-    """Dependency that rejects callers who can't see the Run Rules page.
-
-    Implements the user-facing rule: admins always pass; non-admins must
-    be members of a group mapped to ``UserRole.RUNNER``. Other roles
-    (author/approver/viewer) by themselves do **not** grant runner
-    access — they need an explicit RUNNER mapping.
-    """
-
-    async def _check(
-        role: Annotated[UserRole, Depends(get_user_role)],
-        is_runner: Annotated[bool, Depends(get_user_runner_flag)],
-    ) -> bool:
-        if role == UserRole.ADMIN or is_runner:
-            return True
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Requires the 'runner' role. Ask an admin to assign your group to the Runner role.",
-        )
-
-    return Depends(_check)
-
 
 async def _fetch_catalog_names(obo_ws: WorkspaceClient) -> frozenset[str]:
     """Issue the UC ``catalogs.list`` call via the caller's OBO client."""
@@ -1249,10 +1202,7 @@ __all__ = [
     "get_demo_status_store",
     "get_demo_seed_service",
     "require_role",
-    "require_runner",
     "CurrentUserRole",
-    "CurrentUserRunner",
-    "get_user_runner_flag",
     "get_user_catalog_names",
     "rt",
 ]

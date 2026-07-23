@@ -7,6 +7,7 @@ future regression in escaping or column ordering is caught early).
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -15,6 +16,7 @@ import pytest
 from databricks_labs_dqx_app.backend import run_status_manager
 from databricks_labs_dqx_app.backend.run_status_manager import (
     RunMetadata,
+    _STALE_RUNNING_MAX_AGE_HOURS,
     get_run_metadata,
     get_run_owner,
     get_run_view_fqn,
@@ -323,3 +325,128 @@ class TestReconcileRunningRows:
         in_clause = sql_executor_mock.query.call_args.args[0]
         # Exactly the cap number of run_ids appear in the IN (...) lookup.
         assert in_clause.count("'r") == cap
+
+
+# ---------------------------------------------------------------------------
+# Stale-age fallback — rows that cannot be resolved via the Jobs API
+# ---------------------------------------------------------------------------
+
+
+def _stale_created_at(extra_hours: float = 1.0) -> str:
+    """Return an ISO string older than the stale threshold."""
+    dt = datetime.now(timezone.utc) - timedelta(hours=_STALE_RUNNING_MAX_AGE_HOURS + extra_hours)
+    # Spark CAST(TIMESTAMP AS STRING) format: "YYYY-MM-DD HH:MM:SS"
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _fresh_created_at() -> str:
+    """Return an ISO string well within the stale threshold (1 hour ago)."""
+    dt = datetime.now(timezone.utc) - timedelta(hours=1)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+class TestReconcileStaleAgeFallback:
+    def test_stale_row_with_no_job_run_id_is_flipped_to_failed(self, sql_executor_mock, app_config):
+        """A RUNNING row older than the threshold with no job_run_id → FAILED."""
+        # No job_run_id mapping returned.
+        sql_executor_mock.query.return_value = []
+        rows: list[dict[str, str | None]] = [
+            {"run_id": "old1", "status": "RUNNING", "error_message": None, "created_at": _stale_created_at()}
+        ]
+        status_fn = Mock()
+
+        reconcile_running_rows(sql_executor_mock, app_config, "dq_validation_runs", rows, status_fn)
+
+        assert rows[0]["status"] == "FAILED"
+        assert rows[0]["error_message"] is not None
+        assert "stale" in rows[0]["error_message"].lower()
+        # Must persist via UPDATE.
+        sql_executor_mock.execute.assert_called_once()
+        upd = sql_executor_mock.execute.call_args.args[0]
+        assert "status = 'FAILED'" in upd
+        # status_fn never called — no job_run_id to look up.
+        status_fn.assert_not_called()
+
+    def test_recent_row_with_no_job_run_id_is_left_alone(self, sql_executor_mock, app_config):
+        """A RUNNING row younger than the threshold is NOT flipped even without a job_run_id."""
+        sql_executor_mock.query.return_value = []
+        rows: list[dict[str, str | None]] = [
+            {"run_id": "new1", "status": "RUNNING", "error_message": None, "created_at": _fresh_created_at()}
+        ]
+        status_fn = Mock()
+
+        reconcile_running_rows(sql_executor_mock, app_config, "dq_validation_runs", rows, status_fn)
+
+        assert rows[0]["status"] == "RUNNING"
+        sql_executor_mock.execute.assert_not_called()
+
+    def test_stale_row_with_unresolvable_jobs_api_is_flipped(self, sql_executor_mock, app_config):
+        """A stale RUNNING row where the Jobs API raises is still flipped to FAILED."""
+        sql_executor_mock.query.return_value = [["old2", "999"]]
+        rows: list[dict[str, str | None]] = [
+            {"run_id": "old2", "status": "RUNNING", "error_message": None, "created_at": _stale_created_at()}
+        ]
+        status_fn = Mock(side_effect=RuntimeError("jobs api gone"))
+
+        reconcile_running_rows(sql_executor_mock, app_config, "dq_validation_runs", rows, status_fn)
+
+        assert rows[0]["status"] == "FAILED"
+        sql_executor_mock.execute.assert_called_once()
+
+    def test_jobs_api_success_state_still_not_written_back(self, sql_executor_mock, app_config):
+        """Even a stale row whose Jobs API returns SUCCESS is not clobbered."""
+        sql_executor_mock.query.return_value = [["stale_success", "777"]]
+        rows: list[dict[str, str | None]] = [
+            {
+                "run_id": "stale_success",
+                "status": "RUNNING",
+                "error_message": None,
+                "created_at": _stale_created_at(),
+            }
+        ]
+        status_fn = Mock(return_value=_status("TERMINATED", "SUCCESS"))
+
+        reconcile_running_rows(sql_executor_mock, app_config, "dq_validation_runs", rows, status_fn)
+
+        # Runner owns SUCCESS — we must not overwrite it even if the row is stale.
+        assert rows[0]["status"] == "RUNNING"
+        sql_executor_mock.execute.assert_not_called()
+
+    def test_unparseable_created_at_is_not_flipped(self, sql_executor_mock, app_config):
+        """A row with a garbage created_at string skips the stale-age flip."""
+        sql_executor_mock.query.return_value = []
+        rows: list[dict[str, str | None]] = [
+            {
+                "run_id": "bad_ts",
+                "status": "RUNNING",
+                "error_message": None,
+                "created_at": "not-a-timestamp",
+            }
+        ]
+        status_fn = Mock()
+
+        reconcile_running_rows(sql_executor_mock, app_config, "dq_validation_runs", rows, status_fn)
+
+        # Cannot determine age — must not flip.
+        assert rows[0]["status"] == "RUNNING"
+        sql_executor_mock.execute.assert_not_called()
+
+    def test_stale_row_with_job_run_id_still_running_is_not_flipped(self, sql_executor_mock, app_config):
+        """A stale RUNNING row whose Jobs API confirms it is still active must not be flipped."""
+        sql_executor_mock.query.return_value = [["long_run", "888"]]
+        rows: list[dict[str, str | None]] = [
+            {
+                "run_id": "long_run",
+                "status": "RUNNING",
+                "error_message": None,
+                "created_at": _stale_created_at(extra_hours=24),
+            }
+        ]
+        # Jobs API says the run is genuinely still active.
+        status_fn = Mock(return_value=_status("RUNNING", None))
+
+        reconcile_running_rows(sql_executor_mock, app_config, "dq_validation_runs", rows, status_fn)
+
+        # Resolvable-but-running rows must be left alone regardless of age.
+        assert rows[0]["status"] == "RUNNING"
+        sql_executor_mock.execute.assert_not_called()

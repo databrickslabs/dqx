@@ -38,11 +38,16 @@ export function useRunFailureToasts(): void {
   const refetchInterval = () =>
     hasRunningRef.current && document.visibilityState === "visible" ? 5000 : (false as const);
 
+  // Served from the shared React Query cache across navigations so the two run-list
+  // queries don't refetch on every page mount (this hook is mounted app-wide in the
+  // sidebar layout). The RUNNING-poll (refetchInterval, below) still drives live
+  // updates while a run is in flight — staleTime does not affect interval polling.
+  const RUNS_STALE_TIME = 30 * 60 * 1000; // 30 min
   const { data: validationResp } = useListValidationRuns({
-    query: { refetchInterval },
+    query: { refetchInterval, staleTime: RUNS_STALE_TIME },
   });
   const { data: profileResp } = useListProfileRuns(undefined, {
-    query: { refetchInterval },
+    query: { refetchInterval, staleTime: RUNS_STALE_TIME },
   });
 
   const candidates: RunFailureCandidate[] = useMemo(() => {

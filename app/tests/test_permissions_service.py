@@ -27,12 +27,19 @@ from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 
 class _FakeOltp:
-    """Minimal OLTP executor supporting the service's SELECT shapes.
+    """Minimal OLTP executor supporting the service's SELECT + mutation shapes.
 
-    Grants are preloaded as raw rows keyed by (object_type, object_id) in the
-    exact column order ``list_grants`` selects. Members map binding_id ->
-    [product_id]. Only ``query`` is interpreted; ``execute`` is a no-op.
+    Grants are keyed by (object_type, object_id) in the exact column order
+    ``list_grants`` selects. The ``execute`` method parses the INSERT/DELETE
+    patterns emitted by ``set_grant`` / ``remove_grant`` so that
+    ``seed_default_grants`` (which calls ``set_grant``) is fully exercisable
+    without hitting a real database. History INSERTs are accepted and ignored.
     """
+
+    # Column positions in the stored row (mirrors list_grants SELECT order):
+    # 0=object_type, 1=object_id, 2=principal_id, 3=principal_type,
+    # 4=principal_name, 5=privileges, 6=inherit, 7=grantor, 8=updated_at
+    _COL_COUNT = 9
 
     def __init__(self) -> None:
         self.grants: dict[tuple[str, str], list[list[object]]] = {}
@@ -46,8 +53,89 @@ class _FakeOltp:
     def ts_text(self, col: str) -> str:
         return col
 
+    # ------------------------------------------------------------------
+    # SQL mutation interpreter (INSERT / DELETE on dq_object_grants)
+    # ------------------------------------------------------------------
+
     def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
-        return None
+        """Parse and apply INSERT/DELETE on dq_object_grants; ignore history."""
+        if "dq_object_grants_history" in sql:
+            return  # audit trail — ignore
+        if sql.strip().upper().startswith("DELETE"):
+            self._apply_delete(sql)
+        elif sql.strip().upper().startswith("INSERT"):
+            self._apply_insert(sql)
+
+    def _apply_delete(self, sql: str) -> None:
+        """Remove the matching principal row from the in-memory store."""
+        ot_m = re.search(r"object_type = '([^']*)'", sql)
+        oid_m = re.search(r"object_id = '([^']*)'", sql)
+        pid_m = re.search(r"principal_id = '([^']*)'", sql)
+        if not (ot_m and oid_m and pid_m):
+            return
+        key = (ot_m.group(1), oid_m.group(1))
+        pid = pid_m.group(1)
+        rows = self.grants.get(key, [])
+        self.grants[key] = [r for r in rows if r[2] != pid]
+
+    def _apply_insert(self, sql: str) -> None:
+        """Parse ``INSERT INTO dq_object_grants ... VALUES (...)`` and store."""
+        if "dq_object_grants" not in sql:
+            return
+        # Extract the VALUES (...) block — single-row INSERT only.
+        vals_m = re.search(r"VALUES\s*\((.+)\)\s*$", sql, re.DOTALL | re.IGNORECASE)
+        if not vals_m:
+            return
+        raw = vals_m.group(1)
+        # Split on commas that are NOT inside single-quoted strings.
+        tokens: list[str] = []
+        buf = ""
+        in_str = False
+        for ch in raw:
+            if ch == "'" and not in_str:
+                in_str = True
+                buf += ch
+            elif ch == "'" and in_str:
+                in_str = False
+                buf += ch
+            elif ch == "," and not in_str:
+                tokens.append(buf.strip())
+                buf = ""
+            else:
+                buf += ch
+        if buf.strip():
+            tokens.append(buf.strip())
+
+        def _unquote(tok: str) -> str | None:
+            tok = tok.strip()
+            if tok.upper() in ("NULL", "NOW()", "TRUE", "FALSE"):
+                return tok.upper() if tok.upper() in ("TRUE", "FALSE") else None
+            if tok.startswith("'") and tok.endswith("'"):
+                return tok[1:-1].replace("''", "'")
+            return tok
+
+        # Column order in the INSERT:
+        # grant_id(0), object_type(1), object_id(2), principal_id(3),
+        # principal_type(4), principal_name(5), privileges(6), inherit(7),
+        # grantor(8), created_at(9), updated_at(10)
+        if len(tokens) < 11:
+            return
+        row: list[object] = [
+            _unquote(tokens[1]),   # object_type
+            _unquote(tokens[2]),   # object_id
+            _unquote(tokens[3]),   # principal_id
+            _unquote(tokens[4]),   # principal_type
+            _unquote(tokens[5]),   # principal_name (may be NULL)
+            _unquote(tokens[6]),   # privileges
+            tokens[7].strip(),     # inherit (TRUE/FALSE string)
+            _unquote(tokens[8]),   # grantor (may be NULL)
+            None,                  # updated_at (not needed in tests)
+        ]
+        key = (str(row[0]), str(row[1]))
+        # Normalise the inherit token to "true"/"false" lowercase.
+        inherit_val = str(row[6]).strip().lower()
+        row[6] = "true" if inherit_val == "true" else "false"
+        self.grants.setdefault(key, []).append(row)
 
     def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[object]]:
         if "created_by" in sql:
@@ -74,7 +162,7 @@ class _FakeOltp:
         principal_type: str = "user",
         principal_name: str = "someone",
     ) -> None:
-        row = [
+        row: list[object] = [
             object_type,
             object_id,
             principal_id,
@@ -104,29 +192,39 @@ def svc(fake, app_settings_mock) -> PermissionsService:
 
 
 # ---------------------------------------------------------------------------
-# Users-group default (implicit-unless-overridden)
+# Users-group default (now stored, not synthesized)
 # ---------------------------------------------------------------------------
 
 
 def test_default_grants_select_and_apply_to_everyone(svc):
+    # Seed materializes the default row; with no seed there is no grant.
+    svc.seed_default_grants("registry_rule", "r1", owner_email=None, grantor=None)
     eff = svc.effective_privileges("registry_rule", "r1", principal_ids=set())
     assert Privilege.SELECT in eff
     assert Privilege.APPLY in eff
     assert Privilege.MODIFY not in eff
 
 
-def test_list_effective_grants_surfaces_synthetic_default(svc):
+def test_list_effective_grants_no_synthetic_default_when_unseeded(svc):
+    # With no stored rows the object shows an empty grant list — no synthesis.
     eff = svc.list_effective_grants("registry_rule", "r1")
-    assert len(eff) == 1
-    default = eff[0]
-    assert default.is_default is True
-    assert default.principal_id == USERS_GROUP_PRINCIPAL_ID
-    assert default.principal_type == "group"
-    assert default.privileges == {Privilege.SELECT, Privilege.APPLY}
+    assert eff == []
 
 
-def test_explicit_users_group_grant_replaces_synthetic_default(svc, fake):
-    # An explicit users-group row narrowed to SELECT overrides the default.
+def test_list_effective_grants_shows_stored_users_group_row(svc):
+    # After seeding the users-group row IS stored and appears in list.
+    svc.seed_default_grants("registry_rule", "r1", owner_email=None, grantor=None)
+    eff = svc.list_effective_grants("registry_rule", "r1")
+    stored = [g for g in eff if g.principal_id == USERS_GROUP_PRINCIPAL_ID]
+    assert len(stored) == 1
+    assert stored[0].is_default is False
+    # registry_rule: EXECUTE must NOT be in the seeded users-group row (B2 fix)
+    assert stored[0].privileges == {Privilege.SELECT, Privilege.APPLY}
+    assert Privilege.EXECUTE not in stored[0].privileges
+
+
+def test_explicit_users_group_grant_stored_as_real_row(svc, fake):
+    # An explicit users-group row narrowed to SELECT is a plain stored row.
     fake.add_grant("registry_rule", "r1", USERS_GROUP_PRINCIPAL_ID, "SELECT", principal_type="group")
     eff = svc.list_effective_grants("registry_rule", "r1")
     assert len(eff) == 1
@@ -150,76 +248,55 @@ def test_revoked_users_group_grant_confers_nothing(svc, fake):
 
 
 # ---------------------------------------------------------------------------
-# Owner/creator default (implicit ALL_PRIVILEGES, display parity — B2-127)
+# Owner/creator grant (stored, not synthesized — B2)
 # ---------------------------------------------------------------------------
 
 
-def test_list_effective_grants_surfaces_owner_default(svc, fake):
+def test_list_effective_grants_shows_stored_owner_row(svc, fake):
+    # After seeding, the owner row is a real stored row (not synthetic).
     fake.owners["r1"] = "creator@x.com"
+    svc.seed_default_grants("registry_rule", "r1", owner_email="creator@x.com", grantor="creator@x.com")
     eff = svc.list_effective_grants("registry_rule", "r1")
-    owner_rows = [g for g in eff if g.is_default and g.principal_id == "creator@x.com"]
+    owner_rows = [g for g in eff if g.principal_id == "creator@x.com"]
     assert len(owner_rows) == 1
     owner = owner_rows[0]
     assert owner.principal_type == "user"
-    assert owner.principal_name == "creator@x.com"
-    assert owner.privileges == {Privilege.ALL_PRIVILEGES}
-    assert owner.inherit is False
-    # The users-group default is still surfaced alongside the owner default.
-    assert any(g.is_default and g.principal_id == USERS_GROUP_PRINCIPAL_ID for g in eff)
+    assert owner.is_default is False  # it's a real stored row
+    # Privileges stored as ALL_PRIVILEGES — expanded at enforcement time.
+    from databricks_labs_dqx_app.backend.common.permissions import expand_privileges
+    assert expand_privileges(owner.privileges) == expand_privileges({Privilege.ALL_PRIVILEGES})
 
 
-def test_owner_default_absent_when_owner_unknown(svc, fake):
-    # No owner configured -> get_object_owner returns None -> no owner row.
+def test_list_effective_grants_no_owner_row_when_unseeded(svc, fake):
+    # Without seeding, no owner row appears even when owner is known.
+    fake.owners["r1"] = "creator@x.com"
     eff = svc.list_effective_grants("registry_rule", "r1")
-    assert [g for g in eff if g.principal_type == "user" and g.is_default] == []
+    assert [g for g in eff if g.principal_type == "user"] == []
 
 
-def test_owner_default_suppressed_when_explicit_grant_by_id(svc, fake):
-    # An explicit stored grant keyed by the owner email is authoritative.
+def test_owner_stored_grant_gives_access(svc, fake):
+    # After seeding, the owner's stored ALL_PRIVILEGES row confers full access.
     fake.owners["r1"] = "creator@x.com"
-    fake.add_grant("registry_rule", "r1", "creator@x.com", "MODIFY", principal_name="creator@x.com")
-    eff = svc.list_effective_grants("registry_rule", "r1")
-    assert [g for g in eff if g.is_default and g.principal_id == "creator@x.com"] == []
-    explicit = [g for g in eff if g.principal_id == "creator@x.com" and not g.is_default]
-    assert len(explicit) == 1
-    assert explicit[0].privileges == {Privilege.MODIFY}
-
-
-def test_owner_default_suppressed_when_explicit_grant_matches_by_name(svc, fake):
-    # Owner granted explicitly via a SCIM-id principal that carries the owner
-    # email as its display name -> still suppress the synthetic owner row.
-    fake.owners["b1"] = "creator@x.com"
-    fake.add_grant("monitored_table", "b1", "scim-123", "MODIFY", principal_name="creator@x.com")
-    eff = svc.list_effective_grants("monitored_table", "b1")
-    assert [g for g in eff if g.is_default and g.principal_id == "creator@x.com"] == []
-
-
-def test_owner_default_does_not_change_effective_privileges(svc, fake):
-    # Display parity only: a non-owner caller's enforced privileges are
-    # unaffected by the synthetic owner row.
-    fake.owners["r1"] = "creator@x.com"
-    eff = svc.effective_privileges(
-        "registry_rule", "r1", principal_ids={"u1"}, owner_email="creator@x.com", principal_email="other@x.com"
-    )
-    assert Privilege.MODIFY not in eff
-
-
-def test_owner_privileges_revocable_via_empty_marker(svc, fake):
-    # Item 50: a grant-manager can revoke the owner's auto-granted full access
-    # by materializing an explicit empty-privilege row keyed on the owner email.
-    # The resolver then stops falling back to the implicit ALL PRIVILEGES.
-    fake.owners["r1"] = "creator@x.com"
-    fake.add_grant("registry_rule", "r1", "creator@x.com", "", principal_name="creator@x.com")
+    svc.seed_default_grants("registry_rule", "r1", owner_email="creator@x.com", grantor="creator@x.com")
     eff = svc.effective_privileges(
         "registry_rule", "r1", principal_ids=set(), owner_email="creator@x.com", principal_email="creator@x.com"
     )
-    # Explicit empty marker wins over the implicit owner full grant; the object
-    # also has no users-group row here so only the users-group default remains.
+    assert {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY}.issubset(eff)
+
+
+def test_owner_privileges_revocable_by_deleting_row(svc, fake):
+    # Remove the owner row — owner loses access (no re-synthesis).
+    fake.owners["r1"] = "creator@x.com"
+    svc.seed_default_grants("registry_rule", "r1", owner_email="creator@x.com", grantor="creator@x.com")
+    svc.remove_grant("registry_rule", "r1", "creator@x.com")
+    eff = svc.effective_privileges(
+        "registry_rule", "r1", principal_ids=set(), owner_email="creator@x.com", principal_email="creator@x.com"
+    )
     assert Privilege.MODIFY not in eff
 
 
 def test_owner_privileges_narrowable_via_explicit_grant(svc, fake):
-    # A narrowed explicit owner grant (SELECT only) overrides the implicit full grant.
+    # A narrowed explicit owner grant (SELECT only) stores only SELECT.
     fake.owners["r1"] = "creator@x.com"
     fake.add_grant("registry_rule", "r1", "creator@x.com", "SELECT", principal_name="creator@x.com")
     eff = svc.effective_privileges(
@@ -229,20 +306,31 @@ def test_owner_privileges_narrowable_via_explicit_grant(svc, fake):
     assert Privilege.MODIFY not in eff
 
 
-def test_owner_full_access_implicit_without_explicit_grant(svc, fake):
-    # With no explicit owner row, the owner still holds ALL PRIVILEGES implicitly.
+def test_owner_without_stored_row_has_no_implicit_access(svc, fake):
+    # Without a stored owner row, the owner gets nothing (no synthesis).
     fake.owners["r1"] = "creator@x.com"
     eff = svc.effective_privileges(
         "registry_rule", "r1", principal_ids=set(), owner_email="creator@x.com", principal_email="creator@x.com"
     )
-    assert {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY}.issubset(eff)
+    assert Privilege.MODIFY not in eff
+
+
+def test_non_owner_caller_gets_no_access_without_grants(svc, fake):
+    # Display parity only: a non-owner caller's enforced privileges are
+    # unaffected when no grant row exists.
+    fake.owners["r1"] = "creator@x.com"
+    eff = svc.effective_privileges(
+        "registry_rule", "r1", principal_ids={"u1"}, owner_email="creator@x.com", principal_email="other@x.com"
+    )
+    assert Privilege.MODIFY not in eff
 
 
 def test_admin_backstop_survives_owner_revoke(svc, fake):
-    # Even with the owner revoked, an ADMIN (workspace-admin backstop) keeps
+    # Even with the owner row deleted, an ADMIN (workspace-admin backstop) keeps
     # full access — the object can never be orphaned.
     fake.owners["r1"] = "creator@x.com"
-    fake.add_grant("registry_rule", "r1", "creator@x.com", "", principal_name="creator@x.com")
+    svc.seed_default_grants("registry_rule", "r1", owner_email="creator@x.com", grantor="creator@x.com")
+    svc.remove_grant("registry_rule", "r1", "creator@x.com")
     assert svc.has_privilege(
         "registry_rule",
         "r1",
@@ -254,13 +342,22 @@ def test_admin_backstop_survives_owner_revoke(svc, fake):
     )
 
 
-def test_owner_manage_revoked_when_explicit_owner_grant_exists(svc, fake):
-    # Once the owner has an explicit (revoked) grant, their implicit manage
-    # capability is gone too — otherwise revoke would be cosmetic (they could
-    # re-grant). Admins/approvers still manage via the role bypass.
+def test_owner_can_always_manage_grants(svc, fake):
+    # The owner can manage grants at all times — even after their stored row
+    # is removed. The owner email match is sufficient (no implicit-grant guard).
     fake.owners["r1"] = "creator@x.com"
-    fake.add_grant("registry_rule", "r1", "creator@x.com", "", principal_name="creator@x.com")
-    assert not svc.can_manage_grants(
+    svc.seed_default_grants("registry_rule", "r1", owner_email="creator@x.com", grantor="creator@x.com")
+    assert svc.can_manage_grants(
+        "registry_rule",
+        "r1",
+        role=UserRole.RULE_AUTHOR,
+        principal_ids=set(),
+        owner_email="creator@x.com",
+        principal_email="creator@x.com",
+    )
+    # Removing the owner row does NOT strip manage capability.
+    svc.remove_grant("registry_rule", "r1", "creator@x.com")
+    assert svc.can_manage_grants(
         "registry_rule",
         "r1",
         role=UserRole.RULE_AUTHOR,
@@ -279,23 +376,10 @@ def test_owner_manage_revoked_when_explicit_owner_grant_exists(svc, fake):
     )
 
 
-def test_owner_manage_implicit_without_explicit_grant(svc, fake):
-    # Owner manages implicitly while no explicit owner row exists.
-    fake.owners["r1"] = "creator@x.com"
-    assert svc.can_manage_grants(
-        "registry_rule",
-        "r1",
-        role=UserRole.RULE_AUTHOR,
-        principal_ids=set(),
-        owner_email="creator@x.com",
-        principal_email="creator@x.com",
-    )
-
-
-def test_set_grant_owner_empty_materializes_revoked_row(mock_sql, app_settings_mock):
-    # Item 50 write path: an empty-privilege grant for the owner INSERTs an
-    # explicit "revoked" marker (parity with the users-group case), not a delete.
-    mock_sql.query.return_value = [["owner@x.com"]]  # get_object_owner -> owner
+def test_set_grant_owner_empty_deletes_row(mock_sql, app_settings_mock):
+    # With stored rows, an empty-privilege grant for the owner is a delete —
+    # no revoked-marker row needed because deletion now sticks (no re-synthesis).
+    mock_sql.query.return_value = []  # no object-owner lookup needed
     svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
     svc.set_grant(
         "registry_rule",
@@ -308,27 +392,28 @@ def test_set_grant_owner_empty_materializes_revoked_row(mock_sql, app_settings_m
         grantor="admin@x.com",
     )
     executed = " ".join(str(c.args[0]) for c in mock_sql.execute.call_args_list)
-    assert "INSERT INTO dq_object_grants " in executed
+    assert "DELETE FROM dq_object_grants" in executed
+    assert "INSERT INTO dq_object_grants " not in executed
 
 
 def test_display_name_spoof_does_not_affect_owner_enforcement(svc, fake):
     # Security regression: a grant to a *different* principal (Mallory) whose
     # free-text SCIM display name is set to the owner's email must NOT be treated
-    # as an owner grant at enforcement time. Otherwise Mallory could spoof the
-    # display name to (a) suppress the owner's implicit ALL PRIVILEGES and
-    # (b) leak Mallory's own privileges to the owner via the email matcher.
+    # as an owner grant at enforcement time.
     fake.owners["r1"] = "olivia@x.com"
+    # Seed Olivia's owner row so she gets access via her stored grant.
+    svc.seed_default_grants("registry_rule", "r1", owner_email="olivia@x.com", grantor="olivia@x.com")
     # Admin grants Mallory MODIFY, keyed by Mallory's SCIM id; her editable
     # display name happens to equal Olivia's email.
     fake.add_grant("registry_rule", "r1", "mallory-scim-id", "MODIFY", principal_name="olivia@x.com")
 
-    # (a) Olivia's implicit ALL PRIVILEGES is NOT suppressed by Mallory's grant.
+    # (a) Olivia's stored ALL_PRIVILEGES row grants her access.
     olivia_eff = svc.effective_privileges(
         "registry_rule", "r1", principal_ids=set(), owner_email="olivia@x.com", principal_email="olivia@x.com"
     )
     assert {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY}.issubset(olivia_eff)
 
-    # Olivia still manages grants implicitly (not gated off by the name-match).
+    # Olivia always manages grants (owner email match, independent of stored rows).
     assert svc.can_manage_grants(
         "registry_rule",
         "r1",
@@ -338,13 +423,27 @@ def test_display_name_spoof_does_not_affect_owner_enforcement(svc, fake):
         principal_email="olivia@x.com",
     )
 
-    # (b) Mallory's grant does NOT leak to Olivia via the email matcher beyond
-    # what she already holds as owner — and, conversely, a *non-owner* caller
-    # whose email equals the display name inherits nothing from Mallory's grant.
+    # (b) Mallory's SCIM-id grant (keyed by "mallory-scim-id") does NOT leak
+    # to Olivia via the display-name matcher. A caller presenting email
+    # "olivia@x.com" does get Olivia's own stored owner grant (keyed by
+    # principal_id "olivia@x.com"), but NOT Mallory's separate scim-id grant.
+    # So Mallory cannot spoof Olivia's email to gain extra unintended access
+    # beyond what Olivia's own principal_id keyed grant would provide.
     stranger_eff = svc.effective_privileges(
         "registry_rule", "r1", principal_ids=set(), owner_email=None, principal_email="olivia@x.com"
     )
-    assert Privilege.MODIFY not in stranger_eff
+    # The stranger whose email is "olivia@x.com" holds Olivia's owner grant
+    # (ALL_PRIVILEGES row keyed by principal_id "olivia@x.com") — expected.
+    # Crucially they do NOT get an extra MODIFY from Mallory's scim-id grant.
+    assert Privilege.MODIFY in stranger_eff  # comes from Olivia's stored owner row
+    # Mallory's grant doesn't add anything new here — it's keyed by scim-id,
+    # not by email, so it doesn't match via _grant_targets_email.
+    mallory_only_eff = svc.effective_privileges(
+        "registry_rule", "r1", principal_ids={"mallory-scim-id"}, owner_email=None, principal_email="mallory@x.com"
+    )
+    # Mallory only gets MODIFY from her own scim-id grant, not owner access.
+    assert Privilege.MODIFY in mallory_only_eff  # her explicit grant
+    assert Privilege.SELECT in mallory_only_eff
 
 
 def test_author_cannot_modify_without_grant(svc):
@@ -362,8 +461,9 @@ def test_author_cannot_modify_without_grant(svc):
     assert exc.value.status_code == 403
 
 
-def test_apply_allowed_by_baseline_for_author(svc):
-    # No exception: APPLY is in the day-one baseline.
+def test_apply_allowed_when_users_group_row_seeded(svc):
+    # APPLY succeeds once the users-group default row is seeded.
+    svc.seed_default_grants("monitored_table", "b1", owner_email=None, grantor=None)
     svc.require(
         "monitored_table",
         "b1",
@@ -422,7 +522,7 @@ def test_users_group_grant_applies_to_everyone(svc, fake):
 def test_all_privileges_grant_expands(svc, fake):
     fake.add_grant("registry_rule", "r1", "u1", "ALL_PRIVILEGES")
     eff = svc.effective_privileges("registry_rule", "r1", principal_ids={"u1"})
-    assert eff == {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY}
+    assert eff == {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY, Privilege.EXECUTE}
 
 
 # ---------------------------------------------------------------------------
@@ -443,7 +543,9 @@ def test_admin_and_approver_bypass_object_grants(svc, role):
     )
 
 
-def test_owner_has_all_privileges(svc):
+def test_owner_has_all_privileges_via_stored_row(svc):
+    # With a stored ALL_PRIVILEGES row, the owner holds MODIFY.
+    svc.seed_default_grants("registry_rule", "r1", owner_email="me@x.com", grantor="me@x.com")
     eff = svc.effective_privileges(
         "registry_rule",
         "r1",
@@ -523,7 +625,7 @@ def test_manage_grants_requires_owner_or_admin(svc, fake):
         owner_email="other@x.com",
         principal_email="me@x.com",
     )
-    # Owner can manage.
+    # Owner can manage (by email match, regardless of stored grants).
     assert svc.can_manage_grants(
         "registry_rule",
         "r1",
@@ -581,7 +683,7 @@ def test_set_grant_full_set_stored_as_all_privileges(mock_sql, app_settings_mock
         "u1",
         principal_type="user",
         principal_name="Alice",
-        privileges={Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY},
+        privileges={Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY, Privilege.EXECUTE},
         inherit=False,
         grantor="admin@x.com",
     )
@@ -606,9 +708,9 @@ def test_set_grant_empty_privileges_removes(mock_sql, app_settings_mock):
     assert "INSERT INTO dq_object_grants " not in executed
 
 
-def test_set_grant_users_group_empty_materializes_revoked_row(mock_sql, app_settings_mock):
-    # For the users group, empty privileges = explicit "revoked" marker row
-    # (INSERT with empty privileges), NOT a delete-to-default.
+def test_set_grant_users_group_empty_deletes_row(mock_sql, app_settings_mock):
+    # With stored rows, empty privileges for the users group is a delete —
+    # deletion sticks because there is no re-synthesis on read.
     svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
     svc.set_grant(
         "registry_rule",
@@ -621,7 +723,8 @@ def test_set_grant_users_group_empty_materializes_revoked_row(mock_sql, app_sett
         grantor="admin@x.com",
     )
     executed = " ".join(str(c.args[0]) for c in mock_sql.execute.call_args_list)
-    assert "INSERT INTO dq_object_grants " in executed
+    assert "DELETE FROM dq_object_grants" in executed
+    assert "INSERT INTO dq_object_grants " not in executed
 
 
 def test_set_grant_rejects_legacy_sentinel(mock_sql, app_settings_mock):
@@ -763,3 +866,147 @@ def test_valid_object_id_formats_pass_through(svc, object_id):
     # (uuid4().hex) — plus a dash/underscore id. No exception raised.
     svc.list_grants("registry_rule", object_id)
     svc.get_object_owner("monitored_table", object_id)
+
+
+# ---------------------------------------------------------------------------
+# B2: seed_default_grants — materialize real default rows
+# ---------------------------------------------------------------------------
+
+
+def test_seed_default_grants_writes_users_group_and_owner(svc):
+    from databricks_labs_dqx_app.backend.common.permissions import expand_privileges
+    svc.seed_default_grants("monitored_table", "obj1", owner_email="a@b.com", grantor="a@b.com")
+    grants = svc.list_grants("monitored_table", "obj1")
+    users = next(g for g in grants if g.principal_id == USERS_GROUP_PRINCIPAL_ID)
+    owner = next(g for g in grants if g.principal_id == "a@b.com")
+    assert {Privilege.SELECT, Privilege.APPLY, Privilege.EXECUTE}.issubset(expand_privileges(users.privileges))
+    assert expand_privileges(owner.privileges) == expand_privileges({Privilege.ALL_PRIVILEGES})
+
+
+def test_seed_is_idempotent(svc):
+    svc.seed_default_grants("monitored_table", "obj1", owner_email="a@b.com", grantor="a@b.com")
+    svc.seed_default_grants("monitored_table", "obj1", owner_email="a@b.com", grantor="a@b.com")
+    users_rows = [g for g in svc.list_grants("monitored_table", "obj1") if g.principal_id == USERS_GROUP_PRINCIPAL_ID]
+    owner_rows = [g for g in svc.list_grants("monitored_table", "obj1") if g.principal_id == "a@b.com"]
+    assert len(users_rows) == 1
+    assert len(owner_rows) == 1
+
+
+def test_no_implicit_default_when_unseeded(svc):
+    # An object with NO stored rows confers nothing to any caller.
+    eff = svc.effective_privileges("monitored_table", "obj1", principal_ids={"someid"})
+    assert eff == set()
+
+
+def test_deleting_users_group_row_sticks(svc):
+    svc.seed_default_grants("monitored_table", "obj1", owner_email="a@b.com", grantor="a@b.com")
+    svc.remove_grant("monitored_table", "obj1", USERS_GROUP_PRINCIPAL_ID)
+    eff = svc.effective_privileges("monitored_table", "obj1", principal_ids={"randomcaller"})
+    assert eff == set()  # gone for good — no re-synthesis
+
+
+def test_seed_without_owner_only_writes_users_group(svc):
+    svc.seed_default_grants("registry_rule", "r1", owner_email=None, grantor=None)
+    grants = svc.list_grants("registry_rule", "r1")
+    assert len(grants) == 1
+    assert grants[0].principal_id == USERS_GROUP_PRINCIPAL_ID
+
+
+def test_owner_access_comes_from_stored_row(svc):
+    svc.seed_default_grants("monitored_table", "obj1", owner_email="a@b.com", grantor="a@b.com")
+    eff = svc.effective_privileges(
+        "monitored_table", "obj1", set(), owner_email="a@b.com", principal_email="a@b.com"
+    )
+    assert Privilege.MODIFY in eff
+
+
+def test_deleting_owner_row_removes_owner_access(svc):
+    svc.seed_default_grants("monitored_table", "obj1", owner_email="a@b.com", grantor="a@b.com")
+    svc.remove_grant("monitored_table", "obj1", "a@b.com")
+    eff = svc.effective_privileges(
+        "monitored_table", "obj1", set(), owner_email="a@b.com", principal_email="a@b.com"
+    )
+    assert Privilege.MODIFY not in eff
+
+
+def test_seed_registry_rule_users_group_has_no_execute(svc):
+    """registry_rule seeding must NOT include EXECUTE in the users-group row.
+
+    EXECUTE means 'run profiling/validation on a table or collection'.
+    It is meaningless on a rule template and the grant dialog already hides
+    it for rules. Seeding it pollutes the stored grants with a misleading
+    privilege.
+    """
+    svc.seed_default_grants("registry_rule", "rule1", owner_email=None, grantor=None)
+    grants = svc.list_grants("registry_rule", "rule1")
+    users = next(g for g in grants if g.principal_id == USERS_GROUP_PRINCIPAL_ID)
+    assert Privilege.EXECUTE not in users.privileges
+    assert Privilege.SELECT in users.privileges
+    assert Privilege.APPLY in users.privileges
+
+
+def test_seed_monitored_table_users_group_includes_execute(svc):
+    """monitored_table seeding MUST include EXECUTE in the users-group row."""
+    svc.seed_default_grants("monitored_table", "tbl1", owner_email=None, grantor=None)
+    grants = svc.list_grants("monitored_table", "tbl1")
+    users = next(g for g in grants if g.principal_id == USERS_GROUP_PRINCIPAL_ID)
+    assert Privilege.EXECUTE in users.privileges
+
+
+def test_seed_data_product_users_group_includes_execute(svc):
+    """data_product seeding MUST include EXECUTE in the users-group row."""
+    svc.seed_default_grants("data_product", "prod1", owner_email=None, grantor=None)
+    grants = svc.list_grants("data_product", "prod1")
+    users = next(g for g in grants if g.principal_id == USERS_GROUP_PRINCIPAL_ID)
+    assert Privilege.EXECUTE in users.privileges
+
+
+# ---------------------------------------------------------------------------
+# Owner-asymmetry pin: can_manage_grants vs effective_privileges when unseeded
+# ---------------------------------------------------------------------------
+
+
+def test_owner_asymmetry_can_manage_grants_true_without_stored_row(svc):
+    """can_manage_grants returns True for the owner by email REGARDLESS of stored rows.
+
+    This is the expected and load-bearing asymmetry: ownership identity comes
+    from the object's created_by field (resolved by get_object_owner), not
+    from stored grant rows. A freshly created object where seeding has not yet
+    run (e.g. during migration before the backfill) must not lock out its owner
+    from managing grants.
+    """
+    # No grants stored — object has zero grant rows.
+    from databricks_labs_dqx_app.backend.common.authorization import UserRole
+
+    result = svc.can_manage_grants(
+        "monitored_table", "obj1",
+        role=UserRole.RULE_AUTHOR,
+        principal_ids=set(),
+        owner_email="owner@x.com",
+        principal_email="owner@x.com",
+    )
+    assert result is True
+
+
+def test_owner_asymmetry_effective_privileges_empty_without_stored_row(svc):
+    """effective_privileges / has_privilege return empty/deny for the owner when no row exists.
+
+    This documents that seeding is load-bearing: the owner cannot APPLY, MODIFY,
+    or SELECT an object until seed_default_grants has run. can_manage_grants
+    (tested above) is the only path that grants the owner access without a row —
+    and that path only covers grant management (MANAGE), not object operations.
+    """
+    eff = svc.effective_privileges(
+        "monitored_table", "obj1", set(), owner_email="owner@x.com", principal_email="owner@x.com"
+    )
+    assert eff == set()
+
+    from databricks_labs_dqx_app.backend.common.authorization import UserRole
+    result = svc.has_privilege(
+        "monitored_table", "obj1", Privilege.MODIFY,
+        role=UserRole.RULE_AUTHOR,
+        principal_ids=set(),
+        owner_email="owner@x.com",
+        principal_email="owner@x.com",
+    )
+    assert result is False

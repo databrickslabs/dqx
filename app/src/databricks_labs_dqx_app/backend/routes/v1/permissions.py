@@ -24,6 +24,7 @@ from databricks_labs_dqx_app.backend.common.permissions import (
     ObjectType,
     Privilege,
     is_reserved_principal_id,
+    is_users_group,
 )
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentPrincipalIds,
@@ -64,7 +65,24 @@ def _parse_privileges(raw: list[str]) -> set[Privilege]:
     return out
 
 
-def _to_out(grant: ObjectGrant) -> ObjectGrantOut:
+def _to_out(grant: ObjectGrant, owner: str | None = None) -> ObjectGrantOut:
+    """Convert an *ObjectGrant* service object to its API output model.
+
+    *is_default* is computed at read time: a grant is a system-seeded default
+    when it targets the workspace users group **or** the object owner — but only
+    for direct (non-inherited) grants, because an inherited row is not a default
+    of *this* object.
+    """
+    inherited = grant.inherited_from_type is not None
+    if inherited:
+        # Inherited rows are managed on the parent — never treat them as defaults.
+        is_default = False
+    else:
+        users_group = is_users_group(grant.principal_id)
+        owner_row = bool(
+            owner and grant.principal_id.strip().lower() == owner.strip().lower()
+        )
+        is_default = users_group or owner_row
     return ObjectGrantOut(
         principal_id=grant.principal_id,
         principal_type=grant.principal_type,
@@ -73,10 +91,10 @@ def _to_out(grant: ObjectGrant) -> ObjectGrantOut:
         inherit=grant.inherit,
         grantor=grant.grantor,
         updated_at=grant.updated_at.isoformat() if grant.updated_at else None,
-        inherited=grant.inherited_from_type is not None,
+        inherited=inherited,
         inherited_from_type=grant.inherited_from_type,
         inherited_from_id=grant.inherited_from_id,
-        is_default=grant.is_default,
+        is_default=is_default,
     )
 
 
@@ -126,7 +144,7 @@ def list_object_grants(
     """List the grants on an object (direct + inherited + users-group default) with capability."""
     ot = _validate_object_type(object_type)
     owner = perms.get_object_owner(ot, object_id)
-    grants = [_to_out(g) for g in perms.list_effective_grants(ot, object_id)]
+    grants = [_to_out(g, owner) for g in perms.list_effective_grants(ot, object_id)]
     can_manage = perms.can_manage_grants(
         ot, object_id, role=role, principal_ids=set(principal_ids), owner_email=owner, principal_email=user
     )

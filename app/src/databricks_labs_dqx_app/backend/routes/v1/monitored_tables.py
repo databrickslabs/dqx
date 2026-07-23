@@ -13,7 +13,7 @@ from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
     CurrentPrincipalIds,
@@ -35,7 +35,6 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_rules_catalog_service,
     get_tag_suggestion_service,
     require_role,
-    require_runner,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
@@ -570,16 +569,17 @@ def get_monitored_table_version_checks(
     "/{binding_id}/run",
     response_model=RunMonitoredTableOut,
     operation_id="runMonitoredTable",
-    # Same orthogonal RUNNER gate as the existing Run Rules batch endpoint
-    # (``routes/v1/dryrun.py:batch_run_from_catalog``) — a runner mapping
-    # (or admin) is required regardless of the caller's primary role.
-    dependencies=[require_runner()],
+    # Run gate: only ADMIN and RULE_AUTHOR may trigger runs.
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def run_monitored_table(
     binding_id: str,
     body: RunMonitoredTableIn,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     run_svc: Annotated[BindingRunService, Depends(get_binding_run_service)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> RunMonitoredTableOut:
     """Run a monitored table's approved (latest or pinned) or draft checks.
 
@@ -589,9 +589,20 @@ def run_monitored_table(
     binding's latest approved snapshot (409 if the table has never been
     approved). Submits through the same job path as the existing Run
     Rules batch endpoint and mints a run set of one.
+
+    Requires ``EXECUTE`` on the monitored table (direct/inherited/owner)
+    unless the caller is an admin/approver.
     """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.EXECUTE,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
+    )
     try:
-        user_email = _current_user_email(obo_ws)
         result = run_svc.run_binding(
             binding_id,
             source=body.source,

@@ -181,11 +181,23 @@ _SLOT_TOKEN_SCAN_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
 # --- Value / reference helpers (mirror lowcodeCompile.ts) --------------------
 
 
-def _ref(column: str) -> str:
+def _ref(column: str, qualify: bool = False) -> str:
     """Qualified (dotted) refs name a joined-table column and stay raw; plain
     refs name a declared slot and are wrapped as ``{{name}}`` placeholders the
-    materializer substitutes with the real column."""
-    return column if "." in column else f"{{{{{column}}}}}"
+    materializer substitutes with the real column.
+
+    When *qualify* is True (the rule has joins), an own-table column is prefixed
+    with the ``{{input_view}}`` marker so it is unambiguous against a joined table
+    that shares the column name: ``{{input_view}}.{{col}}``. The library
+    substitutes ``{{input_view}}`` with the unique input-view name and the app
+    materializer substitutes ``{{col}}`` with the real column, yielding
+    ``<view>.<col>``. Only valid inside the QUERY TEXT (predicate / join ON), never
+    for ``merge_columns`` (which the library passes verbatim to a bare-name join).
+    Joined-table (dotted) columns are already qualified and stay raw.
+    """
+    if "." in column:
+        return column
+    return f"{{{{input_view}}}}.{{{{{column}}}}}" if qualify else f"{{{{{column}}}}}"
 
 
 def _quote(value: object) -> str:
@@ -213,20 +225,21 @@ def _column_ref_name(value: object) -> str | None:
     return None
 
 
-def _value_sql(value: object) -> str:
+def _value_sql(value: object, qualify: bool = False) -> str:
     """Render a comparison RHS operand — a column reference OR a literal.
 
     Mirrors ``valueSql`` in ``lowcodeCompile.ts`` (item 42): a column reference
     ``{"$col": "b"}`` emits ``_ref("b")`` (a plain name -> ``{{b}}`` placeholder,
     a joined-table column -> raw), so one column can be compared against another;
-    anything else is quoted as a literal.
+    anything else is quoted as a literal. *qualify* is forwarded so an own-table
+    column value is qualified to the input view under a join (see :func:`_ref`).
     """
     name = _column_ref_name(value)
-    return _ref(name) if name is not None else _quote(value)
+    return _ref(name, qualify) if name is not None else _quote(value)
 
 
-def _quote_list(values: list[object]) -> str:
-    return ", ".join(_value_sql(v) for v in values)
+def _quote_list(values: list[object], qualify: bool = False) -> str:
+    return ", ".join(_value_sql(v, qualify) for v in values)
 
 
 def _like_literal(value: object) -> str:
@@ -267,6 +280,14 @@ def _split_top_level_commas(value: str) -> list[str]:
 
 
 def _join_key_refs(joins: list[dict[str, Any]]) -> list[str]:
+    """The BARE input-side merge keys for a set of joins.
+
+    These become ``merge_columns``, which the library passes VERBATIM to Spark's
+    ``df.select(*merge_columns)`` / ``df.join(on=merge_columns)`` — the library
+    substitutes ``{{input_view}}`` only inside the query TEXT, never in
+    ``merge_columns``. So these MUST stay bare (``{{col}}`` -> ``col``): never
+    ``{{input_view}}``-qualified, or Spark sees an invalid bare identifier.
+    """
     seen: set[str] = set()
     out: list[str] = []
     for join in joins or []:
@@ -284,24 +305,39 @@ def _join_key_refs(joins: list[dict[str, Any]]) -> list[str]:
     return out
 
 
-def _agg_expr(spec: dict[str, Any]) -> str:
+def _select_key_projection(bare_key: str) -> str:
+    """The SELECT-list projection for one merge key when the query has joins.
+
+    A bare own-column key (e.g. ``{{customer_id}}``) is ambiguous in a joined
+    SELECT, so qualify the SOURCE to the input view while ALIASING back to the
+    bare name the ``merge_columns`` join expects:
+    ``{{input_view}}.{{customer_id}} AS {{customer_id}}``. A joined-table
+    (dotted) key is already qualified and needs no alias — returned as-is.
+    """
+    if bare_key.startswith("{{") and bare_key.endswith("}}"):
+        inner = bare_key[2:-2]
+        return f"{{{{input_view}}}}.{bare_key} AS {bare_key}" if "." not in inner else bare_key
+    return bare_key
+
+
+def _agg_expr(spec: dict[str, Any], qualify: bool = False) -> str:
     agg = spec.get("aggregate")
     col = spec.get("column_ref")
     if not agg or agg not in _AGG_SQL:
         return ""
     if not col:
         return ""
-    return _AGG_SQL[agg](_ref(col), spec.get("aggregate_param"))
+    return _AGG_SQL[agg](_ref(col, qualify), spec.get("aggregate_param"))
 
 
-def _row_sql(left: str, operator: str, value: object) -> str:
+def _row_sql(left: str, operator: str, value: object, qualify: bool = False) -> str:
     op = operator
     if op in _COMPARISON_OPS:
-        return f"{left} {op} {_value_sql(value)}"
+        return f"{left} {op} {_value_sql(value, qualify)}"
     if op == "equals":
-        return f"{left} = {_value_sql(value)}"
+        return f"{left} = {_value_sql(value, qualify)}"
     if op == "not equals":
-        return f"{left} != {_value_sql(value)}"
+        return f"{left} != {_value_sql(value, qualify)}"
     if op == "contains":
         return f"{left} LIKE '%{_like_literal(value)}%'"
     if op == "does not contain":
@@ -314,11 +350,11 @@ def _row_sql(left: str, operator: str, value: object) -> str:
         return f"{left} RLIKE {_quote(value)}"
     if op == "between":
         lo, hi = (value[0], value[1]) if isinstance(value, list) and len(value) >= 2 else (None, None)
-        return f"{left} BETWEEN {_value_sql(lo)} AND {_value_sql(hi)}"
+        return f"{left} BETWEEN {_value_sql(lo, qualify)} AND {_value_sql(hi, qualify)}"
     if op == "in":
-        return f"{left} IN ({_quote_list(value if isinstance(value, list) else [])})"
+        return f"{left} IN ({_quote_list(value if isinstance(value, list) else [], qualify)})"
     if op == "not in":
-        return f"{left} NOT IN ({_quote_list(value if isinstance(value, list) else [])})"
+        return f"{left} NOT IN ({_quote_list(value if isinstance(value, list) else [], qualify)})"
     if op == "is null":
         return f"{left} IS NULL"
     if op == "is not null":
@@ -328,13 +364,13 @@ def _row_sql(left: str, operator: str, value: object) -> str:
     if op == "is false":
         return f"{left} = FALSE"
     if op == "before":
-        return f"{left} < {_value_sql(value)}"
+        return f"{left} < {_value_sql(value, qualify)}"
     if op == "after":
-        return f"{left} > {_value_sql(value)}"
+        return f"{left} > {_value_sql(value, qualify)}"
     if op == "on or before":
-        return f"{left} <= {_value_sql(value)}"
+        return f"{left} <= {_value_sql(value, qualify)}"
     if op == "on or after":
-        return f"{left} >= {_value_sql(value)}"
+        return f"{left} >= {_value_sql(value, qualify)}"
     if op == "is in last":
         obj = value if isinstance(value, dict) else {}
         number = obj.get("number", 0)
@@ -359,7 +395,7 @@ def _row_sql(left: str, operator: str, value: object) -> str:
         return f"length({left}) < {_quote(value)}"
     if op == "length between":
         lo, hi = (value[0], value[1]) if isinstance(value, list) and len(value) >= 2 else (None, None)
-        return f"length({left}) BETWEEN {_value_sql(lo)} AND {_value_sql(hi)}"
+        return f"length({left}) BETWEEN {_value_sql(lo, qualify)} AND {_value_sql(hi, qualify)}"
     if op == "is not empty":
         return f"length(trim({left})) > 0"
     if op == "is empty":
@@ -407,20 +443,20 @@ def _row_sql(left: str, operator: str, value: object) -> str:
     return ""
 
 
-def _compile_row(row: dict[str, Any]) -> str:
+def _compile_row(row: dict[str, Any], qualify: bool = False) -> str:
     if row.get("kind") == "row":
         column_ref = row.get("column_ref")
         if not column_ref:
             return ""
-        return _row_sql(_ref(column_ref), str(row.get("operator", "")), row.get("value"))
-    left = _agg_expr(row)
+        return _row_sql(_ref(column_ref, qualify), str(row.get("operator", "")), row.get("value"), qualify)
+    left = _agg_expr(row, qualify)
     if not left:
         return ""
     op = str(row.get("operator", ""))
     value = row.get("value")
     if op in _COMPARISON_OPS:
         if isinstance(value, dict) and "aggregate" in value:
-            right = _agg_expr(value)
+            right = _agg_expr(value, qualify)
         else:
             right = _quote(value)
         return f"{left} {op} {right}"
@@ -434,8 +470,14 @@ def _compile_row(row: dict[str, Any]) -> str:
     return ""
 
 
-def compile_ast_to_sql(ast: dict[str, Any]) -> str:
-    """Compile the row stack into a single boolean *pass* condition."""
+def compile_ast_to_sql(ast: dict[str, Any], qualify: bool = False) -> str:
+    """Compile the row stack into a single boolean *pass* condition.
+
+    *qualify* is set by :func:`compile_lowcode_body` when the rule has joins, so
+    own-table columns in the predicate are qualified to the input view (see
+    :func:`_ref`). Left False elsewhere (e.g. :func:`lowcode_is_usable`) so a
+    join-free predicate stays byte-identical.
+    """
     rows = ast.get("rows") or []
     if not rows:
         return ""
@@ -443,7 +485,7 @@ def compile_ast_to_sql(ast: dict[str, Any]) -> str:
     for i, row in enumerate(rows):
         if not isinstance(row, dict):
             continue
-        frag = _compile_row(row)
+        frag = _compile_row(row, qualify)
         if not frag:
             continue
         if i == 0:
@@ -477,8 +519,12 @@ def compile_joins_to_sql(joins: list[dict[str, Any]]) -> str:
         if join_type == "CROSS":
             out.append(head)
             continue
+        # The own side of the ON condition is qualified to the input view — this
+        # is query text (``{{input_view}}`` is substituted by the library), and it
+        # lives in a join context so a shared column name would otherwise be
+        # ambiguous. The joined side is already table-qualified.
         conds = [
-            f"{target}.{k['joined_column']} = {_ref(k['column_ref'])}"
+            f"{target}.{k['joined_column']} = {_ref(k['column_ref'], qualify=True)}"
             for k in keys
             if k.get("joined_column") and k.get("column_ref")
         ]
@@ -498,8 +544,13 @@ class CompiledLowcodeBody:
 def compile_lowcode_body(ast: dict[str, Any], group_by: str) -> CompiledLowcodeBody:
     """Fold the row predicate, joins and group-by into the single body payload
     the materializer's sql-mode path consumes (mirrors ``compileLowcodeBody``)."""
-    predicate = compile_ast_to_sql(ast)
-    joins_sql = compile_joins_to_sql(ast.get("joins") or [])
+    joins = ast.get("joins") or []
+    has_joins = bool(compile_joins_to_sql(joins))
+    # Own-table columns in the PREDICATE are qualified to the input view only when
+    # the rule has joins (otherwise a shared column name is ambiguous). merge_columns
+    # and GROUP BY stay bare (see below).
+    predicate = compile_ast_to_sql(ast, qualify=has_joins)
+    joins_sql = compile_joins_to_sql(joins)
     gb_columns = _split_top_level_commas(group_by or "")
 
     if not joins_sql and not gb_columns:
@@ -509,16 +560,24 @@ def compile_lowcode_body(ast: dict[str, Any], group_by: str) -> CompiledLowcodeB
     from_clause = "{{input_view}}" + (f" {joins_sql}" if joins_sql else "")
 
     if gb_columns:
+        # GROUP BY / merge_columns stay BARE (bare column names the library passes
+        # verbatim to Spark's group/join). When joins are present the SELECT
+        # projection qualifies the source and aliases back to the bare name so the
+        # projected/grouped column is an unambiguous bare identifier.
+        select_list = ", ".join(_select_key_projection(c) for c in gb_columns) if joins_sql else ", ".join(gb_columns)
         gb_list = ", ".join(gb_columns)
         return CompiledLowcodeBody(
-            sql_query=f"SELECT {gb_list}, ({fail_cond}) AS condition FROM {from_clause} GROUP BY {gb_list}",
+            sql_query=f"SELECT {select_list}, ({fail_cond}) AS condition FROM {from_clause} GROUP BY {gb_list}",
             merge_columns=gb_columns,
         )
 
-    key_refs = _join_key_refs(ast.get("joins") or [])
+    key_refs = _join_key_refs(joins)
     if key_refs:
+        # SELECT projection qualifies each own key to the input view and aliases it
+        # back to the bare name; merge_columns stays BARE (see _join_key_refs).
+        select_list = ", ".join(_select_key_projection(k) for k in key_refs)
         return CompiledLowcodeBody(
-            sql_query=f"SELECT {', '.join(key_refs)}, ({fail_cond}) AS condition FROM {from_clause}",
+            sql_query=f"SELECT {select_list}, ({fail_cond}) AS condition FROM {from_clause}",
             merge_columns=key_refs,
         )
 

@@ -15343,6 +15343,9 @@ with *version* pins a frozen snapshot, and with no *version* uses the
 binding's latest approved snapshot (409 if the table has never been
 approved). Submits through the same job path as the existing Run
 Rules batch endpoint and mints a run set of one.
+
+Requires ``EXECUTE`` on the monitored table (direct/inherited/owner)
+unless the caller is an admin/approver.
  * @summary Run Monitored Table
  */
 export const runMonitoredTable = (
@@ -23669,6 +23672,9 @@ export const useRevertDataProduct = <TError = AxiosError<HTTPValidationError>,
     
 /**
  * Run every runnable member of a data product through a shared run set.
+
+Requires ``EXECUTE`` on the data product (direct/inherited/owner)
+unless the caller is an admin/approver.
  * @summary Run Data Product
  */
 export const runDataProduct = (

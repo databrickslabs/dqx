@@ -1,7 +1,7 @@
-"""Tests for ``RoleService`` — primary-role resolution + RUNNER orthogonality.
+"""Tests for ``RoleService`` — primary-role resolution.
 
-The service hits Delta tables for mappings, but ``resolve_role`` and
-``has_runner_role`` accept a pre-cached mapping list. We swap the
+The service hits Delta tables for mappings, but ``resolve_role``
+accepts a pre-cached mapping list. We swap the
 mappings in via ``_mappings_cache`` so no SQL is touched.
 """
 
@@ -119,64 +119,26 @@ class TestResolveRolePrimary:
 
 
 # ---------------------------------------------------------------------------
-# resolve_role — RUNNER must NOT show up as a primary role
+# resolve_role — unknown/stale role strings in DB are silently skipped
 # ---------------------------------------------------------------------------
 
 
-class TestResolveRoleRunnerOrthogonality:
-    def test_runner_only_user_resolves_to_viewer(self, role_service):
-        # The orthogonality contract: a group mapped only to RUNNER must not
-        # promote the primary role above VIEWER.
-        _seed_mappings(role_service, [(UserRole.RUNNER.value, "runners")])
+class TestResolveRoleUnknownMapping:
+    def test_unknown_role_string_is_silently_skipped(self, role_service):
+        # A DB row with a stale role value (e.g. the old "runner" string) must
+        # not crash resolve_role — it should be skipped via the ValueError path.
+        _seed_mappings(role_service, [("runner", "runners")])
         assert role_service.resolve_role(["runners"]) == UserRole.VIEWER
 
-    def test_runner_plus_author_resolves_to_author_not_higher(self, role_service):
+    def test_unknown_role_alongside_known_resolves_to_known(self, role_service):
         _seed_mappings(
             role_service,
             [
-                (UserRole.RUNNER.value, "runners"),
+                ("runner", "runners"),
                 (UserRole.RULE_AUTHOR.value, "writers"),
             ],
         )
         assert role_service.resolve_role(["runners", "writers"]) == UserRole.RULE_AUTHOR
-
-
-# ---------------------------------------------------------------------------
-# has_runner_role
-# ---------------------------------------------------------------------------
-
-
-class TestHasRunnerRole:
-    def test_admin_is_implicit_runner(self, role_service):
-        # Member of the bootstrap admin group is always a runner, even with
-        # no explicit RUNNER mapping configured.
-        _seed_mappings(role_service, [])
-        assert role_service.has_runner_role(["admins"], admin_group="admins") is True
-
-    def test_explicit_runner_group_membership(self, role_service):
-        _seed_mappings(role_service, [(UserRole.RUNNER.value, "runners")])
-        assert role_service.has_runner_role(["runners"], admin_group="other-admins") is True
-
-    def test_no_runner_mapping_no_admin_returns_false(self, role_service):
-        _seed_mappings(role_service, [(UserRole.RULE_AUTHOR.value, "writers")])
-        assert role_service.has_runner_role(["writers"], admin_group="other-admins") is False
-
-    def test_author_role_does_not_imply_runner(self, role_service):
-        # The whole point of orthogonality: RULE_AUTHOR alone does NOT
-        # confer runner privilege.
-        _seed_mappings(role_service, [(UserRole.RULE_AUTHOR.value, "writers")])
-        assert role_service.has_runner_role(["writers"], admin_group="other-admins") is False
-
-    def test_approver_role_does_not_imply_runner(self, role_service):
-        _seed_mappings(role_service, [(UserRole.RULE_APPROVER.value, "approvers")])
-        assert role_service.has_runner_role(["approvers"], admin_group="other-admins") is False
-
-    def test_no_mappings_only_admin_check(self, role_service):
-        _seed_mappings(role_service, [])
-        # Admin-group-via-bootstrap path still works when no DB mappings exist.
-        assert role_service.has_runner_role(["admins"], admin_group="admins") is True
-        # And non-admins are not runners with empty mappings.
-        assert role_service.has_runner_role(["data-eng"], admin_group="admins") is False
 
 
 # ---------------------------------------------------------------------------

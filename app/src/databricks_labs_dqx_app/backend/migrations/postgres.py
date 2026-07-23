@@ -1059,6 +1059,115 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"  ON {_S}.dq_tag_auto_suppressions (binding_id);"
         ),
     ),
+    PgMigration(
+        version=20,
+        description="Backfill default object grants (users-group SELECT/APPLY/EXECUTE + owner ALL_PRIVILEGES) "
+        "for existing registry_rules, monitored_tables, and data_products that predate on-create seeding",
+        sql=(
+            # ------------------------------------------------------------------
+            # Backfill users-group grant (SELECT,APPLY,EXECUTE) for every
+            # existing registry rule that has no grant row yet.
+            # ------------------------------------------------------------------
+            f"INSERT INTO {_S}.dq_object_grants "
+            "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, "
+            "privileges, inherit, grantor, created_at, updated_at) "
+            f"SELECT gen_random_uuid()::text, 'registry_rule', r.rule_id, 'users', 'group', 'users', "
+            "'SELECT,APPLY,EXECUTE', FALSE, NULL, NOW(), NOW() "
+            f"FROM {_S}.dq_rules r "
+            f"WHERE NOT EXISTS (SELECT 1 FROM {_S}.dq_object_grants g "
+            "WHERE g.object_type = 'registry_rule' AND g.object_id = r.rule_id AND g.principal_id = 'users');"
+            # ------------------------------------------------------------------
+            # Backfill owner grant (ALL_PRIVILEGES) for registry rules where
+            # created_by is set and no owner grant row exists yet.
+            # ------------------------------------------------------------------
+            f"INSERT INTO {_S}.dq_object_grants "
+            "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, "
+            "privileges, inherit, grantor, created_at, updated_at) "
+            f"SELECT gen_random_uuid()::text, 'registry_rule', r.rule_id, r.created_by, 'user', r.created_by, "
+            "'ALL_PRIVILEGES', FALSE, NULL, NOW(), NOW() "
+            f"FROM {_S}.dq_rules r "
+            "WHERE r.created_by IS NOT NULL "
+            f"AND NOT EXISTS (SELECT 1 FROM {_S}.dq_object_grants g "
+            "WHERE g.object_type = 'registry_rule' AND g.object_id = r.rule_id AND g.principal_id = r.created_by);"
+            # ------------------------------------------------------------------
+            # Backfill users-group grant for every existing monitored table.
+            # ------------------------------------------------------------------
+            f"INSERT INTO {_S}.dq_object_grants "
+            "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, "
+            "privileges, inherit, grantor, created_at, updated_at) "
+            f"SELECT gen_random_uuid()::text, 'monitored_table', t.binding_id, 'users', 'group', 'users', "
+            "'SELECT,APPLY,EXECUTE', FALSE, NULL, NOW(), NOW() "
+            f"FROM {_S}.dq_monitored_tables t "
+            f"WHERE NOT EXISTS (SELECT 1 FROM {_S}.dq_object_grants g "
+            "WHERE g.object_type = 'monitored_table' AND g.object_id = t.binding_id AND g.principal_id = 'users');"
+            # ------------------------------------------------------------------
+            # Backfill owner grant for monitored tables.
+            # ------------------------------------------------------------------
+            f"INSERT INTO {_S}.dq_object_grants "
+            "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, "
+            "privileges, inherit, grantor, created_at, updated_at) "
+            f"SELECT gen_random_uuid()::text, 'monitored_table', t.binding_id, t.created_by, 'user', t.created_by, "
+            "'ALL_PRIVILEGES', FALSE, NULL, NOW(), NOW() "
+            f"FROM {_S}.dq_monitored_tables t "
+            "WHERE t.created_by IS NOT NULL "
+            f"AND NOT EXISTS (SELECT 1 FROM {_S}.dq_object_grants g "
+            "WHERE g.object_type = 'monitored_table' AND g.object_id = t.binding_id AND g.principal_id = t.created_by);"
+            # ------------------------------------------------------------------
+            # Backfill users-group grant for every existing data product.
+            # ------------------------------------------------------------------
+            f"INSERT INTO {_S}.dq_object_grants "
+            "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, "
+            "privileges, inherit, grantor, created_at, updated_at) "
+            f"SELECT gen_random_uuid()::text, 'data_product', p.product_id, 'users', 'group', 'users', "
+            "'SELECT,APPLY,EXECUTE', FALSE, NULL, NOW(), NOW() "
+            f"FROM {_S}.dq_data_products p "
+            f"WHERE NOT EXISTS (SELECT 1 FROM {_S}.dq_object_grants g "
+            "WHERE g.object_type = 'data_product' AND g.object_id = p.product_id AND g.principal_id = 'users');"
+            # ------------------------------------------------------------------
+            # Backfill owner grant for data products.
+            # ------------------------------------------------------------------
+            f"INSERT INTO {_S}.dq_object_grants "
+            "(grant_id, object_type, object_id, principal_id, principal_type, principal_name, "
+            "privileges, inherit, grantor, created_at, updated_at) "
+            f"SELECT gen_random_uuid()::text, 'data_product', p.product_id, p.created_by, 'user', p.created_by, "
+            "'ALL_PRIVILEGES', FALSE, NULL, NOW(), NOW() "
+            f"FROM {_S}.dq_data_products p "
+            "WHERE p.created_by IS NOT NULL "
+            f"AND NOT EXISTS (SELECT 1 FROM {_S}.dq_object_grants g "
+            "WHERE g.object_type = 'data_product' AND g.object_id = p.product_id AND g.principal_id = p.created_by);"
+        ),
+    ),
+    PgMigration(
+        version=21,
+        description="Strip EXECUTE from registry_rule users-group grant rows (EXECUTE is meaningless on a rule)",
+        sql=(
+            # ------------------------------------------------------------------
+            # Strip EXECUTE from existing ``registry_rule`` users-group grant
+            # rows (bug fix — mirrors Delta v25). ``EXECUTE`` is meaningless on a
+            # rule (the privilege means "run profiling/validation on a table or
+            # collection"; rules are not run directly). New rules are seeded
+            # without it from this deploy onwards; this migration backfills rows
+            # already stored with it.
+            #
+            # Only touches rows where ``object_type = 'registry_rule'`` AND
+            # ``privileges`` contains the literal token ``EXECUTE`` AND the stored
+            # form is NOT ``ALL_PRIVILEGES`` (owner rows — those are left alone;
+            # ALL_PRIVILEGES on a rule is acceptable and expands to the concrete
+            # set only at check-time).
+            #
+            # Idempotent: re-running finds no ``EXECUTE`` token in the already-
+            # stripped rows, so the UPDATE matches zero rows on a second run.
+            #
+            # Postgres ``string_to_array`` / ``array_remove`` / ``array_to_string``
+            # strip a single element from a comma-joined privilege string cleanly.
+            # ------------------------------------------------------------------
+            f"UPDATE {_S}.dq_object_grants "
+            "SET privileges = array_to_string(array_remove(string_to_array(privileges, ','), 'EXECUTE'), ',') "
+            "WHERE object_type = 'registry_rule' "
+            "AND privileges LIKE '%EXECUTE%' "
+            "AND privileges <> 'ALL_PRIVILEGES';"
+        ),
+    ),
 ]
 
 

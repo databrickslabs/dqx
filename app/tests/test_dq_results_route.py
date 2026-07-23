@@ -463,8 +463,8 @@ class TestTableResults:
         sql_dispatch(sql_mock)
         client.get(f"/api/v1/dq-results/table/{FQN}")
         stmt = sql_mock.query_dicts.call_args_list[0][0][0]
-        # Catalog/schema are backtick-quoted (hyphenated-catalog support).
-        assert f"`{app_config.catalog}`.`{app_config.schema_name}`.{SHAPING_VIEW_NAME}" in stmt
+        # Catalog/genie-schema are backtick-quoted (hyphenated-catalog support).
+        assert f"`{app_config.catalog}`.`{app_config.genie_schema_name}`.{SHAPING_VIEW_NAME}" in stmt
         assert f"'{FQN}'" in stmt
         # The as-of-run attribution columns ride along on the same query
         # (criticality now included for threshold-breach evaluation).
@@ -581,7 +581,7 @@ class TestRuns:
             "breach_criticality": None,
         }
         stmt = sql_mock.query_dicts.call_args[0][0]
-        assert f"`{app_config.catalog}`.`{app_config.schema_name}`.{METRIC_VIEW_NAME}" in stmt
+        assert f"`{app_config.catalog}`.`{app_config.genie_schema_name}`.{METRIC_VIEW_NAME}" in stmt
         assert "MEASURE(score) AS pass_rate" in stmt
         # run_mode rides along per run (lossless: a run has exactly one mode).
         assert "GROUP BY run_id, run_time, run_mode" in stmt
@@ -784,7 +784,7 @@ class TestGlobalResults:
         sql_dispatch(sql_mock)
         client.get("/api/v1/dq-results/global")
         stmt = sql_mock.query_dicts.call_args_list[0][0][0]
-        assert f"`{app_config.catalog}`.`{app_config.schema_name}`.{SHAPING_VIEW_NAME}" in stmt
+        assert f"`{app_config.catalog}`.`{app_config.genie_schema_name}`.{SHAPING_VIEW_NAME}" in stmt
         assert "input_location IN" not in stmt
 
     def test_sql_failure_maps_to_500(self, client, sql_mock):
@@ -1043,7 +1043,11 @@ class TestHyphenatedAppCatalog:
     hyphenated (``prod-east``). Every read-path FQN must backtick-quote its
     parts — consistently with the DDL side — or the statements won't parse."""
 
-    QUOTED_PREFIX = "`prod-east`.`dqx-studio`"
+    # Genie-derived objects live in `genie` (the default genie_schema_name);
+    # base tables stay in the main schema (`dqx-studio` here).
+    QUOTED_CAT = "`prod-east`"
+    QUOTED_MAIN = "`prod-east`.`dqx-studio`"
+    QUOTED_GENIE = "`prod-east`.`genie`"
 
     @pytest.fixture(autouse=True)
     def _hyphenated_conf(self, client, app_config):
@@ -1055,17 +1059,21 @@ class TestHyphenatedAppCatalog:
         sql_dispatch(sql_mock, check_rows=[check_row("c1", errors=1, total=10)])
         assert client.get(f"/api/v1/dq-results/table/{FQN}").status_code == 200
         stmts = [call[0][0] for call in sql_mock.query_dicts.call_args_list]
-        assert any(f"{self.QUOTED_PREFIX}.{SHAPING_VIEW_NAME}" in stmt for stmt in stmts)
-        assert any(f"{self.QUOTED_PREFIX}.dq_metrics" in stmt for stmt in stmts)
+        # Shaping view is a genie-schema derived object.
+        assert any(f"{self.QUOTED_GENIE}.{SHAPING_VIEW_NAME}" in stmt for stmt in stmts)
+        # dq_metrics is a base table — stays in the main schema.
+        assert any(f"{self.QUOTED_MAIN}.dq_metrics" in stmt for stmt in stmts)
 
     def test_metric_view_read_is_quoted(self, client, sql_mock):
         sql_dispatch(sql_mock, runs_rows=[runs_row()])
         assert client.get(f"/api/v1/dq-results/runs/{FQN}").status_code == 200
-        assert f"{self.QUOTED_PREFIX}.{METRIC_VIEW_NAME}" in sql_mock.query_dicts.call_args[0][0]
+        # Metric view is a genie-schema derived object.
+        assert f"{self.QUOTED_GENIE}.{METRIC_VIEW_NAME}" in sql_mock.query_dicts.call_args[0][0]
 
     def test_quarantine_read_is_quoted(self, client, sql_mock):
         assert client.get(FAILED_ROWS_URL).status_code == 200
-        assert f"{self.QUOTED_PREFIX}.dq_quarantine_records" in sql_mock.query_dicts.call_args[0][0]
+        # Quarantine table is a base table — stays in the main schema.
+        assert f"{self.QUOTED_MAIN}.dq_quarantine_records" in sql_mock.query_dicts.call_args[0][0]
 
 
 # ---------------------------------------------------------------------------
@@ -1578,7 +1586,7 @@ class TestIncludeDrafts:
         assert "dq_quarantine_records" in stmt
         assert (
             f"run_id = (SELECT run_id FROM "
-            f"`{app_config.catalog}`.`{app_config.schema_name}`.{SHAPING_VIEW_NAME} "
+            f"`{app_config.catalog}`.`{app_config.genie_schema_name}`.{SHAPING_VIEW_NAME} "
             f"WHERE input_location = '{FQN}' AND run_mode = 'published' "
             f"ORDER BY run_time DESC LIMIT 1)" in stmt
         )

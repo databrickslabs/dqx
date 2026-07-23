@@ -63,7 +63,7 @@ def _build_client(*, role: UserRole, service: DatabaseResetService | None = None
 class TestAdminGate:
     @pytest.mark.parametrize(
         "role",
-        [UserRole.VIEWER, UserRole.RULE_AUTHOR, UserRole.RULE_APPROVER, UserRole.RUNNER],
+        [UserRole.VIEWER, UserRole.RULE_AUTHOR, UserRole.RULE_APPROVER],
     )
     def test_non_admin_is_rejected_403_and_service_not_called(self, role):
         # A spy service proves the reset never runs for a non-admin even

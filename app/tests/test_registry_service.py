@@ -242,6 +242,35 @@ class TestCreateRule:
         rule, _ = svc.create_rule(mode="sql", definition=safe_definition, user_email="alice@x")
         assert rule.definition.body["predicate"] == "{{column}} IS NOT NULL"
 
+    def test_create_rule_seeds_default_grants(self, sql):
+        """create_rule seeds default grants via the injected PermissionsService."""
+        from unittest.mock import create_autospec
+        from databricks_labs_dqx_app.backend.common.permissions import ObjectType
+        from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+
+        perms = create_autospec(PermissionsService, instance=True)
+        svc = RegistryService(sql=sql, permissions=perms)
+        rule, _ = svc.create_rule(
+            mode="dqx_native",
+            definition=_native_definition(),
+            user_email="alice@x",
+        )
+        perms.seed_default_grants.assert_called_once_with(
+            ObjectType.REGISTRY_RULE.value,
+            rule.rule_id,
+            owner_email="alice@x",
+            grantor="alice@x",
+        )
+
+    def test_create_rule_skips_seeding_when_no_permissions_service(self, svc, sql):
+        """create_rule is safe with no PermissionsService injected (None default)."""
+        rule, _ = svc.create_rule(
+            mode="dqx_native",
+            definition=_native_definition(),
+            user_email="alice@x",
+        )
+        assert rule.status == "draft"
+
 
 # ---------------------------------------------------------------------------
 # update_draft
@@ -1074,6 +1103,80 @@ class TestMatchOrCreateApprovedRule:
         # make the auto-created rule auditable.
         assert "'profiling'" in insert
         assert "'ai_assisted'" in insert
+
+    def test_match_or_create_seeds_grants_on_create(self, sql):
+        """match_or_create_approved_rule seeds grants when it creates a new rule (created=True).
+
+        Since match_or_create_approved_rule delegates to create_rule, the seeding
+        happens inside create_rule and is covered by test_create_rule_seeds_default_grants.
+        This test pins that seeding fires exactly once per created rule via the whole path.
+        """
+        from unittest.mock import create_autospec
+        from databricks_labs_dqx_app.backend.common.permissions import ObjectType
+        from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+        from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+
+        perms = create_autospec(PermissionsService, instance=True)
+        svc = RegistryService(sql=sql, permissions=perms)
+
+        # Build rows for the newly created rule at different lifecycle stages
+        defn = _native_definition()
+
+        def _draft_row() -> list:
+            r = RegistryRule(
+                rule_id="new-profiling-rule", mode="dqx_native", status="draft", version=0,
+                definition=defn,
+            )
+            r.fingerprint = compute_registry_rule_fingerprint(r)
+            return _row_for(r, status="draft", version=0)
+
+        def _pending_row() -> list:
+            r = RegistryRule(
+                rule_id="new-profiling-rule", mode="dqx_native", status="pending_approval", version=0,
+                definition=defn,
+            )
+            r.fingerprint = compute_registry_rule_fingerprint(r)
+            return _row_for(r, status="pending_approval", version=0)
+
+        # 6 query calls matching the existing test_new_rule_attributed_to_profiling pattern:
+        # 1: find_approved_rule_for_definition → empty
+        # 2: get_rule_by_fingerprint (any-status check) → empty
+        # 3: _dedup_warning in create_rule → empty
+        # 4: submit→_get → draft row
+        # 5: submit→_transition→_get → draft row
+        # 6: approve→_get → pending row
+        sql.query.side_effect = [[], [], [], [_draft_row()], [_draft_row()], [_pending_row()]]
+        rule, created = svc.match_or_create_approved_rule(defn, {"name": "x"}, "alice@x")
+        assert created is True
+        # seeding fires exactly once (from create_rule); the seeded rule_id is the
+        # internally generated UUID (not the mock row's id), so we check call count
+        # and object_type/owner rather than the exact id.
+        assert perms.seed_default_grants.call_count == 1
+        call_args = perms.seed_default_grants.call_args
+        assert call_args.args[0] == ObjectType.REGISTRY_RULE.value
+        assert call_args.kwargs["owner_email"] == "alice@x"
+        assert call_args.kwargs["grantor"] == "alice@x"
+
+    def test_match_or_create_does_not_seed_on_match(self, sql):
+        """match_or_create_approved_rule does NOT seed when it matches an existing rule."""
+        from unittest.mock import create_autospec
+        from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+        from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+
+        perms = create_autospec(PermissionsService, instance=True)
+        svc = RegistryService(sql=sql, permissions=perms)
+
+        defn = _native_definition()
+        existing = RegistryRule(
+            rule_id="existing-r1", mode="dqx_native", status="approved", version=1, definition=defn
+        )
+        existing.fingerprint = compute_registry_rule_fingerprint(existing)
+        sql.query.return_value = [_row_for(existing, status="approved", version=1)]
+        rule, created = svc.match_or_create_approved_rule(defn, {}, "alice@x")
+        assert created is False
+        perms.seed_default_grants.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

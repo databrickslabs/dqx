@@ -214,6 +214,82 @@ class ApplyRulesService:
                 tags=tags,
             )
 
+        applied = self.build_applied_rule(
+            binding_id=binding_id,
+            rule_id=rule_id,
+            column_mapping=column_mapping,
+            user_email=user_email,
+            pinned_version=pinned_version,
+            severity_override=severity_override,
+            row_filter=row_filter,
+            pass_threshold=pass_threshold,
+            tags=tags,
+            _rule=rule,
+            _mapping_hash=mapping_hash,
+        )
+        self._insert(applied)
+        logger.info("Applied registry rule %s to binding %s (applied_rule_id=%s)", rule_id, binding_id, applied.id)
+        return applied
+
+    def build_applied_rule(
+        self,
+        binding_id: str,
+        rule_id: str,
+        column_mapping: list[ColumnMappingGroup],
+        user_email: str,
+        pinned_version: int | None = None,
+        severity_override: str | None = None,
+        row_filter: str | None = None,
+        pass_threshold: int | None = None,
+        tags: dict[str, Any] | None = None,
+        *,
+        _rule: RegistryRule | None = None,
+        _mapping_hash: str | None = None,
+    ) -> AppliedRule:
+        """Build an :class:`AppliedRule` in memory WITHOUT persisting it.
+
+        Performs the same validation and construction as the INSERT branch of
+        :meth:`apply_rule` — verifies the binding exists, the rule is published,
+        the column mapping covers every slot, and resolves *pinned_version*
+        through ``default_auto_upgrade`` — but does NOT call :meth:`_insert`.
+
+        This is the staging path for the profiler-suggestion flow: the
+        resolved-or-created registry rule template is bound in memory so the
+        frontend can drop the row into the Apply Rules tab's unsaved selection
+        (as if the user hand-picked the rule). Callers that need persistence
+        should use :meth:`apply_rule` instead.
+
+        Args:
+            binding_id: The monitored table binding the rule would be applied to.
+            rule_id: The registry rule to apply. Must be ``approved``.
+            column_mapping: Column mapping groups — same constraints as
+                :meth:`apply_rule`.
+            user_email: Attributed as ``created_by`` on the transient row.
+            pinned_version: Resolved via ``default_auto_upgrade`` when *None*,
+                same as the INSERT branch of :meth:`apply_rule`.
+            severity_override: Optional per-application severity override.
+            row_filter: Optional SQL predicate (validated).
+            pass_threshold: Optional per-rule pass threshold.
+            tags: Per-application free-text tags.
+            _rule: Pre-resolved :class:`RegistryRule` (avoids a redundant DB
+                lookup when called from :meth:`apply_rule`).
+            _mapping_hash: Pre-computed mapping hash (avoids redundant hashing).
+
+        Returns:
+            An un-persisted :class:`AppliedRule` with a fresh ``id`` and
+            ``created_at`` set to the current UTC time.
+
+        Raises:
+            RuntimeError: *binding_id* or *rule_id* does not exist.
+            RuleNotPublishedError: *rule_id* is not currently ``approved``.
+            MappingIncompleteError: a group's keys don't match the rule's slots.
+            UnsafeRowFilterError: *row_filter* contains prohibited SQL.
+        """
+        rule = _rule or self._validate_applicable_rule(binding_id, rule_id, column_mapping)
+        if _rule is None:
+            validate_row_filter(row_filter)
+        mapping_hash = _mapping_hash if _mapping_hash is not None else compute_mapping_hash(column_mapping)
+
         # Attach-time-only default_auto_upgrade resolution: this is the
         # INSERT branch (no existing row for this natural key), i.e. a
         # genuinely new application. An update (see _update_mutable_fields
@@ -225,7 +301,7 @@ class ApplyRulesService:
         )
 
         now = datetime.now(timezone.utc)
-        applied = AppliedRule(
+        return AppliedRule(
             id=uuid4().hex[:16],
             binding_id=binding_id,
             rule_id=rule_id,
@@ -239,9 +315,6 @@ class ApplyRulesService:
             created_by=user_email,
             created_at=now,
         )
-        self._insert(applied)
-        logger.info("Applied registry rule %s to binding %s (applied_rule_id=%s)", rule_id, binding_id, applied.id)
-        return applied
 
     def attach_auto_mapping(
         self,

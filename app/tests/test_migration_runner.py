@@ -177,6 +177,46 @@ class TestPendingApplicationsMigration:
         assert "dq_pending_applications" not in ANALYTICAL_TABLE_NAMES
 
 
+class TestBackfillDefaultGrantsMigration:
+    """v24: backfill default object grants for pre-existing objects (OLTP fallback)."""
+
+    def test_v24_covers_all_object_types(self) -> None:
+        v24 = next(m for m in MIGRATIONS if m.version == 24)
+        for obj_type in ("registry_rule", "monitored_table", "data_product"):
+            assert obj_type in v24.sql_template, f"v24 must cover object type '{obj_type}'"
+        assert "SELECT,APPLY,EXECUTE" in v24.sql_template, "users-group privileges must be present"
+        assert "ALL_PRIVILEGES" in v24.sql_template, "owner ALL_PRIVILEGES must be present"
+        assert "NOT EXISTS" in v24.sql_template, "backfill must be idempotent via NOT EXISTS"
+        assert "dq_object_grants" in v24.sql_template
+
+    def test_v24_is_oltp_fallback(self) -> None:
+        v24 = next(m for m in MIGRATIONS if m.version == 24)
+        assert v24.oltp_fallback is True
+
+
+class TestStripExecuteFromRegistryRuleGrantsMigration:
+    """v25: strip EXECUTE from registry_rule users-group grant rows (OLTP fallback)."""
+
+    def test_v25_targets_registry_rule_execute_rows(self) -> None:
+        v25 = next(m for m in MIGRATIONS if m.version == 25)
+        sql = v25.sql_template
+        assert "UPDATE" in sql, "v25 must be an UPDATE statement"
+        assert "dq_object_grants" in sql
+        assert "registry_rule" in sql, "must target registry_rule rows"
+        assert "EXECUTE" in sql, "must reference the EXECUTE token to strip it"
+        # Spark SQL array helpers used to strip the token
+        assert "array_remove" in sql, "must use array_remove to strip EXECUTE"
+        assert "split" in sql
+        assert "array_join" in sql
+        # Must NOT touch ALL_PRIVILEGES rows (owner rows)
+        assert "ALL_PRIVILEGES" in sql, "must guard against touching ALL_PRIVILEGES rows"
+        assert "<> 'ALL_PRIVILEGES'" in sql, "must explicitly exclude ALL_PRIVILEGES rows"
+
+    def test_v25_is_oltp_fallback(self) -> None:
+        v25 = next(m for m in MIGRATIONS if m.version == 25)
+        assert v25.oltp_fallback is True
+
+
 # ---------------------------------------------------------------------------
 # Identifier-quoting contract — review item #8.
 # ---------------------------------------------------------------------------

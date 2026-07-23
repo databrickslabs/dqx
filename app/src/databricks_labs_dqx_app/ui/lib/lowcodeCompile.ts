@@ -44,7 +44,13 @@ const AGG_SQL: Record<string, (col: string, param?: number | null) => string> = 
 // Qualified refs (containing a dot) name a joined-table column and are
 // emitted as raw SQL. Plain refs name a declared slot and stay wrapped as
 // `{{name}}` placeholders the materializer substitutes with the real column.
-const ref = (c: string) => (c.includes(".") ? c : `{{${c}}}`);
+// When `qualify` is set (the rule has joins), an own-table column is prefixed
+// with the `{{input_view}}` marker so it is unambiguous against a joined table
+// sharing the column name: `{{input_view}}.{{col}}`. Only valid in QUERY TEXT
+// (predicate / join ON) — never for merge_columns, which the library passes
+// verbatim to a bare-name join. Mirrors `_ref` in `backend/lowcode_compile.py`.
+const ref = (c: string, qualify = false): string =>
+  c.includes(".") ? c : qualify ? `{{input_view}}.{{${c}}}` : `{{${c}}}`;
 
 function quote(v: unknown): string {
   if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
@@ -58,8 +64,8 @@ function quote(v: unknown): string {
 // plain name becomes {{name}} and a joined-table col emits raw) OR a literal
 // (quote() as before). This is the only place the literal-vs-column decision
 // is made for scalar operands.
-function valueSql(value: unknown): string {
-  return isColumnRef(value) ? ref(value.$col) : quote(value);
+function valueSql(value: unknown, qualify = false): string {
+  return isColumnRef(value) ? ref(value.$col, qualify) : quote(value);
 }
 
 // Escape a value for embedding INSIDE a single-quoted SQL LIKE pattern
@@ -126,19 +132,34 @@ function joinKeyRefs(joins: JoinAst[]): string[] {
   return out;
 }
 
-function aggExpr(spec: { aggregate?: string; column_ref?: string; aggregate_param?: number | null }): string {
+// The SELECT-list projection for one BARE merge key when the query has joins.
+// A bare own-column key (`{{col}}`) is ambiguous in a joined SELECT, so qualify
+// the SOURCE to the input view while ALIASING back to the bare name that
+// `merge_columns` joins on: `{{input_view}}.{{col}} AS {{col}}`. A joined-table
+// (dotted) key is already qualified — returned as-is. Mirrors
+// `_select_key_projection` in `backend/lowcode_compile.py`.
+function selectKeyProjection(bareKey: string): string {
+  const m = /^\{\{(.+?)\}\}$/.exec(bareKey);
+  if (m && !m[1].includes(".")) return `{{input_view}}.${bareKey} AS ${bareKey}`;
+  return bareKey;
+}
+
+function aggExpr(
+  spec: { aggregate?: string; column_ref?: string; aggregate_param?: number | null },
+  qualify = false,
+): string {
   const agg = spec.aggregate;
   const col = spec.column_ref;
   if (!agg || !(agg in AGG_SQL)) return "";
   if (!col) return "";
-  return AGG_SQL[agg](ref(col), spec.aggregate_param);
+  return AGG_SQL[agg](ref(col, qualify), spec.aggregate_param);
 }
 
-function rowSql(left: string, operator: string, value: unknown): string {
+function rowSql(left: string, operator: string, value: unknown, qualify = false): string {
   const op = operator;
-  if (["=", "!=", "<", "<=", ">", ">="].includes(op)) return `${left} ${op} ${valueSql(value)}`;
-  if (op === "equals") return `${left} = ${valueSql(value)}`;
-  if (op === "not equals") return `${left} != ${valueSql(value)}`;
+  if (["=", "!=", "<", "<=", ">", ">="].includes(op)) return `${left} ${op} ${valueSql(value, qualify)}`;
+  if (op === "equals") return `${left} = ${valueSql(value, qualify)}`;
+  if (op === "not equals") return `${left} != ${valueSql(value, qualify)}`;
   if (op === "contains") return `${left} LIKE '%${likeLiteral(value)}%'`;
   if (op === "does not contain") return `${left} NOT LIKE '%${likeLiteral(value)}%'`;
   if (op === "starts with") return `${left} LIKE '${likeLiteral(value)}%'`;
@@ -146,18 +167,19 @@ function rowSql(left: string, operator: string, value: unknown): string {
   if (op === "matches regex") return `${left} RLIKE ${quote(value)}`;
   if (op === "between") {
     const [lo, hi] = Array.isArray(value) ? (value as unknown[]) : [null, null];
-    return `${left} BETWEEN ${valueSql(lo)} AND ${valueSql(hi)}`;
+    return `${left} BETWEEN ${valueSql(lo, qualify)} AND ${valueSql(hi, qualify)}`;
   }
-  if (op === "in") return `${left} IN (${((value as unknown[]) ?? []).map(valueSql).join(", ")})`;
-  if (op === "not in") return `${left} NOT IN (${((value as unknown[]) ?? []).map(valueSql).join(", ")})`;
+  if (op === "in") return `${left} IN (${((value as unknown[]) ?? []).map((v) => valueSql(v, qualify)).join(", ")})`;
+  if (op === "not in")
+    return `${left} NOT IN (${((value as unknown[]) ?? []).map((v) => valueSql(v, qualify)).join(", ")})`;
   if (op === "is null") return `${left} IS NULL`;
   if (op === "is not null") return `${left} IS NOT NULL`;
   if (op === "is true") return `${left} = TRUE`;
   if (op === "is false") return `${left} = FALSE`;
-  if (op === "before") return `${left} < ${valueSql(value)}`;
-  if (op === "after") return `${left} > ${valueSql(value)}`;
-  if (op === "on or before") return `${left} <= ${valueSql(value)}`;
-  if (op === "on or after") return `${left} >= ${valueSql(value)}`;
+  if (op === "before") return `${left} < ${valueSql(value, qualify)}`;
+  if (op === "after") return `${left} > ${valueSql(value, qualify)}`;
+  if (op === "on or before") return `${left} <= ${valueSql(value, qualify)}`;
+  if (op === "on or after") return `${left} >= ${valueSql(value, qualify)}`;
   if (op === "is in last") {
     const obj = (value && typeof value === "object" ? value : {}) as { number?: number; unit?: string };
     return `${left} >= current_timestamp() - INTERVAL '${obj.number ?? 0} ${obj.unit ?? "days"}'`;
@@ -176,7 +198,7 @@ function rowSql(left: string, operator: string, value: unknown): string {
   if (op === "is shorter than") return `length(${left}) < ${quote(value)}`;
   if (op === "length between") {
     const [lo, hi] = Array.isArray(value) ? (value as unknown[]) : [null, null];
-    return `length(${left}) BETWEEN ${valueSql(lo)} AND ${valueSql(hi)}`;
+    return `length(${left}) BETWEEN ${valueSql(lo, qualify)} AND ${valueSql(hi, qualify)}`;
   }
   if (op === "is not empty") return `length(trim(${left})) > 0`;
   if (op === "is empty") return `length(trim(${left})) = 0`;
@@ -218,18 +240,18 @@ function rowSql(left: string, operator: string, value: unknown): string {
   return "";
 }
 
-function compileRow(row: AnyRow): string {
+function compileRow(row: AnyRow, qualify = false): string {
   if (row.kind === "row") {
     if (!row.column_ref) return "";
-    return rowSql(ref(row.column_ref), row.operator, row.value);
+    return rowSql(ref(row.column_ref, qualify), row.operator, row.value, qualify);
   }
-  const left = aggExpr(row);
+  const left = aggExpr(row, qualify);
   if (!left) return "";
   const op = row.operator;
   if (["=", "!=", "<", "<=", ">", ">="].includes(op)) {
     const right =
       row.value && typeof row.value === "object" && "aggregate" in (row.value as Record<string, unknown>)
-        ? aggExpr(row.value as { aggregate?: string; column_ref?: string })
+        ? aggExpr(row.value as { aggregate?: string; column_ref?: string }, qualify)
         : quote(row.value);
     return `${left} ${op} ${right}`;
   }
@@ -244,11 +266,11 @@ function compileRow(row: AnyRow): string {
 
 /** Compile the row stack into a single boolean WHERE/HAVING expression (the
  *  "pass" condition — IF this holds THEN the row passes, by default). */
-export function compileAstToSql(ast: LowcodeAstV2): string {
+export function compileAstToSql(ast: LowcodeAstV2, qualify = false): string {
   if (!ast.rows?.length) return "";
   const parts: string[] = [];
   ast.rows.forEach((row, i) => {
-    const frag = compileRow(row);
+    const frag = compileRow(row, qualify);
     if (!frag) return;
     if (i === 0) parts.push(frag);
     else parts.push(`${row.combinator ?? "AND"} ${frag}`);
@@ -256,8 +278,15 @@ export function compileAstToSql(ast: LowcodeAstV2): string {
   return parts.join(" ");
 }
 
-/** Compile the joins into a `LEFT JOIN … ON …` FROM-clause fragment. */
-export function compileJoinsToSql(joins: JoinAst[]): string {
+/** Compile the joins into a `LEFT JOIN … ON …` FROM-clause fragment.
+ *
+ *  `qualifyOwnKeys` (default true, set by the low-code {@link compileLowcodeBody})
+ *  qualifies the own side of each ON condition to the input view so it is
+ *  unambiguous against a joined table sharing the key name. {@link buildSqlBody}
+ *  (the raw-SQL editor path) passes false: there the author owns their SQL text
+ *  and the ON own-side stays a bare `{{slot}}`, matching the predicate they typed.
+ */
+export function compileJoinsToSql(joins: JoinAst[], qualifyOwnKeys = true): string {
   if (!joins?.length) return "";
   const typeSql: Record<string, string> = {
     INNER: "INNER JOIN",
@@ -273,9 +302,12 @@ export function compileJoinsToSql(joins: JoinAst[]): string {
     .map((j) => {
       const head = `${typeSql[j.join_type] ?? "INNER JOIN"} ${j.target_table}`;
       if (j.join_type === "CROSS") return head;
+      // Own side of the ON condition is qualified to the input view (query text,
+      // join context) — the joined side is already table-qualified. The raw-SQL
+      // path opts out (qualifyOwnKeys=false) to keep the author's bare {{slot}}.
       const conds = j.keys
         .filter((k) => k.joined_column && k.column_ref)
-        .map((k) => `${j.target_table}.${k.joined_column} = ${ref(k.column_ref)}`);
+        .map((k) => `${j.target_table}.${k.joined_column} = ${ref(k.column_ref, qualifyOwnKeys)}`);
       return `${head} ON ${conds.join(" AND ")}`;
     })
     .join(" ");
@@ -423,8 +455,11 @@ export function lowcodeHasAdvancedShape(ast: LowcodeAstV2, groupBy: string): boo
 }
 
 export function compileLowcodeBody(ast: LowcodeAstV2, groupBy: string): CompiledLowcodeBody {
-  const predicate = compileAstToSql(ast);
   const joinsSql = compileJoinsToSql(ast.joins);
+  const hasJoins = Boolean(joinsSql);
+  // Own-table columns in the PREDICATE are qualified to the input view only when
+  // the rule has joins; merge_columns / GROUP BY stay bare (see below).
+  const predicate = compileAstToSql(ast, hasJoins);
   const gbColumns = splitTopLevelCommas(groupBy ?? "");
 
   if (!joinsSql && gbColumns.length === 0) {
@@ -435,19 +470,26 @@ export function compileLowcodeBody(ast: LowcodeAstV2, groupBy: string): Compiled
   const from = `{{input_view}}${joinsSql ? ` ${joinsSql}` : ""}`;
 
   if (gbColumns.length > 0) {
+    // GROUP BY / merge_columns stay BARE. When joins are present the SELECT
+    // projection qualifies the source and aliases back to the bare name so the
+    // projected/grouped column is an unambiguous bare identifier.
+    const selectList = hasJoins ? gbColumns.map(selectKeyProjection).join(", ") : gbColumns.join(", ");
     const gbList = gbColumns.join(", ");
     return {
-      sql_query: `SELECT ${gbList}, (${failCond}) AS condition FROM ${from} GROUP BY ${gbList}`,
+      sql_query: `SELECT ${selectList}, (${failCond}) AS condition FROM ${from} GROUP BY ${gbList}`,
       merge_columns: gbColumns,
     };
   }
 
   // Joins only: run row-level, merging the per-row result back on the
   // input-side join keys (the only columns present on the input table).
+  // merge_columns stay BARE (see joinKeyRefs); the SELECT projection qualifies
+  // each own key to the input view and aliases it back to the bare name.
   const keyRefs = joinKeyRefs(ast.joins);
   if (keyRefs.length > 0) {
+    const selectList = keyRefs.map(selectKeyProjection).join(", ");
     return {
-      sql_query: `SELECT ${keyRefs.join(", ")}, (${failCond}) AS condition FROM ${from}`,
+      sql_query: `SELECT ${selectList}, (${failCond}) AS condition FROM ${from}`,
       merge_columns: keyRefs,
     };
   }
@@ -495,7 +537,9 @@ export function buildSqlBody(params: {
   sqlQueryPassthrough?: { merge_columns?: string[] } | null;
 }): CompiledLowcodeBody {
   const { sqlPredicate, sqlJoins, sqlQueryPassthrough } = params;
-  const joinsSql = compileJoinsToSql(sqlJoins);
+  // Raw-SQL editor path: the author owns the predicate text, so keep the ON
+  // own-side bare (don't qualify) — the predicate they wrote uses bare {{slot}}s.
+  const joinsSql = compileJoinsToSql(sqlJoins, false);
   const pred = sqlPredicate.trim();
   if (joinsSql) {
     const failCond = `NOT (${pred})`;

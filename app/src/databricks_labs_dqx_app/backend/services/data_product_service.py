@@ -55,6 +55,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RunSetTrigger,
     ScheduleKind,
 )
+from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
 from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer
@@ -62,6 +63,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
     MonitoredTableSummary,
 )
+from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.score_cache_service import CachedScore, parse_cached_score
@@ -203,8 +205,10 @@ class DataProductService:
         version_service: MonitoredTableVersionService,
         app_settings: AppSettingsService,
         materializer: Materializer,
+        permissions: PermissionsService | None = None,
     ) -> None:
         self._sql = sql
+        self._perms = permissions
         self._monitored_tables = monitored_tables
         self._run_set_service = run_set_service
         self._binding_run_service = binding_run_service
@@ -313,6 +317,13 @@ class DataProductService:
             f"{self._opt_str(product.schedule_kind)}, "
             f"'{product.status}', 0, {self._opt_str(created_by)}, now(), {self._opt_str(created_by)}, now())"
         )
+        if self._perms is not None:
+            self._perms.seed_default_grants(
+                ObjectType.DATA_PRODUCT.value,
+                product.product_id,
+                owner_email=created_by,
+                grantor=created_by,
+            )
         logger.info("Created data product %s (product_id=%s)", name, product.product_id)
         return product
 
@@ -833,7 +844,13 @@ class DataProductService:
             snapshot = pinned_counts.get((summary.table.binding_id, pinned_version))
             if snapshot is not None:
                 return snapshot
-        checks_count = live_check_counts.get(summary.table.binding_id, summary.check_count)
+        rendered = live_check_counts.get(summary.table.binding_id)
+        if rendered is not None:
+            checks_count = rendered
+        elif summary.applied_check_count is not None:
+            checks_count = summary.applied_check_count
+        else:
+            checks_count = summary.check_count
         return summary.applied_rule_count, checks_count
 
     def _pinned_snapshot_counts(self, member_rows: list[_MemberRow]) -> dict[tuple[str, int], tuple[int, int]]:
@@ -876,6 +893,12 @@ class DataProductService:
                 continue
             summary = table_map.get(row.binding_id)
             if summary is None:
+                continue
+            # Approved bindings (version > 0) read their frozen snapshot count from
+            # the summary (applied_check_count) — no render. Only never-approved
+            # drafts (version == 0) need a live render (item 44). Mirrors the Tables
+            # overview's _apply_snapshot_check_counts split.
+            if summary.table.version > 0:
                 continue
             seen.add(row.binding_id)
             live_bindings.append((row.binding_id, summary.table.table_fqn))

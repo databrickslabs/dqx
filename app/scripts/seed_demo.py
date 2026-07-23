@@ -288,7 +288,7 @@ def main() -> int:
         settings_service=app_settings,
         runs_table=sp_sql.fqn("dq_validation_runs"),
     )
-    score_cache = ScoreCacheService(oltp=oltp, warehouse_sql=sp_sql)
+    score_cache = ScoreCacheService(oltp=oltp, warehouse_sql=sp_sql, genie_schema=conf.genie_schema_name)
     status = DemoStatusStore(app_settings)
     reset_service: DatabaseResetService | None = DatabaseResetService(delta_sql=sp_sql, oltp_sql=oltp)
 

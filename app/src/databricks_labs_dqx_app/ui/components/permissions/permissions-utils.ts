@@ -7,6 +7,7 @@
 export const PRIV_SELECT = "SELECT";
 export const PRIV_MODIFY = "MODIFY";
 export const PRIV_APPLY = "APPLY";
+export const PRIV_EXECUTE = "EXECUTE";
 export const PRIV_ALL = "ALL_PRIVILEGES";
 
 /** Minimal shape needed to detect the synthetic default rows (users-group and
@@ -49,7 +50,21 @@ export function initialGrantInherit(
 
 export function isAllPrivileges(privileges: string[]): boolean {
   if (privileges.includes(PRIV_ALL)) return true;
-  return [PRIV_SELECT, PRIV_MODIFY, PRIV_APPLY].every((p) => privileges.includes(p));
+  return [PRIV_SELECT, PRIV_MODIFY, PRIV_APPLY, PRIV_EXECUTE].every((p) => privileges.includes(p));
+}
+
+export interface GrantDraftPrivs {
+  view: boolean;
+  modify: boolean;
+  apply: boolean;
+  execute: boolean;
+}
+
+/** When any of modify/apply/execute is set, SELECT (view) must be on:
+ *  you can't act on what you can't see. Returns the draft with view forced. */
+export function forceSelectWhenOthers<T extends GrantDraftPrivs>(draft: T): T {
+  const others = draft.modify || draft.apply || draft.execute;
+  return others ? { ...draft, view: true } : draft;
 }
 
 // Privilege tags render as the canonical Unity-Catalog-style grant keyword
@@ -59,14 +74,14 @@ export function privilegeTagLabel(p: string): string {
 }
 
 /**
- * Column count for the empty-grants placeholder row. Registry rules omit
- * the "Inheritance" column (there's nothing beneath a rule to inherit a
- * grant to — see `PermissionsTab`'s module doc), so their base column count
- * is one narrower than tables/table spaces. An extra column is added when
- * the viewer can manage grants (the trailing actions column).
+ * Column count for the empty-grants placeholder row. The "Inheritance"
+ * column has been removed from the table for all object types, so the base
+ * column count is now 3 (Principal · Privileges · Granted by) regardless of
+ * object type. An extra column is added when the viewer can manage grants
+ * (the trailing actions column).
  */
-export function grantsEmptyColSpan(isRule: boolean, canManage: boolean): number {
-  return (isRule ? 3 : 4) + (canManage ? 1 : 0);
+export function grantsEmptyColSpan(_isRule: boolean, canManage: boolean): number {
+  return 3 + (canManage ? 1 : 0);
 }
 
 /**

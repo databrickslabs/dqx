@@ -43,7 +43,7 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
 @pytest.fixture
 def svc(sql_executor_mock) -> ScoreViewService:
     sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
-    return ScoreViewService(sql=sql_executor_mock)
+    return ScoreViewService(sql=sql_executor_mock, genie_schema="genie")
 
 
 def _yaml_body(metric_ddl: str) -> dict:
@@ -84,7 +84,9 @@ class TestAttributionViewDdl:
 
     def test_targets_attribution_view_and_reads_validation_runs(self, svc):
         ddl = svc.attribution_view_ddl()
-        assert f"`dqx_test`.`dqx_app_test`.{ATTRIBUTION_VIEW_NAME}" in ddl
+        # View CREATE target resolves in the genie schema
+        assert f"`dqx_test`.`genie`.{ATTRIBUTION_VIEW_NAME}" in ddl
+        # Base table stays in the main schema
         assert "`dqx_test`.`dqx_app_test`.dq_validation_runs" in ddl
 
     def test_is_a_single_statement(self, svc):
@@ -166,7 +168,9 @@ class TestShapingViewDdl:
 
     def test_targets_shaping_view_and_reads_dq_metrics(self, svc):
         ddl = svc.shaping_view_ddl()
-        assert f"`dqx_test`.`dqx_app_test`.{SHAPING_VIEW_NAME}" in ddl
+        # View CREATE target resolves in the genie schema
+        assert f"`dqx_test`.`genie`.{SHAPING_VIEW_NAME}" in ddl
+        # Base table stays in the main schema
         assert "`dqx_test`.`dqx_app_test`.dq_metrics" in ddl
 
     def test_explodes_check_metrics_json(self, svc):
@@ -191,15 +195,16 @@ class TestShapingViewDdl:
     def test_quotes_hyphenated_catalog(self, sql_executor_mock):
         sql_executor_mock.catalog = "prod-east"
         sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
-        ddl = ScoreViewService(sql=sql_executor_mock).shaping_view_ddl()
+        ddl = ScoreViewService(sql=sql_executor_mock, genie_schema="genie").shaping_view_ddl()
         assert "`prod-east`" in ddl
         assert " prod-east." not in ddl
 
     def test_left_joins_as_of_run_attribution(self, svc):
         # LEFT (not INNER): a legacy run with NULL checks_json still keeps
         # its check rows — they land in the untagged (NULL) bucket.
+        # The attribution view is a derived view — resolves in the genie schema.
         ddl = svc.shaping_view_ddl()
-        assert f"LEFT JOIN `dqx_test`.`dqx_app_test`.{ATTRIBUTION_VIEW_NAME} a" in ddl
+        assert f"LEFT JOIN `dqx_test`.`genie`.{ATTRIBUTION_VIEW_NAME} a" in ddl
         assert "ON a.run_id = e.run_id" in ddl
         assert "AND a.source_table_fqn = e.input_location" in ddl
         assert "AND a.check_name = e.check_name" in ddl
@@ -259,9 +264,11 @@ class TestAsofViewDdl:
         assert svc.asof_view_ddl().startswith("CREATE OR REPLACE VIEW ")
 
     def test_targets_asof_view_and_reads_the_shaping_view(self, svc):
+        # Both the as-of view and the shaping view it sources are derived views
+        # — both resolve in the genie schema.
         ddl = svc.asof_view_ddl()
-        assert f"`dqx_test`.`dqx_app_test`.{ASOF_VIEW_NAME}" in ddl
-        assert f"`dqx_test`.`dqx_app_test`.{SHAPING_VIEW_NAME}" in ddl
+        assert f"`dqx_test`.`genie`.{ASOF_VIEW_NAME}" in ddl
+        assert f"`dqx_test`.`genie`.{SHAPING_VIEW_NAME}" in ddl
 
     def test_is_a_single_statement(self, svc):
         assert ";" not in svc.asof_view_ddl()
@@ -328,15 +335,16 @@ class TestAsofViewDdl:
         sql_executor_mock.catalog = "prod-east"
         sql_executor_mock.schema = "dqx-studio"
         sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
-        ddl = ScoreViewService(sql=sql_executor_mock).asof_view_ddl()
-        assert f"`prod-east`.`dqx-studio`.{ASOF_VIEW_NAME}" in ddl
+        ddl = ScoreViewService(sql=sql_executor_mock, genie_schema="genie").asof_view_ddl()
+        assert f"`prod-east`.`genie`.{ASOF_VIEW_NAME}" in ddl
 
 
 class TestMetricViewDdl:
     def test_is_idempotent_create_or_replace_with_metrics_yaml(self, svc):
         ddl = svc.metric_view_ddl()
         assert ddl.startswith("CREATE OR REPLACE VIEW ")
-        assert f"`dqx_test`.`dqx_app_test`.{METRIC_VIEW_NAME}" in ddl
+        # Metric view (a derived view) resolves in the genie schema
+        assert f"`dqx_test`.`genie`.{METRIC_VIEW_NAME}" in ddl
         assert "WITH METRICS" in ddl
         assert "LANGUAGE YAML" in ddl
 
@@ -346,7 +354,8 @@ class TestMetricViewDdl:
     def test_yaml_body_parses_and_sources_the_shaping_view(self, svc):
         body = _yaml_body(svc.metric_view_ddl())
         assert str(body["version"]) == "1.1"
-        assert body["source"] == f"`dqx_test`.`dqx_app_test`.{SHAPING_VIEW_NAME}"
+        # The shaping view is a derived view — resolves in the genie schema
+        assert body["source"] == f"`dqx_test`.`genie`.{SHAPING_VIEW_NAME}"
 
     def test_yaml_dimensions(self, svc):
         body = _yaml_body(svc.metric_view_ddl())
@@ -427,13 +436,18 @@ class TestEnsureViews:
 
 
 class TestStartupWiring:
-    """``backend.app._ensure_score_views`` — the lifespan step that owns the DDL."""
+    """``ScoreViewService.ensure_views`` — creates all four views in dependency order.
+
+    NOTE: ``backend.app._ensure_score_views`` wires up the ``genie_schema``
+    argument; that caller update is a separate follow-on task.  These tests
+    exercise ``ScoreViewService`` directly so they remain valid regardless of
+    the app-level wiring state.
+    """
 
     def test_creates_all_four_views(self, sql_executor_mock):
-        from databricks_labs_dqx_app.backend.app import _ensure_score_views
-
         sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
-        _ensure_score_views(sql_executor_mock)
+        svc = ScoreViewService(sql=sql_executor_mock, genie_schema="genie")
+        svc.ensure_views()
         executed = [call.args[0] for call in sql_executor_mock.execute.call_args_list]
         assert len(executed) == 4
         assert ATTRIBUTION_VIEW_NAME in executed[0]
@@ -441,12 +455,16 @@ class TestStartupWiring:
         assert ASOF_VIEW_NAME in executed[2]
         assert METRIC_VIEW_NAME in executed[3]
 
-    def test_is_best_effort_and_never_raises(self, sql_executor_mock):
-        from databricks_labs_dqx_app.backend.app import _ensure_score_views
-
+    def test_ensure_views_propagates_executor_errors(self, sql_executor_mock):
+        # ScoreViewService.ensure_views() propagates exceptions — the docstring
+        # documents this explicitly ("Raises on failure").  The best-effort
+        # swallowing lives in the app-level _ensure_score_views wrapper
+        # (app.py), not here.  Callers must wrap it in try/except themselves.
         sql_executor_mock.q.side_effect = lambda ident: "`" + ident.replace("`", "``") + "`"
         sql_executor_mock.execute.side_effect = RuntimeError("warehouse cannot create metric views")
-        _ensure_score_views(sql_executor_mock)  # must not propagate
+        svc = ScoreViewService(sql=sql_executor_mock, genie_schema="genie")
+        with pytest.raises(RuntimeError, match="warehouse cannot create metric views"):
+            svc.ensure_views()
 
 
 # ---------------------------------------------------------------------------
@@ -649,3 +667,22 @@ class TestChecksJsonAttributionContract:
         assert extracted["dimension"] is None
         assert extracted["registry_rule_id"] is None
         assert extracted["columns"] is None
+
+
+def test_view_names_use_genie_schema_but_base_tables_use_main():
+    from unittest.mock import create_autospec
+
+    from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+
+    sql = create_autospec(SqlExecutor, instance=True)
+    sql.catalog = "dqx"
+    sql.schema = "dqx_studio"
+    sql.q = lambda s: f"`{s}`"
+    svc = ScoreViewService(sql=sql, genie_schema="genie")
+    # View names resolve in the genie schema (three-part: catalog.genie_schema.view)
+    assert "`dqx`.`genie`.mv_dq_scores" in svc.metric_view_fqn_quoted
+    assert "`dqx`.`genie`.v_dq_check_attribution" in svc.attribution_view_fqn_quoted
+    # Attribution DDL: view CREATE target in genie, base table read from main schema
+    ddl = svc.attribution_view_ddl()
+    assert "`dqx`.`genie`.v_dq_check_attribution" in ddl
+    assert "`dqx`.`dqx_studio`.dq_validation_runs" in ddl

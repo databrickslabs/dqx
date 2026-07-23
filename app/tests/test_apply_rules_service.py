@@ -243,6 +243,65 @@ class TestApplyRule:
 
 
 # ---------------------------------------------------------------------------
+# build_applied_rule (in-memory construction, no persistence — profiler staging)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildAppliedRule:
+    """build_applied_rule returns a valid AppliedRule WITHOUT inserting to the DB."""
+
+    def test_returns_applied_rule_without_inserting(self, svc, sql, registry):
+        registry.get_rule.return_value = _published_rule()
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists (from _validate_applicable_rule)
+        ]
+        applied = svc.build_applied_rule("b1", "r1", [{"column": "customer_id"}], "alice@x")
+
+        assert applied.binding_id == "b1"
+        assert applied.rule_id == "r1"
+        assert applied.column_mapping == [{"column": "customer_id"}]
+        assert applied.mapping_hash
+        assert applied.id is not None
+        assert applied.created_at is not None
+        # Critical: no DB insert must happen
+        sql.execute.assert_not_called()
+
+    def test_apply_rule_still_inserts(self, svc, sql, registry):
+        """Regression: apply_rule's persist behavior is unchanged after extracting build_applied_rule."""
+        registry.get_rule.return_value = _published_rule()
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists
+            [],  # no existing application with this natural key
+        ]
+        applied = svc.apply_rule("b1", "r1", [{"column": "customer_id"}], "alice@x")
+
+        assert applied.binding_id == "b1"
+        assert applied.rule_id == "r1"
+        # Must have issued an INSERT
+        insert_sql = sql.execute.call_args[0][0]
+        assert "INSERT INTO dqx_test.dqx_app_test.dq_applied_rules" in insert_sql
+
+    def test_build_resolves_pinned_version_via_auto_upgrade(self, svc, sql, registry, app_settings):
+        app_settings.get_default_auto_upgrade.return_value = False
+        registry.get_rule.return_value = _published_rule()  # version=1
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists
+        ]
+        applied = svc.build_applied_rule("b1", "r1", [{"column": "customer_id"}], "alice@x", pinned_version=None)
+        assert applied.pinned_version == 1
+        sql.execute.assert_not_called()
+
+    def test_build_rejects_unpublished_rule(self, svc, sql, registry):
+        sql.query.return_value = [["b1"]]
+        draft_rule = _published_rule()
+        draft_rule.status = "draft"
+        registry.get_rule.return_value = draft_rule
+        with pytest.raises(RuleNotPublishedError):
+            svc.build_applied_rule("b1", "r1", [{"column": "customer_id"}], "alice@x")
+        sql.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # attach_auto_mapping (apply-on-tag reconcile — add-only, origin-stamped)
 # ---------------------------------------------------------------------------
 

@@ -35,21 +35,41 @@ class TestPermissionMap:
     def test_admin_has_every_other_roles_perms(self):
         admin_perms = set(PERMISSIONS[UserRole.ADMIN])
         for role, perms in PERMISSIONS.items():
-            if role in (UserRole.ADMIN, UserRole.RUNNER):
+            if role == UserRole.ADMIN:
                 continue
             assert set(perms).issubset(admin_perms), f"Admin missing perms from {role}: {set(perms) - admin_perms}"
 
     def test_admin_includes_run_rules(self):
-        # Admins are implicit runners (per the docstring + UI gating).
+        # Admins can always run rules.
         assert "run_rules" in PERMISSIONS[UserRole.ADMIN]
 
-    def test_runner_carries_only_run_rules(self):
-        # The orthogonality contract: a RUNNER-only mapping does not grant
-        # any non-run permission.
-        assert PERMISSIONS[UserRole.RUNNER] == ["run_rules"]
+    def test_no_runner_role(self):
+        # RUNNER is removed — the enum must not have a RUNNER member.
+        assert not hasattr(UserRole, "RUNNER")
 
     def test_viewer_is_read_only(self):
         assert PERMISSIONS[UserRole.VIEWER] == ["view_rules"]
+
+    # A1: new matrix assertions -------------------------------------------
+
+    def test_author_has_run_rules(self):
+        assert "run_rules" in get_permissions_for_role(UserRole.RULE_AUTHOR)
+
+    def test_approver_cannot_author_or_run(self):
+        p = get_permissions_for_role(UserRole.RULE_APPROVER)
+        assert "run_rules" not in p
+        assert "create_rules" not in p
+        assert "edit_rules" not in p
+        assert "submit_rules" not in p
+
+    def test_approver_can_approve_and_export(self):
+        p = get_permissions_for_role(UserRole.RULE_APPROVER)
+        assert "approve_rules" in p
+        assert "export_rules" in p
+        assert "configure_storage" in p
+
+    def test_viewer_only_views(self):
+        assert get_permissions_for_role(UserRole.VIEWER) == ["view_rules"]
 
     def test_author_can_write_but_not_approve(self):
         author = set(PERMISSIONS[UserRole.RULE_AUTHOR])
@@ -63,11 +83,6 @@ class TestPermissionMap:
         approver = set(PERMISSIONS[UserRole.RULE_APPROVER])
         assert "approve_rules" in approver
         assert "manage_roles" not in approver
-
-    def test_runner_not_in_role_priority_hierarchy(self):
-        # The whole point of RUNNER being orthogonal: it must never bleed
-        # into the primary-role priority comparison.
-        assert UserRole.RUNNER not in ROLE_PRIORITY
 
     def test_role_priority_ascending_admin_last(self):
         # Stronger roles should come later in the priority list, since the

@@ -5,12 +5,11 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
     get_obo_ws,
     get_schedule_config_service,
     require_role,
-    require_runner,
 )
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
@@ -24,11 +23,9 @@ router = APIRouter()
 
 _ADMINS = [UserRole.ADMIN]
 
-# Schedule listing/reading is gated on the orthogonal runner role rather
-# than on the primary-role hierarchy: the schedules tab lives inside the
-# Run Rules page, which only runners (admins implicitly, others by
-# explicit RUNNER mapping) are allowed to see. Mutation endpoints stay
-# admin-only.
+# Schedule listing/reading is gated on CAN_RUN_ROLES: the schedules tab
+# lives inside the Run Rules page, which only ADMIN and RULE_AUTHOR may
+# see. Mutation endpoints stay admin-only.
 
 
 def _notify_scheduler() -> None:
@@ -44,7 +41,7 @@ def _notify_scheduler() -> None:
     "",
     response_model=list[ScheduleConfigOut],
     operation_id="listSchedules",
-    dependencies=[require_runner()],
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def list_schedules(
     svc: Annotated[ScheduleConfigService, Depends(get_schedule_config_service)],
@@ -73,7 +70,7 @@ def list_schedules(
     "/{name}",
     response_model=ScheduleConfigOut,
     operation_id="getSchedule",
-    dependencies=[require_runner()],
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def get_schedule(
     name: str,
@@ -152,7 +149,7 @@ def delete_schedule(
     "/{name}/history",
     response_model=list[ScheduleConfigHistoryOut],
     operation_id="getScheduleHistory",
-    dependencies=[require_runner()],
+    dependencies=[require_role(*CAN_RUN_ROLES)],
 )
 def get_schedule_history(
     name: str,

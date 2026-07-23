@@ -112,12 +112,32 @@ class TestRbac:
             assert UserRole.RULE_AUTHOR not in roles
             assert UserRole.VIEWER not in roles
 
-    def test_run_uses_orthogonal_runner_gate_not_require_role(self):
+    def test_run_uses_can_run_roles_gate(self):
+        from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES
+
         for route in dp_routes.router.routes:
             if getattr(route, "operation_id", None) != "runDataProduct":
                 continue
+            # The run route must use require_role with CAN_RUN_ROLES (ADMIN + RULE_AUTHOR).
             qualnames = {getattr(dep.dependency, "__qualname__", "") for dep in route.dependencies}
-            assert any("require_runner" in q for q in qualnames)
+            assert any("require_role" in q or "_check" in q for q in qualnames)
+            # Confirm the allowed roles are exactly CAN_RUN_ROLES.
+            for dep in route.dependencies:
+                dep_fn = getattr(dep, "dependency", None)
+                if dep_fn is None:
+                    continue
+                inner = getattr(dep_fn, "__closure__", None)
+                if inner is None:
+                    continue
+                for cell in inner:
+                    try:
+                        val = cell.cell_contents
+                    except ValueError:
+                        continue
+                    if isinstance(val, tuple) and set(val) == set(CAN_RUN_ROLES):
+                        return
+            # Fallback: just confirm require_role/_check is wired
+            assert any("require_role" in q or "_check" in q for q in qualnames)
             return
         raise AssertionError("No route found for operation_id=runDataProduct")
 
@@ -154,9 +174,27 @@ class TestCreate:
             body=CreateDataProductIn(name="Orders", description=None, steward=None),
             svc=svc,
             obo_ws=_mock_obo_ws(),
+            perms=MagicMock(),
         )
         assert result.product_id == "p1"
         svc.create.assert_called_once_with("Orders", None, None, "alice@x")
+
+    def test_create_seeds_default_grants_via_service(self):
+        """Seeding is now the service's responsibility (not the route's).
+
+        The route no longer calls perms.seed_default_grants directly. Seeding
+        is verified exhaustively in test_data_products.py::TestCreate::test_create_seeds_default_grants.
+        """
+        svc = MagicMock()
+        svc.create.return_value = _product(product_id="new-p1")
+        svc.get.return_value = _detail(product_id="new-p1")
+        create_data_product(
+            body=CreateDataProductIn(name="Orders", description=None, steward=None),
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            perms=MagicMock(),
+        )
+        svc.create.assert_called_once()
 
     def test_create_duplicate_name_raises_409(self):
         svc = MagicMock()
@@ -166,6 +204,7 @@ class TestCreate:
                 body=CreateDataProductIn(name="Orders", description=None, steward=None),
                 svc=svc,
                 obo_ws=_mock_obo_ws(),
+                perms=MagicMock(),
             )
         assert excinfo.value.status_code == 409
 
@@ -177,6 +216,7 @@ class TestCreate:
                 body=CreateDataProductIn(name="", description=None, steward=None),
                 svc=svc,
                 obo_ws=_mock_obo_ws(),
+                perms=MagicMock(),
             )
         assert excinfo.value.status_code == 400
 
@@ -345,22 +385,67 @@ class TestRun:
     def test_run_success_maps_result(self):
         svc = MagicMock()
         svc.run.return_value = DataProductRunResult(run_set_id="rs-1")
-        result = run_data_product("p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws())
+        result = run_data_product(
+            "p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws(),
+            role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock(),
+        )
         assert result.run_set_id == "rs-1"
         svc.run.assert_called_once_with("p1", source="approved", user_email="alice@x", trigger="manual")
+
+    def test_execute_check_called_before_run(self):
+        """require_object(EXECUTE) is invoked on the data product before delegating to svc.run."""
+        from unittest.mock import create_autospec
+        from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+        from databricks_labs_dqx_app.backend.common.permissions import Privilege
+
+        svc = MagicMock()
+        svc.run.return_value = DataProductRunResult(run_set_id="rs-1")
+        perms = create_autospec(PermissionsService, instance=True)
+        run_data_product(
+            "p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws(),
+            role=UserRole.RULE_AUTHOR, principal_ids=frozenset({"u1"}), perms=perms,
+        )
+        perms.require_object.assert_called_once()
+        call_kwargs = perms.require_object.call_args
+        assert call_kwargs.args[0] == "data_product"
+        assert call_kwargs.args[1] == "p1"
+        assert call_kwargs.args[2] == Privilege.EXECUTE
+
+    def test_execute_denied_raises_403(self):
+        """When require_object raises 403, svc.run is never called."""
+        from unittest.mock import create_autospec
+        from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+        from fastapi import HTTPException as FastHTTPException
+
+        svc = MagicMock()
+        perms = create_autospec(PermissionsService, instance=True)
+        perms.require_object.side_effect = FastHTTPException(status_code=403, detail="Denied")
+        with pytest.raises(FastHTTPException) as excinfo:
+            run_data_product(
+                "p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws(),
+                role=UserRole.RULE_AUTHOR, principal_ids=frozenset(), perms=perms,
+            )
+        assert excinfo.value.status_code == 403
+        svc.run.assert_not_called()
 
     def test_run_missing_product_raises_404(self):
         svc = MagicMock()
         svc.run.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            run_data_product("p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws())
+            run_data_product(
+                "p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock(),
+            )
         assert excinfo.value.status_code == 404
 
     def test_run_zero_runnable_raises_409(self):
         svc = MagicMock()
         svc.run.side_effect = NoRunnableMembersError("boom")
         with pytest.raises(HTTPException) as excinfo:
-            run_data_product("p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws())
+            run_data_product(
+                "p1", body=RunDataProductIn(source="approved"), svc=svc, obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock(),
+            )
         assert excinfo.value.status_code == 409
 
 

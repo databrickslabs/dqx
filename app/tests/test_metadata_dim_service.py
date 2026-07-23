@@ -32,8 +32,8 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
 )
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 
-DIM_RULES_FQN = "`dqx_test`.`dqx_app_test`.dim_dq_rules"
-DIM_TABLES_FQN = "`dqx_test`.`dqx_app_test`.dim_dq_monitored_tables"
+DIM_RULES_FQN = "`dqx_test`.`genie`.dim_dq_rules"
+DIM_TABLES_FQN = "`dqx_test`.`genie`.dim_dq_monitored_tables"
 
 _TS = datetime(2026, 7, 10, 12, 30, 45, tzinfo=timezone.utc)
 
@@ -87,7 +87,9 @@ def monitored_tables() -> object:
 
 @pytest.fixture
 def service(sql_executor_mock, registry, monitored_tables) -> MetadataDimService:
-    return MetadataDimService(sp_sql=sql_executor_mock, registry=registry, monitored_tables=monitored_tables)
+    return MetadataDimService(
+        sp_sql=sql_executor_mock, registry=registry, monitored_tables=monitored_tables, genie_schema="genie"
+    )
 
 
 def _executed(sql_executor_mock) -> list[str]:
@@ -274,6 +276,19 @@ class TestRefreshMonitoredTables:
         stmts = _executed(sql_executor_mock)
         assert any(DIM_TABLES_FQN in s and s.startswith("CREATE OR REPLACE TABLE") for s in stmts)
         assert not any(DIM_TABLES_FQN in s and s.startswith("INSERT INTO") for s in stmts)
+
+
+def test_dims_created_in_genie_schema(sql_executor_mock, registry, monitored_tables) -> None:
+    registry.list_rules.return_value = []
+    monitored_tables.list_monitored_tables.return_value = []
+    svc = MetadataDimService(
+        sp_sql=sql_executor_mock, registry=registry, monitored_tables=monitored_tables, genie_schema="genie"
+    )
+    svc.refresh()
+    created = " ".join(c.args[0] for c in sql_executor_mock.execute.call_args_list)
+    assert "`genie`" in created
+    assert "dim_dq_rules" in created and "dim_dq_monitored_tables" in created
+    assert "dqx_app_test" not in created  # dims fully moved; no main-schema ref in their DDL
 
 
 def test_refresh_propagates_execute_failures(service, sql_executor_mock, registry, monitored_tables) -> None:

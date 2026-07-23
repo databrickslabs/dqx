@@ -145,12 +145,22 @@ def _validate_run_id(run_id: str | None) -> None:
 
 
 def _app_object_fqn(app_conf: AppConfig, name: str) -> str:
-    """Backtick-quoted FQN of an app-schema object (*name* is a trusted constant)."""
+    """Backtick-quoted FQN of a main-schema object (*name* is a trusted constant).
+
+    Use this for base tables only (``dq_metrics``, ``dq_quarantine_records``, …).
+    For the seven derived Genie objects that live in the genie schema, use
+    :func:`_genie_object_fqn` instead.
+    """
     return quote_object_fqn(app_conf.catalog, app_conf.schema_name, name)
 
 
+def _genie_object_fqn(app_conf: AppConfig, name: str) -> str:
+    """Backtick-quoted FQN of a genie-schema derived object (*name* is a trusted constant)."""
+    return quote_object_fqn(app_conf.catalog, app_conf.genie_schema_name, name)
+
+
 def _shaping_view_fqn(app_conf: AppConfig) -> str:
-    return _app_object_fqn(app_conf, SHAPING_VIEW_NAME)
+    return _genie_object_fqn(app_conf, SHAPING_VIEW_NAME)
 
 
 def _is_valid_fqn(table_fqn: str, source: str) -> bool:
@@ -238,7 +248,7 @@ def _fetch_asof_check_rows(
     """
     if table_fqns is not None and not table_fqns:
         return []
-    view = _app_object_fqn(app_conf, ASOF_VIEW_NAME)
+    view = _genie_object_fqn(app_conf, ASOF_VIEW_NAME)
     conds = [f"include_drafts = {'true' if include_drafts else 'false'}"]
     if table_fqns is not None:
         conds.append(f"input_location IN ({_in_list(table_fqns)})")
@@ -630,7 +640,7 @@ def _runs_from_metric_view(
     if not table_fqns:
         return RunsOut()
     breaches = breach_by_run or {}
-    mv = metric_view_fqn(app_conf.catalog, app_conf.schema_name)
+    mv = metric_view_fqn(app_conf.catalog, app_conf.genie_schema_name)
     conds = [f"input_location IN ({_in_list(table_fqns)})"]
     if not include_drafts:
         conds.append(f"run_mode = '{RUN_MODE_PUBLISHED}'")

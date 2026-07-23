@@ -123,6 +123,18 @@ def test_asof_source_description_teaches_the_partition_discipline() -> None:
         assert phrase in desc, phrase
 
 
+def test_serialized_space_uses_genie_schema() -> None:
+    """build_serialized_space(catalog, genie_schema) puts all 7 derived objects
+    in the genie schema, not the main schema."""
+    blob = str(gs.build_serialized_space("dqx", "genie"))
+    assert "dqx.genie.mv_dq_scores" in blob
+    assert "dqx.genie.dim_dq_rules" in blob
+    assert "dqx.genie.v_dq_failing_rows" in blob
+    # Verify none of the 7 genie objects land in a different schema
+    assert "dqx.dqx_studio.mv_dq_scores" not in blob
+    assert "dqx.dqx_studio.v_dq_failing_rows" not in blob
+
+
 def test_space_never_references_ungated_row_level_objects() -> None:
     """The only row-level object is the entitlement-gated view — the raw
     quarantine table (and dqlake's row objects) must never appear."""

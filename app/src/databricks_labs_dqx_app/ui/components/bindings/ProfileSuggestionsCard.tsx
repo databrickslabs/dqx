@@ -10,7 +10,7 @@
  * Collapsed by default so stewards read the column stats first, then expand
  * when ready to add rules.
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -28,20 +28,47 @@ import {
 } from "@/lib/ai-style";
 import { cn } from "@/lib/utils";
 import {
-  getGetMonitoredTableQueryKey,
   getListProfilingSuggestionsQueryKey,
   useApplyProfilingSuggestions,
   useListProfilingSuggestions,
+  type AppliedRuleOut,
   type ProfilingSuggestionOut,
 } from "@/lib/api";
 
 interface Props {
   bindingId: string;
   canApply: boolean;
+  onStageRules: (rows: AppliedRuleOut[]) => void;
+  /** Staged applied-rule rows (unsaved + saved baseline) from the Apply Rules
+   *  tab. Used to hide suggestions that are already in the working set so they
+   *  disappear immediately on "Add checks" rather than waiting for a server
+   *  re-fetch.  A suggestion is considered staged when a row exists with the
+   *  same (rule_name, column_mapping) pair. */
+  stagedRows?: AppliedRuleOut[];
 }
 
 function columnsText(mapping: ProfilingSuggestionOut["column_mapping"]): string {
   return Object.values(mapping ?? {}).join(", ");
+}
+
+/** Canonical identity key for a profiling suggestion: (rule_name, sorted column_mapping).
+ *
+ *  ``rule_name`` is the humanized check-function name derived from the profiler
+ *  metadata (e.g. "Not Null").  ``column_mapping`` is sorted by key so that
+ *  ``{"column": "x"}`` and ``{"column": "x"}`` in different key orders compare
+ *  equal.  This key is used both on the suggestion side (``keyForSuggestion``)
+ *  and on the staged-row side (``keyForStagedRow``) so a suggestion disappears
+ *  as soon as its counterpart lands in the staged working set.
+ *
+ *  Reliability: profiler suggestions for builtin DQX checks always have a
+ *  non-null ``rule_name`` (set by ``build_builtin_metadata`` via
+ *  ``humanize_function_name``).  After bug-fix C3/B1, staged rows from the
+ *  profiler path also carry ``rule_name`` in the API response.  The composite
+ *  key is therefore stable for all practically relevant suggestions.
+ */
+function suggestionStageKey(ruleName: string | null | undefined, mapping: Record<string, string> | null | undefined): string {
+  const sortedMapping = Object.fromEntries(Object.entries(mapping ?? {}).sort());
+  return `${ruleName ?? ""}::${JSON.stringify(sortedMapping)}`;
 }
 
 /** Group suggestions by check function, preserving first-seen order. */
@@ -55,14 +82,41 @@ function groupByKind(suggestions: ProfilingSuggestionOut[]): [string, ProfilingS
   return [...byKind.entries()];
 }
 
-export function ProfileSuggestionsCard({ bindingId, canApply }: Props) {
+export function ProfileSuggestionsCard({ bindingId, canApply, onStageRules, stagedRows }: Props) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
   const { data } = useListProfilingSuggestions(bindingId);
-  const suggestions = data?.data ?? [];
+  const serverSuggestions = data?.data ?? [];
+
+  // Client-side filter: hide suggestions already present in the staged working
+  // set (unsaved + saved baseline) so they disappear immediately when "Add
+  // checks" is clicked, without waiting for a server re-fetch.
+  const stagedKeySet = useMemo((): Set<string> => {
+    if (!stagedRows || stagedRows.length === 0) return new Set();
+    const keys = new Set<string>();
+    for (const row of stagedRows) {
+      // A staged row may have multiple column_mapping groups (one per slot
+      // group after normalizeStagedRows splits them).  We add a key for each
+      // group so every mapping variant is covered.
+      for (const group of row.column_mapping ?? []) {
+        keys.add(suggestionStageKey(row.rule_name, group));
+      }
+      // Also cover the case where column_mapping is empty (staging with no
+      // mapping yet — key falls back to rule_name alone).
+      if ((row.column_mapping ?? []).length === 0) {
+        keys.add(suggestionStageKey(row.rule_name, {}));
+      }
+    }
+    return keys;
+  }, [stagedRows]);
+
+  const suggestions = useMemo(
+    () => serverSuggestions.filter((s) => !stagedKeySet.has(suggestionStageKey(s.rule_name, s.column_mapping))),
+    [serverSuggestions, stagedKeySet],
+  );
 
   const applyMutation = useApplyProfilingSuggestions();
 
@@ -93,7 +147,8 @@ export function ProfileSuggestionsCard({ bindingId, canApply }: Props) {
       { bindingId, data: { indices } },
       {
         onSuccess: async (resp) => {
-          const appliedCount = resp.data.applied?.length ?? 0;
+          const applied = resp.data.applied ?? [];
+          const appliedCount = applied.length;
           const failedCount = resp.data.failed?.length ?? 0;
           if (appliedCount > 0) {
             toast.success(t("monitoredTables.toastSuggestionsApplied", { count: appliedCount }));
@@ -104,10 +159,8 @@ export function ProfileSuggestionsCard({ bindingId, canApply }: Props) {
             else toast.error(message);
           }
           setSelected(new Set());
-          await Promise.all([
-            queryClient.invalidateQueries({ queryKey: getListProfilingSuggestionsQueryKey(bindingId) }),
-            queryClient.invalidateQueries({ queryKey: getGetMonitoredTableQueryKey(bindingId) }),
-          ]);
+          onStageRules(applied);
+          await queryClient.invalidateQueries({ queryKey: getListProfilingSuggestionsQueryKey(bindingId) });
         },
         onError: () => {
           toast.error(t("monitoredTables.toastApplyFailed"));

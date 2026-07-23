@@ -122,7 +122,9 @@ import {
   exportMonitoredTable,
   useLabelDefinitions,
   useListPendingApplications,
+  useListValidationRuns,
   useWorkspaceHost,
+  type ValidationRunSummaryOut,
 } from "@/lib/api-custom";
 import { ExportDialog } from "@/components/ExportDialog";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -311,6 +313,29 @@ function MonitoredTableDetailPage() {
   // which was lost on reload.
   const runActivity = useMonitoredTableRunActivity(bindingId, { tableFqn: table.table_fqn });
 
+  // Detect RUNNING validation runs that were launched outside this page
+  // (e.g. overview actions bar, collection run). `useMonitoredTableRunActivity`
+  // only tracks runs registered via `registerRun` in this session, so a run
+  // started elsewhere doesn't set `hasActive`. We query the full validation-run
+  // list (same key used by runs-history, so no extra network request when both
+  // pages are mounted) and OR the external signal into `runInProgress` (D3).
+  const externalValidationRunsQuery = useListValidationRuns({
+    query: {
+      refetchInterval: (query) => {
+        const rows = (query.state.data as { data?: ValidationRunSummaryOut[] } | undefined)?.data;
+        return Array.isArray(rows) &&
+          rows.some((r) => r.source_table_fqn === table.table_fqn && r.status === "RUNNING")
+          ? 4000
+          : false;
+      },
+      refetchIntervalInBackground: false,
+    },
+  });
+  const hasExternalRunningRun = useMemo(() => {
+    const rows = externalValidationRunsQuery.data?.data ?? [];
+    return rows.some((r) => r.source_table_fqn === table.table_fqn && r.status === "RUNNING");
+  }, [externalValidationRunsQuery.data, table.table_fqn]);
+
   // ---------------------------------------------------------------------
   // Staged editor (P16-F) — every add/mapping-edit/severity-override/pin/
   // removal on the Apply Rules tab mutates `stagedRows` ONLY (no network).
@@ -345,6 +370,43 @@ function MonitoredTableDetailPage() {
       setBaseline(normalizeStagedRows(appliedRules));
     }
   }, [bindingId, appliedRules]);
+
+  /** Stable per-row identity key used for deduping profiler-applied rows against
+   *  the existing staged selection. Uses the same canonicalization as
+   *  `desiredApplicationsKey` in shared.tsx: sort each mapping group's entries
+   *  before serializing so key order in the object doesn't affect equality. The
+   *  same rule_id can appear with different column_mapping values (one card per
+   *  column), so `rule_id` alone is insufficient — the composite is required. */
+  const stagedRowKey = useCallback(
+    (r: AppliedRuleOut) =>
+      `${r.rule_id}::${JSON.stringify(
+        (r.column_mapping ?? [])
+          .map((group) => JSON.stringify(Object.fromEntries(Object.entries(group).sort())))
+          .sort(),
+      )}`,
+    [],
+  );
+
+  /** Page-level handler called by ProfileSuggestionsCard after a successful
+   *  apply. Merges the returned rows into the Apply Rules tab's unsaved staged
+   *  selection, deduping on `(rule_id, column_mapping)` so re-applying the same
+   *  suggestions doesn't create duplicate cards while still allowing the same
+   *  rule applied to a different column to land as a separate card. The tab goes
+   *  dirty immediately; the user must click Save to persist. */
+  const handleStageSuggestedRules = useCallback(
+    (rows: AppliedRuleOut[]) => {
+      if (rows.length === 0) return;
+      setStagedRows((prev) => {
+        // Normalize first so the key operates on the same one-group-per-row
+        // shape that prev already uses (invariant maintained by normalizeStagedRows).
+        const normalized = normalizeStagedRows(rows);
+        const existing = new Set(prev.map(stagedRowKey));
+        const fresh = normalized.filter((r) => !existing.has(stagedRowKey(r)));
+        return fresh.length ? [...prev, ...fresh] : prev;
+      });
+    },
+    [setStagedRows, stagedRowKey],
+  );
 
   const adminDefaultThreshold = useDefaultPassThreshold();
   const isDirty =
@@ -611,7 +673,7 @@ function MonitoredTableDetailPage() {
                 bindingId={bindingId}
                 table={table}
                 isDirty={isDirty}
-                runInProgress={runActivity.hasActive}
+                runInProgress={runActivity.hasActive || hasExternalRunningRun}
                 onSaveDraft={saveDraft}
                 onRunStarted={runActivity.registerRun}
                 {...computeRunGating(baseline.length, stagedRows.length)}
@@ -853,7 +915,13 @@ function MonitoredTableDetailPage() {
           </TabsContent>
 
           <TabsContent value="profile">
-            <ProfileTab bindingId={bindingId} tableFqn={table.table_fqn} canApply={perms.canCreateRules} />
+            <ProfileTab
+              bindingId={bindingId}
+              tableFqn={table.table_fqn}
+              canApply={perms.canCreateRules}
+              onStageRules={handleStageSuggestedRules}
+              stagedRows={stagedRows}
+            />
           </TabsContent>
 
           <TabsContent value="apply-rules">
@@ -874,7 +942,7 @@ function MonitoredTableDetailPage() {
               tableName={tableName}
               tableFqn={table.table_fqn}
               neverApproved={(table.version ?? 0) === 0}
-              runInProgress={runActivity.hasActive}
+              runInProgress={runActivity.hasActive || hasExternalRunningRun}
             />
           </TabsContent>
 
@@ -1561,10 +1629,14 @@ function ProfileTab({
   bindingId,
   tableFqn,
   canApply,
+  onStageRules,
+  stagedRows,
 }: {
   bindingId: string;
   tableFqn: string;
   canApply: boolean;
+  onStageRules: (rows: AppliedRuleOut[]) => void;
+  stagedRows: AppliedRuleOut[];
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -1790,7 +1862,14 @@ function ProfileTab({
               profiler's generated checks live here on the Profile page (not in
               the AI Suggest-rules dialog). Only shown for the latest profile,
               not a historical run. */}
-          {selectedRunId === null && <ProfileSuggestionsCard bindingId={bindingId} canApply={canApply} />}
+          {selectedRunId === null && (
+            <ProfileSuggestionsCard
+              bindingId={bindingId}
+              canApply={canApply}
+              onStageRules={onStageRules}
+              stagedRows={stagedRows}
+            />
+          )}
 
           {/* Version switcher (items 50/31) — pick any past run; its full
               results are already persisted per run_id, so this just re-points
