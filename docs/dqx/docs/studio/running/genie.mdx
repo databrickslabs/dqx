@@ -8,9 +8,32 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 
 # Ask Genie
 
-Not sure where to look? Open the **Ask Genie** panel on any
-[results page](/docs/studio/running/results) and ask in plain English. It answers
-with a short explanation and a chart — no SQL, no query building.
+**Ask Genie** turns your data-quality results into a conversation. Open the panel
+on any [results page](/docs/studio/running/results) and ask a question in plain
+English — "which columns have the most failures?", "why did my score drop?" — and
+Genie answers with a short explanation and, where it helps, a chart. There's no
+SQL to write and no query to build; it's built on Databricks Genie and reads the
+same results you're already looking at.
+
+It's the fastest way in for a steward or reviewer who wants an answer without
+digging through the breakdowns by hand. Every conversation stays with the table
+or collection you opened it from, and you can start a **New conversation** or
+revisit an earlier one from **History** at any time.
+
+## Start with a suggested question
+
+Not sure what to ask? Genie opens with a set of **suggested questions** grouped by
+what you're trying to do — **Basic stats**, **Drilldown**, **Trends over time**,
+and **Diagnose**. Pick one to get going, or type your own in the box at the
+bottom.
+
+<ThemedImage
+  alt="The Ask Genie chat panel with suggested questions grouped into Basic stats, Drilldown, Trends over time, and Diagnose, above an ask-a-question box"
+  sources={{
+    light: useBaseUrl('/img/studio/genie_suggestions_light.png'),
+    dark: useBaseUrl('/img/studio/genie_suggestions_dark.png'),
+  }}
+/>
 
 ## Find the worst spots
 
@@ -43,7 +66,3 @@ can see exactly which check pulled the score up or down.
     dark: useBaseUrl('/img/studio/genie_diagnose_dark.png'),
   }}
 />
-
-Genie comes with suggested questions grouped as **basic stats**, **drilldown**,
-**trends over time**, and **diagnose** — a good starting point when you're not
-sure what to ask.
