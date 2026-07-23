@@ -12,6 +12,7 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_greater_than,
     is_ipv4_address_in_cidr,
     is_ipv6_address_in_cidr,
+    is_valid_country_code,
     sql_expression,
 )
 from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
@@ -141,3 +142,8 @@ def test_sql_expression_complex_exists_negate_auto_name():
     expression = "EXISTS (SELECT 1 FROM cfg WHERE cfg.val = STATUS)"
     result = sql_expression(expression, negate=True)
     assert get_column_name_or_alias(result) == "exists_select_1_from_cfg_where_cfg_val_status"
+
+
+def test_is_valid_country_code_auto_name():
+    result = is_valid_country_code("a")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_country_code"
