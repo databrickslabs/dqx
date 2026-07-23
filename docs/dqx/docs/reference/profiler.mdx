@@ -16,19 +16,19 @@ When running the code on a Databricks workspace, the workspace client is automat
 You only need the following code to create the workspace client if you run DQX on Databricks workspace:
 
 <Tabs>
-  <TabItem value="Python" label="Python" default>
-    ```python
-    from databricks.sdk import WorkspaceClient
-    from databricks.labs.dqx.profiler.profiler import DQProfiler
-    from databricks.labs.dqx.profiler.generator import DQGenerator
-    from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
+    <TabItem value="Python" label="Python" default>
+        ```python
+        from databricks.sdk import WorkspaceClient
+        from databricks.labs.dqx.profiler.profiler import DQProfiler
+        from databricks.labs.dqx.profiler.generator import DQGenerator
+        from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
 
-    ws = WorkspaceClient()
-    profiler = DQProfiler(ws)
-    generator = DQGenerator(ws)
-    dlt_generator = DQDltGenerator(ws)
-    ```
-  </TabItem>
+        ws = WorkspaceClient()
+        profiler = DQProfiler(ws)
+        generator = DQGenerator(ws)
+        dlt_generator = DQDltGenerator(ws)
+        ```
+    </TabItem>
 </Tabs>
 
 For external environments, such as CI servers or local machines, you can authenticate to Databricks using any method supported by the Databricks SDK. For detailed instructions, refer to the [default authentication flow](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
@@ -68,8 +68,8 @@ The profiler supports extensive configuration options to customize behavior:
 | `limit`                     | `1000`        | Maximum number of records to analyze                                                                                                                                                                                                                                                                                                 |
 | `filter`                    | `None`        | Filter for the input data as a string SQL expression                                                                                                                                                                                                                                                                                 |
 | `llm_primary_key_detection` | `True`        | Detect primary keys for generation of `is_unique` rule                                                                                                                                                                                                                                                                               |
-| `outliers_ratio`                | `0.01`        | Generate `has_no_outliers` rule if the fraction of outliers (detected via MAD) is at or below this threshold                                                                                                                                                                                                                               |
-| `has_no_outliers`               | `True`        | Enable or disable `has_no_outliers` rule generation globally for all columns                                                                                                                                                                                                                                                         |
+| `outliers_ratio`                | `0.01`        | Generate `has_no_outliers` rule if the fraction of outliers (detected via MAD) is at or below this threshold                                                                                                                                                                                                                     |
+| `has_no_outliers`               | `False`       | Enable or disable `has_no_outliers` rule generation globally for all columns. Disabled by default due to performance considerations.                                                                                                                                                                                             |
 | `has_no_outliers_allow_columns` | `[]`          | Generate `has_no_outliers` rule only for the listed columns; all other columns are skipped. Mutually exclusive with `has_no_outliers_deny_columns`                                                                                                                                                                                    |
 | `has_no_outliers_deny_columns`  | `[]`          | Skip `has_no_outliers` rule generation for the listed columns; all other columns are processed. Mutually exclusive with `has_no_outliers_allow_columns`                                                                                                                                                                               |
 
@@ -125,5 +125,6 @@ The `DQDltGenerator` class creates Delta Live Tables expectation statements from
 | `generate_dlt_rules` | Generates Delta Live Table rules in the specified language.        | `rules`: List of DQProfile objects; `action`: Optional violation action ("drop", "fail", or None); `language`: Target language ("SQL", "Python", or "Python_Dict").     | Yes                      |
 
 <Admonition type="info" title="Complete Profiling Guide">
-For comprehensive examples, advanced options, and best practices, see the [Data Profiling Guide](/docs/guide/data_profiling).
+    For comprehensive examples, advanced options, and best practices, see the [Data Profiling
+    Guide](/docs/guide/data_profiling).
 </Admonition> 
