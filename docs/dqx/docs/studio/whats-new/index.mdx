@@ -1,0 +1,101 @@
+---
+sidebar_position: 1
+title: What's new
+---
+
+# What's new in DQX Studio
+
+The headline features and improvements in this release of DQX Studio. For the
+full commit-level history, see the project's changelog.
+
+<!--
+  Maintainers: when you ship a major, user-facing Studio feature or change,
+  add a short entry here (a bold headline + 1–2 sentences). This page is the
+  single place users look to see what changed. See the Definition of Done in
+  the contributing guide.
+-->
+
+## Redesigned app & new documentation
+
+- **A ground-up app redesign.** A cleaner layout and consistent patterns across
+  authoring, monitoring, results, and governance.
+- **Substantially faster and more fluid.** Lists, tables, and results load
+  quicker and navigation feels noticeably smoother.
+- **New documentation.** DQX is now documented as two tracks — **DQX Core** (the
+  Python package) and **DQX Studio** (the no-code app) — with a task-oriented
+  Studio guide illustrated with real screenshots.
+
+## Authoring
+
+- **Rules Registry.** Build a library of reusable, versioned rule definitions
+  once and apply them across as many tables as you like. Each rule can become
+  many checks.
+- **Low-code rule builder.** Author rules in a visual form — pick a built-in
+  check, or write a custom condition with a plain-language condition builder,
+  AND/OR chaining, filters, and joins — no code required.
+- **Suggest rules with AI.** Point the app at a table and it proposes a tailored
+  set of checks for its columns and data, as a reviewable first draft you stay
+  in control of.
+- **Profiling.** Scan a table to measure the shape of its data and get suggested
+  candidate rules drawn from the statistics, staged for you to keep or discard.
+- **Severity & dimensions.** Give every rule a severity (a customizable
+  Low / Medium / High / Critical priority for triage and reporting) and a quality
+  dimension such as completeness or validity, so results can be grouped and
+  ranked by what matters.
+- **Rule versioning.** Rules are versioned as they evolve, and each check on a
+  table can either track the latest approved version automatically or be pinned
+  to a specific version for stability.
+- **Import & export.** Import rules from DQX YAML or from ODCS data contracts,
+  bulk-import across many tables at once, and export rules back out.
+
+## Monitoring
+
+- **Monitored tables.** Apply rules to a Unity Catalog table to make it a
+  monitored table — the single source of truth for that table's data quality,
+  with per-table severity and threshold overrides and bulk registration.
+- **Table overview & sample data.** Each monitored table has an overview that
+  shows its schema, a preview of sample data, and an ask-a-question box, so you
+  can see what you're working with before and after applying rules.
+- **Quality thresholds.** Require a share of rows to pass (e.g. 95%) rather than
+  demanding perfection, with per-rule and per-column overrides and clear breach
+  indicators — ideal for improving quality gradually.
+- **Governed tags & auto-mapping.** Tag a rule's column with a Unity Catalog
+  governed tag and it applies automatically to any table column carrying that
+  tag, with matched-tag chips showing where it landed.
+- **Collections (data products).** Group related monitored tables into a data
+  product you can view, run, and schedule together — quality across related
+  tables at a glance.
+
+## Running & reviewing
+
+- **Runs & scheduling.** Run checks on demand or on an hourly, daily, weekly, or
+  custom schedule, with pause/resume and a full runs history.
+- **Results dashboard.** Read the DQ score and trend, break results down by
+  dimension, severity, rule, and column, and drill all the way to the failing
+  records.
+- **Ask Genie.** Ask questions about your results in plain English and get an
+  answer with a chart — no SQL or query building.
+- **Comments.** Discuss and hand off findings with a comment thread on results,
+  each note keeping its author and timestamp.
+
+## Governance & security
+
+- **Roles & entitlements.** Map Databricks workspace groups to DQX Studio roles
+  — Viewer, Rule Author, Rule Approver, and Admin — so access follows people as
+  they join and leave.
+- **Four-eyes approval.** Changes move through a draft → submit → review →
+  approve workflow, with a diff and comments, so a second person signs off
+  before anything goes live.
+- **Object-level permissions.** Grant View, Modify, Apply, and Execute on a
+  specific rule, table, or collection, with sensible defaults seeded on create
+  that you can narrow at any time.
+- **Data access respects Unity Catalog.** The app browses and reads data as you,
+  so you only ever see what you already have access to.
+
+## Setup & administration
+
+- **Admin Settings.** A single place to manage entitlements, governed tags, data
+  retention, the AI endpoint, and the built-in demo.
+- **Built-in demo.** Deploy a set of sample tables, rules, collections, and past
+  runs to explore every feature against realistic data before pointing DQX
+  Studio at your own tables.
