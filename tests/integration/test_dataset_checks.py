@@ -24,7 +24,7 @@ from databricks.labs.dqx.check_funcs import (
     aggr_matches_dataset,
 )
 from databricks.labs.dqx.utils import get_column_name_or_alias
-from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError
+from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError, UnsafeSqlQueryError
 
 from tests.constants import TEST_CATALOG
 
@@ -242,6 +242,16 @@ def test_has_no_outliers_with_row_filter(spark: SparkSession):
         "a: int, b: int, b_has_outliers: string",
     )
     assertDataFrameEqual(actual_condition_df, expected_condition_df, checkRowOrder=False)
+
+
+def test_has_no_outliers_rejects_destructive_row_filter(spark: SparkSession):
+    """has_no_outliers routes row_filter through safe_filter_expr, so a destructive filter is rejected
+    instead of being applied as a raw string (regression test for the previous MAD bypass)."""
+    test_df = spark.createDataFrame([[1, 10], [2, 12], [3, 11]], "a: int, b: int")
+
+    _, apply_method = has_no_outliers("b", row_filter="a = 3 OR DROP TABLE users")
+    with pytest.raises(UnsafeSqlQueryError):
+        apply_method(test_df)
 
 
 def test_has_no_outliers_with_none_median(spark: SparkSession):
