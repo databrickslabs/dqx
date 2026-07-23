@@ -319,3 +319,21 @@ def generated_email_df(spark):
         gen = gen.withColumnSpec(col, template=template)
 
     return gen.build()
+
+
+@pytest.fixture
+def generated_currency_code_df(spark):
+    currency_schema_str = "col1_currency_code: string, col2_currency_code: string"
+    schema = _parse_datatype_string(currency_schema_str)
+
+    currency_templates = {
+        "col1_currency_code": r"AAA",
+        "col2_currency_code": r"KKK",
+    }
+
+    _, gen = make_data_gen(spark, n_rows=DEFAULT_ROWS, n_columns=len(currency_templates), partitions=DEFAULT_PARTITIONS)
+    gen = gen.withSchema(schema)
+    for col, template in currency_templates.items():
+        gen = gen.withColumnSpec(col, template=template)
+
+    return gen.build()

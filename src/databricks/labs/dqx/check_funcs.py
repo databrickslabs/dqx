@@ -1022,6 +1022,203 @@ def is_valid_email(column: str | Column) -> Column:
     return _matches_pattern(column, DQPattern.EMAIL_ADDRESS)
 
 
+# Active ISO 4217 alpha-3 currency codes, derived from the CLDR currency data bundled with Babel:
+# codes that are currently in tender in at least one territory, excluding historical codes and
+# non-national special codes (e.g. XAU, XDR, XXX). To regenerate, iterate
+# babel.core.get_global("territory_currencies") and keep each code whose tender flag is set and
+# whose end date is unset or not in the past.
+_ISO_4217_CURRENCY_CODES: frozenset[str] = frozenset(
+    {
+        "AED",
+        "AFN",
+        "ALL",
+        "AMD",
+        "AOA",
+        "ARS",
+        "AUD",
+        "AWG",
+        "AZN",
+        "BAM",
+        "BBD",
+        "BDT",
+        "BGN",
+        "BHD",
+        "BIF",
+        "BMD",
+        "BND",
+        "BOB",
+        "BRL",
+        "BSD",
+        "BTN",
+        "BWP",
+        "BYN",
+        "BZD",
+        "CAD",
+        "CDF",
+        "CHF",
+        "CLP",
+        "CNY",
+        "COP",
+        "CRC",
+        "CUP",
+        "CVE",
+        "CZK",
+        "DJF",
+        "DKK",
+        "DOP",
+        "DZD",
+        "EGP",
+        "ERN",
+        "ETB",
+        "EUR",
+        "FJD",
+        "FKP",
+        "GBP",
+        "GEL",
+        "GHS",
+        "GIP",
+        "GMD",
+        "GNF",
+        "GTQ",
+        "GYD",
+        "HKD",
+        "HNL",
+        "HTG",
+        "HUF",
+        "IDR",
+        "ILS",
+        "INR",
+        "IQD",
+        "IRR",
+        "ISK",
+        "JMD",
+        "JOD",
+        "JPY",
+        "KES",
+        "KGS",
+        "KHR",
+        "KMF",
+        "KPW",
+        "KRW",
+        "KWD",
+        "KYD",
+        "KZT",
+        "LAK",
+        "LBP",
+        "LKR",
+        "LRD",
+        "LSL",
+        "LYD",
+        "MAD",
+        "MDL",
+        "MGA",
+        "MKD",
+        "MMK",
+        "MNT",
+        "MOP",
+        "MRU",
+        "MUR",
+        "MVR",
+        "MWK",
+        "MXN",
+        "MYR",
+        "MZN",
+        "NAD",
+        "NGN",
+        "NIO",
+        "NOK",
+        "NPR",
+        "NZD",
+        "OMR",
+        "PAB",
+        "PEN",
+        "PGK",
+        "PHP",
+        "PKR",
+        "PLN",
+        "PYG",
+        "QAR",
+        "RON",
+        "RSD",
+        "RUB",
+        "RWF",
+        "SAR",
+        "SBD",
+        "SCR",
+        "SDG",
+        "SEK",
+        "SGD",
+        "SHP",
+        "SLE",
+        "SOS",
+        "SRD",
+        "SSP",
+        "STN",
+        "SYP",
+        "SZL",
+        "THB",
+        "TJS",
+        "TMT",
+        "TND",
+        "TOP",
+        "TRY",
+        "TTD",
+        "TWD",
+        "TZS",
+        "UAH",
+        "UGX",
+        "USD",
+        "UYU",
+        "UZS",
+        "VES",
+        "VND",
+        "VUV",
+        "WST",
+        "XAF",
+        "XCD",
+        "XCG",
+        "XOF",
+        "XPF",
+        "YER",
+        "ZAR",
+        "ZMW",
+        "ZWG",
+    }
+)
+
+
+@register_rule("row")
+def is_valid_currency_code(column: str | Column) -> Column:
+    """Checks whether the values in the input column are valid ISO 4217 currency codes
+    (for example, *USD*, *EUR*, *JPY*).
+
+    Validation is a case-sensitive membership test against the set of active ISO 4217
+    alpha-3 currency codes. Historical codes and non-national special codes (for example
+    *XAU* or *XXX*) are not accepted.
+
+    Null values will pass the check with no violation reported.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+
+    Returns:
+        Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    allowed = [F.lit(code) for code in sorted(_ISO_4217_CURRENCY_CODES)]
+    condition = F.when(col_expr.isNotNull(), ~col_expr.isin(*allowed)).otherwise(F.lit(None))
+    return make_condition(
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not a valid ISO 4217 currency code"),
+        ),
+        f"{col_str_norm}_is_not_a_valid_currency_code",
+    )
+
+
 @register_rule("row")
 def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     """

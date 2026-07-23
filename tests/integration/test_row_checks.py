@@ -32,6 +32,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_valid_email,
+    is_valid_currency_code,
     is_ipv4_address_in_cidr,
     is_valid_ipv6_address,
     is_ipv6_address_in_cidr,
@@ -1948,6 +1949,70 @@ def test_col_is_valid_email(spark):
         [None],
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_currency_code(spark):
+    schema_ccy = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            # Valid ISO 4217 alpha-3 codes
+            ["USD"],
+            ["EUR"],
+            ["JPY"],
+            ["INR"],
+            # Invalid - wrong length, unknown, or non-currency codes
+            ["US"],  # too short
+            ["USDD"],  # too long
+            ["usd"],  # lowercase (validation is case-sensitive)
+            ["XXX"],  # special code, not accepted
+            ["ABC"],  # not a real currency code
+            [""],  # empty string
+            [None],  # Null - passes (no violation reported)
+        ],
+        schema_ccy,
+    )
+
+    actual = test_df.select(is_valid_currency_code("a"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 4217 currency code"
+
+    checked_schema = "a_is_not_a_valid_currency_code: string"
+    checked_data = [
+        # Valid (no violation reported)
+        [None],
+        [None],
+        [None],
+        [None],
+        # Invalid
+        [violation("US")],
+        [violation("USDD")],
+        [violation("usd")],
+        [violation("XXX")],
+        [violation("ABC")],
+        [violation("")],
+        # Null passes
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_currency_code_column_expr(spark):
+    schema_ccy = "a: string"
+    test_df = spark.createDataFrame([["EUR"], ["ABC"]], schema_ccy)
+
+    # Column-expression input end-to-end
+    actual = test_df.select(is_valid_currency_code(F.col("a")))
+
+    checked_schema = "a_is_not_a_valid_currency_code: string"
+    expected = spark.createDataFrame(
+        [[None], ["Value 'ABC' in Column 'a' is not a valid ISO 4217 currency code"]],
+        checked_schema,
+    )
 
     assertDataFrameEqual(actual, expected)
 
