@@ -1,5 +1,6 @@
 from typing import cast
 import pytest
+import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.check_funcs import (
     is_equal_to,
@@ -69,6 +70,29 @@ def test_has_valid_string_case_rejects_invalid_case(case: object, expected_messa
         has_valid_string_case("a", cast(str, case))
 
     assert str(error.value) == expected_message
+
+
+@pytest.mark.parametrize(
+    "value, expected_valid",
+    [
+        ("Notes From IEEE Meeting", True),
+        ("An Ordinary Title", True),
+        ("Notes from IEEE Meeting", False),
+        ("", True),
+        ("   ", True),
+        ("123!?", True),
+        ("hello-world", False),
+    ],
+)
+def test_has_valid_string_case_title_expression(value: str, expected_valid: bool):
+    normalized = " ".join(f"{word[:1].upper()}{word[1:]}" for word in value.split(" "))
+
+    assert (value == normalized) is expected_valid
+
+    expression = str(has_valid_string_case(F.lit(value), "title"))
+    assert "initcap" not in expression
+    assert "transform(split(" in expression
+    assert "lower(" not in expression
 
 
 def test_incorrect_aggr_type():

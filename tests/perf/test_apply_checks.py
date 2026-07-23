@@ -2165,3 +2165,49 @@ def test_benchmark_is_valid_email(benchmark, ws, generated_email_df, column):
     checked = dq_engine.apply_checks(generated_email_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "case, generated_string_df",
+    [
+        pytest.param(
+            "upper",
+            {"n_rows": DEFAULT_ROWS, "n_columns": 1, "template": "VALID UPPER CASE"},
+            id="upper",
+        ),
+        pytest.param(
+            "lower",
+            {"n_rows": DEFAULT_ROWS, "n_columns": 1, "template": "valid lower case"},
+            id="lower",
+        ),
+        pytest.param(
+            "title",
+            {"n_rows": DEFAULT_ROWS, "n_columns": 1, "template": "Notes From IEEE Meeting"},
+            id="title",
+        ),
+        pytest.param(
+            "sentence",
+            {"n_rows": DEFAULT_ROWS, "n_columns": 1, "template": "First segment. Second segment."},
+            id="sentence",
+        ),
+    ],
+    indirect=["generated_string_df"],
+)
+@pytest.mark.benchmark(group="test_benchmark_has_valid_string_case")
+def test_benchmark_has_valid_string_case(benchmark, ws, generated_string_df, case):
+    columns, df, _ = generated_string_df
+    column = columns[0]
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_has_invalid_{case}_string_case",
+            criticality="warn",
+            check_func=check_funcs.has_valid_string_case,
+            column=column,
+            check_func_kwargs={"case": case},
+        ),
+    ]
+    benchmark.group += f" {case}"
+    checked = dq_engine.apply_checks(df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS

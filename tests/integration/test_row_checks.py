@@ -50,8 +50,22 @@ SCHEMA = "a: string, b: int"
 def test_has_valid_string_case(spark):
     test_df = spark.createDataFrame(
         [
-            ["UPPER", "lower", "Spark Sql", "First segment. Second segment.", {"value": "nested"}, 123],
-            ["Upper", "Lower", "Spark SQL", "first SEGMENT. second SEGMENT", {"value": "Nested"}, None],
+            [
+                "UPPER",
+                "lower",
+                "Notes From IEEE Meeting",
+                "First segment. Second segment.",
+                {"value": "nested"},
+                123,
+            ],
+            [
+                "Upper",
+                "Lower",
+                "Notes from IEEE Meeting",
+                "first SEGMENT. second SEGMENT",
+                {"value": "Nested"},
+                None,
+            ],
             [None, "", "   ", "123!?. #$", {"value": "nested"}, 123],
             [" UPPER ", " lower ", " spark sql ", " first SEGMENT. second SEGMENT ", {"value": "nested"}, 123],
             ["123!?", "123!?", "hello-world", "Hello 123!. Second segment", {"value": "NESTED"}, 123],
@@ -77,7 +91,7 @@ def test_has_valid_string_case(spark):
             [
                 violation("Upper", "upper", "upper"),
                 violation("Lower", "lower", "lower"),
-                violation("Spark SQL", "title", "title"),
+                violation("Notes from IEEE Meeting", "title", "title"),
                 violation("first SEGMENT. second SEGMENT", "sentence", "sentence"),
                 violation("Nested", "nested['value']", "lower"),
                 None,

@@ -56,35 +56,6 @@ from databricks.labs.dqx.errors import InvalidCheckError, InvalidParameterError
 SCHEMA = "a: int, b: int, c: int"
 
 
-def test_has_valid_string_case_rule_round_trip():
-    rule = DQRowRule(
-        criticality="warn",
-        check_func=has_valid_string_case,
-        column="a",
-        check_func_kwargs={"case": "lower"},
-    )
-    expected_metadata = [
-        {
-            "name": "a_has_invalid_lower_string_case",
-            "criticality": "warn",
-            "check": {
-                "function": "has_valid_string_case",
-                "arguments": {"column": "a", "case": "lower"},
-            },
-        }
-    ]
-
-    assert serialize_checks([rule]) == expected_metadata
-
-    deserialized_rules = deserialize_checks(expected_metadata)
-    assert len(deserialized_rules) == 1
-    deserialized_rule = deserialized_rules[0]
-    assert deserialized_rule.name == "a_has_invalid_lower_string_case"
-    assert deserialized_rule.check_func is has_valid_string_case
-    assert deserialized_rule.column == "a"
-    assert deserialized_rule.check_func_kwargs == {"case": "lower"}
-
-
 def test_get_for_each_rules():
     actual_rules = (
         # set of columns for the same check
@@ -803,6 +774,13 @@ def test_build_rules_by_metadata():
             "criticality": "error",
             "check": {"function": "is_valid_email", "arguments": {"column": "a"}},
         },
+        {
+            "criticality": "error",
+            "check": {
+                "function": "has_valid_string_case",
+                "arguments": {"column": "a", "case": "lower"},
+            },
+        },
     ]
 
     actual_rules = deserialize_checks(checks)
@@ -1074,6 +1052,13 @@ def test_build_rules_by_metadata():
             criticality="error",
             check_func=is_valid_email,
             column="a",
+        ),
+        DQRowRule(
+            name="a_has_invalid_lower_string_case",
+            criticality="error",
+            check_func=has_valid_string_case,
+            column="a",
+            check_func_kwargs={"case": "lower"},
         ),
     ]
 
@@ -1412,6 +1397,12 @@ def test_convert_dq_rules_to_metadata():
         DQRowRule(criticality="error", check_func=is_valid_json, column="col_json_str"),
         DQRowRule(
             criticality="error",
+            check_func=has_valid_string_case,
+            column="col1",
+            check_func_kwargs={"case": "lower"},
+        ),
+        DQRowRule(
+            criticality="error",
             check_func=has_json_keys,
             column="col_json_str",
             check_func_kwargs={"keys": ["key1"]},
@@ -1623,6 +1614,14 @@ def test_convert_dq_rules_to_metadata():
             "check": {
                 "function": "is_valid_json",
                 "arguments": {"column": "col_json_str"},
+            },
+        },
+        {
+            "name": "col1_has_invalid_lower_string_case",
+            "criticality": "error",
+            "check": {
+                "function": "has_valid_string_case",
+                "arguments": {"column": "col1", "case": "lower"},
             },
         },
         {
