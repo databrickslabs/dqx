@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Any
@@ -14,6 +14,7 @@ from databricks.labs.dqx.io import read_input_data, get_reference_dataframes
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
+    to_utc,
     normalize_col_str,
     safe_json_load,
     get_columns_as_strings,
@@ -847,3 +848,25 @@ def test_resolve_variables_accepts_time():
     checks = [{"expr": "t > '{{ t }}'"}]
     result = resolve_variables(checks, {"t": time(10, 30)})
     assert result[0]["expr"] == "t > '10:30:00'"
+
+
+def test_to_utc_attaches_utc_to_naive():
+    """A naive datetime is assumed to be UTC and given UTC tzinfo (value unchanged)."""
+    naive = datetime(2024, 6, 1, 12, 0, 0)
+    result = to_utc(naive)
+    assert result == datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    assert result.tzinfo == timezone.utc
+
+
+def test_to_utc_leaves_utc_aware_unchanged():
+    aware_utc = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    assert to_utc(aware_utc) == aware_utc
+
+
+def test_to_utc_converts_non_utc_aware_to_utc():
+    """An aware, non-UTC datetime is converted to the equivalent UTC instant."""
+    eastern = timezone(timedelta(hours=-5))
+    aware_eastern = datetime(2024, 6, 1, 12, 0, 0, tzinfo=eastern)  # 17:00 UTC
+    result = to_utc(aware_eastern)
+    assert result == datetime(2024, 6, 1, 17, 0, 0, tzinfo=timezone.utc)
+    assert result.utcoffset() == timedelta(0)

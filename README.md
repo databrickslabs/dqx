@@ -15,6 +15,23 @@ Simplified Data Quality checking at Scale for PySpark Workloads on streaming and
 [![PyPI](https://img.shields.io/pypi/v/databricks-labs-dqx?label=pypi%20package&cacheSeconds=3600)](https://pypi.org/project/databricks-labs-dqx/) 
 ![PyPI Downloads](https://static.pepy.tech/personalized-badge/databricks-labs-dqx?period=month&units=international_system&left_color=grey&right_color=orange&left_text=PyPI%20downloads&cacheSeconds=3600)
 
+# ✨ Key capabilities
+
+- **Rule-based quality checks** — 80+ built-in checks (null, range, regex, referential, aggregate, geo, PII, and more) for row-level and column/dataset-level validation, with support for custom check functions.
+- **Code or config checks** — define checks programmatically as code or declaratively as YAML/JSON configuration.
+- **Check levels** — mark failed checks as warning or error.
+- **Custom reactions to failed checks** — drop, mark, or quarantine invalid data flexibly.
+- **Detailed failure info** — get detailed insights into why each check failed.
+- **AI-assisted rule generation** — LLM-driven rule suggestions from business descriptions, powered by DSPy and Databricks Model Serving.
+- **Data profiling & rule generation** — automatic statistics collection and quality rule candidate generation from existing data.
+- **ML row anomaly detection** — Isolation Forest–based row anomaly detection with SHAP explanations and AI-generated narratives.
+- **Data contracts** — generate quality rules from ODCS data contracts, including schema validation.
+- **Summary metrics & quality dashboard** — built-in and custom aggregate metrics (input/error/warning/valid row counts, per-check breakdowns) persisted to Delta tables, with a Lakeview quality dashboard for tracking and identifying data quality issues.
+- **Actions and alerting** — automatically send Slack, Microsoft Teams, or generic webhook alerts and/or fail the pipeline when summary metrics cross a threshold.
+- **Flexible checks storage** — save and load quality rules from YAML/JSON files, Unity Catalog tables, Volumes, or Lakebase (PostgreSQL).
+- **DQX Studio** — browser-based no-code UI for authoring, reviewing, running, and monitoring quality rules, deployed as a Databricks App.
+- **Data format agnostic & streaming support** — works with PySpark DataFrames and applies checks to both batch and Spark Structured Streaming (including Lakeflow Pipelines / DLT) using the same API.
+
 # 📖 Documentation
 
 The complete documentation is available at: [https://databrickslabs.github.io/dqx/](https://databrickslabs.github.io/dqx/)

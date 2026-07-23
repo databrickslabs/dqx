@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from pyspark.sql import SparkSession
 from pyspark.sql.streaming import listener
@@ -22,24 +23,33 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
         spark: `SparkSession` for writing summary metrics
         target_query_id: Optional query ID of the specific streaming query to monitor. If provided, only events
             from this query will be processed (useful when multiple queries share the same observation).
+        action_callback: Optional callback the engine uses to evaluate actions, invoked per micro-batch
+            with the per-batch *DQMetricsObservation* and run time. Optional because actions are optional:
+            a metrics-only stream passes none. Kept a plain callable so this module never imports the
+            actions subsystem, which databricks-connect would fail to re-import in its listener worker
+            process. Exceptions propagate out of *onQueryProgress*; the callback decides what to swallow
+            or re-raise.
     """
 
-    metrics_config: OutputConfig
+    metrics_config: OutputConfig | None
     metrics_observation: DQMetricsObservation
     spark: SparkSession
     target_query_id: str | None
+    action_callback: Callable[[DQMetricsObservation, datetime], None] | None
 
     def __init__(
         self,
-        metrics_config: OutputConfig,
+        metrics_config: OutputConfig | None,
         metrics_observation: DQMetricsObservation,
         spark: SparkSession,
         target_query_id: str | None = None,
+        action_callback: Callable[[DQMetricsObservation, datetime], None] | None = None,
     ) -> None:
         self.metrics_config = metrics_config
         self.metrics_observation = metrics_observation
         self.spark = spark
         self.target_query_id = target_query_id
+        self.action_callback = action_callback
 
     def onQueryStarted(self, event: listener.QueryStartedEvent) -> None:
         """
@@ -84,8 +94,15 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
             rule_set_fingerprint=self.metrics_observation.rule_set_fingerprint,
             user_metadata=self.metrics_observation.user_metadata,
         )
-        metrics_df = DQMetricsObserver.build_metrics_df(self.spark, metrics_observation)
-        save_dataframe_as_table(metrics_df, self.metrics_config)
+        # Write metrics only when a destination is configured; the listener may run purely to drive
+        # the action callback (no metrics_config), in which case the write is skipped.
+        if self.metrics_config is not None:
+            metrics_df = DQMetricsObserver.build_metrics_df(self.spark, metrics_observation)
+            save_dataframe_as_table(metrics_df, self.metrics_config)
+
+        # The callback owns the swallow-vs-re-raise policy, keeping this listener decoupled from actions.
+        if self.action_callback is not None:
+            self.action_callback(metrics_observation, run_time_overwrite)
 
     def onQueryIdle(self, event: listener.QueryIdleEvent) -> None:
         """

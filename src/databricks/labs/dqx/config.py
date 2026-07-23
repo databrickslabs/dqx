@@ -29,7 +29,60 @@ __all__ = [
     "LakebaseChecksStorageConfig",
     "InstallationChecksStorageConfig",
     "VolumeFileChecksStorageConfig",
+    "DQSecret",
+    "TableActionsStorageConfig",
+    "LakebaseActionsStorageConfig",
+    "ActionEventsConfig",
 ]
+
+
+@dataclass(frozen=True)
+class DQSecret:
+    """A reference to a Databricks secret stored in a secret scope.
+
+    Provides a canonical *scope/key* string representation that can be passed as
+    a credential reference in DQX configuration without embedding the secret
+    value in plain text.
+
+    Args:
+        scope: The Databricks secret scope name.
+        key: The key within the secret scope.
+    """
+
+    scope: str
+    key: str
+
+    def as_reference(self) -> str:
+        """Return the canonical *scope/key* reference string.
+
+        Returns:
+            A string of the form ``scope/key``.
+        """
+        return f"{self.scope}/{self.key}"
+
+    @classmethod
+    def from_reference(cls, ref: str) -> "DQSecret":
+        """Parse a *scope/key* reference string into a *DQSecret*.
+
+        The string is split on the **first** ``/`` only, so a key that itself
+        contains slashes is handled correctly.
+
+        Args:
+            ref: A reference string in the form ``scope/key``.
+
+        Returns:
+            A new *DQSecret* instance.
+
+        Raises:
+            InvalidParameterError: If *ref* does not contain a ``/``, or if
+                either the scope or key part is empty.
+        """
+        if "/" not in ref:
+            raise InvalidParameterError(f"Secret reference must be in the form 'scope/key', got {ref!r}.")
+        scope, _, key = ref.partition("/")
+        if not scope or not key:
+            raise InvalidParameterError(f"Secret reference must have non-empty scope and key parts, got {ref!r}.")
+        return cls(scope=scope, key=key)
 
 
 @dataclass
@@ -194,6 +247,13 @@ class RunConfig:
     lakebase_instance_name: str | None = None
     lakebase_client_id: str | None = None
     lakebase_port: str | None = None
+
+    # UC/Lakebase table (or workspace/volume file) holding action definitions to auto-load and apply
+    # during workflow runs. None disables actions for this run config.
+    actions_location: str | None = None
+    # UC/Lakebase table for action event history and durable alert suppression across runs.
+    # None keeps alert suppression state in-memory only (resets each run).
+    action_events_location: str | None = None
 
 
 @dataclass
@@ -582,3 +642,120 @@ class InstallationChecksStorageConfig(
         if isinstance(data, dict) and "location" in data and not data["location"]:
             raise InvalidConfigError("The workspace file path ('location' field) must not be empty or None.")
         return data
+
+
+class TableActionsStorageConfig(BaseChecksStorageConfig):
+    """Configuration class for persisting DQ action definitions to a Unity Catalog table.
+
+    Args:
+        location: Fully qualified UC table name (e.g. *catalog.schema.table*) where action definitions are stored.
+        run_config_name: Name of the run configuration these actions belong to (default is *default*).
+        mode: Write mode for the table (*append* or *overwrite*, default *append*).
+    """
+
+    run_config_name: str = "default"
+    mode: str = "append"
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_location(cls, data: Any) -> Any:
+        if cls is TableActionsStorageConfig and isinstance(data, dict) and not data.get("location"):
+            raise InvalidConfigError("The table name ('location' field) must not be empty or None.")
+        return data
+
+    @model_validator(mode="after")
+    def validate_mode(self) -> "TableActionsStorageConfig":
+        if self.mode not in ("append", "overwrite"):
+            raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
+        return self
+
+
+class LakebaseActionsStorageConfig(BaseChecksStorageConfig):
+    """Configuration class for persisting DQ action definitions to a Lakebase (PostgreSQL) table.
+
+    The *location* must be a fully qualified three-part name in the form *database.schema.table*.
+
+    Args:
+        location: Fully qualified Lakebase table name in the format *database.schema.table*.
+        instance_name: Name of the Lakebase instance.
+        client_id: ID of the Databricks service principal for the Lakebase connection.
+        port: Lakebase port (default is *5432*).
+        run_config_name: Name of the run configuration these actions belong to (default is *default*).
+        mode: Write mode for the table (*append* or *overwrite*, default *append*).
+    """
+
+    instance_name: str | None = None
+    client_id: str | None = None
+    port: str = "5432"
+    run_config_name: str = "default"
+    mode: str = "append"
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_location_present(cls, data: Any) -> Any:
+        if cls is LakebaseActionsStorageConfig and isinstance(data, dict) and not data.get("location"):
+            raise InvalidParameterError("Location must not be empty or None.")
+        return data
+
+    @model_validator(mode="after")
+    def validate_lakebase_config(self) -> "LakebaseActionsStorageConfig":
+        if not self.instance_name:
+            raise InvalidParameterError("Instance name must not be empty or None.")
+
+        if len(self.location.split(".")) != 3:
+            raise InvalidConfigError(
+                f"Invalid Lakebase table name '{self.location}'. Must be in the format 'database.schema.table'."
+            )
+
+        if self.mode not in ("append", "overwrite"):
+            raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
+
+        return self
+
+    def _split_location(self) -> tuple[str, ...]:
+        """Splits *database.schema.table* into components."""
+        return tuple(self.location.split("."))
+
+    @property
+    def database_name(self) -> str:
+        """The database portion of the three-part location."""
+        return self._split_location()[0]
+
+    @property
+    def schema_name(self) -> str:
+        """The schema portion of the three-part location."""
+        return self._split_location()[1]
+
+    @property
+    def table_name(self) -> str:
+        """The table portion of the three-part location."""
+        return self._split_location()[2]
+
+
+class ActionEventsConfig(BaseChecksStorageConfig):
+    """Configuration class for storing DQ action events in a Unity Catalog table.
+
+    Args:
+        location: Fully qualified UC table name (e.g. *catalog.schema.events*) where action events are written.
+        mode: Reserved for API symmetry with the other storage configs. Action events form an
+            append-only audit log, so the events table is always appended to regardless of this value.
+        run_config_name: Run configuration the events belong to. Events are stamped with, and loaded
+            filtered by, this value so a shared events table keeps per-run-config alert suppression
+            independent (default is *default*).
+    """
+
+    mode: str = "append"
+    run_config_name: str = "default"
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_location(cls, data: Any) -> Any:
+        if cls is ActionEventsConfig and isinstance(data, dict) and not data.get("location"):
+            raise InvalidConfigError("The events table name ('location' field) must not be empty or None.")
+        return data
+
+    @model_validator(mode="after")
+    def validate_mode(self) -> "ActionEventsConfig":
+        if self.mode not in ("append", "overwrite"):
+            raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
+        return self

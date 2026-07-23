@@ -294,6 +294,9 @@ run_configs:                        # <- list of run configurations, each run co
 
   checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at absolute or relative path within the installation folder or volume file path.
 
+  actions_location: iot_actions.yml      # <- optional. Action definitions (alerting / fail-pipeline) to auto-load and apply after checks. Table, JSON/YAML file (absolute or relative to the installation folder, or volume path), or Lakebase table. Omit to run without actions.
+  action_events_location: main.iot.dq_action_events  # <- optional. UC or Lakebase table for action event history and durable alert suppression across runs. Omit to keep suppression state in memory per run.
+
   anomaly_config:                          # <- optional row anomaly detection configuration (model training via workflow)
     columns: [amount, quantity]            # <- optional, omit to use all supported columns
     model_name: main.iot.orders_monitor    # <- required when using anomaly config, fully qualified
