@@ -5,7 +5,7 @@ Shared profiling utilities.
 import collections.abc
 
 import pyspark.sql.functions as F
-from pyspark.sql import DataFrame
+from pyspark.sql import Column, DataFrame
 
 
 def compute_null_and_distinct_counts(
@@ -52,7 +52,7 @@ def compute_exact_distinct_counts(
 
 
 def calculate_median_absolute_deviation_bounds(
-    df: DataFrame, column: str, filter_condition: str | None = None
+    df: DataFrame, column: str, filter_condition: str | Column | None = None
 ) -> tuple[float, float] | None:
     """
     Calculates the lower and upper bounds using the median absolute deviation of a numeric column.
@@ -63,7 +63,8 @@ def calculate_median_absolute_deviation_bounds(
     Args:
         df: PySpark DataFrame
         column: Name of the numeric column to calculate MAD for
-        filter_condition: SQL filter expression to apply before calculation (optional)
+        filter_condition: Filter to apply before calculation (optional), as a SQL expression string or a
+            pre-compiled Column (e.g. a validated filter from *safe_filter_expr*).
 
     Returns:
         A (lower_bound, upper_bound) tuple, or None if bounds cannot be calculated.
@@ -80,7 +81,7 @@ def calculate_median_absolute_deviation_bounds(
 
 
 def calculate_median_absolute_deviation(
-    df: DataFrame, column: str, filter_condition: str | None
+    df: DataFrame, column: str, filter_condition: str | Column | None
 ) -> tuple[float | None, float | None]:
     """
     Calculates the Median Absolute Deviation (MAD) for a numeric column.
@@ -92,7 +93,8 @@ def calculate_median_absolute_deviation(
     Args:
         df: PySpark DataFrame
         column: Name of the numeric column to calculate MAD for
-        filter_condition: SQL filter expression to apply before calculation (optional)
+        filter_condition: Filter to apply before calculation (optional), as a SQL expression string or a
+            pre-compiled Column (e.g. a validated filter from *safe_filter_expr*).
 
     Returns:
         A (median, mad) tuple. Both values are None when the filtered DataFrame is empty.
