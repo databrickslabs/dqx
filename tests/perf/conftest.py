@@ -319,3 +319,21 @@ def generated_email_df(spark):
         gen = gen.withColumnSpec(col, template=template)
 
     return gen.build()
+
+
+@pytest.fixture
+def generated_country_code_df(spark):
+    country_schema_str = "col1_country_code: string, col2_country_code: string"
+    schema = _parse_datatype_string(country_schema_str)
+
+    country_templates = {
+        "col1_country_code": r"AA",
+        "col2_country_code": r"KK",
+    }
+
+    _, gen = make_data_gen(spark, n_rows=DEFAULT_ROWS, n_columns=len(country_templates), partitions=DEFAULT_PARTITIONS)
+    gen = gen.withSchema(schema)
+    for col, template in country_templates.items():
+        gen = gen.withColumnSpec(col, template=template)
+
+    return gen.build()

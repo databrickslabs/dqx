@@ -32,6 +32,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_valid_email,
+    is_valid_country_code,
     is_ipv4_address_in_cidr,
     is_valid_ipv6_address,
     is_ipv6_address_in_cidr,
@@ -1948,6 +1949,72 @@ def test_col_is_valid_email(spark):
         [None],
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_country_code(spark):
+    schema_cc = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            # Valid ISO 3166-1 alpha-2 codes
+            ["US"],
+            ["GB"],
+            ["DE"],
+            ["JP"],
+            # Invalid - wrong length, unknown, or non-country codes
+            ["USA"],  # alpha-3, not alpha-2
+            ["U"],  # too short
+            ["us"],  # lowercase (validation is case-sensitive)
+            ["EU"],  # supranational code, not accepted
+            ["XK"],  # user-assigned code, not accepted
+            ["ZZ"],  # unknown-region code, not accepted
+            [""],  # empty string
+            [None],  # Null - passes (no violation reported)
+        ],
+        schema_cc,
+    )
+
+    actual = test_df.select(is_valid_country_code("a"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 3166-1 alpha-2 country code"
+
+    checked_schema = "a_is_not_a_valid_country_code: string"
+    checked_data = [
+        # Valid (no violation reported)
+        [None],
+        [None],
+        [None],
+        [None],
+        # Invalid
+        [violation("USA")],
+        [violation("U")],
+        [violation("us")],
+        [violation("EU")],
+        [violation("XK")],
+        [violation("ZZ")],
+        [violation("")],
+        # Null passes
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_country_code_column_expr(spark):
+    schema_cc = "a: string"
+    test_df = spark.createDataFrame([["FR"], ["ZZ"]], schema_cc)
+
+    # Column-expression input end-to-end
+    actual = test_df.select(is_valid_country_code(F.col("a")))
+
+    checked_schema = "a_is_not_a_valid_country_code: string"
+    expected = spark.createDataFrame(
+        [[None], ["Value 'ZZ' in Column 'a' is not a valid ISO 3166-1 alpha-2 country code"]],
+        checked_schema,
+    )
 
     assertDataFrameEqual(actual, expected)
 

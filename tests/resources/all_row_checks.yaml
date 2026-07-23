@@ -483,3 +483,10 @@
     function: is_valid_email
     arguments:
       column: col_email
+
+# is_valid_country_code check
+- criticality: error
+  check:
+    function: is_valid_country_code
+    arguments:
+      column: col_country
