@@ -483,3 +483,11 @@
     function: is_valid_email
     arguments:
       column: col_email
+
+# has_valid_string_case check
+- criticality: error
+  check:
+    function: has_valid_string_case
+    arguments:
+      column: col1
+      case: lower

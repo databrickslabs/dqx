@@ -24,6 +24,7 @@ from databricks.labs.dqx.check_funcs import (
     foreign_key,
     is_valid_ipv4_address,
     is_valid_email,
+    has_valid_string_case,
     is_ipv4_address_in_cidr,
     is_not_less_than,
     is_not_greater_than,
@@ -773,6 +774,13 @@ def test_build_rules_by_metadata():
             "criticality": "error",
             "check": {"function": "is_valid_email", "arguments": {"column": "a"}},
         },
+        {
+            "criticality": "error",
+            "check": {
+                "function": "has_valid_string_case",
+                "arguments": {"column": "a", "case": "lower"},
+            },
+        },
     ]
 
     actual_rules = deserialize_checks(checks)
@@ -1044,6 +1052,13 @@ def test_build_rules_by_metadata():
             criticality="error",
             check_func=is_valid_email,
             column="a",
+        ),
+        DQRowRule(
+            name="a_has_invalid_lower_string_case",
+            criticality="error",
+            check_func=has_valid_string_case,
+            column="a",
+            check_func_kwargs={"case": "lower"},
         ),
     ]
 
@@ -1382,6 +1397,12 @@ def test_convert_dq_rules_to_metadata():
         DQRowRule(criticality="error", check_func=is_valid_json, column="col_json_str"),
         DQRowRule(
             criticality="error",
+            check_func=has_valid_string_case,
+            column="col1",
+            check_func_kwargs={"case": "lower"},
+        ),
+        DQRowRule(
+            criticality="error",
             check_func=has_json_keys,
             column="col_json_str",
             check_func_kwargs={"keys": ["key1"]},
@@ -1593,6 +1614,14 @@ def test_convert_dq_rules_to_metadata():
             "check": {
                 "function": "is_valid_json",
                 "arguments": {"column": "col_json_str"},
+            },
+        },
+        {
+            "name": "col1_has_invalid_lower_string_case",
+            "criticality": "error",
+            "check": {
+                "function": "has_valid_string_case",
+                "arguments": {"column": "col1", "case": "lower"},
             },
         },
         {

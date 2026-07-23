@@ -29,6 +29,8 @@ _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
 IPV4_MAX_OCTET_COUNT = 4
 IPV4_BIT_LENGTH = 32
+_VALID_STRING_CASES = {"upper", "lower", "title", "sentence"}
+_MAX_SUBSTRING_LENGTH = 2_147_483_647
 
 # Email helpers (RFC 5322 §3.2.3, §3.2.4 + RFC 5321 §4.1.3, §4.5.3.1).
 _EMAIL_ATEXT = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]"
@@ -248,6 +250,71 @@ def is_null_or_empty(column: str | Column, trim_strings: bool | None = False) ->
         f"Column '{col_expr_str}' value is not null and not empty",
         f"{col_str_norm}_is_not_null_and_not_empty",
     )
+
+
+@register_rule("row")
+def has_valid_string_case(column: str | Column, case: str) -> Column:
+    """Checks whether string values use the requested letter case.
+
+    Sentence case capitalizes the first non-whitespace character of every
+    period-delimited segment and lowercases the remainder of that segment.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        case: expected case; one of *upper*, *lower*, *title*, or *sentence*
+
+    Returns:
+        Column object for condition
+
+    Raises:
+        InvalidParameterError: If *case* is not a supported string case.
+    """
+    if not isinstance(case, str):
+        raise InvalidParameterError(f"'case' must be a string, got {type(case)} instead.")
+    if case not in _VALID_STRING_CASES:
+        raise InvalidParameterError(f"'case' must be one of {sorted(_VALID_STRING_CASES)}, got '{case}'")
+
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    col_expr_cast = col_expr.cast("string")
+
+    if case == "upper":
+        normalized_case = F.upper(col_expr_cast)
+    elif case == "lower":
+        normalized_case = F.lower(col_expr_cast)
+    elif case == "title":
+        words = F.split(col_expr_cast, " ")
+        normalized_case = F.array_join(
+            F.transform(
+                words,
+                lambda word: F.concat(
+                    F.upper(F.substring(word, 1, 1)),
+                    F.substring(word, 2, _MAX_SUBSTRING_LENGTH),
+                ),
+            ),
+            " ",
+        )
+    else:
+        segments = F.split(col_expr_cast, r"\.")
+        normalized_case = F.array_join(
+            F.transform(
+                segments,
+                lambda segment: F.concat(
+                    F.regexp_extract(segment, r"^(\s*)", 1),
+                    F.upper(F.substring(F.regexp_replace(segment, r"^\s*", ""), 1, 1)),
+                    F.lower(F.substring(F.regexp_replace(segment, r"^\s*", ""), 2, _MAX_SUBSTRING_LENGTH)),
+                ),
+            ),
+            ".",
+        )
+
+    condition = F.when(col_expr.isNotNull(), col_expr_cast != normalized_case).otherwise(F.lit(None))
+    message = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' does not have valid '{case}' string case"),
+    )
+    return make_condition(condition, message, f"{col_str_norm}_has_invalid_{case}_string_case")
 
 
 @register_rule("row")

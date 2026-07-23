@@ -1,4 +1,6 @@
+from typing import cast
 import pytest
+import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.check_funcs import (
     is_equal_to,
@@ -10,6 +12,7 @@ from databricks.labs.dqx.check_funcs import (
     is_in_list,
     is_not_null_and_is_in_list,
     is_aggr_not_greater_than,
+    has_valid_string_case,
     is_ipv4_address_in_cidr,
     is_ipv6_address_in_cidr,
     sql_expression,
@@ -50,6 +53,46 @@ def test_col_is_not_null_and_is_in_list_missing_allowed_list():
 def test_col_is_in_list_missing_allowed_list():
     with pytest.raises(InvalidParameterError, match="allowed list must not be empty."):
         is_in_list("a", allowed=[])
+
+
+@pytest.mark.parametrize(
+    "case, expected_message",
+    [
+        ("camel", "'case' must be one of ['lower', 'sentence', 'title', 'upper'], got 'camel'"),
+        ("", "'case' must be one of ['lower', 'sentence', 'title', 'upper'], got ''"),
+        ("Upper", "'case' must be one of ['lower', 'sentence', 'title', 'upper'], got 'Upper'"),
+        (None, "'case' must be a string, got <class 'NoneType'> instead."),
+        (1, "'case' must be a string, got <class 'int'> instead."),
+    ],
+)
+def test_has_valid_string_case_rejects_invalid_case(case: object, expected_message: str):
+    with pytest.raises(InvalidParameterError) as error:
+        has_valid_string_case("a", cast(str, case))
+
+    assert str(error.value) == expected_message
+
+
+@pytest.mark.parametrize(
+    "value, expected_valid",
+    [
+        ("Notes From IEEE Meeting", True),
+        ("An Ordinary Title", True),
+        ("Notes from IEEE Meeting", False),
+        ("", True),
+        ("   ", True),
+        ("123!?", True),
+        ("hello-world", False),
+    ],
+)
+def test_has_valid_string_case_title_expression(value: str, expected_valid: bool):
+    normalized = " ".join(f"{word[:1].upper()}{word[1:]}" for word in value.split(" "))
+
+    assert (value == normalized) is expected_valid
+
+    expression = str(has_valid_string_case(F.lit(value), "title"))
+    assert "initcap" not in expression
+    assert "transform(split(" in expression
+    assert "lower(" not in expression
 
 
 def test_incorrect_aggr_type():
