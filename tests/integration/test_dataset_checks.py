@@ -1984,6 +1984,73 @@ def test_aggr_matches_dataset_group_by_null_key_match(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+def test_aggr_matches_dataset_count_distinct_group_by_match(spark: SparkSession):
+    """count_distinct combined with group_by: per-group distinct counts match on both sides -> no violation.
+
+    Locks in grouped count_distinct for this check. Non-null group
+    keys use the window-incompatible join, so this exercises the grouped distinct-count path end-to-end.
+    """
+    # group "x": distinct b = {1, 2} (2); group "y": distinct b = {3} (1)
+    test_df = spark.createDataFrame([["x", 1], ["x", 1], ["x", 2], ["y", 3]], SCHEMA)
+    # same distinct counts per group on the reference (values differ, distinct counts do not)
+    ref_df = spark.createDataFrame([["x", 10], ["x", 20], ["y", 30], ["y", 30]], SCHEMA)
+
+    checks = [aggr_matches_dataset("b", ref_df_name="ref_df", aggr_type="count_distinct", group_by=["a"])]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    expected = spark.createDataFrame(
+        [["x", 1, None], ["x", 1, None], ["x", 2, None], ["y", 3, None]],
+        f"{SCHEMA}, b_count_distinct_group_by_a_not_equal_to_upstream_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_aggr_matches_dataset_count_distinct_group_by_mismatch(spark: SparkSession):
+    """count_distinct combined with group_by: a per-group distinct-count difference is flagged for that group."""
+    # group "x": distinct b = {1, 2} (2); group "y": distinct b = {3, 4} (2)
+    test_df = spark.createDataFrame([["x", 1], ["x", 2], ["y", 3], ["y", 4]], SCHEMA)
+    # group "x": distinct = {10} (1) -> mismatch; group "y": distinct = {30, 40} (2) -> match
+    ref_df = spark.createDataFrame([["x", 10], ["x", 10], ["y", 30], ["y", 40]], SCHEMA)
+
+    checks = [aggr_matches_dataset("b", ref_df_name="ref_df", aggr_type="count_distinct", group_by=["a"])]
+    actual = _apply_checks(test_df, checks, ref_dfs={"ref_df": ref_df}, spark=spark)
+
+    expected_message_x = (
+        "Distinct count value 2 in column 'b' per group of columns 'a' is not equal to "
+        "DataFrame 'ref_df' column 'b' limit: 1"
+    )
+    expected = spark.createDataFrame(
+        [["x", 1, expected_message_x], ["x", 2, expected_message_x], ["y", 3, None], ["y", 4, None]],
+        f"{SCHEMA}, b_count_distinct_group_by_a_not_equal_to_upstream_limit STRING",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_aggr_matches_dataset_count_distinct_group_by_null_key(spark: SparkSession):
+    """count_distinct + group_by with a NULL group key.
+
+    count_distinct is a window-incompatible aggregate, so the grouped join is not null-safe (documented on
+    aggr_matches_dataset). A legitimately NULL group key therefore cannot be matched to the reference and is
+    surfaced with a NULL limit (mismatch) rather than being silently compared. This test pins that documented
+    behavior so a future change to the join is a conscious decision.
+    """
+    # NULL group: distinct b = {1, 2} (2); group "y": distinct b = {3} (1)
+    test_df = spark.createDataFrame([[None, 1], [None, 2], ["y", 3]], SCHEMA)
+    ref_df = spark.createDataFrame([[None, 10], [None, 20], ["y", 30]], SCHEMA)
+
+    condition, apply_fn = aggr_matches_dataset("b", ref_df_name="ref_df", aggr_type="count_distinct", group_by=["a"])
+    checked = apply_fn(test_df, spark, {"ref_df": ref_df}).select("a", "b", condition.alias("cond"))
+    # Assert the flagging behavior (which rows are flagged) rather than the exact NULL-limit message text:
+    # the non-null group "y" matches (distinct 1 == 1) and passes; the NULL-key group cannot join
+    # null-safely for a window-incompatible aggregate, so it is surfaced (condition is non-null).
+    results = {(row["a"], row["b"]): row["cond"] for row in checked.collect()}
+    assert results[("y", 3)] is None
+    assert results[(None, 1)] is not None
+    assert results[(None, 2)] is not None
+
+
 def test_aggr_matches_dataset_group_by_null_key_mismatch(spark: SparkSession):
     """A NULL group_by key present on both sides with differing per-group metrics is still flagged."""
     test_df = spark.createDataFrame([[None, 1], [None, 2], ["y", 3]], SCHEMA)
