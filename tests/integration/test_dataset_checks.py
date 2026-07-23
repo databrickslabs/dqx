@@ -20,6 +20,7 @@ from databricks.labs.dqx.check_funcs import (
     foreign_key,
     compare_datasets,
     is_data_fresh_per_time_window,
+    has_no_gaps_per_time_window,
     has_valid_schema,
     aggr_matches_dataset,
 )
@@ -3210,6 +3211,50 @@ def test_is_data_fresh_per_time_window_check_entire_dataset(spark: SparkSession,
                 "b": 7,
                 condition_column: None,
             },
+        ],
+        expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_gaps_per_time_window(spark: SparkSession, set_utc_timezone):
+    schema = "event_date date, val int"
+    data = [
+        (date(2025, 7, 14), 1),
+        (date(2025, 7, 14), 2),  # same daily window as the first row
+        (date(2025, 7, 16), 3),  # 2025-07-15 is missing -> gap after 2025-07-14
+        (date(2025, 7, 17), 4),  # consecutive with 2025-07-16 -> no gap
+        (None, 5),  # null date passes with no violation
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_gaps_per_time_window(column="event_date", window_minutes=1440)
+    actual: DataFrame = apply_method(df)
+    condition_column = get_column_name_or_alias(condition)
+    actual = actual.select("event_date", "val", condition)
+
+    def gap_violation(window_start: str, next_window_start: str) -> str:
+        return (
+            f"Gap in time series: no data between the window starting at {window_start} "
+            f"and the next present window starting at {next_window_start}"
+        )
+
+    expected_schema = f"event_date date, val int, {condition_column} string"
+    expected = spark.createDataFrame(
+        [
+            {
+                "event_date": date(2025, 7, 14),
+                "val": 1,
+                condition_column: gap_violation("2025-07-14 00:00:00", "2025-07-16 00:00:00"),
+            },
+            {
+                "event_date": date(2025, 7, 14),
+                "val": 2,
+                condition_column: gap_violation("2025-07-14 00:00:00", "2025-07-16 00:00:00"),
+            },
+            {"event_date": date(2025, 7, 16), "val": 3, condition_column: None},
+            {"event_date": date(2025, 7, 17), "val": 4, condition_column: None},
+            {"event_date": None, "val": 5, condition_column: None},
         ],
         expected_schema,
     )

@@ -2520,6 +2520,92 @@ def is_data_fresh_per_time_window(
     return condition, apply
 
 
+@register_rule("dataset")
+def has_no_gaps_per_time_window(column: str | Column, window_minutes: int) -> tuple[Column, Callable]:
+    """Checks whether a time-series column has gaps, i.e. time windows that contain no rows at all
+    between windows that do (for example no data for 2025-07-15 while 2025-07-14 and 2025-07-16 are
+    present).
+
+    A missing window has no row to attach a violation to, so the gap is reported on the boundary row
+    that precedes it (the last row before the gap). Distinct values of *column* are bucketed into
+    fixed time windows of *window_minutes*, and a gap is flagged whenever the next present window
+    starts more than one window after the current one.
+
+    Only interior gaps are detected. A trailing gap (no data for the most recent windows up to the
+    current time) is not reported, because there is no later row to anchor it to. Null values are
+    ignored and pass with no violation reported.
+
+    Args:
+        column: timestamp or date column to check; can be a string column name or a column expression
+        window_minutes: size of the time window in minutes that defines the expected data grain
+            (for example 1440 for daily)
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the gap condition.
+            - A closure that applies the gap detection and adds the necessary condition columns.
+
+    Raises:
+        InvalidParameterError: if *window_minutes* is not a positive integer.
+    """
+    if window_minutes is None or window_minutes <= 0:
+        raise InvalidParameterError("window_minutes must be a positive integer")
+
+    col_str_norm, _, col_expr = get_normalized_column_and_expr(column)
+
+    unique_str = uuid.uuid4().hex
+    interval_col = f"__gap_interval_{col_str_norm}_{unique_str}"
+    window_start_col = f"__gap_window_start_{col_str_norm}_{unique_str}"
+    next_window_start_col = f"__gap_next_window_start_{col_str_norm}_{unique_str}"
+    condition_col = f"__gap_condition_{col_str_norm}_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        """Bucket rows into fixed time windows and flag the boundary row before each interior gap."""
+        input_columns = df.columns
+
+        # Bucket each row into a fixed time window and keep the window start. Null timestamps are
+        # coalesced to a sentinel first, because Spark's time-window operator drops rows whose window
+        # is null; those rows are excluded from gap detection below (distinct_windows filters nulls)
+        # and never match a gap window, so they pass through with no violation and are not lost.
+        safe_col_expr = F.coalesce(col_expr.cast("timestamp"), F.lit("1900-01-01 00:00:00").cast("timestamp"))
+        df = df.withColumn(interval_col, F.window(safe_col_expr, f"INTERVAL {window_minutes} MINUTES"))
+        df = df.withColumn(window_start_col, F.col(interval_col).start)
+
+        # For each present window, find the next present window over the distinct, ordered windows.
+        distinct_windows = df.filter(col_expr.isNotNull()).select(window_start_col).distinct()
+        ordered_windows = Window.orderBy(window_start_col)
+        gaps = distinct_windows.withColumn(next_window_start_col, F.lead(window_start_col).over(ordered_windows))
+
+        # A gap exists when the next present window starts more than one window after the current one.
+        gap_seconds = window_minutes * 60
+        gaps = gaps.withColumn(
+            condition_col,
+            F.when(
+                F.col(next_window_start_col).isNotNull()
+                & ((F.unix_timestamp(next_window_start_col) - F.unix_timestamp(window_start_col)) > F.lit(gap_seconds)),
+                True,
+            ).otherwise(False),
+        )
+
+        # Attach the per-window gap flag back to every row of the boundary window, keeping column order.
+        joined = df.join(gaps, on=window_start_col, how="left")
+        return joined.select(*input_columns, window_start_col, next_window_start_col, condition_col)
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("Gap in time series: no data between the window starting at "),
+            F.col(window_start_col).cast("string"),
+            F.lit(" and the next present window starting at "),
+            F.col(next_window_start_col).cast("string"),
+        ),
+        alias=f"{col_str_norm}_has_no_gaps_per_time_window",
+    )
+
+    return condition, apply
+
+
 @register_for_original_columns_preselection()
 @register_rule("dataset")
 def has_valid_schema(
