@@ -1,3 +1,4 @@
+import inspect
 import logging
 from datetime import datetime
 from dataclasses import dataclass
@@ -13,7 +14,14 @@ from databricks.labs.dqx.rule import (
     DQRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
-from databricks.labs.dqx.utils import get_column_name_or_alias, is_simple_column_expression, quote_column_name
+from databricks.labs.dqx.utils import (
+    get_column_name_or_alias,
+    is_simple_column_expression,
+    quote_column_name,
+    is_sql_query_safe,
+    safe_filter_expr,
+    sanitize_for_logging,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +76,46 @@ class DQRuleManager:
         """
         Returns the filter condition for the check.
         """
-        return F.expr(self.check.filter) if self.check.filter else F.lit(True)
+        return safe_filter_expr(self.check.filter)
+
+    @cached_property
+    def _effective_filter(self) -> str | None:
+        """
+        Returns the filter string that will be applied for this check, or None.
+
+        This is the single source of truth for "what filter runs" so the skip decision covers every way a
+        filter can reach a check function: the check-level *filter*, and a *row_filter* passed through
+        *check_func_kwargs* or positionally via *check_func_args*. Resolving from the check function's bound
+        arguments (rather than only *check.filter* / the kwarg) ensures no supply path slips past the guard.
+        """
+        if self.check.filter:
+            return self.check.filter
+        args, kwargs = self.check.prepare_check_func_args_and_kwargs()
+        row_filter = kwargs.get("row_filter")
+        if row_filter is None:
+            # row_filter may have been supplied positionally; bind against the signature to locate it.
+            sig = inspect.signature(self.check.check_func)
+            if "row_filter" in sig.parameters:
+                try:
+                    bound = sig.bind_partial(*args, **kwargs)
+                    row_filter = bound.arguments.get("row_filter")
+                except TypeError:
+                    row_filter = None
+        return row_filter if isinstance(row_filter, str) else None
+
+    @cached_property
+    def has_unsafe_filter(self) -> bool:
+        """
+        Returns True if the check filter contains unsafe SQL (e.g. a destructive statement keyword).
+
+        This is a non-raising check: an unsafe filter causes the check to be skipped (like any other
+        invalid filter) rather than aborting evaluation of the whole rule set. Note this does not apply to
+        the *sql_query* check, whose query runs via *spark.sql* and is still hard-rejected in the executor.
+        """
+        filter_expr = self._effective_filter
+        if not filter_expr:
+            return False
+        return not is_sql_query_safe(filter_expr)
 
     @cached_property
     def invalid_columns(self) -> list[str]:
@@ -111,7 +158,12 @@ class DQRuleManager:
     def has_invalid_filter(self) -> bool:
         """
         Returns a boolean indicating whether the filter is invalid in the input DataFrame.
+
+        An unsafe filter is short-circuited here so that ``filter_condition`` (which rejects unsafe SQL by
+        raising) is never compiled for it; the check is reported as skipped via ``_get_invalid_cols_message``.
         """
+        if self.has_unsafe_filter:
+            return True
         return self._is_invalid_column(self.filter_condition)
 
     @cached_property
@@ -235,11 +287,14 @@ class DQRuleManager:
                 f"Check evaluation skipped due to invalid check columns: {self.invalid_columns}"
             )
 
-        if self.has_invalid_filter:
-            logger.warning(f"Skipping check '{self.check.name}' due to invalid check filter: '{self.check.filter}'")
-            invalid_cols_message_parts.append(
-                f"Check evaluation skipped due to invalid check filter: '{self.check.filter}'"
-            )
+        if self.has_unsafe_filter:
+            safe_filter = sanitize_for_logging(self._effective_filter or "")
+            logger.warning(f"Skipping check '{self.check.name}' due to unsafe check filter: '{safe_filter}'")
+            invalid_cols_message_parts.append(f"Check evaluation skipped due to unsafe check filter: '{safe_filter}'")
+        elif self.has_invalid_filter:
+            safe_filter = sanitize_for_logging(self.check.filter or "")
+            logger.warning(f"Skipping check '{self.check.name}' due to invalid check filter: '{safe_filter}'")
+            invalid_cols_message_parts.append(f"Check evaluation skipped due to invalid check filter: '{safe_filter}'")
 
         if self.has_invalid_custom_message:
             if isinstance(self.check.message_expr, str):

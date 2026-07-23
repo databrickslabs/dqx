@@ -191,18 +191,18 @@ markdown = { header_level_by_type = { Method = 3, Function = 3, Class = 2, Modul
 profile = "black"
 
 [tool.mypy]
-# ``app/*`` is a self-contained uv sub-project (``app/pyproject.toml``)
-# with its own venv, its own mypy config, and its own ``app/tests/``
-# suite. Only mypy is opted out at the library level — to avoid a
-# "Duplicate module named 'tests'" collision between the library's own
-# ``tests/`` package and ``app/tests/`` (both ship ``__init__.py``).
+# ``app/*`` and ``mcp-server/*`` are self-contained sub-projects with
+# their own venvs, configs, and ``tests/`` suites. Only mypy is opted
+# out at the library level — to avoid a "Duplicate module named 'tests'"
+# collision between the library's own ``tests/`` package and
+# ``app/tests/`` / ``mcp-server/tests/`` (all ship ``__init__.py``).
 # Type-check the app via ``make app-check`` (runs ``bun run tsc -b`` +
-# ``basedpyright`` directly) instead. Black and ruff still traverse into ``app/`` from the root —
-# ruff picks up the app's own ``[tool.ruff]`` config automatically, and
-# black uses the same ``line-length = 120`` setting in both, so the
-# library-level ``make fmt`` / ``make lint`` formats and lints the app
-# alongside the library.
-exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*', 'app/*']
+# ``basedpyright`` directly) instead. Black and ruff still traverse
+# into ``app/`` and ``mcp-server/`` from the root — ruff picks up each
+# project's own ``[tool.ruff]`` config automatically, and black uses
+# the same ``line-length = 120`` setting, so the library-level
+# ``make fmt`` / ``make lint`` formats and lints them alongside the library.
+exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*', 'app/*', 'mcp-server/*']
 
 [[tool.mypy.overrides]]
 # External packages without PEP 561 type stubs (unavoidable - these are third-party optional dependencies)
@@ -218,7 +218,7 @@ markers = [
     "anomaly: marks tests as anomaly detection tests",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
-pythonpath = ["src", "app/src"]
+pythonpath = ["src", "app/src", "mcp-server"]
 
 
 [tool.black]
@@ -231,7 +231,7 @@ extend-exclude = 'demos/|tests/e2e/notebooks'
 cache-dir = ".venv/ruff-cache"
 target-version = "py310"
 line-length = 120
-exclude = ["demos/*", "tests/e2e/notebooks", "ui/*"]
+exclude = ["demos/*", "tests/e2e/notebooks", "ui/*", "mcp-server/notebooks/*"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["databricks.labs.dqx"]
@@ -258,7 +258,7 @@ exclude_lines = [
 # License: https://github.com/google/styleguide/blob/gh-pages/LICENSE
 
 # Add app/src to sys.path for pylint to find databricks_labs_dqx_app
-init-hook = "import sys; sys.path.insert(0, 'app/src')"
+init-hook = "import sys; sys.path.insert(0, 'app/src'); sys.path.insert(0, 'mcp-server')"
 
 # Clear in-memory caches upon conclusion of linting. Useful if running pylint in
 # a server-like mode.
@@ -890,6 +890,7 @@ redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", 
 "tests/unit/test_anomaly_check_funcs_validation.py" = "protected-access"
 "tests/unit/test_anomaly_scoring_run.py" = "protected-access"
 "tests/integration_anomaly/test_anomaly_ai_explanation.py" = "protected-access"
+"tests/unit/test_checks_storage.py" = "protected-access"
 
 # This plugin is used to generate correct links in README showed on PyPi
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
