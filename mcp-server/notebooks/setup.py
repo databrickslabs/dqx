@@ -68,6 +68,7 @@ Parameters:
 
 import logging
 import re
+import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dqx-mcp-setup")
@@ -148,20 +149,53 @@ logger.info(
 
 # Look up the app's service principal
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
+
+# App provisioning is asynchronous: `bundle deploy` registers the app, but the app entity and its
+# service principal become queryable via the Apps API only some time later. Under account-wide load
+# (e.g. many CI runs deploying apps concurrently) that window widens, so a single immediate
+# ws.apps.get() right after deploy can race the provisioner and raise NotFound ("App ... does not
+# exist or is deleted"). Poll with backoff until the app exists AND its service_principal_client_id
+# is populated, rather than failing the whole setup on a transient not-ready state.
+_APP_LOOKUP_TIMEOUT_SECONDS = 300
+_APP_LOOKUP_POLL_SECONDS = 10
+
+
+def _get_app_with_sp(ws: WorkspaceClient, name: str):
+    """Return the app once it exists and its service principal client id is populated.
+
+    Retries on NotFound and on a not-yet-assigned SP for up to _APP_LOOKUP_TIMEOUT_SECONDS to
+    tolerate asynchronous app provisioning after `bundle deploy`.
+    """
+    deadline = time.monotonic() + _APP_LOOKUP_TIMEOUT_SECONDS
+    last_reason = "app not found"
+    while True:
+        try:
+            app = ws.apps.get(name)
+            if app.service_principal_client_id:
+                return app
+            last_reason = "service principal not yet assigned"
+        except NotFound:
+            last_reason = "app not found"
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"App '{name}' was not fully provisioned within {_APP_LOOKUP_TIMEOUT_SECONDS}s "
+                f"({last_reason}). Ensure `bundle deploy`/`bundle run` for the app succeeded before setup."
+            )
+        logger.info(
+            f"Waiting for app '{name}' to be provisioned ({last_reason}); retrying in {_APP_LOOKUP_POLL_SECONDS}s"
+        )
+        time.sleep(_APP_LOOKUP_POLL_SECONDS)
+
 
 ws = WorkspaceClient()
-app = ws.apps.get(app_name)
+app = _get_app_with_sp(ws, app_name)
 
 # UC GRANTs use the SP's application id (client id), not its display_name or numeric SCIM id.
 # The Apps API returns it directly as service_principal_client_id — use that instead of a
 # ws.service_principals.get() SCIM lookup, which requires workspace-admin rights (the SCIM
 # GET /ServicePrincipals/{id} endpoint is admin-only) and would fail for a non-admin deployer.
 sp_principal = app.service_principal_client_id
-if not sp_principal:
-    raise ValueError(
-        f"App '{app_name}' has no service_principal_client_id — cannot resolve the app SP application id "
-        "for UC grants. Ensure the app is fully deployed before running setup."
-    )
 # Interpolated into the GRANT statements below, so validate it (backtick-breakout guard), same as
 # the runner SP application id.
 _validate_sp_id(sp_principal, "app service_principal_client_id")

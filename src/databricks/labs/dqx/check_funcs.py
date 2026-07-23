@@ -18,6 +18,7 @@ from databricks.labs.dqx.rule import register_rule, register_for_original_column
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
+    safe_filter_expr,
     normalize_col_str,
     get_columns_as_strings,
     to_lowercase,
@@ -430,6 +431,10 @@ def sql_expression(
 
     Args:
         expression: SQL expression. Fail if expression evaluates to False, pass if it evaluates to True.
+            Security note: this parameter accepts arbitrary SQL and is evaluated as-is, so it may
+            include subqueries and run with the permissions of the process executing the checks.
+            Only use check definitions from trusted sources, especially in automated or multi-tenant
+            pipelines.
         msg: optional message of the *Column* type, automatically generated if None
         name: optional name of the resulting column, automatically generated if None
         negate: if the condition should be negated (true) or not. For example, "col is not null" will mark null
@@ -1246,8 +1251,10 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
                 f"Column '{col_expr_str}' must be of numeric type to perform outlier detection using MAD method, "
                 f"but got type '{column_type.simpleString()}' instead."
             )
-        filter_condition = F.expr(row_filter) if row_filter else F.lit(True)
-        median, mad = _calculate_median_absolute_deviation(df, col_expr_str, row_filter)
+        # Validate and compile the filter (rejecting unsafe SQL); keep None when no filter is given so
+        # the MAD calculation stays a true no-op instead of filtering on F.lit(True).
+        filter_condition = safe_filter_expr(row_filter) if row_filter else None
+        median, mad = _calculate_median_absolute_deviation(df, col_expr_str, filter_condition)
         if median is not None and mad is not None:
             median = float(median)
             mad = float(mad)
@@ -1258,9 +1265,11 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
             upper_bound_expr = get_limit_expr(upper_bound)
 
             condition = (col_expr < (lower_bound_expr)) | (col_expr > (upper_bound_expr))
+            # Restrict the flagged rows to the filtered subset when a filter is present.
+            outlier_condition = (filter_condition & condition) if filter_condition is not None else condition
 
             # Add outlier detection columns
-            result_df = df.withColumn(condition_col, F.when(filter_condition & condition, True).otherwise(False))
+            result_df = df.withColumn(condition_col, F.when(outlier_condition, True).otherwise(False))
         else:
             # If median or mad could not be calculated, no outliers can be detected
             result_df = df.withColumn(condition_col, F.lit(False))
@@ -1337,7 +1346,7 @@ def is_unique(
 
         filter_condition = F.lit(True)
         if row_filter:
-            filter_condition = filter_condition & F.expr(row_filter)
+            filter_condition = filter_condition & safe_filter_expr(row_filter)
 
         if nulls_distinct:
             # All columns must be non-null
@@ -1466,7 +1475,7 @@ def foreign_key(
         ref_alias = f"__ref_{col_str_norm}_{unique_str}"
         ref_df_distinct = ref_df.select(ref_col_expr.alias(ref_alias)).distinct()
 
-        filter_expr = F.expr(row_filter) if row_filter else F.lit(True)
+        filter_expr = safe_filter_expr(row_filter)
 
         # col_expr.isNotNull() only filters rows in the single-column non-null-safe path;
         # when col_expr is a struct (composite keys or null_safe=True), the struct is never NULL
@@ -1583,7 +1592,7 @@ def sql_query(
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         filtered_df = df
         if row_filter:
-            filtered_df = df.filter(F.expr(row_filter))
+            filtered_df = df.filter(safe_filter_expr(row_filter))
 
         # since the check could be applied multiple times, the views created here must be unique
         filtered_df.createOrReplaceTempView(unique_input_view)
@@ -1956,8 +1965,7 @@ def has_no_aggr_outliers(
                 f"but got type '{time_col_type.simpleString()}' instead."
             )
 
-        filter_col = F.expr(row_filter) if row_filter else F.lit(True)
-        filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
+        filtered_expr = F.when(safe_filter_expr(row_filter), aggr_col_expr) if row_filter else aggr_col_expr
         aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
 
         group_cols = [F.col(c) if isinstance(c, str) else c for c in (group_by or [])]
@@ -2184,7 +2192,7 @@ def compare_datasets(
         skipped_columns = [col for col in df.columns if col not in compare_columns and col not in pk_column_names]
 
         # apply filter before aliasing to avoid ambiguity
-        df = df.withColumn(filter_col, F.expr(row_filter) if row_filter else F.lit(True))
+        df = df.withColumn(filter_col, safe_filter_expr(row_filter))
 
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
@@ -2291,7 +2299,7 @@ def is_data_fresh_per_time_window(
         # Build filter condition
         filter_condition = F.lit(True)
         if row_filter:
-            filter_condition = filter_condition & F.expr(row_filter)
+            filter_condition = filter_condition & safe_filter_expr(row_filter)
 
         # Limit checking to be within the lookback window if needed
         if lookback_windows is not None:
@@ -3354,8 +3362,7 @@ def _is_aggr_compare(
         Returns:
             The DataFrame with additional condition and metric columns for aggregation validation.
         """
-        filter_col = F.expr(row_filter) if row_filter else F.lit(True)
-        filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
+        filtered_expr = F.when(safe_filter_expr(row_filter), aggr_col_expr) if row_filter else aggr_col_expr
 
         # Build aggregation expression
         aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
@@ -3872,7 +3879,7 @@ def _apply_dataset_level_sql_check(
     # - If row_filter is provided, only rows matching the filter get the condition value
     # - Rows not matching the filter get None (consistent with row-level checks)
     if row_filter:
-        filter_expr = F.expr(row_filter)
+        filter_expr = safe_filter_expr(row_filter)
         result_df = df.withColumn(
             unique_condition_column, F.when(filter_expr, F.lit(condition_value)).otherwise(F.lit(None))
         )
@@ -3914,7 +3921,9 @@ def _validate_sql_query_params(query: str, merge_columns: list[str] | None) -> N
         raise InvalidParameterError("'merge_columns' entries must be non-empty strings.")
 
 
-def _calculate_median_absolute_deviation(df: DataFrame, column: str, filter_condition: str | None) -> tuple[Any, Any]:
+def _calculate_median_absolute_deviation(
+    df: DataFrame, column: str, filter_condition: Column | None
+) -> tuple[Any, Any]:
     """
     Calculate the Median Absolute Deviation (MAD) for a numeric column.
 
