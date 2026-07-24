@@ -69,6 +69,14 @@ def test_has_valid_string_case(spark):
             [None, "", "   ", "123!?. #$", {"value": "nested"}, 123],
             [" UPPER ", " lower ", " spark sql ", " first SEGMENT. second SEGMENT ", {"value": "nested"}, 123],
             ["123!?", "123!?", "hello-world", "Hello 123!. Second segment", {"value": "NESTED"}, 123],
+            [
+                "UPPER",
+                "lower",
+                "Notes From The 4th IEEE Meeting",
+                "The first IEEE meeting was today. The 2nd IEEE meeting will be next month.",
+                {"value": "nested"},
+                123,
+            ],
         ],
         "upper: string, lower: string, title: string, sentence: string, nested: struct<value:string>, numeric: int",
     )
@@ -97,7 +105,14 @@ def test_has_valid_string_case(spark):
                 None,
             ],
             [None, None, None, None, None, None],
-            [None, None, None, violation(" first SEGMENT. second SEGMENT ", "sentence", "sentence"), None, None],
+            [
+                None,
+                None,
+                violation(" spark sql ", "title", "title"),
+                violation(" first SEGMENT. second SEGMENT ", "sentence", "sentence"),
+                None,
+                None,
+            ],
             [
                 None,
                 None,
@@ -106,6 +121,7 @@ def test_has_valid_string_case(spark):
                 violation("NESTED", "nested['value']", "lower"),
                 None,
             ],
+            [None, None, None, None, None, None],
         ],
         "upper_has_invalid_upper_string_case: string, "
         "lower_has_invalid_lower_string_case: string, "

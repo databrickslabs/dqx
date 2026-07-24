@@ -253,10 +253,12 @@ def is_null_or_empty(column: str | Column, trim_strings: bool | None = False) ->
 
 @register_rule("row")
 def has_valid_string_case(column: str | Column, case: str) -> Column:
-    """Checks whether string values use the requested letter case.
+    """Checks whether string values match the requested letter case:
 
-    Sentence case capitalizes the first non-whitespace character of every
-    period-delimited segment and lowercases the remainder of that segment.
+    * `upper` requires all alphabetic characters to be uppercase
+    * `lower` requires all alphabetic characters to be lowercase
+    * `title` requires the first character of each space-delimited word to be uppercase
+    * `sentence` requires each period-delimited segment's first non-whitespace character to be uppercase
 
     Args:
         column: column to check; can be a string column name or a column expression
@@ -300,7 +302,7 @@ def has_valid_string_case(column: str | Column, case: str) -> Column:
                 lambda segment: F.concat(
                     F.regexp_extract(segment, r"^(\s*)", 1),
                     F.upper(F.substring(F.regexp_replace(segment, r"^\s*", ""), 1, 1)),
-                    F.lower(F.substring(F.regexp_replace(segment, r"^\s*", ""), 2, _MAX_SUBSTRING_LENGTH)),
+                    F.substring(F.regexp_replace(segment, r"^\s*", ""), 2, _MAX_SUBSTRING_LENGTH),
                 ),
             ),
             ".",
