@@ -1,7 +1,7 @@
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.config import ExtraParams
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx.rule import DQDatasetRule, DQRowRule
 from tests.integration.conftest import (
     EXTRA_PARAMS,
     RUN_TIME,
@@ -57,3 +57,55 @@ def test_apply_checks_skipped_flag_set_on_skipped_entries(ws, spark):
     assert len(errors) == 1
     assert errors[0]["name"] == "missing_col_is_null"
     assert errors[0]["skipped"] is True
+
+
+def test_apply_checks_suppress_skipped_suppresses_missing_special_char_column(ws, spark):
+    """A missing special-char column is still skipped, and suppress_skipped removes the entry."""
+    extra_params = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overwrite=RUN_ID, suppress_skipped=True)
+    dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
+    special_schema = "id int, `Customer Name` string"
+    test_df = spark.createDataFrame([[1, "Alice"], [2, "Bob"]], special_schema)
+
+    checks = [
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="error",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, `Customer Name` string, `Missing Column` string",
+                "columns": ["Customer Name", "Missing Column"],
+                "strict": False,
+            },
+        ),
+    ]
+
+    good_df, bad_df = dq_engine.apply_checks_and_split(test_df, checks)
+    assert bad_df.count() == 0
+    assert good_df.count() == 2
+
+
+def test_apply_checks_missing_special_char_column_is_skipped_and_back_quoted(ws, spark):
+    """A special-char column name that does not exist is still skipped, and is back-quoted in the message."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    special_schema = "id int, `Customer Name` string"
+    test_df = spark.createDataFrame([[1, "Alice"]], special_schema)
+
+    checks = [
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="error",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, `Customer Name` string, `Missing Column` string",
+                "columns": ["Customer Name", "Missing Column"],
+                "strict": False,
+            },
+        ),
+    ]
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    errors = checked.select("_errors").first()["_errors"]
+    assert len(errors) == 1
+    assert errors[0]["name"] == "has_valid_schema"
+    assert errors[0]["skipped"] is True
+    assert errors[0]["message"] == "Check evaluation skipped due to invalid check columns: ['`Missing Column`']"
