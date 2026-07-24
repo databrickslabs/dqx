@@ -32,6 +32,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_valid_email,
+    is_valid_national_id,
     is_ipv4_address_in_cidr,
     is_valid_ipv6_address,
     is_ipv6_address_in_cidr,
@@ -1888,7 +1889,7 @@ def test_col_is_valid_email(spark):
             ["user@[192.0.2.1"],  # missing closing bracket
             ["user@localhost"],  # no TLD
             ["missing@tld"],  # no domain "."
-            [None],  # null - passes (no violation reported)
+            [None],  # Null - passes (no violation reported)
         ],
         schema_email,
     )
@@ -1948,6 +1949,84 @@ def test_col_is_valid_email(spark):
         [None],
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_national_id(spark):
+    schema_ssn = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            # Valid - separators must be consistent (all '-', all ' ', or none)
+            ["123-45-6789"],
+            ["123456789"],
+            ["123 45 6789"],
+            ["899-45-6789"],  # area boundary just below 900
+            ["667-45-6789"],  # area just above 666
+            ["001-01-0001"],  # minimal valid area / group / serial
+            # Invalid - excluded number ranges
+            ["000-45-6789"],  # area 000
+            ["666-45-6789"],  # area 666
+            ["900-45-6789"],  # area 9xx (ITIN range, rejected)
+            ["123-00-6789"],  # group 00
+            ["123-45-0000"],  # serial 0000
+            # Invalid - separator / structure
+            ["123-45 6789"],  # mixed separators
+            ["12-45-6789"],  # area too short
+            ["1234-45-6789"],  # area too long
+            ["abc-de-fghi"],  # non-numeric
+            [""],  # empty string
+            [None],  # Null - passes (no violation reported)
+        ],
+        schema_ssn,
+    )
+
+    actual = test_df.select(is_valid_national_id("a", country="US"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' does not match pattern 'SSN_US'"
+
+    checked_schema = "a_does_not_match_pattern_ssn_us: string"
+    checked_data = [
+        # Valid (no violation reported)
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        [None],
+        # Invalid - excluded number ranges
+        [violation("000-45-6789")],
+        [violation("666-45-6789")],
+        [violation("900-45-6789")],
+        [violation("123-00-6789")],
+        [violation("123-45-0000")],
+        # Invalid - separator / structure
+        [violation("123-45 6789")],
+        [violation("12-45-6789")],
+        [violation("1234-45-6789")],
+        [violation("abc-de-fghi")],
+        [violation("")],
+        # Null passes
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_national_id_column_expr_and_lowercase_country(spark):
+    schema_ssn = "a: string"
+    test_df = spark.createDataFrame([["123-45-6789"], ["000-45-6789"]], schema_ssn)
+
+    # Column-expression input + case-insensitive country normalization end-to-end
+    actual = test_df.select(is_valid_national_id(F.col("a"), country="us"))
+
+    checked_schema = "a_does_not_match_pattern_ssn_us: string"
+    expected = spark.createDataFrame(
+        [[None], ["Value '000-45-6789' in Column 'a' does not match pattern 'SSN_US'"]],
+        checked_schema,
+    )
 
     assertDataFrameEqual(actual, expected)
 
