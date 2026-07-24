@@ -339,6 +339,7 @@ async def get_ai_gateway(
 async def get_ai_rules_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     gateway: Annotated[AIGateway, Depends(get_ai_gateway)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> AiRulesService:
     """Create an AiRulesService, entirely OBO-authenticated.
 
@@ -346,8 +347,12 @@ async def get_ai_rules_service(
     importer, and the AIGateway-backed purpose calls — generate_rule/suggest_field/
     generate_checks_via_gateway) run as the calling user, so every model invocation and UC
     read triggered by an AI-assisted request is subject to that user's own permissions.
+
+    The (SP-side) ``AppSettingsService`` supplies the admin-configurable dimension/severity
+    vocabularies that drive the rule-proposal prompt option lists and post-parse validation
+    (a cheap, best-effort OLTP setting read that degrades to hard-coded defaults on failure).
     """
-    return AiRulesService(obo_ws=obo_ws, gateway=gateway)
+    return AiRulesService(obo_ws=obo_ws, gateway=gateway, app_settings=app_settings)
 
 
 async def get_contract_rules_service(
@@ -376,15 +381,20 @@ async def get_rules_catalog_service(
 async def get_registry_service(
     sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
 ) -> RegistryService:
-    """Create a RegistryService routed at the OLTP executor."""
-    return RegistryService(sql=sql, permissions=perms)
+    """Create a RegistryService routed at the OLTP executor.
+
+    The SP client resolves ``steward_display_name`` at write time via SCIM.
+    """
+    return RegistryService(sql=sql, permissions=perms, sp_ws=sp_ws)
 
 
 async def get_monitored_table_service(
     sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     profiling_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
 ) -> MonitoredTableService:
     """Create a MonitoredTableService.
 
@@ -394,7 +404,7 @@ async def get_monitored_table_service(
     SQL executor, since that table is written by the profiler job
     regardless of whether Lakebase is enabled.
     """
-    return MonitoredTableService(sql=sql, profiling_sql=profiling_sql, permissions=perms)
+    return MonitoredTableService(sql=sql, profiling_sql=profiling_sql, permissions=perms, sp_ws=sp_ws)
 
 
 async def get_apply_rules_service(
@@ -859,6 +869,7 @@ async def get_data_product_service(
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     materializer: Annotated[Materializer, Depends(get_materializer)],
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
 ) -> DataProductService:
     """Create a DataProductService routed at the OLTP executor.
 
@@ -880,6 +891,7 @@ async def get_data_product_service(
         app_settings=app_settings,
         materializer=materializer,
         permissions=perms,
+        sp_ws=sp_ws,
     )
 
 

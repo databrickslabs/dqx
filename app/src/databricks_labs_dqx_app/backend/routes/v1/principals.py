@@ -19,6 +19,7 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.dependencies import get_sp_ws, require_role
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import PrincipalSearchOut
+from databricks_labs_dqx_app.backend.services.steward_display_name_service import _quote_scim
 
 router = APIRouter()
 
@@ -28,11 +29,6 @@ _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, User
 
 _CACHE_TTL_SECS = 60.0
 _cache: dict[tuple[str, str, int], tuple[float, list[PrincipalSearchOut]]] = {}
-
-
-def _quote_scim(s: str) -> str:
-    """Escape double quotes for SCIM filter strings."""
-    return s.replace('"', '\\"')
 
 
 @router.get(

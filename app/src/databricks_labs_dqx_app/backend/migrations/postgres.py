@@ -1168,6 +1168,29 @@ PG_MIGRATIONS: list[PgMigration] = [
             "AND privileges <> 'ALL_PRIVILEGES';"
         ),
     ),
+    PgMigration(
+        version=22,
+        description="Add steward_display_name to dq_rules, dq_monitored_tables, dq_data_products",
+        sql=(
+            # ------------------------------------------------------------------
+            # ``steward_display_name`` — human-readable name for the steward
+            # email stored in the sibling ``steward`` column. Populated at
+            # write-time (the entity services resolve the steward email ->
+            # display name via SCIM on every steward write, defaulting to the
+            # principal picker's ``display_name`` when supplied). No startup
+            # backfill; the list pages fall back to the raw email when NULL.
+            #
+            # ``IF NOT EXISTS`` is native Postgres syntax, so a re-run against an
+            # already-converged DB is a true no-op. Mirrors Delta v26.
+            # ------------------------------------------------------------------
+            f"ALTER TABLE {_S}.dq_rules "
+            "  ADD COLUMN IF NOT EXISTS steward_display_name TEXT;"
+            f"ALTER TABLE {_S}.dq_monitored_tables "
+            "  ADD COLUMN IF NOT EXISTS steward_display_name TEXT;"
+            f"ALTER TABLE {_S}.dq_data_products "
+            "  ADD COLUMN IF NOT EXISTS steward_display_name TEXT;"
+        ),
+    ),
 ]
 
 

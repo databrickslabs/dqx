@@ -34,9 +34,10 @@ import {
 import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
 import type { MonitoredTableSummaryOut } from "@/lib/api";
 
-/** Effective owner for display/filter/sort — explicit ``steward`` wins, else creator. */
+/** Effective owner for display/filter/sort — the steward's resolved display
+ *  name wins, then the raw steward identity, then the creator. */
 export function monitoredTableOwner(r: MonitoredTableSummaryOut): string {
-  return r.table.steward || r.table.created_by || "";
+  return r.table.steward_display_name || r.table.steward || r.table.created_by || "";
 }
 
 /** Column keys that carry a comparable value and can drive client sort. */

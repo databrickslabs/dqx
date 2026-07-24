@@ -42,9 +42,9 @@ from typing import Any
 
 from databricks.labs.dqx.utils import is_sql_query_safe
 
-from .builtin_rules_seed import build_builtin_metadata
+from .builtin_rules_seed import build_builtin_metadata, humanize_function_name
 from .models import CheckFunctionDef
-from .registry_models import ColumnMappingGroup, RuleDefinition, RuleParameter, RuleSlot
+from .registry_models import RESERVED_NAME_KEY, ColumnMappingGroup, RuleDefinition, RuleParameter, RuleSlot, set_reserved_tag
 from .registry_seed_map import derive_slots_and_parameters
 from .routes.v1.check_functions import _introspect_check_functions
 from .sql_utils import strip_sql_line_comments
@@ -188,7 +188,58 @@ def build_profiling_rule(check: dict[str, Any]) -> ProfilingRuleCandidate | None
     }
     definition = RuleDefinition(body=body, slots=slots, parameters=frozen_parameters)
     metadata = build_builtin_metadata(cfd)
+    # Override the generic function label with a column-qualified name so that
+    # multiple profiler suggestions for the same function (but different columns)
+    # produce distinguishable rule names in the registry.
+    metadata = set_reserved_tag(metadata, RESERVED_NAME_KEY, _derive_rule_name(function, mapping))
     return ProfilingRuleCandidate(function=function, definition=definition, mapping=mapping, metadata=metadata)
+
+
+def _sanitize_name_fragment(value: str) -> str:
+    """Strip control characters (including newlines) from a name fragment.
+
+    Column names come from Unity Catalog metadata and are not free user text,
+    but we sanitize defensively before embedding them in a display string that
+    may be logged or stored as a tag value (CWE-117).
+    """
+    return "".join(ch for ch in value if ch >= " ")
+
+
+def _derive_rule_name(function: str, mapping: ColumnMappingGroup) -> str:
+    """Build a distinguishing rule name from the humanized function label + columns.
+
+    Format: ``"<Humanized function>: <col1>, <col2>"``
+
+    Column names are the primary differentiator — the profiler can suggest the
+    same function for multiple columns, and users need to tell them apart at a
+    glance. Parameters are NOT included: they would make the name noisy and
+    overly long, and the column alone is almost always sufficient to distinguish.
+
+    For a ``many`` slot the mapping value is already a comma-joined string; we
+    split and re-join with a consistent separator so the result reads naturally
+    regardless of how the mapping was built.
+    """
+    label = humanize_function_name(function)
+
+    col_parts: list[str] = []
+    for value in mapping.values():
+        # A ``many`` slot stores "col_a,col_b"; flatten to individual names.
+        for col in value.split(","):
+            col = _sanitize_name_fragment(col.strip())
+            if col:
+                col_parts.append(col)
+
+    if not col_parts:
+        return label
+
+    # Truncate to avoid absurdly long names when many columns are present.
+    _MAX_COLS = 3
+    if len(col_parts) > _MAX_COLS:
+        col_summary = ", ".join(col_parts[:_MAX_COLS]) + ", …"
+    else:
+        col_summary = ", ".join(col_parts)
+
+    return f"{label}: {col_summary}"
 
 
 def _freeze_parameter(param: RuleParameter, raw: object) -> RuleParameter:

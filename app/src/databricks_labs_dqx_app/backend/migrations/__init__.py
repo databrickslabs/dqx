@@ -1290,6 +1290,29 @@ _V25_STRIP_EXECUTE_FROM_REGISTRY_RULE_GRANTS = (
 )
 
 
+# Add ``steward_display_name`` to the three OLTP tables that carry a steward
+# column (``dq_rules``, ``dq_monitored_tables``, ``dq_data_products``).  The
+# column is populated at write-time (the entity services resolve the steward
+# email -> display name via SCIM on every steward write, defaulting to the
+# principal picker's ``display_name`` when supplied). There is no startup
+# backfill; the list pages fall back to the raw email when
+# ``steward_display_name`` is NULL (pre-existing rows until the steward is
+# next touched).
+#
+# ``ADD COLUMN`` (not ``ADD COLUMN IF NOT EXISTS`` — unsupported on some
+# warehouse versions); on an already-converged DB each raises
+# ``COLUMN_ALREADY_EXISTS`` which ``_IDEMPOTENT_ERROR_FRAGMENTS`` swallows.
+#
+# Marked ``oltp_fallback=True``: all three tables live in Lakebase when
+# enabled (the Postgres mirror is v22 in ``backend.migrations.postgres``), so
+# this only runs against Delta when Lakebase is disabled.
+_V26_STEWARD_DISPLAY_NAME = (
+    f"ALTER TABLE {_PLACEHOLDER}.dq_rules ADD COLUMN steward_display_name STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_monitored_tables ADD COLUMN steward_display_name STRING;"
+    f"ALTER TABLE {_PLACEHOLDER}.dq_data_products ADD COLUMN steward_display_name STRING"
+)
+
+
 _V19_TAG_AUTO_SUPPRESSIONS = (
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_tag_auto_suppressions ("
     "  binding_id STRING NOT NULL,"
@@ -1476,6 +1499,13 @@ MIGRATIONS: list[Migration] = [
         description="Strip EXECUTE from registry_rule users-group grant rows (EXECUTE is meaningless on a rule) "
         "— used only when Lakebase is disabled",
         sql_template=_V25_STRIP_EXECUTE_FROM_REGISTRY_RULE_GRANTS,
+        oltp_fallback=True,
+    ),
+    DeltaMigration(
+        version=26,
+        description="Add steward_display_name to dq_rules, dq_monitored_tables, dq_data_products "
+        "— used only when Lakebase is disabled",
+        sql_template=_V26_STEWARD_DISPLAY_NAME,
         oltp_fallback=True,
     ),
 ]

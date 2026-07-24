@@ -166,6 +166,7 @@ def create_registry_rule(
             author_kind=body.author_kind,
             user_metadata=body.user_metadata,
             steward=body.steward,
+            steward_display_name=body.steward_display_name,
         )
         return CreateRegistryRuleOut(rule=RegistryRuleOut.from_domain(rule), dedup_warning=warning)
     except UnsafeSqlQueryError as e:
@@ -239,6 +240,7 @@ def batch_import_registry_rules(
                 author_kind=rule_in.author_kind,
                 user_metadata=rule_in.user_metadata,
                 steward=rule_in.steward,
+                steward_display_name=rule_in.steward_display_name,
                 source="import",
             )
             out = CreateRegistryRuleOut(rule=RegistryRuleOut.from_domain(rule), dedup_warning=warning)
@@ -325,6 +327,7 @@ def update_registry_rule(
             polarity=body.polarity,
             user_metadata=body.user_metadata,
             steward=body.steward,
+            steward_display_name=body.steward_display_name,
             author_kind=body.author_kind,
         )
         return RegistryRuleOut.from_domain(rule)

@@ -59,6 +59,7 @@ def _table_row(
     binding_id: str = "b1",
     table_fqn: str = "cat.schema.tbl",
     steward: str | None = "alice@x",
+    steward_display_name: str | None = None,
     status: str = "draft",
     version: int = 0,
     schedule_cron: str | None = None,
@@ -72,32 +73,34 @@ def _table_row(
     score_computed_at: str | None = None,
     version_state_json: str | None = None,
 ) -> list[str]:
-    # ``schedule_kind`` (B2-52) is at index 13; the trailing 4 cells are the
-    # dq_score_cache LEFT-JOIN columns the list query selects (P3.4, indices
-    # 14..17) — all None when the table has never been scored. Index 18 is the
-    # version_state_json from the dq_monitored_table_versions LEFT JOIN. The
-    # single-row read paths select only the first 14 columns; the extra cells
-    # are simply ignored by _row_to_table.
+    # ``schedule_kind`` (B2-52) is at index 13;
+    # ``steward_display_name`` at index 14;
+    # the trailing 4 cells are the dq_score_cache LEFT-JOIN columns
+    # (P3.4, indices 15..18) — all None when the table has never been scored.
+    # Index 19 is the version_state_json from the dq_monitored_table_versions
+    # LEFT JOIN. The single-row read paths select only the first 15 columns;
+    # the extra cells are simply ignored by _row_to_table.
     return [
-        binding_id,
-        table_fqn,
-        steward,
-        status,
-        version,
-        schedule_cron,
-        schedule_tz,
-        last_profiled_at,
-        last_run_at,
-        "alice@x",
-        "2026-07-02T00:00:00+00:00",
-        "alice@x",
-        "2026-07-02T00:00:00+00:00",
-        schedule_kind,
-        score,
-        failed_tests,
-        total_tests,
-        score_computed_at,
-        version_state_json,
+        binding_id,        # 0
+        table_fqn,         # 1
+        steward,           # 2
+        status,            # 3
+        version,           # 4
+        schedule_cron,     # 5
+        schedule_tz,       # 6
+        last_profiled_at,  # 7
+        last_run_at,       # 8
+        "alice@x",         # 9 created_by
+        "2026-07-02T00:00:00+00:00",  # 10 created_at
+        "alice@x",         # 11 updated_by
+        "2026-07-02T00:00:00+00:00",  # 12 updated_at
+        schedule_kind,     # 13
+        steward_display_name,  # 14
+        score,             # 15
+        failed_tests,      # 16
+        total_tests,       # 17
+        score_computed_at, # 18
+        version_state_json,  # 19
     ]
 
 

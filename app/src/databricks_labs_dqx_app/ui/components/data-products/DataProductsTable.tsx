@@ -223,7 +223,11 @@ const COLUMNS: Record<DataProductsSortKey, ColumnDef> = {
     // A→Z through the named stewards (B2-92); un-stewarded products sort last.
     renderHeader: (label) => label,
     renderCell: (p) =>
-      p.steward ? <TruncatedCell text={p.steward} /> : <span className="text-muted-foreground">—</span>,
+      (p.steward_display_name || p.steward) ? (
+        <TruncatedCell text={p.steward_display_name || p.steward || ""} />
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      ),
   },
   tables: {
     labelKey: "dataProducts.colTables",

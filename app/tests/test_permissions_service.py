@@ -262,9 +262,10 @@ def test_list_effective_grants_shows_stored_owner_row(svc, fake):
     owner = owner_rows[0]
     assert owner.principal_type == "user"
     assert owner.is_default is False  # it's a real stored row
-    # Privileges stored as ALL_PRIVILEGES — expanded at enforcement time.
+    # Owner on a registry_rule gets SELECT,MODIFY,APPLY — EXECUTE is stripped by
+    # the set_grant guard (rules are not run directly, so EXECUTE is meaningless).
     from databricks_labs_dqx_app.backend.common.permissions import expand_privileges
-    assert expand_privileges(owner.privileges) == expand_privileges({Privilege.ALL_PRIVILEGES})
+    assert expand_privileges(owner.privileges) == {Privilege.SELECT, Privilege.MODIFY, Privilege.APPLY}
 
 
 def test_list_effective_grants_no_owner_row_when_unseeded(svc, fake):
@@ -1010,3 +1011,70 @@ def test_owner_asymmetry_effective_privileges_empty_without_stored_row(svc):
         principal_email="owner@x.com",
     )
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# H2 regression: EXECUTE must never be stored on registry_rule (set_grant guard)
+# ---------------------------------------------------------------------------
+
+
+def test_set_grant_registry_rule_all_privileges_strips_execute(mock_sql, app_settings_mock):
+    """ALL_PRIVILEGES on a registry_rule must expand then strip EXECUTE, storing
+    SELECT,MODIFY,APPLY — NOT the ALL_PRIVILEGES token (which would imply EXECUTE).
+    """
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    svc.set_grant(
+        "registry_rule",
+        "r1",
+        "steward@x.com",
+        principal_type="user",
+        principal_name="steward@x.com",
+        privileges={Privilege.ALL_PRIVILEGES},
+        inherit=False,
+        grantor="admin@x.com",
+    )
+    executed = " ".join(str(c.args[0]) for c in mock_sql.execute.call_args_list)
+    # Must store the explicit concrete set, not the ALL_PRIVILEGES token
+    # (which normalise would re-produce only if EXECUTE were present).
+    assert "ALL_PRIVILEGES" not in executed
+    assert "SELECT" in executed
+    assert "MODIFY" in executed
+    assert "APPLY" in executed
+    assert "EXECUTE" not in executed
+
+
+def test_set_grant_registry_rule_select_execute_strips_execute(mock_sql, app_settings_mock):
+    """An explicit {SELECT, EXECUTE} grant on a registry_rule must store only SELECT."""
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    svc.set_grant(
+        "registry_rule",
+        "r1",
+        "u1",
+        principal_type="user",
+        principal_name="Alice",
+        privileges={Privilege.SELECT, Privilege.EXECUTE},
+        inherit=False,
+        grantor="admin@x.com",
+    )
+    executed = " ".join(str(c.args[0]) for c in mock_sql.execute.call_args_list)
+    assert "EXECUTE" not in executed
+    assert "SELECT" in executed
+
+
+def test_set_grant_monitored_table_all_privileges_unaffected(mock_sql, app_settings_mock):
+    """The EXECUTE-strip guard must NOT apply to monitored_table — ALL_PRIVILEGES
+    on a table must remain ALL_PRIVILEGES (EXECUTE is valid there).
+    """
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    svc.set_grant(
+        "monitored_table",
+        "b1",
+        "u1",
+        principal_type="user",
+        principal_name="Alice",
+        privileges={Privilege.ALL_PRIVILEGES},
+        inherit=False,
+        grantor="admin@x.com",
+    )
+    executed = " ".join(str(c.args[0]) for c in mock_sql.execute.call_args_list)
+    assert "ALL_PRIVILEGES" in executed

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Collection
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, ClassVar, TypedDict
@@ -26,6 +27,7 @@ from databricks_labs_dqx_app.backend.lowcode_compile import (
     lowcode_prompt_vocab,
 )
 from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.sql_utils import strip_sql_line_comments
 
 logger = logging.getLogger(__name__)
@@ -65,10 +67,13 @@ ONE reusable {mode_label} rule.
 Return ONLY a JSON object with these fields:
   - "name": a short human-readable rule name (max 80 chars)
   - "description": a one-sentence description of what the rule checks
-  - "dimension": one of Validity, Completeness, Accuracy, Consistency, Uniqueness, Timeliness
-  - "severity": one of Low, Medium, High, Critical
-  - "polarity": "pass" or "fail" (use "pass" for a Basic Rules rule; for a SQL rule, "pass" \
-means the SQL predicate must be true for a row to pass)
+  - "dimension": one of {dimensions}
+  - "severity": one of {severities}
+  - "polarity": "pass" or "fail" — STRONGLY PREFER "pass": express the condition that is TRUE \
+when the row is VALID (the expected default for almost every rule). Only use "fail" (a predicate \
+describing the FAILING rows) when writing the passing-case predicate would be substantially more \
+complex/unnatural, OR when the user's description EXPLICITLY frames it as a failure condition \
+(e.g. "flag rows where amount is negative"). When in doubt, use "pass".
   - "definition": {definition_shape}{columns_field}
 
 Guidelines:
@@ -83,8 +88,10 @@ _SQL_DEFINITION_SHAPE = '{"sql_query": "<a SELECT-only predicate expression, no 
 
 # Friendly, user-facing names for each internal mode id — used only in the
 # human-readable PROSE the model reads (the internal ids "dqx_native"/"sql"/
-# "lowcode" remain the app-wide contract; see parse_rule_type_intent).
-_MODE_LABELS = {"dqx_native": "Basic Rules", "sql": "SQL", "lowcode": "Custom Checks"}
+# "lowcode" remain the app-wide contract; see parse_rule_type_intent). Aligned
+# to the current UI rule-type picker labels (en.json: coreBasicChecks="Basic
+# Rules", coreConditionBuilder="Condition Builder", coreSql="SQL").
+_MODE_LABELS = {"dqx_native": "Basic Rules", "sql": "SQL", "lowcode": "Condition Builder"}
 
 # Low-code proposal prompt (B2-132). Ported from dqlake's `_GENERATE_LOWCODE_SYSTEM`
 # and adapted to DQX: the model emits a low-code AST (`rows` + `joins`) plus the
@@ -98,16 +105,19 @@ _MODE_LABELS = {"dqx_native": "Basic Rules", "sql": "SQL", "lowcode": "Custom Ch
 _LOWCODE_PROPOSAL_SYSTEM_TEMPLATE = """\
 You are a data quality rule design assistant for the DQX Rules Registry. Given a business \
 description of a data quality requirement (and optional table schema/sample data), propose \
-ONE reusable Custom Checks rule expressed as a structured AST.
+ONE reusable Condition Builder rule expressed as a structured AST.
 
 Return ONLY a JSON object with these fields:
   - "name": a short human-readable rule name (max 80 chars)
   - "description": a one-sentence description of what the rule checks
-  - "dimension": one of Validity, Completeness, Accuracy, Consistency, Uniqueness, Timeliness
-  - "severity": one of Low, Medium, High, Critical
-  - "polarity": "pass" or "fail" — use "pass" when the AST rows describe the condition that is \
-TRUE for a VALID row (the common case); use "fail" only when the description explicitly names a \
-failure condition. When in doubt, choose "pass".
+  - "dimension": one of {dimensions}
+  - "severity": one of {severities}
+  - "polarity": "pass" or "fail" — STRONGLY PREFER "pass": express the AST rows as the condition \
+that is TRUE when a row is VALID. This is almost always possible and is the expected default. \
+Only use "fail" (rows where the condition is TRUE describe a FAILING row) when writing the \
+passing-case AST would be substantially more complex/unnatural, OR when the user's description \
+EXPLICITLY frames it as a failure condition (e.g. "flag rows where amount is negative"). When \
+in doubt, use "pass".
   - "columns": a JSON array of {{"name": "<snake_case>", "family": \
 "numeric"|"text"|"temporal"|"boolean"|"any"}} objects — ONE per column the rule references
   - "group_by_columns": a comma-separated string of {{{{column}}}} placeholders for group-level \
@@ -163,10 +173,12 @@ _WRITE_SQL_SYSTEM_TEMPLATE = """\
 You produce data-quality rule predicates for the DQX Rules Registry. Respond with ONLY a JSON \
 object: {{"predicate": "<sql boolean expression>", "polarity": "pass"|"fail"}}.
 
-Set "polarity" to "pass" if the predicate is TRUE when the row is VALID (the common case — \
-users typically describe what a good row looks like). Set it to "fail" only when the user \
-explicitly describes a failure condition (e.g. "flag rows where amount is negative" — the \
-predicate then describes the failing rows). When in doubt, choose "pass".
+STRONGLY PREFER writing the predicate for the PASSING case: express the condition that is TRUE \
+when the row is VALID, and set polarity to "pass". This is almost always possible and is the \
+expected default. Only use polarity "fail" (a predicate describing the FAILING rows) when \
+writing the passing-case predicate would be substantially more complex/unnatural, OR when the \
+user's description EXPLICITLY frames it as a failure condition (e.g. "flag rows where amount \
+is negative"). When in doubt, write the passing case with polarity "pass".
 
 Column reference rules:
 - Reference every column as a {{{{slot}}}} placeholder — never a bare column identifier. A \
@@ -182,8 +194,10 @@ You refine a DQX SQL boolean predicate per the user's instruction. Respond with 
 object: {{"predicate": "<sql boolean expression>", "polarity": "pass"|"fail"}}.
 
 Keep every column reference as a {{{{slot}}}} placeholder; keep declared slot names unchanged. \
-Set "polarity" to "pass" when a TRUE predicate means the row is VALID (the common case), or \
-"fail" only when the user explicitly describes a failure condition; when in doubt choose "pass".
+STRONGLY PREFER writing the predicate for the PASSING case: set "polarity" to "pass" when the \
+predicate is TRUE for a VALID row (the expected default). Only use "fail" when the passing-case \
+predicate would be substantially more complex/unnatural, or when the user's instruction \
+EXPLICITLY describes a failure condition; when in doubt choose "pass".
 
 Safety rules:
 - The predicate must be a single boolean SQL expression only — no SELECT, no semicolons, no \
@@ -223,25 +237,31 @@ _INTENT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(rf"\bsql\s+{_RULE_KIND}\b|\b{_RULE_KIND}\s+(?:in|using|with|as)\s+sql\b", re.IGNORECASE),
     ),
     (
-        # "Custom Checks" is the friendly name for the lowcode mode; the old
-        # "low-code" / "condition builder" phrasings still route here too.
+        # "Condition Builder" is the current friendly name for the lowcode mode
+        # (UI: coreConditionBuilder); the older "low-code" / "custom condition" /
+        # "custom check" phrasings still route here too. "condition builder" is
+        # itself the type phrase (its head noun is "builder", not a rule/check
+        # noun), so it is matched explicitly rather than via _RULE_KIND.
         "lowcode",
         re.compile(
             rf"\blow[\s-]?code\s+{_RULE_KIND}\b"
             rf"|\blow[\s-]?code\b(?=.*\b{_RULE_KIND}\b)"
+            rf"|\bcondition\s+builder\b"
             rf"|\bcustom\s+(?:condition|{_RULE_KIND})\b",
             re.IGNORECASE,
         ),
     ),
     (
-        # "Basic Rules" is the friendly name for the dqx_native mode; the old
-        # "native" / "built-in function" phrasings still route here too.
+        # "Basic Rules" is the current friendly name for the dqx_native mode
+        # (UI: coreBasicChecks); the older "native" / "built-in function" and the
+        # "basic"/"simple" phrasings all route here too.
         "dqx_native",
         re.compile(
             rf"\b(?:dqx[\s-]?)?native\s+{_RULE_KIND}\b"
             rf"|\bbuilt[\s-]?in\s+(?:function|{_RULE_KIND})\b"
             rf"|\bnative\s+(?:function|{_RULE_KIND})\b"
-            rf"|\bbasic\s+{_RULE_KIND}\b",
+            rf"|\bbasic\s+{_RULE_KIND}\b"
+            rf"|\bsimple\s+{_RULE_KIND}\b",
             re.IGNORECASE,
         ),
     ),
@@ -320,8 +340,25 @@ _DEFAULT_CASCADE: tuple[str, ...] = ("lowcode", "dqx_native", "sql")
 _BASIC_FIRST_CASCADE: tuple[str, ...] = ("dqx_native", "lowcode", "sql")
 
 
-_VALID_DIMENSIONS = frozenset({"Validity", "Completeness", "Accuracy", "Consistency", "Uniqueness", "Timeliness"})
-_VALID_SEVERITIES = frozenset({"Low", "Medium", "High", "Critical"})
+# Fallback dimension/severity vocabularies. The LIVE vocab is admin-configurable
+# via AppSettingsService.get_label_definitions() (reserved "dimension"/"severity"
+# entries) and, when an AppSettingsService is injected, drives both the proposal
+# prompt option lists AND the post-parse validation (see _resolve_label_vocab).
+# These ordered defaults are used verbatim when settings are missing/empty/
+# malformed, or when no AppSettingsService is injected (e.g. unit tests). They
+# mirror the reserved-seed defaults in app_settings_service.py.
+_DEFAULT_DIMENSIONS: tuple[str, ...] = (
+    "Validity",
+    "Completeness",
+    "Accuracy",
+    "Consistency",
+    "Uniqueness",
+    "Timeliness",
+)
+_DEFAULT_SEVERITIES: tuple[str, ...] = ("Low", "Medium", "High", "Critical")
+# Reserved label_definitions keys whose "values" list drives the AI vocab.
+_DIMENSION_LABEL_KEY = "dimension"
+_SEVERITY_LABEL_KEY = "severity"
 _VALID_POLARITIES = frozenset({"pass", "fail"})
 # Mirrors registry_models.SlotFamily — the closed vocabulary a native column slot's
 # family may take. Used to validate any family hint the model returns for a slot.
@@ -355,9 +392,62 @@ class AiRulesService:
     _few_shot_messages: ClassVar[list[BaseMessage] | None] = None
     _available_functions: ClassVar[str | None] = None
 
-    def __init__(self, obo_ws: WorkspaceClient, gateway: AIGateway) -> None:
+    def __init__(
+        self,
+        obo_ws: WorkspaceClient,
+        gateway: AIGateway,
+        app_settings: AppSettingsService | None = None,
+    ) -> None:
         self._obo_ws = obo_ws  # user identity — UC table access + legacy ChatDatabricks leg
         self._gateway = gateway  # AIGateway-backed purpose calls (also OBO under the hood)
+        # Source of the admin-configurable dimension/severity vocabularies that
+        # drive the proposal prompt option lists AND post-parse validation.
+        # Optional: when absent (e.g. unit tests) the service degrades to the
+        # hard-coded _DEFAULT_DIMENSIONS/_DEFAULT_SEVERITIES.
+        self._app_settings = app_settings
+
+    def _resolve_label_vocab(self) -> tuple[list[str], list[str]]:
+        """Resolve the CURRENTLY configured (dimension, severity) value lists.
+
+        Reads the reserved ``dimension``/``severity`` entries from
+        :meth:`AppSettingsService.get_label_definitions` and returns their
+        ``values`` lists, falling back to :data:`_DEFAULT_DIMENSIONS` /
+        :data:`_DEFAULT_SEVERITIES` when no settings service is injected or the
+        setting is missing/empty/malformed. Best-effort: any read failure is
+        swallowed and the defaults are returned — a settings hiccup must never
+        break AI generation. Resolve ONCE per generate call (not inside a loop).
+
+        Returns:
+            A ``(dimensions, severities)`` tuple of non-empty ordered value lists.
+        """
+        if self._app_settings is None:
+            return list(_DEFAULT_DIMENSIONS), list(_DEFAULT_SEVERITIES)
+        try:
+            definitions = self._app_settings.get_label_definitions()
+        except Exception:  # best-effort: settings read must never break generation
+            logger.warning("Could not read label_definitions for AI vocab; using defaults")
+            return list(_DEFAULT_DIMENSIONS), list(_DEFAULT_SEVERITIES)
+        dimensions = self._vocab_values(definitions, _DIMENSION_LABEL_KEY, _DEFAULT_DIMENSIONS)
+        severities = self._vocab_values(definitions, _SEVERITY_LABEL_KEY, _DEFAULT_SEVERITIES)
+        return dimensions, severities
+
+    @staticmethod
+    def _vocab_values(definitions: list[dict[str, Any]], key: str, default: tuple[str, ...]) -> list[str]:
+        """Extract the ``values`` list for one reserved label key, else *default*.
+
+        Falls back to *default* when the entry is missing, its ``values`` is not
+        a list, or it holds no usable (non-empty string) values — so a malformed
+        or emptied setting never yields an empty option list.
+        """
+        for definition in definitions:
+            if definition.get("key") != key:
+                continue
+            values = definition.get("values")
+            if not isinstance(values, list):
+                break
+            cleaned = [v.strip() for v in values if isinstance(v, str) and v.strip()]
+            return cleaned if cleaned else list(default)
+        return list(default)
 
     # ------------------------------------------------------------------
     # Class-level prompt construction (once per process)
@@ -563,11 +653,16 @@ class AiRulesService:
         schema_info = self._get_schema_info(table_fqn) if table_fqn else ""
         context = self._build_rule_context(description, schema_info, columns, sample_rows)
 
+        # Resolve the admin-configured dimension/severity vocab ONCE per call
+        # (cheap OLTP read, best-effort). It drives both the proposal prompt
+        # option lists and the post-parse validation for every pass below.
+        vocab = self._resolve_label_vocab()
+
         # B2-140 — honour an explicit rule-type request: run ONLY that generator
         # and fail (never silently substitute) if it can't produce a valid rule.
         requested_mode = parse_rule_type_intent(description)
         if requested_mode is not None:
-            validated = await self._generate_in_mode(requested_mode, context, user_email)
+            validated = await self._generate_in_mode(requested_mode, context, user_email, vocab)
             if validated is not None:
                 validated["author_kind"] = "ai_generated"
                 return validated
@@ -581,31 +676,49 @@ class AiRulesService:
         # a hand-rolled low-code/SQL equivalent (still falling through if it can't).
         cascade = _BASIC_FIRST_CASCADE if prefers_basic_check(description) else _DEFAULT_CASCADE
         for mode in cascade:
-            validated = await self._generate_in_mode(mode, context, user_email)
+            validated = await self._generate_in_mode(mode, context, user_email, vocab)
             if validated is not None:
                 validated["author_kind"] = "ai_generated"
                 return validated
 
         raise ValueError("AI could not generate a valid, safe rule for this description.")
 
-    async def _generate_in_mode(self, mode: str, context: str, user_email: str) -> dict[str, Any] | None:
+    async def _generate_in_mode(
+        self,
+        mode: str,
+        context: str,
+        user_email: str,
+        vocab: tuple[list[str], list[str]],
+    ) -> dict[str, Any] | None:
         """Run ONE generation mode end-to-end (propose + validate); None on failure.
 
         Dispatches to the low-code pass (compiled + safety-gated) or the shared
         dqx_native/sql pass, returning the validated proposal or ``None`` so the
         caller can fall through (cascade) or fail (explicit request). Never
-        returns an invalid or unsafe rule.
+        returns an invalid or unsafe rule. *vocab* is the resolved
+        ``(dimensions, severities)`` value lists that back both the prompt
+        option lists and the dimension/severity validation.
         """
         if mode == "lowcode":
-            raw = await self._generate_lowcode_candidate(context, user_email)
-            return self._validate_lowcode_proposal(raw) if raw is not None else None
+            raw = await self._generate_lowcode_candidate(context, user_email, vocab)
+            return self._validate_lowcode_proposal(raw, vocab) if raw is not None else None
         shape = _DQX_NATIVE_DEFINITION_SHAPE if mode == "dqx_native" else _SQL_DEFINITION_SHAPE
-        proposal = await self._generate_rule_candidate(mode, shape, context, user_email)
-        return self._validate_and_repair_proposal(proposal) if proposal is not None else None
+        proposal = await self._generate_rule_candidate(mode, shape, context, user_email, vocab)
+        return self._validate_and_repair_proposal(proposal, vocab) if proposal is not None else None
 
-    async def _generate_lowcode_candidate(self, context: str, user_email: str) -> dict[str, Any] | None:
+    async def _generate_lowcode_candidate(
+        self,
+        context: str,
+        user_email: str,
+        vocab: tuple[list[str], list[str]],
+    ) -> dict[str, Any] | None:
         """Run the low-code proposal pass and return the parsed JSON (or None on unparsable)."""
-        system = _LOWCODE_PROPOSAL_SYSTEM_TEMPLATE.format(vocab=lowcode_prompt_vocab())
+        dimensions, severities = vocab
+        system = _LOWCODE_PROPOSAL_SYSTEM_TEMPLATE.format(
+            dimensions=", ".join(dimensions),
+            severities=", ".join(severities),
+            vocab=lowcode_prompt_vocab(),
+        )
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": context},
@@ -631,13 +744,17 @@ class AiRulesService:
         definition_shape: str,
         context: str,
         user_email: str,
+        vocab: tuple[list[str], list[str]],
     ) -> dict[str, Any] | None:
         is_native = mode == "dqx_native"
+        dimensions, severities = vocab
         system = _RULE_PROPOSAL_SYSTEM_TEMPLATE.format(
             mode_label=_MODE_LABELS.get(mode, mode),
             definition_shape=definition_shape,
             columns_field=_DQX_NATIVE_COLUMNS_FIELD if is_native else "",
             columns_guidance=_DQX_NATIVE_COLUMNS_GUIDANCE if is_native else "",
+            dimensions=", ".join(dimensions),
+            severities=", ".join(severities),
             available_functions=self._get_available_functions(),
         )
         messages = [
@@ -681,14 +798,21 @@ class AiRulesService:
             parts.append(f"sample_rows: {json.dumps(sample_rows[:AI_SAMPLE_ROW_LIMIT])}")
         return "\n".join(parts)
 
-    def _validate_and_repair_proposal(self, proposal: dict[str, Any]) -> dict[str, Any] | None:
+    def _validate_and_repair_proposal(
+        self,
+        proposal: dict[str, Any],
+        vocab: tuple[list[str], list[str]] | None = None,
+    ) -> dict[str, Any] | None:
         """DQX-native validation of a generated rule proposal.
 
         Never returns an invalid or unsafe rule: the ``dqx_native`` candidate is validated
         through :meth:`DQEngine.validate_checks`; the ``sql`` candidate's query must pass
         :func:`is_sql_query_safe`. Returns ``None`` (never raises) on any failure so the
-        caller can fall through to the next candidate mode.
+        caller can fall through to the next candidate mode. *vocab* is the resolved
+        ``(dimensions, severities)`` value lists the ``dimension``/``severity`` choices are
+        validated against; when ``None`` the hard-coded defaults are used.
         """
+        dimensions, severities = vocab if vocab is not None else (list(_DEFAULT_DIMENSIONS), list(_DEFAULT_SEVERITIES))
         mode = proposal.get("mode") or proposal.get("_mode")
         definition = proposal.get("definition")
         if not isinstance(definition, dict):
@@ -733,14 +857,18 @@ class AiRulesService:
             "name": self._clean_str(proposal.get("name")) or "AI-generated rule",
             "description": self._clean_str(proposal.get("description")) or "",
             "mode": mode,
-            "dimension": self._clean_choice(proposal.get("dimension"), _VALID_DIMENSIONS),
-            "severity": self._clean_choice(proposal.get("severity"), _VALID_SEVERITIES),
+            "dimension": self._clean_choice(proposal.get("dimension"), dimensions),
+            "severity": self._clean_choice(proposal.get("severity"), severities),
             "polarity": self._clean_choice(proposal.get("polarity"), _VALID_POLARITIES) or "pass",
             "definition": definition,
             "slots": slots,
         }
 
-    def _validate_lowcode_proposal(self, proposal: dict[str, Any]) -> dict[str, Any] | None:
+    def _validate_lowcode_proposal(
+        self,
+        proposal: dict[str, Any],
+        vocab: tuple[list[str], list[str]] | None = None,
+    ) -> dict[str, Any] | None:
         """Validate + compile a low-code AI proposal into a stored rule definition (B2-132).
 
         Never returns an invalid or unsafe rule: the proposal's ``lowcode_ast`` is compiled to
@@ -751,8 +879,11 @@ class AiRulesService:
         ``RegistryRuleFormDialog`` stores for a low-code rule (``lowcode_ast`` + optional
         ``group_by`` + compiled ``predicate`` or ``sql_query`` + ``merge_columns``), and its
         ``slots`` are derived from the ``{{slot}}`` placeholders in the compiled SQL so every
-        placeholder the materializer must substitute has a matching declared slot.
+        placeholder the materializer must substitute has a matching declared slot. *vocab* is
+        the resolved ``(dimensions, severities)`` value lists the ``dimension``/``severity``
+        choices are validated against; when ``None`` the hard-coded defaults are used.
         """
+        dimensions, severities = vocab if vocab is not None else (list(_DEFAULT_DIMENSIONS), list(_DEFAULT_SEVERITIES))
         ast = proposal.get("lowcode_ast")
         if not isinstance(ast, dict) or not isinstance(ast.get("rows"), list):
             return None
@@ -784,8 +915,8 @@ class AiRulesService:
             "name": self._clean_str(proposal.get("name")) or "AI-generated rule",
             "description": self._clean_str(proposal.get("description")) or "",
             "mode": "lowcode",
-            "dimension": self._clean_choice(proposal.get("dimension"), _VALID_DIMENSIONS),
-            "severity": self._clean_choice(proposal.get("severity"), _VALID_SEVERITIES),
+            "dimension": self._clean_choice(proposal.get("dimension"), dimensions),
+            "severity": self._clean_choice(proposal.get("severity"), severities),
             "polarity": self._clean_choice(proposal.get("polarity"), _VALID_POLARITIES) or "pass",
             "definition": body,
             "slots": slots,
@@ -997,7 +1128,7 @@ class AiRulesService:
         return value.strip() if isinstance(value, str) and value.strip() else None
 
     @staticmethod
-    def _clean_choice(value: Any, allowed: frozenset[str]) -> str | None:
+    def _clean_choice(value: Any, allowed: Collection[str]) -> str | None:
         return value if isinstance(value, str) and value in allowed else None
 
     async def suggest_field(self, field: str, context: str, user_email: str) -> str:

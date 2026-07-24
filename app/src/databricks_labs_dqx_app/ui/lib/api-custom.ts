@@ -206,27 +206,29 @@ export interface ValidationRunSummaryOut {
 }
 
 export const listValidationRuns = (
+  params?: { summary?: boolean; review_status?: string[] },
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<ValidationRunSummaryOut[]>> => {
-  return axios.default.get(`/api/v1/dryrun/runs`, options);
+  return axios.default.get(`/api/v1/dryrun/runs`, { ...options, params });
 };
 
-export const getListValidationRunsQueryKey = () =>
-  [`/api/v1/dryrun/runs`] as const;
+export const getListValidationRunsQueryKey = (params?: { summary?: boolean; review_status?: string[] }) =>
+  [`/api/v1/dryrun/runs`, params ?? null] as const;
 
 export const useListValidationRuns = <
   TData = Awaited<ReturnType<typeof listValidationRuns>>,
   TError = AxiosError<unknown>,
 >(
+  params?: { summary?: boolean; review_status?: string[] },
   options?: {
     query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof listValidationRuns>>, TError, TData>>;
     axios?: AxiosRequestConfig;
   },
 ): UseQueryResult<TData, TError> => {
   const { query: queryOptions, axios: axiosOptions } = options ?? {};
-  const queryKey = queryOptions?.queryKey ?? getListValidationRunsQueryKey();
+  const queryKey = queryOptions?.queryKey ?? getListValidationRunsQueryKey(params);
 
-  const queryFn = () => listValidationRuns(axiosOptions);
+  const queryFn = () => listValidationRuns(params, axiosOptions);
 
   return useQuery({ queryKey, queryFn, ...queryOptions }) as UseQueryResult<TData, TError>;
 };

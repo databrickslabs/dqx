@@ -185,7 +185,13 @@ def create_data_product(
     """Create a new data product (status ``draft``, no approver gate)."""
     try:
         user_email = _current_user_email(obo_ws)
-        product = svc.create(body.name, body.description, body.steward, user_email)
+        product = svc.create(
+            body.name,
+            body.description,
+            body.steward,
+            user_email,
+            steward_display_name=body.steward_display_name,
+        )
         detail = svc.get(product.product_id)
         assert detail is not None  # just created
         return DataProductOut.from_domain(detail)

@@ -407,6 +407,10 @@ class CreateRegistryRuleIn(BaseModel):
         description="Reserved tag keys (name/description/dimension/severity) + free-text tags",
     )
     steward: str | None = Field(default=None, description="Owning steward's email/username")
+    steward_display_name: str | None = Field(
+        default=None,
+        description="Human-readable display name for the steward; sourced from the principal picker.",
+    )
 
 
 class UpdateRegistryRuleIn(BaseModel):
@@ -417,6 +421,10 @@ class UpdateRegistryRuleIn(BaseModel):
     polarity: RegistryPolarity | None = None
     user_metadata: dict[str, Any] | None = None
     steward: str | None = None
+    steward_display_name: str | None = Field(
+        default=None,
+        description="Human-readable display name for the steward; sourced from the principal picker.",
+    )
     author_kind: RegistryAuthorKind | None = Field(
         default=None,
         description=(
@@ -439,6 +447,10 @@ class RegistryRuleOut(BaseModel):
     user_metadata: dict[str, Any] = Field(default_factory=dict)
     fingerprint: str | None = None
     steward: str | None = None
+    steward_display_name: str | None = Field(
+        default=None,
+        description="Human-readable display name for the steward; falls back to the steward email when null.",
+    )
     is_builtin: bool = False
     source: str | None = None
     created_by: str | None = None
@@ -470,6 +482,7 @@ class RegistryRuleOut(BaseModel):
             user_metadata=rule.user_metadata,
             fingerprint=rule.fingerprint,
             steward=rule.steward,
+            steward_display_name=rule.steward_display_name,
             is_builtin=rule.is_builtin,
             source=rule.source,
             created_by=rule.created_by,
@@ -653,6 +666,10 @@ class RegisterMonitoredTableIn(BaseModel):
 
     table_fqn: str = Field(description="Fully qualified table name (catalog.schema.table)")
     steward: str | None = Field(default=None, description="Owning steward's email/username")
+    steward_display_name: str | None = Field(
+        default=None,
+        description="Human-readable display name for the steward; sourced from the principal picker.",
+    )
 
 
 class UpdateMonitoredTableScheduleIn(BaseModel):
@@ -897,6 +914,10 @@ class MonitoredTableOut(BaseModel):
     binding_id: str
     table_fqn: str
     steward: str | None = None
+    steward_display_name: str | None = Field(
+        default=None,
+        description="Human-readable display name for the steward; falls back to the steward email when null.",
+    )
     status: MonitoredTableStatusDomain
     version: int = Field(default=0, description="0 = never approved; bumped on each table approval")
     schedule_cron: str | None = Field(default=None, description="5-field POSIX cron; None = not scheduled")
@@ -922,6 +943,7 @@ class MonitoredTableOut(BaseModel):
             binding_id=table.binding_id,
             table_fqn=table.table_fqn,
             steward=table.steward,
+            steward_display_name=table.steward_display_name,
             status=table.status,
             version=table.version,
             schedule_cron=table.schedule_cron,
@@ -1448,6 +1470,25 @@ class ValidationRunSummaryOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Lightweight recent-failures shape used by the app-wide toast watcher.
+# Only carries the fields the hook needs: no counts, no error_message.
+# ---------------------------------------------------------------------------
+
+
+class RunFailureOut(BaseModel):
+    """Minimal projection of a failed run for the app-wide toast watcher.
+
+    Intentionally omits heavy fields (error_message, counts, checks_json)
+    so the endpoint payload stays tiny regardless of how many failures exist.
+    """
+
+    run_id: str
+    source_table_fqn: str
+    status: str
+    created_at: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Data Products Task 3 — run sets + monitored-table run endpoint
 # ---------------------------------------------------------------------------
 
@@ -1536,6 +1577,10 @@ class CreateDataProductIn(BaseModel):
     name: str
     description: str | None = None
     steward: str | None = Field(default=None, description="Defaults to the creator's email when omitted")
+    steward_display_name: str | None = Field(
+        default=None,
+        description="Human-readable display name for the steward; sourced from the principal picker.",
+    )
 
 
 class UpdateDataProductIn(BaseModel):
@@ -1550,6 +1595,10 @@ class UpdateDataProductIn(BaseModel):
     name: str | None = None
     description: str | None = None
     steward: str | None = None
+    steward_display_name: str | None = Field(
+        default=None,
+        description="Human-readable display name for the steward; sourced from the principal picker.",
+    )
     schedule_cron: str | None = None
     schedule_tz: str | None = None
     schedule_kind: RegistryScheduleKind | None = None
@@ -1623,6 +1672,10 @@ class DataProductOut(BaseModel):
     name: str
     description: str | None = None
     steward: str | None = None
+    steward_display_name: str | None = Field(
+        default=None,
+        description="Human-readable display name for the steward; falls back to the steward email when null.",
+    )
     schedule_cron: str | None = None
     schedule_tz: str | None = None
     schedule_kind: RegistryScheduleKind = REGISTRY_SCHEDULE_KIND_DEFAULT
@@ -1655,6 +1708,7 @@ class DataProductOut(BaseModel):
             name=product.name,
             description=product.description,
             steward=product.steward,
+            steward_display_name=product.steward_display_name,
             schedule_cron=product.schedule_cron,
             schedule_tz=product.schedule_tz,
             schedule_kind=product.schedule_kind,

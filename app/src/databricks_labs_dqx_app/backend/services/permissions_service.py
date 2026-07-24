@@ -579,6 +579,13 @@ class PermissionsService:
         self._validate_object_id(object_id)
         self._reject_reserved_principal(principal_id)
         self._validate_enums(object_type, principal_type)
+        if object_type == ObjectType.REGISTRY_RULE.value:
+            # EXECUTE is meaningless on a rule (rules are not run directly;
+            # only tables and collections support EXECUTE). Expand before
+            # stripping so that an ALL_PRIVILEGES token cannot smuggle EXECUTE
+            # in — after stripping, normalize_privileges will NOT re-collapse
+            # to ALL_PRIVILEGES since the full concrete set is no longer present.
+            privileges = expand_privileges(privileges) - {Privilege.EXECUTE}
         norm = normalize_privileges(privileges)
         if not norm:
             self.remove_grant(object_type, object_id, principal_id, actor=grantor)

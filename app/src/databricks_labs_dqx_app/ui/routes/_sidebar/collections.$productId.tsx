@@ -159,7 +159,10 @@ function DataProductDetailPage() {
                   showSteward
                   canEditSteward={canEdit}
                   steward={editState.steward}
+                  stewardDisplayName={editState.stewardDisplayName}
                   onStewardChange={editState.setSteward}
+                  onStewardDisplayNameChange={editState.setStewardDisplayName}
+                  onStewardGrantIntent={editState.setStewardGrantIntent}
                 />
               </TabBoundary>
             ),

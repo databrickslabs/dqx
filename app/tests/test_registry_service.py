@@ -43,7 +43,13 @@ def _native_definition(column: str = "id") -> RuleDefinition:
     )
 
 
-def _row_for(rule, *, status: str | None = None, version: int | None = None) -> list[str]:
+def _row_for(
+    rule,
+    *,
+    status: str | None = None,
+    version: int | None = None,
+    steward_display_name: str | None = None,
+) -> list[str]:
     """Build a SELECT row matching ``RegistryService._build_select_cols`` order."""
     return [
         rule.rule_id,
@@ -62,6 +68,7 @@ def _row_for(rule, *, status: str | None = None, version: int | None = None) -> 
         "2026-07-02T00:00:00+00:00",
         rule.updated_by,
         "2026-07-02T00:00:00+00:00",
+        steward_display_name if steward_display_name is not None else rule.steward_display_name,
     ]
 
 
@@ -119,6 +126,68 @@ class TestCreateRule:
             mode="dqx_native", definition=_native_definition(), user_email="alice@x", steward="bob@x"
         )
         assert rule.steward == "bob@x"
+
+    def test_resolves_steward_display_name_at_write_time(self, sql):
+        # A stub SP client whose users.list returns a display name → the
+        # persisted row carries the resolved steward_display_name.
+        from unittest.mock import create_autospec
+
+        from databricks.sdk import WorkspaceClient
+        from databricks.sdk.service.iam import User
+        from databricks_labs_dqx_app.backend.services import steward_display_name_service
+
+        steward_display_name_service._resolve_cache.clear()
+        u = User()
+        u.user_name = "bob@x"
+        u.display_name = "Bob Jones"
+        sp_ws = create_autospec(WorkspaceClient, instance=True)
+        sp_ws.users.list.return_value = iter([u])
+        svc = RegistryService(sql=sql, sp_ws=sp_ws)
+
+        rule, _ = svc.create_rule(
+            mode="dqx_native", definition=_native_definition(), user_email="alice@x", steward="bob@x"
+        )
+        assert rule.steward_display_name == "Bob Jones"
+
+    def test_supplied_display_name_not_clobbered_by_resolution(self, sql):
+        # The picker path supplies both steward + steward_display_name; the
+        # service must NOT re-resolve and overwrite it (SCIM is never called).
+        from unittest.mock import create_autospec
+
+        from databricks.sdk import WorkspaceClient
+        from databricks_labs_dqx_app.backend.services import steward_display_name_service
+
+        steward_display_name_service._resolve_cache.clear()
+        sp_ws = create_autospec(WorkspaceClient, instance=True)
+        svc = RegistryService(sql=sql, sp_ws=sp_ws)
+
+        rule, _ = svc.create_rule(
+            mode="dqx_native",
+            definition=_native_definition(),
+            user_email="alice@x",
+            steward="bob@x",
+            steward_display_name="Robert Jones",
+        )
+        assert rule.steward_display_name == "Robert Jones"
+        sp_ws.users.list.assert_not_called()
+
+    def test_group_steward_stores_null_display_name(self, sql):
+        # A group steward has no SCIM user match → display name stays NULL and
+        # the write never raises.
+        from unittest.mock import create_autospec
+
+        from databricks.sdk import WorkspaceClient
+        from databricks_labs_dqx_app.backend.services import steward_display_name_service
+
+        steward_display_name_service._resolve_cache.clear()
+        sp_ws = create_autospec(WorkspaceClient, instance=True)
+        sp_ws.users.list.return_value = iter([])
+        svc = RegistryService(sql=sql, sp_ws=sp_ws)
+
+        rule, _ = svc.create_rule(
+            mode="dqx_native", definition=_native_definition(), user_email="alice@x", steward="data-stewards"
+        )
+        assert rule.steward_display_name is None
 
     def test_error_message_persists_through_create(self, svc, sql):
         """Phase 7C-a: optional custom failure message threads through create

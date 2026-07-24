@@ -194,6 +194,29 @@ class TestBackfillDefaultGrantsMigration:
         assert v24.oltp_fallback is True
 
 
+class TestStewardDisplayNameMigration:
+    """v26: add steward_display_name to dq_rules, dq_monitored_tables, dq_data_products (OLTP fallback)."""
+
+    def test_v26_adds_steward_display_name_to_three_tables(self) -> None:
+        v26 = next(m for m in MIGRATIONS if m.version == 26)
+        sql = v26.sql_template
+        assert "dq_rules" in sql, "v26 must touch dq_rules"
+        assert "dq_monitored_tables" in sql, "v26 must touch dq_monitored_tables"
+        assert "dq_data_products" in sql, "v26 must touch dq_data_products"
+        assert "steward_display_name" in sql, "v26 must add steward_display_name"
+        assert sql.count("ADD COLUMN") == 3, "v26 must have exactly 3 ADD COLUMN statements"
+
+    def test_v26_is_oltp_fallback(self) -> None:
+        v26 = next(m for m in MIGRATIONS if m.version == 26)
+        assert v26.oltp_fallback is True
+
+    def test_v26_version_follows_v25(self) -> None:
+        versions = [m.version for m in MIGRATIONS]
+        idx25 = versions.index(25)
+        idx26 = versions.index(26)
+        assert idx26 == idx25 + 1, "v26 must immediately follow v25 in MIGRATIONS"
+
+
 class TestStripExecuteFromRegistryRuleGrantsMigration:
     """v25: strip EXECUTE from registry_rule users-group grant rows (OLTP fallback)."""
 

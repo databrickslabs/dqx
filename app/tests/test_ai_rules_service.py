@@ -17,14 +17,28 @@ import pytest
 
 from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
 from databricks_labs_dqx_app.backend.services.ai_rules_service import (
+    _DEFAULT_DIMENSIONS,
+    _DEFAULT_SEVERITIES,
+    _IMPROVE_SQL_SYSTEM_TEMPLATE,
+    _LOWCODE_PROPOSAL_SYSTEM_TEMPLATE,
+    _RULE_PROPOSAL_SYSTEM_TEMPLATE,
+    _WRITE_SQL_SYSTEM_TEMPLATE,
     AiRulesService,
     parse_rule_type_intent,
     prefers_basic_check,
 )
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 
 
-def _service(gateway: MagicMock) -> AiRulesService:
-    return AiRulesService(obo_ws=MagicMock(), gateway=gateway)
+def _service(gateway: MagicMock, app_settings: object | None = None) -> AiRulesService:
+    return AiRulesService(obo_ws=MagicMock(), gateway=gateway, app_settings=app_settings)
+
+
+def _app_settings_with_labels(definitions: list[dict]) -> MagicMock:
+    """A stub AppSettingsService whose get_label_definitions returns *definitions*."""
+    stub = create_autospec(AppSettingsService, instance=True)
+    stub.get_label_definitions.return_value = definitions
+    return stub
 
 
 def _gateway_returning(*contents: str) -> MagicMock:
@@ -555,6 +569,9 @@ class TestParseRuleTypeIntent:
             "a custom check for positive amounts",
             "make a custom rule that ensures amount > 0",
             "a custom condition for the order total",
+            # Current UI friendly name for the lowcode mode: "Condition Builder".
+            "use the condition builder for the order total",
+            "make a condition builder rule",
         ],
     )
     def test_explicit_lowcode(self, description: str):
@@ -570,6 +587,9 @@ class TestParseRuleTypeIntent:
             # New friendly name for the dqx_native mode: "Basic Rules".
             "a basic rule for null ids",
             "make a basic check that validates emails",
+            # "Simple Rule"/"Simple Check" also route to dqx_native.
+            "a simple rule for null ids",
+            "make a simple check that validates emails",
         ],
     )
     def test_explicit_native(self, description: str):
@@ -805,3 +825,243 @@ class TestExplainSql:
 
         with pytest.raises(AIResponseParseError):
             await service.explain_sql(predicate="{{amount}} > 0", user_email="a@x")
+
+
+class TestPassPreferencePrompts:
+    """The prompt templates must STRONGLY PREFER the passing-case polarity=pass.
+
+    These tests assert the templates carry the strengthened wording so a
+    reviewer/CI catch can detect accidental prompt regressions.
+    """
+
+    def test_lowcode_template_strongly_prefers_pass(self):
+        assert "STRONGLY PREFER" in _LOWCODE_PROPOSAL_SYSTEM_TEMPLATE
+        assert '"pass"' in _LOWCODE_PROPOSAL_SYSTEM_TEMPLATE
+        assert "VALID" in _LOWCODE_PROPOSAL_SYSTEM_TEMPLATE
+        # Escape hatch preserved: "fail" is mentioned as the exception, not the default.
+        assert '"fail"' in _LOWCODE_PROPOSAL_SYSTEM_TEMPLATE
+
+    def test_rule_proposal_template_strongly_prefers_pass(self):
+        # The template has {definition_shape} etc. as format placeholders;
+        # the polarity guidance is literal text (not a placeholder).
+        assert "STRONGLY PREFER" in _RULE_PROPOSAL_SYSTEM_TEMPLATE
+        assert '"pass"' in _RULE_PROPOSAL_SYSTEM_TEMPLATE
+        assert "VALID" in _RULE_PROPOSAL_SYSTEM_TEMPLATE
+        assert '"fail"' in _RULE_PROPOSAL_SYSTEM_TEMPLATE
+
+    def test_write_sql_template_strongly_prefers_pass(self):
+        assert "STRONGLY PREFER" in _WRITE_SQL_SYSTEM_TEMPLATE
+        assert '"pass"' in _WRITE_SQL_SYSTEM_TEMPLATE
+        assert "VALID" in _WRITE_SQL_SYSTEM_TEMPLATE
+        assert '"fail"' in _WRITE_SQL_SYSTEM_TEMPLATE
+
+    def test_improve_sql_template_strongly_prefers_pass(self):
+        assert "STRONGLY PREFER" in _IMPROVE_SQL_SYSTEM_TEMPLATE
+        assert '"pass"' in _IMPROVE_SQL_SYSTEM_TEMPLATE
+        # Improve template uses "VALID" indirectly — check the key pass-preference signal.
+        assert '"fail"' in _IMPROVE_SQL_SYSTEM_TEMPLATE
+
+
+class TestPolarityDefaultsToPass:
+    """When the model omits polarity or returns an unrecognised value, the parse
+    path must default to "pass" — never to "fail".
+    """
+
+    def test_validate_and_repair_proposal_defaults_polarity_to_pass(self):
+        # Model returned a valid sql rule but with no polarity field.
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock())
+        proposal = {
+            "name": "id not null",
+            "description": "id must not be null",
+            "definition": {"sql_query": "{{id}} IS NOT NULL"},
+        }
+        result = svc._validate_and_repair_proposal(proposal)
+        assert result is not None
+        assert result["polarity"] == "pass"
+
+    def test_validate_and_repair_proposal_invalid_polarity_defaults_to_pass(self):
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock())
+        proposal = {
+            "name": "id not null",
+            "description": "d",
+            "polarity": "MAYBE",
+            "definition": {"sql_query": "{{id}} IS NOT NULL"},
+        }
+        result = svc._validate_and_repair_proposal(proposal)
+        assert result is not None
+        assert result["polarity"] == "pass"
+
+    def test_validate_lowcode_proposal_defaults_polarity_to_pass(self):
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock())
+        proposal = {
+            "name": "Amount Positive",
+            "description": "amount must be positive",
+            # No polarity field at all.
+            "columns": [{"name": "amount", "family": "numeric"}],
+            "group_by_columns": None,
+            "lowcode_ast": {
+                "rows": [{"kind": "row", "combinator": None, "column_ref": "amount", "operator": ">", "value": 0}],
+                "joins": [],
+            },
+        }
+        result = svc._validate_lowcode_proposal(proposal)
+        assert result is not None
+        assert result["polarity"] == "pass"
+
+    async def test_write_sql_invalid_polarity_returns_none(self):
+        # _parse_sql_predicate normalises an unrecognised polarity to None
+        # (caller retains current polarity when AI returns nothing usable).
+        gateway = _gateway_returning(json.dumps({"predicate": "{{id}} IS NOT NULL", "polarity": "unknown"}))
+        service = _service(gateway)
+
+        result = await service.write_sql(description="d", user_email="a@x")
+
+        assert result["polarity"] is None
+
+
+class TestResolveLabelVocab:
+    """The dimension/severity vocab is read from the injected AppSettingsService,
+    falling back to the hard-coded defaults when absent/empty/malformed (W-B)."""
+
+    def test_defaults_when_no_settings_injected(self):
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock())
+        dimensions, severities = svc._resolve_label_vocab()
+        assert dimensions == list(_DEFAULT_DIMENSIONS)
+        assert severities == list(_DEFAULT_SEVERITIES)
+
+    def test_reads_configured_custom_vocab(self):
+        app_settings = _app_settings_with_labels(
+            [
+                {"key": "dimension", "values": ["Validity", "Relevance"]},
+                {"key": "severity", "values": ["Info", "Warning", "Blocker"]},
+            ]
+        )
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock(), app_settings=app_settings)
+        dimensions, severities = svc._resolve_label_vocab()
+        assert dimensions == ["Validity", "Relevance"]
+        assert severities == ["Info", "Warning", "Blocker"]
+
+    def test_missing_entries_fall_back_to_defaults(self):
+        # No dimension/severity entries at all -> defaults for both.
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock(), app_settings=_app_settings_with_labels([]))
+        dimensions, severities = svc._resolve_label_vocab()
+        assert dimensions == list(_DEFAULT_DIMENSIONS)
+        assert severities == list(_DEFAULT_SEVERITIES)
+
+    def test_malformed_or_empty_values_fall_back_to_defaults(self):
+        app_settings = _app_settings_with_labels(
+            [
+                {"key": "dimension", "values": "not-a-list"},  # malformed
+                {"key": "severity", "values": []},  # empty
+            ]
+        )
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock(), app_settings=app_settings)
+        dimensions, severities = svc._resolve_label_vocab()
+        assert dimensions == list(_DEFAULT_DIMENSIONS)
+        assert severities == list(_DEFAULT_SEVERITIES)
+
+    def test_settings_read_failure_degrades_to_defaults(self):
+        app_settings = create_autospec(AppSettingsService, instance=True)
+        app_settings.get_label_definitions.side_effect = RuntimeError("boom")
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock(), app_settings=app_settings)
+        dimensions, severities = svc._resolve_label_vocab()
+        assert dimensions == list(_DEFAULT_DIMENSIONS)
+        assert severities == list(_DEFAULT_SEVERITIES)
+
+
+class TestVocabDrivenValidation:
+    """_clean_choice accepts a configured value and rejects an off-list one (W-B)."""
+
+    def test_validate_and_repair_accepts_configured_value_rejects_off_list(self):
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock())
+        vocab = (["Relevance"], ["Blocker"])
+        proposal = {
+            "name": "n",
+            "description": "d",
+            "dimension": "Relevance",  # configured -> accepted
+            "severity": "High",  # NOT in the configured severities -> rejected
+            "definition": {"sql_query": "{{id}} IS NOT NULL"},
+        }
+        result = svc._validate_and_repair_proposal(proposal, vocab)
+        assert result is not None
+        assert result["dimension"] == "Relevance"
+        assert result["severity"] is None
+
+    def test_lowcode_validation_uses_configured_vocab(self):
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock())
+        vocab = (["Relevance"], ["Blocker"])
+        proposal = {
+            "name": "Amount Positive",
+            "description": "amount must be positive",
+            "dimension": "Relevance",
+            "severity": "Blocker",
+            "columns": [{"name": "amount", "family": "numeric"}],
+            "group_by_columns": None,
+            "lowcode_ast": {
+                "rows": [{"kind": "row", "combinator": None, "column_ref": "amount", "operator": ">", "value": 0}],
+                "joins": [],
+            },
+        }
+        result = svc._validate_lowcode_proposal(proposal, vocab)
+        assert result is not None
+        assert result["dimension"] == "Relevance"
+        assert result["severity"] == "Blocker"
+
+    def test_default_vocab_still_accepts_builtin_values(self):
+        # No vocab passed -> hard-coded defaults still validate the built-in set.
+        svc = AiRulesService(obo_ws=MagicMock(), gateway=MagicMock())
+        proposal = {
+            "name": "n",
+            "description": "d",
+            "dimension": "Completeness",
+            "severity": "High",
+            "definition": {"sql_query": "{{id}} IS NOT NULL"},
+        }
+        result = svc._validate_and_repair_proposal(proposal)
+        assert result is not None
+        assert result["dimension"] == "Completeness"
+        assert result["severity"] == "High"
+
+
+class TestVocabDrivenPrompt:
+    """The proposal prompt option lists interpolate the configured vocab (W-B)."""
+
+    async def test_native_prompt_lists_configured_values(self):
+        app_settings = _app_settings_with_labels(
+            [
+                {"key": "dimension", "values": ["Relevance"]},
+                {"key": "severity", "values": ["Blocker"]},
+            ]
+        )
+        proposal = json.dumps(
+            {"name": "n", "description": "d", "definition": {"function": "is_not_null", "arguments": {"column": "id"}}}
+        )
+        gateway = _gateway_returning(_LOWCODE_MISS, proposal)
+        service = _service(gateway, app_settings=app_settings)
+
+        await service.generate_rule(description="id must not be null", user_email="a@x")
+
+        # The dqx_native pass (2nd query) carries the configured vocab in its system prompt.
+        native_system = gateway.query.call_args_list[1].kwargs["messages"][0]["content"]
+        assert "Relevance" in native_system
+        assert "Blocker" in native_system
+        # A default value the admin removed is no longer offered.
+        assert "Completeness" not in native_system
+
+    async def test_lowcode_prompt_lists_configured_values(self):
+        app_settings = _app_settings_with_labels(
+            [
+                {"key": "dimension", "values": ["Relevance"]},
+                {"key": "severity", "values": ["Blocker"]},
+            ]
+        )
+        gateway = _gateway_returning(_lowcode_proposal(dimension="Relevance", severity="Blocker"))
+        service = _service(gateway, app_settings=app_settings)
+
+        await service.generate_rule(description="amount must be positive", user_email="a@x")
+
+        lowcode_system = gateway.query.call_args_list[0].kwargs["messages"][0]["content"]
+        assert "Relevance" in lowcode_system
+        assert "Blocker" in lowcode_system
+        # Escaped JSON braces in the lowcode template survive .format() intact.
+        assert '{"rows":' in lowcode_system or '{"kind":' in lowcode_system

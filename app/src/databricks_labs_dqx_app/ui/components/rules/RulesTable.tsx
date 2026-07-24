@@ -271,7 +271,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     sortable: true,
     // A→Z through the named stewards (B2-92); un-stewarded rules sort last.
     renderHeader: (label) => label,
-    renderCell: (r) => <TruncatedCell text={r.steward || "—"} className="text-muted-foreground" />,
+    renderCell: (r) => <TruncatedCell text={r.steward_display_name || r.steward || "—"} className="text-muted-foreground" />,
   },
   source: {
     labelKey: "rulesRegistry.colSource",

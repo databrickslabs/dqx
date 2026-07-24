@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -49,6 +50,7 @@ import {
   History as HistoryIcon,
   Info,
   Loader2,
+  Save,
   Send,
   Shield,
   Sparkles,
@@ -59,7 +61,7 @@ import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { LabelsEditor } from "@/components/Labels";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { TagPicker } from "@/components/apply-rules/TagPicker";
-import { PermissionsTab } from "@/components/permissions/PermissionsTab";
+import { PermissionsTab, type StewardGrantIntent } from "@/components/permissions/PermissionsTab";
 import { RuleResultsTab } from "@/components/registry-rules/RuleResultsTab";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ruleResultsState } from "@/lib/results-display";
@@ -123,6 +125,9 @@ import {
   useAiGenerateRule,
   useAiSuggestField,
   useListGovernedTags,
+  useSetObjectGrant,
+  useRemoveObjectGrant,
+  getListObjectGrantsQueryKey,
   type RegistryRuleOut,
   type RuleDefinition,
   type RuleSlot,
@@ -1838,6 +1843,11 @@ export function RegistryRuleFormDialog({
   const [passThreshold, setPassThreshold] = useState<number | null>(null);
   const [tags, setTags] = useState<Record<string, string>>({});
   const [steward, setSteward] = useState("");
+  const [stewardDisplayName, setStewardDisplayName] = useState("");
+  // Stashed by PermissionsTab's StewardGrantDialog when the user picks a new
+  // steward and confirms the popup.  Consumed (and cleared) in handleSave
+  // right after the rule is persisted.  null = no pending grant.
+  const [stewardGrantIntent, setStewardGrantIntent] = useState<StewardGrantIntent | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const [authorKind, setAuthorKind] = useState<CreateRegistryRuleInAuthorKind | undefined>(undefined);
   const [pendingNativeArgs, setPendingNativeArgs] = useState<Record<string, unknown> | null>(null);
@@ -1912,6 +1922,8 @@ export function RegistryRuleFormDialog({
     setSeverity(asString(RESERVED_SEVERITY_KEY));
     setPassThreshold(asIntOrNull(RESERVED_PASS_THRESHOLD_KEY));
     setSteward(sourceRule?.steward ?? "");
+    setStewardDisplayName(sourceRule?.steward_display_name ?? "");
+    setStewardGrantIntent(null);
     setNameError(null);
     setErrorMessage(sourceRule?.definition?.error_message ?? "");
     setFilter(sourceRule?.definition?.filter ?? "");
@@ -2091,9 +2103,12 @@ export function RegistryRuleFormDialog({
     setPendingNativeSlots(null);
   }, [pendingNativeArgs, pendingNativeSlots, checkFunctions, selectedFn, derivedParams, fnDerivedSlots, t]);
 
+  const queryClient = useQueryClient();
   const createMutation = useCreateRegistryRule();
   const updateMutation = useUpdateRegistryRule();
   const submitMutation = useSubmitRegistryRule();
+  const setGrantMut = useSetObjectGrant({ mutation: { onError: () => {} } });
+  const removeGrantMut = useRemoveObjectGrant({ mutation: { onError: () => {} } });
   // When the approvals mode will auto-approve this user's submit (#94), the
   // submit buttons publish in one step — relabel them accordingly.
   const { willAutoApprove } = useApprovalsMode();
@@ -2724,6 +2739,7 @@ export function RegistryRuleFormDialog({
           polarity: polarityIsMeaningful ? polarity : null,
           user_metadata: userMetadata,
           steward: steward.trim() || null,
+          steward_display_name: stewardDisplayName.trim() || null,
           // Persist AI provenance stamped during this edit-in-place session
           // (e.g. accepting an AI-suggested field on an otherwise
           // human-authored draft) rather than silently dropping it.
@@ -2743,6 +2759,7 @@ export function RegistryRuleFormDialog({
           polarity: polarityIsMeaningful ? polarity : null,
           user_metadata: userMetadata,
           steward: steward.trim() || null,
+          steward_display_name: stewardDisplayName.trim() || null,
           author_kind: authorKind ?? "human",
         };
         const resp = await createMutation.mutateAsync({ data: payload });
@@ -2759,6 +2776,49 @@ export function RegistryRuleFormDialog({
         await submitMutation.mutateAsync({ ruleId });
         toast.success(t("rulesRegistry.toastSubmitted"));
       }
+
+      // Write steward grant(s) after the rule is persisted (so `ruleId` is
+      // known for a freshly created rule).  Fires only when the user confirmed
+      // the StewardGrantDialog; errors are toasted but do NOT roll back the
+      // rule save (the grant is a best-effort UX convenience).
+      if (stewardGrantIntent) {
+        const capturedIntent = stewardGrantIntent;
+        setStewardGrantIntent(null);
+        try {
+          await setGrantMut.mutateAsync({
+            objectType: "registry_rule",
+            objectId: ruleId,
+            data: {
+              principal_id: capturedIntent.newPrincipalId,
+              principal_type: capturedIntent.newPrincipalType,
+              principal_name: capturedIntent.newPrincipalName,
+              // EXECUTE is meaningless on a rule — send only the rule-valid set.
+              // The backend strips EXECUTE defensively too (layer-1 guard).
+              privileges: ["SELECT", "MODIFY", "APPLY"],
+              inherit: false,
+            },
+          });
+          if (capturedIntent.removeOldPrincipalId) {
+            await removeGrantMut.mutateAsync({
+              objectType: "registry_rule",
+              objectId: ruleId,
+              principalId: capturedIntent.removeOldPrincipalId,
+            });
+          }
+          // Refresh the grants table in the Permissions tab so the newly
+          // written grant (and any removed old-steward grant) appear immediately
+          // without requiring a navigate-away. Mirrors the collection path in
+          // useEditProductState.ts.
+          queryClient.invalidateQueries({
+            queryKey: getListObjectGrantsQueryKey("registry_rule", ruleId),
+          });
+        } catch (grantErr) {
+          toast.error(extractApiError(grantErr, t("permissions.stewardGrantFailed")), {
+            duration: 6000,
+          });
+        }
+      }
+
       onSaved(ruleId);
       closeAndReset();
     } catch (err) {
@@ -2942,19 +3002,36 @@ export function RegistryRuleFormDialog({
         <div className="flex items-center gap-2 group">
           <Select value={dimension || undefined} onValueChange={setDimension} disabled={readOnly}>
             <SelectTrigger className="h-8 w-full max-w-xs text-xs">
-              <SelectValue placeholder={t("rulesRegistry.selectDimension")} />
+              {/* Render the closed-trigger content explicitly so it shows ONLY the
+                  dimension name (+ColorDot) — never the option's description
+                  subtext. Radix SelectValue would otherwise clone the selected
+                  item's full ItemText (incl. description) into the trigger. */}
+              {dimension ? (
+                <span className="flex items-center gap-1.5">
+                  <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_DIMENSION_KEY, dimension)} />
+                  {dimension}
+                </span>
+              ) : (
+                <SelectValue placeholder={t("rulesRegistry.selectDimension")} />
+              )}
             </SelectTrigger>
             <SelectContent>
               {dimensionValues.map((v) => {
                 const description = dimensionDescriptions[v];
                 return (
-                  <SelectItem key={v} value={v} className="text-xs">
-                    <span
-                      className="flex items-center gap-1.5"
-                      title={description || undefined}
-                    >
-                      <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_DIMENSION_KEY, v)} />
-                      {v}
+                  // `textValue={v}` so the closed trigger shows only the dimension
+                  // name — Radix otherwise clones the full item (incl. the
+                  // description subtext) into the SelectValue. The description is
+                  // meant for the open option list only.
+                  <SelectItem key={v} value={v} textValue={v} className="text-xs">
+                    <span className="flex flex-col gap-0.5">
+                      <span className="flex items-center gap-1.5">
+                        <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_DIMENSION_KEY, v)} />
+                        {v}
+                      </span>
+                      {description && (
+                        <span className="text-[11px] leading-tight text-muted-foreground">{description}</span>
+                      )}
                     </span>
                   </SelectItem>
                 );
@@ -2990,6 +3067,10 @@ export function RegistryRuleFormDialog({
   // replaces the grants table with an empty shell ("save first" message),
   // guarded on `objectId`.
   const permissionsTabContent = (
+    // pt-2 matches the inner wrappers on the About and Implementation panels
+    // (both use pt-2 on their root divs) so all three tabs have the same gap
+    // between the tab bar and first content. PermissionsTab owns its own
+    // internal spacing (space-y-6), so we don't add space-y here.
     <div className="pt-2">
       <PermissionsTab
         objectType="registry_rule"
@@ -2997,7 +3078,10 @@ export function RegistryRuleFormDialog({
         showSteward
         canEditSteward={!readOnly}
         steward={steward}
+        stewardDisplayName={stewardDisplayName}
         onStewardChange={setSteward}
+        onStewardDisplayNameChange={setStewardDisplayName}
+        onStewardGrantIntent={setStewardGrantIntent}
       />
     </div>
   );
@@ -4273,8 +4357,11 @@ export function RegistryRuleFormDialog({
             disabled={saving || !isDirty || !canSaveDraft}
             className="gap-2"
           >
-            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {isPublishedRevision ? t("rulesRegistry.saveRevision") : t("rulesRegistry.saveDraft")}
+            {/* Save icon (spinner while saving) + always "Save as draft" —
+                consistent with the Tables and Collections editors. (Previously
+                iconless and showed "Save" for a published revision.) */}
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            {t("rulesRegistry.saveDraft")}
           </Button>,
           !canSaveDraft,
           missingDraftFieldLabels,

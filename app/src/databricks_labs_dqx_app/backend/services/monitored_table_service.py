@@ -39,9 +39,12 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_pass_threshold,
     get_rule_severity,
 )
+from databricks.sdk import WorkspaceClient
+
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
+from databricks_labs_dqx_app.backend.services.steward_display_name_service import resolve_steward_display_name
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
@@ -171,10 +174,12 @@ class MonitoredTableService:
         sql: OltpExecutorProtocol,
         profiling_sql: SqlExecutor,
         permissions: PermissionsService | None = None,
+        sp_ws: WorkspaceClient | None = None,
     ) -> None:
         self._sql = sql
         self._profiling_sql = profiling_sql
         self._perms = permissions
+        self._sp_ws = sp_ws
         self._table = sql.fqn("dq_monitored_tables")
         self._versions_table = sql.fqn("dq_monitored_table_versions")
         self._applied_table = sql.fqn("dq_applied_rules")
@@ -203,7 +208,9 @@ class MonitoredTableService:
             f"{prefix}updated_by, {updated_at} AS updated_at, "
             # schedule_kind (B2-52) appended last so existing positional indices
             # in ``_row_to_table`` stay stable (schedule_kind=row[13]).
-            f"{prefix}schedule_kind"
+            f"{prefix}schedule_kind, "
+            # steward_display_name appended after schedule_kind (row[14]).
+            f"{prefix}steward_display_name"
         )
 
     def _build_applied_select_cols(self) -> str:
@@ -223,7 +230,13 @@ class MonitoredTableService:
     # Register
     # ------------------------------------------------------------------
 
-    def register(self, table_fqn: str, user_email: str, steward: str | None = None) -> MonitoredTable:
+    def register(
+        self,
+        table_fqn: str,
+        user_email: str,
+        steward: str | None = None,
+        steward_display_name: str | None = None,
+    ) -> MonitoredTable:
         """Register *table_fqn* under Rules Registry governance (status ``draft``).
 
         Raises :class:`DuplicateMonitoredTableError` if the table is already
@@ -236,15 +249,21 @@ class MonitoredTableService:
                 f"Table '{table_fqn}' is already monitored (binding_id={existing.binding_id})."
             )
         now = datetime.now(timezone.utc)
+        # Default the steward to the creator when none was resolved, so a
+        # freshly registered table always has an accountable owner (mirrors
+        # table spaces). The route prefers the UC table owner and passes it
+        # here as ``steward``; this fallback covers the owner-unavailable case.
+        # An explicit steward always wins.
+        resolved_steward = steward or user_email
+        # Resolve the steward's display name at write time when the caller did
+        # not supply one (best-effort; group/unresolvable → NULL).
+        if steward_display_name is None:
+            steward_display_name = resolve_steward_display_name(resolved_steward, self._sp_ws)
         binding = MonitoredTable(
             binding_id=uuid4().hex[:16],
             table_fqn=table_fqn,
-            # Default the steward to the creator when none was resolved, so a
-            # freshly registered table always has an accountable owner (mirrors
-            # table spaces). The route prefers the UC table owner and passes it
-            # here as ``steward``; this fallback covers the owner-unavailable
-            # case. An explicit steward always wins.
-            steward=steward or user_email,
+            steward=resolved_steward,
+            steward_display_name=steward_display_name,
             status="draft",
             last_profiled_at=None,
             created_by=user_email,
@@ -292,16 +311,20 @@ class MonitoredTableService:
         skipped_existing = [fqn for fqn in valid if fqn in existing]
         to_register = [fqn for fqn in valid if fqn not in existing]
 
+        # Bulk register defaults every binding's steward to the creator (no
+        # per-table UC owner lookup — see route docstring for the cost
+        # trade-off). An explicit shared steward always wins. Resolve the
+        # shared steward's display name once (best-effort) rather than per row.
+        resolved_steward = steward or user_email
+        resolved_display_name = resolve_steward_display_name(resolved_steward, self._sp_ws)
         registered: list[str] = []
         for fqn in to_register:
             now = datetime.now(timezone.utc)
             binding = MonitoredTable(
                 binding_id=uuid4().hex[:16],
                 table_fqn=fqn,
-                # Bulk register defaults every binding's steward to the creator
-                # (no per-table UC owner lookup — see route docstring for the
-                # cost trade-off). An explicit shared steward always wins.
-                steward=steward or user_email,
+                steward=resolved_steward,
+                steward_display_name=resolved_display_name,
                 status="draft",
                 last_profiled_at=None,
                 created_by=user_email,
@@ -341,11 +364,12 @@ class MonitoredTableService:
         # always carries a concrete enum (SCHEDULE_KIND_DEFAULT on the model).
         sql = (
             f"INSERT INTO {self._table} "
-            "(binding_id, table_fqn, steward, status, version, created_by, created_at, "
-            "updated_by, updated_at, schedule_kind) "
+            "(binding_id, table_fqn, steward, steward_display_name, status, version, created_by, "
+            "created_at, updated_by, updated_at, schedule_kind) "
             "VALUES "
             f"('{escape_sql_string(binding.binding_id)}', '{escape_sql_string(binding.table_fqn)}', "
-            f"{self._opt_str(binding.steward)}, '{escape_sql_string(binding.status)}', 0, "
+            f"{self._opt_str(binding.steward)}, {self._opt_str(binding.steward_display_name)}, "
+            f"'{escape_sql_string(binding.status)}', 0, "
             f"{self._opt_str(binding.created_by)}, now(), {self._opt_str(binding.updated_by)}, now(), "
             f"'{escape_sql_string(binding.schedule_kind)}')"
         )
@@ -408,13 +432,14 @@ class MonitoredTableService:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY mt.updated_at DESC LIMIT 2000"
         rows = self._sql.query(sql)
-        # Base columns end with schedule_kind (index 13), so the score-cache
-        # LEFT-JOIN columns follow at 14..17, and the version_state_json at 18.
+        # Base columns end with steward_display_name (index 14, after schedule_kind
+        # at 13), so the score-cache LEFT-JOIN columns follow at 15..18, and the
+        # version_state_json at 19.
         tables = [
             (
                 self._row_to_table(row),
-                parse_cached_score(row[14], row[15], row[16], row[17]),
-                _parse_snapshot_check_count(row[18]),
+                parse_cached_score(row[15], row[16], row[17], row[18]),
+                _parse_snapshot_check_count(row[19]),
             )
             for row in rows
         ]
@@ -1178,6 +1203,7 @@ class MonitoredTableService:
             updated_by=row[11],
             updated_at=self._parse_timestamp(row[12]),
             schedule_kind=self._parse_schedule_kind(row[13] if len(row) > 13 else None),
+            steward_display_name=row[14] if len(row) > 14 else None,
         )
 
     def _row_to_applied_rule(self, row: list[str]) -> AppliedRule:

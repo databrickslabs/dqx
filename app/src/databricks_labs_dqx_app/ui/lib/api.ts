@@ -882,6 +882,11 @@ export type CreateDataProductInDescription = string | null;
 export type CreateDataProductInSteward = string | null;
 
 /**
+ * Human-readable display name for the steward; sourced from the principal picker.
+ */
+export type CreateDataProductInStewardDisplayName = string | null;
+
+/**
  * Body of ``POST /data-products`` (``createDataProduct``).
  */
 export interface CreateDataProductIn {
@@ -889,6 +894,8 @@ export interface CreateDataProductIn {
   description?: CreateDataProductInDescription;
   /** Defaults to the creator's email when omitted */
   steward?: CreateDataProductInSteward;
+  /** Human-readable display name for the steward; sourced from the principal picker. */
+  steward_display_name?: CreateDataProductInStewardDisplayName;
 }
 
 /**
@@ -933,6 +940,11 @@ export type CreateRegistryRuleInUserMetadata = { [key: string]: unknown };
 export type CreateRegistryRuleInSteward = string | null;
 
 /**
+ * Human-readable display name for the steward; sourced from the principal picker.
+ */
+export type CreateRegistryRuleInStewardDisplayName = string | null;
+
+/**
  * Request body for creating a new draft Rules Registry rule.
  */
 export interface CreateRegistryRuleIn {
@@ -948,6 +960,8 @@ export interface CreateRegistryRuleIn {
   user_metadata?: CreateRegistryRuleInUserMetadata;
   /** Owning steward's email/username */
   steward?: CreateRegistryRuleInSteward;
+  /** Human-readable display name for the steward; sourced from the principal picker. */
+  steward_display_name?: CreateRegistryRuleInStewardDisplayName;
 }
 
 /**
@@ -1030,6 +1044,11 @@ export type DataProductOutDescription = string | null;
 
 export type DataProductOutSteward = string | null;
 
+/**
+ * Human-readable display name for the steward; falls back to the steward email when null.
+ */
+export type DataProductOutStewardDisplayName = string | null;
+
 export type DataProductOutScheduleCron = string | null;
 
 export type DataProductOutScheduleTz = string | null;
@@ -1087,6 +1106,8 @@ export interface DataProductOut {
   name: string;
   description?: DataProductOutDescription;
   steward?: DataProductOutSteward;
+  /** Human-readable display name for the steward; falls back to the steward email when null. */
+  steward_display_name?: DataProductOutStewardDisplayName;
   schedule_cron?: DataProductOutScheduleCron;
   schedule_tz?: DataProductOutScheduleTz;
   schedule_kind?: DataProductOutScheduleKind;
@@ -2077,6 +2098,11 @@ export interface MonitoredTableDetailOut {
 
 export type MonitoredTableOutSteward = string | null;
 
+/**
+ * Human-readable display name for the steward; falls back to the steward email when null.
+ */
+export type MonitoredTableOutStewardDisplayName = string | null;
+
 export type MonitoredTableOutStatus = typeof MonitoredTableOutStatus[keyof typeof MonitoredTableOutStatus];
 
 
@@ -2133,6 +2159,8 @@ export interface MonitoredTableOut {
   binding_id: string;
   table_fqn: string;
   steward?: MonitoredTableOutSteward;
+  /** Human-readable display name for the steward; falls back to the steward email when null. */
+  steward_display_name?: MonitoredTableOutStewardDisplayName;
   status: MonitoredTableOutStatus;
   /** 0 = never approved; bumped on each table approval */
   version?: number;
@@ -2690,6 +2718,11 @@ export interface RefreshScoresOut {
 export type RegisterMonitoredTableInSteward = string | null;
 
 /**
+ * Human-readable display name for the steward; sourced from the principal picker.
+ */
+export type RegisterMonitoredTableInStewardDisplayName = string | null;
+
+/**
  * Request body for registering a table under Rules Registry governance.
  */
 export interface RegisterMonitoredTableIn {
@@ -2697,6 +2730,8 @@ export interface RegisterMonitoredTableIn {
   table_fqn: string;
   /** Owning steward's email/username */
   steward?: RegisterMonitoredTableInSteward;
+  /** Human-readable display name for the steward; sourced from the principal picker. */
+  steward_display_name?: RegisterMonitoredTableInStewardDisplayName;
 }
 
 export type RegistryRuleDetailOutCurrentVersion = RegistryRuleVersionOut | null;
@@ -2741,6 +2776,11 @@ export type RegistryRuleOutFingerprint = string | null;
 
 export type RegistryRuleOutSteward = string | null;
 
+/**
+ * Human-readable display name for the steward; falls back to the steward email when null.
+ */
+export type RegistryRuleOutStewardDisplayName = string | null;
+
 export type RegistryRuleOutSource = string | null;
 
 export type RegistryRuleOutCreatedBy = string | null;
@@ -2781,6 +2821,8 @@ export interface RegistryRuleOut {
   user_metadata?: RegistryRuleOutUserMetadata;
   fingerprint?: RegistryRuleOutFingerprint;
   steward?: RegistryRuleOutSteward;
+  /** Human-readable display name for the steward; falls back to the steward email when null. */
+  steward_display_name?: RegistryRuleOutStewardDisplayName;
   is_builtin?: boolean;
   source?: RegistryRuleOutSource;
   created_by?: RegistryRuleOutCreatedBy;
@@ -3378,6 +3420,21 @@ export interface RunDataProductOut {
   submitted?: DataProductRunSubmissionOut[];
   /** '{table_fqn}: {reason}' entries for members that were skipped or failed */
   skipped?: string[];
+}
+
+export type RunFailureOutCreatedAt = string | null;
+
+/**
+ * Minimal projection of a failed run for the app-wide toast watcher.
+
+Intentionally omits heavy fields (error_message, counts, checks_json)
+so the endpoint payload stays tiny regardless of how many failures exist.
+ */
+export interface RunFailureOut {
+  run_id: string;
+  source_table_fqn: string;
+  status: string;
+  created_at?: RunFailureOutCreatedAt;
 }
 
 /**
@@ -4090,6 +4147,11 @@ export type UpdateDataProductInDescription = string | null;
 
 export type UpdateDataProductInSteward = string | null;
 
+/**
+ * Human-readable display name for the steward; sourced from the principal picker.
+ */
+export type UpdateDataProductInStewardDisplayName = string | null;
+
 export type UpdateDataProductInScheduleCron = string | null;
 
 export type UpdateDataProductInScheduleTz = string | null;
@@ -4108,6 +4170,8 @@ export interface UpdateDataProductIn {
   name?: UpdateDataProductInName;
   description?: UpdateDataProductInDescription;
   steward?: UpdateDataProductInSteward;
+  /** Human-readable display name for the steward; sourced from the principal picker. */
+  steward_display_name?: UpdateDataProductInStewardDisplayName;
   schedule_cron?: UpdateDataProductInScheduleCron;
   schedule_tz?: UpdateDataProductInScheduleTz;
   schedule_kind?: UpdateDataProductInScheduleKind;
@@ -4175,6 +4239,11 @@ export type UpdateRegistryRuleInUserMetadata = UpdateRegistryRuleInUserMetadataA
 export type UpdateRegistryRuleInSteward = string | null;
 
 /**
+ * Human-readable display name for the steward; sourced from the principal picker.
+ */
+export type UpdateRegistryRuleInStewardDisplayName = string | null;
+
+/**
  * Re-stamp AI provenance during an edit-in-place session (e.g. a human accepts an AI-suggested field on an otherwise human-authored draft). Omit to leave unchanged.
  */
 export type UpdateRegistryRuleInAuthorKind = 'human' | 'ai_generated' | 'ai_assisted' | null;
@@ -4188,6 +4257,8 @@ export interface UpdateRegistryRuleIn {
   polarity?: UpdateRegistryRuleInPolarity;
   user_metadata?: UpdateRegistryRuleInUserMetadata;
   steward?: UpdateRegistryRuleInSteward;
+  /** Human-readable display name for the steward; sourced from the principal picker. */
+  steward_display_name?: UpdateRegistryRuleInStewardDisplayName;
   /** Re-stamp AI provenance during an edit-in-place session (e.g. a human accepts an AI-suggested field on an otherwise human-authored draft). Omit to leave unchanged. */
   author_kind?: UpdateRegistryRuleInAuthorKind;
 }
@@ -4548,6 +4619,10 @@ export type DeleteMonitoredTable200 = {[key: string]: string};
 export type RemoveAppliedRule200 = {[key: string]: string};
 
 export type ListValidationRunsParams = {
+/**
+ * When true, omit the heavy ``error_message`` field from each row (set to null). This reduces the response payload from ~117 kB to ~6 kB and is intended for callers that only need run_id/status/source_table_fqn (e.g. the app-wide toast watcher and the table-detail spinner). Full-payload callers (Runs History) should omit this param or pass summary=false.
+ */
+summary?: boolean;
 /**
  * Filter to runs whose effective review status matches one of the supplied values. Repeat the param for multi-select (e.g. ?review_status=Acknowledged&review_status=Resolved). Match is on the effective value, so passing the catalogue default also catches unreviewed runs.
  */
@@ -17092,6 +17167,159 @@ export function useListValidationRunsSuspense<TData = Awaited<ReturnType<typeof 
 
 
 /**
+ * Return recently-failed validation runs, bounded to the most recent *N*.
+
+Intended for the app-wide toast watcher: returns FAILED runs only with
+minimal fields (run_id, source_table_fqn, status, created_at). The
+endpoint is cheap by construction — no error_message, no counts, no
+review-status join. The full run history is still available via
+``GET /dryrun/runs`` for the Runs History page.
+ * @summary List Recent Validation Failures
+ */
+export const listRecentValidationFailures = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RunFailureOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/dryrun/runs/recent-failures`,options
+    );
+  }
+
+
+
+
+export const getListRecentValidationFailuresQueryKey = () => {
+    return [
+    `/api/v1/dryrun/runs/recent-failures`
+    ] as const;
+    }
+
+    
+export const getListRecentValidationFailuresQueryOptions = <TData = Awaited<ReturnType<typeof listRecentValidationFailures>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRecentValidationFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListRecentValidationFailuresQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRecentValidationFailures>>> = ({ signal }) => listRecentValidationFailures({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listRecentValidationFailures>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListRecentValidationFailuresQueryResult = NonNullable<Awaited<ReturnType<typeof listRecentValidationFailures>>>
+export type ListRecentValidationFailuresQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListRecentValidationFailures<TData = Awaited<ReturnType<typeof listRecentValidationFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRecentValidationFailures>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRecentValidationFailures>>,
+          TError,
+          Awaited<ReturnType<typeof listRecentValidationFailures>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRecentValidationFailures<TData = Awaited<ReturnType<typeof listRecentValidationFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRecentValidationFailures>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRecentValidationFailures>>,
+          TError,
+          Awaited<ReturnType<typeof listRecentValidationFailures>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRecentValidationFailures<TData = Awaited<ReturnType<typeof listRecentValidationFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRecentValidationFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Recent Validation Failures
+ */
+
+export function useListRecentValidationFailures<TData = Awaited<ReturnType<typeof listRecentValidationFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRecentValidationFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListRecentValidationFailuresQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListRecentValidationFailuresSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listRecentValidationFailures>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRecentValidationFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListRecentValidationFailuresQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRecentValidationFailures>>> = ({ signal }) => listRecentValidationFailures({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRecentValidationFailures>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListRecentValidationFailuresSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listRecentValidationFailures>>>
+export type ListRecentValidationFailuresSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListRecentValidationFailuresSuspense<TData = Awaited<ReturnType<typeof listRecentValidationFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRecentValidationFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRecentValidationFailuresSuspense<TData = Awaited<ReturnType<typeof listRecentValidationFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRecentValidationFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRecentValidationFailuresSuspense<TData = Awaited<ReturnType<typeof listRecentValidationFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRecentValidationFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Recent Validation Failures
+ */
+
+export function useListRecentValidationFailuresSuspense<TData = Awaited<ReturnType<typeof listRecentValidationFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRecentValidationFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListRecentValidationFailuresSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
  * Read approved checks from the rules catalog for the given tables and submit dry-run jobs.
  * @summary Batch Run From Catalog
  */
@@ -17750,6 +17978,158 @@ export function useListProfileRunsSuspense<TData = Awaited<ReturnType<typeof lis
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListProfileRunsSuspenseQueryOptions(params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Return recently-failed profiler runs, bounded to the most recent *N*.
+
+Intended for the app-wide toast watcher: returns FAILED runs only with
+minimal fields (run_id, source_table_fqn, status, created_at). The
+endpoint is cheap by construction — no summary_json, no generated rules.
+The full profiler run history is still available via ``GET /profiler/runs``.
+ * @summary List Recent Profile Failures
+ */
+export const listRecentProfileFailures = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RunFailureOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/profiler/runs/recent-failures`,options
+    );
+  }
+
+
+
+
+export const getListRecentProfileFailuresQueryKey = () => {
+    return [
+    `/api/v1/profiler/runs/recent-failures`
+    ] as const;
+    }
+
+    
+export const getListRecentProfileFailuresQueryOptions = <TData = Awaited<ReturnType<typeof listRecentProfileFailures>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRecentProfileFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListRecentProfileFailuresQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRecentProfileFailures>>> = ({ signal }) => listRecentProfileFailures({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listRecentProfileFailures>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListRecentProfileFailuresQueryResult = NonNullable<Awaited<ReturnType<typeof listRecentProfileFailures>>>
+export type ListRecentProfileFailuresQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListRecentProfileFailures<TData = Awaited<ReturnType<typeof listRecentProfileFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRecentProfileFailures>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRecentProfileFailures>>,
+          TError,
+          Awaited<ReturnType<typeof listRecentProfileFailures>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRecentProfileFailures<TData = Awaited<ReturnType<typeof listRecentProfileFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRecentProfileFailures>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRecentProfileFailures>>,
+          TError,
+          Awaited<ReturnType<typeof listRecentProfileFailures>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRecentProfileFailures<TData = Awaited<ReturnType<typeof listRecentProfileFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRecentProfileFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Recent Profile Failures
+ */
+
+export function useListRecentProfileFailures<TData = Awaited<ReturnType<typeof listRecentProfileFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRecentProfileFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListRecentProfileFailuresQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListRecentProfileFailuresSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listRecentProfileFailures>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRecentProfileFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListRecentProfileFailuresQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRecentProfileFailures>>> = ({ signal }) => listRecentProfileFailures({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRecentProfileFailures>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListRecentProfileFailuresSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listRecentProfileFailures>>>
+export type ListRecentProfileFailuresSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListRecentProfileFailuresSuspense<TData = Awaited<ReturnType<typeof listRecentProfileFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRecentProfileFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRecentProfileFailuresSuspense<TData = Awaited<ReturnType<typeof listRecentProfileFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRecentProfileFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRecentProfileFailuresSuspense<TData = Awaited<ReturnType<typeof listRecentProfileFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRecentProfileFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Recent Profile Failures
+ */
+
+export function useListRecentProfileFailuresSuspense<TData = Awaited<ReturnType<typeof listRecentProfileFailures>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRecentProfileFailures>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListRecentProfileFailuresSuspenseQueryOptions(options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

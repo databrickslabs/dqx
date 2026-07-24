@@ -50,7 +50,6 @@ import {
   useClearRunReviewStatus,
   getRunReviewStatusQueryKey,
   getRunReviewStatusHistoryQueryKey,
-  getListValidationRunsQueryKey,
 } from "@/lib/api-custom";
 // Re-use the colour token table from the Configuration page so the
 // badge here is visually identical to the swatch admins picked there.
@@ -85,8 +84,9 @@ export function RunReviewStatusPanel({ runId, trailingAction }: RunReviewStatusP
     queryClient.invalidateQueries({ queryKey: getRunReviewStatusQueryKey(runId) });
     queryClient.invalidateQueries({ queryKey: getRunReviewStatusHistoryQueryKey(runId) });
     // Bust the listing cache too so the History page row reflects the
-    // change immediately when the user collapses the row.
-    queryClient.invalidateQueries({ queryKey: getListValidationRunsQueryKey() });
+    // change immediately when the user collapses the row. Invalidate by
+    // prefix so both the full and summary cache variants are busted.
+    queryClient.invalidateQueries({ queryKey: ["/api/v1/dryrun/runs"] });
   };
 
   const handleSelect = (value: string) => {

@@ -143,3 +143,72 @@ class TestListValidationRunsChecksAlwaysEmpty:
         assert results[0].status == "FAILED"
         assert results[0].error_message == "boom"
         assert results[0].checks == []
+
+
+class TestListValidationRunsSummaryMode:
+    """``summary=True`` omits error_message; ``summary=False`` (default) keeps it."""
+
+    async def test_summary_omits_error_message(self, app_config: AppConfig) -> None:
+        """error_message must be None when summary=True."""
+        row = _run_row(run_id="r2", status="FAILED")
+        row["error_message"] = "some long stacktrace"
+        job_svc, review_svc, sql, response = _make_deps(app_config, [row])
+
+        from databricks_labs_dqx_app.backend.routes.v1.dryrun import list_validation_runs
+
+        results = await list_validation_runs(
+            response=response,
+            job_svc=job_svc,
+            review_svc=review_svc,
+            app_conf=app_config,
+            user_catalogs=frozenset({"cat"}),
+            sql=sql,
+            summary=True,
+            review_status=None,
+        )
+
+        assert len(results) == 1
+        assert results[0].error_message is None, "error_message must be None in summary mode"
+        assert results[0].run_id == "r2"
+        assert results[0].status == "FAILED"
+
+    async def test_non_summary_keeps_error_message(self, app_config: AppConfig) -> None:
+        """error_message must be preserved when summary=False (default)."""
+        row = _run_row(run_id="r3", status="FAILED")
+        row["error_message"] = "boom"
+        job_svc, review_svc, sql, response = _make_deps(app_config, [row])
+
+        from databricks_labs_dqx_app.backend.routes.v1.dryrun import list_validation_runs
+
+        results = await list_validation_runs(
+            response=response,
+            job_svc=job_svc,
+            review_svc=review_svc,
+            app_conf=app_config,
+            user_catalogs=frozenset({"cat"}),
+            sql=sql,
+            summary=False,
+            review_status=None,
+        )
+
+        assert results[0].error_message == "boom"
+
+    async def test_summary_null_error_message_kept_null(self, app_config: AppConfig) -> None:
+        """Rows with no error_message stay null in summary mode (no regression)."""
+        row = _run_row(run_id="r4", status="SUCCESS")
+        job_svc, review_svc, sql, response = _make_deps(app_config, [row])
+
+        from databricks_labs_dqx_app.backend.routes.v1.dryrun import list_validation_runs
+
+        results = await list_validation_runs(
+            response=response,
+            job_svc=job_svc,
+            review_svc=review_svc,
+            app_conf=app_config,
+            user_catalogs=frozenset({"cat"}),
+            sql=sql,
+            summary=True,
+            review_status=None,
+        )
+
+        assert results[0].error_message is None

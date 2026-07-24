@@ -187,6 +187,17 @@ class TestPgMigrationsCatalogue:
         assert "NOT EXISTS" in sql, "backfill must be idempotent via WHERE NOT EXISTS"
         assert "dq_object_grants" in sql
 
+    def test_v22_adds_steward_display_name_to_three_tables(self):
+        """v22 adds steward_display_name to dq_rules, dq_monitored_tables, dq_data_products."""
+        v22 = next(m for m in PG_MIGRATIONS if m.version == 22)
+        sql = v22.sql
+        assert "steward_display_name" in sql, "v22 must add steward_display_name"
+        assert "dq_rules" in sql, "v22 must touch dq_rules"
+        assert "dq_monitored_tables" in sql, "v22 must touch dq_monitored_tables"
+        assert "dq_data_products" in sql, "v22 must touch dq_data_products"
+        # Postgres uses IF NOT EXISTS, so re-running is a no-op.
+        assert "IF NOT EXISTS" in sql, "v22 must use ADD COLUMN IF NOT EXISTS for idempotency"
+
     def test_v21_strips_execute_from_registry_rule_grants(self):
         """v21 must UPDATE dq_object_grants to remove EXECUTE from
         registry_rule rows, leaving ALL_PRIVILEGES (owner) rows untouched."""

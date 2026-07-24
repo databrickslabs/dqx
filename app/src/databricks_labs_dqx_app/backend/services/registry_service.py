@@ -27,6 +27,7 @@ from uuid import uuid4
 
 from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from databricks.labs.dqx.utils import is_sql_query_safe
+from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
@@ -42,6 +43,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_severity,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+from databricks_labs_dqx_app.backend.services.steward_display_name_service import resolve_steward_display_name
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
 
@@ -87,9 +89,15 @@ class RegistryService:
     # (use "Duplicate" / undeprecate respectively).
     EDITABLE_STATUSES: frozenset[str] = frozenset({"draft", "approved"})
 
-    def __init__(self, sql: OltpExecutorProtocol, permissions: PermissionsService | None = None) -> None:
+    def __init__(
+        self,
+        sql: OltpExecutorProtocol,
+        permissions: PermissionsService | None = None,
+        sp_ws: WorkspaceClient | None = None,
+    ) -> None:
         self._sql = sql
         self._perms = permissions
+        self._sp_ws = sp_ws
         self._table = sql.fqn("dq_rules")
         self._versions_table = sql.fqn("dq_rule_versions")
         self._history_table = sql.fqn("dq_rules_history")
@@ -104,7 +112,7 @@ class RegistryService:
             "rule_id, mode, status, version, polarity, author_kind, "
             f"{definition} AS definition_json, {user_metadata} AS user_metadata_json, "
             f"fingerprint, steward, is_builtin, source, created_by, {created_at}, "
-            f"updated_by, {updated_at}"
+            f"updated_by, {updated_at}, steward_display_name"
         )
 
     # ------------------------------------------------------------------
@@ -520,6 +528,7 @@ class RegistryService:
         author_kind: AuthorKind = "human",
         user_metadata: dict[str, Any] | None = None,
         steward: str | None = None,
+        steward_display_name: str | None = None,
         source: str = "ui",
     ) -> tuple[RegistryRule, str | None]:
         """Create a new draft registry rule.
@@ -542,6 +551,16 @@ class RegistryService:
         """
         self._validate_definition_sql_safety(mode, definition)
         now = datetime.now(timezone.utc)
+        # Default the steward to the creator when none was supplied, so a
+        # freshly authored rule always has an accountable owner (mirrors how
+        # table spaces default steward -> creator). An explicit steward from
+        # the caller always wins.
+        resolved_steward = steward or user_email
+        # Resolve the steward's display name at write time when the caller did
+        # not already supply one (the principal picker does). Best-effort — a
+        # group / unresolvable steward or SCIM failure stores NULL.
+        if steward_display_name is None:
+            steward_display_name = resolve_steward_display_name(resolved_steward, self._sp_ws)
         rule = RegistryRule(
             rule_id=uuid4().hex[:16],
             mode=mode,
@@ -551,11 +570,8 @@ class RegistryService:
             author_kind=author_kind,
             definition=definition,
             user_metadata=dict(user_metadata or {}),
-            # Default the steward to the creator when none was supplied, so a
-            # freshly authored rule always has an accountable owner (mirrors
-            # how table spaces default steward -> creator). An explicit steward
-            # from the caller always wins.
-            steward=steward or user_email,
+            steward=resolved_steward,
+            steward_display_name=steward_display_name,
             is_builtin=False,
             source=source,
             created_by=user_email,
@@ -630,6 +646,7 @@ class RegistryService:
         polarity: Polarity | None = None,
         user_metadata: dict[str, Any] | None = None,
         steward: str | None = None,
+        steward_display_name: str | None = None,
         author_kind: AuthorKind | None = None,
     ) -> RegistryRule:
         """Update a registry rule's LIVE ``dq_rules`` row in place.
@@ -671,6 +688,12 @@ class RegistryService:
             rule.user_metadata = dict(user_metadata)
         if steward is not None:
             rule.steward = steward
+            # Steward changed without an explicit display name → resolve it at
+            # write time (best-effort). An explicitly-supplied name below wins.
+            if steward_display_name is None:
+                rule.steward_display_name = resolve_steward_display_name(steward, self._sp_ws)
+        if steward_display_name is not None:
+            rule.steward_display_name = steward_display_name
         if author_kind is not None:
             rule.author_kind = author_kind
         rule.fingerprint = compute_registry_rule_fingerprint(rule)
@@ -939,11 +962,13 @@ class RegistryService:
         sql = (
             f"INSERT INTO {self._table} "
             "(rule_id, mode, status, version, polarity, author_kind, definition, user_metadata, "
-            "fingerprint, steward, is_builtin, source, created_by, created_at, updated_by, updated_at) VALUES "
+            "fingerprint, steward, steward_display_name, is_builtin, source, created_by, created_at, "
+            "updated_by, updated_at) VALUES "
             f"('{escape_sql_string(rule.rule_id)}', '{escape_sql_string(rule.mode)}', "
             f"'{escape_sql_string(rule.status)}', {rule.version}, {self._opt_str(rule.polarity)}, "
             f"{self._opt_str(rule.author_kind)}, {definition_expr}, {metadata_expr}, "
             f"{self._opt_str(rule.fingerprint)}, {self._opt_str(rule.steward)}, "
+            f"{self._opt_str(rule.steward_display_name)}, "
             f"{'TRUE' if rule.is_builtin else 'FALSE'}, {self._opt_str(rule.source)}, "
             f"{self._opt_str(rule.created_by)}, now(), {self._opt_str(rule.updated_by)}, now())"
         )
@@ -964,6 +989,7 @@ class RegistryService:
             f"  user_metadata = {metadata_expr}, "
             f"  fingerprint = {self._opt_str(rule.fingerprint)}, "
             f"  steward = {self._opt_str(rule.steward)}, "
+            f"  steward_display_name = {self._opt_str(rule.steward_display_name)}, "
             f"  updated_by = {self._opt_str(rule.updated_by)}, "
             f"  updated_at = now() "
             f"WHERE rule_id = '{e_rule_id}'"
@@ -1045,6 +1071,7 @@ class RegistryService:
             created_at=self._parse_timestamp(row[13], rule_id=rule_id, field="created_at"),
             updated_by=row[14],
             updated_at=self._parse_timestamp(row[15], rule_id=rule_id, field="updated_at"),
+            steward_display_name=row[16] if len(row) > 16 else None,
         )
 
     def _row_to_version(self, row: list[str]) -> RuleVersion:

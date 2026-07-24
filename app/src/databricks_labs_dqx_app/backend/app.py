@@ -251,8 +251,8 @@ async def _build_scheduler_data_product_service(
     """
     app_settings = await get_app_settings_service(sql=oltp)
     perms = await get_permissions_service(sql=oltp, app_settings=app_settings)
-    monitored_tables = await get_monitored_table_service(sql=oltp, profiling_sql=sp_sql, perms=perms)
-    registry = await get_registry_service(sql=oltp, perms=perms)
+    monitored_tables = await get_monitored_table_service(sql=oltp, profiling_sql=sp_sql, perms=perms, sp_ws=sp_ws)
+    registry = await get_registry_service(sql=oltp, perms=perms, sp_ws=sp_ws)
     rules_catalog = await get_rules_catalog_service(sql=oltp)
     materializer = await get_materializer(
         sql=oltp, registry=registry, monitored_tables=monitored_tables, app_settings=app_settings
@@ -285,6 +285,7 @@ async def _build_scheduler_data_product_service(
         app_settings=app_settings,
         materializer=materializer,
         perms=perms,
+        sp_ws=sp_ws,
     )
     return data_product_service, binding_run_service
 
@@ -608,6 +609,11 @@ async def lifespan(app: FastAPI):
         logger.info("Delta schema is up to date")
 
     # Best-effort below — the app can recover from these failing.
+
+    # steward_display_name is populated at WRITE time by the entity services
+    # (see steward_display_name_service.resolve_steward_display_name), so there
+    # is no startup backfill — every object created going forward carries its
+    # resolved name, and list pages fall back to the raw identity otherwise.
 
     # Genie schema — must exist before the derived views, dims, and
     # entitlement objects below are created inside it. Best-effort: a

@@ -377,7 +377,7 @@ function RunHistoryContent() {
     isFetching: validationFetching,
     error: validationError,
     refetch: refetchValidation,
-  } = useListValidationRuns({
+  } = useListValidationRuns(undefined, {
     query: {
       refetchInterval: (query) => {
         const rows = (query.state.data as { data?: ValidationRunSummaryOut[] } | undefined)?.data;

@@ -63,6 +63,7 @@ def _product_row(
     name: str = "Orders",
     description: str | None = None,
     steward: str | None = "alice@x",
+    steward_display_name: str | None = None,
     schedule_cron: str | None = None,
     schedule_tz: str | None = None,
     status: str = "draft",
@@ -73,29 +74,31 @@ def _product_row(
     total_tests: str | None = None,
     score_computed_at: str | None = None,
 ) -> list[str | None]:
-    # ``schedule_kind`` (B2-52) is selected last among the base columns
-    # (index 12); the trailing 4 cells are the dq_score_cache LEFT-JOIN
+    # ``schedule_kind`` (B2-52) at index 12;
+    # ``steward_display_name`` at index 13;
+    # the trailing 4 cells are the dq_score_cache LEFT-JOIN
     # columns the list/get read paths select (P3.4) — all None when the
     # product has never been scored. The non-score read paths select only
-    # the first 13 columns; the extra cells are ignored by _row_to_product.
+    # the first 14 columns; the extra cells are ignored by _row_to_product.
     return [
-        product_id,
-        name,
-        description,
-        steward,
-        schedule_cron,
-        schedule_tz,
-        status,
-        version,
-        "alice@x",
-        "2026-07-07T00:00:00",
-        "alice@x",
-        "2026-07-07T00:00:00",
-        schedule_kind,
-        score,
-        failed_tests,
-        total_tests,
-        score_computed_at,
+        product_id,       # 0
+        name,             # 1
+        description,      # 2
+        steward,          # 3
+        schedule_cron,    # 4
+        schedule_tz,      # 5
+        status,           # 6
+        version,          # 7
+        "alice@x",        # 8 created_by
+        "2026-07-07T00:00:00",  # 9 created_at
+        "alice@x",        # 10 updated_by
+        "2026-07-07T00:00:00",  # 11 updated_at
+        schedule_kind,    # 12
+        steward_display_name,   # 13
+        score,            # 14
+        failed_tests,     # 15
+        total_tests,      # 16
+        score_computed_at,  # 17
     ]
 
 

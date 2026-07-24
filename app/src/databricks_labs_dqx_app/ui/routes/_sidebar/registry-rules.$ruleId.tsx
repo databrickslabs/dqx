@@ -62,7 +62,10 @@ import {
 import { ApplyRuleModal } from "@/components/registry-rules/ApplyRuleModal";
 import { RegistryRuleJsonDialog } from "@/components/registry-rules/RegistryRuleJsonDialog";
 import { StatusBadge, ModifiedBadge, RuleVersionBadge, getTag, RESERVED_NAME_KEY } from "@/components/RegistryRuleBadges";
-import { invalidateAfterRegistryRuleApprovalChange } from "@/lib/registry-rule-invalidation";
+import {
+  invalidateAfterRegistryRuleApprovalChange,
+  invalidateAfterRegistryRuleEdit,
+} from "@/lib/registry-rule-invalidation";
 import { cn } from "@/lib/utils";
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -446,9 +449,12 @@ function RegistryRuleDetailPage() {
           editingRule={canEdit ? rule : null}
           viewingRule={canEdit ? null : rule}
           labelDefinitions={labelDefinitions}
-          onSaved={() => {
+          onSaved={(savedRuleId) => {
             justSavedRef.current = true;
-            invalidateDetail();
+            // Invalidate this rule's detail AND the registry-rules list so
+            // returning to the overview reflects the edit/steward change
+            // instead of serving the pre-edit 5-minute cache (L3).
+            invalidateAfterRegistryRuleEdit(queryClient, savedRuleId ?? ruleId);
           }}
           activeTab={tab as PageTab | undefined}
           onActiveTabChange={handleActiveTabChange}
@@ -484,13 +490,16 @@ function RegistryRuleDetailPage() {
         onSaved={(newRuleId) => {
           justSavedRef.current = true;
           if (newRuleId && newRuleId !== rule.rule_id) {
+            // Clone-to-new-draft: refresh the list so the new draft shows up,
+            // then navigate to it.
+            invalidateAfterRegistryRuleEdit(queryClient, newRuleId);
             navigate({
               to: "/registry-rules/$ruleId",
               params: { ruleId: newRuleId },
               search: { tab: "about" },
             });
           } else {
-            invalidateDetail();
+            invalidateAfterRegistryRuleEdit(queryClient, rule.rule_id);
           }
         }}
       />

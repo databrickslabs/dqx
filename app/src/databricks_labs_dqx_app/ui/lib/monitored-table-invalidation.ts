@@ -34,6 +34,10 @@ const MONITORED_TABLE_DETAIL_PATH_PREFIX = "/api/v1/monitored-tables/";
 export function invalidateAfterMonitoredTableChange(queryClient: QueryClient, bindingId?: string): void {
   queryClient.invalidateQueries({ queryKey: getListMonitoredTablesQueryKey() });
   queryClient.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
+  // Invalidate ALL validation-run query variants (full and summary) so the
+  // table-detail spinner sees the freshly-started run immediately (G3). Using
+  // the base path as the prefix matches both [path, null] and [path, {summary:true}].
+  queryClient.invalidateQueries({ queryKey: ["/api/v1/dryrun/runs"] });
   if (!bindingId) return;
   const detailPrefix = `${MONITORED_TABLE_DETAIL_PATH_PREFIX}${bindingId}`;
   queryClient.invalidateQueries({

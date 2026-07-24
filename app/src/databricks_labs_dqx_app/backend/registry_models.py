@@ -156,6 +156,10 @@ class RegistryRule(BaseModel):
     )
     fingerprint: str | None = Field(default=None, description="Dedup hash over canonical definition + slots")
     steward: str | None = None
+    steward_display_name: str | None = Field(
+        default=None,
+        description="Human-readable display name for the steward email; populated from the principal picker.",
+    )
     is_builtin: bool = False
     source: str | None = None
     created_by: str | None = None
@@ -235,6 +239,10 @@ class MonitoredTable(BaseModel):
     binding_id: str
     table_fqn: str
     steward: str | None = None
+    steward_display_name: str | None = Field(
+        default=None,
+        description="Human-readable display name for the steward email; populated from the principal picker.",
+    )
     status: MonitoredTableStatus = "draft"
     version: int = Field(default=0, description="0 = never approved; bumped on each table approval")
     schedule_cron: str | None = Field(
@@ -379,6 +387,10 @@ class DataProduct(BaseModel):
     name: str
     description: str | None = None
     steward: str | None = None
+    steward_display_name: str | None = Field(
+        default=None,
+        description="Human-readable display name for the steward email; populated from the principal picker.",
+    )
     schedule_cron: str | None = None
     schedule_tz: str | None = None
     schedule_kind: ScheduleKind = SCHEDULE_KIND_DEFAULT

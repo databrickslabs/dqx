@@ -211,6 +211,58 @@ class TestUnavailablePaths:
 
         assert result.available is False
 
+    async def test_judge_permission_denied_returns_actionable_reason(
+        self, monitored_tables, registry, apply_rules
+    ):
+        """PermissionDenied from the serving endpoint → available=False with a
+        human-readable reason that names the endpoint and instructs the user to
+        request EXECUTE access."""
+        from databricks.sdk.errors.platform import PermissionDenied
+
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}})
+        registry.get_rule.return_value = _rule("r1", ["id"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway = _gateway(
+            error=PermissionDenied("User is missing privileges: EXECUTE on system.ai.databricks-gpt-5-4-nano")
+        )
+        suggester = _suggester(monitored_tables, registry, apply_rules, retriever, gateway)
+
+        result = await suggester.suggest("b1", "user@x")
+
+        assert result.available is False
+        # Reason must guide the user to request access.
+        assert "permission" in result.reason.lower() or "execute" in result.reason.lower()
+        # Reason must NOT leak workspace secrets.
+        for leak in ("token", "client_secret", "client_id"):
+            assert leak not in result.reason.lower(), f"reason must not contain '{leak}'"
+
+    async def test_judge_permission_denied_reason_differs_from_generic(
+        self, monitored_tables, registry, apply_rules
+    ):
+        """PermissionDenied reason must be distinct from the generic 'AI judge failed' message."""
+        from databricks.sdk.errors.platform import PermissionDenied
+
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile({"id": {}})
+        registry.get_rule.return_value = _rule("r1", ["id"])
+        retriever = FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)])
+        gateway_permission = _gateway(
+            error=PermissionDenied("User is missing privileges: EXECUTE on system.ai.databricks-gpt-5-4-nano")
+        )
+        gateway_generic = _gateway(error=RuntimeError("unexpected failure"))
+
+        result_permission = await _suggester(
+            monitored_tables, registry, apply_rules, retriever, gateway_permission
+        ).suggest("b1", "user@x")
+        result_generic = await _suggester(
+            monitored_tables, registry, apply_rules, FakeRetriever(candidates=[RetrievedRule(rule_id="r1", score=0.9)]), gateway_generic
+        ).suggest("b1", "user@x")
+
+        assert result_permission.reason != result_generic.reason, (
+            "PermissionDenied should produce a distinct reason from the generic error path"
+        )
+
     async def test_judge_unparsable_response_degrades_gracefully(self, monitored_tables, registry, apply_rules):
         monitored_tables.get.return_value = _binding_detail()
         monitored_tables.get_latest_profile.return_value = _profile({"id": {}})

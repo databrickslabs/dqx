@@ -319,18 +319,29 @@ function MonitoredTableDetailPage() {
   // started elsewhere doesn't set `hasActive`. We query the full validation-run
   // list (same key used by runs-history, so no extra network request when both
   // pages are mounted) and OR the external signal into `runInProgress` (D3).
-  const externalValidationRunsQuery = useListValidationRuns({
-    query: {
-      refetchInterval: (query) => {
-        const rows = (query.state.data as { data?: ValidationRunSummaryOut[] } | undefined)?.data;
-        return Array.isArray(rows) &&
-          rows.some((r) => r.source_table_fqn === table.table_fqn && r.status === "RUNNING")
-          ? 4000
-          : false;
+  // summary=true: omit the heavy error_message field — only status/fqn are
+  // needed here for the spinner (D3 detection). staleTime: 0 + refetchOnMount:
+  // true ensures navigating into the detail page always fetches fresh data,
+  // fixing the chicken-and-egg where a stale cache (pre-run) had no RUNNING
+  // rows so the refetchInterval predicate never started and the spinner never
+  // appeared until a manual refresh (G3).
+  const externalValidationRunsQuery = useListValidationRuns(
+    { summary: true },
+    {
+      query: {
+        staleTime: 0,
+        refetchOnMount: true,
+        refetchInterval: (query) => {
+          const rows = (query.state.data as { data?: ValidationRunSummaryOut[] } | undefined)?.data;
+          return Array.isArray(rows) &&
+            rows.some((r) => r.source_table_fqn === table.table_fqn && r.status === "RUNNING")
+            ? 4000
+            : false;
+        },
+        refetchIntervalInBackground: false,
       },
-      refetchIntervalInBackground: false,
     },
-  });
+  );
   const hasExternalRunningRun = useMemo(() => {
     const rows = externalValidationRunsQuery.data?.data ?? [];
     return rows.some((r) => r.source_table_fqn === table.table_fqn && r.status === "RUNNING");
@@ -2154,11 +2165,18 @@ function ApplyRulesTab({
       // AI reason is moot; with no tag suggestions we preserve the exact prior
       // reason plumbing (AI reason on both the available and unavailable path).
       const available = aiAvailableResult || tagSuggestions.length > 0;
+      const finalReason = tagSuggestions.length > 0 ? undefined : aiReason;
       setSuggestState({
         available,
-        reason: tagSuggestions.length > 0 ? undefined : aiReason,
+        reason: finalReason,
         suggestions: merged,
       });
+      // Surface a toast when the AI result is unavailable with a specific reason
+      // (e.g. the user lacks EXECUTE on the serving endpoint) so the feedback is
+      // immediate — the dialog would otherwise open silently to an empty state.
+      if (!available && finalReason) {
+        toast.info(finalReason);
+      }
     })();
   }, [bindingId, suggestMutation, queryClient, reportUnavailable, clearSuggestTimeout, t]);
 

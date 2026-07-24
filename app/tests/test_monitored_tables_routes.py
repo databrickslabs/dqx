@@ -225,7 +225,7 @@ class TestRegister:
         assert result.table.table_fqn == "cat.schema.tbl"
         assert result.applied_rule_count == 0
         # An explicit steward wins — the UC owner lookup is skipped entirely.
-        svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", steward="bob@x")
+        svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", steward="bob@x", steward_display_name=None)
         discovery.get_table_owner.assert_not_called()
 
     def test_register_seeds_default_grants_via_service(self):
@@ -255,7 +255,7 @@ class TestRegister:
             tag_suggestions=_tag_suggestions_mock(),
         )
         discovery.get_table_owner.assert_called_once_with("cat.schema.tbl")
-        svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", steward="owner@x")
+        svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", steward="owner@x", steward_display_name=None)
 
     def test_register_falls_back_to_none_when_owner_unavailable(self):
         # Owner unresolved (permission denied / missing) -> route passes None,
@@ -268,7 +268,7 @@ class TestRegister:
             body=body, svc=svc, obo_ws=_mock_obo_ws(), discovery=discovery,
             tag_suggestions=_tag_suggestions_mock(),
         )
-        svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", steward=None)
+        svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", steward=None, steward_display_name=None)
 
     def test_register_duplicate_raises_409(self):
         svc = MagicMock()

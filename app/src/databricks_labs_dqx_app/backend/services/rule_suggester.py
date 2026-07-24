@@ -31,6 +31,8 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_name,
     get_rule_severity,
 )
+from databricks.sdk.errors.platform import PermissionDenied
+
 from databricks_labs_dqx_app.backend.services.ai_gateway import (
     AIGateway,
     AIRateLimitExceededError,
@@ -219,6 +221,16 @@ class RuleSuggester:
             judged = await self._judge(candidate_rules, columns, table_fqn, user_email)
         except (AIUnavailableError, AIRateLimitExceededError) as e:
             return SuggestRulesResult(available=False, reason=str(e))
+        except PermissionDenied:
+            logger.warning("AI judge permission denied for binding %s", binding_id, exc_info=True)
+            endpoint = self._ai_gateway.endpoint_name()
+            return SuggestRulesResult(
+                available=False,
+                reason=(
+                    f"AI suggestions are unavailable because you don't have permission to run the configured AI model"
+                    f" ({endpoint}). Ask an admin to grant you EXECUTE on the serving endpoint."
+                ),
+            )
         except AIResponseParseError:
             logger.warning("AI judge returned an unparsable response for binding %s", binding_id, exc_info=True)
             return SuggestRulesResult(available=False, reason="AI judge returned an unparsable response.")

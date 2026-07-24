@@ -5,14 +5,18 @@ import {
   PRIV_EXECUTE,
   PRIV_MODIFY,
   PRIV_SELECT,
+  findAllPrivilegesGrantByName,
   forceSelectWhenOthers,
   grantsEmptyColSpan,
   hasSavedObject,
+  holdsFullAccess,
   initialGrantInherit,
   isAllPrivileges,
   isOwnerDefaultGrant,
   isUsersGroupGrant,
+  overlayStewardPreview,
   privilegeTagLabel,
+  stewardPreviewPrivileges,
 } from "./permissions-utils";
 
 describe("privilegeTagLabel", () => {
@@ -171,5 +175,182 @@ describe("hasSavedObject", () => {
 
   test("true for any non-empty object id", () => {
     expect(hasSavedObject("00000000-0000-0000-0000-000000000000")).toBe(true);
+  });
+});
+
+describe("findAllPrivilegesGrantByName", () => {
+  const allPrivsGrant = {
+    principal_name: "alice@example.com",
+    privileges: [PRIV_ALL],
+  };
+  const selectOnlyGrant = {
+    principal_name: "bob@example.com",
+    privileges: [PRIV_SELECT],
+  };
+  const noNameGrant = {
+    principal_name: null,
+    privileges: [PRIV_ALL],
+  };
+
+  test("returns the grant when the named steward holds ALL_PRIVILEGES", () => {
+    expect(
+      findAllPrivilegesGrantByName([allPrivsGrant, selectOnlyGrant], "alice@example.com", "data_product"),
+    ).toBe(allPrivsGrant);
+  });
+
+  test("returns null when the named steward holds only partial privileges", () => {
+    expect(
+      findAllPrivilegesGrantByName([allPrivsGrant, selectOnlyGrant], "bob@example.com", "data_product"),
+    ).toBeNull();
+  });
+
+  test("returns null when no grant matches the name", () => {
+    expect(
+      findAllPrivilegesGrantByName([allPrivsGrant, selectOnlyGrant], "charlie@example.com", "data_product"),
+    ).toBeNull();
+  });
+
+  test("returns null when the name is empty", () => {
+    expect(findAllPrivilegesGrantByName([allPrivsGrant], "", "data_product")).toBeNull();
+  });
+
+  test("skips grants with null principal_name", () => {
+    expect(
+      findAllPrivilegesGrantByName([noNameGrant, allPrivsGrant], "alice@example.com", "data_product"),
+    ).toBe(allPrivsGrant);
+  });
+
+  test("returns null for an empty grants array", () => {
+    expect(findAllPrivilegesGrantByName([], "alice@example.com", "data_product")).toBeNull();
+  });
+
+  test("matches on the concrete ALL privileges set (no explicit PRIV_ALL marker)", () => {
+    const concreteAllGrant = {
+      principal_name: "dave@example.com",
+      privileges: [PRIV_SELECT, PRIV_MODIFY, PRIV_APPLY, PRIV_EXECUTE],
+    };
+    expect(findAllPrivilegesGrantByName([concreteAllGrant], "dave@example.com", "data_product")).toBe(
+      concreteAllGrant,
+    );
+  });
+
+  test("matches on the steward's display name when the grant is keyed by display name", () => {
+    // Regression: a steward set via the principal picker stores its grant with
+    // the DISPLAY NAME as principal_name (keyed by SCIM id), while `steward`
+    // holds the email identity. Matching on the email alone missed it, so the
+    // remove-old tickbox never appeared on collections/tables. Passing the
+    // display name lets it match.
+    const displayNamedGrant = {
+      principal_name: "Marcin Wojtyczka",
+      privileges: [PRIV_ALL],
+    };
+    // Email identity alone does not match the display-named grant.
+    expect(
+      findAllPrivilegesGrantByName([displayNamedGrant], "marcin@example.com", "data_product"),
+    ).toBeNull();
+    // With the display name supplied, it matches.
+    expect(
+      findAllPrivilegesGrantByName(
+        [displayNamedGrant],
+        "marcin@example.com",
+        "data_product",
+        "Marcin Wojtyczka",
+      ),
+    ).toBe(displayNamedGrant);
+  });
+
+  test("still matches an owner grant keyed by email even when a display name is supplied", () => {
+    // The owner default grant is named with the email; passing a display name
+    // must not break the email match.
+    expect(
+      findAllPrivilegesGrantByName([allPrivsGrant], "alice@example.com", "data_product", "Alice Example"),
+    ).toBe(allPrivsGrant);
+  });
+
+  test("registry_rule: matches a SELECT+MODIFY+APPLY owner grant (EXECUTE never grantable on a rule)", () => {
+    // Regression: rules store the owner/steward grant without EXECUTE, so the
+    // remove-old tickbox was never offered. holdsFullAccess treats that set as
+    // full access for registry_rule.
+    const ruleOwnerGrant = {
+      principal_name: "erin@example.com",
+      privileges: [PRIV_SELECT, PRIV_MODIFY, PRIV_APPLY],
+    };
+    expect(findAllPrivilegesGrantByName([ruleOwnerGrant], "erin@example.com", "registry_rule")).toBe(
+      ruleOwnerGrant,
+    );
+    // The same partial set is NOT full access on a table/collection.
+    expect(
+      findAllPrivilegesGrantByName([ruleOwnerGrant], "erin@example.com", "data_product"),
+    ).toBeNull();
+  });
+});
+
+describe("holdsFullAccess", () => {
+  test("explicit ALL_PRIVILEGES is full access for any object type", () => {
+    expect(holdsFullAccess([PRIV_ALL], "registry_rule")).toBe(true);
+    expect(holdsFullAccess([PRIV_ALL], "data_product")).toBe(true);
+  });
+
+  test("registry_rule: SELECT+MODIFY+APPLY is full access (no EXECUTE)", () => {
+    expect(holdsFullAccess([PRIV_SELECT, PRIV_MODIFY, PRIV_APPLY], "registry_rule")).toBe(true);
+  });
+
+  test("registry_rule: missing APPLY is not full access", () => {
+    expect(holdsFullAccess([PRIV_SELECT, PRIV_MODIFY], "registry_rule")).toBe(false);
+  });
+
+  test("table/collection: SELECT+MODIFY+APPLY without EXECUTE is not full access", () => {
+    expect(holdsFullAccess([PRIV_SELECT, PRIV_MODIFY, PRIV_APPLY], "monitored_table")).toBe(false);
+    expect(holdsFullAccess([PRIV_SELECT, PRIV_MODIFY, PRIV_APPLY, PRIV_EXECUTE], "monitored_table")).toBe(
+      true,
+    );
+  });
+});
+
+describe("stewardPreviewPrivileges", () => {
+  test("registry rules get the EXECUTE-stripped full set the save writes", () => {
+    expect(stewardPreviewPrivileges("registry_rule")).toEqual([PRIV_SELECT, PRIV_MODIFY, PRIV_APPLY]);
+  });
+
+  test("tables and collections get ALL_PRIVILEGES", () => {
+    expect(stewardPreviewPrivileges("monitored_table")).toEqual([PRIV_ALL]);
+    expect(stewardPreviewPrivileges("data_product")).toEqual([PRIV_ALL]);
+  });
+});
+
+describe("overlayStewardPreview", () => {
+  const g = (id: string, extra: Record<string, unknown> = {}) => ({ principal_id: id, ...extra });
+
+  test("returns the grants unchanged when there is no preview", () => {
+    const rows = overlayStewardPreview([g("a"), g("b")], null, null);
+    expect(rows.map((r) => r.principal_id)).toEqual(["a", "b"]);
+  });
+
+  test("appends the new steward as an ordinary row (brand-new principal)", () => {
+    const preview = g("new");
+    const rows = overlayStewardPreview([g("a")], preview, null);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toBe(preview);
+  });
+
+  test("replaces (not duplicates) when the new steward already has a grant", () => {
+    const preview = g("owner", { privileges: [PRIV_ALL] });
+    const rows = overlayStewardPreview([g("owner", { privileges: [PRIV_SELECT] }), g("b")], preview, null);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toBe(preview);
+    expect(rows[1].principal_id).toBe("b");
+  });
+
+  test("drops the old steward row when removal was requested (as if deleted)", () => {
+    const preview = g("new");
+    const rows = overlayStewardPreview([g("old"), g("b")], preview, "old");
+    expect(rows.some((r) => r.principal_id === "old")).toBe(false);
+    expect(rows.some((r) => r.principal_id === "b")).toBe(true);
+    expect(rows.some((r) => r.principal_id === "new")).toBe(true);
+  });
+
+  test("preserves the original row order", () => {
+    const rows = overlayStewardPreview([g("a"), g("b"), g("c")], null, null);
+    expect(rows.map((r) => r.principal_id)).toEqual(["a", "b", "c"]);
   });
 });

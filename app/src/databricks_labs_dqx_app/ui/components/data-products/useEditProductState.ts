@@ -18,13 +18,17 @@ import {
   useAddDataProductMember,
   useRemoveDataProductMember,
   useSubmitDataProduct,
+  useSetObjectGrant,
+  useRemoveObjectGrant,
   getGetDataProductQueryKey,
   getListDataProductsQueryKey,
   getListRunSetsQueryKey,
+  getListObjectGrantsQueryKey,
   type DataProductOut,
   type DataProductMemberOut,
   type UpdateDataProductIn,
 } from "@/lib/api";
+import type { StewardGrantIntent } from "@/components/permissions/PermissionsTab";
 
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };
@@ -57,6 +61,10 @@ export function useEditProductState(product: DataProductOut) {
   const [name, setName] = useState(product.name);
   const [description, setDescription] = useState(product.description ?? "");
   const [steward, setStewardLocal] = useState(product.steward ?? "");
+  const [stewardDisplayName, setStewardDisplayNameLocal] = useState(product.steward_display_name ?? "");
+  // Pending steward grant intent — stashed when the user confirms the
+  // StewardGrantDialog, consumed and cleared in `persist`.
+  const [stewardGrantIntent, setStewardGrantIntent] = useState<StewardGrantIntent | null>(null);
   const [scheduleCron, setScheduleCronLocal] = useState<string | null>(product.schedule_cron ?? null);
   const [scheduleTz, setScheduleTzLocal] = useState<string>(product.schedule_tz ?? "UTC");
   const [scheduleKind, setScheduleKindLocal] = useState<ScheduleKind>(product.schedule_kind ?? DEFAULT_SCHEDULE_KIND);
@@ -68,6 +76,7 @@ export function useEditProductState(product: DataProductOut) {
   const [members, setMembers] = useState<DataProductMemberOut[]>(() => product.members ?? []);
 
   const setSteward = useCallback((v: string) => setStewardLocal(v), []);
+  const setStewardDisplayName = useCallback((v: string) => setStewardDisplayNameLocal(v), []);
   const setSchedule = useCallback((cron: string | null, tz?: string) => {
     setScheduleCronLocal(cron);
     if (tz) setScheduleTzLocal(tz);
@@ -197,6 +206,8 @@ export function useEditProductState(product: DataProductOut) {
   const addMut = useAddDataProductMember({ mutation: { onError: () => {} } });
   const removeMut = useRemoveDataProductMember({ mutation: { onError: () => {} } });
   const submitMut = useSubmitDataProduct({ mutation: { onError: () => {} } });
+  const setGrantMut = useSetObjectGrant({ mutation: { onError: () => {} } });
+  const removeGrantMut = useRemoveObjectGrant({ mutation: { onError: () => {} } });
 
   const invalidate = useCallback(() => {
     qc.invalidateQueries({ queryKey: getGetDataProductQueryKey(product.product_id) });
@@ -225,6 +236,7 @@ export function useEditProductState(product: DataProductOut) {
     }
     if (stewardDirty) {
       patch.steward = steward.trim() || null;
+      patch.steward_display_name = stewardDisplayName.trim() || null;
       patchNeeded = true;
     }
     if (scheduleDirty) {
@@ -260,12 +272,52 @@ export function useEditProductState(product: DataProductOut) {
         await removeMut.mutateAsync({ productId: product.product_id, memberId: m.id });
       }
     }
+
+    // Write steward grant(s) after the product is persisted.  Fires only when
+    // the user confirmed the StewardGrantDialog; errors are toasted but do NOT
+    // roll back the product save.
+    if (stewardGrantIntent) {
+      const capturedIntent = stewardGrantIntent;
+      setStewardGrantIntent(null);
+      try {
+        await setGrantMut.mutateAsync({
+          objectType: "data_product",
+          objectId: product.product_id,
+          data: {
+            principal_id: capturedIntent.newPrincipalId,
+            principal_type: capturedIntent.newPrincipalType,
+            principal_name: capturedIntent.newPrincipalName,
+            privileges: ["ALL_PRIVILEGES"],
+            inherit: true,
+          },
+        });
+        if (capturedIntent.removeOldPrincipalId) {
+          await removeGrantMut.mutateAsync({
+            objectType: "data_product",
+            objectId: product.product_id,
+            principalId: capturedIntent.removeOldPrincipalId,
+          });
+        }
+        // Refresh the grants table in the Permissions tab so the newly
+        // written ALL_PRIVILEGES grant (and any removed old-steward grant)
+        // appear immediately without requiring a navigate-away.
+        qc.invalidateQueries({
+          queryKey: getListObjectGrantsQueryKey("data_product", product.product_id),
+        });
+      } catch (grantErr) {
+        const axErr = grantErr as { response?: { data?: { detail?: string } } };
+        toast.error(axErr?.response?.data?.detail ?? t("permissions.stewardGrantFailed"), {
+          duration: 6000,
+        });
+      }
+    }
   }, [
     scheduleCronInvalid,
     t,
     name,
     description,
     steward,
+    stewardDisplayName,
     stewardDirty,
     scheduleCron,
     scheduleTz,
@@ -275,9 +327,12 @@ export function useEditProductState(product: DataProductOut) {
     serverMemberKeys,
     serverMemberPins,
     product,
+    stewardGrantIntent,
     updateMut,
     addMut,
     removeMut,
+    setGrantMut,
+    removeGrantMut,
   ]);
 
   const handleSaveDraft = useCallback(async (): Promise<boolean> => {
@@ -339,6 +394,9 @@ export function useEditProductState(product: DataProductOut) {
 
     steward,
     setSteward,
+    stewardDisplayName,
+    setStewardDisplayName,
+    setStewardGrantIntent,
 
     scheduleCron,
     scheduleTz,

@@ -114,3 +114,60 @@ class TestBuildProfilingRule:
         # A SQL-bearing check whose query fails the safety scan is dropped, never
         # turned into a persisted rule.
         assert build_profiling_rule(_check("sql_query", {"query": "DROP TABLE users", "input_column": "x"})) is None
+
+    # --- Column-qualified name tests ---
+
+    def test_name_contains_humanized_function_and_column(self):
+        # The rule name must include both the humanized function label and the column.
+        candidate = build_profiling_rule(_check("is_not_null", {"column": "country"}))
+        assert candidate is not None
+        name = candidate.metadata.get("name", "")
+        assert "Is not null" in name
+        assert "country" in name
+
+    def test_same_function_different_columns_produce_different_names(self):
+        # The primary purpose of column-qualified names: two suggestions for the
+        # same function on different columns must be distinguishable.
+        a = build_profiling_rule(_check("is_in_list", {"column": "payment_method", "allowed": ["cash", "card"]}))
+        b = build_profiling_rule(_check("is_in_list", {"column": "status", "allowed": ["active"]}))
+        assert a is not None and b is not None
+        assert a.metadata.get("name") != b.metadata.get("name")
+        assert "payment_method" in a.metadata.get("name", "")
+        assert "status" in b.metadata.get("name", "")
+
+    def test_name_with_params_still_includes_column(self):
+        # Frozen parameters don't affect the name — column is still the primary token.
+        candidate = build_profiling_rule(
+            _check("is_in_range", {"column": "order_amount", "min_limit": 0.0, "max_limit": 1000.0})
+        )
+        assert candidate is not None
+        name = candidate.metadata.get("name", "")
+        assert "Is in range" in name
+        assert "order_amount" in name
+
+    def test_name_format_uses_colon_separator(self):
+        # Format must be "Humanized label: column" so display is clean and scannable.
+        candidate = build_profiling_rule(_check("is_not_null", {"column": "user_id"}))
+        assert candidate is not None
+        assert candidate.metadata.get("name") == "Is not null: user_id"
+
+    def test_name_does_not_affect_fingerprint(self):
+        # The rule name (a reserved metadata tag) must NOT be part of the structural
+        # fingerprint — two candidates for the same function + same params on different
+        # columns have different names but identical fingerprints (the column is a slot).
+        from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        a = build_profiling_rule(_check("is_not_null", {"column": "col_a"}))
+        b = build_profiling_rule(_check("is_not_null", {"column": "col_b"}))
+        assert a is not None and b is not None
+        # Names must differ (column-qualified).
+        assert a.metadata.get("name") != b.metadata.get("name")
+
+        def _fp(candidate):
+            return compute_registry_rule_fingerprint(
+                RegistryRule(rule_id="x", mode="dqx_native", status="draft", version=0, definition=candidate.definition)
+            )
+
+        # But fingerprints must be equal — name is display-only, not fingerprinted.
+        assert _fp(a) == _fp(b)

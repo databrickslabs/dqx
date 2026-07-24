@@ -13,7 +13,11 @@
  * Drafts & Review approval queue) can't drift out of sync with each other.
  */
 import type { QueryClient } from "@tanstack/react-query";
-import { getListRegistryRulesQueryKey, getListMonitoredTablesQueryKey } from "@/lib/api";
+import {
+  getListRegistryRulesQueryKey,
+  getListMonitoredTablesQueryKey,
+  getGetRegistryRuleQueryKey,
+} from "@/lib/api";
 
 const MONITORED_TABLES_PATH_PREFIX = "/api/v1/monitored-tables/";
 
@@ -39,4 +43,26 @@ export function invalidateAfterRegistryRuleApprovalChange(queryClient: QueryClie
       return typeof key === "string" && key.startsWith(MONITORED_TABLES_PATH_PREFIX);
     },
   });
+}
+
+/**
+ * Invalidate after a plain edit / steward change / field save of a registry
+ * rule (NOT an approval-state transition). A plain save only touches the rule
+ * itself, so we refresh:
+ * - that rule's detail query (so a still-mounted detail re-reads the new value)
+ * - the registry rules list (parameter-less key prefix-matches every filtered
+ *   variant, including the Drafts & Review queue, so returning to the overview
+ *   shows the change instead of the pre-edit cache — the 5-minute `staleTime`
+ *   otherwise serves the stale list on mount).
+ *
+ * Deliberately does NOT touch the monitored-tables surface the way
+ * {@link invalidateAfterRegistryRuleApprovalChange} does: a plain edit can't
+ * re-materialize bindings server-side (only approve/reject/revoke can), so
+ * invalidating every monitored-table detail/list query would be wasted work.
+ * Keeping the key list here (not inlined at call sites) matches this file's
+ * single-source-of-truth pattern.
+ */
+export function invalidateAfterRegistryRuleEdit(queryClient: QueryClient, ruleId: string): void {
+  queryClient.invalidateQueries({ queryKey: getGetRegistryRuleQueryKey(ruleId) });
+  queryClient.invalidateQueries({ queryKey: getListRegistryRulesQueryKey() });
 }

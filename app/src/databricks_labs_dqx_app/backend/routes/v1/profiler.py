@@ -30,6 +30,7 @@ from databricks_labs_dqx_app.backend.models import (
     ProfileRunIn,
     ProfileRunOut,
     ProfileRunSummaryOut,
+    RunFailureOut,
     RunStatusOut,
 )
 from databricks_labs_dqx_app.backend.run_status_manager import get_run_metadata, has_terminal_result, update_run_status
@@ -178,6 +179,51 @@ def list_profile_runs(
     except Exception as e:
         logger.error("Failed to list profile runs: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list profile runs: {e}")
+
+
+_RECENT_FAILURES_LIMIT = 50
+
+
+@router.get(
+    "/runs/recent-failures",
+    response_model=list[RunFailureOut],
+    operation_id="listRecentProfileFailures",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def list_recent_profile_failures(
+    job_svc: Annotated[JobService, Depends(get_job_service)],
+    app_conf: Annotated[AppConfig, Depends(get_conf)],
+) -> list[RunFailureOut]:
+    """Return recently-failed profiler runs, bounded to the most recent *N*.
+
+    Intended for the app-wide toast watcher: returns FAILED runs only with
+    minimal fields (run_id, source_table_fqn, status, created_at). The
+    endpoint is cheap by construction — no summary_json, no generated rules.
+    The full profiler run history is still available via ``GET /profiler/runs``.
+    """
+    try:
+        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
+        rows = job_svc.list_run_rows(table, limit=_RECENT_FAILURES_LIMIT * 10)
+
+        results: list[RunFailureOut] = []
+        for row in rows:
+            if row.get("status") != "FAILED":
+                continue
+            results.append(
+                RunFailureOut(
+                    run_id=row.get("run_id") or "",
+                    source_table_fqn=row.get("source_table_fqn") or "",
+                    status="FAILED",
+                    created_at=row.get("created_at"),
+                )
+            )
+            if len(results) >= _RECENT_FAILURES_LIMIT:
+                break
+
+        return results
+    except Exception as e:
+        logger.error("Failed to list recent profile failures: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list recent profile failures: {e}")
 
 
 @router.post(

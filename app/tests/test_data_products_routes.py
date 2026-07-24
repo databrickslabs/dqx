@@ -177,7 +177,24 @@ class TestCreate:
             perms=MagicMock(),
         )
         assert result.product_id == "p1"
-        svc.create.assert_called_once_with("Orders", None, None, "alice@x")
+        svc.create.assert_called_once_with("Orders", None, None, "alice@x", steward_display_name=None)
+
+    def test_create_seeds_default_grants_via_service(self):
+        """Seeding is now the service's responsibility (not the route's).
+
+        The route no longer calls perms.seed_default_grants directly. Seeding
+        is verified exhaustively in test_data_products.py::TestCreate::test_create_seeds_default_grants.
+        """
+        svc = MagicMock()
+        svc.create.return_value = _product(product_id="new-p1")
+        svc.get.return_value = _detail(product_id="new-p1")
+        create_data_product(
+            body=CreateDataProductIn(name="Orders", description=None, steward=None),
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            perms=MagicMock(),
+        )
+        svc.create.assert_called_once()
 
     def test_create_seeds_default_grants_via_service(self):
         """Seeding is now the service's responsibility (not the route's).

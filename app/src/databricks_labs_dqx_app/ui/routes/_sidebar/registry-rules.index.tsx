@@ -55,13 +55,13 @@ import {
   useUndeprecateRegistryRule,
   useDeleteRegistryRule,
   useRevokeRegistryRule,
+  useCurrentUser,
   type RegistryRuleOut,
 } from "@/lib/api";
 import {
   RegistryRuleDiffDialog,
   type RegistryDiffTarget,
 } from "@/components/drafts/ChangeDiffDialog";
-import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
 import type { User as UserType } from "@/lib/api";
 import { useLabelDefinitions, exportRegistryRules } from "@/lib/api-custom";
@@ -146,8 +146,12 @@ function RegistryRulesPage() {
   const perms = usePermissions();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data: currentUser } = useCurrentUserSuspense(selector<UserType>());
-  const currentUserEmail = currentUser?.user_name ?? "";
+  // Non-suspense: currentUserEmail is used only for ownership comparison in
+  // isRuleAuthor (to gate revoke for the rule's own author). The query hits a
+  // warm cache (AuthGuard has already fetched this) so it resolves synchronously
+  // in practice, and isRuleAuthor already guards against the empty-string case.
+  const { data: currentUserData } = useCurrentUser(selector<UserType>());
+  const currentUserEmail = currentUserData?.user_name ?? "";
 
   const [dimensionFilter, setDimensionFilter] = useState<string>(ALL);
   const [severityFilter, setSeverityFilter] = useState<string>(ALL);
@@ -860,7 +864,11 @@ function RegistryRulesPage() {
       <SearchableSelect
         value={stewardFilter}
         onChange={applyFilter(setStewardFilter)}
-        options={stewardValues.map((v) => ({ value: v, label: v }))}
+        options={stewardValues.map((v) => {
+          // Best-effort: find a rule with this steward to get its display name.
+          const match = serverFilteredRules.find((r) => r.steward === v);
+          return { value: v, label: match?.steward_display_name || v };
+        })}
         allValue={ALL}
         allLabel={t("rulesRegistry.allOwners")}
         searchPlaceholder={t("common.search")}
@@ -930,8 +938,6 @@ function RegistryRulesPage() {
 
         {isError ? (
           <RegistryRulesError resetErrorBoundary={() => void refetch()} />
-        ) : isPending ? (
-          <Skeleton className="h-64 w-full" />
         ) : (
           <>
             {/* ExportDialog lives outside BulkActionBar so it stays mounted even
@@ -944,8 +950,13 @@ function RegistryRulesPage() {
             />
             <div className="relative">
               {bulkToolbar}
+              {/* Always render the table shell (filters + Edit Columns + headers)
+                  and show the loading state as a spinning body row while the list
+                  is pending — matching the Tables and Collections pages, which
+                  paint the shell immediately and only spin the contents (rather
+                  than swapping the whole region for a skeleton block). */}
               <RulesTable
-              rows={pagedRules}
+              rows={isPending ? [] : pagedRules}
               labelDefinitions={labelDefinitions}
               sortKey={sortKey}
               sortDir={sortDir}
@@ -955,19 +966,26 @@ function RegistryRulesPage() {
               toolbarExtra={filterControls}
               selection={tableSelection}
               emptyMessage={
-                <div className="flex flex-col items-center justify-center text-center">
-                  {/* h-12 w-12: an integer 2× of lucide's 24px grid renders
-                      crisp 4px strokes; 40px (h-10) is a fractional 5/3 scale
-                      whose 3.33px strokes anti-alias soft (P23 item 18). */}
-                  <Library className="h-12 w-12 text-muted-foreground/30 mb-3" />
-                  <p className="text-sm text-muted-foreground">
-                    {hasActiveFilters
-                      ? t("rulesRegistry.emptyState")
-                      : perms.canCreateRules
-                        ? t("rulesRegistry.emptyStateNoRulesCta")
-                        : t("rulesRegistry.emptyStateNoRules")}
-                  </p>
-                </div>
+                isPending ? (
+                  <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground py-4">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {t("common.loading")}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center text-center">
+                    {/* h-12 w-12: an integer 2× of lucide's 24px grid renders
+                        crisp 4px strokes; 40px (h-10) is a fractional 5/3 scale
+                        whose 3.33px strokes anti-alias soft (P23 item 18). */}
+                    <Library className="h-12 w-12 text-muted-foreground/30 mb-3" />
+                    <p className="text-sm text-muted-foreground">
+                      {hasActiveFilters
+                        ? t("rulesRegistry.emptyState")
+                        : perms.canCreateRules
+                          ? t("rulesRegistry.emptyStateNoRulesCta")
+                          : t("rulesRegistry.emptyStateNoRules")}
+                    </p>
+                  </div>
+                )
               }
               />
             </div>

@@ -46,6 +46,8 @@ from datetime import datetime, timezone
 from typing import Any, cast, get_args
 from uuid import uuid4
 
+from databricks.sdk import WorkspaceClient
+
 from databricks_labs_dqx_app.backend.registry_models import (
     SCHEDULE_KIND_DEFAULT,
     DataProduct,
@@ -67,12 +69,13 @@ from databricks_labs_dqx_app.backend.services.permissions_service import Permiss
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.score_cache_service import CachedScore, parse_cached_score
+from databricks_labs_dqx_app.backend.services.steward_display_name_service import resolve_steward_display_name
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
-_UPDATABLE_FIELDS = ("name", "description", "steward", "schedule_cron", "schedule_tz")
+_UPDATABLE_FIELDS = ("name", "description", "steward", "steward_display_name", "schedule_cron", "schedule_tz")
 
 
 class DuplicateDataProductNameError(ValueError):
@@ -206,9 +209,11 @@ class DataProductService:
         app_settings: AppSettingsService,
         materializer: Materializer,
         permissions: PermissionsService | None = None,
+        sp_ws: WorkspaceClient | None = None,
     ) -> None:
         self._sql = sql
         self._perms = permissions
+        self._sp_ws = sp_ws
         self._monitored_tables = monitored_tables
         self._run_set_service = run_set_service
         self._binding_run_service = binding_run_service
@@ -283,7 +288,14 @@ class DataProductService:
     # CRUD
     # ------------------------------------------------------------------
 
-    def create(self, name: str, description: str | None, steward: str | None, created_by: str) -> DataProduct:
+    def create(
+        self,
+        name: str,
+        description: str | None,
+        steward: str | None,
+        created_by: str,
+        steward_display_name: str | None = None,
+    ) -> DataProduct:
         """Create a new data product in ``draft`` status (no approver gate — design spec §3.3).
 
         Raises:
@@ -294,11 +306,18 @@ class DataProductService:
             raise ValueError("Data product name must not be empty.")
         self._assert_name_available(name, exclude_product_id=None)
         now = datetime.now(timezone.utc)
+        # Default the steward to the creator when none was supplied. Resolve the
+        # display name at write time when the caller did not supply one
+        # (best-effort; group/unresolvable → NULL). An explicit name wins.
+        resolved_steward = steward or created_by
+        if steward_display_name is None:
+            steward_display_name = resolve_steward_display_name(resolved_steward, self._sp_ws)
         product = DataProduct(
             product_id=uuid4().hex,
             name=name,
             description=description,
-            steward=steward or created_by,
+            steward=resolved_steward,
+            steward_display_name=steward_display_name,
             schedule_cron=None,
             schedule_tz=None,
             status="draft",
@@ -310,10 +329,11 @@ class DataProductService:
         )
         self._sql.execute(
             f"INSERT INTO {self._products_table} "
-            "(product_id, name, description, steward, schedule_cron, schedule_tz, schedule_kind, status, version, "
-            "created_by, created_at, updated_by, updated_at) VALUES ("
+            "(product_id, name, description, steward, steward_display_name, schedule_cron, schedule_tz, "
+            "schedule_kind, status, version, created_by, created_at, updated_by, updated_at) VALUES ("
             f"'{escape_sql_string(product.product_id)}', '{escape_sql_string(product.name)}', "
-            f"{self._opt_str(product.description)}, {self._opt_str(product.steward)}, NULL, NULL, "
+            f"{self._opt_str(product.description)}, {self._opt_str(product.steward)}, "
+            f"{self._opt_str(product.steward_display_name)}, NULL, NULL, "
             f"{self._opt_str(product.schedule_kind)}, "
             f"'{product.status}', 0, {self._opt_str(created_by)}, now(), {self._opt_str(created_by)}, now())"
         )
@@ -352,6 +372,14 @@ class DataProductService:
                 raise ValueError("Data product name must not be empty.")
             if new_name != product.name:
                 self._assert_name_available(new_name, exclude_product_id=product_id)
+
+        # Steward changed without an explicit display name → resolve it at write
+        # time (best-effort). A caller-supplied name (picker path) always wins.
+        if "steward" in updates and "steward_display_name" not in updates:
+            updates = {
+                **updates,
+                "steward_display_name": resolve_steward_display_name(updates.get("steward"), self._sp_ws),
+            }
 
         set_clauses = ["status = 'draft'", f"updated_by = {self._opt_str(updated_by)}", "updated_at = now()"]
         for col in _UPDATABLE_FIELDS:
@@ -962,9 +990,13 @@ class DataProductService:
             f"{prefix}schedule_cron, {prefix}schedule_tz, {prefix}status, {prefix}version, "
             f"{prefix}created_by, {created_at} AS created_at, "
             f"{prefix}updated_by, {updated_at} AS updated_at, "
-            # schedule_kind (B2-52) appended last so the score-join columns keep
-            # their relative offset (score cols follow at +1..+4).
-            f"{prefix}schedule_kind"
+            # schedule_kind (B2-52) appended; score-join columns follow at +1..+4.
+            f"{prefix}schedule_kind, "
+            # steward_display_name appended after schedule_kind (row[13]).
+            # NOTE: score-join cols are appended AFTER steward_display_name in
+            # ``_score_joined_select``, so the score tuple offset shifts by 1
+            # (was row[13..16]; now row[14..17]).
+            f"{prefix}steward_display_name"
         )
 
     def _require_approved_binding(self, binding_id: str) -> MonitoredTable:
@@ -1024,12 +1056,14 @@ class DataProductService:
         if not rows:
             return None
         row = rows[0]
-        return self._row_to_product(row), parse_cached_score(row[13], row[14], row[15], row[16])
+        # steward_display_name is now row[13]; score cols shifted to row[14..17].
+        return self._row_to_product(row), parse_cached_score(row[14], row[15], row[16], row[17])
 
     def _fetch_products_with_scores(self) -> list[tuple[DataProduct, CachedScore]]:
         sql = f"{self._score_joined_select()} ORDER BY p.updated_at DESC"  # noqa: S608
         rows = self._sql.query(sql)
-        return [(self._row_to_product(row), parse_cached_score(row[13], row[14], row[15], row[16])) for row in rows]
+        # steward_display_name is now row[13]; score cols shifted to row[14..17].
+        return [(self._row_to_product(row), parse_cached_score(row[14], row[15], row[16], row[17])) for row in rows]
 
     def _row_to_product(self, row: list[str]) -> DataProduct:
         return DataProduct(
@@ -1050,6 +1084,7 @@ class DataProductService:
                 if len(row) > 12 and row[12] in get_args(ScheduleKind)
                 else SCHEDULE_KIND_DEFAULT
             ),
+            steward_display_name=row[13] if len(row) > 13 else None,
         )
 
     @staticmethod

@@ -35,6 +35,7 @@ from databricks_labs_dqx_app.backend.models import (
     DryRunIn,
     DryRunResultsOut,
     DryRunSubmitOut,
+    RunFailureOut,
     RunStatusOut,
     ValidationRunSummaryOut,
 )
@@ -87,6 +88,19 @@ async def list_validation_runs(
     app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    summary: Annotated[
+        bool,
+        Query(
+            description=(
+                "When true, omit the heavy ``error_message`` field from each row "
+                "(set to null). This reduces the response payload from ~117 kB to "
+                "~6 kB and is intended for callers that only need "
+                "run_id/status/source_table_fqn (e.g. the app-wide toast watcher "
+                "and the table-detail spinner). Full-payload callers (Runs History) "
+                "should omit this param or pass summary=false."
+            ),
+        ),
+    ] = False,
     review_status: Annotated[
         list[str] | None,
         Query(
@@ -199,7 +213,7 @@ async def list_validation_runs(
                     warning_rows=int(v) if (v := row.get("warning_rows")) is not None else None,
                     created_at=row.get("created_at"),
                     run_type=row.get("run_type"),
-                    error_message=row.get("error_message"),
+                    error_message=None if summary else row.get("error_message"),
                     duration_seconds=float(v) if (v := row.get("duration_seconds")) is not None else None,
                     job_run_id=int(v) if (v := row.get("job_run_id")) else None,
                     review_status=review_value,
@@ -212,6 +226,65 @@ async def list_validation_runs(
     except Exception as e:
         logger.error("Failed to list validation runs: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list validation runs: {e}")
+
+
+_RECENT_FAILURES_LIMIT = 50
+
+
+@router.get(
+    "/runs/recent-failures",
+    response_model=list[RunFailureOut],
+    operation_id="listRecentValidationFailures",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def list_recent_validation_failures(
+    job_svc: Annotated[JobService, Depends(get_job_service)],
+    app_conf: Annotated[AppConfig, Depends(get_conf)],
+    user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
+    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+) -> list[RunFailureOut]:
+    """Return recently-failed validation runs, bounded to the most recent *N*.
+
+    Intended for the app-wide toast watcher: returns FAILED runs only with
+    minimal fields (run_id, source_table_fqn, status, created_at). The
+    endpoint is cheap by construction — no error_message, no counts, no
+    review-status join. The full run history is still available via
+    ``GET /dryrun/runs`` for the Runs History page.
+    """
+    try:
+        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
+        rows = job_svc.list_dryrun_rows(table, limit=_RECENT_FAILURES_LIMIT * 10)
+
+        # Reconcile stale RUNNING placeholders so the failure list stays
+        # accurate even when the task runner crashed before writing a result.
+        # Best-effort — never let it break the listing.
+        try:
+            reconcile_running_rows(sql, app_conf, _DRYRUN_TABLE, rows, job_svc.get_run_status)
+        except Exception as exc:
+            logger.warning("Failed to reconcile RUNNING validation runs (recent-failures): %s", exc)
+
+        results: list[RunFailureOut] = []
+        for row in rows:
+            if row.get("status") != "FAILED":
+                continue
+            fqn = row.get("source_table_fqn") or ""
+            if not fqn.startswith(_SQL_CHECK_PREFIX) and _catalog_of(fqn) not in user_catalogs:
+                continue
+            results.append(
+                RunFailureOut(
+                    run_id=row.get("run_id") or "",
+                    source_table_fqn=fqn,
+                    status="FAILED",
+                    created_at=row.get("created_at"),
+                )
+            )
+            if len(results) >= _RECENT_FAILURES_LIMIT:
+                break
+
+        return results
+    except Exception as e:
+        logger.error("Failed to list recent validation failures: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list recent validation failures: {e}")
 
 
 @router.post(

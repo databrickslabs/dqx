@@ -276,7 +276,12 @@ def register_monitored_table(
     try:
         user_email = _current_user_email(obo_ws)
         steward = body.steward or discovery.get_table_owner(body.table_fqn)
-        table = svc.register(body.table_fqn, user_email, steward=steward)
+        table = svc.register(
+            body.table_fqn,
+            user_email,
+            steward=steward,
+            steward_display_name=body.steward_display_name,
+        )
         # Apply-on-tag: after a successful register, auto-attach every published
         # tag-mapped rule this table now matches — via TagSuggestionService, which
         # reads the table's tags OBO (as the caller) so it sees tags the app
