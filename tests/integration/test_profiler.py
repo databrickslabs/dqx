@@ -71,7 +71,9 @@ def test_profiler(spark, ws):
     )
 
     profiler = DQProfiler(ws)
-    stats, profiles = profiler.profile(inp_df, options={"sample_fraction": None, "llm_primary_key_detection": False})
+    stats, profiles = profiler.profile(
+        inp_df, options={"sample_fraction": None, "llm_primary_key_detection": False, "has_no_outliers": True}
+    )
 
     expected_profiles = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
@@ -217,7 +219,9 @@ def test_profiler_rounding_midnight_behavior(spark, ws):
     )
 
     profiler = DQProfiler(ws)
-    stats, profiles = profiler.profile(inp_df, options={"sample_fraction": None, "llm_primary_key_detection": False})
+    stats, profiles = profiler.profile(
+        inp_df, options={"sample_fraction": None, "llm_primary_key_detection": False, "has_no_outliers": True}
+    )
 
     expected_profiles = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
@@ -340,6 +344,7 @@ def test_profiler_non_default_profile_options(spark, ws):
         "limit": 1000,  # limit the number of samples
         "filter": "t1 > 0",  # filter out the first row
         "llm_primary_key_detection": False,  # disable pk detection
+        "has_no_outliers": True,  # generate has_no_outliers profile
     }
 
     stats, profiles = profiler.profile(input_df, columns=input_df.columns, options=profile_options)
@@ -462,6 +467,7 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
         "llm_primary_key_detection": False,  # disable pk detection
+        "has_no_outliers": True,  # generate has_no_outliers profile
     }
 
     stats, profiles = profiler.profile(inp_df, columns=inp_df.columns, options=profile_options)
@@ -572,6 +578,7 @@ def test_profiler_non_default_profile_options_with_rounding_enabled(spark, ws):
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
         "llm_primary_key_detection": False,  # disable pk detection
+        "has_no_outliers": True,  # generate has_no_outliers profile
     }
 
     stats, profiles = profiler.profile(inp_df, columns=inp_df.columns, options=profile_options)
@@ -1699,6 +1706,7 @@ def test_profile_with_dataset_filter(spark, ws):
         "limit": None,
         "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         "llm_primary_key_detection": False,
+        "has_no_outliers": True,
     }
 
     profiler = DQProfiler(ws)
@@ -1956,7 +1964,7 @@ def test_profiler_with_pk_detection(spark, ws):
 
     llm_model_config = LLMModelConfig()
     profiler = DQProfiler(ws, llm_model_config=llm_model_config)
-    stats, profiles = profiler.profile(input_df, options={"sample_fraction": None})
+    stats, profiles = profiler.profile(input_df, options={"sample_fraction": None, "has_no_outliers": True})
 
     expected_profiles = [
         DQProfile(name="is_not_null", column="order_id", description=None, parameters=None),
@@ -2335,6 +2343,7 @@ def test_profiler_generates_has_no_outliers_for_clean_numeric_data(spark, ws):
             "llm_primary_key_detection": False,
             "remove_outliers": False,
             "outliers_ratio": 0.01,
+            "has_no_outliers": True,
         },
     )
 
@@ -2361,6 +2370,7 @@ def test_profiler_no_has_no_outliers_when_outliers_exceed_threshold(spark, ws):
             "sample_fraction": None,
             "llm_primary_key_detection": False,
             "outliers_ratio": 0.1,
+            "has_no_outliers": True,
         },
     )
 
