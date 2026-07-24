@@ -339,6 +339,50 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
 
+  # MCP server integration tests. Mirrors the mcp.yml PR job, but runs on the nightly schedule so
+  # the suite is exercised even when no PR touches mcp-server/. Deploys an isolated MCP app from the
+  # bundle, drives it as an agent would, and tears it down (see tests/integration_mcp/conftest.py).
+  # No coverage upload on purpose: the MCP server and runner execute remotely (Databricks App + job),
+  # so nothing under `coverage` runs locally — an upload would only report those modules at 0%.
+  mcp-tests:
+    environment: tool
+    runs-on:
+      group: larger-runners
+      labels: larger
+    permissions:
+      id-token: write
+      pull-requests: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
+
+      - name: Pre-build DQX wheel
+        uses: ./.github/actions/prebuild-wheel
+
+      # Required for the DAB (Databricks Asset Bundle) deploy the MCP suite runs (ci_deploy.sh).
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@596b0a354ba14aa59921aca1b02bd67c2b0a81a5 # v0.297.2
+
+      - name: Run MCP integration tests
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
+        with:
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 1h
+          create_issues: false
+          codegen_path: tests/integration_mcp/.codegen.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          # No runner-SP env var is needed: ci_deploy.sh leaves the runner job's run_as at the
+          # deploying identity (resolved via `databricks current-user me`), so run_as == the job's
+          # creator and needs no servicePrincipal.user grant.
+
   # Performance benchmarks:
   # 1. run tests and generate a new perf baseline
   # 2. merge it with the existing one

@@ -1315,6 +1315,49 @@ def test_benchmark_compare_datasets(benchmark, ws, generated_df, make_ref_df):
     assert actual_count == EXPECTED_ROWS
 
 
+def test_benchmark_aggr_matches_dataset(benchmark, ws, generated_df, make_ref_df):
+    """Benchmark dataset-wide row-count comparison against a reference DataFrame (crossJoin path)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.aggr_matches_dataset,
+            column="*",
+            check_func_kwargs={
+                "aggr_type": "count",
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+    refs_df = {"ref_df": make_ref_df}
+    checked = dq_engine.apply_checks(generated_df, checks, refs_df)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_aggr_matches_dataset_count_distinct_with_group_by(benchmark, ws, generated_df, make_ref_df):
+    """Benchmark count_distinct with group_by (window-incompatible aggregate -> two-stage groupBy + join)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.aggr_matches_dataset,
+            column="col2",
+            check_func_kwargs={
+                "aggr_type": "count_distinct",
+                "group_by": ["col3"],
+                "ref_column": "ref_col2",
+                "ref_group_by": ["ref_col3"],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+    refs_df = {"ref_df": make_ref_df}
+    checked = dq_engine.apply_checks(generated_df, checks, refs_df)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
 @pytest.mark.parametrize(
     "generated_integer_df",
     [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
@@ -2163,5 +2206,31 @@ def test_benchmark_is_valid_email(benchmark, ws, generated_email_df, column):
     ]
     benchmark.group += f" {column}"
     checked = dq_engine.apply_checks(generated_email_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_ssn_dashed",
+        "col2_ssn_plain",
+        "col3_ssn_valid_area",
+        "col4_ssn_spaced",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_national_id")
+def test_benchmark_is_valid_national_id(benchmark, ws, generated_national_id_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_national_id",
+            criticality="warn",
+            check_func=check_funcs.is_valid_national_id,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_national_id_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
