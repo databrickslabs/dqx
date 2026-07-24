@@ -236,8 +236,8 @@ def normalize_bound_args(val: Any, allow_simple_expressions_only: bool = True) -
     """
     Normalize a value or collection of values for consistent processing.
 
-    Handles primitives, dates, Decimal, and column-like objects. Lists, tuples, and sets are
-    recursively normalized with type preserved.
+    Handles primitives, dates, Decimal, and column-like objects. Collections are recursively
+    normalized, preserving list and tuple order while canonicalizing set and frozenset order.
 
     For Decimal values, uses a special JSON-serializable format to preserve type information
     for round-trip deserialization.
@@ -258,13 +258,35 @@ def normalize_bound_args(val: Any, allow_simple_expressions_only: bool = True) -
     if val is None:
         return None
 
-    if isinstance(val, (list, tuple, set, frozenset)):
+    if isinstance(val, (set, frozenset)):
+        normalized = [normalize_bound_args(v, allow_simple_expressions_only) for v in val]
+        return sorted(normalized, key=lambda item: json.dumps(item, sort_keys=True, default=str))
+
+    if isinstance(val, (list, tuple)):
         return [normalize_bound_args(v, allow_simple_expressions_only) for v in val]
 
     if isinstance(val, dict):
         return {k: normalize_bound_args(v, allow_simple_expressions_only) for k, v in val.items()}
 
     return _normalize_leaf_value(val, allow_simple_expressions_only)
+
+
+def quote_column_name(name: str) -> str:
+    """
+    Wraps a column name in backticks so it can be used as a SQL identifier.
+
+    Column names containing spaces, non-ASCII characters, or other characters that require escaping
+    (e.g. "Customer Name", "Ääkkönen") are not valid bare SQL identifiers and must be back-quoted before
+    being parsed by ``F.expr``.
+
+    Args:
+        name: Column name to quote.
+
+    Returns:
+        The column name wrapped in backticks with embedded backticks escaped.
+    """
+    escaped = name.replace("`", "``")
+    return f"`{escaped}`"
 
 
 def normalize_col_str(col_str: str) -> str:
