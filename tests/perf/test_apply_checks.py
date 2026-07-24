@@ -2208,3 +2208,29 @@ def test_benchmark_is_valid_email(benchmark, ws, generated_email_df, column):
     checked = dq_engine.apply_checks(generated_email_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_ssn_dashed",
+        "col2_ssn_plain",
+        "col3_ssn_valid_area",
+        "col4_ssn_spaced",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_national_id")
+def test_benchmark_is_valid_national_id(benchmark, ws, generated_national_id_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_national_id",
+            criticality="warn",
+            check_func=check_funcs.is_valid_national_id,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_national_id_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
