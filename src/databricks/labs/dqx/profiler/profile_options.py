@@ -1,0 +1,85 @@
+"""Constants for DQProfiler option keys and default option values."""
+
+# Round min/max boundary values away from the mean when generating *min_max* rules.
+PROFILE_OPTION_ROUND = "round"
+
+# Maximum number of distinct values allowed for an *is_in* rule to be emitted.
+PROFILE_OPTION_MAX_IN_COUNT = "max_in_count"
+
+# Maximum ratio of distinct-to-total rows (0–1) for an *is_in* rule to be emitted.
+PROFILE_OPTION_DISTINCT_RATIO = "distinct_ratio"
+
+# Maximum acceptable fraction of null values for a *is_not_null* rule to be emitted.
+PROFILE_OPTION_MAX_NULL_RATIO = "max_null_ratio"
+
+# Maximum acceptable fraction of empty-string values for an *is_not_empty* rule to be emitted.
+PROFILE_OPTION_MAX_EMPTY_RATIO = "max_empty_ratio"
+
+# Whether to cap *min_max* boundaries using ``mean ± num_sigmas * stddev`` outlier removal.
+PROFILE_OPTION_REMOVE_OUTLIERS = "remove_outliers"
+
+# Explicit list of column names on which to apply outlier removal; empty list means all columns.
+PROFILE_OPTION_OUTLIER_COLUMNS = "outlier_columns"
+
+# Number of standard deviations used to cap outlier boundaries.
+PROFILE_OPTION_NUM_SIGMAS = "num_sigmas"
+
+# Whether to trim leading/trailing whitespace before analysing string columns.
+PROFILE_OPTION_TRIM_STRINGS = "trim_strings"
+
+# Fraction of rows to sample (float) or per-stratum fractions (dict) before profiling.
+PROFILE_OPTION_SAMPLE_FRACTION = "sample_fraction"
+
+# Random seed for reproducible sampling; *None* means non-deterministic.
+PROFILE_OPTION_SAMPLE_SEED = "sample_seed"
+
+# Column name used to stratify the sample; requires *PROFILE_OPTION_SAMPLE_FRACTION*.
+PROFILE_OPTION_SAMPLE_BY_COLUMN = "sample_by_column"
+
+# Maximum number of distinct stratum values collected for uniform stratified sampling.
+PROFILE_OPTION_SAMPLE_BY_VALUES_LIMIT = "sample_by_values_limit"
+
+# Hard row limit applied after sampling via ``DataFrame.limit``; *None* disables it.
+PROFILE_OPTION_LIMIT = "limit"
+
+# SQL expression used to pre-filter the DataFrame before profiling.
+PROFILE_OPTION_FILTER = "filter"
+
+# Whether to invoke the LLM engine to detect primary-key columns and emit an *is_unique* rule.
+PROFILE_OPTION_LLM_PRIMARY_KEY_DETECTION = "llm_primary_key_detection"
+
+# Outlier ratio threshold; emit a *has_no_outliers* profile only when the outlier fraction is below this value.
+PROFILE_OPTION_OUTLIERS_RATIO = "outliers_ratio"
+
+# Whether generate *has_no_outliers* profile
+PROFILE_OPTION_HAS_NO_OUTLIERS = "has_no_outliers"
+
+# List of allowed columns to generate *has_no_outliers* profile for
+PROFILE_OPTION_HAS_NO_OUTLIERS_ALLOW_COLUMNS = "has_no_outliers_allow_columns"
+
+# List of denied columns to generate *has_no_outliers* profile for
+PROFILE_OPTION_HAS_NO_OUTLIERS_DENY_COLUMNS = "has_no_outliers_deny_columns"
+
+# Default values for all DQProfiler options.
+DEFAULT_PROFILE_OPTIONS: dict[str, None | bool | int | float | str | list[int] | list[float] | list[str]] = {
+    PROFILE_OPTION_ROUND: True,
+    PROFILE_OPTION_MAX_IN_COUNT: 10,
+    PROFILE_OPTION_DISTINCT_RATIO: 0.05,
+    PROFILE_OPTION_MAX_NULL_RATIO: 0.01,
+    PROFILE_OPTION_REMOVE_OUTLIERS: True,
+    PROFILE_OPTION_OUTLIER_COLUMNS: [],
+    PROFILE_OPTION_NUM_SIGMAS: 3,
+    PROFILE_OPTION_TRIM_STRINGS: True,
+    PROFILE_OPTION_MAX_EMPTY_RATIO: 0.01,
+    PROFILE_OPTION_SAMPLE_FRACTION: 0.3,
+    PROFILE_OPTION_SAMPLE_SEED: None,
+    PROFILE_OPTION_SAMPLE_BY_COLUMN: None,
+    PROFILE_OPTION_SAMPLE_BY_VALUES_LIMIT: 1000,
+    PROFILE_OPTION_LIMIT: 1000,
+    PROFILE_OPTION_FILTER: None,
+    PROFILE_OPTION_LLM_PRIMARY_KEY_DETECTION: True,
+    PROFILE_OPTION_OUTLIERS_RATIO: 0.01,
+    PROFILE_OPTION_HAS_NO_OUTLIERS: False,
+    PROFILE_OPTION_HAS_NO_OUTLIERS_ALLOW_COLUMNS: [],
+    PROFILE_OPTION_HAS_NO_OUTLIERS_DENY_COLUMNS: [],
+}
