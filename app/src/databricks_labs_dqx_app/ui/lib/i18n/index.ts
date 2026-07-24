@@ -10,6 +10,8 @@ export const SUPPORTED_LANGUAGES = [
   { code: "pt-BR", label: "Portuguese (Brazil)", nativeLabel: "Português (Brasil)" },
   { code: "it", label: "Italian", nativeLabel: "Italiano" },
   { code: "es", label: "Spanish", nativeLabel: "Español" },
+  { code: "de", label: "German", nativeLabel: "Deutsch" },
+  { code: "pl", label: "Polish", nativeLabel: "Polski" },
 ] as const;
 
 export type LanguageCode = (typeof SUPPORTED_LANGUAGES)[number]["code"];
@@ -21,6 +23,8 @@ const localeLoaders: Record<string, () => Promise<{ default: Record<string, unkn
   "pt-BR": () => import("./locales/pt-BR.json"),
   it: () => import("./locales/it.json"),
   es: () => import("./locales/es.json"),
+  de: () => import("./locales/de.json"),
+  pl: () => import("./locales/pl.json"),
 };
 
 const SUPPORTED_CODES = SUPPORTED_LANGUAGES.map((l) => l.code);
