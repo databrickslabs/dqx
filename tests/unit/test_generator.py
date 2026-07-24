@@ -6,6 +6,7 @@ import pytest
 
 from databricks.labs.dqx.errors import MissingParameterError
 import databricks.labs.dqx.profiler.generator as generator_module
+from databricks.labs.dqx.profiler.profile import DQProfile
 
 
 def test_profiler_llm_disabled(generator, monkeypatch):
@@ -64,3 +65,13 @@ def test_generate_dq_rules_ai_assisted_keeps_valid_drops_invalid(generator, capl
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1, f"Expected one WARNING for the invalid rule only, got {warnings}"
     assert "nonexistent_function_xyz" in warnings[0].getMessage()
+
+
+def test_generate_has_no_outliers(generator, caplog):
+    """Test to check has_no_outliers rule generated out from profile"""
+    profiles = [DQProfile(name="has_no_outliers", column="measurement")]
+    rules = generator.generate_dq_rules(profiles)
+    assert len(rules) == 1
+    assert "has_no_outliers" in rules[0]["check"]["function"]
+    assert "measurement" in rules[0]["check"]["arguments"]["column"]
+    assert "error" in rules[0]["criticality"]

@@ -92,6 +92,7 @@ class ProfilerConfig:
     # Override profiler default thresholds
     max_null_ratio: float | None = None
     max_empty_ratio: float | None = None
+    outliers_ratio: float | None = None
 
 
 @dataclass

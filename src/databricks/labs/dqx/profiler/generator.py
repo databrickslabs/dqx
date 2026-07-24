@@ -443,6 +443,31 @@ class DQGenerator(DQEngineBase):
             "user_metadata": user_metadata,
         }
 
+    @staticmethod
+    def dq_generate_has_no_outliers(column: str, criticality: str = "error", **params: dict):
+        """Generates a data quality rule to check if a column's values contain no outliers.
+
+        Uses the MAD (Median Absolute Deviation) method via the *has_no_outliers* check function.
+        Values outside median ± 3.5 * MAD are flagged as outliers.
+
+        Args:
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+            params: Additional parameters (unused; left for compatibility with other functions).
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        params = params or {}  # consume the shared **params dispatch arg (see _checks_mapping call site)
+        return {
+            "check": {
+                "function": "has_no_outliers",
+                "arguments": {"column": column},
+            },
+            "name": f"{column}_has_no_outliers",
+            "criticality": criticality,
+        }
+
     _checks_mapping = {
         "is_not_null": dq_generate_is_not_null,
         "is_in": dq_generate_is_in,
@@ -450,4 +475,5 @@ class DQGenerator(DQEngineBase):
         "is_not_null_or_empty": dq_generate_is_not_null_or_empty,
         "is_not_empty": dq_generate_is_not_empty,
         "is_unique": dq_generate_is_unique,
+        "has_no_outliers": dq_generate_has_no_outliers,
     }

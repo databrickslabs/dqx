@@ -14,6 +14,8 @@ import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
+
+from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
 from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
@@ -1254,13 +1256,9 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
         # Validate and compile the filter (rejecting unsafe SQL); keep None when no filter is given so
         # the MAD calculation stays a true no-op instead of filtering on F.lit(True).
         filter_condition = safe_filter_expr(row_filter) if row_filter else None
-        median, mad = _calculate_median_absolute_deviation(df, col_expr_str, filter_condition)
-        if median is not None and mad is not None:
-            median = float(median)
-            mad = float(mad)
-            # Create outlier condition
-            lower_bound = median - (3.5 * mad)
-            upper_bound = median + (3.5 * mad)
+        bounds = calculate_median_absolute_deviation_bounds(df, col_expr_str, filter_condition)
+        if bounds is not None:
+            lower_bound, upper_bound = bounds
             lower_bound_expr = get_limit_expr(lower_bound)
             upper_bound_expr = get_limit_expr(upper_bound)
 
@@ -4149,38 +4147,3 @@ def _validate_sql_query_params(query: str, merge_columns: list[str] | None) -> N
     invalid_columns = [col for col in merge_columns if not isinstance(col, str) or not col]
     if invalid_columns:
         raise InvalidParameterError("'merge_columns' entries must be non-empty strings.")
-
-
-def _calculate_median_absolute_deviation(
-    df: DataFrame, column: str, filter_condition: Column | None
-) -> tuple[Any, Any]:
-    """
-    Calculate the Median Absolute Deviation (MAD) for a numeric column.
-
-    The MAD is a robust measure of variability based on the median, calculated as:
-    MAD = median(|X_i - median(X)|)
-
-    This is useful for outlier detection as it is more robust to outliers than
-    standard deviation.
-
-    Args:
-        df: PySpark DataFrame
-        column: Name of the numeric column to calculate MAD for
-        filter_condition: Filter to apply before calculation (optional)
-
-    Returns:
-        The Median and Absolute Deviation values
-    """
-    if filter_condition is not None:
-        df = df.filter(filter_condition)
-
-    # Step 1: Calculate the median of the column
-    median_value = df.agg(F.percentile_approx(column, 0.5)).collect()[0][0]
-
-    # Step 2: Calculate absolute deviations from the median
-    df_with_deviations = df.select(F.abs(F.col(column) - F.lit(median_value)).alias("absolute_deviation"))
-
-    # Step 3: Calculate the median of absolute deviations
-    mad = df_with_deviations.agg(F.percentile_approx("absolute_deviation", 0.5)).collect()[0][0]
-
-    return median_value, mad
