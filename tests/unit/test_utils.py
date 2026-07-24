@@ -366,6 +366,11 @@ def test_safe_json_load_non_string_arg():
         safe_json_load(123)
 
 
+def test_safe_json_load_none_returns_none():
+    # A stored MAP<STRING, STRING> may contain SQL NULL values, which surface as None on read.
+    assert safe_json_load(None) is None
+
+
 @pytest.mark.parametrize(
     "column, expected",
     [
