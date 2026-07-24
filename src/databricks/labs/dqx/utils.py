@@ -271,6 +271,24 @@ def normalize_bound_args(val: Any, allow_simple_expressions_only: bool = True) -
     return _normalize_leaf_value(val, allow_simple_expressions_only)
 
 
+def quote_column_name(name: str) -> str:
+    """
+    Wraps a column name in backticks so it can be used as a SQL identifier.
+
+    Column names containing spaces, non-ASCII characters, or other characters that require escaping
+    (e.g. "Customer Name", "Ääkkönen") are not valid bare SQL identifiers and must be back-quoted before
+    being parsed by ``F.expr``.
+
+    Args:
+        name: Column name to quote.
+
+    Returns:
+        The column name wrapped in backticks with embedded backticks escaped.
+    """
+    escaped = name.replace("`", "``")
+    return f"`{escaped}`"
+
+
 def normalize_col_str(col_str: str) -> str:
     """
     Normalizes string to be compatible with metastore column names by applying the following transformations:
@@ -357,14 +375,19 @@ def sanitize_for_logging(value: str) -> str:
     return value.replace("\r", "\\r").replace("\n", "\\n")
 
 
-def safe_json_load(value: str):
+def safe_json_load(value: str | None) -> object:
     """
     Safely load a JSON string, returning the original value if it fails to parse.
     This allows to specify string value without a need to escape the quotes.
 
+    A *None* value is returned unchanged (a stored MAP<STRING, STRING> may contain SQL NULL values,
+    which surface as None and must not be passed to json.loads).
+
     Args:
-        value: The value to parse as JSON.
+        value: The value to parse as JSON, or None.
     """
+    if value is None:
+        return None
     try:
         return json.loads(value)
     except json.JSONDecodeError:
