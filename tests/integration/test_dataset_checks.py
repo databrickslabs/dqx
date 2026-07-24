@@ -64,6 +64,7 @@ def test_sql_query_with_null_merge_columns(
     )
 
     actual = apply_method(test_df, spark, {}).select(*merge_columns, "amount", condition.alias("violation"))
+    assert actual.count() == len(rows)
     violations = {tuple(row[column] for column in merge_columns): row["violation"] for row in actual.collect()}
 
     expected = {}

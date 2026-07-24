@@ -1938,6 +1938,9 @@ def has_no_aggr_outliers(
     unique_str = uuid.uuid4().hex
     condition_col = f"__dq_outlier_cond_{aggr_col_str_norm}_{aggr_type}_{unique_str}"
     msg_col = f"__dq_outlier_msg_{aggr_col_str_norm}_{aggr_type}_{unique_str}"
+    internal_cols = {
+        name: f"__dq_{name}_{unique_str}" for name in ("grain", "metric", "rn", "current", "mu", "sigma", "n", "jkey")
+    }
 
     def apply(df: DataFrame) -> DataFrame:
         """
@@ -1964,69 +1967,79 @@ def has_no_aggr_outliers(
         aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
 
         group_cols = [F.col(c) if isinstance(c, str) else c for c in (group_by or [])]
-        grain_col = F.date_trunc(time_interval, F.col(time_column)).alias("__dq_grain")
+        grain_expr = F.date_trunc(time_interval, F.col(time_column)).alias(internal_cols["grain"])
 
         # Step 1: aggregate per time-grain (and group)
-        aggregate_df = df.groupBy(*group_cols, grain_col).agg(aggr_expr.alias("__dq_metric"))
+        aggregate_df = df.groupBy(*group_cols, grain_expr).agg(aggr_expr.alias(internal_cols["metric"]))
 
         # Step 2: rank grains per group, most-recent first
         window_spec = (
-            Window.partitionBy(*group_cols).orderBy(F.col("__dq_grain").desc())
+            Window.partitionBy(*group_cols).orderBy(F.col(internal_cols["grain"]).desc())
             if group_by
-            else Window.orderBy(F.col("__dq_grain").desc())
+            else Window.orderBy(F.col(internal_cols["grain"]).desc())
         )
-        ranked = aggregate_df.withColumn("__dq_rn", F.row_number().over(window_spec))
+        ranked = aggregate_df.withColumn(internal_cols["rn"], F.row_number().over(window_spec))
 
         # Step 3: most-recent bucket (rank 1) and history (ranks 2..lookback_num_intervals+1)
-        current = ranked.filter(F.col("__dq_rn") == 1).select(
+        current = ranked.filter(F.col(internal_cols["rn"]) == 1).select(
             *group_cols,
-            F.col("__dq_metric").alias("__dq_current"),
+            F.col(internal_cols["metric"]).alias(internal_cols["current"]),
         )
-        hist = ranked.filter((F.col("__dq_rn") >= 2) & (F.col("__dq_rn") <= lookback_num_intervals + 1))
+        hist = ranked.filter(
+            (F.col(internal_cols["rn"]) >= 2) & (F.col(internal_cols["rn"]) <= lookback_num_intervals + 1)
+        )
 
         # Step 4: rolling baseline stats
         stats = hist.groupBy(*group_cols).agg(
-            F.avg("__dq_metric").alias("__dq_mu"),
-            F.stddev_pop("__dq_metric").alias("__dq_sigma"),
-            F.count("*").alias("__dq_n"),
+            F.avg(internal_cols["metric"]).alias(internal_cols["mu"]),
+            F.stddev_pop(internal_cols["metric"]).alias(internal_cols["sigma"]),
+            F.count("*").alias(internal_cols["n"]),
         )
 
         # Step 5: join current bucket + stats (left-join so current bucket always survives)
         if group_by:
             join_keys = [c if isinstance(c, str) else get_column_name_or_alias(c) for c in group_by]
-            joined = _join_results_on_null_safe_columns(current, stats, join_keys, ["__dq_mu", "__dq_sigma", "__dq_n"])
+            joined = _join_results_on_null_safe_columns(
+                current,
+                stats,
+                join_keys,
+                [internal_cols["mu"], internal_cols["sigma"], internal_cols["n"]],
+            )
         else:
             # Use a dummy-key left-join so the current bucket row survives even when stats
             # is empty (e.g. only 1 bucket of data → hist is empty → stats has 0 rows).
             # A plain crossJoin with empty stats would produce 0 rows and discard all df rows.
             joined = (
-                current.withColumn("__dq_jkey", F.lit(1))
+                current.withColumn(internal_cols["jkey"], F.lit(1))
                 .join(
-                    stats.withColumn("__dq_jkey", F.lit(1)),
-                    on="__dq_jkey",
+                    stats.withColumn(internal_cols["jkey"], F.lit(1)),
+                    on=internal_cols["jkey"],
                     how="left",
                 )
-                .drop("__dq_jkey")
+                .drop(internal_cols["jkey"])
             )
 
         # Step 6: compute violation and message string (2 output columns: condition + msg)
-        # Guard on NULL __dq_n: occurs when hist is empty (fewer than 2 buckets)
-        insufficient_history = F.col("__dq_n").isNull() | (F.col("__dq_n") < warmup_num_intervals)
-        delta_expr = F.abs(F.col("__dq_current") - F.col("__dq_mu"))
+        # A NULL history count occurs when hist is empty (fewer than 2 buckets).
+        insufficient_history = F.col(internal_cols["n"]).isNull() | (F.col(internal_cols["n"]) < warmup_num_intervals)
+        delta_expr = F.abs(F.col(internal_cols["current"]) - F.col(internal_cols["mu"]))
         violation = (
             F.when(insufficient_history, F.lit(False))
-            .when(F.col("__dq_sigma").isNull() | (F.col("__dq_sigma") == 0), F.lit(False))
-            .when(F.col("__dq_current").isNull(), F.lit(False))
-            .otherwise(delta_expr > F.lit(sigma) * F.col("__dq_sigma"))
+            .when(
+                F.col(internal_cols["sigma"]).isNull() | (F.col(internal_cols["sigma"]) == 0),
+                F.lit(False),
+            )
+            .when(F.col(internal_cols["current"]).isNull(), F.lit(False))
+            .otherwise(delta_expr > F.lit(sigma) * F.col(internal_cols["sigma"]))
         )
         message = F.concat_ws(
             "",
             F.lit(f"{aggr_type}({aggr_col_str}): current="),
-            F.col("__dq_current").cast("string"),
+            F.col(internal_cols["current"]).cast("string"),
             F.lit(", baseline="),
-            F.col("__dq_mu").cast("string"),
+            F.col(internal_cols["mu"]).cast("string"),
             F.lit(", stddev="),
-            F.col("__dq_sigma").cast("string"),
+            F.col(internal_cols["sigma"]).cast("string"),
             F.lit(", delta="),
             delta_expr.cast("string"),
             F.lit(f" exceeds {sigma} x stddev (lookback={lookback_num_intervals} intervals)"),
@@ -3102,7 +3115,23 @@ def _match_rows(
 def _join_results_on_null_safe_columns(
     df: DataFrame, result_df: DataFrame, join_columns: list[str], result_columns: list[str]
 ) -> DataFrame:
-    """Left-join computed result columns while matching null join keys."""
+    """
+    Left-join computed result columns while matching null join keys.
+
+    The caller must ensure that *result_df* has at most one row per join key and
+    that *result_columns* are disjoint from *df.columns*. Otherwise the join can
+    multiply input rows or create duplicate output columns. The helper aliases
+    the two sides internally as "df" and "ref_df".
+
+    Args:
+        df: The input DataFrame whose rows and columns must be preserved.
+        result_df: The computed results, unique per combination of join key values.
+        join_columns: Column names shared by both DataFrames and used for matching.
+        result_columns: Non-overlapping result columns to append from *result_df*.
+
+    Returns:
+        The input rows and columns with the requested result columns appended.
+    """
     joined = _match_rows(
         df.alias("df"),
         result_df.alias("ref_df"),

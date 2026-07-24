@@ -222,10 +222,12 @@ def test_null_current_passes(spark: SparkSession):
 
 
 @pytest.mark.parametrize("spike_group", ["spike", None])
-def test_group_by_isolates_bands(spark: SparkSession, spike_group: str | None):
+@pytest.mark.parametrize("group_column", ["grp", "__dq_metric"])
+def test_group_by_isolates_bands(spark: SparkSession, spike_group: str | None, group_column: str):
     """
     Two groups: 'stable' (14 days at 10 +/- 1, today=10) and a nullable spike
-    group (14 days at 10 +/- 1, today=50). Only the spike group should violate.
+    group (14 days at 10 +/- 1, today=50). Only the spike group should violate,
+    including when its column name matches an internal column prefix.
     """
     hist_values = [9.0, 11.0] * 7  # mean=10, stddev_pop=1.0
 
@@ -239,7 +241,9 @@ def test_group_by_isolates_bands(spark: SparkSession, spike_group: str | None):
     rows.append(("stable", today, 10.0))  # within band
     rows.append((spike_group, today, 50.0))  # spike
 
-    df = spark.createDataFrame(rows, "grp: string, event_date: date, metric: double")
+    df = spark.createDataFrame(rows, "grp: string, event_date: date, metric: double").withColumnRenamed(
+        "grp", group_column
+    )
 
     condition, apply_fn = has_no_aggr_outliers(
         "metric",
@@ -248,12 +252,12 @@ def test_group_by_isolates_bands(spark: SparkSession, spike_group: str | None):
         sigma=3.0,
         lookback_num_intervals=14,
         warmup_num_intervals=3,
-        group_by=["grp"],
+        group_by=[group_column],
     )
     result = _apply_with_original(df, [(condition, apply_fn)])
 
-    stable_msgs = [r[-1] for r in result.filter(F.col("grp") == "stable").collect()]
-    spike_msgs = [r[-1] for r in result.filter(F.col("grp").eqNullSafe(F.lit(spike_group))).collect()]
+    stable_msgs = [r[-1] for r in result.filter(F.col(group_column) == "stable").collect()]
+    spike_msgs = [r[-1] for r in result.filter(F.col(group_column).eqNullSafe(F.lit(spike_group))).collect()]
 
     assert all(m is None for m in stable_msgs), f"Stable group should not violate: {stable_msgs}"
     assert all(m is not None for m in spike_msgs), f"Spike group should violate: {spike_msgs}"
