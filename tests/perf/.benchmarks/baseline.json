@@ -161,6 +161,76 @@
   "benchmarks": [
     {
       "group": null,
+      "name": "test_benchmark_aggr_matches_dataset",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_aggr_matches_dataset",
+      "params": null,
+      "param": null,
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.36534398599997076,
+        "max": 0.6876445660000172,
+        "mean": 0.4618528158003755,
+        "stddev": 0.12873880584805808,
+        "rounds": 5,
+        "median": 0.4232984940008464,
+        "iqr": 0.10169738224976754,
+        "q1": 0.39314126525050597,
+        "q3": 0.4948386475002735,
+        "iqr_outliers": 1,
+        "stddev_outliers": 1,
+        "outliers": "1;1",
+        "ld15iqr": 0.36534398599997076,
+        "hd15iqr": 0.6876445660000172,
+        "ops": 2.1651919524773997,
+        "total": 2.3092640790018777,
+        "iterations": 1
+      }
+    },
+    {
+      "group": null,
+      "name": "test_benchmark_aggr_matches_dataset_count_distinct_with_group_by",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_aggr_matches_dataset_count_distinct_with_group_by",
+      "params": null,
+      "param": null,
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 2.862199041000167,
+        "max": 3.3805562429997735,
+        "mean": 3.0947713346000456,
+        "stddev": 0.22172416755032465,
+        "rounds": 5,
+        "median": 3.070569206000073,
+        "iqr": 0.38913046725042477,
+        "q1": 2.8959787454998605,
+        "q3": 3.2851092127502852,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 2.862199041000167,
+        "hd15iqr": 3.3805562429997735,
+        "ops": 0.32312565029274953,
+        "total": 15.473856673000228,
+        "iterations": 1
+      }
+    },
+    {
+      "group": null,
       "name": "test_benchmark_apply_checks_all_dataset_checks",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_apply_checks_all_dataset_checks",
       "params": null,
