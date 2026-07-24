@@ -1,3 +1,4 @@
+import inspect
 import logging
 from datetime import datetime
 from dataclasses import dataclass
@@ -13,7 +14,14 @@ from databricks.labs.dqx.rule import (
     DQRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
-from databricks.labs.dqx.utils import get_column_name_or_alias
+from databricks.labs.dqx.utils import (
+    get_column_name_or_alias,
+    is_simple_column_expression,
+    quote_column_name,
+    is_sql_query_safe,
+    safe_filter_expr,
+    sanitize_for_logging,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,23 +76,76 @@ class DQRuleManager:
         """
         Returns the filter condition for the check.
         """
-        return F.expr(self.check.filter) if self.check.filter else F.lit(True)
+        return safe_filter_expr(self.check.filter)
+
+    @cached_property
+    def _effective_filter(self) -> str | None:
+        """
+        Returns the filter string that will be applied for this check, or None.
+
+        This is the single source of truth for "what filter runs" so the skip decision covers every way a
+        filter can reach a check function: the check-level *filter*, and a *row_filter* passed through
+        *check_func_kwargs* or positionally via *check_func_args*. Resolving from the check function's bound
+        arguments (rather than only *check.filter* / the kwarg) ensures no supply path slips past the guard.
+        """
+        if self.check.filter:
+            return self.check.filter
+        args, kwargs = self.check.prepare_check_func_args_and_kwargs()
+        row_filter = kwargs.get("row_filter")
+        if row_filter is None:
+            # row_filter may have been supplied positionally; bind against the signature to locate it.
+            sig = inspect.signature(self.check.check_func)
+            if "row_filter" in sig.parameters:
+                try:
+                    bound = sig.bind_partial(*args, **kwargs)
+                    row_filter = bound.arguments.get("row_filter")
+                except TypeError:
+                    row_filter = None
+        return row_filter if isinstance(row_filter, str) else None
+
+    @cached_property
+    def has_unsafe_filter(self) -> bool:
+        """
+        Returns True if the check filter contains unsafe SQL (e.g. a destructive statement keyword).
+
+        This is a non-raising check: an unsafe filter causes the check to be skipped (like any other
+        invalid filter) rather than aborting evaluation of the whole rule set. Note this does not apply to
+        the *sql_query* check, whose query runs via *spark.sql* and is still hard-rejected in the executor.
+        """
+        filter_expr = self._effective_filter
+        if not filter_expr:
+            return False
+        return not is_sql_query_safe(filter_expr)
 
     @cached_property
     def invalid_columns(self) -> list[str]:
         """
         Returns list of invalid check columns in the input DataFrame.
+
+        Column names that contain characters requiring SQL identifier escaping (e.g. spaces, such as
+        "Customer Name") are back-quoted so they are unambiguous in the skip / error messages.
         """
         invalid_cols = []
 
         if self.check.column is not None and self._is_invalid_column(self.check.column):
-            invalid_cols.append(get_column_name_or_alias(self.check.column))
+            invalid_cols.append(self._display_column_name(self.check.column))
         elif self.check.columns is not None:  # either column or columns can be provided, but not both
             for column in self.check.columns:
                 if self._is_invalid_column(column):
-                    invalid_cols.append(get_column_name_or_alias(column))
+                    invalid_cols.append(self._display_column_name(column))
 
         return invalid_cols
+
+    @staticmethod
+    def _display_column_name(column: str | Column) -> str:
+        """
+        Returns the column name for use in skip / error messages, back-quoting names that require SQL
+        identifier escaping (e.g. "Customer Name" -> "`Customer Name`").
+        """
+        name = get_column_name_or_alias(column)
+        if is_simple_column_expression(name) or (name.startswith("`") and name.endswith("`")):
+            return name
+        return quote_column_name(name)
 
     @cached_property
     def has_invalid_columns(self) -> bool:
@@ -97,7 +158,12 @@ class DQRuleManager:
     def has_invalid_filter(self) -> bool:
         """
         Returns a boolean indicating whether the filter is invalid in the input DataFrame.
+
+        An unsafe filter is short-circuited here so that ``filter_condition`` (which rejects unsafe SQL by
+        raising) is never compiled for it; the check is reported as skipped via ``_get_invalid_cols_message``.
         """
+        if self.has_unsafe_filter:
+            return True
         return self._is_invalid_column(self.filter_condition)
 
     @cached_property
@@ -221,11 +287,14 @@ class DQRuleManager:
                 f"Check evaluation skipped due to invalid check columns: {self.invalid_columns}"
             )
 
-        if self.has_invalid_filter:
-            logger.warning(f"Skipping check '{self.check.name}' due to invalid check filter: '{self.check.filter}'")
-            invalid_cols_message_parts.append(
-                f"Check evaluation skipped due to invalid check filter: '{self.check.filter}'"
-            )
+        if self.has_unsafe_filter:
+            safe_filter = sanitize_for_logging(self._effective_filter or "")
+            logger.warning(f"Skipping check '{self.check.name}' due to unsafe check filter: '{safe_filter}'")
+            invalid_cols_message_parts.append(f"Check evaluation skipped due to unsafe check filter: '{safe_filter}'")
+        elif self.has_invalid_filter:
+            safe_filter = sanitize_for_logging(self.check.filter or "")
+            logger.warning(f"Skipping check '{self.check.name}' due to invalid check filter: '{safe_filter}'")
+            invalid_cols_message_parts.append(f"Check evaluation skipped due to invalid check filter: '{safe_filter}'")
 
         if self.has_invalid_custom_message:
             if isinstance(self.check.message_expr, str):
@@ -260,11 +329,28 @@ class DQRuleManager:
             col_expr = F.expr(column) if isinstance(column, str) else column
             _ = self.df.select(col_expr).schema  # perform logical plan validation without triggering computation
         except AnalysisException as e:
+            # The input string may be a SQL expression (e.g. "a + b") or a plain column name that may require
+            # SQL identifier escaping (spaces / non-ASCII / reserved chars, e.g. "Customer Name"). To validate
+            # the input string, we first attempt F.expr() and retry failing strings as a backtick-quoted identifiers.
+            # String expressions parse cleanly and only genuine single-identifier names pass fallback validation.
+            if isinstance(column, str) and not self._is_invalid_quoted_column(column):
+                return False
             # If column is not accessible or column expression cannot be evaluated, an AnalysisException is thrown.
             # Note: This does not cover all error conditions. Some issues only appear during a Spark action.
             logger.debug(
                 f"Invalid column '{column}' provided in the check '{self.check.name}'",
                 exc_info=e,
             )
+            return True
+        return False
+
+    def _is_invalid_quoted_column(self, column: str) -> bool:
+        """
+        Returns True if the string cannot be resolved as a single backtick-quoted column identifier,
+        otherwise False.
+        """
+        try:
+            _ = self.df.select(F.expr(quote_column_name(column))).schema
+        except AnalysisException:
             return True
         return False

@@ -491,3 +491,10 @@
     arguments:
       column: col1
       case: lower
+# is_valid_national_id check
+- criticality: error
+  check:
+    function: is_valid_national_id
+    arguments:
+      column: col_ssn
+      country: US

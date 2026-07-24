@@ -13,6 +13,7 @@ from pyspark.sql.types import (
 from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema, anomaly_info_struct_schema
 from databricks.labs.dqx.anomaly.segment_utils import canonicalize_segment_values
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.utils import safe_filter_expr
 from databricks.labs.dqx.schema.dq_info_schema import (
     build_dq_info_struct,
     register_dq_info_field,
@@ -248,4 +249,4 @@ def apply_row_filter(df: DataFrame, row_filter: str | None) -> DataFrame:
     row_filter is a SQL expression (e.g. \"region = 'US'\"). Only these rows are run
     through anomaly detection; elsewhere we join results back so output has same row count.
     """
-    return df.filter(F.expr(row_filter)) if row_filter else df
+    return df.filter(safe_filter_expr(row_filter)) if row_filter else df

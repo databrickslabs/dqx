@@ -158,3 +158,23 @@ jobs:
       - name: Run app backend tests
         run: make app-test
         working-directory: .
+
+  mcp:
+    needs: not-a-fork
+    name: Build and Check MCP Server
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
+
+      - name: Type-check MCP server
+        run: make mcp-check
+
+      - name: Run MCP server tests
+        run: make mcp-test
