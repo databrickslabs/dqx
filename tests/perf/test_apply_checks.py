@@ -2252,6 +2252,11 @@ def test_benchmark_has_valid_string_case(benchmark, ws, generated_string_df, cas
     ]
     benchmark.group += f" {case}"
     checked = dq_engine.apply_checks(df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
     "column",
     [
         "col1_ssn_dashed",
