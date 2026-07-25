@@ -33,6 +33,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_ipv4_address,
     is_valid_email,
     is_valid_national_id,
+    is_valid_currency_code,
     is_ipv4_address_in_cidr,
     is_valid_ipv6_address,
     is_ipv6_address_in_cidr,
@@ -2027,6 +2028,89 @@ def test_col_is_valid_national_id_column_expr_and_lowercase_country(spark):
         [[None], ["Value '000-45-6789' in Column 'a' does not match pattern 'SSN_US'"]],
         checked_schema,
     )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_currency_code_alphabetic(spark):
+    schema_ccy = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            # Valid ISO 4217 alphabetic codes (incl. the precious-metal code XAU)
+            ["USD"],
+            ["EUR"],
+            ["JPY"],
+            ["XAU"],
+            # Invalid - wrong length, lowercase (case-sensitive), unknown, or empty
+            ["US"],
+            ["USDD"],
+            ["usd"],
+            ["ABC"],
+            [""],
+            [None],  # Null - passes (no violation reported)
+        ],
+        schema_ccy,
+    )
+
+    actual = test_df.select(is_valid_currency_code("a"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 4217 currency code"
+
+    checked_schema = "a_is_not_a_valid_currency_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        [None],
+        [violation("US")],
+        [violation("USDD")],
+        [violation("usd")],
+        [violation("ABC")],
+        [violation("")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_currency_code_numeric(spark):
+    schema_ccy = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            # Valid ISO 4217 numeric codes (USD=840, EUR=978, JPY=392)
+            ["840"],
+            ["978"],
+            ["392"],
+            # Invalid - wrong width, alphabetic value, or empty
+            ["8"],
+            ["0840"],
+            ["USD"],
+            [""],
+            [None],  # Null - passes (no violation reported)
+        ],
+        schema_ccy,
+    )
+
+    # Numeric format + column-expression input end-to-end
+    actual = test_df.select(is_valid_currency_code(F.col("a"), code_format="numeric"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 4217 currency code"
+
+    checked_schema = "a_is_not_a_valid_currency_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        [violation("8")],
+        [violation("0840")],
+        [violation("USD")],
+        [violation("")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
 
     assertDataFrameEqual(actual, expected)
 
