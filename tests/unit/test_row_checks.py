@@ -203,3 +203,8 @@ def test_is_valid_currency_code_non_string_code_format():
 def test_is_valid_currency_code_unsupported_code_format():
     with pytest.raises(InvalidParameterError, match="Unsupported code_format for currency code validation"):
         is_valid_currency_code("a", code_format="alpha-3")
+
+
+def test_is_valid_currency_code_case_insensitive_auto_name():
+    result = is_valid_currency_code("a", case_sensitive=False)
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_currency_code"

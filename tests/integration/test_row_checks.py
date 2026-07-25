@@ -2115,6 +2115,39 @@ def test_col_is_valid_currency_code_numeric(spark):
     assertDataFrameEqual(actual, expected)
 
 
+def test_col_is_valid_currency_code_case_insensitive(spark):
+    schema_ccy = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            ["usd"],  # lowercase alphabetic accepted when case_sensitive is False
+            ["Eur"],  # mixed case accepted
+            ["JPY"],  # canonical case still accepted
+            ["ABC"],  # not an assigned code, still invalid
+            [""],
+            [None],
+        ],
+        schema_ccy,
+    )
+
+    actual = test_df.select(is_valid_currency_code("a", case_sensitive=False))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 4217 currency code"
+
+    checked_schema = "a_is_not_a_valid_currency_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        [violation("ABC")],
+        [violation("")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_is_ipv4_address_in_cidr(spark):
     schema_ipv4 = "a: string, b: string"
 
