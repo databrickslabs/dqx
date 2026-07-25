@@ -2148,6 +2148,39 @@ def test_col_is_valid_country_code_numeric(spark):
     assertDataFrameEqual(actual, expected)
 
 
+def test_col_is_valid_country_code_case_insensitive(spark):
+    schema = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            ["us"],  # lowercase alpha-2 accepted when case_sensitive is False
+            ["Gb"],  # mixed case accepted
+            ["DE"],  # canonical case still accepted
+            ["ZZ"],  # not an assigned code, still invalid
+            [""],
+            [None],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(is_valid_country_code("a", case_sensitive=False))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 3166-1 country code"
+
+    checked_schema = "a_is_not_a_valid_country_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        [violation("ZZ")],
+        [violation("")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_is_ipv4_address_in_cidr(spark):
     schema_ipv4 = "a: string, b: string"
 

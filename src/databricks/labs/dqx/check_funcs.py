@@ -1095,10 +1095,11 @@ def _load_iso_codes(resource_name: str) -> frozenset[str]:
 
 
 # ISO 3166-1 country codes. The authoritative source is
-# https://www.iso.org/iso-3166-country-codes.html. The code lists are stored as data files under
-# the resources package and loaded via importlib.resources. To regenerate them, iterate
-# pycountry.countries (which packages the ISO 3166-1 data) and write each entry's alpha_2, alpha_3
-# and numeric code, one per line, to the matching resource file.
+# https://www.iso.org/iso-3166-country-codes.html; the values were verified against it and cover the
+# officially assigned codes as of July 2026. The code lists are stored as data files under the
+# resources package and loaded via importlib.resources. To regenerate them, iterate
+# pycountry.countries (which packages the ISO 3166-1 data) as a convenience, then reconcile against
+# the official ISO list above before committing.
 _ISO_3166_1_CODES_BY_FORMAT: dict[str, frozenset[str]] = {
     "alpha-2": _load_iso_codes("iso_3166_1_alpha_2.txt"),
     "alpha-3": _load_iso_codes("iso_3166_1_alpha_3.txt"),
@@ -1107,7 +1108,7 @@ _ISO_3166_1_CODES_BY_FORMAT: dict[str, frozenset[str]] = {
 
 
 @register_rule("row")
-def is_valid_country_code(column: str | Column, code_format: str = "alpha-2") -> Column:
+def is_valid_country_code(column: str | Column, code_format: str = "alpha-2", case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are valid ISO 3166-1 country codes.
 
     ISO 3166-1 defines three code representations, selected with *code_format*:
@@ -1117,14 +1118,18 @@ def is_valid_country_code(column: str | Column, code_format: str = "alpha-2") ->
     * *numeric*: the three-digit code, e.g. *840*, *826*, *276*.
 
     The valid codes follow the ISO 3166-1 standard; see https://www.iso.org/iso-3166-country-codes.html.
+    Only officially assigned codes are accepted; user-assigned codes (e.g. *XK* for Kosovo) and
+    reserved codes are intentionally excluded. Numeric codes are the three-digit, zero-padded form
+    (e.g. *004*), so a numeric input column must preserve the leading zeros.
 
-    Validation is a case-sensitive membership test against the selected set. Null values will pass
-    the check with no violation reported.
+    By default the comparison is case-sensitive; pass *case_sensitive* as False to accept values in
+    any case. Null values will pass the check with no violation reported.
 
     Args:
         column: column to check; can be a string column name or a column expression
         code_format: ISO 3166-1 code representation to validate against: *alpha-2* (default),
             *alpha-3*, or *numeric*
+        case_sensitive: whether to perform a case-sensitive comparison (default: True)
 
     Returns:
         Column object for condition
@@ -1145,8 +1150,13 @@ def is_valid_country_code(column: str | Column, code_format: str = "alpha-2") ->
             f"Unsupported code_format for country code validation: '{code_format}'. Supported: [{supported}]."
         )
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
-    allowed = [F.lit(code) for code in sorted(allowed_codes)]
-    condition = F.when(col_expr.isNotNull(), ~col_expr.isin(*allowed)).otherwise(F.lit(None))
+    if case_sensitive:
+        col_expr_compare = col_expr
+        allowed = [F.lit(code) for code in sorted(allowed_codes)]
+    else:
+        col_expr_compare = to_lowercase(col_expr)
+        allowed = [F.lit(code.lower()) for code in sorted(allowed_codes)]
+    condition = F.when(col_expr.isNotNull(), ~col_expr_compare.isin(*allowed)).otherwise(F.lit(None))
     return make_condition(
         condition,
         F.concat_ws(
