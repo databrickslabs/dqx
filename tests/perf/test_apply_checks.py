@@ -2234,3 +2234,27 @@ def test_benchmark_is_valid_national_id(benchmark, ws, generated_national_id_df,
     checked = dq_engine.apply_checks(generated_national_id_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_country_code",
+        "col2_country_code",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_country_code")
+def test_benchmark_is_valid_country_code(benchmark, ws, generated_country_code_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_country_code",
+            criticality="warn",
+            check_func=check_funcs.is_valid_country_code,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_country_code_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS

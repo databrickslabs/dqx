@@ -4,6 +4,8 @@ import warnings
 import ipaddress
 import uuid
 from decimal import Decimal
+from importlib.resources import files
+from pathlib import Path
 from collections.abc import Callable, Sequence
 from enum import Enum
 from itertools import zip_longest
@@ -1079,6 +1081,82 @@ def is_valid_national_id(column: str | Column, country: str = "US") -> Column:
             f"Unsupported country code for national ID validation: '{country}'. Supported: [{supported}]."
         )
     return _matches_pattern(column, pattern)
+
+
+def _load_iso_codes(resource_name: str) -> frozenset[str]:
+    """Load a set of standard codes from a newline-delimited data file in the resources package.
+
+    The large standard code lists are stored as data files rather than inline literals to keep them
+    readable and easy to regenerate. See the files under *databricks/labs/dqx/resources* for the
+    values and their authoritative sources.
+    """
+    resource = Path(str(files("databricks.labs.dqx.resources") / resource_name))
+    return frozenset(resource.read_text(encoding="utf-8").split())
+
+
+# ISO 3166-1 country codes. The authoritative source is
+# https://www.iso.org/iso-3166-country-codes.html. The code lists are stored as data files under
+# the resources package and loaded via importlib.resources. To regenerate them, iterate
+# pycountry.countries (which packages the ISO 3166-1 data) and write each entry's alpha_2, alpha_3
+# and numeric code, one per line, to the matching resource file.
+_ISO_3166_1_CODES_BY_FORMAT: dict[str, frozenset[str]] = {
+    "alpha-2": _load_iso_codes("iso_3166_1_alpha_2.txt"),
+    "alpha-3": _load_iso_codes("iso_3166_1_alpha_3.txt"),
+    "numeric": _load_iso_codes("iso_3166_1_numeric.txt"),
+}
+
+
+@register_rule("row")
+def is_valid_country_code(column: str | Column, code_format: str = "alpha-2") -> Column:
+    """Checks whether the values in the input column are valid ISO 3166-1 country codes.
+
+    ISO 3166-1 defines three code representations, selected with *code_format*:
+
+    * *alpha-2* (default): the two-letter code, e.g. *US*, *GB*, *DE*.
+    * *alpha-3*: the three-letter code, e.g. *USA*, *GBR*, *DEU*.
+    * *numeric*: the three-digit code, e.g. *840*, *826*, *276*.
+
+    The valid codes follow the ISO 3166-1 standard; see https://www.iso.org/iso-3166-country-codes.html.
+
+    Validation is a case-sensitive membership test against the selected set. Null values will pass
+    the check with no violation reported.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        code_format: ISO 3166-1 code representation to validate against: *alpha-2* (default),
+            *alpha-3*, or *numeric*
+
+    Returns:
+        Column object for condition
+
+    Raises:
+        MissingParameterError: if *code_format* is None.
+        InvalidParameterError: if *code_format* is not a string, or is not a supported representation.
+    """
+    if code_format is None:
+        raise MissingParameterError("'code_format' is not provided.")
+    if not isinstance(code_format, str):
+        raise InvalidParameterError(f"'code_format' must be a string, got {type(code_format)} instead.")
+    normalized_format = code_format.lower()
+    allowed_codes = _ISO_3166_1_CODES_BY_FORMAT.get(normalized_format)
+    if allowed_codes is None:
+        supported = ", ".join(sorted(_ISO_3166_1_CODES_BY_FORMAT))
+        raise InvalidParameterError(
+            f"Unsupported code_format for country code validation: '{code_format}'. Supported: [{supported}]."
+        )
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    allowed = [F.lit(code) for code in sorted(allowed_codes)]
+    condition = F.when(col_expr.isNotNull(), ~col_expr.isin(*allowed)).otherwise(F.lit(None))
+    return make_condition(
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not a valid ISO 3166-1 country code"),
+        ),
+        f"{col_str_norm}_is_not_a_valid_country_code",
+    )
 
 
 @register_rule("row")

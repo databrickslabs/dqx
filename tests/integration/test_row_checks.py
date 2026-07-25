@@ -33,6 +33,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_ipv4_address,
     is_valid_email,
     is_valid_national_id,
+    is_valid_country_code,
     is_ipv4_address_in_cidr,
     is_valid_ipv6_address,
     is_ipv6_address_in_cidr,
@@ -2027,6 +2028,122 @@ def test_col_is_valid_national_id_column_expr_and_lowercase_country(spark):
         [[None], ["Value '000-45-6789' in Column 'a' does not match pattern 'SSN_US'"]],
         checked_schema,
     )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_country_code_alpha_2(spark):
+    schema = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            # Valid alpha-2 codes
+            ["US"],
+            ["GB"],
+            ["DE"],
+            ["FR"],
+            # Invalid
+            ["USA"],  # alpha-3 code, not alpha-2
+            ["us"],  # lowercase, membership is case-sensitive
+            ["ZZ"],  # not an assigned code
+            [""],  # empty string
+            [None],  # Null - passes (no violation reported)
+        ],
+        schema,
+    )
+
+    actual = test_df.select(is_valid_country_code("a"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 3166-1 country code"
+
+    checked_schema = "a_is_not_a_valid_country_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        [None],
+        [violation("USA")],
+        [violation("us")],
+        [violation("ZZ")],
+        [violation("")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_country_code_alpha_3(spark):
+    schema = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            ["USA"],
+            ["GBR"],
+            ["DEU"],
+            ["US"],  # alpha-2 code, not alpha-3
+            ["usa"],  # lowercase
+            ["ZZZ"],  # not an assigned code
+            [""],
+            [None],
+        ],
+        schema,
+    )
+
+    # Column-expression input with the alpha-3 representation
+    actual = test_df.select(is_valid_country_code(F.col("a"), code_format="alpha-3"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 3166-1 country code"
+
+    checked_schema = "a_is_not_a_valid_country_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        [violation("US")],
+        [violation("usa")],
+        [violation("ZZZ")],
+        [violation("")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_country_code_numeric(spark):
+    schema = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            ["840"],
+            ["826"],
+            ["276"],
+            ["8"],  # too short, codes are zero-padded to three digits
+            ["0840"],  # extra leading zero
+            ["US"],  # alpha-2 code, not numeric
+            [""],
+            [None],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(is_valid_country_code("a", code_format="numeric"))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 3166-1 country code"
+
+    checked_schema = "a_is_not_a_valid_country_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        [violation("8")],
+        [violation("0840")],
+        [violation("US")],
+        [violation("")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
 
     assertDataFrameEqual(actual, expected)
 
