@@ -237,6 +237,11 @@ def test_has_no_gaps_per_time_window_exceptions(window_minutes):
         has_no_gaps_per_time_window(column="event_date", window_minutes=window_minutes)
 
 
+def test_has_no_gaps_per_time_window_invalid_group_by():
+    with pytest.raises(InvalidParameterError, match="group_by must be a list"):
+        has_no_gaps_per_time_window(column="event_date", window_minutes=1440, group_by="device")
+
+
 @pytest.mark.parametrize(
     "expected_schema, ref_df_name, ref_table",
     [

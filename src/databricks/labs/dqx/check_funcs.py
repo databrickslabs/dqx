@@ -2521,15 +2521,23 @@ def is_data_fresh_per_time_window(
 
 
 @register_rule("dataset")
-def has_no_gaps_per_time_window(column: str | Column, window_minutes: int) -> tuple[Column, Callable]:
+def has_no_gaps_per_time_window(
+    column: str | Column, window_minutes: int, group_by: list[str | Column] | None = None
+) -> tuple[Column, Callable]:
     """Checks whether a time-series column has gaps, i.e. time windows that contain no rows at all
     between windows that do (for example no data for 2025-07-15 while 2025-07-14 and 2025-07-16 are
     present).
 
     A missing window has no row to attach a violation to, so the gap is reported on the boundary row
     that precedes it (the last row before the gap). Distinct values of *column* are bucketed into
-    fixed time windows of *window_minutes*, and a gap is flagged whenever the next present window
-    starts more than one window after the current one.
+    fixed time windows of *window_minutes* (a fixed grid aligned to absolute time), and a gap is
+    flagged whenever the next present window starts more than one window after the current one. Gaps
+    are therefore measured against this fixed absolute-time grid, not the elapsed time between
+    consecutive events.
+
+    When *group_by* is provided, gaps are detected independently within each group (for example per
+    device or session) and the work partitions by the group key, which is the common case for IoT or
+    clickstream data. When it is omitted, the whole column is treated as a single series.
 
     Only interior gaps are detected. A trailing gap (no data for the most recent windows up to the
     current time) is not reported, because there is no later row to anchor it to. Null values are
@@ -2541,6 +2549,8 @@ def has_no_gaps_per_time_window(column: str | Column, window_minutes: int) -> tu
         column: timestamp or date column to check; can be a string column name or a column expression
         window_minutes: size of the time window in minutes that defines the expected data grain
             (for example 1440 for daily)
+        group_by: optional list of column names or Column expressions to detect gaps independently
+            within each group; when omitted, the whole column is treated as a single global series
 
     Returns:
         A tuple of:
@@ -2548,12 +2558,17 @@ def has_no_gaps_per_time_window(column: str | Column, window_minutes: int) -> tu
             - A closure that applies the gap detection and adds the necessary condition columns.
 
     Raises:
-        InvalidParameterError: if *window_minutes* is not a positive integer.
+        InvalidParameterError: if *window_minutes* is not a positive integer, or if *group_by* is not
+            a list.
     """
     if window_minutes is None or window_minutes <= 0:
         raise InvalidParameterError("window_minutes must be a positive integer")
+    if group_by is not None and not isinstance(group_by, list):
+        raise InvalidParameterError("group_by must be a list of column names or column expressions")
 
     col_str_norm, _, col_expr = get_normalized_column_and_expr(column)
+    group_cols = [F.col(c) if isinstance(c, str) else c for c in (group_by or [])]
+    join_keys = [c if isinstance(c, str) else get_column_name_or_alias(c) for c in (group_by or [])]
 
     unique_str = uuid.uuid4().hex
     interval_col = f"__gap_interval_{col_str_norm}_{unique_str}"
@@ -2573,9 +2588,15 @@ def has_no_gaps_per_time_window(column: str | Column, window_minutes: int) -> tu
         df = df.withColumn(interval_col, F.window(safe_col_expr, f"INTERVAL {window_minutes} MINUTES"))
         df = df.withColumn(window_start_col, F.col(interval_col).start)
 
-        # For each present window, find the next present window over the distinct, ordered windows.
-        distinct_windows = df.filter(col_expr.isNotNull()).select(window_start_col).distinct()
-        ordered_windows = Window.orderBy(window_start_col)
+        # For each present window (within each group) find the next present window over the ordered
+        # windows. Partitioning the window by the group key keeps per-group gap detection independent
+        # and lets the work scale across partitions for per-entity data.
+        distinct_windows = df.filter(col_expr.isNotNull()).select(*group_cols, window_start_col).distinct()
+        ordered_windows = (
+            Window.partitionBy(*group_cols).orderBy(window_start_col)
+            if group_cols
+            else Window.orderBy(window_start_col)
+        )
         gaps = distinct_windows.withColumn(next_window_start_col, F.lead(window_start_col).over(ordered_windows))
 
         # A gap exists when the next present window starts more than one window after the current one.
@@ -2590,7 +2611,7 @@ def has_no_gaps_per_time_window(column: str | Column, window_minutes: int) -> tu
         )
 
         # Attach the per-window gap flag back to every row of the boundary window, keeping column order.
-        joined = df.join(gaps, on=window_start_col, how="left")
+        joined = df.join(gaps, on=[*join_keys, window_start_col], how="left")
         return joined.select(*input_columns, window_start_col, next_window_start_col, condition_col)
 
     condition = make_condition(
