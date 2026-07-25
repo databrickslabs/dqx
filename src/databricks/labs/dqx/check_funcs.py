@@ -2535,6 +2535,8 @@ def has_no_gaps_per_time_window(column: str | Column, window_minutes: int) -> tu
     current time) is not reported, because there is no later row to anchor it to. Null values are
     ignored and pass with no violation reported.
 
+    In streaming, gaps are detected within individual micro-batches only.
+
     Args:
         column: timestamp or date column to check; can be a string column name or a column expression
         window_minutes: size of the time window in minutes that defines the expected data grain

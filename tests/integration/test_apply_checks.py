@@ -67,6 +67,32 @@ def test_apply_checks_and_split_on_empty_checks(ws, spark):
     assert_df_equality(bad, expected_df)
 
 
+def test_apply_checks_and_split_has_no_gaps_per_time_window(ws, spark, set_utc_timezone):
+    dq_engine = DQEngine(ws)
+    schema = "event_ts timestamp, val int"
+    test_df = spark.createDataFrame(
+        [
+            (datetime(2025, 7, 14), 1),  # 2025-07-15 missing -> gap, boundary row is quarantined
+            (datetime(2025, 7, 16), 2),  # consecutive with 2025-07-17 -> valid
+            (datetime(2025, 7, 17), 3),  # valid
+        ],
+        schema,
+    )
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.has_no_gaps_per_time_window,
+            column="event_ts",
+            check_func_kwargs={"window_minutes": 1440},
+        ),
+    ]
+
+    good, bad = dq_engine.apply_checks_and_split(test_df, checks)
+
+    assert sorted(row["val"] for row in good.select("val").collect()) == [2, 3]
+    assert [row["val"] for row in bad.select("val").collect()] == [1]
+
+
 def test_apply_checks_passed(ws, spark):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
