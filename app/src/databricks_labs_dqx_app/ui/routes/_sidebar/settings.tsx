@@ -1347,14 +1347,12 @@ function OptimizeSettings() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          {t("config.optimizeDescription")}
-        </p>
         <div className="flex items-center justify-between gap-4 rounded-md border p-3">
           <div className="space-y-0.5 pr-4">
             <Label htmlFor="optimize-interval" className="text-sm">
               {t("config.optimizeIntervalLabel")}
             </Label>
+            <p className="text-[11px] text-muted-foreground">{t("config.optimizeDescription")}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <Input
@@ -2257,7 +2255,7 @@ function PassThresholdSettingsCard() {
               onChange={handleThresholdChange}
               onBlur={handleThresholdBlur}
               disabled={!isAdmin || saveMutation.isPending || !settings.pass_threshold_enabled}
-              className="h-8 w-20 text-right"
+              className="h-8 w-20"
             />
             <span className="text-sm text-muted-foreground">%</span>
           </div>

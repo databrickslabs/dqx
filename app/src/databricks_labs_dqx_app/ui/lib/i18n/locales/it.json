@@ -289,7 +289,7 @@
     "computeSaved": "Impostazioni di calcolo salvate.",
     "computeSaveFailed": "Impossibile salvare le impostazioni di calcolo.",
     "optimizeTitle": "Ottimizzazione della tabella di quarantena",
-    "optimizeDescription": "Con quale frequenza DQX esegue OPTIMIZE sulla tabella di quarantena per applicarne il liquid clustering. Un intervallo più breve mantiene i dati più aggiornati ma utilizza il warehouse più spesso.",
+    "optimizeDescription": "Con quale frequenza le tabelle di quarantena/risultati vengono ottimizzate, riducendo il tempo di query nella visualizzazione dei risultati.",
     "optimizeIntervalLabel": "Esegui OPTIMIZE ogni",
     "optimizeIntervalHoursUnit": "ore",
     "optimizeSaved": "Pianificazione dell'ottimizzazione aggiornata.",

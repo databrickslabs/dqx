@@ -289,7 +289,7 @@
     "computeSaved": "Compute settings saved.",
     "computeSaveFailed": "Couldn't save compute settings.",
     "optimizeTitle": "Quarantine table optimization",
-    "optimizeDescription": "How often DQX runs OPTIMIZE on the quarantine table so its liquid clustering is applied. Lower is fresher but bills the warehouse more often.",
+    "optimizeDescription": "How often the quarantine/results tables are optimized, reducing the query time of viewing results.",
     "optimizeIntervalLabel": "OPTIMIZE every",
     "optimizeIntervalHoursUnit": "hours",
     "optimizeSaved": "Optimization schedule updated.",
