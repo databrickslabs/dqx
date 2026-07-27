@@ -11,10 +11,12 @@ from databricks.labs.dqx.utils import is_sql_query_safe
 from databricks_labs_dqx_app.backend.sql_utils import (
     escape_json_for_sql_string_literal,
     escape_sql_string,
+    escape_sql_string_strict,
     fqn_needs_quoting,
     quote_fqn,
     quote_ident,
     quote_object_fqn,
+    sql_string_in_list,
     strip_sql_line_comments,
     validate_entity_type,
     validate_fqn,
@@ -98,6 +100,45 @@ class TestEscapeSqlString:
 
     def test_empty_string_round_trips(self):
         assert escape_sql_string("") == ""
+
+
+class TestEscapeSqlStringStrict:
+    """Strict variant escapes BOTH backslashes and quotes — for unvalidated
+    user input (facet values) interpolated into SQL for the first time."""
+
+    def test_single_quote_is_doubled(self):
+        assert escape_sql_string_strict("O'Brien") == "O''Brien"
+
+    def test_backslash_is_doubled(self):
+        assert escape_sql_string_strict("a\\b") == "a\\\\b"
+
+    def test_trailing_backslash_cannot_escape_closing_quote(self):
+        # The classic break-out: a value ending in a backslash would, under
+        # the plain escaper, consume the literal's closing quote. Strict
+        # doubling neutralizes it.
+        escaped = escape_sql_string_strict("evil\\")
+        assert escaped == "evil\\\\"
+        # Embedded in a literal, the closing quote survives intact.
+        assert f"'{escaped}'".endswith("\\\\'")
+
+    def test_backslash_then_quote_injection(self):
+        # ...' OR 1=1 -- preceded by a backslash must not break out.
+        payload = "x\\' OR 1=1 --"
+        assert escape_sql_string_strict(payload) == "x\\\\'' OR 1=1 --"
+
+    def test_empty_string_round_trips(self):
+        assert escape_sql_string_strict("") == ""
+
+
+class TestSqlStringInList:
+    def test_renders_escaped_comma_separated_literals(self):
+        assert sql_string_in_list(["High", "Low"]) == "'High', 'Low'"
+
+    def test_each_value_is_strict_escaped(self):
+        assert sql_string_in_list(["a\\", "O'B"]) == "'a\\\\', 'O''B'"
+
+    def test_single_value(self):
+        assert sql_string_in_list(("Completeness",)) == "'Completeness'"
 
 
 class TestEscapeJsonForSqlStringLiteral:

@@ -155,6 +155,35 @@ def escape_json_for_sql_string_literal(value: str) -> str:
     return escape_sql_string(value.replace("\\", "\\\\"))
 
 
+def escape_sql_string_strict(value: str) -> str:
+    """Escape an UNVALIDATED user string for a single-quoted SQL literal.
+
+    Unlike :func:`escape_sql_string`, this doubles backslashes as well as
+    single-quotes, so it is safe for values that have NOT passed through
+    :func:`validate_fqn` (which is what lets the plain variant skip
+    backslash-escaping). Use this for user-supplied values interpolated
+    into SQL for the first time — e.g. the failing-rows facet values
+    (dimension / severity / rule / column), which historically were only
+    ever compared app-side and so never needed SQL-escaping. On the Delta /
+    Databricks SQL string-literal path a trailing backslash would otherwise
+    consume the closing quote and let the literal break out (injection).
+    """
+    return value.replace("\\", "\\\\").replace("'", "''")
+
+
+def sql_string_in_list(values: tuple[str, ...] | list[str]) -> str:
+    """Render values as a strict-escaped, comma-separated SQL literal list.
+
+    Produces ``'a', 'b'`` for an ``IN (...)`` clause. Every value is
+    escaped with :func:`escape_sql_string_strict` because these are
+    user-supplied facet values. An empty input yields ``''`` (an
+    empty-string literal) so callers must guard against empty lists before
+    building an ``IN`` clause; the failing-rows builder only calls this
+    when a facet is non-empty.
+    """
+    return ", ".join("'" + escape_sql_string_strict(v) + "'" for v in values)
+
+
 def validate_fqn(fqn: str) -> str:
     """Validate that a string is a valid three-part Unity Catalog identifier.
 

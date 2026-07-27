@@ -101,7 +101,12 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
     metric_view_fqn,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_object_fqn, validate_fqn
+from databricks_labs_dqx_app.backend.sql_utils import (
+    escape_sql_string,
+    quote_object_fqn,
+    sql_string_in_list,
+    validate_fqn,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -314,55 +319,69 @@ def _fetch_failed_records_by_run(
     return out
 
 
-def _count_filtered_failed_rows(
-    sql: SqlExecutor,
-    quarantine_table: str,
-    escaped_fqn: str,
-    run_cond: str,
-    facets: ResultFacets,
-) -> int | None:
-    """True count of a run's failing rows matching the active facets.
+def _facet_pushdown_predicate(facets: ResultFacets) -> str:
+    """SQL predicate matching a quarantine row against the active facets.
 
-    The facet predicates (dimension/severity/rule/column) are evaluated
-    app-side over each row's parsed failure structs — they are not SQL
-    predicates — so the filtered *total* cannot come from the mode-wide
-    ``dq_metrics`` number (that counts every failing row of the run,
-    whatever check failed). This scans the WHOLE run's failure structs
-    (``errors``/``warnings`` only — never the wide ``row_data`` payload)
-    and counts matches, so a capped preview window can't undercount a
-    selective filter. Returns None on any error (the caller then keeps the
-    scan-window count rather than surfacing a wrong headline).
+    Mirrors :meth:`QuarantineSampleService.row_matches_filters` exactly, but
+    pushed into the warehouse over the ``errors``/``warnings`` VARIANT
+    columns (the table was created VARIANT specifically for this — see the
+    migration). Semantics preserved:
+
+    * ``parse_failures`` merges errors AND warnings, so each facet matches
+      when ANY error OR ANY warning satisfies it — hence the per-facet
+      ``(exists(errors...) OR exists(warnings...))``.
+    * Facets are ANDed together.
+    * The rule facet matches the frozen ``registry_rule_id`` OR the rule
+      name (``user_metadata.name`` falling back to the struct ``name``),
+      mirroring the id-or-name identity match.
+    * The column facet tests the struct ``columns`` falling back to
+      ``user_metadata.mapped_columns`` (a JSON-array string) for
+      sql_query/expression checks that carry no struct columns.
+
+    Legacy object-shaped payloads (a bare ``{name: message}`` map) are NOT
+    matched here — they carry no ``user_metadata`` and were an explicit
+    non-goal for the pushdown. Every interpolated value is strict-escaped
+    (``sql_string_in_list``) because facet values are user-supplied.
+
+    Returns ``"true"`` when no facet is active (caller does not use it then).
     """
-    # ORDER BY created_at DESC to MATCH the preview scan's window: both are
-    # capped, so aligning their order guarantees the count covers the same
-    # top-N rows the preview shows — otherwise, on a run larger than the cap,
-    # the two scans could pull disjoint windows and report total < len(rows)
-    # (breaking the "N of M" display).
-    stmt = (
-        f"SELECT to_json(errors) AS errors, to_json(warnings) AS warnings "
-        f"FROM {quarantine_table} WHERE source_table_fqn = '{escaped_fqn}' "  # noqa: S608
-        f"{run_cond}"
-        f"ORDER BY created_at DESC LIMIT {_FAILED_ROWS_MAX}"
-    )
-    try:
-        rows = sql.query_dicts(stmt)
-    except Exception:
-        logger.warning("Filtered failing-row count failed; keeping scan-window total", exc_info=True)
-        return None
-    count = 0
-    for raw in rows:
-        parsed_failures = parse_failures(raw)
-        failed_columns = sorted({c for f in parsed_failures for c in f.columns})
-        if QuarantineSampleService.row_matches_filters(
-            enrich_failures(parsed_failures),
-            failed_columns,
-            dimensions=facets.dimensions,
-            severities=facets.severities,
-            rules=facets.rules,
-            columns=facets.columns,
-        ):
-            count += 1
-    return count
+
+    def _exists(col: str) -> list[str]:
+        parts: list[str] = []
+        if facets.dimensions:
+            parts.append(
+                f"exists(cast({col} as array<variant>), f -> "
+                f"variant_get(f, '$.user_metadata.dimension', 'string') IN ({sql_string_in_list(facets.dimensions)}))"
+            )
+        if facets.severities:
+            parts.append(
+                f"exists(cast({col} as array<variant>), f -> "
+                f"variant_get(f, '$.user_metadata.severity', 'string') IN ({sql_string_in_list(facets.severities)}))"
+            )
+        if facets.rules:
+            rule_list = sql_string_in_list(facets.rules)
+            parts.append(
+                f"exists(cast({col} as array<variant>), f -> "
+                f"variant_get(f, '$.user_metadata.registry_rule_id', 'string') IN ({rule_list}) "
+                f"OR coalesce(variant_get(f, '$.user_metadata.name', 'string'), "
+                f"variant_get(f, '$.name', 'string')) IN ({rule_list}))"
+            )
+        if facets.columns:
+            parts.append(
+                f"exists(cast({col} as array<variant>), f -> arrays_overlap("
+                f"coalesce(cast(variant_get(f, '$.columns') as array<string>), "
+                f"cast(from_json(variant_get(f, '$.user_metadata.mapped_columns', 'string'), "
+                f"'array<string>') as array<string>)), array({sql_string_in_list(facets.columns)})))"
+            )
+        return parts
+
+    err = _exists("errors")
+    warn = _exists("warnings")
+    if not err:
+        return "true"
+    # err[i] / warn[i] are the SAME facet over the two columns — OR them, then
+    # AND the facets together (matches parse_failures + row_matches_filters).
+    return " AND ".join(f"({e} OR {w})" for e, w in zip(err, warn))
 
 
 def _facets(
@@ -1193,6 +1212,7 @@ def get_dq_results_failed_rows(
     column: Annotated[list[str] | None, Query()] = None,
     run_id: str | None = Query(None),
     limit: int = Query(200, ge=1, le=100000),
+    offset: int = Query(0, ge=0),
     include_drafts: bool = Query(False),
 ) -> FailedRowsOut:
     """One run's failing rows for *table_fqn*, filtered server-side (OBO-gated).
@@ -1243,14 +1263,16 @@ def get_dq_results_failed_rows(
     entitlements.record_entitlement(email, table_fqn)
 
     facets = _facets(dimension, severity, rule, column)
-    # When filters are active, scan a wider window than the page size so a
-    # selective filter can still fill the page. *total* is corrected to the
-    # TRUE filtered count below (a dedicated count pass), so this window only
-    # governs how many rows the preview itself renders.
-    scan_limit = limit if not facets.any_active() else min(max(limit * 5, 1000), _FAILED_ROWS_MAX)
+    active = facets.any_active()
 
     # (4) SP-side fetch of the precomputed failing rows, with created_at
-    # surfaced as the run_ts.
+    # surfaced as the run_ts. The facets (dimension/severity/rule/column) are
+    # pushed into the warehouse as VARIANT predicates over errors/warnings —
+    # the table is VARIANT specifically to allow this. So the query returns
+    # exactly the page the UI shows (LIMIT/OFFSET), and COUNT(*) OVER() yields
+    # the TRUE filtered total in the SAME pass — no separate 100k count-scan,
+    # no app-side parse-and-filter over a wide window. The predicate mirrors
+    # row_matches_filters exactly (see _facet_pushdown_predicate).
     quarantine_table = _app_object_fqn(app_conf, "dq_quarantine_records")
     e_fqn = escape_sql_string(table_fqn)
     if run_id:
@@ -1269,13 +1291,21 @@ def get_dq_results_failed_rows(
             f"WHERE input_location = '{e_fqn}' {mode_cond}"
             f"ORDER BY run_time DESC LIMIT 1) "
         )
+    # All facet values are strict-escaped inside the predicate builder.
+    facet_cond = f"AND ({_facet_pushdown_predicate(facets)}) " if active else ""
+    # COUNT(*) OVER() (computed before LIMIT/OFFSET) is the true filtered
+    # total; only needed when filtering — the unfiltered total is the cheaper
+    # authoritative dq_metrics read below. A deterministic quarantine_id
+    # tiebreak keeps paging stable when many rows share one created_at (bulk
+    # quarantine writes stamp an identical timestamp across the whole run).
+    count_col = ", COUNT(*) OVER () AS total_count" if active else ""
     stmt = (
         f"SELECT quarantine_id, run_id, to_json(row_data) AS row_data, "
         f"to_json(errors) AS errors, to_json(warnings) AS warnings, "
-        f"CAST(created_at AS STRING) AS created_at "
+        f"CAST(created_at AS STRING) AS created_at{count_col} "
         f"FROM {quarantine_table} WHERE source_table_fqn = '{e_fqn}' "  # noqa: S608
-        f"{run_cond}"
-        f"ORDER BY created_at DESC LIMIT {int(scan_limit)}"
+        f"{run_cond}{facet_cond}"
+        f"ORDER BY created_at DESC, quarantine_id DESC LIMIT {int(limit)} OFFSET {int(offset)}"
     )
     try:
         raw_rows = sp_sql.query_dicts(stmt)
@@ -1285,66 +1315,45 @@ def get_dq_results_failed_rows(
         logger.exception(f"Failed to load failed rows for {table_fqn}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    matched: list[FailedRowOut] = []
+    # The SQL already applied the facets, so every returned row is a match —
+    # parse each purely to shape it for display. Severity/dimension/rule_id
+    # come from each failure struct's OWN frozen user_metadata (as-of-run
+    # payload), never a live rule join.
+    rows: list[FailedRowOut] = []
     for raw in raw_rows:
-        # Severity/dimension/rule_id come from each failure struct's OWN
-        # frozen user_metadata (as-of-run payload) — no live rule join.
         parsed_failures = parse_failures(raw)
         record = to_failing_record(raw, parsed_failures)
-        failures = enrich_failures(parsed_failures)
-        if not QuarantineSampleService.row_matches_filters(
-            failures,
-            record.failed_columns,
-            dimensions=facets.dimensions,
-            severities=facets.severities,
-            rules=facets.rules,
-            columns=facets.columns,
-        ):
-            continue
-        matched.append(
+        rows.append(
             FailedRowOut(
                 record_key=record.record_key,
                 row_values=record.row_values,
                 failed_columns=record.failed_columns,
-                failures=failures,
+                failures=enrich_failures(parsed_failures),
                 run_ts=raw.get("created_at"),
             )
         )
 
-    # *total* must reflect the TRUE number of failing records for the
-    # resolved run — never the size of the (capped) preview scan.
-    #  - No active facets: read the run's authoritative distinct
-    #    failing-row count from dq_metrics (input_row_count -
-    #    valid_row_count) so the "download to view all N" headline is
-    #    correct even when *rows* is capped at *limit*.
-    #  - Active facets: the filters are applied app-side over each row's
-    #    parsed failure structs (not a SQL predicate), so the metrics
-    #    number — which counts EVERY failing row of the run regardless of
-    #    which check failed — would over-report. Instead count the true
-    #    matches across the WHOLE run (a dedicated errors/warnings-only
-    #    scan), not just the capped preview window. Without this the
-    #    filtered headline reported the scan-window match count, a lower
-    #    bound that badly undershot a selective filter on a large run
-    #    (item 63: a single-check filter showed 307 of its real 1183).
-    total = len(matched)
-    if not facets.any_active() and raw_rows:
-        # Every returned row belongs to exactly ONE run (the WHERE clause
-        # pins it), so the effective run is the pin or the run the sample
-        # carries.
-        resolved_run_id = run_id or raw_rows[0].get("run_id")
-        if resolved_run_id:
-            failed_by_run = _fetch_failed_records_by_run(sp_sql, app_conf, [table_fqn])
-            true_total = failed_by_run.get((table_fqn, resolved_run_id))
-            if true_total is not None:
-                total = true_total
-    elif facets.any_active() and raw_rows:
-        # len(matched) counts only the capped preview window; count the true
-        # filtered total across the FULL run so a selective filter's headline
-        # isn't a scan-window lower bound.
-        exact = _count_filtered_failed_rows(sp_sql, quarantine_table, e_fqn, run_cond, facets)
-        if exact is not None:
-            total = exact
-    return FailedRowsOut(rows=matched[:limit], total=total, suppressed=False)
+    # *total* must reflect the TRUE number of matching failing records for the
+    # resolved run — never the size of the returned page.
+    #  - Active facets: COUNT(*) OVER() on the filtered set, read off any row.
+    #    Zero when the page is empty (no match anywhere in the run).
+    #  - No active facets: the run's authoritative distinct failing-row count
+    #    from dq_metrics (input_row_count - valid_row_count), so the "download
+    #    to view all N" headline is correct even when the page is capped.
+    if active:
+        total = int(raw_rows[0].get("total_count") or 0) if raw_rows else 0
+    else:
+        total = len(rows)
+        if raw_rows:
+            # Every returned row belongs to exactly ONE run (the WHERE clause
+            # pins it), so the effective run is the pin or the run the page carries.
+            resolved_run_id = run_id or raw_rows[0].get("run_id")
+            if resolved_run_id:
+                failed_by_run = _fetch_failed_records_by_run(sp_sql, app_conf, [table_fqn])
+                true_total = failed_by_run.get((table_fqn, resolved_run_id))
+                if true_total is not None:
+                    total = true_total
+    return FailedRowsOut(rows=rows, total=total, suppressed=False)
 
 
 # ---------------------------------------------------------------------------

@@ -56,7 +56,10 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
               About tab listing every column) summons the scrollbar, shrinks
               this scroller, and `mx-auto` re-centers the content a few px
               LEFT of its position on shorter sibling tabs (P23 item 15). */}
-          <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]">
+          <div
+            data-scroll-root
+            className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]"
+          >
             <div className="flex flex-col gap-4 p-6 pt-0 max-w-7xl mx-auto min-w-0">
               <Outlet />
             </div>

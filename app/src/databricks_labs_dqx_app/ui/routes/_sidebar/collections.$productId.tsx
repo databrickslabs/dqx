@@ -32,6 +32,7 @@ import { ProductRunsTab } from "@/components/data-products/ProductRunsTab";
 import { ProductSchedulingTab } from "@/components/data-products/ProductSchedulingTab";
 import { ProductHistoryTab } from "@/components/data-products/ProductHistoryTab";
 import { useEditProductState } from "@/components/data-products/useEditProductState";
+import { useScrollToTop } from "@/hooks/use-scroll-to-top";
 
 export const Route = createFileRoute("/_sidebar/collections/$productId")({
   validateSearch: (search: Record<string, unknown>): { tab?: string } => ({
@@ -130,6 +131,12 @@ function DataProductDetailPage() {
   // state. An absent/invalid ?tab= falls back to "about".
   const activeTab: ProductTabKey =
     tab && (PRODUCT_TAB_KEYS as string[]).includes(tab) ? (tab as ProductTabKey) : "about";
+  // Reset the shared scroll container to the top on every tab switch. Tabs are
+  // a `?tab=` change (not a route change), so TanStack's scrollRestoration
+  // never fires; and shadcn Tabs keeps every panel mounted, so a mount-only
+  // reset in the tab body wouldn't re-fire on re-entry. Keying on activeTab
+  // covers both (see use-scroll-to-top).
+  useScrollToTop(activeTab);
   const setActiveTab = (next: ProductTabKey) =>
     void navigate({
       to: "/collections/$productId",

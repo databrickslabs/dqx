@@ -128,6 +128,7 @@ import {
 } from "@/lib/api-custom";
 import { ExportDialog } from "@/components/ExportDialog";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useScrollToTop } from "@/hooks/use-scroll-to-top";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { isRunStale, useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
 import { useMonitoredTableRunActivity } from "@/hooks/use-monitored-table-run-activity";
@@ -264,6 +265,10 @@ function MonitoredTableDetailPage() {
   // rule editor. Push (not replace) a history entry per switch.
   const activeTab: DetailTab =
     tab && (DETAIL_TAB_KEYS as readonly string[]).includes(tab) ? (tab as DetailTab) : "about";
+  // Reset the shared scroll container to the top on every tab switch — tabs are
+  // a `?tab=` change, not a route change, so scrollRestoration never fires
+  // (see use-scroll-to-top). Keyed on activeTab so it re-fires on every switch.
+  useScrollToTop(activeTab);
   const handleTabChange = useCallback(
     (next: string) => {
       // B2-23: mark the tab-switch navigate as a transition so that if any

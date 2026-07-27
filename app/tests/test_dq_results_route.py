@@ -404,9 +404,7 @@ class TestTableResults:
         assert resp.status_code == 403
         sql_mock.query_dicts.assert_not_called()
 
-    def test_breakdowns_use_as_of_run_attribution_from_the_view_rows(
-        self, client, sql_mock, monitored_tables_mock
-    ):
+    def test_breakdowns_use_as_of_run_attribution_from_the_view_rows(self, client, sql_mock, monitored_tables_mock):
         sql_dispatch(
             sql_mock,
             check_rows=[
@@ -608,9 +606,7 @@ class TestRuns:
         assert resp.status_code == 403
         sql_mock.query_dicts.assert_not_called()
 
-    def test_binding_resolving_to_inaccessible_catalog_returns_403(
-        self, client, sql_mock, monitored_tables_mock
-    ):
+    def test_binding_resolving_to_inaccessible_catalog_returns_403(self, client, sql_mock, monitored_tables_mock):
         monitored_tables_mock.get.return_value = binding_detail("b1", "secret.hr.salaries")
         resp = client.get("/api/v1/dq-results/runs/b1")
         assert resp.status_code == 403
@@ -704,9 +700,7 @@ class TestProductResults:
         assert row["failed_tests"] == 20
         assert row["total_tests"] == 200
 
-    def test_product_runs_without_run_sets_stay_one_per_run(
-        self, client, sql_mock, data_products_mock, run_sets_mock
-    ):
+    def test_product_runs_without_run_sets_stay_one_per_run(self, client, sql_mock, data_products_mock, run_sets_mock):
         # No run-set membership -> each run is its own batch (COALESCE), so
         # the rollup is one picker row per run, unchanged.
         data_products_mock.get.return_value = product_detail("p1", [("b1", "main.sales.orders")])
@@ -721,9 +715,7 @@ class TestProductResults:
         body = client.get("/api/v1/dq-results/product/p1/runs").json()
         assert [r["run_id"] for r in body["rows"]] == ["r2", "r1"]
 
-    def test_product_with_no_accessible_members_yields_empty_runs(
-        self, client, sql_mock, data_products_mock
-    ):
+    def test_product_with_no_accessible_members_yields_empty_runs(self, client, sql_mock, data_products_mock):
         data_products_mock.get.return_value = product_detail("p1", [("b1", "secret.hr.salaries")])
         body = client.get("/api/v1/dq-results/product/p1/runs").json()
         assert body == {"rows": []}
@@ -855,9 +847,7 @@ class TestRuleResults:
         assert body["by_rule"] == [] and body["trend"] == []
         sql_mock.query_dicts.assert_not_called()
 
-    def test_inaccessible_tables_are_filtered_not_403(
-        self, client, sql_mock, apply_rules_mock, monitored_tables_mock
-    ):
+    def test_inaccessible_tables_are_filtered_not_403(self, client, sql_mock, apply_rules_mock, monitored_tables_mock):
         apply_rules_mock.list_bindings_for_rule.return_value = [
             AppliedRule(id="ar1", binding_id="b1", rule_id="rule-1"),
             AppliedRule(id="ar2", binding_id="b2", rule_id="rule-1"),
@@ -873,9 +863,7 @@ class TestRuleResults:
         for call in sql_mock.query_dicts.call_args_list:
             assert "secret.hr.salaries" not in call[0][0]
 
-    def test_broken_binding_lookup_is_skipped_not_500(
-        self, client, sql_mock, apply_rules_mock, monitored_tables_mock
-    ):
+    def test_broken_binding_lookup_is_skipped_not_500(self, client, sql_mock, apply_rules_mock, monitored_tables_mock):
         apply_rules_mock.list_bindings_for_rule.return_value = [
             AppliedRule(id="ar1", binding_id="b1", rule_id="rule-1"),
             AppliedRule(id="ar2", binding_id="b-broken", rule_id="rule-1"),
@@ -1007,16 +995,12 @@ class TestTableFacetParam:
                 check_row("c1", errors=30, total=100, fqn="dev.sales.items", rule_id="rule-1"),
             ],
         )
-        body = client.get(
-            "/api/v1/dq-results/rule/rule-1", params={"table": ["dev.sales.items"]}
-        ).json()
+        body = client.get("/api/v1/dq-results/rule/rule-1", params={"table": ["dev.sales.items"]}).json()
         assert body["trend"][0]["pass_rate"] == pytest.approx(0.7)
         # by_table self-excludes the facet: both scoped tables stay visible.
         assert {g["label"] for g in body["by_table"]} == {"main.sales.orders", "dev.sales.items"}
         # An out-of-scope value is silently dropped — unfiltered, not empty.
-        body = client.get(
-            "/api/v1/dq-results/rule/rule-1", params={"table": ["main.other.table"]}
-        ).json()
+        body = client.get("/api/v1/dq-results/rule/rule-1", params={"table": ["main.other.table"]}).json()
         assert body["trend"][0]["pass_rate"] == pytest.approx(1 - 40 / 200)
 
     def test_rule_invalid_table_facet_fqn_returns_400(self, client, sql_mock, apply_rules_mock):
@@ -1087,8 +1071,9 @@ def quarantine_row(
     errors: object = None,
     warnings: object = None,
     created_at: str = "2026-07-10 00:00:00",
+    total_count: int | None = None,
 ) -> dict[str, str | None]:
-    return {
+    row: dict[str, str | None] = {
         "quarantine_id": quarantine_id,
         "run_id": "r1",
         "row_data": json.dumps(row_data if row_data is not None else {"id": 1, "amount": "12.5"}),
@@ -1096,6 +1081,11 @@ def quarantine_row(
         "warnings": json.dumps(warnings) if warnings is not None else None,
         "created_at": created_at,
     }
+    if total_count is not None:
+        # COUNT(*) OVER() rides on each filtered row (Statement Execution
+        # returns all columns as strings).
+        row["total_count"] = str(total_count)
+    return row
 
 
 FAILED_ROWS_URL = f"/api/v1/dq-results/failed-rows/{FQN}"
@@ -1109,9 +1099,7 @@ def _quarantine_stmt(sql_mock: MagicMock) -> str:
     select it explicitly rather than via ``call_args`` (last call).
     """
     return next(
-        call[0][0]
-        for call in reversed(sql_mock.query_dicts.call_args_list)
-        if "dq_quarantine_records" in call[0][0]
+        call[0][0] for call in reversed(sql_mock.query_dicts.call_args_list) if "dq_quarantine_records" in call[0][0]
     )
 
 
@@ -1162,9 +1150,7 @@ class TestFailedRowsSecurity:
         assert resp.status_code == 200
         assert order == ["obo_select_check", "fine_grained_check", "sp_fetch"]
 
-    def test_malformed_fqn_returns_400_without_any_backend_call(
-        self, client, obo_sql_mock, obo_ws_mock, sql_mock
-    ):
+    def test_malformed_fqn_returns_400_without_any_backend_call(self, client, obo_sql_mock, obo_ws_mock, sql_mock):
         resp = client.get("/api/v1/dq-results/failed-rows/not-a-three-part-name")
         assert resp.status_code == 400
         obo_sql_mock.query.assert_not_called()
@@ -1206,17 +1192,13 @@ class TestFailedRowsEntitlementPiggyback:
         client.get("/api/v1/dq-results/failed-rows/not-a-three-part-name")
         entitlement_mock.record_entitlement.assert_not_called()
 
-    def test_upsert_sits_after_both_gates(
-        self, client, obo_sql_mock, obo_ws_mock, sql_mock, entitlement_mock
-    ):
+    def test_upsert_sits_after_both_gates(self, client, obo_sql_mock, obo_ws_mock, sql_mock, entitlement_mock):
         # Placement pin: the entitlement is recorded only once BOTH Task 7
         # gates have passed — never between them — and before the SP fetch.
         order: list[str] = []
         obo_sql_mock.query.side_effect = lambda *a, **k: order.append("obo_select_check") or []
         obo_ws_mock.tables.get.side_effect = lambda *a, **k: order.append("fine_grained_check") or PLAIN_TABLE
-        entitlement_mock.record_entitlement.side_effect = (
-            lambda *a, **k: order.append("entitlement_upsert") or True
-        )
+        entitlement_mock.record_entitlement.side_effect = lambda *a, **k: order.append("entitlement_upsert") or True
         sql_mock.query_dicts.side_effect = lambda *a, **k: order.append("sp_fetch") or []
         assert client.get(FAILED_ROWS_URL).status_code == 200
         assert order == ["obo_select_check", "fine_grained_check", "entitlement_upsert", "sp_fetch"]
@@ -1300,51 +1282,114 @@ class TestFailedRowsShapeAndFilters:
             ),
         ]
 
-    def test_rule_filter(self, client, sql_mock):
-        self._two_rows(sql_mock)
-        body = client.get(FAILED_ROWS_URL, params={"rule": "c1"}).json()
-        assert [r["record_key"] for r in body["rows"]] == ["q1"]
-        assert body["total"] == 1
+    # NOTE ON FILTER SEMANTICS: the facet predicates (dimension/severity/
+    # rule/column) are now pushed into the warehouse as VARIANT predicates
+    # over errors/warnings (a single query, COUNT(*) OVER() for the total) —
+    # they are no longer applied app-side. The MagicMock SQL seam returns
+    # canned rows regardless of the WHERE clause, so these unit tests pin the
+    # generated SQL PREDICATE (structure + strict escaping); end-to-end
+    # semantic parity with the old app-side filter is proven against live
+    # data (see the results-performance validation).
 
-    def test_severity_filter_via_frozen_struct_metadata(self, client, sql_mock):
-        self._two_rows(sql_mock)
-        body = client.get(FAILED_ROWS_URL, params={"severity": "Low"}).json()
-        assert [r["record_key"] for r in body["rows"]] == ["q2"]
+    def test_rule_filter_pushes_id_or_name_predicate(self, client, sql_mock):
+        client.get(FAILED_ROWS_URL, params={"rule": "c1"})
+        stmt = _quarantine_stmt(sql_mock)
+        # rule identity: registry_rule_id OR (user_metadata.name -> struct name)
+        assert "variant_get(f, '$.user_metadata.registry_rule_id', 'string') IN ('c1')" in stmt
+        assert "variant_get(f, '$.name', 'string')) IN ('c1')" in stmt
+        # applied to BOTH errors and warnings, ORed
+        assert "cast(errors as array<variant>)" in stmt
+        assert "cast(warnings as array<variant>)" in stmt
 
-    def test_dimension_filter_via_frozen_struct_metadata(self, client, sql_mock):
-        self._two_rows(sql_mock)
-        body = client.get(FAILED_ROWS_URL, params={"dimension": "Completeness"}).json()
-        assert [r["record_key"] for r in body["rows"]] == ["q1"]
+    def test_severity_filter_pushes_metadata_predicate(self, client, sql_mock):
+        client.get(FAILED_ROWS_URL, params={"severity": "Low"})
+        stmt = _quarantine_stmt(sql_mock)
+        assert "variant_get(f, '$.user_metadata.severity', 'string') IN ('Low')" in stmt
 
-    def test_column_filter_over_failed_columns(self, client, sql_mock):
-        self._two_rows(sql_mock)
-        body = client.get(FAILED_ROWS_URL, params={"column": "amount"}).json()
-        assert [r["record_key"] for r in body["rows"]] == ["q2"]
+    def test_dimension_filter_pushes_metadata_predicate(self, client, sql_mock):
+        client.get(FAILED_ROWS_URL, params={"dimension": "Completeness"})
+        stmt = _quarantine_stmt(sql_mock)
+        assert "variant_get(f, '$.user_metadata.dimension', 'string') IN ('Completeness')" in stmt
 
-    def test_repeatable_facets_are_ored(self, client, sql_mock):
-        self._two_rows(sql_mock)
-        body = client.get(FAILED_ROWS_URL, params={"rule": ["c1", "c2"]}).json()
-        assert body["total"] == 2
+    def test_column_filter_pushes_columns_with_mapped_fallback(self, client, sql_mock):
+        client.get(FAILED_ROWS_URL, params={"column": "amount"})
+        stmt = _quarantine_stmt(sql_mock)
+        assert "arrays_overlap(" in stmt
+        assert "cast(variant_get(f, '$.columns') as array<string>)" in stmt
+        assert "user_metadata.mapped_columns" in stmt
+        assert "array('amount')" in stmt
+
+    def test_repeatable_facets_are_ored_into_in_list(self, client, sql_mock):
+        client.get(FAILED_ROWS_URL, params={"rule": ["c1", "c2"]})
+        stmt = _quarantine_stmt(sql_mock)
+        assert "IN ('c1', 'c2')" in stmt
+
+    def test_multiple_facets_are_anded(self, client, sql_mock):
+        client.get(FAILED_ROWS_URL, params={"severity": "High", "dimension": "Completeness"})
+        stmt = _quarantine_stmt(sql_mock)
+        # Two per-facet (errors OR warnings) groups joined by AND.
+        assert "') IN ('High'" in stmt
+        assert "') IN ('Completeness'" in stmt
+        assert ") AND (" in stmt
+
+    def test_filtered_query_selects_count_over_window(self, client, sql_mock):
+        client.get(FAILED_ROWS_URL, params={"rule": "c1"})
+        stmt = _quarantine_stmt(sql_mock)
+        assert "COUNT(*) OVER () AS total_count" in stmt
+
+    def test_filtered_total_is_read_from_count_over_column(self, client, sql_mock):
+        # COUNT(*) OVER() rides on each returned row; the endpoint reads it off
+        # the first row as the true filtered total (independent of page size).
+        sql_mock.query_dicts.return_value = [
+            quarantine_row("q1", errors=[{"name": "c1", "message": "m", "columns": ["id"]}], total_count=1183)
+        ]
+        body = client.get(FAILED_ROWS_URL, params={"limit": 1, "rule": "c1"}).json()
+        assert len(body["rows"]) == 1
+        assert body["total"] == 1183  # NOT len(rows)
+
+    def test_empty_filtered_result_reports_zero_total(self, client, sql_mock):
+        sql_mock.query_dicts.return_value = []
+        body = client.get(FAILED_ROWS_URL, params={"rule": "no-such-rule"}).json()
+        assert body["rows"] == []
+        assert body["total"] == 0
+
+    def test_facet_values_are_strict_escaped_against_injection(self, client, sql_mock):
+        # A malicious facet value must not break out of the string literal.
+        client.get(FAILED_ROWS_URL, params={"severity": "x') OR 1=1 --"})
+        stmt = _quarantine_stmt(sql_mock)
+        # Single-quote doubled; the payload stays inside the literal.
+        assert "x'') OR 1=1 --" in stmt
+        assert "'x') OR 1=1" not in stmt
+
+    def test_facet_value_trailing_backslash_is_neutralized(self, client, sql_mock):
+        client.get(FAILED_ROWS_URL, params={"rule": "evil\\"})
+        stmt = _quarantine_stmt(sql_mock)
+        # Backslash doubled so it cannot escape the closing quote.
+        assert "evil\\\\" in stmt
 
     def test_unfiltered_scan_uses_limit(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"limit": 7})
-        assert "LIMIT 7" in sql_mock.query_dicts.call_args[0][0]
+        assert "LIMIT 7" in _quarantine_stmt(sql_mock)
 
-    def test_filtered_scan_widens_the_window(self, client, sql_mock):
-        # With active filters the SP scan window is wider than the page so a
-        # selective filter can still fill it.
-        client.get(FAILED_ROWS_URL, params={"limit": 7, "rule": "c1"})
-        assert "LIMIT 1000" in sql_mock.query_dicts.call_args[0][0]
+    def test_query_orders_with_quarantine_id_tiebreak(self, client, sql_mock):
+        # Bulk quarantine writes stamp one created_at across the whole run, so
+        # a deterministic tiebreak is required for stable paging.
+        client.get(FAILED_ROWS_URL)
+        assert "ORDER BY created_at DESC, quarantine_id DESC" in _quarantine_stmt(sql_mock)
 
-    def test_limit_caps_rows_but_total_counts_matches(self, client, sql_mock):
-        self._two_rows(sql_mock)
-        body = client.get(FAILED_ROWS_URL, params={"limit": 1, "rule": ["c1", "c2"]}).json()
-        assert len(body["rows"]) == 1
-        assert body["total"] == 2
+    def test_offset_is_pushed_for_pagination(self, client, sql_mock):
+        client.get(FAILED_ROWS_URL, params={"limit": 50, "offset": 100})
+        stmt = _quarantine_stmt(sql_mock)
+        assert "LIMIT 50 OFFSET 100" in stmt
 
     @pytest.mark.parametrize("limit", [0, 100001])
     def test_out_of_range_limit_is_rejected(self, client, sql_mock, limit):
         resp = client.get(FAILED_ROWS_URL, params={"limit": limit})
+        assert resp.status_code == 422
+        sql_mock.query_dicts.assert_not_called()
+
+    def test_negative_offset_is_rejected(self, client, sql_mock):
+        resp = client.get(FAILED_ROWS_URL, params={"offset": -1})
         assert resp.status_code == 422
         sql_mock.query_dicts.assert_not_called()
 
@@ -1364,16 +1409,19 @@ class TestFailedRowsTrueTotal:
         ]
 
     def test_unfiltered_total_is_true_metrics_count_not_capped_sample(self, client, sql_mock):
-        # The sample is capped at *limit* (1 row here), but the headline
-        # total is the run's real failing-row count: 5000 - 200 = 4800.
+        # The page is capped at *limit* IN SQL (LIMIT pushed down); the mock
+        # returns the one row the warehouse would. The headline total is the
+        # run's real failing-row count from dq_metrics: 5000 - 200 = 4800,
+        # independent of the returned page size.
         sql_dispatch(
             sql_mock,
-            quarantine_rows=[quarantine_row("q1"), quarantine_row("q2")],
+            quarantine_rows=[quarantine_row("q1")],
             metrics_rows=[metrics_row(FQN, "r1", input_rows=5000, valid_rows=200)],
         )
         body = client.get(FAILED_ROWS_URL, params={"limit": 1}).json()
-        assert len(body["rows"]) == 1  # preview stays capped
-        assert body["total"] == 4800  # NOT 1 (sample) or 2 (scanned window)
+        assert "LIMIT 1 OFFSET 0" in _quarantine_stmt(sql_mock)  # cap enforced in SQL
+        assert len(body["rows"]) == 1
+        assert body["total"] == 4800  # NOT the page size
 
     def test_pinned_run_total_uses_that_runs_metrics(self, client, sql_mock):
         sql_dispatch(
@@ -1396,43 +1444,28 @@ class TestFailedRowsTrueTotal:
     def test_faceted_total_skips_metrics_read(self, client, sql_mock):
         # With filters active the true FILTERED count can't come from the
         # mode-wide metrics number (it counts EVERY failing row of the run,
-        # whatever check failed), so no dq_metrics read is issued — the count
-        # comes from a dedicated quarantine scan instead.
+        # whatever check failed). The filtered path reads COUNT(*) OVER() off
+        # the (single) pushdown query and issues no dq_metrics read.
         sql_mock.query_dicts.return_value = [
-            quarantine_row(
-                "q1",
-                errors=[{"name": "c1", "message": "m", "columns": ["id"]}],
-            )
+            quarantine_row("q1", errors=[{"name": "c1", "message": "m", "columns": ["id"]}], total_count=1)
         ]
         body = client.get(FAILED_ROWS_URL, params={"rule": "c1"}).json()
         assert body["total"] == 1
         assert self._metrics_stmts(sql_mock) == []
 
-    def test_faceted_total_counts_whole_run_not_capped_preview(self, client, sql_mock):
-        # item 63: the filtered headline must be the TRUE count of matching
-        # rows across the whole run — never the capped preview window. The
-        # preview (row_data SELECT, capped at *limit*) returns 1 row; the
-        # dedicated count pass (errors/warnings-only SELECT, no row_data)
-        # sees the full run and reports the real filtered total.
-        preview_rows = [
-            quarantine_row("q1", errors=[{"name": "c1", "message": "m", "columns": ["id"]}]),
+    def test_faceted_total_is_single_query_no_separate_count_scan(self, client, sql_mock):
+        # item 63 + performance: the filtered headline is the TRUE count of
+        # matching rows across the whole run (COUNT(*) OVER(), computed before
+        # LIMIT/OFFSET), read off the returned page — never the page size, and
+        # WITHOUT a second 100k count-scan pass. Exactly ONE quarantine query.
+        sql_mock.query_dicts.return_value = [
+            quarantine_row("q1", errors=[{"name": "c1", "message": "m", "columns": ["id"]}], total_count=1183)
         ]
-        count_rows = [
-            quarantine_row(f"q{i}", errors=[{"name": "c1", "message": "m", "columns": ["id"]}])
-            for i in range(3)
-        ]
-
-        def dispatch(stmt: str, **_kwargs: object) -> list[dict[str, str | None]]:
-            if "dq_quarantine_records" not in stmt:
-                return []
-            # The preview SELECT carries row_data + ORDER BY; the count pass
-            # selects only the failure structs.
-            return preview_rows if "row_data" in stmt else count_rows
-
-        sql_mock.query_dicts.side_effect = dispatch
         body = client.get(FAILED_ROWS_URL, params={"limit": 1, "rule": "c1"}).json()
-        assert len(body["rows"]) == 1  # preview stays capped at limit
-        assert body["total"] == 3  # true filtered count over the full run
+        assert len(body["rows"]) == 1  # page stays capped at limit
+        assert body["total"] == 1183  # true filtered count from COUNT(*) OVER()
+        quarantine_calls = [c for c in sql_mock.query_dicts.call_args_list if "dq_quarantine_records" in c[0][0]]
+        assert len(quarantine_calls) == 1  # no separate count-scan pass
 
     def test_no_rows_yields_zero_total_without_metrics_read(self, client, sql_mock):
         sql_dispatch(sql_mock, quarantine_rows=[])
@@ -1680,16 +1713,12 @@ class TestFailedRowsRunScoping:
 
     def test_explicit_run_id_wins_over_include_drafts(self, client, sql_mock):
         self._two_run_dispatch(sql_mock)
-        body = client.get(
-            FAILED_ROWS_URL, params={"run_id": "r1", "include_drafts": "true"}
-        ).json()
+        body = client.get(FAILED_ROWS_URL, params={"run_id": "r1", "include_drafts": "true"}).json()
         assert [r["record_key"] for r in body["rows"]] == ["q-old"]
         assert "run_id = 'r1'" in _quarantine_stmt(sql_mock)
 
     @pytest.mark.parametrize("run_id", ["ab'c", "x' OR '1'='1", "run id"])
-    def test_unsafe_run_id_is_rejected_before_the_obo_gates(
-        self, client, sql_mock, obo_sql_mock, obo_ws_mock, run_id
-    ):
+    def test_unsafe_run_id_is_rejected_before_the_obo_gates(self, client, sql_mock, obo_sql_mock, obo_ws_mock, run_id):
         resp = client.get(FAILED_ROWS_URL, params={"run_id": run_id})
         assert resp.status_code == 400
         obo_sql_mock.query.assert_not_called()
