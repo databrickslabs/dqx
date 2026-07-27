@@ -2391,7 +2391,10 @@ class SchedulerService:
                 hours = int(rows[0][0])
                 return max(_QUARANTINE_OPTIMIZE_INTERVAL_HOURS_MIN, hours)
         except Exception:
-            logger.warning("OPTIMIZE interval lookup failed; using default", exc_info=True)
+            # debug (not warning) for parity with _resolve_setting_days: this
+            # fires on init + every sweep, so a transient Lakebase blip must not
+            # spam warning-level tracebacks. The default fallback is harmless.
+            logger.debug("OPTIMIZE interval lookup failed; using default", exc_info=True)
         return _QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT
 
     async def _maybe_run_optimize(self, now: datetime) -> None:
