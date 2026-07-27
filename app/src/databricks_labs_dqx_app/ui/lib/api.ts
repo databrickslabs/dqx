@@ -2385,6 +2385,22 @@ export interface ObjectGrantsOut {
   default_inherit?: boolean;
 }
 
+export type OptimizeSettingsInOptimizeIntervalHours = number | null;
+
+export interface OptimizeSettingsIn {
+  optimize_interval_hours?: OptimizeSettingsInOptimizeIntervalHours;
+}
+
+/**
+ * Effective OPTIMIZE cadence + the default/min the scheduler falls back to.
+ */
+export interface OptimizeSettingsOut {
+  optimize_interval_hours: number;
+  optimize_interval_hours_default?: number;
+  optimize_interval_hours_min?: number;
+  optimize_interval_hours_set: boolean;
+}
+
 export type OutputConfigOptions = {[key: string]: string};
 
 export type OutputConfigTrigger = {[key: string]: string | boolean};
@@ -6281,6 +6297,216 @@ export const useSaveRetentionSettings = <TError = AxiosError<HTTPValidationError
       > => {
 
       const mutationOptions = getSaveRetentionSettingsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Return the current OPTIMIZE cadence + defaults (admin only).
+ * @summary Get Optimize Settings
+ */
+export const getOptimizeSettings = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<OptimizeSettingsOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/config/optimize`,options
+    );
+  }
+
+
+
+
+export const getGetOptimizeSettingsQueryKey = () => {
+    return [
+    `/api/v1/config/optimize`
+    ] as const;
+    }
+
+    
+export const getGetOptimizeSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetOptimizeSettingsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOptimizeSettings>>> = ({ signal }) => getOptimizeSettings({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetOptimizeSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getOptimizeSettings>>>
+export type GetOptimizeSettingsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetOptimizeSettings<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getOptimizeSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getOptimizeSettings>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetOptimizeSettings<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getOptimizeSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getOptimizeSettings>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetOptimizeSettings<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Optimize Settings
+ */
+
+export function useGetOptimizeSettings<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetOptimizeSettingsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetOptimizeSettingsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetOptimizeSettingsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOptimizeSettings>>> = ({ signal }) => getOptimizeSettings({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetOptimizeSettingsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getOptimizeSettings>>>
+export type GetOptimizeSettingsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetOptimizeSettingsSuspense<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetOptimizeSettingsSuspense<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetOptimizeSettingsSuspense<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Optimize Settings
+ */
+
+export function useGetOptimizeSettingsSuspense<TData = Awaited<ReturnType<typeof getOptimizeSettings>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getOptimizeSettings>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetOptimizeSettingsSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Update the OPTIMIZE cadence (admin only). Omitted field = leave unchanged.
+ * @summary Save Optimize Settings
+ */
+export const saveOptimizeSettings = (
+    optimizeSettingsIn: OptimizeSettingsIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<OptimizeSettingsOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/optimize`,
+      optimizeSettingsIn,options
+    );
+  }
+
+
+
+export const getSaveOptimizeSettingsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveOptimizeSettings>>, TError,{data: OptimizeSettingsIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveOptimizeSettings>>, TError,{data: OptimizeSettingsIn}, TContext> => {
+
+const mutationKey = ['saveOptimizeSettings'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveOptimizeSettings>>, {data: OptimizeSettingsIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveOptimizeSettings(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveOptimizeSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof saveOptimizeSettings>>>
+    export type SaveOptimizeSettingsMutationBody = OptimizeSettingsIn
+    export type SaveOptimizeSettingsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Optimize Settings
+ */
+export const useSaveOptimizeSettings = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveOptimizeSettings>>, TError,{data: OptimizeSettingsIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveOptimizeSettings>>,
+        TError,
+        {data: OptimizeSettingsIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveOptimizeSettingsMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

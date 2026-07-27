@@ -482,3 +482,89 @@ class TestRunRetentionExecutorContract:
             # branch-on-dialect pattern.
             assert f"INTERVAL '{_RETENTION_DAYS_DEFAULT} days'" not in stmt
             assert f"INTERVAL {_RETENTION_DAYS_DEFAULT} DAY" not in stmt
+
+
+# ---------------------------------------------------------------------------
+# /config/optimize route — GET + PUT handler unit tests
+# ---------------------------------------------------------------------------
+
+
+def _wire_stateful_store_for_optimize(sql_executor_mock) -> dict[str, str]:
+    """Wire an in-memory key/value store onto sql_executor_mock for optimize tests."""
+    store: dict[str, str] = {}
+
+    def _upsert(_table, *, key_cols, value_cols, **_kwargs):
+        store[key_cols["setting_key"]] = value_cols["setting_value"]
+
+    def _query(sql):
+        for key, value in store.items():
+            if f"'{key}'" in sql:
+                return [(value,)]
+        return []
+
+    sql_executor_mock.upsert.side_effect = _upsert
+    sql_executor_mock.query.side_effect = _query
+    return store
+
+
+@pytest.fixture
+def optimize_svc(sql_executor_mock):
+    sql_executor_mock.fqn.side_effect = lambda t: t
+    sql_executor_mock.query.return_value = []
+    from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+
+    return AppSettingsService(sql=sql_executor_mock)
+
+
+class TestGetOptimizeSettings:
+    def test_get_optimize_settings_returns_default_when_unset(self, optimize_svc) -> None:
+        from databricks_labs_dqx_app.backend.routes.v1.config import get_optimize_settings
+        from databricks_labs_dqx_app.backend.services.scheduler_service import (
+            _QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT,
+        )
+
+        result = get_optimize_settings(optimize_svc)
+        assert result.optimize_interval_hours == _QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT
+        assert result.optimize_interval_hours_set is False
+
+    def test_get_optimize_settings_reflects_saved_value(self, optimize_svc, sql_executor_mock) -> None:
+        from databricks_labs_dqx_app.backend.routes.v1.config import get_optimize_settings
+
+        _wire_stateful_store_for_optimize(sql_executor_mock)
+        optimize_svc.save_quarantine_optimize_interval_hours(6, user_email="a@b.com")
+
+        result = get_optimize_settings(optimize_svc)
+        assert result.optimize_interval_hours == 6
+        assert result.optimize_interval_hours_set is True
+
+
+class TestSaveOptimizeSettings:
+    def test_put_optimize_settings_persists(self, optimize_svc, sql_executor_mock) -> None:
+        from databricks_labs_dqx_app.backend.routes.v1.config import OptimizeSettingsIn, save_optimize_settings
+
+        _wire_stateful_store_for_optimize(sql_executor_mock)
+        result = save_optimize_settings(OptimizeSettingsIn(optimize_interval_hours=6), optimize_svc, "admin@x")
+        assert result.optimize_interval_hours == 6
+        assert result.optimize_interval_hours_set is True
+
+    def test_put_optimize_settings_validates_floor(self, optimize_svc, sql_executor_mock) -> None:
+        from fastapi import HTTPException
+
+        from databricks_labs_dqx_app.backend.routes.v1.config import OptimizeSettingsIn, save_optimize_settings
+
+        _wire_stateful_store_for_optimize(sql_executor_mock)
+        with pytest.raises(HTTPException) as exc:
+            save_optimize_settings(OptimizeSettingsIn(optimize_interval_hours=0), optimize_svc, "admin@x")
+        assert exc.value.status_code == 400
+
+    def test_put_optimize_settings_omit_leaves_unchanged(self, optimize_svc, sql_executor_mock) -> None:
+        from databricks_labs_dqx_app.backend.routes.v1.config import OptimizeSettingsIn, save_optimize_settings
+        from databricks_labs_dqx_app.backend.services.scheduler_service import (
+            _QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT,
+        )
+
+        _wire_stateful_store_for_optimize(sql_executor_mock)
+        # Omit the field — nothing persisted, should return the default
+        result = save_optimize_settings(OptimizeSettingsIn(), optimize_svc, "admin@x")
+        assert result.optimize_interval_hours == _QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT
+        assert result.optimize_interval_hours_set is False

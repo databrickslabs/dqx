@@ -48,6 +48,11 @@ _RETENTION_DAYS_MIN = 7
 # typo, and lets the UI render a meaningful slider/input range.
 _RETENTION_DAYS_MAX = 3650
 
+# Defaults for the OPTIMIZE sweep — kept in sync with
+# ``backend.services.scheduler_service``.
+_QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT = 24
+_QUARANTINE_OPTIMIZE_INTERVAL_HOURS_MIN = 1
+
 _LABEL_DEFS_SETTING_KEY = "label_definitions"
 # Keys must be safe for YAML round-tripping and stable as DataFrame columns:
 # letters, digits, underscore, leading with a letter.
@@ -404,6 +409,72 @@ def save_retention_settings(
         logger.info("Saved quarantine_retention_days=%d", validated_q)
 
     return get_retention_settings(svc)
+
+
+# ---------------------------------------------------------------------------
+# Quarantine OPTIMIZE cadence — admin knob for the periodic OPTIMIZE sweep
+# that physically applies liquid clustering on dq_quarantine_records.
+# Default 24 h; floored at 1 h so a misconfiguration can't hammer the
+# warehouse. Surfaced in Settings → Compute alongside the retention card.
+# ---------------------------------------------------------------------------
+
+
+class OptimizeSettingsOut(BaseModel):
+    """Effective OPTIMIZE cadence + the default/min the scheduler falls back to."""
+
+    optimize_interval_hours: int
+    optimize_interval_hours_default: int = _QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT
+    optimize_interval_hours_min: int = _QUARANTINE_OPTIMIZE_INTERVAL_HOURS_MIN
+    optimize_interval_hours_set: bool
+
+
+class OptimizeSettingsIn(BaseModel):
+    optimize_interval_hours: int | None = None
+
+
+def _validate_optimize_hours(value: int) -> int:
+    if value < _QUARANTINE_OPTIMIZE_INTERVAL_HOURS_MIN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"optimize_interval_hours must be at least {_QUARANTINE_OPTIMIZE_INTERVAL_HOURS_MIN} hour(s).",
+        )
+    return value
+
+
+@router.get(
+    "/optimize",
+    response_model=OptimizeSettingsOut,
+    operation_id="getOptimizeSettings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def get_optimize_settings(
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> OptimizeSettingsOut:
+    """Return the current OPTIMIZE cadence + defaults (admin only)."""
+    hrs = svc.get_quarantine_optimize_interval_hours()
+    return OptimizeSettingsOut(
+        optimize_interval_hours=hrs if hrs is not None else _QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT,
+        optimize_interval_hours_set=hrs is not None,
+    )
+
+
+@router.put(
+    "/optimize",
+    response_model=OptimizeSettingsOut,
+    operation_id="saveOptimizeSettings",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_optimize_settings(
+    body: OptimizeSettingsIn,
+    svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> OptimizeSettingsOut:
+    """Update the OPTIMIZE cadence (admin only). Omitted field = leave unchanged."""
+    if body.optimize_interval_hours is not None:
+        svc.save_quarantine_optimize_interval_hours(
+            _validate_optimize_hours(body.optimize_interval_hours), user_email=email
+        )
+    return get_optimize_settings(svc)
 
 
 # ---------------------------------------------------------------------------
