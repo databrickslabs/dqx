@@ -395,6 +395,49 @@ class TestRunRetentionPostgresDialect:
         assert call_count["n"] == len(_OLTP_RETENTION_TABLES)
 
 
+# ---------------------------------------------------------------------------
+# AppSettingsService — quarantine OPTIMIZE interval setting
+# ---------------------------------------------------------------------------
+
+
+class TestOptimizeIntervalSetting:
+    """quarantine_optimize_interval_hours get/save via AppSettingsService."""
+
+    @pytest.fixture
+    def svc(self, sql_executor_mock):
+        """Return (AppSettingsService, sql_mock) backed by an in-memory store.
+
+        Uses the same ``sql_executor_mock`` fixture as
+        :class:`TestAppSettingsRetention` so the construction is identical.
+        The store is empty at fixture time (``query.return_value = []``),
+        and ``upsert`` side-effects write through so round-trips pass.
+        """
+        from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+
+        store: dict[str, str] = {}
+
+        def _query(sql: str) -> list[tuple[str | None, ...]]:
+            for key, val in store.items():
+                if f"'{key}'" in sql:
+                    return [(val,)]
+            return []
+
+        def _upsert(table: str, *, key_cols: dict, value_cols: dict) -> None:  # type: ignore[override]
+            store[key_cols["setting_key"]] = value_cols["setting_value"]
+
+        sql_executor_mock.query.side_effect = _query
+        sql_executor_mock.upsert.side_effect = _upsert
+        sql_executor_mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
+        return AppSettingsService(sql_executor_mock)
+
+    def test_get_returns_none_when_unset(self, svc) -> None:
+        assert svc.get_quarantine_optimize_interval_hours() is None
+
+    def test_save_then_get_roundtrips(self, svc) -> None:
+        svc.save_quarantine_optimize_interval_hours(12, user_email="a@b.com")
+        assert svc.get_quarantine_optimize_interval_hours() == 12
+
+
 class TestRunRetentionExecutorContract:
     """``_run_retention`` is dialect-agnostic — it just calls
     :meth:`OltpExecutorProtocol.interval_days_expr` and trusts the
