@@ -337,6 +337,8 @@ _V1_ANALYTICAL_BASELINE = (
     # Quarantined invalid rows captured during validation.  ``row_data``
     # and ``errors`` are VARIANT for native JSON predicate pushdown and
     # ~10x compression vs. STRING.
+    # Liquid-clustered by (run_id, source_table_fqn): run-scoped writes
+    # co-locate, and the by-table quarantine views filter on source_table_fqn.
     f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_quarantine_records ("
     "  quarantine_id STRING NOT NULL,"
     "  run_id STRING NOT NULL,"
@@ -347,7 +349,7 @@ _V1_ANALYTICAL_BASELINE = (
     "  warnings VARIANT,"
     "  created_at TIMESTAMP,"
     "  CONSTRAINT pk_dq_quarantine_records PRIMARY KEY (quarantine_id) RELY"
-    ") CLUSTER BY (run_id);"
+    ") CLUSTER BY (run_id, source_table_fqn);"
     #
     # Long-format observability events written by DQMetricsObserver.
     # Schema mirrors the public DQX OBSERVATION_TABLE_SCHEMA so AI/BI
