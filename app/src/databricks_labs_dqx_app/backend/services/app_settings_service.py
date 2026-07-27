@@ -185,6 +185,7 @@ class AppSettingsService:
 
     _RETENTION_KEY = "retention_days"
     _QUARANTINE_RETENTION_KEY = "quarantine_retention_days"
+    _QUARANTINE_OPTIMIZE_INTERVAL_KEY = "quarantine_optimize_interval_hours"
 
     def get_retention_days(self) -> int | None:
         """Return the configured global retention window, or ``None`` if unset."""
@@ -203,6 +204,31 @@ class AppSettingsService:
         """Persist the quarantine retention window. Returns the saved value."""
         self.save_setting(self._QUARANTINE_RETENTION_KEY, str(int(days)), user_email=user_email)
         return int(days)
+
+    def get_quarantine_optimize_interval_hours(self) -> int | None:
+        """Return the configured OPTIMIZE cadence (hours) for dq_quarantine_records, or *None* if unset.
+
+        When *None* the scheduler falls back to its compiled-in default (24 hours).
+        The stored value is returned verbatim (any parseable int, including 0 or a
+        negative); returns *None* only when unset, blank, or non-integer. Lower-bound
+        (floor) protection lives in the scheduler resolver and the route-layer
+        validation, not here.
+        """
+        return self._get_int_setting(self._QUARANTINE_OPTIMIZE_INTERVAL_KEY)
+
+    def save_quarantine_optimize_interval_hours(self, hours: int, *, user_email: str | None = None) -> None:
+        """Persist the OPTIMIZE cadence (hours) for dq_quarantine_records.
+
+        Validation and floor enforcement live at the route layer; this method
+        stores the value exactly as given so callers can always read back what
+        they wrote.
+
+        Args:
+            hours: OPTIMIZE cadence in hours. Must be a positive integer;
+                enforcement is the caller's responsibility.
+            user_email: Email of the admin performing the change (audit trail).
+        """
+        self.save_setting(self._QUARANTINE_OPTIMIZE_INTERVAL_KEY, str(int(hours)), user_email=user_email)
 
     # ------------------------------------------------------------------
     # Draft-run sampling — bounds the rows a DRAFT monitored-table run

@@ -3271,7 +3271,9 @@ export function RegistryRuleFormDialog({
                 placeholder={readOnly ? t("monitoredTables.severityNoneLabel") : t("rulesRegistry.selectSeverity")}
               />
             </SelectTrigger>
-            <SelectContent>
+            {/* position="popper": anchor below the trigger (consistent with the
+                dimension select) rather than overlaying the selected item. */}
+            <SelectContent position="popper">
               {severityValues.map((v) => (
                 <SelectItem key={v} value={v} className="text-xs">
                   <span className="flex items-center gap-1.5">
@@ -3317,7 +3319,12 @@ export function RegistryRuleFormDialog({
                 <SelectValue placeholder={t("rulesRegistry.selectDimension")} />
               )}
             </SelectTrigger>
-            <SelectContent>
+            {/* position="popper" anchors the list BELOW the trigger. The default
+                "item-aligned" overlays the selected item on top of the trigger —
+                which, with these two-line items (name + description), covers the
+                trigger so it can't be re-opened, and visibly jumps the popup
+                elsewhere after a selection. */}
+            <SelectContent position="popper">
               {dimensionValues.map((v) => {
                 const description = dimensionDescriptions[v];
                 return (

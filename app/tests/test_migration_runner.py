@@ -333,3 +333,26 @@ class TestMigrationRunnerUsesQuotedIdentifiers:
         assert "prod-east.dqx_studio" not in " ".join(
             captured
         ), "Found raw (un-quoted) interpolation — hyphenated catalogs would emit parse-invalid DDL"
+
+
+# ---------------------------------------------------------------------------
+# Quarantine table liquid-clustering keys
+# ---------------------------------------------------------------------------
+
+
+class TestQuarantineClustering:
+    """dq_quarantine_records is liquid-clustered by (run_id, source_table_fqn)."""
+
+    def test_quarantine_clustered_by_run_id_then_source_table_fqn(self) -> None:
+        from databricks_labs_dqx_app.backend.migrations import MIGRATIONS
+
+        v1 = next(m for m in MIGRATIONS if m.version == 1)
+        sql = v1.sql_template
+        assert "dq_quarantine_records" in sql
+        assert "CLUSTER BY (run_id, source_table_fqn)" in sql, (
+            "quarantine table must be liquid-clustered by (run_id, source_table_fqn)"
+        )
+        # Guard against a stray leftover single-key clause.
+        assert "dq_quarantine_records" not in sql or "CLUSTER BY (run_id)" not in sql.replace(
+            "CLUSTER BY (run_id, source_table_fqn)", ""
+        )

@@ -1935,3 +1935,23 @@ class TestCollectCompletedScoreRunFqnsBuffersViewFqns:
         svc._collect_completed_score_run_fqns(self.NOW)
 
         assert svc._completed_view_fqns_buffer == []
+
+
+# ---------------------------------------------------------------------------
+# OPTIMIZE sweep
+# ---------------------------------------------------------------------------
+
+
+class TestOptimizeSweep:
+    """SchedulerService._run_optimize issues OPTIMIZE on the quarantine table."""
+
+    def test_run_optimize_issues_optimize_on_quarantine_table(self, make_scheduler) -> None:
+        scheduler, mocks = make_scheduler(distinct_sql=True)
+        scheduler._run_optimize()
+        stmts = [c.args[0] for c in mocks.sql.execute.call_args_list]
+        assert any(s.strip().upper().startswith("OPTIMIZE") and "dq_quarantine_records" in s for s in stmts), stmts
+
+    def test_run_optimize_swallows_errors(self, make_scheduler) -> None:
+        scheduler, mocks = make_scheduler(distinct_sql=True)
+        mocks.sql.execute.side_effect = RuntimeError("boom")
+        scheduler._run_optimize()  # must not raise

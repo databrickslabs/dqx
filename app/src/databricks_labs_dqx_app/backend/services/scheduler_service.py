@@ -180,6 +180,15 @@ _RETENTION_DAYS_DEFAULT = 90
 _RETENTION_DAYS_MIN = 7
 _RETENTION_INTERVAL_HOURS = 24
 
+# OPTIMIZE sweep — periodic `OPTIMIZE` of dq_quarantine_records so its liquid
+# clustering (CLUSTER BY (run_id, source_table_fqn)) is physically applied. LC
+# only reorganises data on OPTIMIZE; without this the clustering keys are
+# declared but never materialised. Interval is admin-configurable via the
+# ``quarantine_optimize_interval_hours`` setting; defaults to 24h, floored at 1h
+# so a misconfiguration can't hammer the warehouse.
+_QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT = 24
+_QUARANTINE_OPTIMIZE_INTERVAL_HOURS_MIN = 1
+
 # ``dq_quarantine_records`` is the only table that holds full row
 # payloads (the source row + ``_errors`` / ``_warnings`` blobs).  Those
 # rows are PII-sensitive and tend to drive most of the Studio's storage
@@ -400,6 +409,14 @@ class SchedulerService:
         # missed sweep is harmless since the next one catches up.
         self._next_retention_at: datetime = datetime.now(timezone.utc) + timedelta(hours=_RETENTION_INTERVAL_HOURS)
 
+        # OPTIMIZE sweep: fires every resolved interval (default 24h). Held in
+        # process memory like the retention sweep; a missed run is harmless.
+        # Initialised with the compiled-in default so construction stays
+        # pure (no OLTP query); the resolver re-reads the setting each cycle.
+        self._next_optimize_at: datetime = datetime.now(timezone.utc) + timedelta(
+            hours=_QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT
+        )
+
         # Metadata-dim refresh: fires every
         # ``_METADATA_DIM_REFRESH_INTERVAL_HOURS`` (default 1h). Held in
         # process memory like the retention sweep; the app also refreshes once
@@ -458,6 +475,7 @@ class SchedulerService:
                 await self._maybe_gc_orphan_views(datetime.now(timezone.utc))
                 await self._maybe_sweep_stale_tmp_views(datetime.now(timezone.utc))
                 await self._maybe_run_retention(datetime.now(timezone.utc))
+                await self._maybe_run_optimize(datetime.now(timezone.utc))
                 await self._maybe_run_tag_reconcile(datetime.now(timezone.utc))
                 await self._maybe_refresh_metadata_dims(datetime.now(timezone.utc))
             except asyncio.CancelledError:
@@ -2349,6 +2367,67 @@ class SchedulerService:
                 logger.warning("Retention sweep: %s failed (%s); continuing", table_name, exc)
 
         logger.info("Retention sweep complete: %d table(s) processed", total_deleted)
+
+    # ------------------------------------------------------------------
+    # OPTIMIZE sweep — periodic OPTIMIZE of dq_quarantine_records
+    # ------------------------------------------------------------------
+
+    def _resolve_optimize_interval_hours(self) -> int:
+        """Return the OPTIMIZE cadence in hours (>= 1).
+
+        Reads ``quarantine_optimize_interval_hours`` from ``dq_app_settings``
+        and falls back to :data:`_QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT`
+        (24h) when unset or unparseable. Floored at
+        :data:`_QUARANTINE_OPTIMIZE_INTERVAL_HOURS_MIN` so a misconfiguration
+        can't schedule a punishing OPTIMIZE cadence.
+        """
+        try:
+            from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+            escaped_key = escape_sql_string("quarantine_optimize_interval_hours")
+            sql = f"SELECT setting_value FROM {self._settings_table} WHERE setting_key = '{escaped_key}'"  # noqa: S608
+            rows = self._oltp_sql.query(sql)
+            if rows and rows[0] and rows[0][0]:
+                hours = int(rows[0][0])
+                return max(_QUARANTINE_OPTIMIZE_INTERVAL_HOURS_MIN, hours)
+        except Exception:
+            # debug (not warning) for parity with _resolve_setting_days: this
+            # fires on init + every sweep, so a transient Lakebase blip must not
+            # spam warning-level tracebacks. The default fallback is harmless.
+            logger.debug("OPTIMIZE interval lookup failed; using default", exc_info=True)
+        return _QUARANTINE_OPTIMIZE_INTERVAL_HOURS_DEFAULT
+
+    async def _maybe_run_optimize(self, now: datetime) -> None:
+        """Run the OPTIMIZE sweep if its timer has elapsed. Best-effort; never fatal."""
+        if now < self._next_optimize_at:
+            return
+        scheduled_for = self._next_optimize_at
+        # Advance first so a slow OPTIMIZE can't double-fire; re-resolve the
+        # interval each cycle so an admin change takes effect on the next run.
+        self._next_optimize_at = now + timedelta(hours=self._resolve_optimize_interval_hours())
+        logger.info(
+            "OPTIMIZE sweep: triggering (was due at %s); next run scheduled for %s",
+            scheduled_for.isoformat(),
+            self._next_optimize_at.isoformat(),
+        )
+        try:
+            await asyncio.to_thread(self._run_optimize)
+        except Exception:
+            logger.exception("OPTIMIZE sweep failed (non-fatal)")
+
+    def _run_optimize(self) -> None:
+        """Run OPTIMIZE on dq_quarantine_records so liquid clustering is applied.
+
+        Delta-only (the quarantine table is always Delta). Backtick-quotes the
+        FQN exactly like the retention sweep. Failure is logged, never raised.
+        """
+        table = f"`{self._catalog}`.`{self._schema}`.dq_quarantine_records"
+        stmt = f"OPTIMIZE {table}"
+        try:
+            self._sql.execute(stmt)
+            logger.info("OPTIMIZE sweep: optimized dq_quarantine_records")
+        except Exception as exc:
+            logger.warning("OPTIMIZE sweep: dq_quarantine_records failed (%s); continuing", exc)
 
     # ------------------------------------------------------------------
     # View creation (SP credentials)
