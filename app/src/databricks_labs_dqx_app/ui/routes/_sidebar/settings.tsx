@@ -78,6 +78,9 @@ import {
   useGetDraftRunSampleLimit,
   useSaveDraftRunSampleLimit,
   getGetDraftRunSampleLimitQueryKey,
+  useGetOptimizeSettings,
+  useSaveOptimizeSettings,
+  getGetOptimizeSettingsQueryKey,
   useDeployDemoContent,
   useDemoContentStatus,
   getDemoContentStatusQueryKey,
@@ -1281,6 +1284,93 @@ function DraftRunSampleLimitSettings() {
         {!isAdmin && (
           <span className="text-xs text-muted-foreground">{t("config.draftSampleAdminOnlyHint")}</span>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Optimize Settings — admin-controlled cadence for the periodic OPTIMIZE sweep
+// that physically applies dq_quarantine_records' liquid clustering. A single
+// integer-hours field, floored at the min the scheduler enforces server-side.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function OptimizeSettings() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { data: resp, isLoading } = useGetOptimizeSettings();
+  const settings = resp?.data;
+  const saveMutation = useSaveOptimizeSettings();
+  const { isAdmin } = usePermissions();
+
+  const [hours, setHours] = useState<string>("");
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (settings && !hydrated) {
+      setHours(String(settings.optimize_interval_hours));
+      setHydrated(true);
+    }
+  }, [settings, hydrated]);
+
+  const min = settings?.optimize_interval_hours_min ?? 1;
+
+  const handleSave = (rawValue: string) => {
+    if (!settings) return;
+    const parsed = Number.parseInt(rawValue, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) return;
+    const clamped = Math.max(min, parsed);
+    if (String(clamped) !== rawValue) setHours(String(clamped));
+    saveMutation.mutate(
+      { data: { optimize_interval_hours: clamped } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetOptimizeSettingsQueryKey() });
+          toast.success(t("config.optimizeSaved"));
+        },
+        onError: (err: unknown) => {
+          const axErr = err as AxiosError<{ detail?: string }>;
+          toast.error(axErr?.response?.data?.detail ?? t("config.optimizeSaveFailed"));
+        },
+      },
+    );
+  };
+
+  if (isLoading || !settings) return <Skeleton className="h-40 w-full" />;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Clock className="h-5 w-5" />
+          {t("config.optimizeTitle")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {t("config.optimizeDescription")}
+        </p>
+        <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+          <div className="space-y-0.5 pr-4">
+            <Label htmlFor="optimize-interval" className="text-sm">
+              {t("config.optimizeIntervalLabel")}
+            </Label>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Input
+              id="optimize-interval"
+              type="number"
+              min={min}
+              step={1}
+              value={hours}
+              disabled={!isAdmin || saveMutation.isPending}
+              onChange={(e) => setHours(e.target.value)}
+              onBlur={() => handleSave(hours)}
+              className="h-8 w-20"
+            />
+            <span className="text-sm text-muted-foreground">{t("config.optimizeIntervalHoursUnit")}</span>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );
@@ -3107,6 +3197,7 @@ function ConfigPage() {
       { id: "entitlements", tab: "entitlements", title: t("roleManagement.title"), keywords: t("config.kwEntitlements"), render: () => <RoleManagement /> },
       { id: "permissions", tab: "entitlements", title: t("config.permissionsDefaultInheritTitle"), keywords: t("config.kwPermissions"), render: () => <PermissionsSettingsCard /> },
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
+      { id: "optimize", tab: "compute", title: t("config.optimizeTitle"), keywords: t("config.kwOptimize"), render: () => <OptimizeSettings /> },
       { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
       { id: "deployDemo", tab: "danger", title: t("config.demoTitle"), keywords: t("config.kwDemo"), render: () => <DeployDemoCard /> },
       { id: "resetDatabase", tab: "danger", title: t("config.resetDbTitle"), keywords: t("config.kwDanger"), render: () => <DangerZoneCard /> },
