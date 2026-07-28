@@ -345,17 +345,22 @@ def generated_national_id_df(spark):
 
 @pytest.fixture
 def generated_currency_code_df(spark):
+    # Mostly-valid vs mostly-invalid mixes (rather than a single fixed value) so the benchmark
+    # exercises isin() with a realistic hit ratio in both directions, since isin performance can
+    # differ between an all-miss workload and one with a mix of hits and misses.
     currency_schema_str = "col1_currency_code: string, col2_currency_code: string"
     schema = _parse_datatype_string(currency_schema_str)
 
-    currency_templates = {
-        "col1_currency_code": r"AAA",
-        "col2_currency_code": r"KKK",
+    currency_value_lists = {
+        "col1_currency_code": ["USD", "EUR", "JPY", "GBP", "AUD", "AAA"],
+        "col2_currency_code": ["AAA", "KKK", "ZZZ", "USD"],
     }
 
-    _, gen = make_data_gen(spark, n_rows=DEFAULT_ROWS, n_columns=len(currency_templates), partitions=DEFAULT_PARTITIONS)
+    _, gen = make_data_gen(
+        spark, n_rows=DEFAULT_ROWS, n_columns=len(currency_value_lists), partitions=DEFAULT_PARTITIONS
+    )
     gen = gen.withSchema(schema)
-    for col, template in currency_templates.items():
-        gen = gen.withColumnSpec(col, template=template)
+    for col, values in currency_value_lists.items():
+        gen = gen.withColumnSpec(col, values=values)
 
     return gen.build()
