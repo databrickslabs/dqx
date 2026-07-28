@@ -2106,24 +2106,23 @@ def test_aggr_matches_dataset_count_distinct_group_by_mismatch(spark: SparkSessi
 def test_aggr_matches_dataset_count_distinct_group_by_null_key(spark: SparkSession):
     """count_distinct + group_by with a NULL group key.
 
-    count_distinct is a window-incompatible aggregate, so the grouped join is not null-safe (documented on
-    aggr_matches_dataset). A legitimately NULL group key therefore cannot be matched to the reference and is
-    surfaced with a NULL limit (mismatch) rather than being silently compared. This test pins that documented
-    behavior so a future change to the join is a conscious decision.
+    count_distinct is a window-incompatible aggregate that uses a two-stage groupBy join, but that join is
+    null-safe on both the checked and reference sides. A legitimately NULL group key is therefore matched to
+    the reference and compared like any other group rather than being dropped. This test pins that behavior so
+    a future change to the join is a conscious decision.
     """
-    # NULL group: distinct b = {1, 2} (2); group "y": distinct b = {3} (1)
+    # NULL group: checked distinct b = {1, 2} (2), ref distinct b = {10, 20} (2) -> equal -> passes.
+    # Group "y": checked distinct b = {3} (1), ref distinct b = {30} (1) -> equal -> passes.
     test_df = spark.createDataFrame([[None, 1], [None, 2], ["y", 3]], SCHEMA)
     ref_df = spark.createDataFrame([[None, 10], [None, 20], ["y", 30]], SCHEMA)
 
     condition, apply_fn = aggr_matches_dataset("b", ref_df_name="ref_df", aggr_type="count_distinct", group_by=["a"])
     checked = apply_fn(test_df, spark, {"ref_df": ref_df}).select("a", "b", condition.alias("cond"))
-    # Assert the flagging behavior (which rows are flagged) rather than the exact NULL-limit message text:
-    # the non-null group "y" matches (distinct 1 == 1) and passes; the NULL-key group cannot join
-    # null-safely for a window-incompatible aggregate, so it is surfaced (condition is non-null).
+    # Both groups match null-safely and their distinct counts are equal, so no row is flagged.
     results = {(row["a"], row["b"]): row["cond"] for row in checked.collect()}
     assert results[("y", 3)] is None
-    assert results[(None, 1)] is not None
-    assert results[(None, 2)] is not None
+    assert results[(None, 1)] is None
+    assert results[(None, 2)] is None
 
 
 def test_aggr_matches_dataset_group_by_null_key_mismatch(spark: SparkSession):

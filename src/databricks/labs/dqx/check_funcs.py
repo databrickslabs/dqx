@@ -2170,9 +2170,10 @@ def aggr_matches_dataset(
         group_by: Optional list of column names or Column expressions in the checked DataFrame to compare
             the aggregate per group instead of dataset-wide. Only simple column expressions are supported,
             e.g. *F.col("region")*. A group present in the checked DataFrame but absent from the reference
-            is reported as a mismatch; groups present only in the reference are not surfaced. Note that
-            when *aggr_type* is a window-incompatible aggregate (e.g. *count_distinct*), the checked-side
-            grouping join is not null-safe, so a legitimately null group key may under-report.
+            is reported as a mismatch; groups present only in the reference are not surfaced. Group keys are
+            matched null-safely on both the checked and reference sides (including window-incompatible
+            aggregates such as *count_distinct*), so a legitimately null group key is compared like any
+            other rather than being dropped.
         ref_group_by: Optional list of group-by columns on the reference (upstream) side, matched to
             *group_by* by position. Defaults to *group_by* when omitted. Must have the same length as
             *group_by*. Requires *group_by* to be set.
