@@ -2617,7 +2617,12 @@ def has_no_gaps_per_time_window(
             than one window before *curr_timestamp*, anchoring the trailing boundary to the current
             time instead of leaving it unchecked; defaults to *False*
         curr_timestamp: optional current timestamp column used to anchor trailing-gap detection; only
-            used when *trailing_gap* is *True*; if not provided, *current_timestamp()* is used
+            used when *trailing_gap* is *True*; if not provided, *current_timestamp()* is used. The
+            anchor is bucketed onto the same absolute-time grid as the event windows, which aligns to
+            UTC epoch boundaries regardless of *spark.sql.session.timeZone*. With daily windows this
+            means the "current window" is the UTC day, which can differ from the local day near
+            midnight (e.g. 21:00 in a UTC-4 timezone is already the next UTC day); pass an explicit
+            *curr_timestamp* shifted to your timezone if you need local-day anchoring.
 
     Returns:
         A tuple of:
