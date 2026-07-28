@@ -1,0 +1,172 @@
+{
+  "items": [
+    {
+      "items": [
+        {
+          "items": [
+            {
+              "items": [
+                {
+                  "items": [
+                    "reference/api/databricks/labs/dqx/anomaly/anomaly_engine",
+                    "reference/api/databricks/labs/dqx/anomaly/anomaly_llm_explainer",
+                    "reference/api/databricks/labs/dqx/anomaly/anomaly_workflow",
+                    "reference/api/databricks/labs/dqx/anomaly/check_funcs",
+                    "reference/api/databricks/labs/dqx/anomaly/core",
+                    "reference/api/databricks/labs/dqx/anomaly/drift",
+                    "reference/api/databricks/labs/dqx/anomaly/ensemble_scorer",
+                    "reference/api/databricks/labs/dqx/anomaly/ensemble_training",
+                    "reference/api/databricks/labs/dqx/anomaly/explainability",
+                    "reference/api/databricks/labs/dqx/anomaly/feature_prep",
+                    "reference/api/databricks/labs/dqx/anomaly/mlflow_registry",
+                    "reference/api/databricks/labs/dqx/anomaly/model_config",
+                    "reference/api/databricks/labs/dqx/anomaly/model_discovery",
+                    "reference/api/databricks/labs/dqx/anomaly/model_loader",
+                    "reference/api/databricks/labs/dqx/anomaly/model_registry",
+                    "reference/api/databricks/labs/dqx/anomaly/profiler",
+                    "reference/api/databricks/labs/dqx/anomaly/scoring_config",
+                    "reference/api/databricks/labs/dqx/anomaly/scoring_orchestrator",
+                    "reference/api/databricks/labs/dqx/anomaly/scoring_run",
+                    "reference/api/databricks/labs/dqx/anomaly/scoring_strategies",
+                    "reference/api/databricks/labs/dqx/anomaly/scoring_utils",
+                    "reference/api/databricks/labs/dqx/anomaly/segment_utils",
+                    "reference/api/databricks/labs/dqx/anomaly/single_model_scorer",
+                    "reference/api/databricks/labs/dqx/anomaly/training_service",
+                    "reference/api/databricks/labs/dqx/anomaly/training_strategies",
+                    "reference/api/databricks/labs/dqx/anomaly/transformers",
+                    "reference/api/databricks/labs/dqx/anomaly/types",
+                    "reference/api/databricks/labs/dqx/anomaly/validation"
+                  ],
+                  "label": "databricks.labs.dqx.anomaly",
+                  "type": "category"
+                },
+                {
+                  "items": [
+                    "reference/api/databricks/labs/dqx/contexts/cli_context",
+                    "reference/api/databricks/labs/dqx/contexts/global_context",
+                    "reference/api/databricks/labs/dqx/contexts/workflow_context",
+                    "reference/api/databricks/labs/dqx/contexts/workspace_context"
+                  ],
+                  "label": "databricks.labs.dqx.contexts",
+                  "type": "category"
+                },
+                {
+                  "items": [
+                    "reference/api/databricks/labs/dqx/datacontract/contract_rules_generator"
+                  ],
+                  "label": "databricks.labs.dqx.datacontract",
+                  "type": "category"
+                },
+                {
+                  "items": [
+                    "reference/api/databricks/labs/dqx/geo/check_funcs"
+                  ],
+                  "label": "databricks.labs.dqx.geo",
+                  "type": "category"
+                },
+                {
+                  "items": [
+                    "reference/api/databricks/labs/dqx/installer/config_provider",
+                    "reference/api/databricks/labs/dqx/installer/dashboard_installer",
+                    "reference/api/databricks/labs/dqx/installer/install",
+                    "reference/api/databricks/labs/dqx/installer/logs",
+                    "reference/api/databricks/labs/dqx/installer/version_checker",
+                    "reference/api/databricks/labs/dqx/installer/warehouse_installer",
+                    "reference/api/databricks/labs/dqx/installer/workflow_installer",
+                    "reference/api/databricks/labs/dqx/installer/workflow_task"
+                  ],
+                  "label": "databricks.labs.dqx.installer",
+                  "type": "category"
+                },
+                {
+                  "items": [
+                    "reference/api/databricks/labs/dqx/llm/llm_core",
+                    "reference/api/databricks/labs/dqx/llm/llm_engine",
+                    "reference/api/databricks/labs/dqx/llm/llm_pk_detector",
+                    "reference/api/databricks/labs/dqx/llm/llm_utils",
+                    "reference/api/databricks/labs/dqx/llm/optimizers",
+                    "reference/api/databricks/labs/dqx/llm/validators"
+                  ],
+                  "label": "databricks.labs.dqx.llm",
+                  "type": "category"
+                },
+                {
+                  "items": [
+                    "reference/api/databricks/labs/dqx/pii/nlp_engine_config",
+                    "reference/api/databricks/labs/dqx/pii/pii_detection_funcs"
+                  ],
+                  "label": "databricks.labs.dqx.pii",
+                  "type": "category"
+                },
+                {
+                  "items": [
+                    "reference/api/databricks/labs/dqx/profiler/common",
+                    "reference/api/databricks/labs/dqx/profiler/dlt_generator",
+                    "reference/api/databricks/labs/dqx/profiler/generator",
+                    "reference/api/databricks/labs/dqx/profiler/profile",
+                    "reference/api/databricks/labs/dqx/profiler/profile_builder",
+                    "reference/api/databricks/labs/dqx/profiler/profiler",
+                    "reference/api/databricks/labs/dqx/profiler/profiler_runner",
+                    "reference/api/databricks/labs/dqx/profiler/profiler_workflow"
+                  ],
+                  "label": "databricks.labs.dqx.profiler",
+                  "type": "category"
+                },
+                {
+                  "items": [
+                    "reference/api/databricks/labs/dqx/quality_checker/e2e_workflow",
+                    "reference/api/databricks/labs/dqx/quality_checker/quality_checker_runner",
+                    "reference/api/databricks/labs/dqx/quality_checker/quality_checker_workflow"
+                  ],
+                  "label": "databricks.labs.dqx.quality_checker",
+                  "type": "category"
+                },
+                {
+                  "items": [
+                    "reference/api/databricks/labs/dqx/schema/dq_info_schema"
+                  ],
+                  "label": "databricks.labs.dqx.schema",
+                  "type": "category"
+                },
+                "reference/api/databricks/labs/dqx/__main__",
+                "reference/api/databricks/labs/dqx/base",
+                "reference/api/databricks/labs/dqx/check_funcs",
+                "reference/api/databricks/labs/dqx/checks_resolver",
+                "reference/api/databricks/labs/dqx/checks_serializer",
+                "reference/api/databricks/labs/dqx/checks_storage",
+                "reference/api/databricks/labs/dqx/checks_validator",
+                "reference/api/databricks/labs/dqx/cli",
+                "reference/api/databricks/labs/dqx/config",
+                "reference/api/databricks/labs/dqx/config_serializer",
+                "reference/api/databricks/labs/dqx/engine",
+                "reference/api/databricks/labs/dqx/errors",
+                "reference/api/databricks/labs/dqx/executor",
+                "reference/api/databricks/labs/dqx/io",
+                "reference/api/databricks/labs/dqx/manager",
+                "reference/api/databricks/labs/dqx/metrics_listener",
+                "reference/api/databricks/labs/dqx/metrics_observer",
+                "reference/api/databricks/labs/dqx/package_utils",
+                "reference/api/databricks/labs/dqx/profiling_utils",
+                "reference/api/databricks/labs/dqx/reporting_columns",
+                "reference/api/databricks/labs/dqx/rule",
+                "reference/api/databricks/labs/dqx/rule_fingerprint",
+                "reference/api/databricks/labs/dqx/table_manager",
+                "reference/api/databricks/labs/dqx/telemetry",
+                "reference/api/databricks/labs/dqx/utils",
+                "reference/api/databricks/labs/dqx/workflows_runner"
+              ],
+              "label": "databricks.labs.dqx",
+              "type": "category"
+            }
+          ],
+          "label": "databricks.labs",
+          "type": "category"
+        }
+      ],
+      "label": "databricks",
+      "type": "category"
+    }
+  ],
+  "label": "Reference",
+  "type": "category"
+}
