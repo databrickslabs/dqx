@@ -3350,6 +3350,18 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "run_id": RUN_ID,
                         "user_metadata": {},
                     },
+                    # null-safe merge on [b, c]: this row's key (b=NULL, c=3) now matches the query
+                    # group (b=NULL, c=3) because NULL<=>NULL is True on b (and 3==3 on c)
+                    {
+                        "name": "multiple_key_check_violation",
+                        "message": "multiple key check failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
                 ],
             ],
             [
@@ -3385,6 +3397,18 @@ def test_apply_checks_with_sql_query(ws, spark):
                     {
                         "name": "non_unique_merge_key",
                         "message": f"Value is not matching query: '{query_non_unique_merge_key}'",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                    # null-safe merge on [b, c]: this row's key (b=NULL, c=4) now matches the query
+                    # group (b=NULL, c=4) because NULL<=>NULL is True on b (and 4==4 on c)
+                    {
+                        "name": "multiple_key_check_violation",
+                        "message": "multiple key check failed",
                         "columns": None,
                         "filter": None,
                         "function": "sql_query",

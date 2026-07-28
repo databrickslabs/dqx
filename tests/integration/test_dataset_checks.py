@@ -22,6 +22,7 @@ from databricks.labs.dqx.check_funcs import (
     is_data_fresh_per_time_window,
     has_no_gaps_per_time_window,
     has_valid_schema,
+    sql_query,
     aggr_matches_dataset,
 )
 from databricks.labs.dqx.utils import get_column_name_or_alias
@@ -31,6 +32,49 @@ from tests.constants import TEST_CATALOG
 
 
 SCHEMA = "a: string, b: int"
+
+
+@pytest.mark.parametrize(
+    "schema, merge_columns, rows",
+    [
+        (
+            "row_id: string, amount: int",
+            ["row_id"],
+            [(None, 100), ("row-1", 100), ("row-2", -1)],
+        ),
+        (
+            "row_id: string, part_id: string, amount: int",
+            ["row_id", "part_id"],
+            [(None, "part-1", 100), ("row-1", None, 100), ("row-2", "part-2", -1)],
+        ),
+    ],
+)
+def test_sql_query_with_null_merge_columns(
+    spark: SparkSession,
+    schema: str,
+    merge_columns: list[str],
+    rows: list[tuple[str | int | None, ...]],
+):
+    """A true query condition must survive null keys in single and composite joins."""
+    test_df = spark.createDataFrame(rows, schema)
+    query_columns = ", ".join(merge_columns)
+    condition, apply_method = sql_query(
+        f"SELECT {query_columns}, amount > 0 AS condition FROM {{{{ input_view }}}}",
+        merge_columns=merge_columns,
+        msg="positive amount",
+    )
+
+    actual = apply_method(test_df, spark, {}).select(*merge_columns, "amount", condition.alias("violation"))
+    assert actual.count() == len(rows)
+    violations = {tuple(row[column] for column in merge_columns): row["violation"] for row in actual.collect()}
+
+    expected = {}
+    for row in rows:
+        amount = row[-1]
+        assert isinstance(amount, int)
+        expected[tuple(row[:-1])] = "positive amount" if amount > 0 else None
+
+    assert violations == expected
 
 
 def test_has_no_outliers_int_numeric_types(spark: SparkSession):
@@ -1261,6 +1305,27 @@ def test_is_aggr_with_count_distinct_and_group_by(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+def test_is_aggr_with_count_distinct_and_null_group(spark: SparkSession):
+    """A violating null group must retain its aggregated metric after reattachment."""
+    test_df = spark.createDataFrame(
+        [[None, "val1"], [None, "val2"], ["group2", "val3"]],
+        "a: string, b: string",
+    )
+
+    actual = _apply_checks(
+        test_df,
+        [is_aggr_not_greater_than("b", limit=1, aggr_type="count_distinct", group_by=["a"])],
+    )
+
+    message = "Distinct count value 2 in column 'b' per group of columns 'a' is greater than limit: 1"
+    expected = spark.createDataFrame(
+        [[None, "val1", message], [None, "val2", message], ["group2", "val3", None]],
+        "a: string, b: string, b_count_distinct_group_by_a_greater_than_limit: string",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
 def test_is_aggr_with_count_distinct_and_column_expression_in_group_by(spark: SparkSession):
     """Test count_distinct with Column expression (F.col) in group_by.
 
@@ -2042,24 +2107,23 @@ def test_aggr_matches_dataset_count_distinct_group_by_mismatch(spark: SparkSessi
 def test_aggr_matches_dataset_count_distinct_group_by_null_key(spark: SparkSession):
     """count_distinct + group_by with a NULL group key.
 
-    count_distinct is a window-incompatible aggregate, so the grouped join is not null-safe (documented on
-    aggr_matches_dataset). A legitimately NULL group key therefore cannot be matched to the reference and is
-    surfaced with a NULL limit (mismatch) rather than being silently compared. This test pins that documented
-    behavior so a future change to the join is a conscious decision.
+    count_distinct is a window-incompatible aggregate that uses a two-stage groupBy join, but that join is
+    null-safe on both the checked and reference sides. A legitimately NULL group key is therefore matched to
+    the reference and compared like any other group rather than being dropped. This test pins that behavior so
+    a future change to the join is a conscious decision.
     """
-    # NULL group: distinct b = {1, 2} (2); group "y": distinct b = {3} (1)
+    # NULL group: checked distinct b = {1, 2} (2), ref distinct b = {10, 20} (2) -> equal -> passes.
+    # Group "y": checked distinct b = {3} (1), ref distinct b = {30} (1) -> equal -> passes.
     test_df = spark.createDataFrame([[None, 1], [None, 2], ["y", 3]], SCHEMA)
     ref_df = spark.createDataFrame([[None, 10], [None, 20], ["y", 30]], SCHEMA)
 
     condition, apply_fn = aggr_matches_dataset("b", ref_df_name="ref_df", aggr_type="count_distinct", group_by=["a"])
     checked = apply_fn(test_df, spark, {"ref_df": ref_df}).select("a", "b", condition.alias("cond"))
-    # Assert the flagging behavior (which rows are flagged) rather than the exact NULL-limit message text:
-    # the non-null group "y" matches (distinct 1 == 1) and passes; the NULL-key group cannot join
-    # null-safely for a window-incompatible aggregate, so it is surfaced (condition is non-null).
+    # Both groups match null-safely and their distinct counts are equal, so no row is flagged.
     results = {(row["a"], row["b"]): row["cond"] for row in checked.collect()}
     assert results[("y", 3)] is None
-    assert results[(None, 1)] is not None
-    assert results[(None, 2)] is not None
+    assert results[(None, 1)] is None
+    assert results[(None, 2)] is None
 
 
 def test_aggr_matches_dataset_group_by_null_key_mismatch(spark: SparkSession):
