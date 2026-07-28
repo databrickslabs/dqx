@@ -28,8 +28,8 @@ from databricks.labs.dqx.utils import (
     to_lowercase,
 )
 from databricks.labs.dqx.errors import (
-    ComputationError,
     MissingParameterError,
+    MissingResourceError,
     InvalidParameterError,
     UnsafeSqlQueryError,
 )
@@ -1099,7 +1099,7 @@ def _load_iso_codes(resource_name: str) -> frozenset[str]:
     # real filesystem path, which is not guaranteed under a zipped wheel (zipimport).
     codes = frozenset((files("databricks.labs.dqx.resources") / resource_name).read_text(encoding="utf-8").split())
     if not codes:
-        raise ComputationError(
+        raise MissingResourceError(
             f"ISO code resource '{resource_name}' is missing or empty; reinstall the package or "
             "regenerate the resource file."
         )
@@ -1126,15 +1126,12 @@ def _iso_4217_codes_by_format() -> dict[str, frozenset[str]]:
 
 # Precomputed once on first use and cached: the literal lists never change at runtime, so building
 # them per call (sorted() + one F.lit() per code) would repeat needless work on every check
-# evaluation. Only alphabetic needs a lowercase variant — numeric codes have no case and never use it.
-@lru_cache(maxsize=1)
-def _iso_4217_literals_by_format() -> dict[str, list[Column]]:
-    return {fmt: [F.lit(code) for code in sorted(codes)] for fmt, codes in _iso_4217_codes_by_format().items()}
-
-
-@lru_cache(maxsize=1)
-def _iso_4217_alphabetic_literals_lower() -> list[Column]:
-    return [F.lit(code.lower()) for code in sorted(_iso_4217_codes_by_format()["alphabetic"])]
+# evaluation. Keyed by (format, lower) so the case-sensitive and case-insensitive variants share one
+# cache instead of separate helpers; numeric never requests lower=True since it has no case.
+@lru_cache(maxsize=None)
+def _iso_4217_literals(fmt: str, lower: bool) -> list[Column]:
+    codes = _iso_4217_codes_by_format()[fmt]
+    return [F.lit(code.lower() if lower else code) for code in sorted(codes)]
 
 
 @register_rule("row")
@@ -1155,7 +1152,8 @@ def is_valid_currency_code(
     three-digit, zero-padded form (e.g. *036*), so a numeric input column must preserve the leading
     zeros; a non-string column is cast to string for comparison, but the cast does not add back
     zero-padding an integer type may have dropped (e.g. an *int* column value *8* is compared as the
-    string *"8"*, not *"008"*, and is correctly flagged as invalid).
+    string *"8"*, not *"008"*, and is flagged as invalid). If codes are stored as unpadded integers,
+    zero-pad the column before calling this check, e.g. *F.lpad(column.cast("string"), 3, "0")*.
 
     By default the comparison is case-sensitive; pass *case_sensitive* as False to accept values in
     any case. *case_sensitive* has no effect for *numeric* codes, which contain only digits.
@@ -1198,13 +1196,13 @@ def is_valid_currency_code(
         # coerce the literals to the column's type instead, silently stripping leading zeros (e.g.
         # "008" -> 8) and letting an unpadded value like 8 match a code that requires "008".
         col_expr_compare = col_expr.cast("string")
-        allowed = _iso_4217_literals_by_format()[normalized_format]
+        allowed = _iso_4217_literals(normalized_format, lower=False)
     elif case_sensitive:
         col_expr_compare = col_expr
-        allowed = _iso_4217_literals_by_format()[normalized_format]
+        allowed = _iso_4217_literals(normalized_format, lower=False)
     else:
         col_expr_compare = to_lowercase(col_expr)
-        allowed = _iso_4217_alphabetic_literals_lower()
+        allowed = _iso_4217_literals(normalized_format, lower=True)
     condition = F.when(col_expr.isNotNull(), ~col_expr_compare.isin(*allowed)).otherwise(F.lit(None))
     return make_condition(
         condition,
