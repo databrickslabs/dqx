@@ -2643,8 +2643,10 @@ def has_no_gaps_per_time_window(
         curr_timestamp = F.current_timestamp()
 
     col_str_norm, _, col_expr = get_normalized_column_and_expr(column)
-    group_cols = [F.col(c) if isinstance(c, str) else c for c in (group_by or [])]
-    join_keys = [c if isinstance(c, str) else get_column_name_or_alias(c) for c in (group_by or [])]
+    # Resolve group_by to plain column-name strings so a Column expression (e.g. F.col("region"))
+    # is used consistently for partitioning, selection, and the join below; get_column_name_or_alias
+    # would otherwise yield a rendered expression string that is not a real column and breaks the join.
+    group_by_names = get_columns_as_strings(group_by, allow_simple_expressions_only=True) if group_by else []
 
     unique_str = uuid.uuid4().hex
     interval_col = f"__gap_interval_{col_str_norm}_{unique_str}"
@@ -2671,10 +2673,10 @@ def has_no_gaps_per_time_window(
         # there is no partitionBy and the sort below is a single partition, but distinct() has already
         # collapsed rows to the occupied-window count, so the sort scales with that count, not with
         # row count; this holds for realistic grids (thousands to low millions of occupied windows).
-        distinct_windows = df.filter(col_expr.isNotNull()).select(*group_cols, window_start_col).distinct()
+        distinct_windows = df.filter(col_expr.isNotNull()).select(*group_by_names, window_start_col).distinct()
         ordered_windows = (
-            Window.partitionBy(*group_cols).orderBy(window_start_col)
-            if group_cols
+            Window.partitionBy(*group_by_names).orderBy(window_start_col)
+            if group_by_names
             else Window.orderBy(window_start_col)
         )
         gaps = distinct_windows.withColumn(next_window_start_col, F.lead(window_start_col).over(ordered_windows))
@@ -2699,7 +2701,7 @@ def has_no_gaps_per_time_window(
         )
 
         # Attach the per-window gap flag back to every row of the boundary window, keeping column order.
-        joined = df.join(gaps, on=[*join_keys, window_start_col], how="left")
+        joined = df.join(gaps, on=[*group_by_names, window_start_col], how="left")
         return joined.select(*input_columns, window_start_col, next_window_start_col, *extra_cols, condition_col)
 
     next_window_phrase = F.lit(" and the next present window starting at ")

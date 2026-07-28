@@ -3454,6 +3454,42 @@ def test_has_no_gaps_per_time_window_group_by(spark: SparkSession, set_utc_timez
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+def test_has_no_gaps_per_time_window_group_by_column_expression(spark: SparkSession, set_utc_timezone):
+    schema = "device string, event_date date, val int"
+    data = [
+        ("A", date(2025, 7, 14), 1),  # device A: 2025-07-15 missing -> gap on this boundary row
+        ("A", date(2025, 7, 16), 2),
+        ("B", date(2025, 7, 14), 3),  # device B: consecutive, no gaps
+        ("B", date(2025, 7, 15), 4),
+        ("B", date(2025, 7, 16), 5),
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_gaps_per_time_window(
+        column="event_date", window_minutes=1440, group_by=[F.col("device")]
+    )
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("device", "event_date", "val", condition)
+
+    expected_schema = f"device string, event_date date, val int, {condition_column} string"
+    expected = spark.createDataFrame(
+        [
+            {
+                "device": "A",
+                "event_date": date(2025, 7, 14),
+                "val": 1,
+                condition_column: _gap_violation_message("2025-07-14 00:00:00", "2025-07-16 00:00:00"),
+            },
+            {"device": "A", "event_date": date(2025, 7, 16), "val": 2, condition_column: None},
+            {"device": "B", "event_date": date(2025, 7, 14), "val": 3, condition_column: None},
+            {"device": "B", "event_date": date(2025, 7, 15), "val": 4, condition_column: None},
+            {"device": "B", "event_date": date(2025, 7, 16), "val": 5, condition_column: None},
+        ],
+        expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
 def test_has_no_gaps_per_time_window_trailing_gap_flagged(spark: SparkSession, set_utc_timezone):
     schema = "event_date date, val int"
     data = [
