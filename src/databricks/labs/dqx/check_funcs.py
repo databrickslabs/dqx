@@ -1088,7 +1088,7 @@ def is_valid_national_id(column: str | Column, country: str = "US") -> Column:
     return _matches_pattern(column, pattern)
 
 
-def _load_iso_codes(resource_name: str) -> frozenset[str]:
+def load_iso_codes(resource_name: str) -> frozenset[str]:
     """Load a set of standard codes from a newline-delimited data file in the resources package.
 
     The large standard code lists are stored as data files rather than inline literals to keep them
@@ -1119,8 +1119,8 @@ def _load_iso_codes(resource_name: str) -> frozenset[str]:
 @lru_cache(maxsize=1)
 def _iso_4217_codes_by_format() -> dict[str, frozenset[str]]:
     return {
-        "alphabetic": _load_iso_codes("iso_4217_alphabetic.txt"),
-        "numeric": _load_iso_codes("iso_4217_numeric.txt"),
+        "alphabetic": load_iso_codes("iso_4217_alphabetic.txt"),
+        "numeric": load_iso_codes("iso_4217_numeric.txt"),
     }
 
 
@@ -1203,7 +1203,9 @@ def is_valid_currency_code(
     else:
         col_expr_compare = to_lowercase(col_expr)
         allowed = _iso_4217_literals(normalized_format, lower=True)
-    condition = F.when(col_expr.isNotNull(), ~col_expr_compare.isin(*allowed)).otherwise(F.lit(None))
+    # isin() already yields NULL for NULL input (SQL null propagation), and make_condition treats
+    # NULL as a pass, so no explicit isNotNull() guard is needed.
+    condition = ~col_expr_compare.isin(*allowed)
     return make_condition(
         condition,
         F.concat_ws(
