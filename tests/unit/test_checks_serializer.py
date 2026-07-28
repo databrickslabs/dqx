@@ -256,8 +256,8 @@ def test_to_dataframe_uses_injected_created_at():
     DataFrameConverter.to_dataframe(spark, _SIMPLE_CHECKS, created_at=_FIXED_TS)
 
     rows = spark.createDataFrame.call_args.args[0]
-    # created_at is the 7th element (index 6) in each row tuple
-    assert all(row[6] == _FIXED_TS for row in rows)
+    # created_at is the 8th element (index 7) in each row tuple (after message_expr at index 6)
+    assert all(row[7] == _FIXED_TS for row in rows)
 
 
 def test_to_dataframe_uses_current_utc_time_when_created_at_is_none():
@@ -269,7 +269,7 @@ def test_to_dataframe_uses_current_utc_time_when_created_at_is_none():
 
     after = datetime.now(timezone.utc)
     rows = spark.createDataFrame.call_args.args[0]
-    created_at_value = rows[0][6]
+    created_at_value = rows[0][7]
     assert before <= created_at_value <= after
 
 
@@ -285,4 +285,4 @@ def test_to_dataframe_all_rows_share_same_created_at():
 
     rows = spark.createDataFrame.call_args.args[0]
     assert len(rows) == 2
-    assert rows[0][6] == rows[1][6] == _FIXED_TS
+    assert rows[0][7] == rows[1][7] == _FIXED_TS

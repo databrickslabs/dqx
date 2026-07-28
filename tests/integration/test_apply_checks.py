@@ -5905,7 +5905,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
-        "col_email: string"
+        "col_email: string, col_ssn: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -5925,6 +5925,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "123-45-6789",
             ],
             [
                 "val2",
@@ -5942,6 +5943,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "223-45-6789",
             ],
             [
                 "val3",
@@ -5959,6 +5961,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "323-45-6789",
             ],
         ],
         schema,
@@ -6000,6 +6003,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "123-45-6789",
                 None,
                 None,
             ],
@@ -6019,6 +6023,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "223-45-6789",
                 None,
                 None,
             ],
@@ -6038,6 +6043,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "323-45-6789",
                 None,
                 None,
             ],
@@ -6192,7 +6198,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
-        "col_email: string"
+        "col_email: string, col_ssn: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -6212,6 +6218,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "123-45-6789",
             ],
             [
                 "val2",
@@ -6229,6 +6236,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "223-45-6789",
             ],
             [
                 "val3",
@@ -6246,6 +6254,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "323-45-6789",
             ],
         ],
         schema,
@@ -6275,6 +6284,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "123-45-6789",
                 None,
                 None,
             ],
@@ -6294,6 +6304,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "223-45-6789",
                 None,
                 None,
             ],
@@ -6313,6 +6324,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "323-45-6789",
                 None,
                 None,
             ],
@@ -7065,6 +7077,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col6",
             check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
         ),
+        # aggr_matches_dataset check — row count matches the reference dataset
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.aggr_matches_dataset,
+            column="*",
+            check_func_kwargs={"aggr_type": "count", "ref_df_name": "ref_df_key"},
+        ),
         # is_valid_json check
         DQRowRule(
             criticality="error",
@@ -7090,6 +7109,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col_json_str2",
             check_func_kwargs={"schema": "STRUCT<a: STRING, b: STRING>"},
         ),
+        # is_valid_national_id check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_national_id,
+            column="col_ssn",
+            check_func_kwargs={"country": "US"},
+        ),
     ]
 
     dq_engine = DQEngine(ws)
@@ -7097,7 +7123,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string"
+        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, col_ssn: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -7116,6 +7142,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
+                "123-45-6789",
             ],
             [
                 "val2",
@@ -7132,6 +7159,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
+                "223-45-6789",
             ],
             [
                 "val3",
@@ -7148,12 +7176,16 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
+                "323-45-6789",
             ],
         ],
         schema,
     )
 
-    checked = dq_engine.apply_checks(test_df, checks)
+    ref_df = test_df.withColumnRenamed("col1", "ref_col1").withColumnRenamed("col2", "ref_col2")
+    ref_dfs = {"ref_df_key": ref_df}
+
+    checked = dq_engine.apply_checks(test_df, checks, ref_dfs=ref_dfs)
 
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
@@ -7173,6 +7205,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
+                "123-45-6789",
                 None,
                 None,
             ],
@@ -7191,6 +7224,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
+                "223-45-6789",
                 None,
                 None,
             ],
@@ -7209,6 +7243,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
+                "323-45-6789",
                 None,
                 None,
             ],
@@ -10038,6 +10073,84 @@ def test_apply_checks_with_has_valid_schema_extra_columns_in_params(ws, spark):
     )
 
     assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
+def test_apply_checks_with_has_valid_schema_special_char_columns_are_valid(ws, spark):
+    """Column names with spaces / non-ASCII characters (that require SQL identifier escaping)
+    must be treated as valid and the check must run instead of being skipped."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, `Customer Name` string, `Ääkkönen` int"
+    test_df = spark.createDataFrame([[1, "Alice", 10], [2, "Bob", 20]], schema)
+
+    checks = [
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, `Customer Name` string, `Ääkkönen` int",
+                "columns": ["id", "Customer Name", "Ääkkönen"],
+                "strict": False,
+            },
+        ),
+    ]
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, "Alice", 10, None, None],
+            [2, "Bob", 20, None, None],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+    assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
+def test_apply_checks_unsafe_filter_is_skipped_and_other_checks_still_run(ws, spark):
+    """A check with an unsafe (destructive-SQL) filter is skipped through DQRuleManager while every other
+    check in the same rule set is still evaluated end-to-end — the run is not aborted."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, None], [2, "ok"]], "id int, b string")
+
+    checks = [
+        # unsafe filter (destructive keyword) -> this check is skipped, not evaluated
+        DQRowRule(
+            name="b_is_null_unsafe_filter",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="b",
+            filter="id = 1 OR DROP TABLE users",
+        ),
+        # a normal check that must still run and flag the null in row id=1
+        DQRowRule(
+            name="b_is_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="b",
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+    errors_by_row = {row["id"]: row["_errors"] for row in checked.select("id", "_errors").collect()}
+
+    # The unsafe-filter check couldn't be evaluated, so it's reported as skipped on every row
+    # (a dataset-wide "not evaluated" marker, consistent with other skipped checks) rather than
+    # aborting the whole run.
+    for row_id in (1, 2):
+        skipped = [e for e in (errors_by_row[row_id] or []) if e["name"] == "b_is_null_unsafe_filter"]
+        assert len(skipped) == 1, f"row {row_id}: {errors_by_row[row_id]}"
+        assert skipped[0]["skipped"] is True
+        assert skipped[0]["message"] == (
+            "Check evaluation skipped due to unsafe check filter: 'id = 1 OR DROP TABLE users'"
+        )
+
+    # The normal check still ran end-to-end: it flags the null b for row id=1 and passes row id=2.
+    normal_row1 = [e for e in (errors_by_row[1] or []) if e["name"] == "b_is_null"]
+    assert len(normal_row1) == 1
+    assert normal_row1[0]["skipped"] is None
+    normal_row2 = [e for e in (errors_by_row[2] or []) if e["name"] == "b_is_null"]
+    assert len(normal_row2) == 0
 
 
 def test_apply_checks_and_save_in_tables_for_patterns_missing_output_suffix(ws, spark):
