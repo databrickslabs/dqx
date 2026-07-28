@@ -3249,53 +3249,12 @@ export function RegistryRuleFormDialog({
 
       <Separator />
 
-      <div className="space-y-2">
-        <div className="flex items-center gap-1.5">
-          <Label>
-            {t("rulesRegistry.severityLabel")} <span className="text-destructive">*</span>
-          </Label>
-          <HelpTooltip text={t("rulesRegistry.severityTooltip")} />
-        </div>
-        <div className="flex items-center gap-2 group">
-          {/* Always a Select (disabled when read-only) — matches Dimension's
-              rendering below so severity doesn't visually downgrade from a
-              dropdown to a plain badge for non-editable rules (regression:
-              a rule WITH severity set, e.g. rejected, used to lose its
-              dropdown chrome entirely). The read-only "None" placeholder
-              still communicates a genuinely-unset severity — see
-              `SeverityBadge`'s read-only rendering elsewhere for the
-              plain-badge equivalent used outside this form. */}
-          <Select value={severity || undefined} onValueChange={setSeverity} disabled={readOnly}>
-            <SelectTrigger className="h-8 w-full max-w-xs text-xs">
-              <SelectValue
-                placeholder={readOnly ? t("monitoredTables.severityNoneLabel") : t("rulesRegistry.selectSeverity")}
-              />
-            </SelectTrigger>
-            {/* position="popper": anchor below the trigger (consistent with the
-                dimension select) rather than overlaying the selected item. */}
-            <SelectContent position="popper">
-              {severityValues.map((v) => (
-                <SelectItem key={v} value={v} className="text-xs">
-                  <span className="flex items-center gap-1.5">
-                    <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_SEVERITY_KEY, v)} />
-                    {v}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {showFieldSuggest && severityValues.length > 0 && (
-            <AiSuggestIcon
-              field="severity"
-              busy={suggestingField === "severity"}
-              onClick={() => handleAiSuggestField("severity")}
-              label={t("rulesRegistry.aiSuggestButton")}
-              position="inline"
-            />
-          )}
-        </div>
-      </div>
-
+      {/* Dimension is rendered BEFORE severity: its items are two lines
+          (name + description) so the open list is tall; keeping it in the
+          higher slot leaves enough room to open DOWNWARD. When it was the
+          lower field the list flipped upward for lack of space below it.
+          Severity's items are a single line, so it still fits below in the
+          lower slot. */}
       <div className="space-y-2">
         <div className="flex items-center gap-1.5">
           <Label>
@@ -3323,8 +3282,10 @@ export function RegistryRuleFormDialog({
                 "item-aligned" overlays the selected item on top of the trigger —
                 which, with these two-line items (name + description), covers the
                 trigger so it can't be re-opened, and visibly jumps the popup
-                elsewhere after a selection. */}
-            <SelectContent position="popper">
+                elsewhere after a selection. align="start" left-aligns the list
+                with the trigger (the shadcn default is "center", which offsets
+                the wider description list from the box's left edge). */}
+            <SelectContent position="popper" align="start">
               {dimensionValues.map((v) => {
                 const description = dimensionDescriptions[v];
                 return (
@@ -3352,6 +3313,55 @@ export function RegistryRuleFormDialog({
               field="dimension"
               busy={suggestingField === "dimension"}
               onClick={() => handleAiSuggestField("dimension")}
+              label={t("rulesRegistry.aiSuggestButton")}
+              position="inline"
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5">
+          <Label>
+            {t("rulesRegistry.severityLabel")} <span className="text-destructive">*</span>
+          </Label>
+          <HelpTooltip text={t("rulesRegistry.severityTooltip")} />
+        </div>
+        <div className="flex items-center gap-2 group">
+          {/* Always a Select (disabled when read-only) — matches Dimension's
+              rendering above so severity doesn't visually downgrade from a
+              dropdown to a plain badge for non-editable rules (regression:
+              a rule WITH severity set, e.g. rejected, used to lose its
+              dropdown chrome entirely). The read-only "None" placeholder
+              still communicates a genuinely-unset severity — see
+              `SeverityBadge`'s read-only rendering elsewhere for the
+              plain-badge equivalent used outside this form. */}
+          <Select value={severity || undefined} onValueChange={setSeverity} disabled={readOnly}>
+            <SelectTrigger className="h-8 w-full max-w-xs text-xs">
+              <SelectValue
+                placeholder={readOnly ? t("monitoredTables.severityNoneLabel") : t("rulesRegistry.selectSeverity")}
+              />
+            </SelectTrigger>
+            {/* position="popper": anchor below the trigger (consistent with the
+                dimension select) rather than overlaying the selected item.
+                align="start" matches dimension's left-aligned list (shadcn
+                default is "center", which offsets the list from the box). */}
+            <SelectContent position="popper" align="start">
+              {severityValues.map((v) => (
+                <SelectItem key={v} value={v} className="text-xs">
+                  <span className="flex items-center gap-1.5">
+                    <ColorDot color={colorFor(labelDefinitions as LabelColorDefinition[], RESERVED_SEVERITY_KEY, v)} />
+                    {v}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {showFieldSuggest && severityValues.length > 0 && (
+            <AiSuggestIcon
+              field="severity"
+              busy={suggestingField === "severity"}
+              onClick={() => handleAiSuggestField("severity")}
               label={t("rulesRegistry.aiSuggestButton")}
               position="inline"
             />
