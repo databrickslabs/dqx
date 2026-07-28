@@ -2522,14 +2522,18 @@ def is_data_fresh_per_time_window(
 
 @register_rule("dataset")
 def has_no_gaps_per_time_window(
-    column: str | Column, window_minutes: int, group_by: list[str | Column] | None = None
+    column: str | Column,
+    window_minutes: int,
+    group_by: list[str | Column] | None = None,
+    trailing_gap: bool = False,
+    curr_timestamp: Column | None = None,
 ) -> tuple[Column, Callable]:
     """Checks whether a time-series column has gaps, i.e. time windows that contain no rows at all
     between windows that do (for example no data for 2025-07-15 while 2025-07-14 and 2025-07-16 are
     present).
 
-    A missing window has no row to attach a violation to, so the gap is reported on the boundary row
-    that precedes it (the last row before the gap). Distinct values of *column* are bucketed into
+    A missing window has no row to attach a violation to, so the gap is reported on every row in the
+    last present window before the gap. Distinct values of *column* are bucketed into
     fixed time windows of *window_minutes* (a fixed grid aligned to absolute time), and a gap is
     flagged whenever the next present window starts more than one window after the current one. Gaps
     are therefore measured against this fixed absolute-time grid, not the elapsed time between
@@ -2539,9 +2543,12 @@ def has_no_gaps_per_time_window(
     device or session) and the work partitions by the group key, which is the common case for IoT or
     clickstream data. When it is omitted, the whole column is treated as a single series.
 
-    Only interior gaps are detected. A trailing gap (no data for the most recent windows up to the
-    current time) is not reported, because there is no later row to anchor it to. Null values are
-    ignored and pass with no violation reported.
+    By default, only interior gaps are detected: a trailing gap (no data for the most recent windows
+    up to the current time) is not reported, because there is no later row to anchor it to. Set
+    *trailing_gap* to *True* to additionally flag the last present window when it ends more than one
+    window before the current time, so that missing recent data (for example no rows reported today)
+    is caught even at the tail of the series. Null values are ignored and pass with no violation
+    reported.
 
     In streaming, gaps are detected within individual micro-batches only.
 
@@ -2551,6 +2558,11 @@ def has_no_gaps_per_time_window(
             (for example 1440 for daily)
         group_by: optional list of column names or Column expressions to detect gaps independently
             within each group; when omitted, the whole column is treated as a single global series
+        trailing_gap: if *True*, also flags the last present window (per group) when it ends more
+            than one window before *curr_timestamp*, anchoring the trailing boundary to the current
+            time instead of leaving it unchecked; defaults to *False*
+        curr_timestamp: optional current timestamp column used to anchor trailing-gap detection; only
+            used when *trailing_gap* is *True*; if not provided, *current_timestamp()* is used
 
     Returns:
         A tuple of:
@@ -2558,13 +2570,17 @@ def has_no_gaps_per_time_window(
             - A closure that applies the gap detection and adds the necessary condition columns.
 
     Raises:
-        InvalidParameterError: if *window_minutes* is not a positive integer, or if *group_by* is not
-            a list.
+        InvalidParameterError: if *window_minutes* is not a positive integer, if *group_by* is not
+            a list, or if *curr_timestamp* is provided while *trailing_gap* is *False*.
     """
-    if window_minutes is None or window_minutes <= 0:
+    if not isinstance(window_minutes, int) or isinstance(window_minutes, bool) or window_minutes <= 0:
         raise InvalidParameterError("window_minutes must be a positive integer")
     if group_by is not None and not isinstance(group_by, list):
         raise InvalidParameterError("group_by must be a list of column names or column expressions")
+    if curr_timestamp is not None and not trailing_gap:
+        raise InvalidParameterError("curr_timestamp can only be provided when trailing_gap is enabled")
+    if trailing_gap and curr_timestamp is None:
+        curr_timestamp = F.current_timestamp()
 
     col_str_norm, _, col_expr = get_normalized_column_and_expr(column)
     group_cols = [F.col(c) if isinstance(c, str) else c for c in (group_by or [])]
@@ -2574,10 +2590,11 @@ def has_no_gaps_per_time_window(
     interval_col = f"__gap_interval_{col_str_norm}_{unique_str}"
     window_start_col = f"__gap_window_start_{col_str_norm}_{unique_str}"
     next_window_start_col = f"__gap_next_window_start_{col_str_norm}_{unique_str}"
+    is_trailing_gap_col = f"__gap_is_trailing_{col_str_norm}_{unique_str}" if trailing_gap else None
     condition_col = f"__gap_condition_{col_str_norm}_{unique_str}"
 
     def apply(df: DataFrame) -> DataFrame:
-        """Bucket rows into fixed time windows and flag the boundary row before each interior gap."""
+        """Bucket rows into fixed time windows and flag the boundary row before each gap."""
         input_columns = df.columns
 
         # Bucket each row into a fixed time window and keep the window start. Null timestamps are
@@ -2590,7 +2607,10 @@ def has_no_gaps_per_time_window(
 
         # For each present window (within each group) find the next present window over the ordered
         # windows. Partitioning the window by the group key keeps per-group gap detection independent
-        # and lets the work scale across partitions for per-entity data.
+        # and lets the work scale across partitions for per-entity data. When group_by is omitted,
+        # there is no partitionBy and the sort below is a single partition, but distinct() has already
+        # collapsed rows to the occupied-window count, so the sort scales with that count, not with
+        # row count; this holds for realistic grids (thousands to low millions of occupied windows).
         distinct_windows = df.filter(col_expr.isNotNull()).select(*group_cols, window_start_col).distinct()
         ordered_windows = (
             Window.partitionBy(*group_cols).orderBy(window_start_col)
@@ -2599,28 +2619,42 @@ def has_no_gaps_per_time_window(
         )
         gaps = distinct_windows.withColumn(next_window_start_col, F.lead(window_start_col).over(ordered_windows))
 
+        # lead() is null only for the last present window in each group. When trailing_gap is enabled,
+        # anchor that boundary to the window containing curr_timestamp instead of leaving it unchecked,
+        # so a stale tail (no recent data) is flagged the same way an interior gap is.
+        extra_cols: list[str] = []
+        if trailing_gap:
+            assert is_trailing_gap_col is not None and curr_timestamp is not None
+            anchor_window_start = F.window(curr_timestamp.cast("timestamp"), f"INTERVAL {window_minutes} MINUTES").start
+            gaps = gaps.withColumn(is_trailing_gap_col, F.col(next_window_start_col).isNull())
+            gaps = gaps.withColumn(next_window_start_col, F.coalesce(F.col(next_window_start_col), anchor_window_start))
+            extra_cols = [is_trailing_gap_col]
+
         # A gap exists when the next present window starts more than one window after the current one.
         gap_seconds = window_minutes * 60
         gaps = gaps.withColumn(
             condition_col,
-            F.when(
-                F.col(next_window_start_col).isNotNull()
-                & ((F.unix_timestamp(next_window_start_col) - F.unix_timestamp(window_start_col)) > F.lit(gap_seconds)),
-                True,
-            ).otherwise(False),
+            F.col(next_window_start_col).isNotNull()
+            & ((F.unix_timestamp(next_window_start_col) - F.unix_timestamp(window_start_col)) > F.lit(gap_seconds)),
         )
 
         # Attach the per-window gap flag back to every row of the boundary window, keeping column order.
         joined = df.join(gaps, on=[*join_keys, window_start_col], how="left")
-        return joined.select(*input_columns, window_start_col, next_window_start_col, condition_col)
+        return joined.select(*input_columns, window_start_col, next_window_start_col, *extra_cols, condition_col)
 
+    next_window_phrase = F.lit(" and the next present window starting at ")
+    if trailing_gap:
+        assert is_trailing_gap_col is not None
+        next_window_phrase = F.when(
+            F.col(is_trailing_gap_col), F.lit(" and the current time; the current window starts at ")
+        ).otherwise(next_window_phrase)
     condition = make_condition(
         condition=F.col(condition_col),
         message=F.concat_ws(
             "",
             F.lit("Gap in time series: no data between the window starting at "),
             F.col(window_start_col).cast("string"),
-            F.lit(" and the next present window starting at "),
+            next_window_phrase,
             F.col(next_window_start_col).cast("string"),
         ),
         alias=f"{col_str_norm}_has_no_gaps_per_time_window",

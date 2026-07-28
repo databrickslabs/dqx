@@ -68,7 +68,7 @@ def test_apply_checks_and_split_on_empty_checks(ws, spark):
 
 
 def test_apply_checks_and_split_has_no_gaps_per_time_window(ws, spark, set_utc_timezone):
-    dq_engine = DQEngine(ws)
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     schema = "event_ts timestamp, val int"
     test_df = spark.createDataFrame(
         [
@@ -87,10 +87,33 @@ def test_apply_checks_and_split_has_no_gaps_per_time_window(ws, spark, set_utc_t
         ),
     ]
 
+    checked = dq_engine.apply_checks(test_df, checks)
     good, bad = dq_engine.apply_checks_and_split(test_df, checks)
 
-    assert sorted(row["val"] for row in good.select("val").collect()) == [2, 3]
-    assert [row["val"] for row in bad.select("val").collect()] == [1]
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                datetime(2025, 7, 14),
+                1,
+                [
+                    build_quality_violation(
+                        "event_ts_has_no_gaps_per_time_window",
+                        "Gap in time series: no data between the window starting at 2025-07-14 00:00:00 "
+                        "and the next present window starting at 2025-07-16 00:00:00",
+                        ["event_ts"],
+                        function="has_no_gaps_per_time_window",
+                    ),
+                ],
+                None,
+            ],
+            [datetime(2025, 7, 16), 2, None, None],
+            [datetime(2025, 7, 17), 3, None, None],
+        ],
+        expected_schema,
+    )
+
+    assert_check_and_split_results(checked, good, bad, expected, ["event_ts", "val"])
 
 
 def test_apply_checks_passed(ws, spark):
