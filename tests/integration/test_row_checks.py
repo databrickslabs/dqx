@@ -2148,6 +2148,58 @@ def test_col_is_valid_currency_code_case_insensitive(spark):
     assertDataFrameEqual(actual, expected)
 
 
+def test_col_is_valid_currency_code_numeric_case_insensitive_is_noop(spark):
+    schema_ccy = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            ["840"],  # valid numeric code
+            ["8"],  # wrong width, still invalid regardless of case_sensitive
+            [None],
+        ],
+        schema_ccy,
+    )
+
+    # case_sensitive=False has no effect on numeric codes (they contain only digits)
+    actual = test_df.select(is_valid_currency_code("a", code_format="numeric", case_sensitive=False))
+
+    def violation(value: str) -> str:
+        return f"Value '{value}' in Column 'a' is not a valid ISO 4217 currency code"
+
+    checked_schema = "a_is_not_a_valid_currency_code: string"
+    checked_data = [
+        [None],
+        [violation("8")],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_currency_code_numeric_int_column(spark):
+    schema_ccy = "a: int"
+    test_df = spark.createDataFrame(
+        [
+            [840],  # valid numeric code, matches as an int without needing zero-padding
+            [8],  # would be code 008 (Albania) but is not zero-padded, so it is correctly invalid
+            [None],
+        ],
+        schema_ccy,
+    )
+
+    actual = test_df.select(is_valid_currency_code("a", code_format="numeric"))
+
+    checked_schema = "a_is_not_a_valid_currency_code: string"
+    checked_data = [
+        [None],
+        ["Value '8' in Column 'a' is not a valid ISO 4217 currency code"],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_is_ipv4_address_in_cidr(spark):
     schema_ipv4 = "a: string, b: string"
 

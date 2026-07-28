@@ -27,7 +27,12 @@ from databricks.labs.dqx.utils import (
     get_columns_as_strings,
     to_lowercase,
 )
-from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError, UnsafeSqlQueryError
+from databricks.labs.dqx.errors import (
+    ComputationError,
+    MissingParameterError,
+    InvalidParameterError,
+    UnsafeSqlQueryError,
+)
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
@@ -1091,7 +1096,13 @@ def _load_iso_codes(resource_name: str) -> frozenset[str]:
     values and their authoritative sources.
     """
     resource = Path(str(files("databricks.labs.dqx.resources") / resource_name))
-    return frozenset(resource.read_text(encoding="utf-8").split())
+    codes = frozenset(resource.read_text(encoding="utf-8").split())
+    if not codes:
+        raise ComputationError(
+            f"ISO code resource '{resource_name}' is missing or empty; reinstall the package or "
+            "regenerate the resource file."
+        )
+    return codes
 
 
 # ISO 4217 currency codes. The authoritative source is
@@ -1104,6 +1115,14 @@ def _load_iso_codes(resource_name: str) -> frozenset[str]:
 _ISO_4217_CODES_BY_FORMAT: dict[str, frozenset[str]] = {
     "alphabetic": _load_iso_codes("iso_4217_alphabetic.txt"),
     "numeric": _load_iso_codes("iso_4217_numeric.txt"),
+}
+# Precomputed once at module load: the literal lists never change at runtime, so building them per
+# call (sorted() + one F.lit() per code) would repeat needless work on every check evaluation.
+_ISO_4217_LITERALS_BY_FORMAT: dict[str, list[Column]] = {
+    fmt: [F.lit(code) for code in sorted(codes)] for fmt, codes in _ISO_4217_CODES_BY_FORMAT.items()
+}
+_ISO_4217_LITERALS_BY_FORMAT_LOWER: dict[str, list[Column]] = {
+    fmt: [F.lit(code.lower()) for code in sorted(codes)] for fmt, codes in _ISO_4217_CODES_BY_FORMAT.items()
 }
 
 
@@ -1123,16 +1142,21 @@ def is_valid_currency_code(
     currencies, such as *XXX* (no currency), *XTS* (reserved for testing), the precious metals
     (*XAU*, *XAG*, *XPT*, *XPD*) and *XDR* (IMF special drawing rights). Numeric codes are the
     three-digit, zero-padded form (e.g. *036*), so a numeric input column must preserve the leading
-    zeros.
+    zeros; a non-string column is cast to string for comparison, but the cast does not add back
+    zero-padding an integer type may have dropped (e.g. an *int* column value *8* is compared as the
+    string *"8"*, not *"008"*, and is correctly flagged as invalid).
 
     By default the comparison is case-sensitive; pass *case_sensitive* as False to accept values in
-    any case. Null values will pass the check with no violation reported.
+    any case. *case_sensitive* has no effect for *numeric* codes, which contain only digits.
+    *code_format* matching itself is case-insensitive (*"NUMERIC"*/*"Alphabetic"* are also accepted).
+    Null values will pass the check with no violation reported.
 
     Args:
         column: column to check; can be a string column name or a column expression
         code_format: ISO 4217 code representation to validate against, either *alphabetic* (default)
-            or *numeric*
-        case_sensitive: whether to perform a case-sensitive comparison (default: True)
+            or *numeric*; matching is case-insensitive
+        case_sensitive: whether to perform a case-sensitive comparison (default: True); ignored when
+            *code_format* is *numeric*
 
     Returns:
         Column object for condition
@@ -1153,12 +1177,19 @@ def is_valid_currency_code(
             f"Unsupported code_format for currency code validation: '{code_format}'. Supported: [{supported}]."
         )
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
-    if case_sensitive:
+    if normalized_format == "numeric":
+        # Numeric codes have no case, so case_sensitive is a no-op. Cast explicitly to string: without
+        # it, comparing a non-string (e.g. int) column against the string literals below makes Spark
+        # coerce the literals to the column's type instead, silently stripping leading zeros (e.g.
+        # "008" -> 8) and letting an unpadded value like 8 match a code that requires "008".
+        col_expr_compare = col_expr.cast("string")
+        allowed = _ISO_4217_LITERALS_BY_FORMAT[normalized_format]
+    elif case_sensitive:
         col_expr_compare = col_expr
-        allowed = [F.lit(code) for code in sorted(allowed_codes)]
+        allowed = _ISO_4217_LITERALS_BY_FORMAT[normalized_format]
     else:
         col_expr_compare = to_lowercase(col_expr)
-        allowed = [F.lit(code.lower()) for code in sorted(allowed_codes)]
+        allowed = _ISO_4217_LITERALS_BY_FORMAT_LOWER[normalized_format]
     condition = F.when(col_expr.isNotNull(), ~col_expr_compare.isin(*allowed)).otherwise(F.lit(None))
     return make_condition(
         condition,
