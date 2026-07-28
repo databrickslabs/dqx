@@ -18,10 +18,18 @@ def test_iso_4217_codes_match_pycountry():
     divergence from pycountry is introduced, record it as an explicit allow-list here rather than
     loosening the assertion. The test reads via the production loader (load_iso_codes) so it covers
     what actually runs rather than reimplementing the reader.
+
+    Currency attributes are read with getattr(..., None) and the None values filtered out, so a
+    future pycountry release that renames an attribute or omits it for some entries surfaces as a
+    readable code-set mismatch here rather than an AttributeError raised during collection.
     """
     expected = {
-        "iso_4217_alphabetic.txt": frozenset(currency.alpha_3 for currency in pycountry.currencies),
-        "iso_4217_numeric.txt": frozenset(currency.numeric for currency in pycountry.currencies),
+        "iso_4217_alphabetic.txt": frozenset(
+            code for currency in pycountry.currencies if (code := getattr(currency, "alpha_3", None)) is not None
+        ),
+        "iso_4217_numeric.txt": frozenset(
+            code for currency in pycountry.currencies if (code := getattr(currency, "numeric", None)) is not None
+        ),
     }
 
     for resource_name, expected_codes in expected.items():
