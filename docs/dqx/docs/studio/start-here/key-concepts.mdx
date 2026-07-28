@@ -35,15 +35,15 @@ You **write a rule**, **apply it to a table as a check**, and each time it runs
 it produces one **test** per row.
 </Admonition>
 
-## The three levels: Registry → tables → collections
+## The three levels: Rules → Tables → Collections
 
 DQX Studio is organized into three levels that build on one another. This is the
 single most useful thing to understand.
 
 ```mermaid
 flowchart LR
-  A["Rules Registry<br/>(reusable rules)"] -->|apply to a table| B["Monitored table<br/>(single source of truth<br/>for that table)"]
-  B -->|group related tables| C["Collection<br/>(a data product)"]
+  A["Rules<br/>(reusable rules)"] -->|apply to a table| B["Tables<br/>(single source of truth<br/>for that table)"]
+  B -->|group related tables| C["Collections<br/>(a data product)"]
 ```
 
 ### 1. Rules Registry — your library of reusable rules
@@ -120,6 +120,16 @@ You set a default severity when you write a rule and can override it for a
 specific table when you apply it. The set of severity levels is **customizable**,
 so your organization can rename or adjust them to match how you already
 classify data issues.
+
+<Admonition type="note" title="How severity maps to DQX Core">
+Under the hood, DQX Core has two execution outcomes for a failing check —
+**warning** and **error** — that decide which result column a failing row lands
+in. Studio's severity levels map onto these two: by default **Low** and
+**Medium** map to *warning*, and **High** and **Critical** map to *error*. That
+mapping is **configurable in the Admin pages** (on the reserved *severity*
+label), so if you add or rename severity levels you can also choose whether each
+one behaves as a warning or an error when checks run.
+</Admonition>
 
 ## Quality dimensions
 

@@ -6,7 +6,7 @@ import Link from '@docusaurus/Link';
 import Button from '../components/Button';
 import {
   AppWindow, Code, Sparkles, BarChart2, ShieldCheck, LineChart, ScrollText,
-  PlusCircle, HeartPulse, Settings2, Boxes, Store, ArrowRight, Library,
+  Boxes, Store, ArrowRight, Library,
   Info, FileText, Activity, AlertTriangle, Grid, PieChart, Radar, Calculator,
 } from 'lucide-react';
 
@@ -230,42 +230,6 @@ const FeatureTabs = ({ tab, setTab }: { tab: 'core' | 'studio'; setTab: (t: 'cor
   );
 };
 
-const TaskLauncher = (): JSX.Element => {
-  const tasks = [
-    { title: 'Check my data’s health', description: 'See quality scores and trends across your tables.', icon: HeartPulse, link: '/docs/studio/running/results' },
-    { title: 'Add a rule', description: 'Define an expectation your data should meet.', icon: PlusCircle, link: '/docs/studio/authoring/create-a-rule' },
-    { title: 'Automate quality checks', description: 'Run checks on a schedule across related tables.', icon: Settings2, link: '/docs/studio/running/run-and-schedule' },
-    { title: 'Govern a rollout', description: 'Set roles, approvals, and standards for your org.', icon: ShieldCheck, link: '/docs/studio/governance/' },
-  ];
-
-  return (
-    <div className="px-4 md:px-10 py-12 w-full bg-gray-50 dark:bg-gray-950/40">
-      <h2 className="text-2xl md:text-3xl font-semibold text-center mb-2">
-        Using DQX Studio? Jump straight in
-      </h2>
-      <p className="text-center text-gray-600 dark:text-gray-400 mb-8">
-        Go directly to the task you came to do.
-      </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-w-5xl mx-auto">
-        {tasks.map((t, i) => {
-          const Icon = t.icon;
-          return (
-            <Link
-              key={i}
-              to={t.link}
-              className="group flex flex-col items-start text-left p-5 rounded-lg border border-gray-200 dark:border-gray-800 hover:border-red-400 hover:shadow-md transition-all no-underline bg-white dark:bg-gray-900"
-            >
-              <Icon className="w-6 h-6 text-red-500 mb-2" />
-              <h3 className="text-base font-semibold mb-1 text-gray-900 dark:text-white">{t.title}</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400">{t.description}</p>
-            </Link>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
-
 const Marketplace = (): JSX.Element => {
   return (
     <div className="px-4 md:px-10 py-12 w-full">
@@ -352,7 +316,6 @@ export default function Home(): JSX.Element {
           <FeatureTabs tab={tab} setTab={setTab} />
           {tab === 'studio' && (
             <>
-              <TaskLauncher />
               <Marketplace />
               <CostCalculator />
             </>

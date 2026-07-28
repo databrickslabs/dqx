@@ -183,6 +183,45 @@ For advanced users: when even the condition builder can't express what you need,
 write the condition directly in SQL. This gives you full control for cases the
 visual builder doesn't cover — for example a window calculation or a lookup.
 
+## Cross-table rules
+
+Some checks span two (or more) tables. There are three ways to write one:
+
+- **A referential integrity check** — the built-in "value exists in a reference
+  table" (foreign-key) check. Pick it in the check catalog and point it at the
+  reference table and matching columns. Best for the common "every `product_id`
+  in orders exists in products" case.
+- **The condition builder's Advanced box** — its *Join / reference another
+  table* option, when the cross-table lookup is part of a larger condition.
+- **A cross-table SQL rule** — for comparisons or aggregates that neither of the
+  above can express (see below).
+
+### Cross-table SQL rules
+
+Choose the **SQL** authoring mode and write a query that joins the tables and
+returns the rows that *fail*. Everything else — name, dimension, severity,
+review — works exactly as it does for any other rule. The query must be a single
+read-only `SELECT` (DQX Studio rejects anything that writes or runs multiple
+statements).
+
+Row-level examples with a basic join:
+
+```sql
+-- Orphaned orders: a customer_id with no matching customer
+SELECT o.*
+FROM orders o
+LEFT JOIN customers c ON o.customer_id = c.id
+WHERE c.id IS NULL
+```
+
+```sql
+-- Line item priced differently from the product's catalogue price
+SELECT i.*
+FROM order_items i
+JOIN products p ON i.product_id = p.id
+WHERE i.unit_price <> p.list_price
+```
+
 ## Generate a rule with AI
 
 If you'd rather describe what you want than build it by hand, use the **Generate**
