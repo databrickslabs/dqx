@@ -59,9 +59,31 @@ export interface AddDataProductMemberIn {
   pinned_version?: AddDataProductMemberInPinnedVersion;
 }
 
+/**
+ * Grid column name -> slot family, for typing.
+ */
+export type AdhocGridInFamilies = {[key: string]: string};
+
+/**
+ * One inline grid standing in for a reference table in the manual test.
+ */
+export interface AdhocGridIn {
+  columns?: string[];
+  rows?: unknown[][];
+  /** Grid column name -> slot family, for typing. */
+  families?: AdhocGridInFamilies;
+}
+
+/**
+ * Cross-table rules: family='table' slot name -> the grid standing in for that reference table.
+ */
+export type AdhocRunInRefGrids = {[key: string]: AdhocGridIn};
+
 export interface AdhocRunIn {
   columns: string[];
   rows: unknown[][];
+  /** Cross-table rules: family='table' slot name -> the grid standing in for that reference table. */
+  ref_grids?: AdhocRunInRefGrids;
 }
 
 /**
@@ -236,6 +258,8 @@ export interface AiSqlOut {
   predicate: string;
   /** pass | fail — whether a TRUE predicate is a pass or fail */
   polarity?: AiSqlOutPolarity;
+  /** Every {{placeholder}} used by the predicate, in first-appearance order, so the editor can declare them automatically. A cross-table rule's joined table comes back with family 'table' (it binds to a table FQN, not a column). */
+  slots?: RuleSlot[];
 }
 
 /**
@@ -1573,13 +1597,18 @@ export interface GenerateDataIn {
    * @maximum 20
    */
   row_count?: number;
+  /** family='table' slot names the rule joins; asks the model for a consistent cross-table mix (some input rows matching a reference row, some deliberately not). */
+  ref_tables?: string[];
 }
 
 export type GenerateDataOutRowsItemItem = string | null;
 
+export type GenerateDataOutRefs = {[key: string]: GeneratedGridOut};
+
 export interface GenerateDataOut {
   columns: string[];
   rows: GenerateDataOutRowsItemItem[][];
+  refs?: GenerateDataOutRefs;
 }
 
 /**
@@ -1614,6 +1643,13 @@ export interface GenerateRulesFromContractOut {
   warnings?: string[];
   /** DQEngine.validate_checks errors for the generated rules. Non-blocking — surfaced so the UI can flag rules that would fail at execution time (mirrors the AI-assisted generation endpoint). */
   validation_errors?: string[];
+}
+
+export type GeneratedGridOutRowsItemItem = string | null;
+
+export interface GeneratedGridOut {
+  columns: SlotIn[];
+  rows: GeneratedGridOutRowsItemItem[][];
 }
 
 export type GenieAnswerOutConversationId = string | null;
@@ -3184,7 +3220,7 @@ export interface RuleScoreOut {
 }
 
 /**
- * Column family the slot accepts
+ * Column family the slot accepts ('table' binds a table FQN instead)
  */
 export type RuleSlotFamily = typeof RuleSlotFamily[keyof typeof RuleSlotFamily];
 
@@ -3197,6 +3233,7 @@ export const RuleSlotFamily = {
   boolean: 'boolean',
   array: 'array',
   any: 'any',
+  table: 'table',
 } as const;
 
 /**
@@ -3226,11 +3263,17 @@ when a rule is applied to a monitored table. ``position`` fixes a stable
 display/substitution order; ``cardinality`` distinguishes a single-column
 slot (``one``) from a composite/multi-column slot (``many``, e.g.
 ``is_unique`` over a list of columns).
+
+A ``family="table"`` slot is the exception: it binds to a fully-qualified
+table name rather than a column, so a cross-table SQL rule can reference a
+joined table as ``{{rates_table}}`` and stay portable across workspaces.
+Such a slot is bound with an FQN input at apply time (not the column
+picker) and is never reported as one of the rule's mapped columns.
  */
 export interface RuleSlot {
   /** Slot placeholder name, e.g. 'column' */
   name: string;
-  /** Column family the slot accepts */
+  /** Column family the slot accepts ('table' binds a table FQN instead) */
   family: RuleSlotFamily;
   /** Stable ordering position among a rule's slots */
   position?: number;
@@ -3928,6 +3971,11 @@ export interface TableQueryIn {
 
 export type TableRunInColumnMapping = {[key: string]: string};
 
+/**
+ * Cross-table rules only: family='table' slot name -> reference table FQN.
+ */
+export type TableRunInTableMapping = {[key: string]: string};
+
 export type TableRunInSampleKind = typeof TableRunInSampleKind[keyof typeof TableRunInSampleKind];
 
 
@@ -3945,6 +3993,8 @@ export interface TableRunIn {
    */
   table_fqn: string;
   column_mapping?: TableRunInColumnMapping;
+  /** Cross-table rules only: family='table' slot name -> reference table FQN. */
+  table_mapping?: TableRunInTableMapping;
   sample_kind?: TableRunInSampleKind;
   /**
    * @minimum 1

@@ -1,12 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import {
+  bodyGranularity,
   buildSqlBody,
   compileAstToSql,
   compileJoinsToSql,
   compileLowcodeBody,
   lowcodeHasAdvancedShape,
   pruneStaleGroupByRefs,
+  queryOmitsInputView,
   rowStrandedByRetype,
+  sqlEditorShape,
 } from "./lowcodeCompile";
 import type { LowcodeColumnRef } from "./lowcodeCompile";
 import { renameColumnInAst, type AnyRow, type JoinAst, type LowcodeAstV2 } from "./lowcodeAst";
@@ -588,6 +591,45 @@ describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without cor
     expect(body.sql_query).toContain("FROM {{input_view}} JOIN c.s.d d ON d.id = {{id}}");
   });
 
+  // The SQL tab's joins CARD (structured joins, as opposed to a JOIN typed into
+  // the editor). This is what makes a cross-table SQL rule row-level without the
+  // author picking merge keys by hand: the keys come from the join itself, the
+  // same way the visual builder derives them.
+  test("structured joins + bare predicate -> sql_query with merge_columns from the join keys", () => {
+    const body = buildSqlBody({
+      sqlPredicate: "c.id IS NOT NULL",
+      sqlJoins: [
+        {
+          join_type: "LEFT",
+          target_table: "main.sales.customers",
+          keys: [{ joined_column: "id", column_ref: "customer_id" }],
+        },
+      ],
+    });
+    expect(body.merge_columns).toEqual(["{{customer_id}}"]);
+    expect(body.sql_query).toContain("SELECT {{customer_id}},");
+    expect(body.sql_query).toContain("FROM {{input_view}} LEFT JOIN main.sales.customers");
+    expect(body.predicate).toBeUndefined();
+  });
+
+  test("structured joins + an explicit row-level toggle uses the author's merge keys", () => {
+    // With a full query in the editor the granularity toggle is live, and the
+    // author's keys win over the join-derived ones.
+    const body = buildSqlBody({
+      sqlPredicate: "c.id IS NOT NULL",
+      sqlJoins: [
+        {
+          join_type: "LEFT",
+          target_table: "main.sales.customers",
+          keys: [{ joined_column: "id", column_ref: "customer_id" }],
+        },
+      ],
+      granularity: "row",
+      mergeColumns: ["{{order_id}}"],
+    });
+    expect(body.merge_columns).toEqual(["{{order_id}}"]);
+  });
+
   test("a plain predicate with no join stays a { predicate } (sql_expression)", () => {
     expect(buildSqlBody({ sqlPredicate: "{{amount}} > 0 AND {{amount}} < 1e9", sqlJoins: [] })).toEqual({
       predicate: "{{amount}} > 0 AND {{amount}} < 1e9",
@@ -600,6 +642,175 @@ describe("buildSqlBody — CRIT-2: cross-table sql_query round-trips without cor
     });
   });
 
+});
+
+// Granularity: which rules report per row and which report one verdict for the
+// whole table. `merge_columns` is the ONLY thing that decides it for a
+// `sql_query`, so these guard both the derivation the UI displays and the body
+// the toggle emits.
+describe("bodyGranularity", () => {
+  test("a predicate is row-level (sql_expression is evaluated per row)", () => {
+    expect(bodyGranularity({ predicate: "{{a}} > 0" })).toBe("row");
+  });
+
+  test("a sql_query WITH merge columns is row-level", () => {
+    expect(bodyGranularity({ sql_query: "SELECT ...", merge_columns: ["{{id}}"] })).toBe("row");
+  });
+
+  test("a sql_query with no / empty merge columns is dataset-level", () => {
+    expect(bodyGranularity({ sql_query: "SELECT ..." })).toBe("dataset");
+    expect(bodyGranularity({ sql_query: "SELECT ...", merge_columns: [] })).toBe("dataset");
+  });
+});
+
+describe("sqlEditorShape", () => {
+  test("a bare boolean predicate is a predicate", () => {
+    expect(sqlEditorShape("{{amount}} > 0 AND {{amount}} < 100")).toBe("predicate");
+  });
+
+  test("empty text is a predicate (nothing to choose yet)", () => {
+    expect(sqlEditorShape("   ")).toBe("predicate");
+  });
+
+  test("a full SELECT is a query", () => {
+    expect(sqlEditorShape("SELECT (NOT (x)) AS condition FROM {{input_view}}")).toBe("query");
+  });
+
+  test("a predicate carrying JOIN clauses is a query", () => {
+    expect(sqlEditorShape("{{r}} IS NOT NULL LEFT JOIN c.s.d d ON d.r = {{r}}")).toBe("query");
+  });
+
+  test("a '-- join' comment does not make a predicate look like a query", () => {
+    expect(sqlEditorShape("{{a}} > 0 -- consider a join here")).toBe("predicate");
+  });
+});
+
+describe("queryOmitsInputView", () => {
+  // The exact shape a table-level author lands on: a dataset verdict over a
+  // column of the monitored table, with nothing to read it from. Both DQX and
+  // the Test tab fail it with UNRESOLVED_COLUMN.
+  test("a SELECT over a column slot with no FROM is flagged", () => {
+    expect(queryOmitsInputView("SELECT (COUNT_IF({{customer_id}} IS NULL) > 0) AS condition", ["customer_id"])).toBe(
+      true,
+    );
+  });
+
+  test("the same query reading the input view is fine", () => {
+    expect(
+      queryOmitsInputView("SELECT (COUNT_IF({{customer_id}} IS NULL) > 0) AS condition FROM {{input_view}}", [
+        "customer_id",
+      ]),
+    ).toBe(false);
+  });
+
+  test("whitespace inside the braces still counts as reading the input view", () => {
+    expect(queryOmitsInputView("SELECT ({{a}} > 0) AS condition FROM {{ input_view }}", ["a"])).toBe(false);
+  });
+
+  test("a query over only reference tables is legitimate", () => {
+    expect(queryOmitsInputView("SELECT (COUNT(*) = 0) AS condition FROM {{ref_table}} r", ["customer_id"])).toBe(false);
+  });
+
+  test("a bare predicate is never flagged — it compiles to sql_expression", () => {
+    expect(queryOmitsInputView("{{customer_id}} IS NOT NULL", ["customer_id"])).toBe(false);
+  });
+
+  test("a predicate carrying JOINs is not flagged — buildSqlBody projects the FROM", () => {
+    expect(
+      queryOmitsInputView("{{region}} IS NOT NULL\nLEFT JOIN {{dim}} d ON d.region = {{region}}", ["region"]),
+    ).toBe(false);
+  });
+
+  test("a commented-out input view does not count", () => {
+    expect(queryOmitsInputView("SELECT ({{a}} > 0) AS condition -- FROM {{input_view}}", ["a"])).toBe(true);
+  });
+});
+
+describe("buildSqlBody — row/table granularity toggle", () => {
+  const PRED_WITH_JOIN = "{{region}} IS NOT NULL\nLEFT JOIN c.s.dim a ON a.region = {{region}}";
+
+  // F3: this exact shape (JOIN, no merge columns) raises InvalidParameterError at
+  // runtime on any table with more than one row. Choosing row-level and naming a
+  // key is what makes it runnable, so the key must land in BOTH merge_columns and
+  // the SELECT list — DQX joins the verdict back on a column it has to receive.
+  test("row-level projects the merge keys into the SELECT and sets merge_columns", () => {
+    const body = buildSqlBody({
+      sqlPredicate: PRED_WITH_JOIN,
+      sqlJoins: [],
+      granularity: "row",
+      mergeColumns: ["{{region}}"],
+    });
+    expect(body.sql_query).toBe(
+      "SELECT {{region}}, (NOT ({{region}} IS NOT NULL)) AS condition " +
+        "FROM {{input_view}} LEFT JOIN c.s.dim a ON a.region = {{region}}",
+    );
+    expect(body.merge_columns).toEqual(["{{region}}"]);
+    expect(bodyGranularity(body)).toBe("row");
+  });
+
+  test("multiple merge keys are all projected, in order", () => {
+    const body = buildSqlBody({
+      sqlPredicate: PRED_WITH_JOIN,
+      sqlJoins: [],
+      granularity: "row",
+      mergeColumns: ["{{region}}", "{{day}}"],
+    });
+    expect(body.sql_query).toContain("SELECT {{region}}, {{day}}, (NOT (");
+    expect(body.merge_columns).toEqual(["{{region}}", "{{day}}"]);
+  });
+
+  test("dataset-level projects nothing and emits no merge columns", () => {
+    const body = buildSqlBody({
+      sqlPredicate: PRED_WITH_JOIN,
+      sqlJoins: [],
+      granularity: "dataset",
+      // Stale keys from a previous row-level choice must not leak through.
+      mergeColumns: ["{{region}}"],
+    });
+    expect(body.sql_query).toBe(
+      "SELECT (NOT ({{region}} IS NOT NULL)) AS condition " +
+        "FROM {{input_view}} LEFT JOIN c.s.dim a ON a.region = {{region}}",
+    );
+    expect(body.merge_columns).toBeUndefined();
+    expect(bodyGranularity(body)).toBe("dataset");
+  });
+
+  test("row-level attaches merge columns to an author-written SELECT without rewriting it", () => {
+    const q = "SELECT {{k}}, (NOT (x > 0)) AS condition FROM {{input_view}} JOIN c.s.d d ON d.k = {{k}}";
+    const body = buildSqlBody({ sqlPredicate: q, sqlJoins: [], granularity: "row", mergeColumns: ["{{k}}"] });
+    expect(body.sql_query).toBe(q);
+    expect(body.merge_columns).toEqual(["{{k}}"]);
+  });
+
+  test("dataset-level strips the merge columns of a loaded row-level query", () => {
+    const q = "SELECT {{k}}, (NOT (x > 0)) AS condition FROM {{input_view}} JOIN c.s.d d ON d.k = {{k}}";
+    const body = buildSqlBody({
+      sqlPredicate: q,
+      sqlJoins: [],
+      sqlQueryPassthrough: { merge_columns: ["{{k}}"] },
+      granularity: "dataset",
+    });
+    expect(body.merge_columns).toBeUndefined();
+  });
+
+  test("a bare predicate ignores a dataset choice and stays sql_expression", () => {
+    // The UI locks the toggle to row-level for this shape; the compiler agrees
+    // rather than inventing an aggregate the author never wrote.
+    expect(
+      buildSqlBody({ sqlPredicate: "{{a}} > 0", sqlJoins: [], granularity: "dataset", mergeColumns: [] }),
+    ).toEqual({ predicate: "{{a}} > 0" });
+  });
+
+  test("row-level with no keys named emits no merge columns (the UI blocks saving this)", () => {
+    const body = buildSqlBody({ sqlPredicate: PRED_WITH_JOIN, sqlJoins: [], granularity: "row", mergeColumns: [] });
+    expect(body.merge_columns).toBeUndefined();
+  });
+
+  test("omitting granularity preserves the loaded merge columns (pre-toggle behaviour)", () => {
+    const q = "SELECT {{k}}, (NOT (x > 0)) AS condition FROM {{input_view}} JOIN c.s.d d ON d.k = {{k}}";
+    const body = buildSqlBody({ sqlPredicate: q, sqlJoins: [], sqlQueryPassthrough: { merge_columns: ["{{k}}"] } });
+    expect(body.merge_columns).toEqual(["{{k}}"]);
+  });
 });
 
 describe("item42: column-ref RHS in single-value operators", () => {

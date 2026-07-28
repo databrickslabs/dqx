@@ -9,14 +9,24 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { SingleTableScopePicker } from "@/components/monitored-tables/SingleTableScopePicker";
 import { SingleColumnPicker } from "@/components/apply-rules/ColumnPicker";
+import { isReferenceTableSlot } from "@/lib/refTableColumns";
 import { useGetTableColumns, type RuleSlot } from "@/lib/api";
 
 export interface TableSourcePayload {
   table: string;
   column_mapping: Record<string, string>;
+  /** Cross-table rules: `family="table"` slot name -> reference table FQN. */
+  table_mapping: Record<string, string>;
   /** Columns to bold in the result grid header (the mapped ones). */
   mappedColumns: string[];
 }
+
+/** A table slot names a reference table to join, so it binds to an FQN rather
+ *  than to a column of the sampled table — asking a column picker for one can
+ *  only ever come up empty. The reserved `{{input_view}}` is neither: it always
+ *  resolves to the table being sampled, so it needs no binding at all. */
+const isTableSlot = isReferenceTableSlot;
+const isColumnSlot = (s: RuleSlot): boolean => s.family !== "table";
 
 function splitFqn(fqn: string): { catalog: string; schema: string; table: string } | null {
   const parts = fqn.split(".");
@@ -34,6 +44,7 @@ export function TableTestSource({
   const { t } = useTranslation();
   const [fqn, setFqn] = useState("");
   const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [tableMapping, setTableMapping] = useState<Record<string, string>>({});
 
   const parts = splitFqn(fqn);
   const detail = useGetTableColumns(parts?.catalog ?? "", parts?.schema ?? "", parts?.table ?? "", {
@@ -41,23 +52,28 @@ export function TableTestSource({
   });
   const columns = detail.data?.data ?? [];
 
+  const columnSlots = useMemo(() => slots.filter(isColumnSlot), [slots]);
+  const tableSlots = useMemo(() => slots.filter(isTableSlot), [slots]);
+
   // Reset the mapping whenever the table changes so stale column names don't
-  // survive onto a different table.
+  // survive onto a different table. Reference-table bindings are independent of
+  // the monitored table, so they survive.
   useEffect(() => {
     setMapping({});
   }, [fqn]);
 
-  const allMapped = slots.length === 0 || slots.every((s) => !!mapping[s.name]);
-  const mappedColumns = useMemo(() => slots.map((s) => mapping[s.name]).filter(Boolean), [slots, mapping]);
+  const allMapped =
+    columnSlots.every((s) => !!mapping[s.name]) && tableSlots.every((s) => !!splitFqn(tableMapping[s.name] ?? ""));
+  const mappedColumns = useMemo(() => columnSlots.map((s) => mapping[s.name]).filter(Boolean), [columnSlots, mapping]);
 
   useEffect(() => {
     if (!parts || !allMapped) {
       onReady(null);
       return;
     }
-    onReady({ table: fqn, column_mapping: mapping, mappedColumns });
+    onReady({ table: fqn, column_mapping: mapping, table_mapping: tableMapping, mappedColumns });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fqn, allMapped, JSON.stringify(mapping)]);
+  }, [fqn, allMapped, JSON.stringify(mapping), JSON.stringify(tableMapping)]);
 
   return (
     <div className="space-y-4">
@@ -65,11 +81,36 @@ export function TableTestSource({
         <h4 className="text-sm font-medium leading-none">{t("ruleTest.pickTable")}</h4>
         <SingleTableScopePicker value={fqn} onChange={setFqn} />
       </div>
-      {parts && slots.length > 0 && (
+      {/* Reference tables are asked for BEFORE the column mapping and outside the
+          `parts` guard: they don't depend on which table is being sampled, and a
+          cross-table rule reads oddly if its joined table isn't visible until a
+          monitored table is picked. */}
+      {tableSlots.length > 0 && (
+        <div className="space-y-2">
+          <h4 className="text-sm font-medium leading-none">{t("ruleTest.mapTables")}</h4>
+          <div className="space-y-3">
+            {tableSlots.map((slot) => (
+              <div key={slot.name} className="space-y-1.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-mono text-xs truncate">{`{{${slot.name}}}`}</span>
+                  <span className="inline-block rounded bg-muted/60 border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground font-medium uppercase tracking-wide shrink-0">
+                    {slot.family}
+                  </span>
+                </div>
+                <SingleTableScopePicker
+                  value={tableMapping[slot.name] ?? ""}
+                  onChange={(v) => setTableMapping((prev) => ({ ...prev, [slot.name]: v }))}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {parts && columnSlots.length > 0 && (
         <div className="space-y-2">
           <h4 className="text-sm font-medium leading-none">{t("ruleTest.mapColumns")}</h4>
           <div className="space-y-2">
-            {slots.map((slot) => (
+            {columnSlots.map((slot) => (
               <div key={slot.name} className="grid grid-cols-[160px_24px_1fr] items-center gap-3">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="font-mono text-xs truncate">{`{{${slot.name}}}`}</span>

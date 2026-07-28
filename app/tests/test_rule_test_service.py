@@ -147,3 +147,80 @@ class TestGenerateTestData:
         ai_gateway.query.return_value = "not json at all"
         with pytest.raises(AIResponseParseError):
             await service.generate_test_data(predicate="p", polarity="pass", columns=[("a", "text")], row_count=8, user_email="u@x")
+
+
+class TestGenerateCrossTableTestData:
+    """Reference tables shift the ask: the model must also invent each reference
+    table's columns and keep the data consistent across grids."""
+
+    @staticmethod
+    async def _generate(service, columns=None, refs=("ref",)):
+        return await service.generate_test_data(
+            predicate="SELECT (c.id IS NULL) AS condition FROM {{input_view}} JOIN {{ref}} c ON c.id = {{cid}}",
+            polarity="pass",
+            columns=columns or [("cid", "text")],
+            row_count=6,
+            user_email="u@x",
+            ref_tables=list(refs),
+        )
+
+    @pytest.mark.asyncio
+    async def test_reference_tables_reach_the_prompt(self, service, ai_gateway):
+        ai_gateway.query.return_value = '{"rows": []}'
+        await self._generate(service)
+        system, user = (m["content"] for m in ai_gateway.query.call_args.kwargs["messages"])
+        assert "cross-table" in system
+        assert '"reference_tables": ["ref"]' in user
+
+    @pytest.mark.asyncio
+    async def test_without_reference_tables_the_single_table_prompt_is_used(self, service, ai_gateway):
+        ai_gateway.query.return_value = '{"rows": []}'
+        await service.generate_test_data(
+            predicate="{{a}} > 0", polarity="pass", columns=[("a", "numeric")], row_count=6, user_email="u@x"
+        )
+        system, user = (m["content"] for m in ai_gateway.query.call_args.kwargs["messages"])
+        assert "cross-table" not in system
+        assert "reference_tables" not in user
+
+    @pytest.mark.asyncio
+    async def test_parses_reference_grids(self, service, ai_gateway):
+        ai_gateway.query.return_value = (
+            '{"rows": [["C-1"], ["C-9"]], "refs": {"ref": {"columns": [{"name": "id", "family": "text"}], '
+            '"rows": [["C-1"]]}}}'
+        )
+        result = await self._generate(service)
+        assert result.rows == [["C-1"], ["C-9"]]
+        assert result.refs["ref"].columns == [("id", "text")]
+        assert result.refs["ref"].rows == [["C-1"]]
+
+    @pytest.mark.asyncio
+    async def test_reference_cells_are_coerced_and_padded(self, service, ai_gateway):
+        ai_gateway.query.return_value = (
+            '{"rows": [], "refs": {"ref": {"columns": [{"name": "id"}, {"name": "tier", "family": "numeric"}], '
+            '"rows": [[7, 2], ["only-one"]]}}}'
+        )
+        result = await self._generate(service)
+        assert result.refs["ref"].columns == [("id", "any"), ("tier", "numeric")]
+        assert result.refs["ref"].rows == [["7", "2"], ["only-one", None]]
+
+    @pytest.mark.asyncio
+    async def test_unrequested_reference_tables_are_ignored(self, service, ai_gateway):
+        ai_gateway.query.return_value = (
+            '{"rows": [], "refs": {"other": {"columns": [{"name": "id"}], "rows": [["x"]]}}}'
+        )
+        result = await self._generate(service)
+        assert result.refs == {}
+
+    @pytest.mark.asyncio
+    async def test_a_malformed_grid_is_dropped_not_fatal(self, service, ai_gateway):
+        # The author still gets usable input rows and can fill the grid by hand.
+        ai_gateway.query.return_value = '{"rows": [["C-1"]], "refs": {"ref": {"columns": "nope"}}}'
+        result = await self._generate(service)
+        assert result.rows == [["C-1"]]
+        assert result.refs == {}
+
+    @pytest.mark.asyncio
+    async def test_a_grid_without_usable_column_names_is_dropped(self, service, ai_gateway):
+        ai_gateway.query.return_value = '{"rows": [], "refs": {"ref": {"columns": [{"name": "  "}], "rows": []}}}'
+        result = await self._generate(service)
+        assert result.refs == {}

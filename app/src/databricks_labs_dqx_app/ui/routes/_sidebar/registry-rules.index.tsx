@@ -644,6 +644,31 @@ function RegistryRulesPage() {
               </Tooltip>
             </>
           )}
+          {/* View changes before Revoke — same order as Tables/Collections
+              (Approve → Reject → Diff → Revert). */}
+          {(rule.display_status === "modified" || rule.status === "pending_approval") && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 text-purple-600 dark:text-purple-400"
+                  aria-label={t("rulesDrafts.diff.viewChanges")}
+                  onClick={() =>
+                    setDiffTarget({
+                      ruleId: rule.rule_id,
+                      name: getTag(rule, RESERVED_NAME_KEY) || rule.rule_id,
+                      version: rule.version,
+                      proposed: rule,
+                    })
+                  }
+                >
+                  <GitCompare className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("rulesDrafts.diff.viewChanges")}</TooltipContent>
+            </Tooltip>
+          )}
           {canRevokeRule(rule) && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -692,29 +717,6 @@ function RegistryRulesPage() {
               <TooltipContent>{t("rulesRegistry.actionUndeprecate")}</TooltipContent>
             </Tooltip>
           )}
-          {(rule.display_status === "modified" || rule.status === "pending_approval") && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 w-7 p-0 text-purple-600 dark:text-purple-400"
-                  aria-label={t("rulesDrafts.diff.viewChanges")}
-                  onClick={() =>
-                    setDiffTarget({
-                      ruleId: rule.rule_id,
-                      name: getTag(rule, RESERVED_NAME_KEY) || rule.rule_id,
-                      version: rule.version,
-                      proposed: rule,
-                    })
-                  }
-                >
-                  <GitCompare className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{t("rulesDrafts.diff.viewChanges")}</TooltipContent>
-            </Tooltip>
-          )}
           {rule.status === "rejected" && perms.canCreateRules && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -739,8 +741,9 @@ function RegistryRulesPage() {
   );
 
   // Canonical action order across all three overviews (bug-bash-v4 item 14):
-  // Run (where applicable) → Approve → Reject → [Deprecate → Revoke:
-  // rules-only] → Export → Delete → Clear. Rules has no Run.
+  // Run (where applicable) → Approve → Reject → View changes →
+  // [Deprecate → Revoke: rules-only] → Export → Delete → Clear.
+  // Rules has no Run; Tables/Collections have no Deprecate.
   const bulkToolbar = (
     <BulkActionBar
       count={selectedIds.size}

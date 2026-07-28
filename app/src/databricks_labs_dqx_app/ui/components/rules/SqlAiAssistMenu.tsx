@@ -27,15 +27,29 @@ interface SqlAiAssistMenuProps {
   onPredicateReplace: (next: string) => void;
   /** Sync the PASS/FAIL polarity switch when the AI infers one. */
   onPolarityChange: (polarity: Polarity) => void;
+  /** Declare the `{{slot}}`s the AI's predicate references — including a
+   *  cross-table rule's `family: "table"` joined-table slot — so the author
+   *  doesn't have to re-add each one by hand to clear the save gate. */
+  onSlotsDeclare: (slots: RuleSlot[]) => void;
   /** Shared AI availability gate — the toolbar is hidden entirely when AI is unavailable. */
   aiAvailability: AiAvailability;
   disabled?: boolean;
 }
 
-function extractApiError(err: unknown, fallback: string): string {
-  const axErr = err as { response?: { status?: number; data?: { detail?: string } } };
-  if (axErr?.response?.status === 429) return fallback;
-  return axErr?.response?.data?.detail ?? fallback;
+/**
+ * Surface the server's own reason whenever there is one. `detail` is only
+ * trusted when it is a non-empty STRING: FastAPI's request-validation errors
+ * put an array of objects there, which would otherwise render as noise. When
+ * the request never reached a handler at all (no response — proxy timeout,
+ * connection drop) the caller's fallback is deliberately replaced with a
+ * network-specific message, since "AI request failed" tells nobody anything.
+ */
+function extractApiError(err: unknown, fallback: string, networkFallback: string): string {
+  const axErr = err as { response?: { status?: number; data?: { detail?: unknown } } };
+  if (!axErr?.response) return networkFallback;
+  if (axErr.response.status === 429) return fallback;
+  const detail = axErr.response.data?.detail;
+  return typeof detail === "string" && detail.trim() ? detail : fallback;
 }
 
 /**
@@ -60,6 +74,7 @@ export function SqlAiAssistMenu({
   slots,
   onPredicateReplace,
   onPolarityChange,
+  onSlotsDeclare,
   aiAvailability,
   disabled,
 }: SqlAiAssistMenuProps) {
@@ -86,14 +101,20 @@ export function SqlAiAssistMenu({
     }
     const axErr = err as { response?: { status?: number } };
     toast.error(
-      axErr?.response?.status === 429 ? t("rulesRegistry.aiRateLimited") : extractApiError(err, t(fallbackKey)),
+      axErr?.response?.status === 429
+        ? t("rulesRegistry.aiRateLimited")
+        : extractApiError(err, t(fallbackKey), t("rulesRegistry.sqlAiUnreachable")),
       { duration: 6000 },
     );
   };
 
-  const applyResult = (result: { predicate: string; polarity?: string | null }, toastKey: string) => {
+  const applyResult = (
+    result: { predicate: string; polarity?: string | null; slots?: RuleSlot[] },
+    toastKey: string,
+  ) => {
     onPredicateReplace(result.predicate);
     if (result.polarity === "pass" || result.polarity === "fail") onPolarityChange(result.polarity);
+    if (result.slots && result.slots.length > 0) onSlotsDeclare(result.slots);
     toast.success(t(toastKey));
   };
 

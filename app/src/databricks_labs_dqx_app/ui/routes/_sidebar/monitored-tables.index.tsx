@@ -637,9 +637,10 @@ function MonitoredTablesPage() {
             </>
           }
           renderActions={
-            // Per-status action gating: approve/reject gated on canApproveRules;
-            // run gated on canRunRules; delete gated on canCreateRules and hidden
-            // when the row has a pending approval. Mirrors registry-rules.index.tsx.
+            // Canonical order (mirrors collections): Run → Approve → Reject →
+            // View changes → Revert → Delete. Approve/reject gated on
+            // canApproveRules; run on canRunRules; delete on canCreateRules
+            // and hidden while pending_approval.
             (summary) => (
                   <div className="flex items-center justify-end gap-1">
                     {perms.canRunRules && (summary.table.version ?? 0) > 0 && (

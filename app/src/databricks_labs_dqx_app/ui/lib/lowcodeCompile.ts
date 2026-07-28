@@ -1,5 +1,7 @@
+import { findRefs } from "./columnRefs";
 import { isColumnRef, type AnyRow, type JoinAst, type LowcodeAstV2 } from "./lowcodeAst";
 import { operatorValidForFamily, VALIDITY_SQL_TYPE, type Family } from "./lowcodeOperators";
+import { INPUT_VIEW_SLOT } from "./refTableColumns";
 import { stripSqlLineComments } from "./sqlComments";
 import type { RuleSlotFamily } from "@/lib/api";
 
@@ -83,7 +85,7 @@ function likeLiteral(value: unknown): string {
 // hydrated from a legacy raw group-by string (or a dqlake import) may still
 // carry an expression; a naive `split(",")` would shred it into invalid
 // merge-column fragments, so we parse structurally instead.
-function splitTopLevelCommas(value: string): string[] {
+export function splitTopLevelCommas(value: string): string[] {
   const out: string[] = [];
   let depth = 0;
   let inQuote = false;
@@ -407,6 +409,69 @@ export interface CompiledLowcodeBody {
   merge_columns?: string[];
 }
 
+/** Whether a check reports a verdict per input row or one verdict for the whole
+ *  dataset. See {@link bodyGranularity} for how a compiled body determines it. */
+export type RuleGranularity = "row" | "dataset";
+
+/**
+ * The granularity a compiled body will ACTUALLY run at — the single source of
+ * truth for any UI indicator, so the label can never drift from what DQX does.
+ *
+ * A `predicate` becomes `sql_expression`, which DQX evaluates per row. A
+ * `sql_query` is row-level only when `merge_columns` tell DQX which keys to join
+ * the verdict back on; without them DQX routes it to the dataset-level branch,
+ * which requires the query to collapse to exactly one row.
+ */
+export function bodyGranularity(body: CompiledLowcodeBody): RuleGranularity {
+  if (body.predicate !== undefined) return "row";
+  return body.merge_columns !== undefined && body.merge_columns.length > 0 ? "row" : "dataset";
+}
+
+/**
+ * Classify what the SQL editor currently holds, which decides whether
+ * granularity is the author's choice at all:
+ *
+ *   • "predicate" — a bare boolean expression. Compiles to `sql_expression`, so
+ *     it is row-level by construction and there is nothing to choose.
+ *   • "query" — a full `SELECT` or a predicate carrying JOIN clauses. Compiles
+ *     to `sql_query`, where `merge_columns` genuinely is a decision.
+ *
+ * Scans with line comments stripped so a `-- mentions join` note can't
+ * misclassify an otherwise plain predicate.
+ */
+export function sqlEditorShape(sqlPredicate: string): "predicate" | "query" {
+  const scan = stripSqlLineComments(sqlPredicate).trim();
+  if (!scan) return "predicate";
+  if (/^select\b/i.test(scan)) return "query";
+  return SQL_JOIN_RE.test(scan) ? "query" : "predicate";
+}
+
+/**
+ * Whether a hand-written query reads columns of the table under test without
+ * ever reading the table itself.
+ *
+ * DQX runs a `sql_query` body verbatim after swapping `{{input_view}}` for a
+ * temp view over the monitored data, and `{{slot}}` placeholders resolve to
+ * bare column identifiers. So a `SELECT` that names them with no FROM on
+ * `{{input_view}}` has no relation to resolve them against: it fails with
+ * UNRESOLVED_COLUMN at run time, exactly as it does in the Test tab.
+ *
+ * Reading only reference tables IS legitimate — a dataset-level verdict about
+ * another table needs no input view — so a missing `{{input_view}}` only counts
+ * as an error once the query also reaches for a column of the table under test.
+ *
+ * Only a whole `SELECT` the author typed can be wrong here: every other shape
+ * (a bare predicate, or a predicate carrying JOIN clauses) is assembled by
+ * `buildSqlBody`, which writes `FROM {{input_view}}` itself.
+ */
+export function queryOmitsInputView(sqlPredicate: string, columnSlotNames: string[]): boolean {
+  const scan = stripSqlLineComments(sqlPredicate);
+  if (!/^\s*select\b/i.test(scan)) return false;
+  const refs = new Set(findRefs(scan));
+  if (refs.has(INPUT_VIEW_SLOT)) return false;
+  return columnSlotNames.some((name) => refs.has(name));
+}
+
 /**
  * Fold the row predicate, joins and group-by into the single body payload the
  * materializer's existing sql-mode path consumes.
@@ -530,21 +595,45 @@ export function compileLowcodeBody(ast: LowcodeAstV2, groupBy: string): Compiled
  * the moment the author changes the rule TYPE (the decision-point re-pick), so
  * an intentional conversion to another mode is honoured; re-declaring joins
  * takes the recompile branch above regardless.
+ *
+ * *granularity* / *mergeColumns* carry the SQL-mode row/dataset toggle. They
+ * apply only to the `sql_query` branches — a bare predicate is `sql_expression`
+ * and row-level by construction. Row-level attaches (and, where we generate the
+ * SELECT, projects) the author's merge keys; dataset-level attaches none.
+ * Omitting *granularity* preserves the loaded body's merge columns, keeping
+ * pre-toggle callers and stored rules behaving exactly as before.
  */
 export function buildSqlBody(params: {
   sqlPredicate: string;
   sqlJoins: JoinAst[];
   sqlQueryPassthrough?: { merge_columns?: string[] } | null;
+  granularity?: RuleGranularity;
+  mergeColumns?: string[];
 }): CompiledLowcodeBody {
-  const { sqlPredicate, sqlJoins, sqlQueryPassthrough } = params;
+  const { sqlPredicate, sqlJoins, sqlQueryPassthrough, granularity, mergeColumns } = params;
   // Raw-SQL editor path: the author owns the predicate text, so keep the ON
   // own-side bare (don't qualify) — the predicate they wrote uses bare {{slot}}s.
   const joinsSql = compileJoinsToSql(sqlJoins, false);
   const pred = sqlPredicate.trim();
+  // Merge keys for whichever `sql_query` branch we land in. An explicit
+  // granularity (the SQL-mode toggle) wins: row-level carries the author's keys,
+  // dataset-level deliberately carries none. With no toggle state — an older
+  // caller, or a rule loaded before the toggle existed — fall back to preserving
+  // whatever the loaded body had, which is the pre-toggle behaviour.
+  const queryMerge =
+    granularity === undefined
+      ? (sqlQueryPassthrough?.merge_columns ?? [])
+      : granularity === "dataset"
+        ? []
+        : (mergeColumns ?? []);
+  const withMerge = (sql_query: string): CompiledLowcodeBody =>
+    queryMerge.length > 0 ? { sql_query, merge_columns: queryMerge } : { sql_query };
   if (joinsSql) {
     const failCond = `NOT (${pred})`;
     const from = `{{input_view}} ${joinsSql}`;
-    const keyRefs = joinKeyRefs(sqlJoins);
+    // The structured-join keys are the natural row keys; an explicit toggle
+    // still overrides them (dataset-level omits merge columns entirely).
+    const keyRefs = granularity === undefined ? joinKeyRefs(sqlJoins) : queryMerge;
     if (keyRefs.length > 0) {
       return {
         sql_query: `SELECT ${keyRefs.join(", ")}, (${failCond}) AS condition FROM ${from}`,
@@ -557,11 +646,7 @@ export function buildSqlBody(params: {
   if (sqlQueryPassthrough && pred) {
     // The editor holds a loaded cross-table sql_query. Persist the CURRENT text
     // as sql_query (so edits are saved, not corrupted), preserving merge_columns.
-    const body: CompiledLowcodeBody = { sql_query: pred };
-    if (sqlQueryPassthrough.merge_columns && sqlQueryPassthrough.merge_columns.length > 0) {
-      body.merge_columns = sqlQueryPassthrough.merge_columns;
-    }
-    return body;
+    return withMerge(pred);
   }
   // Item 55: a SQL rule authored with a JOIN (per the predicate placeholder's
   // "LEFT JOIN catalog.schema.table a ON a.column = {{region}}" hint) must
@@ -569,23 +654,31 @@ export function buildSqlBody(params: {
   // latter can't run a join. Detect it on the comment-stripped text so a `--`
   // note can't trip the scan, then:
   //   • a full `SELECT … FROM … JOIN …` is already a query → persist as-is;
-  //   • a bare boolean predicate followed by JOIN clause(s) is wrapped into a
-  //     dataset-level query `SELECT (NOT (<pred>)) AS condition FROM
-  //     {{input_view}} <joins>` (same NOT-condition convention as the
-  //     structured-joins branch above; no merge_columns — raw JOIN text has no
-  //     pickable input-side key, so the check applies dataset-wide).
+  //   • a bare boolean predicate followed by JOIN clause(s) is wrapped into
+  //     `SELECT <keys>, (NOT (<pred>)) AS condition FROM {{input_view}} <joins>`
+  //     (same NOT-condition convention as the structured-joins branch above).
+  //
+  // The merge keys come from the granularity toggle. Projecting them into the
+  // SELECT list is what makes row-level actually work: DQX joins the verdict
+  // back on those columns, so they must appear in the query's output. Picking
+  // dataset-level projects none, and the author is told to aggregate — such a
+  // query must collapse to exactly one row or DQX raises at runtime.
   const scan = stripSqlLineComments(pred).trim();
   if (/^select\b/i.test(scan)) {
-    return { sql_query: pred };
+    return withMerge(pred);
   }
   const joinMatch = SQL_JOIN_RE.exec(scan);
   if (joinMatch) {
     const boolExpr = scan.slice(0, joinMatch.index).trim();
     const joinClause = scan.slice(joinMatch.index).trim();
     if (boolExpr) {
-      return { sql_query: `SELECT (NOT (${boolExpr})) AS condition FROM {{input_view}} ${joinClause}` };
+      const selectList = queryMerge.length > 0 ? `${queryMerge.join(", ")}, ` : "";
+      return withMerge(`SELECT ${selectList}(NOT (${boolExpr})) AS condition FROM {{input_view}} ${joinClause}`);
     }
   }
+  // A bare boolean predicate compiles to `sql_expression`, which is row-level by
+  // construction — a dataset-level choice cannot apply here, and the UI locks the
+  // toggle to row-level for this shape.
   return { predicate: pred };
 }
 

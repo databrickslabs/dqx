@@ -22,16 +22,18 @@ export function familyForSparkType(typeName: string): RuleSlotFamily {
  * to a same-named column that also satisfies the slot's declared family.
  *
  * Returns ``null`` (mapping incomplete) when any slot can't be resolved:
- * no same-named column, a family mismatch, or a "many" cardinality slot
+ * no same-named column, a family mismatch, a "many" cardinality slot
  * (composite/multi-column slots need a human to pick the column list, so
- * they're never auto-mapped here). Callers should skip applying the rule
- * to that table and report it as needing manual mapping.
+ * they're never auto-mapped here), or a "table" slot (a cross-table rule's
+ * joined table is a deliberate choice — there is nothing on the target table
+ * to infer it from). Callers should skip applying the rule to that table and
+ * report it as needing manual mapping.
  */
 export function buildSlotMapping(slots: RuleSlot[], columns: ColumnOut[]): Record<string, string> | null {
   const byLowerName = new Map(columns.map((c) => [c.name.toLowerCase(), c]));
   const mapping: Record<string, string> = {};
   for (const slot of slots) {
-    if (slot.cardinality === "many") return null;
+    if (slot.cardinality === "many" || slot.family === "table") return null;
     const column = byLowerName.get(slot.name.toLowerCase());
     if (!column) return null;
     if (slot.family !== "any" && familyForSparkType(column.type_name) !== slot.family) return null;

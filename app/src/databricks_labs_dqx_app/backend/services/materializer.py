@@ -234,9 +234,16 @@ def _mapped_columns(group: ColumnMappingGroup, slots: list[RuleSlot]) -> list[st
     comma-separated list, exactly as :func:`_substitute_text` expands it).
     Returns the columns de-duplicated with first-seen order preserved so a rule
     referencing the same column in two slots reports it once.
+
+    ``family="table"`` slots are skipped: they carry a joined table's FQN, not a
+    column of the monitored table. Reporting one here would hand DQX a
+    non-existent column name for validation and pollute the by-column
+    attribution view with a table name.
     """
     columns: list[str] = []
     for slot in slots:
+        if slot.family == "table":
+            continue
         value = group.get(slot.name)
         if not value:
             continue

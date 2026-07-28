@@ -199,6 +199,14 @@ class AiSqlOut(BaseModel):
 
     predicate: str = Field(description="The SQL boolean predicate, referencing slots as {{slot}} placeholders")
     polarity: str | None = Field(default=None, description="pass | fail — whether a TRUE predicate is a pass or fail")
+    slots: list[RegistryRuleSlot] = Field(
+        default_factory=list,
+        description=(
+            "Every {{placeholder}} used by the predicate, in first-appearance order, so the editor "
+            "can declare them automatically. A cross-table rule's joined table comes back with "
+            "family 'table' (it binds to a table FQN, not a column)."
+        ),
+    )
 
 
 class AiExplainSqlIn(BaseModel):

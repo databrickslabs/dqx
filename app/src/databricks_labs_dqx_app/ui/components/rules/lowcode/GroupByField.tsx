@@ -15,6 +15,12 @@ type Props = {
   onChange: (v: string) => void;
   declaredColumns: LowcodeColumnRef[];
   disabled?: boolean;
+  /** Override the field's label / empty-state text. The SQL-mode merge-key
+   *  picker reuses this control verbatim — merge columns have the same contract
+   *  as group-by keys (declared refs that exist on the monitored table), so it
+   *  needs different wording, not a different widget. */
+  label?: string;
+  placeholder?: string;
 };
 
 // Structured Group-By column picker, ported from dqlake's GroupByField.
@@ -50,7 +56,7 @@ function parseRefs(value: string, declared: LowcodeColumnRef[]): string[] {
   return out;
 }
 
-export function GroupByField({ value, onChange, declaredColumns, disabled }: Props) {
+export function GroupByField({ value, onChange, declaredColumns, disabled, label, placeholder }: Props) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
 
@@ -75,7 +81,7 @@ export function GroupByField({ value, onChange, declaredColumns, disabled }: Pro
 
   return (
     <div className="flex flex-col gap-2">
-      <Label className="text-xs">{t("rulesRegistry.lowcodeGroupByLabel")}</Label>
+      <Label className="text-xs">{label ?? t("rulesRegistry.lowcodeGroupByLabel")}</Label>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
@@ -89,7 +95,7 @@ export function GroupByField({ value, onChange, declaredColumns, disabled }: Pro
             {selected.length === 0 ? (
               <span className="text-muted-foreground text-xs">
                 {hasColumns
-                  ? t("rulesRegistry.lowcodeGroupByPlaceholder")
+                  ? (placeholder ?? t("rulesRegistry.lowcodeGroupByPlaceholder"))
                   : t("rulesRegistry.lowcodeGroupByNoColumns")}
               </span>
             ) : (

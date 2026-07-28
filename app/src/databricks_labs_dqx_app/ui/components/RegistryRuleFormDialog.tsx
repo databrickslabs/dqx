@@ -43,8 +43,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import {
   AlertCircle,
   ArrowLeft,
-  ArrowRight,
   ChevronDown,
+  Code2,
   LineChart,
   FlaskConical,
   History as HistoryIcon,
@@ -53,6 +53,7 @@ import {
   Save,
   Send,
   Shield,
+  SlidersHorizontal,
   Sparkles,
   Wrench,
   X,
@@ -66,6 +67,7 @@ import { RuleResultsTab } from "@/components/registry-rules/RuleResultsTab";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ruleResultsState } from "@/lib/results-display";
 import { PredicatePolaritySwitch } from "@/components/rules/PredicatePolaritySwitch";
+import { GranularitySwitch } from "@/components/rules/GranularitySwitch";
 import { PredicateEditorExplainer } from "@/components/rules/PredicateEditorExplainer";
 import { PredicateEditor } from "@/components/rules/PredicateEditor";
 import { AdvancedDisclosure } from "@/components/rules/AdvancedDisclosure";
@@ -76,6 +78,7 @@ import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
 import { JoinTablePickerModal } from "@/components/rules/lowcode/JoinTablePickerModal";
 import { GroupByField } from "@/components/rules/lowcode/GroupByField";
 import {
+  isCustomSurfaceHop,
   ModeSwitchDialog,
   modeSwitchDirection,
   type ModeSwitchDirection,
@@ -83,14 +86,20 @@ import {
 import { RuleTestPanel } from "@/components/rules/test/RuleTestPanel";
 import { useJoinedColumns } from "@/hooks/useJoinedColumns";
 import {
+  bodyGranularity,
   buildSqlBody,
   compileAstToSql,
   compileLowcodeBody,
   lowcodeHasAdvancedShape,
+  queryOmitsInputView,
   rowStrandedByRetype,
   slotFamilyToLowcode,
+  splitTopLevelCommas,
+  sqlEditorShape,
+  type RuleGranularity,
   type LowcodeColumnRef,
 } from "@/lib/lowcodeCompile";
+import { parseSqlToLowcode } from "@/lib/sqlToLowcode";
 import { OPERATORS_BY_FAMILY, AI_OPS, type Family as LowcodeFamily } from "@/lib/lowcodeOperators";
 import {
   AlertDialog,
@@ -186,6 +195,11 @@ type DecisionPointChoice = {
   fnName?: string;
   operator?: string;
   operatorFamily?: LowcodeFamily;
+  /** Set when the choice came from "Custom condition (across tables)". Both
+   * authoring surfaces (visual builder / SQL) support joins, so this is intent,
+   * not capability: it opens the low-code Advanced section — where JoinsBuilder
+   * lives — so the join controls are visible instead of one disclosure away. */
+  crossTable?: boolean;
 };
 type Polarity = "pass" | "fail";
 
@@ -213,6 +227,62 @@ function validateSqlPredicate(predicate: string, t: (key: string) => string): st
   if (scanned.includes(";")) return t("rulesCreateSql.querySemicolonError");
   if (SQL_DDL_DML_PATTERN.test(scanned)) return t("rulesCreateSql.queryProhibitedError");
   return null;
+}
+
+/**
+ * Result of a best-effort SQL -> builder import, shown above the rows.
+ *
+ * Raised even when everything mapped: what the author sees is a TRANSLATION of
+ * their SQL, and the moment they edit a row the builder — not their text —
+ * becomes the rule. A partial import additionally lists the fragments that have
+ * no builder representation, verbatim, so nothing is dropped silently.
+ */
+function SqlImportNotice({
+  notice,
+  onDismiss,
+}: {
+  notice: { mapped: number; unmapped: string[] };
+  onDismiss: () => void;
+}) {
+  const { t } = useTranslation();
+  const lossy = notice.unmapped.length > 0;
+  return (
+    <div
+      className={cn(
+        "flex items-start gap-2 rounded-md border px-3 py-2 text-xs",
+        lossy
+          ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+          : "border-border bg-muted/40 text-muted-foreground",
+      )}
+    >
+      <Info className="mt-0.5 size-3.5 shrink-0" />
+      <div className="min-w-0 flex-1 space-y-1">
+        <p>
+          {lossy
+            ? t("rulesRegistry.sqlImportPartial", { mapped: notice.mapped, dropped: notice.unmapped.length })
+            : t("rulesRegistry.sqlImportBestEffort", { mapped: notice.mapped })}
+        </p>
+        {lossy && (
+          <ul className="list-disc space-y-0.5 pl-4">
+            {notice.unmapped.map((fragment, i) => (
+              <li key={i} className="break-all font-mono">
+                {fragment}
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="opacity-80">{t("rulesRegistry.sqlImportOverwriteHint")}</p>
+      </div>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label={t("common.close")}
+        className="shrink-0 rounded p-0.5 opacity-60 hover:opacity-100"
+      >
+        <X className="size-3.5" />
+      </button>
+    </div>
+  );
 }
 
 function apiFunctionsGrouped(functions: ApiCheckFunctionDef[], query: string) {
@@ -293,8 +363,18 @@ function useDecisionPointShortlist(
   }, [checkFunctions, t]);
 }
 
-/** Which drill-in view the merged condition selector is showing. */
-type ConditionSelectorView = "root" | "basic" | "operators";
+/** Which view the merged condition selector is showing.
+ *
+ * The ROOT is the DQX native check list itself — authors "just choose from the
+ * DQX rules" — with the two custom-condition entries at the END of that list.
+ * Every root entry selects immediately; the authoring SURFACE (visual builder or
+ * SQL) is then a tab on the editor rather than a step in this menu, because
+ * low-code and SQL both compile to the same two DQX functions (`sql_expression`
+ * / `sql_query`) and share one materializer branch: they are two ways to write
+ * one thing, not two rule types alongside the native checks.
+ *
+ * "operators" is the visual builder's own operator picker, not an entry point. */
+type ConditionSelectorView = "root" | "operators";
 
 /** Override the cmdk group-heading styling to the ALL-CAPS framing-word style
  * used by the IF / THEN THE ROW headers (not the default sans-medium), so the
@@ -304,18 +384,20 @@ const COMMAND_GROUP_HEADING_CLASS =
 
 /**
  * The single merged condition selector that sits in the operator-cell position
- * of the always-present `IF <column> <selector>` row. Its root offers the three
- * ways to author a rule — **Basic Checks** (native DQX check functions),
- * **Condition Builder** (low-code operators), and **SQL** — styled like the old
- * decision-point dropdown (search + sectioned + arrowed). Picking Basic Checks
- * or Condition Builder drills IN (the dropdown stays open) to that type's own
- * options — the arity-filtered native checks, or the column-family's monospace
- * operators respectively — with a back affordance returning to the root (which
- * is also how the author changes the rule type). SQL selects immediately.
+ * of the always-present `IF <column> <selector>` row. Its root is the DQX check
+ * list (grouped by category, searchable) followed by the two **custom
+ * condition** entries — one table / across tables — for logic no named check
+ * expresses. Every entry selects immediately and closes: a check configures its
+ * parameters below, a custom condition lands on the editor with the visual
+ * builder and SQL offered as TABS there. The root is also where an author
+ * returns to change the rule type, so the drill-in views' back rows lead here.
+ *
+ * The only drill-in left is "operators", used by the visual builder's own rows
+ * as their operator picker (`initialView="operators"`).
  *
  * The trigger shows the CURRENT selection (monospace for a low-code operator,
- * plain label for a check / SQL) once chosen, or a weighted cycling placeholder
- * before anything is picked.
+ * plain label for a check / custom condition) once chosen, or a weighted
+ * cycling placeholder before anything is picked.
  */
 function ConditionSelector({
   checkFunctions,
@@ -326,6 +408,7 @@ function ConditionSelector({
   operatorFamily,
   initialView,
   operatorsOnly,
+  variant = "field",
 }: {
   checkFunctions: ApiCheckFunctionDef[];
   currentSlots: RuleSlot[];
@@ -338,10 +421,11 @@ function ConditionSelector({
   /** The anchor column's low-code family — drives which monospace operators the
    * "Condition Builder" drill-in offers. */
   operatorFamily: LowcodeFamily;
-  /** Which view to open in. Once a type is chosen the parent passes the matching
-   * drill-in ("basic" for a native check, "operators" for Condition Builder) so
-   * re-opening lands directly on that type's options instead of the root — the
-   * back-arrow then returns to root to change type. Defaults to "root". */
+  /** Which view to open in. A native check re-opens on the root, which IS the
+   * check list. The visual builder's own rows pass "operators" so re-opening
+   * lands on the operator list rather than making the author drill down again;
+   * the back-arrow returns to the root to change rule type. Defaults to
+   * "root". */
   initialView?: ConditionSelectorView;
   /** Operators-only mode: no root / no escalation to SQL/native / no
    * change-rule-type. Used for the low-code SECONDARY condition rows (2+, incl.
@@ -349,6 +433,10 @@ function ConditionSelector({
    * style — the rule type is fixed by then. Locks the view to "operators" and
    * hides the back affordance. */
   operatorsOnly?: boolean;
+  /** Trigger shape. "field" (default) is the boxed control used inside the
+   * condition rows; "chip" is the pill used on the Condition header, matching
+   * the switches it sits beside. */
+  variant?: "field" | "chip";
 }) {
   const { t } = useTranslation();
   const isChanging = currentLabel !== undefined;
@@ -467,6 +555,18 @@ function ConditionSelector({
     [shortlist],
   );
 
+  // The custom-condition entries aren't DQX functions, so they sit outside
+  // `grouped` and need their own query match: the Command has `shouldFilter`
+  // off (we filter natives ourselves), which also makes cmdk's `keywords` prop
+  // inert. Without this they'd survive every search, including one that matches
+  // nothing — and "no matches" would never show.
+  const customMatchesQuery = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    const terms = ["custom", "condition", "sql", "expression", "query", "join", "cross", "single", "table"];
+    return terms.some((term) => term.startsWith(q));
+  }, [query]);
+
   // Cycling animation: fade out → pick a WEIGHTED-RANDOM next label (never the
   // same one twice in a row) → fade in, every 2s. Keeps running while the picker
   // is OPEN (the trigger label keeps cycling behind the menu). Stopped only once
@@ -499,16 +599,31 @@ function ConditionSelector({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        {/* Trigger styled to match the low-code OperatorDropdown's shadcn
-            SelectTrigger exactly (same height / border / bg / radius / font),
-            so the merged condition selector reads as the SAME control the
-            low-code rows use — see components/ui/select.tsx SelectTrigger. */}
+        {/* Two trigger shapes for two contexts, so each control matches its
+            neighbours instead of importing a second style into the row:
+            - "field" (default) matches the low-code OperatorDropdown's shadcn
+              SelectTrigger exactly — same height / border / bg / radius / font —
+              because it sits IN the condition rows beside those controls (see
+              components/ui/select.tsx SelectTrigger).
+            - "chip" is the Condition HEADER's pill idiom, shared with the
+              granularity and surface switches beside it: same 28px height, same
+              text size, same rounded-full border. Prose labels there, so no
+              monospace. */}
         <button
           type="button"
           disabled={disabled}
           data-slot="select-trigger"
           data-size="sm"
-          className="border-input dark:bg-input/30 dark:hover:bg-input/50 focus-visible:border-ring focus-visible:ring-ring/50 flex h-8 w-full items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-1 font-mono text-xs whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
+          // Spell out that the chip is the way to change rule type. Reading only
+          // "SQL" it looks like a static mode label, which is why the way back
+          // out of a chosen type wasn't findable.
+          title={isChanging && !operatorsOnly ? t("rulesRegistry.changeRuleTypeHeader") : undefined}
+          className={cn(
+            "border-input focus-visible:border-ring focus-visible:ring-ring/50 flex w-full items-center justify-between gap-2 border whitespace-nowrap transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
+            variant === "chip"
+              ? "h-7 rounded-full bg-muted/30 px-3 text-xs hover:bg-muted/60"
+              : "dark:bg-input/30 dark:hover:bg-input/50 h-8 rounded-md bg-transparent px-3 py-1 font-mono text-xs shadow-xs",
+          )}
         >
           {/* Monospace like the low-code operator/column controls. A COMMITTED
               selection renders in foreground (so it matches the plain operator
@@ -539,7 +654,7 @@ function ConditionSelector({
               </AnimatePresence>
             )}
           </span>
-          <ChevronDown className="size-4 opacity-50 shrink-0" />
+          <ChevronDown className={cn("opacity-50 shrink-0", variant === "chip" ? "size-3.5" : "size-4")} />
         </button>
       </PopoverTrigger>
       {/* Width sizes to content (floored at 18rem, capped at 28rem) so the
@@ -547,9 +662,21 @@ function ConditionSelector({
           motion.div animates that width change (X) as well as height. */}
       <PopoverContent className="p-0 w-auto min-w-72 max-w-[28rem]" align="start">
         <Command shouldFilter={false}>
-          {/* Search shows in the drill-in views (Basic Rules native functions +
-              Condition Builder operators); the root is a short curated list. */}
-          {(view === "basic" || view === "operators") && (
+          {/* Once a type is chosen this menu's job is to CHANGE it, so say so —
+              pinned above the search so it survives scrolling and filtering.
+              Unlabelled, the list reads as "pick a check" and the way back out
+              of SQL / the visual builder isn't findable: the chip showing only
+              "SQL" looks like a static mode label. The drill-in views carry the
+              same wording on their back rows. */}
+          {isChanging && view === "root" && (
+            <div className="border-b px-2 py-1.5 text-[11px] font-medium text-muted-foreground">
+              {t("rulesRegistry.changeRuleTypeHeader")}
+            </div>
+          )}
+          {/* Search shows wherever there's a long list: the root (the native
+              check list) and the operators drill-in. The custom-condition step
+              is two items, so it needs none. */}
+          {(view === "root" || view === "operators") && (
             <CommandInput
               placeholder={view === "operators" ? t("rulesRegistry.searchOperators") : t("rulesRegistry.searchFunctions")}
               value={query}
@@ -572,78 +699,13 @@ function ConditionSelector({
             >
           <CommandList className="max-h-80">
             {view === "root" && (
-              // ── Root: the three ways to author a rule. Basic Checks and
-              // Condition Builder drill IN (keep the dropdown open); SQL selects
-              // immediately. This root is also where the author returns to CHANGE
-              // the rule type, so every choice routes through the parent's
-              // guarded onSelect.
-              <CommandGroup>
-                <CommandItem
-                  value="__basic_checks__"
-                  onSelect={() => {
-                    setQuery("");
-                    setView("basic");
-                  }}
-                  className="items-start gap-2 text-xs"
-                >
-                  <span className="min-w-0 flex-1 flex items-center justify-between gap-2">
-                    <span>
-                      <span className="font-semibold">{t("rulesRegistry.coreBasicChecks")}</span>
-                      <span className="block text-[10px] text-muted-foreground">
-                        {t("rulesRegistry.coreBasicChecksDesc")}
-                      </span>
-                    </span>
-                    <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  </span>
-                </CommandItem>
-                <CommandItem
-                  value="__condition_builder__"
-                  onSelect={() => setView("operators")}
-                  className="items-start gap-2 text-xs"
-                >
-                  <span className="min-w-0 flex-1 flex items-center justify-between gap-2">
-                    <span>
-                      <span className="font-semibold">{t("rulesRegistry.coreConditionBuilder")}</span>
-                      <span className="block text-[10px] text-muted-foreground">
-                        {t("rulesRegistry.coreConditionBuilderDesc")}
-                      </span>
-                    </span>
-                    <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  </span>
-                </CommandItem>
-                <CommandItem
-                  value="__sql__"
-                  onSelect={() => {
-                    onSelect({ type: "sql" });
-                    setOpen(false);
-                  }}
-                  className="items-start gap-2 text-xs"
-                >
-                  <span className="min-w-0 flex-1 flex items-center justify-between gap-2">
-                    <span>
-                      <span className="font-semibold">{t("rulesRegistry.coreSql")}</span>
-                      <span className="block text-[10px] text-muted-foreground">
-                        {t("rulesRegistry.coreSqlDesc")}
-                      </span>
-                    </span>
-                    <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  </span>
-                </CommandItem>
-              </CommandGroup>
-            )}
-
-            {view === "basic" && (
-              // ── Basic Checks drill-in: the arity-filtered native DQX checks,
-              // grouped by category, searchable. Back returns to root.
+              // ── Root: the DQX native check list itself — grouped by category
+              // and searchable — so the default path is "pick a ready-made DQX
+              // check". The two custom-condition entries close the list and
+              // drill IN to choose an authoring surface. This root is also where
+              // the author returns to CHANGE the rule type, so every choice
+              // routes through the parent's guarded onSelect.
               <>
-                <button
-                  type="button"
-                  onClick={() => setView("root")}
-                  className="flex w-full items-center gap-1.5 px-2 py-1.5 text-[11px] font-medium text-muted-foreground border-b hover:text-foreground"
-                >
-                  <ArrowLeft className="h-3 w-3 shrink-0" />
-                  {t("rulesRegistry.coreBasicChecks")}
-                </button>
                 <CommandEmpty>
                   <span className="text-xs text-muted-foreground">{t("rulesRegistry.noMatches")}</span>
                 </CommandEmpty>
@@ -669,44 +731,51 @@ function ConditionSelector({
                     ))}
                   </CommandGroup>
                 ))}
-                {/* SQL checks live INSIDE Basic Checks, at the END alongside the
-                    "Other" group (item 61). Single- vs cross-table SQL differ only
-                    by whether the author writes JOINs — one `sql` mode — so both
-                    divert to onSelect({ type: "sql" }); here for discoverability. */}
-                <CommandGroup heading={t("rulesRegistry.coreSql")} className={COMMAND_GROUP_HEADING_CLASS}>
-                  <CommandItem
-                    value="__sql_single_table__"
-                    keywords={["sql", "single", "table"]}
-                    onSelect={() => {
-                      onSelect({ type: "sql" });
-                      setOpen(false);
-                    }}
-                    className="items-start gap-2 text-xs"
+                {/* Custom conditions — the escape hatch for logic no named DQX
+                    check expresses (an OR spanning columns, an arbitrary join
+                    predicate). Picking one lands the author straight on the
+                    editor in the visual builder; the two authoring surfaces are
+                    TABS there, not a menu step, because "SQL" is how you write
+                    the condition, never what kind of rule it is. */}
+                {customMatchesQuery && (
+                  <CommandGroup
+                    heading={t("rulesRegistry.customConditionGroup")}
+                    className={COMMAND_GROUP_HEADING_CLASS}
                   >
-                    <span className="min-w-0 flex-1">
-                      <span className="font-medium">{t("rulesRegistry.coreSqlSingleTable")}</span>
-                      <span className="block text-[10px] text-muted-foreground truncate">
-                        {t("rulesRegistry.coreSqlSingleTableDesc")}
+                    <CommandItem
+                      value="__custom_single_table__"
+                      onSelect={() => {
+                        setQuery("");
+                        onSelect({ type: "lowcode", crossTable: false });
+                        setOpen(false);
+                      }}
+                      className="items-start gap-2 text-xs"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="font-medium">{t("rulesRegistry.customConditionSingle")}</span>
+                        <span className="block text-[10px] text-muted-foreground">
+                          {t("rulesRegistry.customConditionSingleDesc")}
+                        </span>
                       </span>
-                    </span>
-                  </CommandItem>
-                  <CommandItem
-                    value="__sql_cross_table__"
-                    keywords={["sql", "cross", "table", "join"]}
-                    onSelect={() => {
-                      onSelect({ type: "sql" });
-                      setOpen(false);
-                    }}
-                    className="items-start gap-2 text-xs"
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="font-medium">{t("rulesRegistry.coreSqlCrossTable")}</span>
-                      <span className="block text-[10px] text-muted-foreground truncate">
-                        {t("rulesRegistry.coreSqlCrossTableDesc")}
+                    </CommandItem>
+                    <CommandItem
+                      value="__custom_cross_table__"
+                      onSelect={() => {
+                        setQuery("");
+                        onSelect({ type: "lowcode", crossTable: true });
+                        setOpen(false);
+                      }}
+                      className="items-start gap-2 text-xs"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="font-medium">{t("rulesRegistry.customConditionCross")}</span>
+                        <span className="block text-[10px] text-muted-foreground">
+                          {t("rulesRegistry.customConditionCrossDesc")}
+                        </span>
                       </span>
-                    </span>
-                  </CommandItem>
-                </CommandGroup>
+                    </CommandItem>
+                  </CommandGroup>
+                )}
               </>
             )}
 
@@ -719,9 +788,11 @@ function ConditionSelector({
               // (via operatorFamily). Monospace like the low-code row. Picking
               // one enters low-code mode with that operator on the first row.
               <>
-                {/* Back-to-root affordance (change rule type) — hidden in
-                    operators-only mode (secondary low-code rows have no rule
-                    type to change). */}
+                {/* Back straight to the root rather than up to the surface step:
+                    changing rule type is the reason anyone reopens this menu, and
+                    making it two clicks deep is how it stopped being findable.
+                    Hidden in operators-only mode — secondary low-code rows have no
+                    rule type to change. */}
                 {!operatorsOnly && (
                   <button
                     type="button"
@@ -729,7 +800,7 @@ function ConditionSelector({
                     className="flex w-full items-center gap-1.5 px-2 py-1.5 text-[11px] font-medium text-muted-foreground border-b hover:text-foreground"
                   >
                     <ArrowLeft className="h-3 w-3 shrink-0" />
-                    {t("rulesRegistry.coreConditionBuilder")}
+                    {t("rulesRegistry.changeRuleTypeHeader")}
                   </button>
                 )}
                 {(() => {
@@ -759,7 +830,11 @@ function ConditionSelector({
                             onSelect={() => {
                               // Picking from a typed group while the column is "any"
                               // auto-assigns that data type to the anchor column.
-                              onSelect({ type: "lowcode", operator: op, operatorFamily: family ?? undefined });
+                              onSelect({
+                                type: "lowcode",
+                                operator: op,
+                                operatorFamily: family ?? undefined,
+                              });
                               setOpen(false);
                             }}
                             className={cn(
@@ -993,14 +1068,25 @@ function ReferenceColumnsField({
   );
 }
 
-const SLOT_FAMILIES: RuleSlotFamilyType[] = ["any", "numeric", "text", "temporal", "boolean", "array"];
+// "table" binds a TABLE FQN rather than a column on the monitored table — the
+// reference side of a cross-table check. It is offered here because everything
+// downstream already handles it (the materializer substitutes the FQN and keeps
+// it out of `mapped_columns`, and apply-time binding gives it a catalog browser
+// instead of a column picker); omitting it only meant an author had to go
+// through the SQL AI assistant to get one.
+const SLOT_FAMILIES: RuleSlotFamilyType[] = ["any", "numeric", "text", "temporal", "boolean", "array", "table"];
+
+/** Declared slots that name a COLUMN. A table slot holds a table FQN, so it has
+ *  no business in a column picker, a row filter, or a merge-key list — DQX merges
+ *  verdicts back on columns of the monitored table. */
+const columnSlotsOnly = (slots: RuleSlot[]): RuleSlot[] => slots.filter((s) => s.family !== "table");
 const SLOT_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
-function nextSlotName(existing: string[]): string {
+function nextSlotName(existing: string[], stem = "column"): string {
   const taken = new Set(existing);
   let i = 1;
-  while (taken.has(`column_${i}`)) i++;
-  return `column_${i}`;
+  while (taken.has(`${stem}_${i}`)) i++;
+  return `${stem}_${i}`;
 }
 
 /**
@@ -1157,6 +1243,46 @@ function mergeCarriedSlotsIntoSignature(signature: RuleSlot[], carried: RuleSlot
 }
 
 /**
+ * Reconcile the slots a SQL AI assistant declared against the ones already on
+ * the form, so an AI-written predicate arrives with its `{{placeholder}}`s
+ * declared instead of stranding the author on the "unused/undeclared column"
+ * save gate.
+ *
+ * *aiSlots* mirrors the new predicate's placeholders in order, so it drives the
+ * result. A slot that already existed keeps the author's own family — their
+ * explicit choice outranks the model's guess — unless it was still the unset
+ * "any" default, which is how a joined table gets upgraded to family "table".
+ * Slots the new predicate no longer references are dropped, except any the row
+ * filter still uses: the filter is authored separately, and a slot it
+ * references must stay declared or `unusedSlots` blocks the save.
+ */
+function mergeAiDeclaredSlots(
+  existing: RuleSlot[],
+  aiSlots: RuleSlot[],
+  filterText: string,
+): RuleSlot[] {
+  if (aiSlots.length === 0) return existing;
+  const byName = new Map(existing.map((s) => [s.name, s]));
+  const merged: RuleSlot[] = aiSlots.map((ai, i) => {
+    const prev = byName.get(ai.name);
+    return {
+      name: ai.name,
+      family: prev && prev.family !== "any" ? prev.family : ai.family,
+      position: i,
+      cardinality: prev?.cardinality ?? "one",
+      arg_key: undefined,
+    };
+  });
+  const kept = new Set(merged.map((s) => s.name));
+  for (const slot of existing) {
+    if (!kept.has(slot.name) && filterText.includes(`{{${slot.name}}}`)) {
+      merged.push({ ...slot, position: merged.length, arg_key: undefined });
+    }
+  }
+  return merged;
+}
+
+/**
  * "Columns used" slot-declaration panel, ported from the dqlake
  * `ColumnsUsedPanel`. Shared by all three authoring modes: SQL / Low-Code
  * authors freely add/remove/rename/retype `{{slot}}` placeholders their
@@ -1183,6 +1309,7 @@ function SlotsPanel({
   onSlotTagsChange,
   isSingleColumnFn = false,
   addDisabledReason,
+  allowTableSlots = false,
 }: {
   value: RuleSlot[];
   onChange: (next: RuleSlot[]) => void;
@@ -1205,6 +1332,12 @@ function SlotsPanel({
   /** When set, "+ Add column" is disabled and shows this text as a tooltip —
    * used to gate adding columns until a rule condition/type is chosen. */
   addDisabledReason?: string;
+  /** Whether `family="table"` slots (a reference table bound at apply time) are
+   * offered. Only true for cross-table rules: a rule that never leaves its own
+   * table has nothing to point a table slot at, so single-table authors don't
+   * see the option at all, and the panel keeps its narrower "Columns used"
+   * title. */
+  allowTableSlots?: boolean;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -1242,7 +1375,14 @@ function SlotsPanel({
       boolean: t("rulesRegistry.slotFamilyBoolean"),
       array: t("rulesRegistry.slotFamilyArray"),
       any: t("rulesRegistry.slotFamilyAny"),
+      table: t("rulesRegistry.slotFamilyTable"),
     })[f];
+
+  // A rule that already carries a table slot (e.g. one the AI wrote) must keep
+  // showing "Table" even if nothing else marks it cross-table yet, or its own
+  // family would be missing from its dropdown.
+  const tablesAllowed = allowTableSlots || value.some((s) => s.family === "table");
+  const families = tablesAllowed ? SLOT_FAMILIES : SLOT_FAMILIES.filter((f) => f !== "table");
 
   const expandableGroupSize = expandableArgKey
     ? value.filter((s) => (s.arg_key ?? s.name) === expandableArgKey).length
@@ -1307,6 +1447,11 @@ function SlotsPanel({
     onChange([...value, { name, family: "any", position: value.length, cardinality: "one", arg_key }]);
     setExpanded(value.length);
   };
+  const addTable = () => {
+    const name = nextSlotName(value.map((s) => s.name), "ref_table");
+    onChange([...value, { name, family: "table", position: value.length, cardinality: "one" }]);
+    setExpanded(value.length);
+  };
 
   // When the function is single-column arity, clicking "+ Add column" first
   // shows an explanatory popover. Confirming (clicking the button again, or
@@ -1324,7 +1469,7 @@ function SlotsPanel({
   return (
     <div ref={rootRef} className="space-y-2">
       <SectionHeader
-        tooltip={t("rulesRegistry.slotsPanelTooltip")}
+        tooltip={tablesAllowed ? t("rulesRegistry.slotsPanelTooltipWithTables") : t("rulesRegistry.slotsPanelTooltip")}
         action={
           // Always reserve the add-button's footprint when the panel isn't
           // fully disabled (read-only), even when this mode's arity is fixed
@@ -1332,7 +1477,19 @@ function SlotsPanel({
           // "Columns used" header sits at a different height than in SQL/
           // Low-Code, which do show a real button here.
           !disabled ? (
-            addDisabledReason ? (
+            <div className="flex items-center gap-2">
+            {tablesAllowed && allowAddRemove && !addDisabledReason && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addTable}
+                className="h-7 px-2.5 text-xs gap-1.5"
+              >
+                {t("rulesRegistry.slotsPanelAddTableButton")}
+              </Button>
+            )}
+            {addDisabledReason ? (
               // Gated: no rule condition chosen yet. Disabled + cursor-following
               // explanatory tooltip (tracks the mouse rather than pinning to the
               // button center).
@@ -1390,15 +1547,18 @@ function SlotsPanel({
               >
                 {t("rulesRegistry.slotsPanelAddButton")}
               </Button>
-            )
+            )}
+            </div>
           ) : undefined
         }
       >
-        {t("rulesRegistry.slotsPanelTitle")}
+        {tablesAllowed ? t("rulesRegistry.slotsPanelTitleWithTables") : t("rulesRegistry.slotsPanelTitle")}
       </SectionHeader>
       <div className="space-y-2">
         {value.length === 0 && (
-          <p className="text-xs text-muted-foreground py-1">{t("rulesRegistry.slotsPanelEmpty")}</p>
+          <p className="text-xs text-muted-foreground py-1">
+            {tablesAllowed ? t("rulesRegistry.slotsPanelEmptyWithTables") : t("rulesRegistry.slotsPanelEmpty")}
+          </p>
         )}
         {value.map((slot, i) => {
           const isOpen = expanded === i;
@@ -1416,6 +1576,17 @@ function SlotsPanel({
             >
               <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-3 py-2">
                 <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  {/* The row expands to the rename field, but nothing said so —
+                      the same invisible affordance that hid the type control. */}
+                  {!disabled && (
+                    <ChevronDown
+                      aria-hidden="true"
+                      className={cn(
+                        "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+                        isOpen && "rotate-180",
+                      )}
+                    />
+                  )}
                   <code className={cn("text-xs mr-1", !nameOk && "text-destructive")}>{`{{${slot.name}}}`}</code>
                   <SlotTagRegion
                     tags={slotTags[slot.name] ?? []}
@@ -1424,9 +1595,39 @@ function SlotsPanel({
                     onRemoveTag={(tag) => removeTagFromSlot(slot.name, tag)}
                   />
                 </div>
-                <Badge variant="outline" className="text-[10px] font-medium">
-                  {familyLabel(slot.family)}
-                </Badge>
+                {/* The slot's TYPE, editable in place. It used to be a read-only
+                    badge with the Select hidden in the row's expandable detail,
+                    and since the row has no disclosure chevron there was nothing
+                    to suggest a type could be changed at all — picking "Table"
+                    (a reference-table slot) was effectively undiscoverable.
+                    stopPropagation so opening the dropdown doesn't also toggle
+                    the row. */}
+                {disabled || lockFamily ? (
+                  <div className="flex items-center gap-1.5">
+                    <Badge variant="outline" className="text-[10px] font-medium">
+                      {familyLabel(slot.family)}
+                    </Badge>
+                    {lockFamily && !disabled && <HelpTooltip text={t("rulesRegistry.slotFamilyLockedTooltip")} />}
+                  </div>
+                ) : (
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <Select
+                      value={slot.family}
+                      onValueChange={(v) => setAt(i, { family: v as RuleSlotFamilyType })}
+                    >
+                      <SelectTrigger className="h-7 text-[11px] w-[7.5rem]" aria-label={t("rulesRegistry.slotsPanelFamilyLabel")}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent position="popper">
+                        {families.map((f) => (
+                          <SelectItem key={f} value={f} className="text-xs">
+                            {familyLabel(f)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 {!disabled && removable && (
                   <button
                     type="button"
@@ -1452,8 +1653,10 @@ function SlotsPanel({
                   onClick={(e) => e.stopPropagation()}
                 >
                   <div className="overflow-hidden">
-                    <div className="grid grid-cols-2 gap-3 px-3 pb-3 pt-2 border-t">
-                      <div className="space-y-1">
+                    {/* Only the NAME lives here now — the type moved up to the row
+                        itself so it is visible and changeable without expanding. */}
+                    <div className="px-3 pb-3 pt-2 border-t">
+                      <div className="space-y-1 max-w-xs">
                         <Label className="text-[11px] text-muted-foreground">
                           {t("rulesRegistry.slotsPanelNameLabel")}
                         </Label>
@@ -1462,35 +1665,6 @@ function SlotsPanel({
                           onChange={(e) => setAt(i, { name: e.target.value })}
                           className="font-mono text-xs h-8"
                         />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-[11px] text-muted-foreground">
-                          {t("rulesRegistry.slotsPanelFamilyLabel")}
-                        </Label>
-                        {lockFamily ? (
-                          // Native mode (item 10): the check's semantics fix the
-                          // family, so it's shown read-only with a hint rather than
-                          // an editable Select.
-                          <div className="flex h-8 items-center gap-1.5">
-                            <Badge variant="outline" className="text-[10px] font-medium">
-                              {familyLabel(slot.family)}
-                            </Badge>
-                            <HelpTooltip text={t("rulesRegistry.slotFamilyLockedTooltip")} />
-                          </div>
-                        ) : (
-                          <Select value={slot.family} onValueChange={(v) => setAt(i, { family: v as RuleSlotFamilyType })}>
-                            <SelectTrigger className="h-8 text-xs w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent position="popper">
-                              {SLOT_FAMILIES.map((f) => (
-                                <SelectItem key={f} value={f} className="text-xs">
-                                  {familyLabel(f)}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        )}
                       </div>
                     </div>
                   </div>
@@ -1763,6 +1937,16 @@ export function RegistryRuleFormDialog({
 
   const [mode, setMode] = useState<RegistryMode>("dqx_native");
   const [decisionPointChosen, setDecisionPointChosen] = useState(false);
+  // Set when the rule type was chosen via "Custom condition (across tables)" —
+  // opens the low-code Advanced section so JoinsBuilder is immediately visible.
+  const [crossTableIntent, setCrossTableIntent] = useState(false);
+  // SQL-mode row/table granularity and the keys a row-level check merges back
+  // on. Only a real choice for a `sql_query` body — a bare predicate compiles to
+  // `sql_expression` and is row-level by construction. Hydrated from a loaded
+  // rule's `merge_columns` so an existing rule reopens at the granularity it
+  // actually runs at rather than at a default that would silently rewrite it.
+  const [sqlGranularity, setSqlGranularity] = useState<RuleGranularity>("row");
+  const [sqlMergeColumns, setSqlMergeColumns] = useState("");
   const [internalPageTab, setInternalPageTab] = useState<PageTab>("about");
   const pageTab = controlledActiveTab ?? internalPageTab;
   const setPageTab = useCallback(
@@ -1800,6 +1984,21 @@ export function RegistryRuleFormDialog({
   // hand-edited away from that, the built conditions can't be reconstructed —
   // the cache is dropped and the builder is cleared with a warning.
   const lowcodeCacheRef = useRef<{ ast: LowcodeAstV2; groupBy: string } | null>(null);
+  // The SQL this form last WROTE into the editor by translating the builder.
+  // While the editor still holds exactly that, re-entering the SQL tab may
+  // refresh it from the builder; the moment the author types over it, their text
+  // is the source of truth and tabbing between the two surfaces must leave it
+  // alone. Null when the editor holds nothing of ours (authored from scratch).
+  const autoTranslatedSqlRef = useRef<string | null>(null);
+  // Whether the author has touched the builder since entering it. Decides who
+  // owns the rule on the way back to SQL: hand-written SQL normally survives a
+  // look at the builder untouched, but once a row has been edited the builder is
+  // what the author last expressed, so it re-translates over the editor.
+  const lowcodeEditedRef = useRef(false);
+  // Outcome of the last best-effort SQL -> builder import, shown as a banner
+  // above the rows. `unmapped` holds the SQL fragments that have no builder
+  // representation, verbatim.
+  const [sqlImportNotice, setSqlImportNotice] = useState<{ mapped: number; unmapped: string[] } | null>(null);
   // CRIT-2: non-null while the editor holds a rule loaded as a cross-table
   // sql_query. Joins aren't round-trippable from a raw sql_query string, so such
   // a rule reopens with sqlJoins=[] and its whole SELECT sitting in the
@@ -1905,6 +2104,9 @@ export function RegistryRuleFormDialog({
     // Drop any Low-Code cache from a previous rule/session (item 5) so a
     // reopened dialog never restores conditions that belong to another rule.
     lowcodeCacheRef.current = null;
+    // A loaded rule's SQL is the AUTHOR's, never our translation, so it must not
+    // be treated as refreshable from the builder.
+    autoTranslatedSqlRef.current = null;
     // CRIT-2: cleared here for every (re)open; set below only when loading a
     // stored cross-table sql_query rule.
     loadedSqlQueryRef.current = null;
@@ -1989,6 +2191,15 @@ export function RegistryRuleFormDialog({
             loadedSqlQueryRef.current = {
               merge_columns: mergeCols && mergeCols.length > 0 ? mergeCols : undefined,
             };
+            // Reopen at the granularity the stored body actually runs at: merge
+            // columns mean DQX joins the verdict back per row, their absence
+            // means one verdict for the whole table.
+            setSqlGranularity(mergeCols && mergeCols.length > 0 ? "row" : "dataset");
+            setSqlMergeColumns(mergeCols?.join(", ") ?? "");
+          } else {
+            // A `predicate` body is `sql_expression` — row-level, no merge keys.
+            setSqlGranularity("row");
+            setSqlMergeColumns("");
           }
           setSqlPredicate(
             typeof body.sql_query === "string"
@@ -1998,6 +2209,8 @@ export function RegistryRuleFormDialog({
                 : "",
           );
         } else {
+          setSqlGranularity("row");
+          setSqlMergeColumns("");
           setSqlPredicate(typeof body.predicate === "string" ? body.predicate : "");
         }
         setSqlJoins([]);
@@ -2024,6 +2237,8 @@ export function RegistryRuleFormDialog({
       setParamRawValues({});
       setSqlPredicate("");
       setSqlJoins([]);
+      setSqlGranularity("row");
+      setSqlMergeColumns("");
       setSqlSlots([seededFirstSlot()]);
       setNativeSlots([]);
       setLowcodeAst(EMPTY_LOWCODE_AST);
@@ -2188,7 +2403,84 @@ export function RegistryRuleFormDialog({
     onDirtyChange?.(readOnly ? false : isDirty);
   }, [open, readOnly, isDirty, onDirtyChange]);
 
-  const sqlError = mode === "sql" ? validateSqlPredicate(sqlPredicate, t) : null;
+  // -- Row / table granularity -------------------------------------------
+  // Whether the SQL editor holds a full query (granularity is a real choice) or
+  // a bare predicate (`sql_expression`, row-level by construction).
+  const sqlShape = sqlEditorShape(sqlPredicate);
+  const sqlGranularityIsChoice = mode === "sql" && sqlShape === "query";
+  const mergeColumnList = useMemo(() => splitTopLevelCommas(sqlMergeColumns), [sqlMergeColumns]);
+  // What will ACTUALLY run, per mode — never a stored flag, so the control can't
+  // claim a granularity DQX won't honour. Native takes the check's registered
+  // `rule_type`; the visual builder asks the compiled body; SQL is the author's
+  // choice, forced back to row-level when the text is only a predicate.
+  const effectiveGranularity: RuleGranularity =
+    mode === "dqx_native"
+      ? selectedFn?.rule_type === "dataset"
+        ? "dataset"
+        : "row"
+      : mode === "lowcode"
+        ? bodyGranularity(compileLowcodeBody(lowcodeAst, groupBy))
+        : sqlGranularityIsChoice
+          ? sqlGranularity
+          : "row";
+  // Why the switch is frozen, or undefined while it's live. Doubles as the
+  // tooltip, so every frozen state explains itself rather than just resisting.
+  const granularityFrozenReason =
+    mode === "dqx_native"
+      ? t("rulesRegistry.granularityFixedByCheck", {
+          level:
+            effectiveGranularity === "row"
+              ? t("rulesRegistry.granularityRowLevel")
+              : t("rulesRegistry.granularityDatasetLevel"),
+        })
+      : mode === "lowcode"
+        ? t("rulesRegistry.granularityDerivedFromBuilder")
+        : sqlGranularityIsChoice
+          ? undefined
+          : t("rulesRegistry.granularityFixedByPredicate");
+
+  // Row-level SQL is only row-level if DQX gets keys to merge the verdict back
+  // on, and those keys have to be in the query's output. Missing either is the
+  // exact shape that raises `InvalidParameterError` at runtime, so both are
+  // save-blocking rather than advisory. Folded into `sqlError` so every existing
+  // save/submit/test gate picks them up.
+  const granularityError = (() => {
+    if (!sqlGranularityIsChoice || sqlGranularity !== "row") return null;
+    if (mergeColumnList.length === 0) return t("rulesRegistry.granularityMergeColumnsRequired");
+    // Only the author's own SELECT can be wrong here — the JOIN-clause branch of
+    // buildSqlBody projects the keys itself.
+    const scan = stripSqlLineComments(sqlPredicate);
+    if (!/^\s*select\b/i.test(scan)) return null;
+    const absent = mergeColumnList.filter((ref) => !scan.includes(ref));
+    if (absent.length === 0) return null;
+    return t("rulesRegistry.granularityMergeColumnsMissingFromQuery", { columns: absent.join(", ") });
+  })();
+
+  // A join card AND a JOIN (or full SELECT) in the editor both claim the FROM
+  // clause. buildSqlBody's structured-joins branch wins and would wrap the typed
+  // JOIN inside `NOT (…)`, emitting invalid SQL — so it's one or the other. A
+  // rule LOADED as a cross-table sql_query is safe: it reopens with no structured
+  // joins (CRIT-2), only the query text.
+  const sqlJoinsConflict =
+    mode === "sql" && sqlJoins.length > 0 && sqlShape === "query" ? t("rulesRegistry.sqlJoinsConflict") : null;
+
+  // A typed SELECT reads the monitored table only through `{{input_view}}`.
+  // Omitting it while still referencing a column slot is dead on arrival — DQX
+  // resolves the slots to bare identifiers over no relation at all — so it is
+  // save-blocking rather than left for the author to discover as a raw
+  // UNRESOLVED_COLUMN from Spark.
+  const missingInputView =
+    mode === "sql" &&
+    queryOmitsInputView(
+      sqlPredicate,
+      columnSlotsOnly(sqlSlots).map((s) => s.name),
+    )
+      ? t("rulesRegistry.sqlMissingInputView", { token: "{{input_view}}" })
+      : null;
+  const sqlError =
+    mode === "sql"
+      ? (validateSqlPredicate(sqlPredicate, t) ?? sqlJoinsConflict ?? missingInputView ?? granularityError)
+      : null;
 
   // -- Save gating -------------------------------------------------------
   // Names of the selected function's non-column parameters that have no
@@ -2384,6 +2676,11 @@ export function RegistryRuleFormDialog({
         sqlPredicate,
         sqlJoins,
         sqlQueryPassthrough: loadedSqlQueryRef.current,
+        // Only pass the toggle when it was a real choice; for a bare predicate
+        // buildSqlBody's own row-level path applies and the loaded body's merge
+        // columns stay preserved.
+        granularity: sqlGranularityIsChoice ? sqlGranularity : undefined,
+        mergeColumns: mergeColumnList,
       });
       return {
         body: sqlBody as Record<string, unknown>,
@@ -3194,12 +3491,19 @@ export function RegistryRuleFormDialog({
   // "condition picker" chip after a type has been chosen (the entry point the
   // author returns to — via the chip's dropdown back affordance — to change
   // the rule type). Native shows the selected function's friendly label.
+  // Cross-table is intent PLUS fact: a rule opened for editing never passed
+  // through the picker, so its configured joins are the only evidence of scope.
+  const crossTableActive = crossTableIntent || lowcodeAst.joins.length > 0 || sqlJoins.length > 0;
+  // Both custom surfaces share ONE type label — the picker entry the author
+  // clicked ("Custom condition (one table)" / "(across tables)"). Naming the
+  // surface here instead ("SQL" / "Visual builder") would put the rule type and
+  // the surface tabs in disagreement about what was chosen.
   const currentTypeLabel =
-    mode === "sql"
-      ? t("rulesRegistry.coreSql")
-      : mode === "lowcode"
-        ? t("rulesRegistry.coreConditionBuilder")
-        : selectedFn?.label || functionName || t("rulesRegistry.modeDqxNative");
+    mode === "dqx_native"
+      ? selectedFn?.label || functionName || t("rulesRegistry.modeDqxNative")
+      : crossTableActive
+        ? t("rulesRegistry.customConditionCross")
+        : t("rulesRegistry.customConditionSingle");
   // The one column parameter (if any) on the selected native function that
   // accepts a LIST of columns — its slots form an add/removable group (see
   // `SlotsPanel`'s `expandableArgKey`); every other native slot has fixed
@@ -3210,17 +3514,29 @@ export function RegistryRuleFormDialog({
   // `{{slot}}` (family-mapped to the builder's UPPERCASE vocabulary) plus any
   // joined-table columns.
   const lowcodeColumns: LowcodeColumnRef[] = [
-    ...sqlSlots.map((s) => ({ name: s.name, family: slotFamilyToLowcode(s.family) })),
+    ...columnSlotsOnly(sqlSlots).map((s) => ({ name: s.name, family: slotFamilyToLowcode(s.family) })),
     ...joinedColumns,
   ];
 
   // Columns the row-filter builder offers — the CURRENT mode's declared slots
   // (native uses nativeSlots, low-code uses sqlSlots) mapped to the low-code
   // family vocabulary. Joined columns aren't relevant to a pre-condition filter.
-  const filterColumns: LowcodeColumnRef[] = currentSlots.map((s) => ({
+  const filterColumns: LowcodeColumnRef[] = columnSlotsOnly(currentSlots).map((s) => ({
     name: s.name,
     family: slotFamilyToLowcode(s.family),
   }));
+
+  // Candidate merge keys for a row-level SQL check. Restricted to declared
+  // `{{slot}}`s (never joined-table columns) because DQX merges the verdict back
+  // onto the monitored input table, so the key has to exist there — the same
+  // contract group-by keys have, which is why both use GroupByField.
+  const sqlMergeColumnOptions: LowcodeColumnRef[] = columnSlotsOnly(sqlSlots).map((s) => ({
+    name: s.name,
+    family: slotFamilyToLowcode(s.family),
+  }));
+  // JoinsBuilder is written against a low-code AST but only ever reads/writes
+  // `.joins`, so the SQL surface hands it its own join list in that shape.
+  const sqlJoinsAst = useMemo(() => ({ ...EMPTY_LOWCODE_AST, joins: sqlJoins }), [sqlJoins]);
 
   // Update the filter builder's AST and keep the compiled SQL (`filter`, what
   // materializes into DQRule.filter) in sync. compileAstToSql yields the raw
@@ -3309,41 +3625,89 @@ export function RegistryRuleFormDialog({
   // change-type re-pick so both stay byte-identical.
   const applyChoice = (choice: DecisionPointChoice) => {
     const next = choiceTargetMode(choice);
+    // An author who asked for a cross-table condition needs the join controls in
+    // view, not folded behind Advanced. Sticky per choice (not derived from the
+    // AST) so the section stays open while the first join is still empty.
+    setCrossTableIntent(!!choice.crossTable);
+    // The import banner describes ONE crossing from SQL into the builder; every
+    // other transition replaces the state it was reporting on.
+    if (!(mode === "sql" && next === "lowcode")) setSqlImportNotice(null);
     // CRIT-2: a rule-TYPE change abandons the loaded cross-table sql_query body
     // (its SELECT is being replaced by a fresh native/lowcode/single-table
     // surface), so drop the passthrough — a later switch back to SQL must build
     // from the new state, not resurrect the old query.
     loadedSqlQueryRef.current = null;
+    // The granularity choice belonged to the body being replaced, so it resets
+    // with it — a fresh surface starts row-level with no merge keys. Moving
+    // between the two custom SURFACES replaces nothing, so the choice travels
+    // with the rule: clearing it there would make a glance at the builder tab
+    // silently drop the merge keys the author picked in SQL (the low-code -> SQL
+    // branch below re-derives both when it re-translates the editor).
+    if (!isCustomSurfaceHop(mode, next)) {
+      setSqlGranularity("row");
+      setSqlMergeColumns("");
+    }
     // Low-Code -> SQL: translate the built rows + joins into the SQL editor
     // so the author keeps their work instead of retyping it, and cache the
     // AST + group-by so switching back can restore it (item 5).
     if (mode === "lowcode" && next === "sql") {
       lowcodeCacheRef.current = { ast: lowcodeAst, groupBy };
       const predicate = compileAstToSql(lowcodeAst);
-      if (predicate) setSqlPredicate(predicate);
+      // Refresh the editor only while it is empty, still holds OUR last
+      // translation, or the author has since edited the builder. Otherwise their
+      // hand-written SQL is the newer expression of the rule and re-translating
+      // would silently destroy it every time they glanced at the builder tab.
+      const current = stripSqlLineComments(sqlPredicate).trim();
+      const ours = stripSqlLineComments(autoTranslatedSqlRef.current ?? "").trim();
+      if (predicate && (current === "" || current === ours || lowcodeEditedRef.current)) {
+        setSqlPredicate(predicate);
+        autoTranslatedSqlRef.current = predicate;
+        // The joins travel with the predicate: it can reference joined columns,
+        // and buildSqlBody needs them to emit the matching FROM clause. Without
+        // this a cross-table builder rule translated to SQL that couldn't run.
+        setSqlJoins(lowcodeAst.joins);
+        // Granularity + merge keys come from what the BUILDER would have emitted,
+        // so the translated rule runs identically. The builder derives row keys
+        // implicitly (join keys, or the group-by columns); the SQL surface makes
+        // them explicit, and leaving them blank would quietly turn a row-level
+        // joined check into a dataset-level one.
+        const built = compileLowcodeBody(lowcodeAst, groupBy);
+        setSqlGranularity(bodyGranularity(built));
+        setSqlMergeColumns((built.merge_columns ?? []).join(", "));
+      }
     }
-    // SQL -> Low-Code with a cached AST (item 5): restore the built conditions
-    // when the SQL still matches what that AST compiles to. If the SQL was
-    // hand-edited away from the compiled output, the structured rows can't be
-    // recovered from free SQL — drop the cache, clear the builder and warn,
-    // rather than silently restoring a stale, mismatched AST. With no cache
-    // (SQL authored from scratch) this falls through to the blank seed below.
-    if (mode === "sql" && next === "lowcode" && lowcodeCacheRef.current) {
+    // SQL -> Low-Code. When the SQL is still exactly what the cached AST
+    // compiles to (item 5), restore that AST verbatim — nothing is lost and the
+    // author gets their own rows back, aggregate params and all. Otherwise the
+    // SQL was hand-written or hand-edited and is read back BEST EFFORT: every
+    // condition the builder can express becomes a row, and whatever can't
+    // (nested groups, unknown functions, a whole SELECT) is REPORTED to the
+    // author rather than silently dropped or, worse, guessed at.
+    if (mode === "sql" && next === "lowcode") {
       const cache = lowcodeCacheRef.current;
-      const compiledFromCache = compileAstToSql(cache.ast).trim();
       const currentSql = stripSqlLineComments(sqlPredicate).trim();
-      if (compiledFromCache === currentSql) {
+      if (cache && compileAstToSql(cache.ast).trim() === currentSql) {
         setLowcodeAst(cache.ast);
         setGroupBy(cache.groupBy);
+        setSqlImportNotice(null);
       } else {
         lowcodeCacheRef.current = null;
         setGroupBy("");
-        setLowcodeAst({
-          ...EMPTY_LOWCODE_AST,
-          rows: [seededFirstLowcodeRow(lowcodeColumns[0]?.name ?? "column_1")],
-        });
-        toast.warning(t("rulesRegistry.lowcodeSqlDivergedWarning"));
+        const imported = parseSqlToLowcode(sqlPredicate, lowcodeColumns);
+        const anchor = lowcodeColumns[0]?.name ?? currentSlots[0]?.name ?? "column_1";
+        const rows = imported.rows.length > 0 ? imported.rows.slice() : [seededFirstLowcodeRow(anchor)];
+        // An operator picked on the way in (the selector's drill-in) still wins
+        // over whatever the first imported row carries.
+        if (choice.operator) {
+          rows[0] = { ...rows[0], kind: "row", column_ref: rows[0].column_ref || anchor, operator: choice.operator };
+        }
+        // Structured joins belong to both surfaces, so they travel across rather
+        // than having to be re-declared in the builder.
+        setLowcodeAst({ rows, joins: sqlJoins });
+        setSqlImportNotice({ mapped: imported.rows.length, unmapped: imported.unmapped });
       }
+      if (choice.operatorFamily) applyOperatorFamilyToAnchor(choice.operatorFamily);
+      lowcodeEditedRef.current = false;
       // Leaving native for SQL/Low-Code is a body-type change: clear the native
       // function selection so a stale function name can't leak into the saved rule.
       setFunctionName("");
@@ -3384,6 +3748,7 @@ export function RegistryRuleFormDialog({
       if (mode === "dqx_native") {
         setSqlPredicate("");
         setSqlJoins([]);
+        autoTranslatedSqlRef.current = null;
       }
       setMode("sql");
       setModeSwitch(null);
@@ -3406,6 +3771,14 @@ export function RegistryRuleFormDialog({
     // operators drill-in): ensure a first row exists and stamp the operator +
     // the anchor column onto it, so picking "is null" lands the author on a
     // ready row rather than a blank builder.
+    // A custom condition picked straight off the root arrives with no operator —
+    // the surface is a tab now, not a menu step, so there is no operator drill-in
+    // on the way in. Seed the first row so the builder opens ready to edit
+    // instead of as an empty canvas.
+    if (next === "lowcode" && !choice.operator) {
+      const anchorCol = lowcodeColumns[0]?.name ?? currentSlots[0]?.name ?? "column_1";
+      setLowcodeAst((prev) => (prev.rows.length > 0 ? prev : { ...prev, rows: [seededFirstLowcodeRow(anchorCol)] }));
+    }
     if (next === "lowcode" && choice.operator) {
       const anchorCol = lowcodeColumns[0]?.name ?? currentSlots[0]?.name ?? "column_1";
       setLowcodeAst((prev) => {
@@ -3415,6 +3788,9 @@ export function RegistryRuleFormDialog({
       });
       if (choice.operatorFamily) applyOperatorFamilyToAnchor(choice.operatorFamily);
     }
+    // Entering the builder from anywhere else starts it untouched, so a later
+    // glance at the SQL tab doesn't count as "the builder is newer".
+    if (next === "lowcode") lowcodeEditedRef.current = false;
     setMode(next);
     setModeSwitch(null);
   };
@@ -3444,6 +3820,15 @@ export function RegistryRuleFormDialog({
         return { ...prev, rows };
       });
       if (choice.operatorFamily) applyOperatorFamilyToAnchor(choice.operatorFamily);
+      return;
+    }
+    // Switching between the two custom-condition entries without leaving the
+    // surface (one table <-> across tables) changes only INTENT: it reveals or
+    // hides the join controls and keeps every authored condition. Applying the
+    // full choice here would needlessly reset the editor, and falling through to
+    // the no-op return below would silently ignore the click.
+    if (next === mode && next !== "dqx_native" && !choice.operator && choice.crossTable !== crossTableIntent) {
+      setCrossTableIntent(!!choice.crossTable);
       return;
     }
     // Re-selecting the same native function (or the same non-native surface with
@@ -3522,6 +3907,7 @@ export function RegistryRuleFormDialog({
           onSlotTagsChange={setSlotTags}
           isSingleColumnFn={mode === "dqx_native" && fnDerivedSlots.length === 1 && !nativeExpandableArgKey}
           addDisabledReason={conditionChosen ? undefined : t("rulesRegistry.advancedGatedTooltip")}
+          allowTableSlots={mode !== "dqx_native" && crossTableActive}
         />
       )}
 
@@ -3536,16 +3922,72 @@ export function RegistryRuleFormDialog({
         {/* Same header treatment as "Columns used" (SectionHeader h2) so the
             Implementation section headers are consistent with each other and
             with About/Permissions. */}
-        <SectionHeader>{t("rulesRegistry.conditionLabel")}</SectionHeader>
+        {/* Granularity rides on the Condition header — the same place for every
+            rule type, so "does this judge rows or the whole table?" is answered
+            without hunting. Live only where it's genuinely a choice (see
+            GranularitySwitch); frozen states carry the reason as a tooltip. */}
+        <SectionHeader
+          action={
+            conditionChosen ? (
+              <div className="flex items-center gap-3">
+                {/* Rule-type chip for a CUSTOM CONDITION — the one place the
+                    type is shown and re-picked for both surfaces. A native check
+                    shows its own name on the IF row below, but the builder's rows
+                    show a column and an OPERATOR and the SQL body is just an
+                    editor, so without this the type was nowhere on screen and
+                    there was nothing to click to leave it. */}
+                {mode !== "dqx_native" && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                      {t("rulesRegistry.ruleTypeLabel")}
+                    </span>
+                    {/* Sizes to its label (capped so a long translation
+                        truncates rather than pushing the switches off the row)
+                        instead of a fixed width that clipped "Custom condition
+                        (across tables)" mid-word. */}
+                    <div className="max-w-[20rem]">
+                      <ConditionSelector
+                        checkFunctions={checkFunctions}
+                        currentSlots={currentSlots}
+                        operatorFamily={anchorOperatorFamily}
+                        onSelect={requestModeChange}
+                        disabled={readOnly}
+                        currentLabel={currentTypeLabel}
+                        initialView="root"
+                        variant="chip"
+                      />
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    {t("rulesRegistry.granularityLabel")}
+                  </span>
+                  <GranularitySwitch
+                    value={effectiveGranularity}
+                    onChange={readOnly ? undefined : setSqlGranularity}
+                    disabled={readOnly || granularityFrozenReason !== undefined}
+                    disabledReason={
+                      granularityFrozenReason ??
+                      (effectiveGranularity === "row"
+                        ? t("rulesRegistry.granularityRowTooltip")
+                        : t("rulesRegistry.granularityDatasetTooltip"))
+                    }
+                  />
+                </div>
+              </div>
+            ) : undefined
+          }
+        >
+          {t("rulesRegistry.conditionLabel")}
+        </SectionHeader>
         {/* Unified top row — the low-code condition-row chrome
             (`IF [column ▾] [selector] …`) is reused for EVERY rule type. The
             operator cell is the merged ConditionSelector: a cycling rule-type
-            picker before anything is chosen, the native-checks list once a
-            basic check is chosen, or (in Condition Builder) the operators list.
-            SQL and Low-Code render their own bodies below; native shows its
-            parameters below. This standalone anchor renders for the UNCHOSEN,
-            NATIVE and SQL states — Low-Code uses LowcodeBuilder (same chrome),
-            whose first row hosts the selector. */}
+            picker before anything is chosen, else the native-checks list. This
+            anchor renders for the UNCHOSEN and NATIVE states only; a custom
+            condition shows its type on the section header's chip instead, since
+            its body is either the builder's own rows or a bare SQL editor. */}
         {(!decisionPointChosen || mode === "dqx_native") && (
           // Same FIXED column (11rem) + function (18rem) widths as LowcodeRow so
           // the {{column}} and <FUNCTION> boxes are identical across page-load /
@@ -3592,10 +4034,90 @@ export function RegistryRuleFormDialog({
               onSelect={decisionPointChosen ? requestModeChange : handleDecisionPointSelect}
               disabled={readOnly}
               currentLabel={decisionPointChosen ? currentTypeLabel : undefined}
-              // In native mode (a chosen basic check) re-open straight into the
-              // Basic Checks list; SQL mode has no submenu so root is fine.
-              initialView={decisionPointChosen && mode === "dqx_native" ? "basic" : "root"}
+              // Root is the check list now, so every mode re-opens there: a
+              // native check lands back on its own list, and SQL has no submenu.
+              initialView="root"
             />
+          </div>
+        )}
+        {/* Authoring-surface TABS for a custom condition. The visual builder and
+            SQL are two ways to write ONE rule type (both compile to
+            `sql_expression` / `sql_query`), so they belong side by side on the
+            editor rather than as a fork in the picker: the author can start in
+            the builder and drop to SQL without re-picking the rule type.
+            Switching routes through `requestModeChange`, so the guarded confirm
+            still runs when the current surface holds content the other can't
+            carry over — Radix keeps the active tab pinned to `mode`, so a
+            cancelled switch leaves the tab where it was. */}
+        {decisionPointChosen && mode !== "dqx_native" && (
+          <div className="flex items-center gap-2">
+            {/* Micro-label in the same style as RULE TYPE / APPLIES TO, so the
+                pair reads as a labelled choice rather than as decoration. */}
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              {t("rulesRegistry.customSurfaceLabel")}
+            </span>
+            <Tabs
+              value={mode === "sql" ? "sql" : "lowcode"}
+              onValueChange={(v) =>
+                requestModeChange(
+                  v === "sql"
+                    ? { type: "sql", crossTable: crossTableActive }
+                    : { type: "lowcode", crossTable: crossTableActive },
+                )
+              }
+            >
+              {/* Tinted per surface — indigo for the builder, amber for SQL —
+                  in the same pill idiom as the polarity and granularity
+                  switches, so which surface you're on is legible at a glance and
+                  the other one visibly invites a click. The hues are chosen not
+                  to collide with those switches' meanings (emerald/rose for
+                  polarity, sky/violet for granularity). Each tone is declared
+                  for BOTH the base and `dark:` variants: the shared TabsTrigger
+                  sets a dark-only active background, which a base-variant
+                  override alone would not reliably beat. */}
+              <TabsList className="h-7 gap-1 rounded-full border bg-muted/30 p-1">
+                {/* The best-effort hint lives on the tab, not only on the banner
+                    that follows an import: an author deciding whether to click
+                    deserves to know the read-back is approximate BEFORE they
+                    find out from the result. */}
+                <CursorTooltip text={mode === "sql" ? t("rulesRegistry.customSurfaceVisualHint") : undefined}>
+                  <TabsTrigger
+                    value="lowcode"
+                    disabled={readOnly}
+                    className={cn(
+                      "gap-1.5 rounded-full px-3 text-xs",
+                      "data-[state=active]:bg-indigo-500/15 dark:data-[state=active]:bg-indigo-500/15",
+                      "data-[state=active]:text-indigo-700 dark:data-[state=active]:text-indigo-300",
+                      "data-[state=active]:ring-1 data-[state=active]:ring-indigo-500/40",
+                      "dark:data-[state=active]:border-transparent",
+                      "data-[state=inactive]:text-muted-foreground",
+                      "data-[state=inactive]:hover:bg-indigo-500/10 data-[state=inactive]:hover:text-indigo-700",
+                      "dark:data-[state=inactive]:hover:text-indigo-300",
+                    )}
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    {t("rulesRegistry.customSurfaceVisual")}
+                  </TabsTrigger>
+                </CursorTooltip>
+                <TabsTrigger
+                  value="sql"
+                  disabled={readOnly}
+                  className={cn(
+                    "gap-1.5 rounded-full px-3 text-xs",
+                    "data-[state=active]:bg-amber-500/15 dark:data-[state=active]:bg-amber-500/15",
+                    "data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-300",
+                    "data-[state=active]:ring-1 data-[state=active]:ring-amber-500/40",
+                    "dark:data-[state=active]:border-transparent",
+                    "data-[state=inactive]:text-muted-foreground",
+                    "data-[state=inactive]:hover:bg-amber-500/10 data-[state=inactive]:hover:text-amber-700",
+                    "dark:data-[state=inactive]:hover:text-amber-300",
+                  )}
+                >
+                  <Code2 className="h-3.5 w-3.5" />
+                  {t("rulesRegistry.customSurfaceSql")}
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
           </div>
         )}
         {/* Low-Code builder renders INSIDE the Condition section (directly under
@@ -3604,10 +4126,18 @@ export function RegistryRuleFormDialog({
             operator cell (incl. aggregated) is the merged ConditionSelector: the
             FIRST row hosts escalation / change-rule-type; secondary rows (2+)
             are operators-only. Advanced + THEN THE ROW follow below. */}
+        {decisionPointChosen && mode === "lowcode" && sqlImportNotice && (
+          <SqlImportNotice notice={sqlImportNotice} onDismiss={() => setSqlImportNotice(null)} />
+        )}
         {decisionPointChosen && mode === "lowcode" && (
           <LowcodeBuilder
             ast={lowcodeAst}
-            onChange={setLowcodeAst}
+            onChange={(nextAst) => {
+              // Only an edit made HERE marks the builder as the newer surface —
+              // programmatic writes (imports, seeds, slot renames) must not.
+              lowcodeEditedRef.current = true;
+              setLowcodeAst(nextAst);
+            }}
             declaredColumns={lowcodeColumns}
             readOnly={readOnly}
             renderOperator={({ family, value, onChange, isFirst }) =>
@@ -3672,7 +4202,9 @@ export function RegistryRuleFormDialog({
               the IF condition's inputs, not the row-level outcome below it. */}
           <AdvancedDisclosure
             label={t("rulesRegistry.advancedSectionLabel")}
-            defaultOpen={!!groupBy || !!filter || lowcodeAst.joins.length > 0 || passThreshold !== null}
+            defaultOpen={
+              !!groupBy || !!filter || lowcodeAst.joins.length > 0 || passThreshold !== null || crossTableIntent
+            }
           >
             {/* Joins come first: they widen the set of columns available to
                 the condition (and to group-by below) by pulling in
@@ -3871,30 +4403,21 @@ export function RegistryRuleFormDialog({
                 directly above the editor (dqlake's ImplementationTab layout). */}
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  {/* Back to the rule-type picker — SQL has no in-row selector
-                      cell (its whole body IS the editor), so the change-type
-                      affordance is a small back arrow next to IF. */}
-                  {!readOnly && (
-                    <button
-                      type="button"
-                      onClick={() => setDecisionPointChosen(false)}
-                      aria-label={t("rulesRegistry.changeRuleTypeHeader")}
-                      title={t("rulesRegistry.changeRuleTypeHeader")}
-                      className="text-muted-foreground hover:text-foreground -ml-1 p-0.5 rounded"
-                    >
-                      <ArrowLeft className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    {t("rulesRegistry.ifCondition")}
-                  </span>
-                </div>
+                {/* The rule type lives on the section header's chip and the
+                    surface on the tabs above, so IF only frames the editor. */}
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {t("rulesRegistry.ifCondition")}
+                </span>
                 <SqlAiAssistMenu
                   predicate={sqlPredicate}
                   slots={sqlSlots}
                   onPredicateReplace={setSqlPredicate}
                   onPolarityChange={setPolarity}
+                  onSlotsDeclare={(aiSlots) =>
+                    setSqlSlots((prev) =>
+                      mergeAiDeclaredSlots(prev, aiSlots, filter),
+                    )
+                  }
                   aiAvailability={aiAvailability}
                   disabled={readOnly}
                 />
@@ -3918,16 +4441,54 @@ export function RegistryRuleFormDialog({
                 {sqlError}
               </p>
             )}
+            {/* Whichever granularity is chosen, this is the obligation it brings.
+                Row-level needs merge keys returned by the query — the step whose
+                absence makes a hand-written JOIN raise at runtime. Table-level
+                needs none but must collapse to a single row, so it gets the
+                warning instead. A bare predicate has neither obligation, which is
+                why this only appears for a query. */}
+            {sqlGranularityIsChoice &&
+              (sqlGranularity === "row" ? (
+                <div className="space-y-1.5">
+                  <GroupByField
+                    value={sqlMergeColumns}
+                    onChange={setSqlMergeColumns}
+                    declaredColumns={sqlMergeColumnOptions}
+                    disabled={readOnly}
+                    label={t("rulesRegistry.granularityMergeColumnsLabel")}
+                    placeholder={t("rulesRegistry.granularityMergeColumnsPlaceholder")}
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    {t("rulesRegistry.granularityMergeColumnsHelp")}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-start gap-1">
+                  <AlertCircle className="mt-0.5 h-2.5 w-2.5 shrink-0" />
+                  {t("rulesRegistry.granularityAggregateWarning")}
+                </p>
+              ))}
           </div>
-          {/* Advanced in SQL mode holds a ROW FILTER code box authored in the
-              same slot-aware SQL editor as the predicate. Authors write any
-              JOINs inline in the predicate editor (a full
-              `SELECT … FROM … JOIN …` round-trips via buildSqlBody's sql_query
-              passthrough) — the predicate placeholder shows a JOIN example. */}
+          {/* Advanced in SQL mode holds the JOINS card and a ROW FILTER code box
+              authored in the same slot-aware SQL editor as the predicate. Opens
+              for a cross-table condition so the join controls are in view. */}
           <AdvancedDisclosure
             label={t("rulesRegistry.advancedSectionLabel")}
-            defaultOpen={!!filter || passThreshold !== null}
+            defaultOpen={!!filter || passThreshold !== null || sqlJoins.length > 0 || crossTableActive}
           >
+            {/* The STRUCTURED cross-table path for SQL — previously the SQL tab
+                had no join controls at all, so "across tables" looked identical
+                to "one table" and the only option was hand-typing the JOIN.
+                Declaring it here also derives `merge_columns` from the join keys
+                (buildSqlBody, same as the visual builder), so a row-level joined
+                check needs no merge keys picked by hand. Authors can still type a
+                full `SELECT … JOIN …` instead — but not both, see sqlJoinsConflict. */}
+            <JoinsBuilder
+              ast={sqlJoinsAst}
+              onChange={(next) => setSqlJoins(next.joins)}
+              declaredColumns={sqlMergeColumnOptions}
+              readOnly={readOnly}
+            />
             {/* Row filter — a SQL WHERE predicate applied before the rule
                 condition. In SQL mode this uses the SAME code editor as the
                 predicate (slot autocomplete + linting), not a plain input —
@@ -3967,7 +4528,27 @@ export function RegistryRuleFormDialog({
     [mode, nativeSlots, selectedFn, derivedParams, paramRawValues],
   );
   const testSlots = mode === "dqx_native" ? nativeSlots : sqlSlots;
-  const testEffectivePredicate = mode === "sql" ? sqlPredicate.trim() : mode === "lowcode" ? lowcodePredicate : "";
+  // Test what the rule will actually BE, not the raw editor text: buildSqlBody is
+  // the same compile the save path uses, so a structured join card or a
+  // predicate carrying JOIN clauses reaches the runner as the `sql_query` it
+  // becomes (wrapped, keys projected) rather than as text that isn't valid SQL on
+  // its own. A bare predicate still comes back as `predicate`, unchanged.
+  const sqlTestBody =
+    mode === "sql"
+      ? buildSqlBody({
+          sqlPredicate,
+          sqlJoins,
+          sqlQueryPassthrough: loadedSqlQueryRef.current,
+          granularity: sqlGranularityIsChoice ? sqlGranularity : undefined,
+          mergeColumns: mergeColumnList,
+        })
+      : null;
+  const testEffectivePredicate =
+    mode === "sql"
+      ? (sqlTestBody?.sql_query ?? sqlTestBody?.predicate ?? "").trim()
+      : mode === "lowcode"
+        ? lowcodePredicate
+        : "";
   const testCanRun =
     mode === "dqx_native"
       ? nativeTestable && functionName.trim().length > 0 && slotsHaveValidNames(nativeSlots) && nativeRequiredParamsFilled

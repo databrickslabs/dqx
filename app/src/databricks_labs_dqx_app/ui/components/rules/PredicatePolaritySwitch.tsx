@@ -51,8 +51,10 @@ export function PredicatePolaritySwitch({
   const invert = () => onChange(value === "pass" ? "fail" : "pass");
 
   const control = (
+    // Same 28px pill as the granularity switch and the rule-type chip (see
+    // GranularitySwitch): one family of controls, one height and text size.
     <div
-      className="relative inline-grid grid-cols-2 items-stretch rounded-full border bg-muted/30 p-1 text-xs"
+      className="relative inline-grid h-7 grid-cols-2 items-stretch rounded-full border bg-muted/30 p-1 text-xs"
       role="radiogroup"
       aria-label={t("rulesRegistry.polarityAriaLabel")}
     >
@@ -80,7 +82,7 @@ export function PredicatePolaritySwitch({
             // opposite value, so the whole control behaves as one toggle.
             onClick={invert}
             className={cn(
-              "relative z-10 rounded-full px-3 py-1 font-medium transition-colors duration-200 ease-out",
+              "relative z-10 flex items-center justify-center rounded-full px-3 font-medium transition-colors duration-200 ease-out",
               on ? "text-foreground" : "text-muted-foreground",
               !on && !disabled && opt.hoverTone,
               "disabled:cursor-not-allowed disabled:opacity-50",

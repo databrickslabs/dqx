@@ -43,12 +43,17 @@ export function familyForType(typeName: string): ColumnFamily {
  * @param excludeColumns Column names to omit from the candidate list — used
  * by the "+ Apply to another column" flow to hide columns the rule is
  * already mapped to, mirroring dqlake's `usedSetForNew` exclusion.
+ *
+ * A `family: "table"` slot binds a joined table's FQN rather than a column of
+ * the monitored table, so it has no candidates here — callers render the table
+ * picker instead (see `MappingChips`).
  */
 export function columnsForSlot(
   columns: ColumnOut[],
   slot: Pick<RuleSlot, "family">,
   excludeColumns?: string[],
 ): ColumnOut[] {
+  if (slot.family === "table") return [];
   const exclude = excludeColumns?.length ? new Set(excludeColumns) : null;
   return columns.filter(
     (c) => (slot.family === "any" || familyForType(c.type_name) === slot.family) && !exclude?.has(c.name),

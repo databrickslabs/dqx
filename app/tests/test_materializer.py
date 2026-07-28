@@ -622,6 +622,52 @@ class TestRenderCheckSqlMode:
         )
         assert check["check"]["arguments"]["negate"] is True
 
+    def test_table_slot_binds_an_fqn_and_is_not_reported_as_a_column(self):
+        """A cross-table rule's joined table is a slot, so the rule stays portable.
+
+        Its bound value is an FQN, which must be substituted into the query text
+        like any other slot but must NOT leak into the rule's mapped columns —
+        that list drives the by-column attribution view (and DQX's own
+        input-DataFrame validation), neither of which knows what a table is.
+        """
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {
+                    "sql_query": (
+                        "SELECT {{amount}}, (NOT ({{amount}} * fx.rate < 10000)) AS condition "
+                        "FROM {{input_view}} LEFT JOIN {{fx_table}} fx ON fx.country = {{country}}"
+                    ),
+                    "merge_columns": ["{{amount}}"],
+                },
+                "slots": [
+                    {"name": "amount", "family": "numeric", "position": 0, "cardinality": "one"},
+                    {"name": "country", "family": "text", "position": 1, "cardinality": "one"},
+                    {"name": "fx_table", "family": "table", "position": 2, "cardinality": "one"},
+                ],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, is_tableless = render_check(
+            mode="sql",
+            version=version,
+            group={"amount": "sales_amount", "country": "country_code", "fx_table": "main.ref.fx_rates"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        args = check["check"]["arguments"]
+        assert is_tableless is False
+        assert "LEFT JOIN main.ref.fx_rates fx" in args["query"]
+        assert "sales_amount * fx.rate < 10000" in args["query"]
+        assert args["merge_columns"] == ["sales_amount"]
+        # sql_query carries its columns in user_metadata (its check function
+        # rejects a `columns` argument) — the FQN must not appear among them.
+        assert json.loads(check["user_metadata"]["mapped_columns"]) == ["sales_amount", "country_code"]
+
     def test_dataset_sql_query_without_slots_is_tableless(self):
         definition = RuleDefinition.model_validate(
             {"body": {"sql_query": "SELECT COUNT(*) > 100 AS condition FROM t"}, "slots": [], "parameters": []}

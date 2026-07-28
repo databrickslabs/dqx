@@ -237,16 +237,18 @@ function DataProductsPage() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
 
-  /** Product IDs eligible for selection — same gating as the row-level bar. */
+  /** Product IDs eligible for selection — same gating as the row-level bar
+   *  (and as monitored-tables): runnable, pending-approvable, or deletable
+   *  (not pending). Modified collections stay deletable/selectable so the
+   *  Actions column stays consistent with Tables. */
   const selectableIds = useMemo(() => {
     const ids = new Set<string>();
     for (const p of sorted) {
       const isPending = p.status === "pending_approval";
-      const isModified = p.display_status === "modified";
       if (
         (perms.canRunRules && (p.runnable_count ?? 0) > 0) ||
         (isPending && perms.canApproveRules) ||
-        (perms.canCreateRules && !isModified && !isPending)
+        (perms.canCreateRules && !isPending)
       ) {
         ids.add(p.product_id);
       }
@@ -358,7 +360,7 @@ function DataProductsPage() {
   const confirmBulkDelete = () => {
     setBulkDeleteOpen(false);
     const eligible = selectedRows.filter(
-      (p) => perms.canCreateRules && p.display_status !== "modified" && p.status !== "pending_approval",
+      (p) => perms.canCreateRules && p.status !== "pending_approval",
     );
     bulkAction(
       eligible,
@@ -407,7 +409,7 @@ function DataProductsPage() {
         <FileDown className="h-3 w-3" />
         {t("exportYaml.button")}
       </Button>
-      {perms.canCreateRules && selectedRows.some((p) => p.display_status !== "modified" && p.status !== "pending_approval") && (
+      {perms.canCreateRules && selectedRows.some((p) => p.status !== "pending_approval") && (
         <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-destructive" onClick={() => setBulkDeleteOpen(true)}>
           <Trash2 className="h-3 w-3" />
           {t("dataProducts.bulkDelete")}
@@ -549,9 +551,10 @@ function DataProductsPage() {
           pendingProductId={pendingId}
           selection={tableSelection}
           renderActions={
-            // Per-status action gating: approve/reject gated on canApproveRules;
-            // run gated on canRunRules; delete gated on canCreateRules and hidden
-            // when the row has pending changes (modified or pending_approval).
+            // Canonical order (mirrors monitored-tables): Run → Approve →
+            // Reject → View changes → Revert → Delete. Approve/reject gated
+            // on canApproveRules; run on canRunRules; delete on canCreateRules
+            // and hidden only while pending_approval (same as Tables).
             (product) => (
                   <div className="flex items-center justify-end gap-1">
                     {perms.canRunRules && (product.runnable_count ?? 0) > 0 && (
@@ -642,7 +645,7 @@ function DataProductsPage() {
                         <TooltipContent>{t("dataProducts.revertAction")}</TooltipContent>
                       </Tooltip>
                     )}
-                    {perms.canCreateRules && product.display_status !== "modified" && product.status !== "pending_approval" && (
+                    {perms.canCreateRules && product.status !== "pending_approval" && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
@@ -832,7 +835,7 @@ function DataProductsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>
               {t("dataProducts.bulkDeleteTitle", {
-                count: selectedRows.filter((p) => p.display_status !== "modified" && p.status !== "pending_approval").length,
+                count: selectedRows.filter((p) => p.status !== "pending_approval").length,
               })}
             </AlertDialogTitle>
             <AlertDialogDescription>{t("dataProducts.bulkDeleteBody")}</AlertDialogDescription>

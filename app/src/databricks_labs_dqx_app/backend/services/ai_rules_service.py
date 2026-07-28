@@ -171,7 +171,9 @@ Return ONLY a JSON object: {{"value": "<suggested value>"}}"""
 # reach the editor — never trust the model's SQL blindly.
 _WRITE_SQL_SYSTEM_TEMPLATE = """\
 You produce data-quality rule predicates for the DQX Rules Registry. Respond with ONLY a JSON \
-object: {{"predicate": "<sql boolean expression>", "polarity": "pass"|"fail"}}.
+object:
+{"predicate": "<sql>", "polarity": "pass"|"fail", "slots": [{"name": "<slot_name>", \
+"family": "numeric"|"text"|"temporal"|"boolean"|"array"|"any"|"table"}]}
 
 STRONGLY PREFER writing the predicate for the PASSING case: express the condition that is TRUE \
 when the row is VALID, and set polarity to "pass". This is almost always possible and is the \
@@ -181,42 +183,81 @@ user's description EXPLICITLY frames it as a failure condition (e.g. "flag rows 
 is negative"). When in doubt, write the passing case with polarity "pass".
 
 Column reference rules:
-- Reference every column as a {{{{slot}}}} placeholder — never a bare column identifier. A \
-registry rule is table-agnostic, so columns are always placeholders.
+- Reference every column OF THE TABLE UNDER TEST as a {{slot}} placeholder — never a bare \
+column identifier. A registry rule is table-agnostic, so its own columns are always placeholders.
 - Prefer the provided declared slot names as-is when they fit.
 
+Cross-table checks (JOINs):
+- When the check needs data from ANOTHER table, write the boolean expression first, then append \
+one or more JOIN clauses AFTER it, each on its own line. Do NOT write a SELECT.
+- Reference the joined TABLE as a {{slot}} placeholder as well, and declare that slot with \
+family "table". NEVER hardcode a literal catalog.schema.table name — the rule must stay portable.
+- Give every joined table a short alias, and reference the joined table's own columns as \
+`alias.column` (raw identifiers). Only the table under test's columns are placeholders, because \
+only they are re-bound per monitored table.
+- Example — "sales amount, converted via the FX rates table, must stay below 10000":
+{"predicate": "{{amount}} * fx.rate_to_usd < 10000\\nLEFT JOIN {{fx_rates_table}} fx ON \
+fx.country_code = {{country_code}}", "polarity": "pass", "slots": [{"name": "amount", \
+"family": "numeric"}, {"name": "country_code", "family": "text"}, {"name": "fx_rates_table", \
+"family": "table"}]}
+
+"slots" rules:
+- Declare EVERY {{placeholder}} that appears in your predicate, and nothing else.
+- Reuse the caller's declared slot names (and their intent) wherever they fit.
+- Pick the family from the value the column holds: numeric, text, temporal, boolean, array, or \
+any when unsure. Use "table" ONLY for a joined table name.
+
 Safety rules:
-- The predicate must be a single boolean SQL expression only — no SELECT, no semicolons, no \
-trailing punctuation, and no DDL/DML (DROP/DELETE/INSERT/UPDATE/CREATE/ALTER/TRUNCATE/MERGE/GRANT/REVOKE)."""
+- No SELECT, no semicolons, no trailing punctuation, and no DDL/DML \
+(DROP/DELETE/INSERT/UPDATE/CREATE/ALTER/TRUNCATE/MERGE/GRANT/REVOKE)."""
 
 _IMPROVE_SQL_SYSTEM_TEMPLATE = """\
 You refine a DQX SQL boolean predicate per the user's instruction. Respond with ONLY a JSON \
-object: {{"predicate": "<sql boolean expression>", "polarity": "pass"|"fail"}}.
+object:
+{"predicate": "<sql>", "polarity": "pass"|"fail", "slots": [{"name": "<slot_name>", \
+"family": "numeric"|"text"|"temporal"|"boolean"|"array"|"any"|"table"}]}
 
-Keep every column reference as a {{{{slot}}}} placeholder; keep declared slot names unchanged. \
-STRONGLY PREFER writing the predicate for the PASSING case: set "polarity" to "pass" when the \
-predicate is TRUE for a VALID row (the expected default). Only use "fail" when the passing-case \
-predicate would be substantially more complex/unnatural, or when the user's instruction \
-EXPLICITLY describes a failure condition; when in doubt choose "pass".
+Keep every reference to a column of the table under test as a {{slot}} placeholder; keep \
+declared slot names unchanged. STRONGLY PREFER writing the predicate for the PASSING case: set \
+"polarity" to "pass" when the predicate is TRUE for a VALID row (the expected default). Only use \
+"fail" when the passing-case predicate would be substantially more complex/unnatural, or when \
+the user's instruction EXPLICITLY describes a failure condition; when in doubt choose "pass".
+
+Cross-table checks (JOINs):
+- The predicate may be followed by JOIN clauses on their own lines when the check spans tables. \
+Preserve any that are already there. Do NOT write a SELECT.
+- Reference a joined TABLE as a {{slot}} placeholder declared with family "table" — never a \
+literal catalog.schema.table name — and reference its columns as `alias.column`.
+
+"slots" rules:
+- Declare EVERY {{placeholder}} that appears in your predicate, and nothing else.
+- Pick the family from the value the column holds: numeric, text, temporal, boolean, array, or \
+any when unsure. Use "table" ONLY for a joined table name.
 
 Safety rules:
-- The predicate must be a single boolean SQL expression only — no SELECT, no semicolons, no \
-trailing punctuation, and no DDL/DML."""
+- No SELECT, no semicolons, no trailing punctuation, and no DDL/DML."""
 
 _EXPLAIN_SQL_SYSTEM_TEMPLATE = """\
 Explain a DQX SQL boolean predicate for a data steward in plain language. Aim for one sentence; \
 two at the absolute most. Declarative voice, plain language, no apologies, no preamble \
 ("This rule…"), no markdown, no quotes. Describe what the predicate is checking — not how the \
-SQL is written. Treat {{{{slot}}}} placeholders as column names.
+SQL is written. Treat {{slot}} placeholders as column names, except one used as a joined table \
+name, which is a table.
 
-Return ONLY a JSON object: {{"explanation": "<plain-language explanation>"}}"""
+Return ONLY a JSON object: {"explanation": "<plain-language explanation>"}"""
 
 
 class SqlPredicateResult(TypedDict):
-    """An AI-written SQL predicate plus an optional inferred PASS/FAIL polarity."""
+    """An AI-written SQL predicate, its inferred PASS/FAIL polarity, and its slots.
+
+    ``slots`` covers every ``{{placeholder}}`` in ``predicate`` — including the
+    ``family="table"`` slot of a cross-table rule's joined table — so the editor
+    can declare them without the author retyping each one.
+    """
 
     predicate: str
     polarity: str | None
+    slots: list[dict[str, str]]
 
 
 # Explicit rule-type intent (B2-140). When a user's natural-language prompt
@@ -299,33 +340,83 @@ def parse_rule_type_intent(description: str) -> str | None:
 # (instead of the usual low-code-first cascade), while still falling through to
 # low-code and SQL if the model can't produce a valid basic check.
 #
-# Deliberately CONSERVATIVE — only distinctive concepts whose meaning maps
-# unambiguously onto one built-in check (e.g. "unique"/"duplicate" -> is_unique)
-# are listed. Generic phrasing keeps the low-code-first default so this never
-# steals rules the low-code builder should own.
+# Matching here only REORDERS the cascade — it never forces a basic check. The
+# dqx_native pass must still survive ``DQEngine.validate_checks`` in
+# `_validate_and_repair_proposal`, and `generate_rule` falls through to low-code
+# then sql when it doesn't. That makes a false positive cheap (one extra model
+# call), which is why this list covers the common phrasings of DQX's built-ins
+# rather than only the four most distinctive ones.
+#
+# Bare magnitude comparisons ("greater than", "less than", "at most") are
+# deliberately NOT listed. They are what the low-code builder is best at, and a
+# native pass can answer a COMPOUND description ("positive AND under 1,000,000")
+# with a single-bound check like `is_not_greater_than` that validates while
+# silently dropping half the requirement — a worse rule than the low-code
+# equivalent. Bounded phrasings that carry both edges ("between X and Y",
+# "in range") map cleanly onto `is_in_range` and ARE listed.
 _BASIC_CHECK_SIGNALS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\buniqu\w*\b", re.IGNORECASE),  # unique / uniqueness / uniquely -> is_unique
-    re.compile(r"\bduplicat\w*\b", re.IGNORECASE),  # duplicate(s) / duplication -> is_unique
-    re.compile(r"\boutlier\w*\b", re.IGNORECASE),  # outlier(s) -> has_no_outliers
-    re.compile(r"\banomal\w*\b", re.IGNORECASE),  # anomaly / anomalies -> has_no_row_anomalies
+    # Uniqueness / duplicates -> is_unique
+    re.compile(r"\buniqu\w*\b", re.IGNORECASE),  # unique / uniqueness / uniquely
+    re.compile(r"\bduplicat\w*\b", re.IGNORECASE),  # duplicate(s) / duplication
+    # Statistical outliers / anomalies -> has_no_outliers / has_no_aggr_outliers
+    re.compile(r"\boutlier\w*\b", re.IGNORECASE),
+    re.compile(r"\banomal\w*\b", re.IGNORECASE),
+    # Null / empty presence -> is_not_null / is_null / is_not_empty /
+    # is_not_null_and_not_empty. The bare concept is the signal: whichever way a
+    # description phrases the negation ("must not be null", "cannot be null",
+    # "no nulls"), a built-in covers it, so matching the word beats enumerating
+    # every negation form.
+    re.compile(r"\bnulls?\b|\bnon[\s-]?null\b", re.IGNORECASE),
+    re.compile(r"\b(?:empty|blank)\b", re.IGNORECASE),
+    # Bounded ranges (both edges present) -> is_in_range / is_not_in_range
+    re.compile(r"\bbetween\b.+?\band\b", re.IGNORECASE),
+    re.compile(r"\b(?:in|out\s+of|outside|within)\s+(?:the\s+)?range\b", re.IGNORECASE),
+    # Allowed / forbidden value sets -> is_in_list / is_not_in_list
+    re.compile(r"\b(?:one|any)\s+of\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:allowed|permitted|accepted|valid|expected|forbidden|disallowed)\s+(?:list|set|values?)\b",
+        re.IGNORECASE,
+    ),
+    # Pattern matching -> regex_match
+    re.compile(r"\bregex\w*\b|\bregular\s+expression\b", re.IGNORECASE),
+    re.compile(r"\bmatch\w*\s+(?:the\s+)?(?:pattern|format)\b", re.IGNORECASE),
+    # Well-known value formats -> is_valid_email / is_valid_date / is_valid_timestamp /
+    # is_valid_ipv4_address / is_valid_ipv6_address / is_ipv*_address_in_cidr / is_valid_json
+    re.compile(r"\bvalid\s+email\b|\bemail\s+address(?:es)?\b", re.IGNORECASE),
+    re.compile(r"\bvalid\s+(?:date|timestamp|datetime)\b", re.IGNORECASE),
+    re.compile(r"\bipv?[46]\b|\bip\s+address(?:es)?\b|\bcidr\b", re.IGNORECASE),
+    re.compile(r"\bvalid\s+json\b|\bjson\s+(?:keys?|schema)\b", re.IGNORECASE),
+    # Freshness / staleness -> is_data_fresh / is_data_fresh_per_time_window
+    re.compile(r"\bfresh\w*\b|\bstale\w*\b", re.IGNORECASE),
+    # Temporal recency bounds -> is_not_in_future / is_not_in_near_future /
+    # is_older_than_n_days / is_older_than_col2_for_n_days
+    re.compile(r"\bin\s+the\s+(?:near\s+)?future\b", re.IGNORECASE),
+    re.compile(r"\bolder\s+than\b", re.IGNORECASE),
+    # Schema conformance -> has_valid_schema
+    re.compile(r"\b(?:valid|expected|matching)\s+schema\b", re.IGNORECASE),
 )
 
 
 def prefers_basic_check(description: str) -> bool:
-    """Whether a description closely matches a named basic (``dqx_native``) check.
+    """Whether a description matches a concept a named basic (``dqx_native``) check expresses.
 
-    Pure and case-insensitive. Returns ``True`` only for a clear, distinctive
-    match to a concept a single built-in check expresses crisply (see
-    :data:`_BASIC_CHECK_SIGNALS`) — e.g. "values must be unique" -> ``is_unique``
-    — so :func:`generate_rule` can try ``dqx_native`` first for it. Conservative
-    by design: anything fuzzier returns ``False`` and keeps the low-code-first
-    cascade.
+    Pure and case-insensitive. Returns ``True`` when the description names a
+    concept one built-in check covers directly (see
+    :data:`_BASIC_CHECK_SIGNALS`) — e.g. "values must be unique" ->
+    ``is_unique``, "must be between 0 and 100" -> ``is_in_range``, "must be a
+    valid email" -> ``is_valid_email`` — so :func:`generate_rule` tries
+    ``dqx_native`` first for it.
+
+    This is a PREFERENCE, not a commitment: a ``True`` here only reorders the
+    cascade, and generation still falls through to low-code then sql when the
+    native pass can't produce a DQX-valid check. Bare magnitude comparisons are
+    excluded on purpose — see :data:`_BASIC_CHECK_SIGNALS` for why.
 
     Args:
         description: The user's natural-language rule description.
 
     Returns:
-        True when the description clearly matches a named basic check.
+        True when the description matches a named basic check's concept.
     """
     if not description:
         return False
@@ -362,7 +453,10 @@ _SEVERITY_LABEL_KEY = "severity"
 _VALID_POLARITIES = frozenset({"pass", "fail"})
 # Mirrors registry_models.SlotFamily — the closed vocabulary a native column slot's
 # family may take. Used to validate any family hint the model returns for a slot.
+# ``table`` only ever applies to a cross-table SQL rule's joined-table placeholder,
+# so it is excluded here and allowed only by ``_VALID_SQL_SLOT_FAMILIES`` below.
 _VALID_SLOT_FAMILIES = frozenset({"numeric", "text", "temporal", "boolean", "array", "any"})
+_VALID_SQL_SLOT_FAMILIES = _VALID_SLOT_FAMILIES | {"table"}
 _SLOT_TOKEN_RE = re.compile(r"^\{\{\s*(.+?)\s*\}\}$")
 
 
@@ -1276,9 +1370,42 @@ class AiRulesService:
         if not isinstance(predicate, str) or not predicate.strip():
             raise ValueError("AI did not return a SQL predicate.")
         predicate = predicate.strip()
-        if not is_sql_query_safe(predicate):
+        # Comments are stripped before the keyword scan for the same reason every
+        # other app-side gate does it: an AI "Explain" comment block can legitimately
+        # contain a word like "updates" that would otherwise trip the DDL/DML check.
+        if not is_sql_query_safe(strip_sql_line_comments(predicate)):
             logger.warning("AI-written SQL predicate rejected: unsafe SQL")
             raise ValueError("AI produced an unsafe SQL predicate. Try rephrasing your request.")
         polarity = parsed.get("polarity")
         clean_polarity = polarity if isinstance(polarity, str) and polarity in _VALID_POLARITIES else None
-        return {"predicate": predicate, "polarity": clean_polarity}
+        return {
+            "predicate": predicate,
+            "polarity": clean_polarity,
+            "slots": AiRulesService._parse_sql_slots(predicate, parsed.get("slots")),
+        }
+
+    @staticmethod
+    def _parse_sql_slots(predicate: str, declared: object) -> list[dict[str, str]]:
+        """Reconcile the model's declared slots against the predicate's real placeholders.
+
+        The PREDICATE is the source of truth: every ``{{token}}`` in it becomes a
+        slot (in first-appearance order) whether or not the model remembered to
+        declare it, and a declared slot that appears nowhere in the text is
+        dropped. The model's declaration only contributes the ``family`` hint —
+        validated against :data:`_VALID_SQL_SLOT_FAMILIES` and falling back to
+        ``any`` — which is what lets a joined table come back as ``table``.
+        """
+        families: dict[str, str] = {}
+        if isinstance(declared, list):
+            for entry in declared:
+                if not isinstance(entry, dict):
+                    continue
+                name = entry.get("name")
+                family = entry.get("family")
+                if isinstance(name, str) and name.strip() and isinstance(family, str):
+                    if family in _VALID_SQL_SLOT_FAMILIES:
+                        families[name.strip()] = family
+        return [
+            {"name": name, "family": families.get(name, "any")}
+            for name in extract_slot_tokens(predicate)
+        ]

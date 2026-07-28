@@ -17,11 +17,16 @@ per-row "passed" expression is:
 * ``polarity == "pass"``  -> ``(predicate)``
 * ``polarity == "fail"``  -> ``(NOT (predicate))``
 
-which is exactly dqlake's ``_passed_expr``. There is no aggregate / group-by /
-join predicate classifier in DQX's registry model, so — unlike dqlake — only
-the ROW evaluation shape is reproduced here. ``dqx_native`` rules are compiled
+which is exactly dqlake's ``_passed_expr``. ``dqx_native`` rules are compiled
 to a row-level SQL predicate by :mod:`native_test_predicate` before reaching
 this module; dataset / geo / UDF checks are rejected upstream.
+
+Cross-table rules materialize as ``sql_query`` instead — a whole SELECT that
+reads from ``{{input_view}}`` and joins reference tables — so their verdict
+comes from the query's own condition column rather than from wrapping a
+predicate. :func:`build_query_test_sql` handles that shape (see
+:func:`condition_passed_expr` for why its polarity handling is the inverse of
+``passed_expr``'s), and :func:`is_query_shaped` decides which builder applies.
 
 All functions here are pure: they take dicts/dataclasses and return SQL text.
 No SDK, no DB, no I/O — so they are exhaustively unit-tested.
@@ -31,9 +36,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from collections.abc import Iterable
 from typing import Any, Literal
 
-from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn, validate_identifier
+from databricks_labs_dqx_app.backend.sql_utils import (
+    quote_fqn,
+    strip_sql_line_comments,
+    validate_fqn,
+    validate_identifier,
+)
 
 SampleKind = Literal["records", "percent", "full"]
 Polarity = Literal["pass", "fail"]
@@ -51,6 +62,22 @@ _FAMILY_SQL_TYPE: dict[str, str] = {
 # Hidden verdict/ordinal columns excluded from the display grid.
 PASSED_COL = "__passed"
 ROW_IDX_COL = "__row_idx"
+
+# Cross-table (``sql_query``) rules. The rule body is a whole SELECT rather than
+# a boolean predicate, so it is tested by running the query itself against a
+# sampled CTE standing in for the monitored table, and reading the verdict off
+# the query's own condition column.
+SAMPLE_CTE = "src"
+CONDITION_COL = "condition"
+INPUT_VIEW_SLOT = "input_view"
+# Prefix for a manual reference grid's CTE, so it cannot collide with the input
+# grid's ``src`` even for a slot named ``src``.
+REF_CTE_PREFIX = "__ref_"
+# Matches DQX's own placeholder scan (``check_funcs.sql_query._replace_template``),
+# whitespace inside the braces included.
+_INPUT_VIEW_RE = re.compile(r"\{\{\s*" + INPUT_VIEW_SLOT + r"\s*\}\}")
+_QUERY_SHAPE_RE = re.compile(r"^\s*select\b", re.IGNORECASE)
+_CONDITION_REF_RE = re.compile(r"\b" + CONDITION_COL + r"\b", re.IGNORECASE)
 
 # C0/C1 control characters other than the common whitespace (\n, \r, \t), which
 # are re-emitted as Spark escape sequences by ``_lit``. These have no legitimate
@@ -93,6 +120,92 @@ def substitute_slots(text: str, mapping: dict[str, str]) -> str:
     return result
 
 
+def is_query_shaped(text: str) -> bool:
+    """Whether *text* is a whole ``SELECT`` (a cross-table ``sql_query`` rule).
+
+    Mirrors the authoring-side classifier (``lib/lowcodeCompile.buildSqlBody``,
+    which persists a leading-``SELECT`` body as ``sql_query`` rather than
+    ``sql_expression``) so what the editor stores and what the test runs agree on
+    the rule's shape. Scanned with line comments stripped, since an author's
+    leading ``-- note`` block would otherwise hide the ``SELECT``.
+    """
+    return bool(_QUERY_SHAPE_RE.match(strip_sql_line_comments(text).strip()))
+
+
+def substitute_table_slots(text: str, mapping: dict[str, str]) -> str:
+    """Replace every ``family="table"`` ``{{slot}}`` with a quoted table FQN.
+
+    The column counterpart (:func:`substitute_slots`) emits a single quoted
+    identifier, which would render ``main.sales.customers`` as one absurd column
+    name; a table slot must become a three-part quoted FQN instead. Each value is
+    validated by ``validate_fqn`` before quoting, so a malformed or injected name
+    is rejected rather than assembled into the query.
+    """
+    result = text
+    for slot_name, fqn in mapping.items():
+        validate_fqn(fqn)
+        result = result.replace("{{" + slot_name + "}}", quote_fqn(fqn))
+    return result
+
+
+def substitute_input_view(text: str, alias: str = SAMPLE_CTE) -> str:
+    """Point the rule's ``{{input_view}}`` marker at the sampled CTE.
+
+    At runtime DQX registers the monitored DataFrame as a temp view and swaps it
+    in here; the test stands the sample in for it, which is what makes the query
+    runnable against a real table.
+    """
+    return _INPUT_VIEW_RE.sub(alias, text)
+
+
+def require_input_view(query: str, column_slots: Iterable[str]) -> None:
+    """Reject a query that uses column slots but never reads ``{{input_view}}``.
+
+    A column slot resolves to a bare identifier, so a query that names one
+    without reading the monitored data has no relation to resolve it against and
+    dies deep inside Spark with ``UNRESOLVED_COLUMN`` — at run time just as in
+    the test. Caught here so the author is told what is actually wrong with the
+    rule instead of being handed the warehouse's error.
+
+    Reading only reference tables is legitimate (a dataset-level verdict about
+    another table), hence the guard triggers on the combination, not on a
+    missing ``{{input_view}}`` alone.
+
+    Raises:
+        ValueError: the query uses column slots and never reads the input view.
+    """
+    scan = strip_sql_line_comments(query)
+    if _INPUT_VIEW_RE.search(scan):
+        return
+    used = [s for s in column_slots if re.search(r"\{\{\s*" + re.escape(s) + r"\s*\}\}", scan)]
+    if not used:
+        return
+    listed = ", ".join(f"{{{{{s}}}}}" for s in used)
+    raise ValueError(
+        f"The query uses columns of the table being checked ({listed}) but never reads it. "
+        f"Add FROM {{{{{INPUT_VIEW_SLOT}}}}} — that placeholder becomes the monitored table when the rule runs."
+    )
+
+
+def condition_passed_expr(condition_ref: str, polarity: str) -> str:
+    """Boolean SQL that is TRUE when a row of the query's output PASSES.
+
+    Reproduces ``check_funcs.sql_query`` + ``make_condition`` exactly. The
+    condition column flags a VIOLATION, and ``make_condition`` only fails a row
+    when its condition evaluates to TRUE (NULL and FALSE both pass), so with
+    ``negate`` (i.e. ``polarity == "fail"``) the failing case is the condition
+    being *FALSE* and a NULL still passes. Hence the asymmetric COALESCE
+    defaults: FALSE when un-negated, TRUE when negated.
+
+    Note this is the INVERSE of :func:`passed_expr`, which handles
+    ``sql_expression`` predicates — those describe when a row is *good*, whereas
+    a query's condition column describes when it is *bad*.
+    """
+    if polarity == "fail":
+        return f"COALESCE({condition_ref}, TRUE)"
+    return f"(NOT COALESCE({condition_ref}, FALSE))"
+
+
 def passed_expr(predicate: str, polarity: str) -> str:
     """Boolean SQL that is TRUE when a row satisfies the rule.
 
@@ -117,6 +230,8 @@ class TableSource:
     sample_kind: SampleKind = "records"
     sample_value: int = 10000
     display_cap: int = 5000
+    # Cross-table rules only: ``family="table"`` slot name -> reference table FQN.
+    table_mapping: dict[str, str] = field(default_factory=dict)
 
 
 def _sample_clause(kind: SampleKind, value: int) -> str:
@@ -149,9 +264,75 @@ def build_table_sql(predicate: str, polarity: str, src: TableSource) -> str:
     )
 
 
+def build_query_test_sql(query: str, polarity: str, src: TableSource) -> str:
+    """Build the test query for a cross-table (``sql_query``) rule.
+
+    Unlike :func:`build_table_sql`, which embeds a boolean predicate per sampled
+    row, the rule here IS a query: it selects from ``{{input_view}}`` and joins
+    reference tables. So the sample becomes a CTE the query reads from, the
+    query runs as a subquery, and the verdict is read off its condition column:
+
+    .. code-block:: sql
+
+        WITH src AS (SELECT * FROM `c`.`s`.`monitored` ORDER BY rand() LIMIT 1000)
+        SELECT q.*, (NOT COALESCE(q.`condition`, FALSE)) AS __passed
+        FROM (<the rule's query, placeholders resolved>) q
+        LIMIT 5000
+
+    The result grid therefore shows the rows the rule's QUERY returns (its merge
+    keys and condition), not every sampled input row — a query with a ``WHERE``
+    that keeps only violations legitimately returns just those.
+
+    Substitution order matters: table slots and column slots are resolved first,
+    then ``{{input_view}}``. A slot sharing the reserved ``input_view`` name is
+    dropped from both mappings beforehand, so an author who mistakenly declared
+    it can't redirect the query away from the sample being tested.
+
+    Raises:
+        ValueError: the table FQN or an identifier is malformed, the query has no
+            condition column to read a verdict from, or it uses column slots
+            without reading ``{{input_view}}``.
+    """
+    validate_fqn(src.table)
+    if not _CONDITION_REF_RE.search(strip_sql_line_comments(query)):
+        raise ValueError(
+            f"A cross-table rule's query must return a '{CONDITION_COL}' column "
+            f"(e.g. `(c.id IS NULL) AS {CONDITION_COL}`) for the test to read a verdict from."
+        )
+    table_mapping = {k: v for k, v in src.table_mapping.items() if k != INPUT_VIEW_SLOT}
+    column_mapping = {k: v for k, v in src.column_mapping.items() if k != INPUT_VIEW_SLOT}
+    require_input_view(query, column_mapping)
+    resolved = substitute_table_slots(query, table_mapping)
+    resolved = substitute_slots(resolved, column_mapping)
+    resolved = substitute_input_view(resolved)
+    passed = condition_passed_expr(f"q.{_q(CONDITION_COL)}", polarity)
+    sample = _sample_clause(src.sample_kind, src.sample_value)
+    return (
+        f"WITH {SAMPLE_CTE} AS (SELECT * FROM {quote_fqn(src.table)} {sample})\n"
+        f"SELECT q.*, {passed} AS {PASSED_COL}\n"
+        f"FROM (\n{resolved}\n) q\n"
+        f"LIMIT {int(src.display_cap)}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Manual (ad-hoc inline VALUES) mode
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class AdhocGrid:
+    """One inline ``VALUES`` grid standing in for a reference table.
+
+    Unlike the input grid — whose columns ARE the rule's column slots — a
+    reference grid's columns are the real column names of the table it stands in
+    for (``id``, ``tier``, …), because the rule's SQL refers to them through its
+    own join alias (``c.id``).
+    """
+
+    columns: list[str]
+    rows: list[list[Any]]
+    families: dict[str, str] = field(default_factory=dict)  # column name -> family
 
 
 @dataclass
@@ -161,6 +342,10 @@ class AdhocSource:
     families: dict[str, str] = field(default_factory=dict)  # column name -> family
     column_mapping: dict[str, str] = field(default_factory=dict)  # slot -> column (identity)
     display_cap: int = 5000
+    # Cross-table rules: ``family="table"`` slot name -> the grid standing in for
+    # that reference table. Each becomes its own CTE, so an orphan check can be
+    # tested against fabricated data without creating any table.
+    ref_grids: dict[str, AdhocGrid] = field(default_factory=dict)
 
 
 def _lit(value: Any) -> str:
@@ -215,38 +400,115 @@ def _values_cell(col: str, value: Any) -> str:
     return _lit(value)
 
 
+def _grid_select(
+    columns: list[str],
+    rows: list[list[Any]],
+    families: dict[str, str],
+    *,
+    row_idx: bool,
+) -> str:
+    """Emit one grid as a typed ``SELECT`` over inline ``VALUES``.
+
+    Ragged rows are normalised to the column count (short rows padded with NULL,
+    overflow dropped). With *row_idx* a leading synthetic ``__row_idx`` ordinal is
+    injected so the frontend can map each verdict back to its input row; a
+    reference grid needs no ordinal, and adding one would leak a column into the
+    rule's own ``SELECT *``.
+    """
+    cols = [ROW_IDX_COL, *columns] if row_idx else list(columns)
+    grid_rows = [[i, *row] for i, row in enumerate(rows)] if row_idx else [list(r) for r in rows]
+
+    cast_cols = ", ".join(_cast_col(families, c) for c in cols)
+    collist = ", ".join(ROW_IDX_COL if c == ROW_IDX_COL else _q(c) for c in cols)
+
+    if not grid_rows:
+        raw = ", ".join(f"NULL AS {ROW_IDX_COL if c == ROW_IDX_COL else _q(c)}" for c in cols)
+        values_block = f"SELECT {raw} WHERE 1=0"
+    else:
+        rows_sql = ", ".join(
+            "(" + ", ".join(_values_cell(c, row[i] if i < len(row) else None) for i, c in enumerate(cols)) + ")"
+            for row in grid_rows
+        )
+        values_block = f"SELECT * FROM (VALUES {rows_sql}) AS raw ({collist})"
+
+    return f"SELECT {cast_cols} FROM ({values_block}) AS raw2"
+
+
+def ref_cte_name(slot_name: str) -> str:
+    """Quoted CTE identifier standing in for the reference table in *slot_name*.
+
+    Prefixed so it can never collide with the input grid's ``src`` CTE, even if a
+    slot is itself named ``src``. Validated before quoting, like every other
+    identifier that reaches the assembled SQL.
+    """
+    validate_identifier(slot_name)
+    return _q(f"{REF_CTE_PREFIX}{slot_name}")
+
+
 def build_adhoc_sql(predicate: str, polarity: str, src: AdhocSource) -> str:
     """Build the ROW test query over inline VALUES (manual test grid).
 
     A leading synthetic ``__row_idx`` ordinal is injected so the frontend can
-    map each verdict back to its input row. Ragged rows are normalised to the
-    column count (short rows padded with NULL, overflow dropped).
+    map each verdict back to its input row.
     """
-    columns = [ROW_IDX_COL, *src.columns]
-    indexed_rows = [[i, *row] for i, row in enumerate(src.rows)]
-
-    cast_cols = ", ".join(_cast_col(src.families, c) for c in columns)
-    collist = ", ".join(ROW_IDX_COL if c == ROW_IDX_COL else _q(c) for c in columns)
-
-    if not indexed_rows:
-        raw = ", ".join(f"NULL AS {ROW_IDX_COL if c == ROW_IDX_COL else _q(c)}" for c in columns)
-        values_block = f"SELECT {raw} WHERE 1=0"
-    else:
-        rows_sql = ", ".join(
-            "("
-            + ", ".join(
-                _values_cell(c, row[i] if i < len(row) else None) for i, c in enumerate(columns)
-            )
-            + ")"
-            for row in indexed_rows
-        )
-        values_block = f"SELECT * FROM (VALUES {rows_sql}) AS raw ({collist})"
-
     pred = substitute_slots(predicate, src.column_mapping)
     passed = passed_expr(pred, polarity)
     return (
-        f"WITH src AS (SELECT {cast_cols} FROM ({values_block}) AS raw2)\n"
+        f"WITH src AS ({_grid_select(src.columns, src.rows, src.families, row_idx=True)})\n"
         f"SELECT src.*, {passed} AS {PASSED_COL} FROM src\n"
+        f"LIMIT {int(src.display_cap)}"
+    )
+
+
+def build_adhoc_query_sql(query: str, polarity: str, src: AdhocSource) -> str:
+    """Build the test query for a cross-table / dataset-level rule over manual grids.
+
+    The manual counterpart of :func:`build_query_test_sql`: instead of sampling
+    real tables, every data source the rule reads is an inline ``VALUES`` grid —
+    the input grid becomes ``src``, and each ``family="table"`` slot becomes its
+    own CTE — so an orphan check can be exercised on fabricated rows without
+    creating a single table:
+
+    .. code-block:: sql
+
+        WITH src AS (SELECT …VALUES…), `__ref_ref_table` AS (SELECT …VALUES…)
+        SELECT q.*, (NOT COALESCE(q.`condition`, FALSE)) AS __passed
+        FROM (<the rule's query, placeholders resolved>) q
+
+    No ``__row_idx`` is projected: the rule's query decides which rows come back
+    (it may aggregate to one, or filter to violations only), so verdicts can't be
+    mapped onto input-grid rows and the result is shown as its own grid.
+
+    Raises:
+        ValueError: an identifier is malformed, the query has no condition column,
+            a table slot has no grid to stand in for it, or the query uses column
+            slots without reading ``{{input_view}}``.
+    """
+    if not _CONDITION_REF_RE.search(strip_sql_line_comments(query)):
+        raise ValueError(
+            f"A cross-table rule's query must return a '{CONDITION_COL}' column "
+            f"(e.g. `(c.id IS NULL) AS {CONDITION_COL}`) for the test to read a verdict from."
+        )
+    ref_grids = {k: v for k, v in src.ref_grids.items() if k != INPUT_VIEW_SLOT}
+    column_mapping = {k: v for k, v in src.column_mapping.items() if k != INPUT_VIEW_SLOT}
+    require_input_view(query, column_mapping)
+
+    resolved = query
+    for slot_name in ref_grids:
+        resolved = resolved.replace("{{" + slot_name + "}}", ref_cte_name(slot_name))
+    resolved = substitute_slots(resolved, column_mapping)
+    resolved = substitute_input_view(resolved)
+
+    ctes = [f"{SAMPLE_CTE} AS ({_grid_select(src.columns, src.rows, src.families, row_idx=False)})"]
+    for slot_name, grid in ref_grids.items():
+        body = _grid_select(grid.columns, grid.rows, grid.families, row_idx=False)
+        ctes.append(f"{ref_cte_name(slot_name)} AS ({body})")
+
+    passed = condition_passed_expr(f"q.{_q(CONDITION_COL)}", polarity)
+    return (
+        "WITH " + ",\n     ".join(ctes) + "\n"
+        f"SELECT q.*, {passed} AS {PASSED_COL}\n"
+        f"FROM (\n{resolved}\n) q\n"
         f"LIMIT {int(src.display_cap)}"
     )
 

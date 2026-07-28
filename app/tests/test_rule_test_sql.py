@@ -5,13 +5,21 @@ from __future__ import annotations
 import pytest
 
 from databricks_labs_dqx_app.backend.rule_test_sql import (
+    AdhocGrid,
     AdhocSource,
     TableSource,
+    build_adhoc_query_sql,
     build_adhoc_sql,
+    build_query_test_sql,
     build_table_sql,
+    condition_passed_expr,
+    is_query_shaped,
     parse_result,
     passed_expr,
+    ref_cte_name,
+    substitute_input_view,
     substitute_slots,
+    substitute_table_slots,
 )
 
 
@@ -51,6 +59,138 @@ class TestPassedExpr:
 
     def test_fail_polarity_negates(self):
         assert passed_expr("col IS NULL", "fail") == "(NOT (col IS NULL))"
+
+
+_ORPHAN_QUERY = (
+    "SELECT {{order_id}}, (c.id IS NULL) AS condition "
+    "FROM {{input_view}} LEFT JOIN {{ref_table}} c ON c.id = {{customer_id}}"
+)
+
+
+class TestIsQueryShaped:
+    def test_whole_select_is_a_query(self):
+        assert is_query_shaped("SELECT (x) AS condition FROM {{input_view}}") is True
+
+    def test_leading_comment_does_not_hide_the_select(self):
+        assert is_query_shaped("-- checks orphans\nSELECT (x) AS condition FROM {{input_view}}") is True
+
+    def test_bare_predicate_is_not_a_query(self):
+        assert is_query_shaped("{{amount}} > 0") is False
+
+    def test_predicate_mentioning_select_in_a_comment_is_not_a_query(self):
+        assert is_query_shaped("-- SELECT was considered\n{{amount}} > 0") is False
+
+
+class TestSubstituteTableSlots:
+    def test_replaces_slot_with_quoted_fqn(self):
+        out = substitute_table_slots("JOIN {{ref}} c", {"ref": "main.sales.customers"})
+        assert out == "JOIN `main`.`sales`.`customers` c"
+
+    def test_rejects_malformed_fqn(self):
+        with pytest.raises(ValueError):
+            substitute_table_slots("JOIN {{ref}}", {"ref": "not_three_parts"})
+
+    def test_unmapped_slot_left_untouched(self):
+        assert substitute_table_slots("JOIN {{ref}}", {}) == "JOIN {{ref}}"
+
+
+class TestSubstituteInputView:
+    def test_replaces_marker_with_sample_cte(self):
+        assert substitute_input_view("FROM {{input_view}}") == "FROM src"
+
+    def test_tolerates_inner_whitespace_like_dqx(self):
+        assert substitute_input_view("FROM {{ input_view }}") == "FROM src"
+
+
+class TestConditionPassedExpr:
+    # A query's condition column flags a VIOLATION, and make_condition only fails
+    # a row when the condition is TRUE — so NULL passes in both polarities, which
+    # is what the asymmetric COALESCE defaults encode.
+    def test_pass_polarity_fails_on_true_condition(self):
+        assert condition_passed_expr("q.`condition`", "pass") == "(NOT COALESCE(q.`condition`, FALSE))"
+
+    def test_fail_polarity_fails_on_false_condition(self):
+        assert condition_passed_expr("q.`condition`", "fail") == "COALESCE(q.`condition`, TRUE)"
+
+
+class TestBuildQueryTestSql:
+    def _src(self, **kw):
+        return TableSource(
+            **{
+                "table": "c.s.orders",
+                "column_mapping": {"order_id": "order_id", "customer_id": "customer_id"},
+                "table_mapping": {"ref_table": "main.sales.customers"},
+                "sample_kind": "records",
+                "sample_value": 100,
+                **kw,
+            }
+        )
+
+    def test_samples_monitored_table_into_the_cte(self):
+        sql = build_query_test_sql(_ORPHAN_QUERY, "pass", self._src())
+        assert "WITH src AS (SELECT * FROM `c`.`s`.`orders` ORDER BY rand() LIMIT 100)" in sql
+
+    def test_input_view_points_at_the_sample(self):
+        sql = build_query_test_sql(_ORPHAN_QUERY, "pass", self._src())
+        assert "FROM src LEFT JOIN" in sql
+        assert "{{input_view}}" not in sql
+
+    def test_table_slot_becomes_a_quoted_fqn_and_column_slots_columns(self):
+        sql = build_query_test_sql(_ORPHAN_QUERY, "pass", self._src())
+        assert "LEFT JOIN `main`.`sales`.`customers` c ON c.id = `customer_id`" in sql
+        assert "SELECT `order_id`," in sql
+
+    def test_verdict_reads_the_condition_column(self):
+        sql = build_query_test_sql(_ORPHAN_QUERY, "pass", self._src())
+        assert "(NOT COALESCE(q.`condition`, FALSE)) AS __passed" in sql
+
+    def test_fail_polarity_inverts_the_verdict(self):
+        sql = build_query_test_sql(_ORPHAN_QUERY, "fail", self._src())
+        assert "COALESCE(q.`condition`, TRUE) AS __passed" in sql
+
+    def test_display_cap_limits_the_outer_select(self):
+        sql = build_query_test_sql(_ORPHAN_QUERY, "pass", self._src(display_cap=42))
+        assert sql.rstrip().endswith("LIMIT 42")
+
+    def test_full_sample_has_no_sample_clause(self):
+        sql = build_query_test_sql(_ORPHAN_QUERY, "pass", self._src(sample_kind="full"))
+        assert "ORDER BY rand()" not in sql
+        assert "TABLESAMPLE" not in sql
+
+    def test_query_without_condition_column_is_rejected(self):
+        with pytest.raises(ValueError, match="condition"):
+            build_query_test_sql("SELECT 1 AS x FROM {{input_view}}", "pass", self._src())
+
+    def test_query_using_column_slots_without_the_input_view_is_rejected(self):
+        # The shape a table-level author lands on: an aggregate over a column of
+        # the monitored table with nothing to read it from. Spark would answer
+        # UNRESOLVED_COLUMN; the builder says what is actually wrong instead.
+        with pytest.raises(ValueError, match="never reads it"):
+            build_query_test_sql("SELECT (COUNT_IF({{customer_id}} IS NULL) > 0) AS condition", "pass", self._src())
+
+    def test_query_over_only_reference_tables_needs_no_input_view(self):
+        sql = build_query_test_sql("SELECT (COUNT(*) = 0) AS condition FROM {{ref_table}} c", "pass", self._src())
+        assert "`main`.`sales`.`customers`" in sql
+
+    def test_reserved_input_view_slot_cannot_redirect_the_query(self):
+        # An author who mistakenly declared {{input_view}} as a slot would other-
+        # wise have the test read their bound table instead of the sample.
+        src = TableSource(
+            table="c.s.orders",
+            column_mapping={},
+            table_mapping={"input_view": "other.cat.elsewhere"},
+        )
+        sql = build_query_test_sql("SELECT (x) AS condition FROM {{input_view}}", "pass", src)
+        assert "FROM src" in sql
+        assert "elsewhere" not in sql
+
+    def test_dataset_level_aggregate_query_is_supported_unchanged(self):
+        # No merge keys, one row out — the builder neither requires nor projects
+        # keys, so a table-level rule tests the same way.
+        query = "SELECT (COUNT(*) > 0) AS condition FROM {{input_view}} LEFT JOIN {{ref_table}} c ON c.id = {{customer_id}} WHERE c.id IS NULL"
+        sql = build_query_test_sql(query, "pass", self._src())
+        assert "COUNT(*)" in sql
+        assert "`main`.`sales`.`customers`" in sql
 
 
 class TestBuildTableSql:
@@ -174,6 +314,138 @@ class TestBuildAdhocSql:
         src = AdhocSource(columns=["ev`il"], rows=[["1"]], families={}, column_mapping={"ev`il": "ev`il"})
         with pytest.raises(ValueError):
             build_adhoc_sql("{{ev`il}} IS NOT NULL", "pass", src)
+
+
+class TestBuildAdhocQuerySql:
+    """Manual test for a cross-table rule: every table it reads is a VALUES grid."""
+
+    @staticmethod
+    def _src(**kw: object) -> AdhocSource:
+        base: dict[str, object] = {
+            "columns": ["customer_id", "order_id"],
+            "rows": [["CUST-1", "O-1"], ["CUST-9", "O-2"]],
+            "families": {"customer_id": "text", "order_id": "text"},
+            "column_mapping": {"customer_id": "customer_id", "order_id": "order_id"},
+            "ref_grids": {
+                "ref_table": AdhocGrid(
+                    columns=["id"],
+                    rows=[["CUST-1"]],
+                    families={"id": "text"},
+                )
+            },
+        }
+        return AdhocSource(**{**base, **kw})  # pyright: ignore[reportArgumentType]
+
+    def test_input_grid_and_each_reference_grid_become_ctes(self):
+        sql = build_adhoc_query_sql(_ORPHAN_QUERY, "pass", self._src())
+        assert "WITH src AS (SELECT" in sql
+        assert "`__ref_ref_table` AS (SELECT" in sql
+        # input rows and reference rows both present as inline literals
+        assert "'CUST-9'" in sql and "'CUST-1'" in sql
+
+    def test_placeholders_resolve_to_grids(self):
+        sql = build_adhoc_query_sql(_ORPHAN_QUERY, "pass", self._src())
+        assert "{{" not in sql
+        assert "LEFT JOIN `__ref_ref_table` c" in sql
+        assert "FROM src" in sql
+
+    def test_reference_grid_has_no_row_idx(self):
+        # A synthetic ordinal on a reference grid would leak into the rule's own
+        # SELECT *; only the input grid gets one — and here not even that, since
+        # the query decides which rows come back.
+        sql = build_adhoc_query_sql(_ORPHAN_QUERY, "pass", self._src())
+        assert "__row_idx" not in sql
+
+    def test_verdict_reads_the_condition_column(self):
+        sql = build_adhoc_query_sql(_ORPHAN_QUERY, "pass", self._src())
+        assert "(NOT COALESCE(q.`condition`, FALSE)) AS __passed" in sql
+
+    def test_fail_polarity_inverts_the_verdict(self):
+        sql = build_adhoc_query_sql(_ORPHAN_QUERY, "fail", self._src())
+        assert "COALESCE(q.`condition`, TRUE) AS __passed" in sql
+
+    def test_reference_grid_cells_are_typed(self):
+        src = self._src(ref_grids={"ref_table": AdhocGrid(columns=["id"], rows=[["7"]], families={"id": "numeric"})})
+        sql = build_adhoc_query_sql(_ORPHAN_QUERY, "pass", src)
+        assert "TRY_CAST(`id` AS DOUBLE) AS `id`" in sql
+
+    def test_reference_grid_cells_are_escaped(self):
+        src = self._src(
+            ref_grids={
+                "ref_table": AdhocGrid(
+                    columns=["id"],
+                    rows=[["'); DROP TABLE t; --"]],
+                    families={"id": "text"},
+                )
+            }
+        )
+        sql = build_adhoc_query_sql(_ORPHAN_QUERY, "pass", src)
+        assert "'''); DROP TABLE t; --'" in sql
+
+    def test_empty_reference_grid_is_a_typed_empty_relation(self):
+        src = self._src(ref_grids={"ref_table": AdhocGrid(columns=["id"], rows=[], families={"id": "text"})})
+        sql = build_adhoc_query_sql(_ORPHAN_QUERY, "pass", src)
+        assert "WHERE 1=0" in sql
+
+    def test_rejects_a_query_without_a_condition_column(self):
+        with pytest.raises(ValueError, match="condition"):
+            build_adhoc_query_sql("SELECT * FROM {{input_view}}", "pass", self._src(ref_grids={}))
+
+    def test_rejects_a_query_using_column_slots_without_the_input_view(self):
+        with pytest.raises(ValueError, match="never reads it"):
+            build_adhoc_query_sql(
+                "SELECT (COUNT_IF({{customer_id}} IS NULL) > 0) AS condition", "pass", self._src(ref_grids={})
+            )
+
+    def test_rejects_a_malformed_reference_slot_name(self):
+        src = self._src(ref_grids={"ev`il": AdhocGrid(columns=["id"], rows=[["1"]], families={})})
+        with pytest.raises(ValueError):
+            build_adhoc_query_sql(_ORPHAN_QUERY, "pass", src)
+
+    def test_input_view_cannot_be_hijacked_by_a_declared_slot(self):
+        # {{input_view}} is reserved for the grid under test; a slot claiming that
+        # name must not redirect it.
+        src = self._src(
+            ref_grids={
+                "input_view": AdhocGrid(columns=["x"], rows=[["1"]], families={}),
+                "ref_table": AdhocGrid(columns=["id"], rows=[["CUST-1"]], families={"id": "text"}),
+            },
+            column_mapping={"customer_id": "customer_id", "order_id": "order_id", "input_view": "nope"},
+        )
+        sql = build_adhoc_query_sql(_ORPHAN_QUERY, "pass", src)
+        assert "FROM src" in sql
+        assert "`__ref_input_view`" not in sql
+
+    def test_a_slot_named_src_cannot_shadow_the_input_grid(self):
+        query = "SELECT (COUNT(*) = 0) AS condition FROM {{input_view}} JOIN {{src}} r ON r.k = {{customer_id}}"
+        src = self._src(
+            columns=["customer_id"],
+            rows=[["CUST-1"]],
+            column_mapping={"customer_id": "customer_id"},
+            ref_grids={"src": AdhocGrid(columns=["k"], rows=[["CUST-1"]], families={})},
+        )
+        sql = build_adhoc_query_sql(query, "pass", src)
+        assert "JOIN `__ref_src` r" in sql
+        assert "FROM src" in sql
+
+    def test_dataset_level_aggregate_query_is_left_intact(self):
+        query = "SELECT (COUNT(*) > 0) AS condition FROM {{input_view}} JOIN {{ref_table}} c ON c.id = {{customer_id}}"
+        sql = build_adhoc_query_sql(query, "pass", self._src())
+        assert "COUNT(*) > 0" in sql
+        assert "LIMIT 5000" in sql
+
+    def test_display_cap_is_applied(self):
+        sql = build_adhoc_query_sql(_ORPHAN_QUERY, "pass", self._src(display_cap=10))
+        assert sql.endswith("LIMIT 10")
+
+
+class TestRefCteName:
+    def test_prefixes_and_quotes(self):
+        assert ref_cte_name("ref_table") == "`__ref_ref_table`"
+
+    def test_rejects_a_malformed_name(self):
+        with pytest.raises(ValueError):
+            ref_cte_name("ev`il")
 
 
 class TestParseResult:

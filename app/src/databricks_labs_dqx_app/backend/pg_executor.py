@@ -301,6 +301,11 @@ class PgExecutor:
         return self._schema
 
     @property
+    def username(self) -> str:
+        """Postgres role the pool authenticates as (SP client id in production)."""
+        return self._username
+
+    @property
     def database(self) -> str:
         return self._database
 

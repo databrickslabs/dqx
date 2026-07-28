@@ -39,7 +39,13 @@ from databricks_labs_dqx_app.backend.native_test_predicate import (
     NativeTestNotSupportedError,
     compile_native_test_predicate,
 )
-from databricks_labs_dqx_app.backend.rule_test_sql import AdhocSource, TableSource, TestRunResult
+from databricks_labs_dqx_app.backend.rule_test_sql import (
+    INPUT_VIEW_SLOT,
+    AdhocGrid,
+    AdhocSource,
+    TableSource,
+    TestRunResult,
+)
 from databricks_labs_dqx_app.backend.services.ai_gateway import (
     AIRateLimitExceededError,
     AIResponseParseError,
@@ -50,6 +56,19 @@ from databricks_labs_dqx_app.backend.services.compute_service import resolve_war
 from databricks_labs_dqx_app.backend.services.rule_test_service import RuleTestService
 
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
+
+# Slot family naming a reference TABLE rather than a column (see RuleSlot).
+_TABLE_FAMILY = "table"
+
+
+def _reference_slots(table_slots: list[str]) -> list[str]:
+    """Table slots the author has to supply, i.e. excluding ``{{input_view}}``.
+
+    A slot named ``input_view`` collides with DQX's reserved token for the data
+    being checked, which the builders resolve themselves — demanding a binding for
+    it would block a test that needs none.
+    """
+    return [n for n in table_slots if n != INPUT_VIEW_SLOT]
 
 router = APIRouter(dependencies=[require_role(*_AUTHORS_AND_ABOVE)])
 
@@ -64,14 +83,30 @@ class SlotIn(BaseModel):
     family: str = "any"
 
 
+class AdhocGridIn(BaseModel):
+    """One inline grid standing in for a reference table in the manual test."""
+
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[Any]] = Field(default_factory=list)
+    families: dict[str, str] = Field(default_factory=dict, description="Grid column name -> slot family, for typing.")
+
+
 class AdhocRunIn(BaseModel):
     columns: list[str]
     rows: list[list[Any]]
+    ref_grids: dict[str, AdhocGridIn] = Field(
+        default_factory=dict,
+        description="Cross-table rules: family='table' slot name -> the grid standing in for that reference table.",
+    )
 
 
 class TableRunIn(BaseModel):
     table_fqn: str = Field(min_length=1, max_length=512)
     column_mapping: dict[str, str] = Field(default_factory=dict)
+    table_mapping: dict[str, str] = Field(
+        default_factory=dict,
+        description="Cross-table rules only: family='table' slot name -> reference table FQN.",
+    )
     sample_kind: Literal["records", "percent", "full"] = "records"
     sample_value: int = Field(default=10000, ge=1, le=10_000_000)
 
@@ -141,25 +176,51 @@ async def run_rule_test(
         if body.source_kind == "adhoc":
             if body.adhoc is None:
                 raise ValueError("Manual test rows are required.")
+            # Each table slot stands in as its own inline grid, so a cross-table
+            # rule is testable here too — but only if the author actually supplied
+            # rows for it; joining an empty grid would silently "pass" everything.
+            table_slots = [s.name for s in body.slots if s.family == _TABLE_FAMILY]
+            unfilled = [n for n in _reference_slots(table_slots) if not (body.adhoc.ref_grids.get(n) or AdhocGridIn()).columns]
+            if unfilled:
+                raise ValueError(f"Add columns and rows for the reference table: {', '.join(unfilled)}")
             families = {s.name: s.family for s in body.slots}
-            mapping = {c: c for c in body.adhoc.columns}
+            # Column slots map to the identically-named grid column; a table slot
+            # resolves to a CTE instead, so it is dropped from the input grid —
+            # by INDEX, so each remaining row keeps its cells aligned even if a
+            # client still sends a column for it.
+            keep = [i for i, c in enumerate(body.adhoc.columns) if c not in set(table_slots)]
+            kept_columns = [body.adhoc.columns[i] for i in keep]
+            mapping = {c: c for c in kept_columns}
             source = AdhocSource(
-                columns=body.adhoc.columns,
-                rows=body.adhoc.rows,
+                columns=kept_columns,
+                rows=[[row[i] if i < len(row) else None for i in keep] for row in body.adhoc.rows],
                 families=families,
                 column_mapping=mapping,
                 display_cap=body.display_cap,
+                ref_grids={
+                    name: AdhocGrid(columns=g.columns, rows=g.rows, families=g.families)
+                    for name, g in body.adhoc.ref_grids.items()
+                },
             )
             result = await svc.run_adhoc(predicate=predicate, polarity=body.polarity, source=source)
         else:
             if body.table is None:
                 raise ValueError("A table and column mapping are required.")
-            missing = [s.name for s in body.slots if s.name not in body.table.column_mapping]
+            # Column slots bind to a column of the sampled table; table slots bind
+            # to a reference table's FQN. Each is looked up in its own map, so a
+            # table slot is never asked for (nor matched against) a column.
+            column_slots = [s.name for s in body.slots if s.family != _TABLE_FAMILY]
+            table_slots = [s.name for s in body.slots if s.family == _TABLE_FAMILY]
+            missing = [n for n in column_slots if n not in body.table.column_mapping]
             if missing:
                 raise ValueError(f"Map a column for: {', '.join(missing)}")
+            missing_tables = [n for n in _reference_slots(table_slots) if n not in body.table.table_mapping]
+            if missing_tables:
+                raise ValueError(f"Pick a table for: {', '.join(missing_tables)}")
             table_source = TableSource(
                 table=body.table.table_fqn,
-                column_mapping=body.table.column_mapping,
+                column_mapping={k: v for k, v in body.table.column_mapping.items() if k not in set(table_slots)},
+                table_mapping=body.table.table_mapping,
                 sample_kind=body.table.sample_kind,
                 sample_value=body.table.sample_value,
                 display_cap=body.display_cap,
@@ -193,11 +254,22 @@ class GenerateDataIn(BaseModel):
     polarity: Literal["pass", "fail"] = "pass"
     columns: list[SlotIn] = Field(default_factory=list)
     row_count: int = Field(default=8, ge=5, le=20)
+    ref_tables: list[str] = Field(
+        default_factory=list,
+        description="family='table' slot names the rule joins; asks the model for a consistent "
+        "cross-table mix (some input rows matching a reference row, some deliberately not).",
+    )
+
+
+class GeneratedGridOut(BaseModel):
+    columns: list[SlotIn]
+    rows: list[list[str | None]]
 
 
 class GenerateDataOut(BaseModel):
     columns: list[str]
     rows: list[list[str | None]]
+    refs: dict[str, GeneratedGridOut] = Field(default_factory=dict)
 
 
 @router.post("/generate-data", response_model=GenerateDataOut, operation_id="generateRuleTestData")
@@ -223,6 +295,7 @@ async def generate_rule_test_data(
             columns=[(c.name, c.family) for c in body.columns],
             row_count=body.row_count,
             user_email=user_email,
+            ref_tables=body.ref_tables,
         )
     except (NativeTestNotSupportedError, NativeTestCompileError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -236,7 +309,17 @@ async def generate_rule_test_data(
         # Treat AI output as untrusted — never relay raw model/exception text.
         logger.error("Failed to generate rule test data: %s", e, exc_info=True)
         raise HTTPException(status_code=502, detail="Could not generate test data. Try again.")
-    return GenerateDataOut(columns=result.columns, rows=result.rows)
+    return GenerateDataOut(
+        columns=result.columns,
+        rows=result.rows,
+        refs={
+            name: GeneratedGridOut(
+                columns=[SlotIn(name=col, family=family) for col, family in grid.columns],
+                rows=grid.rows,
+            )
+            for name, grid in result.refs.items()
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
