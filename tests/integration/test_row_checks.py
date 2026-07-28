@@ -2181,6 +2181,83 @@ def test_col_is_valid_country_code_case_insensitive(spark):
     assertDataFrameEqual(actual, expected)
 
 
+def test_col_is_valid_country_code_alpha_3_case_insensitive(spark):
+    schema = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            ["usa"],  # lowercase alpha-3 accepted when case_sensitive is False
+            ["Gbr"],  # mixed case accepted
+            ["DEU"],  # canonical case still accepted
+            ["ZZZ"],  # not an assigned code, still invalid
+            [None],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(is_valid_country_code("a", code_format="alpha-3", case_sensitive=False))
+
+    checked_schema = "a_is_not_a_valid_country_code: string"
+    checked_data = [
+        [None],
+        [None],
+        [None],
+        ["Value 'ZZZ' in Column 'a' is not a valid ISO 3166-1 country code"],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_country_code_numeric_case_insensitive_is_noop(spark):
+    schema = "a: string"
+    test_df = spark.createDataFrame(
+        [
+            ["840"],  # valid numeric code
+            ["8"],  # wrong width, still invalid regardless of case_sensitive
+            [None],
+        ],
+        schema,
+    )
+
+    # case_sensitive=False has no effect on numeric codes (they contain only digits)
+    actual = test_df.select(is_valid_country_code("a", code_format="numeric", case_sensitive=False))
+
+    checked_schema = "a_is_not_a_valid_country_code: string"
+    checked_data = [
+        [None],
+        ["Value '8' in Column 'a' is not a valid ISO 3166-1 country code"],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_valid_country_code_numeric_int_column(spark):
+    schema = "a: int"
+    test_df = spark.createDataFrame(
+        [
+            [840],  # valid numeric code, matches as an int without needing zero-padding
+            [4],  # would be code 004 (Afghanistan) but is not zero-padded, so it is correctly invalid
+            [None],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(is_valid_country_code("a", code_format="numeric"))
+
+    checked_schema = "a_is_not_a_valid_country_code: string"
+    checked_data = [
+        [None],
+        ["Value '4' in Column 'a' is not a valid ISO 3166-1 country code"],
+        [None],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_is_ipv4_address_in_cidr(spark):
     schema_ipv4 = "a: string, b: string"
 
