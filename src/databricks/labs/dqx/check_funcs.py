@@ -3173,15 +3173,21 @@ def _join_results_on_null_safe_columns(
     """
     Left-join computed result columns while matching null join keys.
 
-    The caller must ensure that *result_df* has at most one row per join key and
-    that *result_columns* are disjoint from *df.columns*. Otherwise the join can
-    multiply input rows or create duplicate output columns. The helper aliases
-    the two sides internally as "df" and "ref_df".
+    Preconditions are the caller's responsibility and are not validated here (all current callers
+    satisfy them):
+
+    - *join_columns* must be non-empty. An empty list makes the null-safe join condition reduce to a
+      constant TRUE, i.e. an unconditional cross join.
+    - *result_df* must have at most one row per join key. Otherwise the left join multiplies *df* rows.
+    - *result_columns* must be disjoint from *df.columns*. Otherwise the final select emits two columns
+      with the same name.
+
+    The helper aliases the two sides internally as "df" and "ref_df".
 
     Args:
         df: The input DataFrame whose rows and columns must be preserved.
         result_df: The computed results, unique per combination of join key values.
-        join_columns: Column names shared by both DataFrames and used for matching.
+        join_columns: Non-empty list of column names shared by both DataFrames and used for matching.
         result_columns: Non-overlapping result columns to append from *result_df*.
 
     Returns:
