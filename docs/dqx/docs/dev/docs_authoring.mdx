@@ -81,7 +81,7 @@ erDiagram
 ```
 ````
 
-See [Table Schemas and Relationships](/docs/reference/table_schemas) for an example. Mermaid is enabled via `@docusaurus/theme-mermaid` (version must match `@docusaurus/core`).
+See [Table Schemas and Relationships](../reference/table_schemas.mdx) for an example. Mermaid is enabled via `@docusaurus/theme-mermaid` (version must match `@docusaurus/core`).
 
 ## Adding images
 
@@ -109,22 +109,34 @@ This will add a gray background to the image and round the corners.
 
 ## Linking pages
 
-It is **strongly** recommended to make all links absolute. 
-By doing so we ensure that it's easy to move files without losing links inside them. 
+Links between docs pages **must be relative links to the target `.mdx` file**, including the
+file extension. The docs are [versioned](https://github.com/databrickslabs/dqx/blob/v0.15.0/docs/dqx/versions.json):
+the live `docs/` folder is the unreleased ("Pre-Release") version and each release is frozen under
+`versioned_docs/`. A relative file link is the only form that resolves **within the same version** —
+it points at the versioned copy of the page, and the build still fails if the target file moves or an
+anchor is wrong, so we keep the safety of validated links.
 
-To add an absolute link, use this syntax:
+Do **not** use absolute links that start with `/docs/`. An absolute link resolves to a single
+(default) version regardless of which version the page belongs to. That silently sends a reader on an
+older version to the current copy of the page, and breaks the build for a page that does not exist in
+the default version (for example an unreleased page linked from Pre-Release docs).
+
+To link to another page, give the path to its `.mdx` file relative to the current file:
 
 ```md
-[link text](/docs/folder/file_name)
+<!-- from docs/guide/quality_checks_apply.mdx -->
+[link to a sibling page](quality_checks_definition.mdx)
+[link to a page in another folder](../reference/testing.mdx)
 ```
 
-Always start with `/docs`. The file extension `.md` or `.mdx` can be omitted. 
-
-To add an anchor to a specific heading, use this syntax:
+To add an anchor to a specific heading, append it to the file link:
 
 ```md
-[link with anchor](/docs/folder/file_name#anchor)
+[link with anchor](../reference/testing.mdx#my-heading)
 ```
+
+Images are version-agnostic assets, so keep referencing them with `useBaseUrl`, e.g.
+`useBaseUrl('/img/dqx.png')` — do not make image paths relative.
 
 After writing docs, run this command:
 
@@ -132,7 +144,8 @@ After writing docs, run this command:
 make docs-build
 ```
 
-It will throw an error on any unresolved link. 
+It will throw an error on any unresolved link or anchor. To preview the unreleased docs as they will
+appear (as the "Pre-Release" version), use `make docs-serve`. 
 
 ## Content alignment and structure of folders
 
@@ -161,4 +174,4 @@ uv run --group docs pydoc-markdown
 This is the same invocation that `make docs-build` and `make docs-serve-dev` run, so the recommended way is simply `make docs-build`.
 The command will generate the API documentation from the Python codebase using pydoc-markdown.
 
-For best practices on writing docstrings, refer to this [guidance](/docs/dev/contributing#writing-docstrings).
+For best practices on writing docstrings, refer to this [guidance](./contributing.mdx#writing-docstrings).

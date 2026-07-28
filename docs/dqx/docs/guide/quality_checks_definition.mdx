@@ -16,11 +16,11 @@ There are several ways to define quality checks in DQX:
 * Delta table (most scalable), suitable when applying checks programmatically and using DQX workflows.
 * Programmatically as a list of dictionaries or DQX objects, suitable when applying checks programmatically.
 
-Checks can be saved and loaded from various storage systems as described [here](/docs/guide/quality_checks_storage).
-The loaded checks can be applied to the data using methods as described [here](/docs/guide/quality_checks_apply).
+Checks can be saved and loaded from various storage systems as described [here](./quality_checks_storage.mdx).
+The loaded checks can be applied to the data using methods as described [here](./quality_checks_apply.mdx).
 
 DQX provides a collection of predefined built-in quality rules (checks). The following is a quick guide on defining quality checks using YAML, JSON, Delta tables, or programmatically in code.
-For a complete list of check functions and detailed examples, see the full reference [here](/docs/reference/quality_checks).
+For a complete list of check functions and detailed examples, see the full reference [here](../reference/quality_checks.mdx).
 
 The quality checks can be defined for simple and complex column types such as structs, maps and arrays.
 Additionally, you can define custom checks using sql or python to meet specific requirements.
@@ -349,7 +349,7 @@ Checks defined using declarative syntax must contain the following fields:
 
 Checks can be defined in a YAML file using declarative syntax.
 
-Checks can be saved and loaded from a YAML file using methods described [here](/docs/guide/quality_checks_storage/).
+Checks can be saved and loaded from a YAML file using methods described [here](./quality_checks_storage.mdx).
 Checks defined in YAML files are supported by the DQX workflows.
 
 Example `yaml` file defining several checks:
@@ -504,7 +504,7 @@ Example `yaml` file defining several checks:
 Checks can be defined in a JSON file using declarative syntax.
 The structure of the JSON file defining quality checks is the same as the YAML format, but uses JSON syntax.
 
-Checks can be saved and loaded from a JSON file using methods described [here](/docs/guide/quality_checks_storage/).
+Checks can be saved and loaded from a JSON file using methods described [here](./quality_checks_storage.mdx).
 Checks defined in JSON files are supported by the DQX workflows.
 
 ```json
@@ -686,10 +686,10 @@ Checks defined in JSON files are supported by the DQX workflows.
 
 Checks can be defined in a Delta table or Lakebase table where each row represents a check with columns: `name`, `check`, `criticality`, `filter`, and `run_config_name` fields. Both backends use the same logical structure and compact format for `for_each_column`.
 
-The most convenient way to programmatically load and save checks is to use the `load_checks` and `save_checks` methods from the `DQEngine`. See more details [here](/docs/guide/quality_checks_storage/).
+The most convenient way to programmatically load and save checks is to use the `load_checks` and `save_checks` methods from the `DQEngine`. See more details [here](./quality_checks_storage.mdx).
 Checks defined in Delta and Lakebase tables are supported by the DQX workflows.
 
-The table used to store checks has the following structure. You can use `for_each_column` in your checks; when saving with `DQEngine.save_checks` to Delta or Lakebase tables, DQX stores such checks in compact format (one row per check). See [quality checks storage](/docs/guide/quality_checks_storage/) for details.
+The table used to store checks has the following structure. You can use `for_each_column` in your checks; when saving with `DQEngine.save_checks` to Delta or Lakebase tables, DQX stores such checks in compact format (one row per check). See [quality checks storage](./quality_checks_storage.mdx) for details.
 
 | Column                 | Type                  | Description                                                                                                                                               |
 | ---------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -792,7 +792,7 @@ dq_engine.save_checks(
 
 In addition to specifying variables during the load or save process, you can define engine-level defaults using the `ExtraParams` class. These constants are automatically applied to all checks unless explicitly overridden.
 
-For technical details and configuration examples, see [Default Variables](/docs/guide/additional_configuration#defining-default-variables-for-substitution) in the Additional Configuration guide.
+For technical details and configuration examples, see [Default Variables](./additional_configuration.mdx#defining-default-variables-for-substitution) in the Additional Configuration guide.
 
 ## Validating quality checks
 
@@ -846,7 +846,7 @@ Validating quality rules is typically done as part of the CI/CD process to ensur
     databricks labs dqx validate-checks --run-config "default"
     ```
 
-    The following DQX field from the run config in [configuration file](/docs/installation/#configuration-file) are used:
+    The following DQX field from the run config in [configuration file](../installation.mdx#configuration-file) are used:
     - 'checks_location': file or table location of the quality checks
   </TabItem>
 </Tabs>

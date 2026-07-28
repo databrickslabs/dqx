@@ -138,7 +138,7 @@ pip install 'databricks-labs-dqx[anomaly]'
 Getting started is two steps: train once on recent "good" data, then run the same model as a check on new or incoming data. No configuration files or tuning required to begin. The example below uses defaults that work for most tables.
 
 <Admonition type="tip" title="Training data requirements">
-**Quantity**: 1,000+ rows preferred; quality and coverage matter more than raw count. **Quality**: Use clean, representative data; anomalies in training are learned as "normal." **Coverage**: Include all realistic scenarios (regions, time ranges, categories). Have a very large table? DQX automatically samples a representative portion (default 30%, capped at 1M rows) before training. See [Row Anomaly Detection in Quality Checks](/docs/reference/quality_checks#row-anomaly-detection) for full parameter details.
+**Quantity**: 1,000+ rows preferred; quality and coverage matter more than raw count. **Quality**: Use clean, representative data; anomalies in training are learned as "normal." **Coverage**: Include all realistic scenarios (regions, time ranges, categories). Have a very large table? DQX automatically samples a representative portion (default 30%, capped at 1M rows) before training. See [Row Anomaly Detection in Quality Checks](../../reference/quality_checks.mdx#row-anomaly-detection) for full parameter details.
 </Admonition>
 
 <Admonition type="warning" title="Exclude identifier columns">
@@ -232,9 +232,9 @@ Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. 
     databricks labs dqx train-anomaly --run-config orders --timeout-minutes 60
     ```
 
-    When not using serverless clusters (`serverless_clusters: false`), you can override cluster configuration for the anomaly-trainer workflow in `config.yml` using `anomaly_override_clusters` (map job cluster names to existing cluster IDs) and optionally `anomaly_spark_conf` for Spark settings. See [Configuration file](/docs/installation/#configuration-file) for the full example.
+    When not using serverless clusters (`serverless_clusters: false`), you can override cluster configuration for the anomaly-trainer workflow in `config.yml` using `anomaly_override_clusters` (map job cluster names to existing cluster IDs) and optionally `anomaly_spark_conf` for Spark settings. See [Configuration file](../../installation.mdx#configuration-file) for the full example.
 
-    Define checks separately (YAML, Python, etc.). See [Row Anomaly Detection in Quality Checks](/docs/reference/quality_checks#row-anomaly-detection).
+    Define checks separately (YAML, Python, etc.). See [Row Anomaly Detection in Quality Checks](../../reference/quality_checks.mdx#row-anomaly-detection).
   </TabItem>
 </Tabs>
 
@@ -285,7 +285,7 @@ The threshold controls how many rows are flagged as anomalies (percentile cutoff
 
 ## How it works under the hood
 
-For full parameter and schema details, see [Row Anomaly Detection in Quality Checks](/docs/reference/quality_checks#row-anomaly-detection).
+For full parameter and schema details, see [Row Anomaly Detection in Quality Checks](../../reference/quality_checks.mdx#row-anomaly-detection).
 
 ### Architecture overview
 
@@ -337,7 +337,7 @@ The nested `ai_explanation` struct (populated when AI explanations are on — th
 | `group_size` | long | Number of anomalous rows in this `(segment, pattern)` group. |
 | `group_avg_severity` | double | Mean `severity_percentile` across the group. |
 
-**Access in PySpark:** use `F.element_at(F.col("_dq_info"), 1)` for the first element (1-based), then `.getField("anomaly").getField("severity_percentile")` etc. Alternatively `F.col("_dq_info").getItem(0)` for 0-based index (see [Troubleshooting](/docs/guide/row_anomaly_detection/troubleshooting) for Spark Connect–friendly patterns).
+**Access in PySpark:** use `F.element_at(F.col("_dq_info"), 1)` for the first element (1-based), then `.getField("anomaly").getField("severity_percentile")` etc. Alternatively `F.col("_dq_info").getItem(0)` for 0-based index (see [Troubleshooting](./troubleshooting.mdx) for Spark Connect–friendly patterns).
 
 ### AI explanations
 
@@ -385,7 +385,7 @@ checks = [
 DQX in the current version, does not retrain the model automatically.
 Retrain the model when "normal" changes: seasonality, new pricing rules, new products, or major pipeline changes. A simple cadence (monthly or quarterly) is often enough.
 
-If you want to quarantine anomalies for investigation, use DQX quarantine pattern (see [Applying Checks](/docs/guide/quality_checks_apply)).
+If you want to quarantine anomalies for investigation, use DQX quarantine pattern (see [Applying Checks](../quality_checks_apply.mdx)).
 
 <Admonition type="tip" title="When to use row anomaly detection">
 Use row anomaly detection when you want to catch unusual combinations across columns that are hard to capture with static rules.
@@ -537,4 +537,4 @@ Having issues? See the [Troubleshooting Guide](./troubleshooting) for solutions 
 
 ## Next steps
 
-For training options, parameters, and YAML examples, see [Row Anomaly Detection in Quality Checks](/docs/reference/quality_checks#row-anomaly-detection) section.
+For training options, parameters, and YAML examples, see [Row Anomaly Detection in Quality Checks](../../reference/quality_checks.mdx#row-anomaly-detection) section.

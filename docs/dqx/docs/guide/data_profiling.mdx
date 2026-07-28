@@ -11,15 +11,15 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 
 Data profiling can be run to profile input data and generate quality rule candidates with summary statistics.
 
-The generated data quality rules (checks) candidates can be used as input for the quality checking as described [here](/docs/guide/quality_checks_apply).
+The generated data quality rules (checks) candidates can be used as input for the quality checking as described [here](./quality_checks_apply.mdx).
 In addition, the Lakeflow (DLT) generator can generate native Lakeflow Pipelines expectations.
 
 You can run profiling and quality checks generation using the following approaches:
-* [DQX Studio (no-code UI)](/docs/guide/dqx_studio): for a no-code experience, DQX Studio is the recommended option. It lets you profile tables and review and save the generated rule candidates from a browser, without writing code.
-* [Programmatic approach](#programmatic-approach): you can use DQX classes to run the profiler and quality checks generator on DataFrames or tables, and [save the generated checks to a storage](/docs/guide/quality_checks_storage).
+* [DQX Studio (no-code UI)](./dqx_studio.mdx): for a no-code experience, DQX Studio is the recommended option. It lets you profile tables and review and save the generated rule candidates from a browser, without writing code.
+* [Programmatic approach](#programmatic-approach): you can use DQX classes to run the profiler and quality checks generator on DataFrames or tables, and [save the generated checks to a storage](./quality_checks_storage.mdx).
 * [No-code approach (Profiler Workflow)](#no-code-approach-profiler-workflow): you can run the profiler and quality checks generator on tables as a workflow if DQX is installed in the workspace as a tool. The workflow will save the generated checks to a file or table automatically.
 
-See [DQProfile Types](/docs/reference/profiler#dqprofile-types) for a complete list of profile types and associated DQX rules.
+See [DQProfile Types](../reference/profiler.mdx#dqprofile-types) for a complete list of profile types and associated DQX rules.
 
 <Admonition type="tip" title="Data profiling usage">
 Data profiling is typically performed as a one-time action for the input dataset to discover the initial set of quality rule candidates.
@@ -29,16 +29,16 @@ This is not intended to be a continuously repeated or scheduled process, thereby
 
 <Admonition type="tip" title="AI-Assisted rules generation">
 DQX offers AI-assisted generation of data quality rules based on user input in natural language.
-See more details in the [AI-Assisted Data Quality Rules Generation](/docs/guide/ai_assisted_quality_checks_generation) section.
+See more details in the [AI-Assisted Data Quality Rules Generation](./ai_assisted_quality_checks_generation.mdx) section.
 
 DQX also offers AI-assisted primary key detection to generate uniqueness rules.
-See more details in the [AI-Assisted Primary Key Detection](/docs/guide/ai_assisted_primary_key_detection) section.
+See more details in the [AI-Assisted Primary Key Detection](./ai_assisted_primary_key_detection.mdx) section.
 </Admonition>
 
 ## Programmatic approach
 
 You can use DQX classes to profile data and generate quality checks candidates programmatically.
-There are multiple storage options for saving the generated quality checks as described [here](/docs/guide/quality_checks_storage).
+There are multiple storage options for saving the generated quality checks as described [here](./quality_checks_storage.mdx).
 
 ### Profiling a DataFrame
 
@@ -237,9 +237,9 @@ You can also generate Lakeflow Pipelines expectation statements from profiler re
 ## No-code approach (Profiler Workflow)
 
 You can run profiler workflow to profile tables and generate quality checks candidates.
-The profiler workflow saves the generated checks automatically in the checks location as defined in the [configuration file](/docs/installation/#configuration-file).
+The profiler workflow saves the generated checks automatically in the checks location as defined in the [configuration file](../installation.mdx#configuration-file).
 
-You need to install DQX as a tool in the workspace to have the profiler workflow available (see [installation guide](/docs/installation)). The workflow is not scheduled to run automatically by default, minimizing concerns regarding compute and associated costs.
+You need to install DQX as a tool in the workspace to have the profiler workflow available (see [installation guide](../installation.mdx)). The workflow is not scheduled to run automatically by default, minimizing concerns regarding compute and associated costs.
 Profiling is typically done as a one-time action for the input dataset to discover the initial set of quality rule candidates.
 
 You can run the profiler workflow from Databricks UI or by using Databricks CLI:
@@ -297,14 +297,14 @@ You can display the logs from the latest profiler workflow run by executing:
 databricks labs dqx logs --workflow profiler
 ```
 
-The generated quality rule candidates and summary statistics will be saved in the `checks_location` set in the run config of the [configuration file](/docs/installation/#configuration-file).
+The generated quality rule candidates and summary statistics will be saved in the `checks_location` set in the run config of the [configuration file](../installation.mdx#configuration-file).
 
 You can open the configuration file (`.dqx/config.yml`) in the installation folder from Databricks UI or by executing the following Databricks CLI command:
 ```commandline
 databricks labs dqx open-remote-config
 ```
 
-The following fields from the [configuration file](/docs/installation/#configuration-file) are used by the profiler workflow:
+The following fields from the [configuration file](../installation.mdx#configuration-file) are used by the profiler workflow:
 - `input_config` configuration for the input data. 'location' is autogenerated when the workflow is executed for patterns.
 - `checks_location`: location of the quality checks in storage. Autogenerated when the workflow is executed for patterns.
 - `profiler_config`: configuration for the profiler containing:
@@ -411,7 +411,7 @@ The profiler supports extensive configuration options to customize the profiling
     ```
   </TabItem>
   <TabItem value="Workflows" label="Workflows">
-    For the profiler workflow, you can set profiling options for each run config in the [configuration file](/docs/installation/#configuration-file) using the following fields:
+    For the profiler workflow, you can set profiling options for each run config in the [configuration file](../installation.mdx#configuration-file) using the following fields:
     - `profiler_config`: configuration for the profiler containing:
         - `summary_stats_file`: relative location within the installation folder of the summary statistics (default: 'profile_summary_stats.yml')
         - `sample_fraction`: fraction of data to sample. Pass a single float for uniform sampling, or a `{stratum: fraction}` dict for per-stratum sampling (requires `sample_by_column`).
@@ -504,7 +504,7 @@ To ensure efficiency, summary statistics are computed on a **sampled subset** of
 2. A **limit** is applied to the sampled rows (default `limit = 1000`).
 3. Statistics are computed on this final **sampled-and-limited** DataFrame.
 
-**These are defaults that can be customized programmatically as detailed in the [Profiling Options](#profiling-options) section, or via `profiler_config` in the [configuration file](/docs/installation/#configuration-file) if DQX is installed as a tool.**
+**These are defaults that can be customized programmatically as detailed in the [Profiling Options](#profiling-options) section, or via `profiler_config` in the [configuration file](../installation.mdx#configuration-file) if DQX is installed as a tool.**
 
 Rule of thumb: `count ≈ min(limit, sample_fraction × total_rows)`.
 </Admonition>
@@ -561,7 +561,7 @@ for column, baseline in baseline_stats.items():
 By saving profile results periodically, you can build a historical ledger and trigger alerts when these markers drift beyond acceptable thresholds.
 
 <Admonition type="tip" title="Automated drift detection">
-The approach above is a lightweight, manual comparison suited to profiling and rule-candidate generation. For **automated, scored** drift detection against a trained baseline, DQX's row anomaly detection already ships a drift detector: it compares each column against the model's training statistics using a z-score / standard-deviation-change score and flags drift past a configurable sigma threshold (default 3.0). If you need alertable drift rather than manual inspection, see the [Row Anomaly Detection](/docs/guide/row_anomaly_detection) guide.
+The approach above is a lightweight, manual comparison suited to profiling and rule-candidate generation. For **automated, scored** drift detection against a trained baseline, DQX's row anomaly detection already ships a drift detector: it compares each column against the model's training statistics using a z-score / standard-deviation-change score and flags drift past a configurable sigma threshold (default 3.0). If you need alertable drift rather than manual inspection, see the [Row Anomaly Detection](./row_anomaly_detection/index.mdx) guide.
 </Admonition>
 
 ## Performance considerations
@@ -592,7 +592,7 @@ When profiling large datasets, use sampling and limits for best performance.
     ```
   </TabItem>
   <TabItem value="Workflows" label="Workflows">
-  Use the following configuration in the [configuration file](/docs/installation/#configuration-file) to configure the profiler workflow:
+  Use the following configuration in the [configuration file](../installation.mdx#configuration-file) to configure the profiler workflow:
 
   For large datasets, use aggressive sampling:
   ```yaml
@@ -674,7 +674,7 @@ Combining either limit with `sample_by_column` may filter out values and lead to
     ```
   </TabItem>
   <TabItem value="Workflows" label="Workflows">
-    Set `sample_by_column` on `profiler_config` in the [configuration file](/docs/installation/#configuration-file). `sample_fraction` may be a single float (applied to all strata) or a `{stratum: fraction}` mapping:
+    Set `sample_by_column` on `profiler_config` in the [configuration file](../installation.mdx#configuration-file). `sample_fraction` may be a single float (applied to all strata) or a `{stratum: fraction}` mapping:
 
     ```yaml
     run_configs:

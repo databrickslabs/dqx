@@ -31,7 +31,7 @@ The custom key-value metadata will be included in every quality check result ins
     ```
   </TabItem>
   <TabItem value="Workflows" label="Workflows">
-    You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to provide user metadata when using DQX workflows:
+    You can set the following fields in the [configuration file](../installation.mdx#configuration-file) to provide user metadata when using DQX workflows:
     ```yaml
     extra_params:
         user_metadata:
@@ -115,7 +115,7 @@ You can customize the names of these result columns by specifying extra paramete
     ```
   </TabItem>
   <TabItem value="Workflows" label="Workflows">
-    You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to customize the result columns when using DQX workflows:
+    You can set the following fields in the [configuration file](../installation.mdx#configuration-file) to customize the result columns when using DQX workflows:
     ```yaml
     extra_params:
       result_column_names:
@@ -127,7 +127,7 @@ You can customize the names of these result columns by specifying extra paramete
 </Tabs>
 
 <Admonition type="info" title="Info column usage">
-The `_dq_info` reporting column is an **array of structs**: one element per dataset-level check that produces info (e.g. one per `has_no_row_anomalies`). Each element has a shared schema; for row anomaly detection the populated field is `anomaly`, with fields such as `score`, `severity_percentile`, `is_anomaly`, `threshold`, `model`, `contributions`, and `confidence_std`. For the full field list and types, see [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info) in the Row Anomaly Detection guide.
+The `_dq_info` reporting column is an **array of structs**: one element per dataset-level check that produces info (e.g. one per `has_no_row_anomalies`). Each element has a shared schema; for row anomaly detection the populated field is `anomaly`, with fields such as `score`, `severity_percentile`, `is_anomaly`, `threshold`, `model`, `contributions`, and `confidence_std`. For the full field list and types, see [Schema of the info column (_dq_info)](./row_anomaly_detection/index.mdx#schema-of-the-info-column-_dq_info) in the Row Anomaly Detection guide.
 </Admonition>
 
 ## Suppressing skipped check entries
@@ -151,7 +151,7 @@ You can suppress these entries entirely by setting `suppress_skipped=True` in `E
     ```
   </TabItem>
   <TabItem value="Workflows" label="Workflows">
-    You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to suppress skipped check entries when using DQX workflows:
+    You can set the following fields in the [configuration file](../installation.mdx#configuration-file) to suppress skipped check entries when using DQX workflows:
     ```yaml
     extra_params:
         suppress_skipped: true
@@ -239,7 +239,7 @@ By default, DQX automatically generates a unique `run_id` for each engine instan
     ```
   </TabItem>
   <TabItem value="Workflows" label="Workflows">
-    You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to overwrite the run metadata when using DQX workflows:
+    You can set the following fields in the [configuration file](../installation.mdx#configuration-file) to overwrite the run metadata when using DQX workflows:
     ```yaml
     extra_params:
       run_id_overwrite: custom-execution-id-123

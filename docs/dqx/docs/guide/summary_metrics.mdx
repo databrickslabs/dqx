@@ -8,7 +8,7 @@ import TabItem from '@theme/TabItem';
 
 # Summary Metrics
 
-DQX provides comprehensive functionality to capture and store aggregate statistics about your data quality. This allows you to track data quality trends over time, monitor the health of your data pipelines, and gain insights into the overall quality of your datasets. For the metrics table schema and relationships to output, quarantine, and checks tables, see [Table Schemas and Relationships](/docs/reference/table_schemas).
+DQX provides comprehensive functionality to capture and store aggregate statistics about your data quality. This allows you to track data quality trends over time, monitor the health of your data pipelines, and gain insights into the overall quality of your datasets. For the metrics table schema and relationships to output, quarantine, and checks tables, see [Table Schemas and Relationships](../reference/table_schemas.mdx).
 
 ## Overview
 
@@ -431,7 +431,7 @@ Pass custom metrics as Spark SQL expressions when creating the `DQMetricsObserve
 
 ### No-Code Approach (Workflows)
 
-When using DQX workflows, summary metrics are automatically configured based on your installation [configuration file](/docs/installation/#configuration-file):
+When using DQX workflows, summary metrics are automatically configured based on your installation [configuration file](../installation.mdx#configuration-file):
 
 1. **Installation Configuration**: During installation, specify metrics table and custom metrics.
 2. **Automatic Observer Creation**: Workflows automatically create `DQMetricsObserver` when metrics are configured.

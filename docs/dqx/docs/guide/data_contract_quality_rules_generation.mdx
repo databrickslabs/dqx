@@ -33,12 +33,12 @@ Data contract-based generation is ideal for:
 - **Compliance**: Maintain auditable links between contracts and quality checks
 - **Data Mesh**: Support domain-oriented data ownership with clear contracts
 
-For automated discovery of data patterns without contracts, consider using the [Data Profiling](/docs/guide/data_profiling) approach instead.
-For generating rules from natural language without contracts, see [AI-Assisted Generation](/docs/guide/ai_assisted_quality_checks_generation).
+For automated discovery of data patterns without contracts, consider using the [Data Profiling](./data_profiling.mdx) approach instead.
+For generating rules from natural language without contracts, see [AI-Assisted Generation](./ai_assisted_quality_checks_generation.mdx).
 </Admonition>
 
 <Admonition type="note" title="No-code: do it from DQX Studio">
-The same pipeline is exposed in [DQX Studio](/docs/guide/dqx_studio) under **Create rules → Import rules → From data contract**. Upload or paste an ODCS contract, pick the Unity Catalog table each schema should target, preview the generated checks, and save them as drafts — no Python required. The CLI / Python API documented below is the right entry point when you want the generation to run inside a pipeline or CI job.
+The same pipeline is exposed in [DQX Studio](./dqx_studio.mdx) under **Create rules → Import rules → From data contract**. Upload or paste an ODCS contract, pick the Unity Catalog table each schema should target, preview the generated checks, and save them as drafts — no Python required. The CLI / Python API documented below is the right entry point when you want the generation to run inside a pipeline or CI job.
 </Admonition>
 
 ### ODCS v3.x Native Support
@@ -912,7 +912,7 @@ pip install 'databricks-labs-dqx[datacontract]'
 - Install LLM dependencies: `pip install 'databricks-labs-dqx[datacontract,llm]'`
 - Ensure `process_text_rules=True` is set (default)
 - Check LLM model access and credentials
-- See [AI-Assisted Generation Troubleshooting](/docs/guide/ai_assisted_quality_checks_generation#troubleshooting)
+- See [AI-Assisted Generation Troubleshooting](./ai_assisted_quality_checks_generation.mdx#troubleshooting)
 
 ### Missing Rules for Some Fields
 

@@ -10,11 +10,11 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 # Applying Quality Checks
 
 You can apply quality checks to your data using the following approaches:
-* [DQX Studio (no-code UI)](/docs/guide/dqx_studio): for a no-code experience, DQX Studio is the recommended option. It lets you apply checks to data at-rest and review the results from a browser, without writing code or maintaining configuration files.
+* [DQX Studio (no-code UI)](./dqx_studio.mdx): for a no-code experience, DQX Studio is the recommended option. It lets you apply checks to data at-rest and review the results from a browser, without writing code or maintaining configuration files.
 * [Programmatic approach](#programmatic-approach): you can apply checks programmatically to a DataFrame or Tables. This method is required if you want to perform a data quality check for data in-transit.
 * [No-code approach (Workflows)](#no-code-approach-workflows): you can apply checks for data at-rest using workflows if DQX is installed in the workspace as a tool. This does not require code-level integration and is suitable for data already stored in Delta tables or files.
 
-DQX offers a set of predefined built-in quality rules (checks) as described [here](/docs/guide/quality_checks_definition).
+DQX offers a set of predefined built-in quality rules (checks) as described [here](./quality_checks_definition.mdx).
 All DQX rules are evaluated independently and in parallel. If one rule fails, the others are still processed.
 All rule types, including row-level and dataset-level rules, can be applied together in a single execution.
 
@@ -26,7 +26,7 @@ Checks can be applied to the input data by one of the following methods of the `
   * `apply_checks_and_split`: apply quality checks and split the input DataFrame into valid and invalid (quarantined) DataFrames.
   * `apply_checks_and_save_in_table`: end-to-end approach to apply quality checks to a table and save results to the output table(s) via single method call. Checks can be passed directly or loaded automatically from a storage location.
 
-* For checks defined as metadata (list of dictionaries, or [loaded from a storage](/docs/guide/quality_checks_storage)):
+* For checks defined as metadata (list of dictionaries, or [loaded from a storage](./quality_checks_storage.mdx)):
   * `apply_checks_by_metadata`: apply quality checks to a DataFrame and report issues as additional columns.
   * `apply_checks_by_metadata_and_split`: apply quality checks and split the input DataFrame into valid and invalid (quarantined) DataFrames.
   * `apply_checks_by_metadata_and_save_in_table`: end-to-end approach to apply quality checks to a table and save results to output table(s) via single method call. Checks can be passed directly as metadata/dict or loaded automatically from a storage location.
@@ -35,24 +35,24 @@ Checks can be applied to the input data by one of the following methods of the `
   * `apply_checks_and_save_in_tables`: apply quality checks to input locations defined by provided list of `RunConfig`.
   * `apply_checks_and_save_in_tables_for_patterns`: apply quality checks to tables matching wildcard patterns.
 
-You can see the full list of `DQEngine` methods [here](/docs/reference/engine/#dqx-engine-methods).
+You can see the full list of `DQEngine` methods [here](../reference/engine.mdx#dqx-engine-methods).
 
 <Admonition type="info" title="Save destinations">
 The end-to-end `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` methods accept `output_config`, `quarantine_config`, `metrics_config`, or combinations of these. If `output_config` is omitted and `quarantine_config` is provided, only the quarantined table is produced. If only `metrics_config` is provided for batch input, only summary metrics are written and no output or quarantine table is produced. Streaming metrics require an output or quarantine stream to emit the observed metrics. This applies to both `apply_checks_and_save_in_tables` and `apply_checks_and_save_in_tables_for_patterns`.
 </Admonition>
 
-The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields and `skipped=True` in the result struct. You can suppress these entries entirely or identify them downstream — see [Suppressing skipped check entries](/docs/guide/additional_configuration#suppressing-skipped-check-entries).
+The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields and `skipped=True` in the result struct. You can suppress these entries entirely or identify them downstream — see [Suppressing skipped check entries](./additional_configuration.mdx#suppressing-skipped-check-entries).
 The engine will raise an error if you try to apply checks with invalid definition (e.g. wrong syntax).
-In addition, you can also perform standalone validation of the checks as described [here](/docs/guide/quality_checks_definition#validating-quality-checks).
+In addition, you can also perform standalone validation of the checks as described [here](./quality_checks_definition.mdx#validating-quality-checks).
 
 You can apply quality checks to streaming pipelines using the same methods as for batch processing.
 You can either use the end-to-end methods or manage the input stream and output directly with native Spark APIs (e.g. `spark.readStream` and `writeStream`).
 
-You can find ready-to-use examples of applying checks with different methods in the [demo](/docs/demos) section.
+You can find ready-to-use examples of applying checks with different methods in the [demo](../demos.mdx) section.
 
 The results are reported as additional columns in the output DataFrame (by default `_warning` and `_error` columns).
-See [quality check results](/docs/guide/quality_checks_apply#detailed-quality-checking-results) for details on the structure of the results.
-You can customize the reporting columns as described in the [additional configuration](/docs/guide/additional_configuration) section.
+See [quality check results](./quality_checks_apply.mdx#detailed-quality-checking-results) for details on the structure of the results.
+You can customize the reporting columns as described in the [additional configuration](./additional_configuration.mdx) section.
 
 ### Applying checks defined with DQX classes
 
@@ -153,8 +153,8 @@ You can customize the reporting columns as described in the [additional configur
 
 ### Applying checks defined using metadata
 
-Users can save and load checks as metadata (list of dictionaries) from a storage through several supported methods, as described [here](/docs/guide/quality_checks_storage).
-When loading checks from a storage, they are always returned as metadata (list of dictionaries). You can convert checks from metadata to classes and back using serialization methods described [here](/docs/reference/quality_checks/#converting-checks-between-formats).
+Users can save and load checks as metadata (list of dictionaries) from a storage through several supported methods, as described [here](./quality_checks_storage.mdx).
+When loading checks from a storage, they are always returned as metadata (list of dictionaries). You can convert checks from metadata to classes and back using serialization methods described [here](../reference/quality_checks.mdx#converting-checks-between-formats).
 
 In the example below, checks are defined in YAML syntax for convenience and then loaded into a list of dictionaries.
 
@@ -250,7 +250,7 @@ In the example below, checks are defined in YAML syntax for convenience and then
 Checks are applied to a `column` specified in the `arguments` of the `check`. This can be either a column name as `string` or column expression.
 Some checks require `columns` (e.g. `is_unique`) instead of `column`, which is a list of column names or expressions. There are also checks that require no columns at all (e.g. `sql_expression` and `sql_query`).
 Alternatively, `for_each_column` can be used to define a list of columns for which the same check should be applied. The `for_each_column` is supported for quality rules that take `column` or `columns` as arguments (e.g. not supported by `sql_expression` and `sql_query`).
-For details on each check, please refer to the documentation [here](/docs/reference/quality_checks).
+For details on each check, please refer to the documentation [here](../reference/quality_checks.mdx).
 </Admonition>
 
 ### Applying checks on multiple tables
@@ -409,7 +409,7 @@ However, expectations don't offer detailed insights into why certain checks fail
 The example below demonstrates integrating DQX with Lakeflow Pipelines to provide comprehensive quality information.
 The DQX integration with Lakeflow Pipelines does not use Expectations but DQX's own methods.
 
-You can define checks using DQX classes or as metadata (list of dictionaries) or loaded from YAML/JSON file or a table as described [here](/docs/guide/quality_checks_storage).
+You can define checks using DQX classes or as metadata (list of dictionaries) or loaded from YAML/JSON file or a table as described [here](./quality_checks_storage.mdx).
 
 <Admonition type="warning" title="Incremental materialized views">
 When writing DQX results to Lakeflow Materialized Views, you can set *run_time_overwrite* and *run_id_overwrite* as **static values** in `ExtraParams` when creating the `DQEngine`. This enables Lakeflow engine to continue incrementally updating the Materialized Views across pipeline runs. Without static values, each run may be treated as a new run, preventing proper incremental updates.
@@ -490,7 +490,7 @@ When writing DQX results to Lakeflow Materialized Views, you can set *run_time_o
 Spark's `foreachBatch` allows users to define an arbitrary processing function run for each streaming batch. DQX requires authentication with a Databricks SDK `WorkspaceClient` which is not supported inside `foreachBatch`. To use DQX in a `foreachBatch` function, create a `DQEngine` instance with a mock `WorkspaceClient`.  
   
 <Admonition type="warning" title="Engine functionality with mocked WorkspaceClient">  
-Some DQX engine methods require a valid Databricks `WorkspaceClient`. Methods must support local execution to be run in a `foreachBatch` function with a mocked `WorkspaceClient`. Check the **Supports local execution** column [here](/docs/reference/engine/#dqx-engine-methods) to verify that DQX engine methods can be executed with a mocked client.  
+Some DQX engine methods require a valid Databricks `WorkspaceClient`. Methods must support local execution to be run in a `foreachBatch` function with a mocked `WorkspaceClient`. Check the **Supports local execution** column [here](../reference/engine.mdx#dqx-engine-methods) to verify that DQX engine methods can be executed with a mocked client.  
 </Admonition>  
   
 ```python  
@@ -539,7 +539,7 @@ input_data.writeStream.foreachBatch(validate_and_write_micro_batch_data).start()
 The quality check results (DataFrames) can be saved by the user to arbitrary tables using Spark APIs.
 DQX also offers convenient methods to save the results to tables without the need to use Spark APIs directly.
 Users can also use end-to-end methods that handle applying checks and saving results in a single method.
-A complete list of `DQEngine` methods is available in the [reference documentation](/docs/reference/engine).
+A complete list of `DQEngine` methods is available in the [reference documentation](../reference/engine.mdx).
 
 Table properties, partition columns, and liquid clustering columns can be specified when using any of DQX's 
 built-in methods to write data to a table.
@@ -657,13 +657,13 @@ dq_engine.apply_checks_and_save_in_table(
 
 ## No-code approach (Workflows)
 
-You can apply quality checks to data at-rest using DQX Workflows without writing any code. This requires installation of DQX in the workspace as a tool (see [installation guide](/docs/installation)).
+You can apply quality checks to data at-rest using DQX Workflows without writing any code. This requires installation of DQX in the workspace as a tool (see [installation guide](../installation.mdx)).
 
 <Admonition type="tip" title="Prefer a UI?">
-[DQX Studio](/docs/guide/dqx_studio) is the recommended no-code option — it provides a browser-based UI to apply checks, review results, and monitor runs, without maintaining a configuration file.
+[DQX Studio](./dqx_studio.mdx) is the recommended no-code option — it provides a browser-based UI to apply checks, review results, and monitor runs, without maintaining a configuration file.
 </Admonition>
 
-The workflows use [configuration file](/docs/installation/#configuration-file) to specify input and output locations, and to apply sets of quality checks from a storage.
+The workflows use [configuration file](../installation.mdx#configuration-file) to specify input and output locations, and to apply sets of quality checks from a storage.
 
 You can open the configuration file (`.dqx/config.yml`) in the installation folder from Databricks UI or by executing the following Databricks CLI command:
 ```commandline
@@ -738,7 +738,7 @@ You can display the logs from the latest run by executing the following command:
 databricks labs dqx logs --workflow quality-checker
 ```
 
-The following fields from the [configuration file](/docs/installation/#configuration-file) are used by the quality checker workflow:
+The following fields from the [configuration file](../installation.mdx#configuration-file) are used by the quality checker workflow:
 - `input_config`: configuration for the input data. 'location' is autogenerated when the workflow is executed for patterns.
 - `output_config`: configuration for the output data. 'location' is autogenerated when the workflow is executed for patterns. Set one of `partition_by` or `cluster_by` to control the output data layout.
 - `quarantine_config`: (optional) configuration for the quarantine data. 'location' is autogenerated when the workflow is executed for patterns. Set one of `partition_by` or `cluster_by` to control the output data layout.
@@ -861,7 +861,7 @@ databricks labs dqx logs --workflow profiler
 databricks labs dqx logs --workflow quality-checker
 ```
 
-The following fields from the [configuration file](/docs/installation/#configuration-file) are used by e2e workflow:
+The following fields from the [configuration file](../installation.mdx#configuration-file) are used by e2e workflow:
 - `input_config`: configuration for the input data. 'location' is autogenerated when the workflow is executed for patterns.
 - `output_config`: configuration for the output data. 'location' is autogenerated when the workflow is executed for patterns. Set one of `partition_by` or `cluster_by` to control the output data layout.
 - `quarantine_config`: (optional) configuration for the quarantine data. 'location' is autogenerated when the workflow is executed for patterns. Set one of `partition_by` or `cluster_by` to control the output data layout.
@@ -1024,14 +1024,14 @@ To enable summary metrics programmatically, create and pass a `DQMetricsObserver
 Summary metrics can also be enabled in DQX workflows. Metrics are configured:
 
 1. **During installation for default run config**: When prompted, choose to store summary metrics and configure the default metrics table location.
-2. **Configuration file**: Add `custom_metrics` and `metrics_config` to the [configuration file](/docs/installation/#configuration-file).
+2. **Configuration file**: Add `custom_metrics` and `metrics_config` to the [configuration file](../installation.mdx#configuration-file).
 
-For detailed information about summary metrics, including examples and best practices, see the [Summary Metrics Guide](/docs/guide/summary_metrics).
+For detailed information about summary metrics, including examples and best practices, see the [Summary Metrics Guide](./summary_metrics.mdx).
 
 ## Detailed quality checking results
 
-Detailed row-level quality check results are added as additional columns to the output or quarantine (if defined) DataFrame or tables (if saved). These columns capture the outcomes of the checks performed on the input data. For full schema reference of output, quarantine, and result columns, see [Table Schemas and Relationships](/docs/reference/table_schemas).
-The result columns are named `_error` and `_warning` by default, but you can customize them as described in the [additional configuration](/docs/guide/additional_configuration) section.
+Detailed row-level quality check results are added as additional columns to the output or quarantine (if defined) DataFrame or tables (if saved). These columns capture the outcomes of the checks performed on the input data. For full schema reference of output, quarantine, and result columns, see [Table Schemas and Relationships](../reference/table_schemas.mdx).
+The result columns are named `_error` and `_warning` by default, but you can customize them as described in the [additional configuration](./additional_configuration.mdx) section.
 
 The result columns can be used to monitor and track data quality issues and for further processing, such as using in a dashboard, or other downstream applications.
 
@@ -1114,7 +1114,7 @@ DQX provides full traceability across all layers:
 
 The example below shows how to get rule definitions for failed checks using detailed results and the checks table.
 DQX automatically generates rule and rule set fingerprints to make this possible. The fingerprints in the detailed results match those stored in the summary metrics table and the checks table.
-If you store checks in files instead of a table, you can calculate the fingerprints as described in [Loading quality checks from a storage](/docs/guide/quality_checks_storage#calculating-fingerprints-manually).
+If you store checks in files instead of a table, you can calculate the fingerprints as described in [Loading quality checks from a storage](./quality_checks_storage.mdx#calculating-fingerprints-manually).
 
 
 ```python

@@ -13,12 +13,12 @@ This page provides a reference for the table structures and relationships (EDR d
 
 When you apply quality checks with DQX:
 
-- **Output table**: Contains rows that passed all checks, plus rows with warnings (warnings do not exclude rows from the output). Each row includes `_errors` and `_warnings` columns (the names can be customized). See [Applying Quality Checks](/docs/guide/quality_checks_apply) for details.
-- **Quarantine table** (optional): When configured, rows that fail error-level checks are written to the quarantine table instead of the output table. The quarantine table has the same structure as the output table, including `_errors` and `_warnings`. See [Applying Quality Checks](/docs/guide/quality_checks_apply) for configuration.
-- **Checks table**: (optional) Stores the rule definitions. Used for loading checks and for traceability via `rule_fingerprint` and `rule_set_fingerprint`. For filtering `run_config_name` is used. See [Loading and Storing Quality Checks](/docs/guide/quality_checks_storage) for details.
-- **Summary metrics table** (optional): When enabled, stores aggregate metrics per run (e.g. `input_row_count`, `error_row_count`). Links to output/quarantine via `run_id` and to the checks table via `checks_location` and `rule_set_fingerprint`. See [Summary Metrics](/docs/guide/summary_metrics) for configuration.
+- **Output table**: Contains rows that passed all checks, plus rows with warnings (warnings do not exclude rows from the output). Each row includes `_errors` and `_warnings` columns (the names can be customized). See [Applying Quality Checks](../guide/quality_checks_apply.mdx) for details.
+- **Quarantine table** (optional): When configured, rows that fail error-level checks are written to the quarantine table instead of the output table. The quarantine table has the same structure as the output table, including `_errors` and `_warnings`. See [Applying Quality Checks](../guide/quality_checks_apply.mdx) for configuration.
+- **Checks table**: (optional) Stores the rule definitions. Used for loading checks and for traceability via `rule_fingerprint` and `rule_set_fingerprint`. For filtering `run_config_name` is used. See [Loading and Storing Quality Checks](../guide/quality_checks_storage.mdx) for details.
+- **Summary metrics table** (optional): When enabled, stores aggregate metrics per run (e.g. `input_row_count`, `error_row_count`). Links to output/quarantine via `run_id` and to the checks table via `checks_location` and `rule_set_fingerprint`. See [Summary Metrics](../guide/summary_metrics.mdx) for configuration.
 
-Once these tables are populated, see the [Query Results Cookbook](/docs/reference/query_results_cookbook) for ready-to-use SQL and PySpark recipes that trace errors and warnings across runs, rows, and check definitions.
+Once these tables are populated, see the [Query Results Cookbook](./query_results_cookbook.mdx) for ready-to-use SQL and PySpark recipes that trace errors and warnings across runs, rows, and check definitions.
 
 <Admonition type="info" title="Output vs Quarantine">
 When **quarantine is configured**: Rows with errors go to the quarantine table; rows with only warnings or no issues go to the output table. When **quarantine is not configured**: All rows (including those with errors) go to the output table. In both cases, **warnings are always included in the output** — rows with warnings appear in the output table, and if a row has both errors and warnings, it goes to quarantine (when configured) with both `_errors` and `_warnings` populated.
@@ -66,7 +66,7 @@ erDiagram
 
 ## Result columns: `_errors` and `_warnings`
 
-The output and quarantine tables include two array columns appended by DQX (see [Applying Quality Checks](/docs/guide/quality_checks_apply#detailed-quality-checking-results) for usage details):
+The output and quarantine tables include two array columns appended by DQX (see [Applying Quality Checks](../guide/quality_checks_apply.mdx#detailed-quality-checking-results) for usage details):
 
 | Column    | Type   | Description                                                                 |
 | --------- | ------ | --------------------------------------------------------------------------- |
@@ -90,7 +90,7 @@ Each element in `_errors` and `_warnings` has the following structure:
 
 ## Checks table schema
 
-When storing checks in Delta or Lakebase tables (see [Loading and Storing Quality Checks](/docs/guide/quality_checks_storage)), the schema is:
+When storing checks in Delta or Lakebase tables (see [Loading and Storing Quality Checks](../guide/quality_checks_storage.mdx)), the schema is:
 
 | Column                 | Type                                                         | Description                                                                 |
 | ---------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------- |
@@ -106,7 +106,7 @@ When storing checks in Delta or Lakebase tables (see [Loading and Storing Qualit
 
 ## Summary metrics table schema
 
-Summary metrics are optional. When enabled (see [Summary Metrics](/docs/guide/summary_metrics)), the schema is:
+Summary metrics are optional. When enabled (see [Summary Metrics](../guide/summary_metrics.mdx)), the schema is:
 
 | Column                 | Type                 | Description                                                                 |
 | ---------------------- | -------------------- | --------------------------------------------------------------------------- |

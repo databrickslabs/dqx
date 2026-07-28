@@ -7,7 +7,7 @@ sidebar_label: DQX MCP Server
 import Admonition from '@theme/Admonition';
 import Link from '@docusaurus/Link';
 
-# DQX MCP Server <Link to="/docs/reference/feature_lifecycle#beta" title="Feature lifecycle: Beta" style={{textDecoration: 'none'}}><span className="badge badge--beta" style={{verticalAlign: 'text-top', marginLeft: '0.4rem', fontSize: '0.19em', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Beta</span></Link> {#dqx-mcp-server}
+# DQX MCP Server <Link to="../../reference/feature_lifecycle#beta" title="Feature lifecycle: Beta" style={{textDecoration: 'none'}}><span className="badge badge--beta" style={{verticalAlign: 'text-top', marginLeft: '0.4rem', fontSize: '0.19em', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Beta</span></Link> {#dqx-mcp-server}
 
 **DQX MCP Server** is an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that exposes DQX data quality tools for AI agents.
 It runs as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html) inside your workspace with on-behalf-of (OBO) authentication — every operation respects the calling user's Unity Catalog permissions.
@@ -18,20 +18,20 @@ The MCP server is the recommended integration point for:
 - IDE-based workflows (Cursor, Claude Code) where you want DQX tools available as MCP tools.
 - Any MCP-compatible client that needs data quality capabilities without writing DQX code directly.
 
-For interactive, browser-based rule management, see [DQX Studio](/docs/guide/dqx_studio).
-For code-level integration into pipelines or notebooks, see the [Programmatic approach](/docs/guide/quality_checks_apply#programmatic-approach).
+For interactive, browser-based rule management, see [DQX Studio](./dqx_studio.mdx).
+For code-level integration into pipelines or notebooks, see the [Programmatic approach](./quality_checks_apply.mdx#programmatic-approach).
 </Admonition>
 
 ## Who this guide is for
 
 There are two reading paths:
 
-- **Platform admins** set up and operate the server: [Install and deploy](#install-and-deploy) → [Configuration](#configuration) → [Troubleshooting](#troubleshooting) → [Upgrade and uninstall](/docs/installation#mcp-upgrade-uninstall).
+- **Platform admins** set up and operate the server: [Install and deploy](#install-and-deploy) → [Configuration](#configuration) → [Troubleshooting](#troubleshooting) → [Upgrade and uninstall](../installation.mdx#mcp-upgrade-uninstall).
 - **Users** — Genie Code users, data engineers, power users — consume it once it's deployed: [Connect an MCP client](#connect-an-mcp-client) → [Usage](#usage) → [Example prompts](#example-prompts). In **Genie Code** you just need the app shared with you and then enable it in settings; other clients (Cursor, Claude Code) use the server's `/mcp` URL — ask your admin.
 
 ## Install and deploy
 
-Deploying the MCP server (prerequisites, the one-time **runner service principal**, and the `make mcp-deploy` steps) lives on the installation page: **[DQX MCP Server installation](/docs/installation#dqx-mcp-server-installation)**.
+Deploying the MCP server (prerequisites, the one-time **runner service principal**, and the `make mcp-deploy` steps) lives on the installation page: **[DQX MCP Server installation](../installation.mdx#dqx-mcp-server-installation)**.
 
 Once it's deployed, the rest of this guide covers configuration, connecting a client, and usage.
 
@@ -129,10 +129,10 @@ You don't run these tools by hand — you ask in plain English (see [Example pro
 Each long-running tool returns a `run_id` immediately; the client then polls `get_run_result(run_id)` until `status` is `completed` or `failed`. Several `get_run_result` calls per run are expected while a job runs — see [Troubleshooting](#troubleshooting).
 
 **Alternative entry points:**
-- If an [ODCS data contract](/docs/guide/data_contract_quality_rules_generation) already exists, use `generate_rules_from_contract` instead of profiling + `generate_rules` — it derives checks deterministically from the contract's schema and quality expectations.
+- If an [ODCS data contract](./data_contract_quality_rules_generation.mdx) already exists, use `generate_rules_from_contract` instead of profiling + `generate_rules` — it derives checks deterministically from the contract's schema and quality expectations.
 - To reuse rules across sessions, `save_checks` to persist them and `load_checks` to retrieve them later.
 - To operationalize (write results to Delta instead of returning a sample), use `apply_checks_and_save_to_table` instead of `run_checks`.
-- For **scheduled pipelines**, treat the MCP server as the interactive/exploratory path: use it to design and `save_checks` a validated rule set, then run that rule set in production with the [programmatic approach](/docs/guide/quality_checks_apply#programmatic-approach).
+- For **scheduled pipelines**, treat the MCP server as the interactive/exploratory path: use it to design and `save_checks` a validated rule set, then run that rule set in production with the [programmatic approach](./quality_checks_apply.mdx#programmatic-approach).
 
 ### Run the whole workflow in one prompt
 
@@ -185,7 +185,7 @@ INSERT INTO <catalog>.<schema>.customers VALUES
  (NULL, 'Peggy',   'peggy@example.com',   39,  'US', DATE'2024-01-05', 180.00);  -- null id
 ```
 
-Optionally, to try `generate_rules_from_contract`, save an [ODCS data contract](/docs/guide/data_contract_quality_rules_generation) describing this table to a UC volume or workspace path and reference it in the prompt.
+Optionally, to try `generate_rules_from_contract`, save an [ODCS data contract](./data_contract_quality_rules_generation.mdx) describing this table to a UC volume or workspace path and reference it in the prompt.
 
 ## Available tools
 
@@ -292,9 +292,9 @@ If you only ever use the read/analyze tools (profile, generate, validate, run), 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `bundle deploy`: `databricks: command not found` | CLI missing / too old | Install Databricks CLI 0.279.0+ (`databricks --version`). |
-| Deploy fails creating the app | Apps not enabled, or you lack app-create permission | Ask an admin to enable Apps / grant app-create (see [Prerequisites](/docs/installation#mcp-prerequisites)). |
+| Deploy fails creating the app | Apps not enabled, or you lack app-create permission | Ask an admin to enable Apps / grant app-create (see [Prerequisites](../installation.mdx#mcp-prerequisites)). |
 | Setup job: `CREATE SCHEMA` or `GRANT` denied | Missing catalog permissions | Grant the deploying user `USE CATALOG` + `CREATE SCHEMA` + `MANAGE` on the catalog. |
-| `bundle deploy`: *"User is not authorized to use this service principal"* | Deployer lacks the **User** role on the runner SP | Grant yourself User on `runner_service_principal_id` (see [Runner service principal](/docs/installation#mcp-runner-sp)). |
+| `bundle deploy`: *"User is not authorized to use this service principal"* | Deployer lacks the **User** role on the runner SP | Grant yourself User on `runner_service_principal_id` (see [Runner service principal](../installation.mdx#mcp-runner-sp)). |
 | MCP client gets **401** on `/mcp` | Using a PAT, or not authenticated | Connect with **OAuth** — Genie Code does this automatically; external clients run the Databricks OAuth login. PATs are rejected by the OBO front-door. |
 | A file read fails with *"Invalid scope, required scopes: workspace"* | OBO token predates a scope change, or the app lacks `workspace.workspace` | Reconnect the MCP server (re-authorize) to mint a fresh token; confirm the app declares the `workspace.workspace` scope. |
 | A read tool fails "cannot read table" | Your UC grants don't allow it (OBO is enforced) | Grant yourself `SELECT` on the source table. |

@@ -44,7 +44,7 @@ The `DQProfiler` class provides methods to analyze datasets and generate data qu
 | `profile_tables_for_patterns`  | Profiles multiple tables in Unity Catalog with pattern matching.              | `patterns`: List of table names or filesystem-style wildcards (e.g. 'schema.\*') to include (if None, all tables are included); `exclude_matched`: Whether to exclude matched tables (default False); `columns`: Optional dictionary with table names as keys and lists of column names to include as values (default: all columns); `options`: Optional list of dictionaries with table names (or table wildcard patterns) as key and profiling options as values (merged with default options); `max_parallelism`: (optional) Maximum number of tables to check in parallel (defaults to the number of CPU cores); `exclude_patterns`: (optional) List of table names or filesystem-style wildcards (e.g. '\*_dq_output') to exclude, useful if wanting to exclude existing output or quarantine tables. |
 | `detect_primary_keys_with_llm` | Detects primary keys in the input table using LLM.                            | `input_config`: `InputConfig` object with the data location (e.g. a table) and options for reading the input data; `max_retries`: Maximum number of retries to find unique primary key combination.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
-See usage example [here](/docs/guide/data_profiling).
+See usage example [here](../guide/data_profiling.mdx).
 
 ## Profiling Options
 
@@ -104,7 +104,7 @@ consisting of an input column, built-in DQX check function, and arguments inferr
 | is_in                | `is_in_list`                | `StringType`, `CharType`, `VarcharType`, `IntegerType`, or `LongType` | `in`: List of distinct values from the profiled data                                                                         | List of values checks are inferred based on the `max_in_count` and `distinct_ratio` in the profiler options                                                                                         |
 | min_max              | `is_in_range`               | `NumericType`, `DateType`, `TimestampType`, or `TimestampNTZType`     | `min`: Minimum value from the profiled data; `max`: Maximum value from the profiled data                                     | Values can be rounded by setting `"round": True` in the profiler options; Outlier values may be ignored based on the profiler options (e.g. `remove_outliers`, `num_sigmas`, and `outlier_columns`) |
 | has_no_outliers      | `has_no_outliers`           | `NumericType` (all numeric types)                                     |                                                                                                                              | Generated when the fraction of outliers detected via the Median Absolute Deviation (MAD) method is at or below `outliers_ratio`; outliers are values outside `median ± 3.5 × MAD`                   |
-| is_unique            | `is_unique`                 | All                                                                   | `reasoning`: Reason for inferring that a column is a primary key; `confidence`: Confidence score of the LLM-generated result | Requires installation of [LLM Extensions](/docs/installation#optional-dependencies); Set `llm_primary_key_detection: True` in the profiler options to enable primary key detection                  |
+| is_unique            | `is_unique`                 | All                                                                   | `reasoning`: Reason for inferring that a column is a primary key; `confidence`: Confidence score of the LLM-generated result | Requires installation of [LLM Extensions](../installation.mdx#optional-dependencies); Set `llm_primary_key_detection: True` in the profiler options to enable primary key detection                  |
 
 ## DQGenerator methods
 
@@ -126,5 +126,5 @@ The `DQDltGenerator` class creates Delta Live Tables expectation statements from
 
 <Admonition type="info" title="Complete Profiling Guide">
     For comprehensive examples, advanced options, and best practices, see the [Data Profiling
-    Guide](/docs/guide/data_profiling).
+    Guide](../guide/data_profiling.mdx).
 </Admonition> 

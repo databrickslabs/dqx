@@ -16,11 +16,11 @@ The skills live in the [`skills/`](https://github.com/databrickslabs/dqx/tree/ma
 
 | Skill                      | What it covers                                                                                       | Canonical docs                                                                                |
 |----------------------------|------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
-| `dqx-define-checks`        | Creating quality rules — `DQRowRule`, `DQDatasetRule`, `DQForEachColRule`, YAML / dict metadata form | [Quality Checks Definition](/docs/guide/quality_checks_definition)                            |
-| `dqx-apply-checks`         | Validating a DataFrame or table against a set of rules                                               | [Applying Quality Checks](/docs/guide/quality_checks_apply)                                   |
-| `dqx-end-to-end`           | Read → check → write in one call with `apply_checks_and_save_in_table`                               | [End-to-end apply](/docs/guide/quality_checks_apply#applying-checks-defined-with-dqx-classes) |
-| `dqx-profile-and-generate` | Profiling and generating rule candidates with `DQProfiler` / `DQGenerator`                           | [Data Profiling](/docs/guide/data_profiling)                                                  |
-| `dqx-storage`              | Loading / saving checks across file, workspace, volume, table, installation, and Lakebase backends   | [Loading and Storing Quality Checks](/docs/guide/quality_checks_storage)                      |
+| `dqx-define-checks`        | Creating quality rules — `DQRowRule`, `DQDatasetRule`, `DQForEachColRule`, YAML / dict metadata form | [Quality Checks Definition](./quality_checks_definition.mdx)                            |
+| `dqx-apply-checks`         | Validating a DataFrame or table against a set of rules                                               | [Applying Quality Checks](./quality_checks_apply.mdx)                                   |
+| `dqx-end-to-end`           | Read → check → write in one call with `apply_checks_and_save_in_table`                               | [End-to-end apply](./quality_checks_apply.mdx#applying-checks-defined-with-dqx-classes) |
+| `dqx-profile-and-generate` | Profiling and generating rule candidates with `DQProfiler` / `DQGenerator`                           | [Data Profiling](./data_profiling.mdx)                                                  |
+| `dqx-storage`              | Loading / saving checks across file, workspace, volume, table, installation, and Lakebase backends   | [Loading and Storing Quality Checks](./quality_checks_storage.mdx)                      |
 
 Each skill is a folder containing a single `SKILL.md` with the standard `name` + `description` frontmatter. Tools auto-load skills based on the description; users can also invoke them explicitly (`@dqx-define-checks`, slash commands, etc.) depending on the tool.
 
@@ -125,7 +125,7 @@ DQX's agent skills are scoped to DQX's public APIs. Follow these guidelines when
 - Prefer linking to `/docs/...` over duplicating content; the skill's job is to tell the model **when** and **how** to use the API, not to reprint the reference.
 - Always import from `databricks.labs.dqx.*` — never guess module paths.
 - Point to the canonical documentation for any topic outside the skill's core responsibility.
-- Changes to the public DQX API should be reflected in the matching skill in the same PR. See [Contributing](/docs/dev/contributing) for the full workflow.
+- Changes to the public DQX API should be reflected in the matching skill in the same PR. See [Contributing](../dev/contributing.mdx) for the full workflow.
 
 ## Source
 

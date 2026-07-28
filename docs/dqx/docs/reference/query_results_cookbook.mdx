@@ -11,7 +11,7 @@ import TabItem from '@theme/TabItem';
 
 This cookbook is a practical guide for querying DQX result tables - summary metrics, output, quarantine, and checks - to trace errors and warnings across runs, rows, and check definitions. It will help you go from a failing run to the rows that failed, link those rows back to the rules that flagged them, and monitor quality trends across runs. It assumes you've already run DQX at least once.
 
-Before you start, take a minute with the [Table Relationships diagram](/docs/reference/table_schemas#table-relationships) in the schema reference. It is important because every query here touches on one of the relationships shown there.
+Before you start, take a minute with the [Table Relationships diagram](./table_schemas.mdx#table-relationships) in the schema reference. It is important because every query here touches on one of the relationships shown there.
 
 <Admonition type="info" title="Table name placeholders">
 The examples below use these placeholder table names. Please replace them with your actual catalog, schema, and table names:
@@ -23,7 +23,7 @@ The examples below use these placeholder table names. Please replace them with y
 - `catalog.schema.my_table` - the input table being checked
 
 The default error and warning column names are `_errors` and `_warnings`.
-If you [customized](/docs/guide/additional_configuration/#customizing-result-columns) them, adjust the queries accordingly.
+If you [customized](../guide/additional_configuration.mdx#customizing-result-columns) them, adjust the queries accordingly.
 </Admonition>
 
 ## Where to start
@@ -97,7 +97,7 @@ Before any joins, it is good to look at what is actually in each table. One row 
 
 **What to notice:**
 
-- `summary_metrics` is in long format, one row per metric per run. Summary metrics are not collected by default - you must [enable them explicitly](/docs/guide/summary_metrics/). To get a wide view, pivot on `metric_name` (Recipe 12).
+- `summary_metrics` is in long format, one row per metric per run. Summary metrics are not collected by default - you must [enable them explicitly](../guide/summary_metrics.mdx). To get a wide view, pivot on `metric_name` (Recipe 12).
 - Output and quarantine rows contain your original data plus two array columns: `_errors` and `_warnings`. Each array element is a struct describing one failed DQX check.
 - The checks table has a `rule_fingerprint` (a hash of one individual rule's definition - its function, arguments, and criticality) and a `rule_set_fingerprint` (a hash of the entire *rule set* - the collection of rules applied together in a single run). Both fingerprints appear inside each error and warning struct, which is how recipes 3 and 4 join back to the checks table.
 
@@ -564,7 +564,7 @@ Rules defined with `for_each_column` produce per-column errors with fingerprints
 
 <Admonition type="tip" title="Alerting on trends">
 Use Databricks SQL Alerts on the run tracking
-query to get notified when error rates exceed a threshold. See [Summary Metrics](/docs/guide/summary_metrics/#monitoring-and-alerting-using-metrics-table)
+query to get notified when error rates exceed a threshold. See [Summary Metrics](../guide/summary_metrics.mdx#monitoring-and-alerting-using-metrics-table)
 for more on monitoring best practices.
 </Admonition>
 
