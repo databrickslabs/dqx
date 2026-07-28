@@ -95,21 +95,30 @@ combine-coverage: ## Combine xdist worker coverage data into coverage-combined.x
 docs-install: ## Install docs site dependencies (yarn --frozen-lockfile)
 	yarn --cwd docs/dqx install --frozen-lockfile
 
-docs-build: ## Build the documentation site (pydoc-markdown + docusaurus build)
+docs-build: ## Build the documentation site (pydoc-markdown + docusaurus build); Builds released versions only
 	$(UV_RUN) --group docs pydoc-markdown
 	yarn --cwd docs/dqx build
 
 docs-serve-dev: ## Run docusaurus dev server with hot reload
 	$(UV_RUN) --group docs pydoc-markdown
-	yarn --cwd docs/dqx start
+	DQX_DOCS_INCLUDE_PRERELEASE=1 yarn --cwd docs/dqx start
 
-docs-serve: docs-build ## Build and serve the docs site (production preview)
+docs-serve: ## Build and serve the docs site locally (including the unreleased "Pre-Release" docs)
 	$(UV_RUN) --group docs pydoc-markdown
-	yarn --cwd docs/dqx serve
+	DQX_DOCS_INCLUDE_PRERELEASE=1 yarn --cwd docs/dqx build
+	DQX_DOCS_INCLUDE_PRERELEASE=1 yarn --cwd docs/dqx serve
 
 docs-clean: ## Remove docs build, .docusaurus, and generated API reference
 	rm -rf docs/dqx/build docs/dqx/.docusaurus docs/dqx/.cache
 	find docs/dqx/docs/reference/api -mindepth 1 -not -name 'index.mdx' -exec rm -rf {} +
+
+docs-version: docs-install ## Snapshot current docs into a frozen version (VERSION=X.Y.Z, PR=<n> optional); defaults to __about__.py
+	# Generate the API reference to freeze this release's API docs
+	# (pydoc-markdown writes into docs/dqx/docs/reference/api, which docs:version then copies).
+	$(UV_RUN) --group docs pydoc-markdown
+	$(UV_RUN) python .github/scripts/snapshot_docs_version.py \
+		$(if $(VERSION),--version $(VERSION)) \
+		$(if $(PR),--pr $(PR))
 
 ##@ App development (DQX Studio)
 
@@ -343,4 +352,4 @@ fork-sync: ## Mirror a fork PR to a branch in the main repo for full CI (PR=<num
 	./.github/scripts/fork-sync-pr.sh $(PR)
 
 .DEFAULT: all
-.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-regen-api app-check app-test app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies
+.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean docs-version app-install app-build app-start-dev app-stop-dev app-regen-api app-check app-test app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies

@@ -38,7 +38,12 @@ jobs:
         run: make docs-install
 
       - name: Build website
+        # Publish released versions only. The unreleased ("Pre-Release") docs are
+        # excluded from the public site; `DQX_DOCS_INCLUDE_PRERELEASE` is pinned off
+        # here so a runner-level value can never leak them into a release build.
         run: make docs-build
+        env:
+          DQX_DOCS_INCLUDE_PRERELEASE: '0'
 
       - name: Upload Build Artifact
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0

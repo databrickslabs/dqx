@@ -187,6 +187,31 @@ const config: Config = {
           // Remove this to remove the "edit this page" links.
           editUrl:
             'https://github.com/databrickslabs/dqx/tree/main/docs/dqx/',
+          // The live `docs/` folder holds the unreleased ("current") docs. Frozen releases
+          // are snapshotted under `versioned_docs/` (see `versions.json`); the newest
+          // release is the default served at `/docs/`. `make docs-version` creates a new
+          // snapshot at release time.
+          //
+          // The unreleased docs are NOT published publicly: `includeCurrentVersion` is
+          // false by default, so a plain `make docs-build` (used by CI/deploy) serves only
+          // released versions. Set `DQX_DOCS_INCLUDE_PRERELEASE=1` (see `make
+          // docs-serve-dev`) to include them locally for authoring, where they appear as
+          // the "Pre-Release" version at `/docs/pre-release/`.
+          lastVersion: '0.15.0',
+          includeCurrentVersion: process.env.DQX_DOCS_INCLUDE_PRERELEASE === '1',
+          // The `current` (unreleased) version is only a known version when it is
+          // included, so its label/path config must be omitted otherwise — Docusaurus
+          // rejects config for an excluded version.
+          versions:
+            process.env.DQX_DOCS_INCLUDE_PRERELEASE === '1'
+              ? {
+                  current: {
+                    label: 'Pre-Release',
+                    path: 'pre-release',
+                    banner: 'unreleased',
+                  },
+                }
+              : {},
         },
         blog: false,
         theme: {
@@ -209,6 +234,11 @@ const config: Config = {
         src: 'img/logo.svg',
       },
       items: [
+        {
+          type: 'docsVersionDropdown',
+          position: 'right',
+          dropdownActiveClassDisabled: true,
+        },
         {
           type: 'search',
           position: 'right',
