@@ -28,7 +28,7 @@ from databricks.labs.dqx.utils import (
     to_lowercase,
 )
 from databricks.labs.dqx.errors import (
-    ComputationError,
+    MissingResourceError,
     MissingParameterError,
     InvalidParameterError,
     UnsafeSqlQueryError,
@@ -1088,7 +1088,7 @@ def is_valid_national_id(column: str | Column, country: str = "US") -> Column:
     return _matches_pattern(column, pattern)
 
 
-def _load_iso_codes(resource_name: str) -> frozenset[str]:
+def load_iso_codes(resource_name: str) -> frozenset[str]:
     """Load a set of standard codes from a newline-delimited data file in the resources package.
 
     The large standard code lists are stored as data files rather than inline literals to keep them
@@ -1099,7 +1099,7 @@ def _load_iso_codes(resource_name: str) -> frozenset[str]:
     # real filesystem path, which is not guaranteed under a zipped wheel (zipimport).
     codes = frozenset((files("databricks.labs.dqx.resources") / resource_name).read_text(encoding="utf-8").split())
     if not codes:
-        raise ComputationError(
+        raise MissingResourceError(
             f"ISO code resource '{resource_name}' is missing or empty; reinstall the package or "
             "regenerate the resource file."
         )
@@ -1118,28 +1118,25 @@ def _load_iso_codes(resource_name: str) -> frozenset[str]:
 @lru_cache(maxsize=1)
 def _iso_3166_1_codes_by_format() -> dict[str, frozenset[str]]:
     return {
-        "alpha-2": _load_iso_codes("iso_3166_1_alpha_2.txt"),
-        "alpha-3": _load_iso_codes("iso_3166_1_alpha_3.txt"),
-        "numeric": _load_iso_codes("iso_3166_1_numeric.txt"),
+        "alpha-2": load_iso_codes("iso_3166_1_alpha_2.txt"),
+        "alpha-3": load_iso_codes("iso_3166_1_alpha_3.txt"),
+        "numeric": load_iso_codes("iso_3166_1_numeric.txt"),
     }
 
 
 # Precomputed once on first use and cached: the literal lists never change at runtime, so building
 # them per call (sorted() + one F.lit() per code) would repeat needless work on every check
-# evaluation. Only the alpha formats need a lowercase variant — numeric codes have no case and never
-# use it.
+# evaluation. Keyed by (format, case_folded): the case_folded=True variant lowercases each code for
+# case-insensitive matching. Numeric codes have no case, so no lowercase variant is built for them.
 @lru_cache(maxsize=1)
-def _iso_3166_1_literals_by_format() -> dict[str, list[Column]]:
-    return {fmt: [F.lit(code) for code in sorted(codes)] for fmt, codes in _iso_3166_1_codes_by_format().items()}
-
-
-@lru_cache(maxsize=1)
-def _iso_3166_1_literals_by_format_lower() -> dict[str, list[Column]]:
-    return {
-        fmt: [F.lit(code.lower()) for code in sorted(codes)]
-        for fmt, codes in _iso_3166_1_codes_by_format().items()
-        if fmt != "numeric"
-    }
+def _iso_3166_1_literals() -> dict[tuple[str, bool], list[Column]]:
+    literals: dict[tuple[str, bool], list[Column]] = {}
+    for fmt, codes in _iso_3166_1_codes_by_format().items():
+        sorted_codes = sorted(codes)
+        literals[(fmt, False)] = [F.lit(code) for code in sorted_codes]
+        if fmt != "numeric":
+            literals[(fmt, True)] = [F.lit(code.lower()) for code in sorted_codes]
+    return literals
 
 
 @register_rule("row")
@@ -1196,20 +1193,23 @@ def is_valid_country_code(column: str | Column, code_format: str = "alpha-2", ca
             f"Unsupported code_format for country code validation: '{code_format}'. Supported: [{supported}]."
         )
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    literals = _iso_3166_1_literals()
     if normalized_format == "numeric":
         # Numeric codes have no case, so case_sensitive is a no-op. Cast explicitly to string:
         # without it, comparing a non-string (e.g. int) column against the string literals below
         # makes Spark coerce the literals to the column's type instead, silently stripping leading
         # zeros (e.g. "004" -> 4) and letting an unpadded value like 4 match a code that requires "004".
         col_expr_compare = col_expr.cast("string")
-        allowed = _iso_3166_1_literals_by_format()[normalized_format]
+        allowed = literals[(normalized_format, False)]
     elif case_sensitive:
         col_expr_compare = col_expr
-        allowed = _iso_3166_1_literals_by_format()[normalized_format]
+        allowed = literals[(normalized_format, False)]
     else:
         col_expr_compare = to_lowercase(col_expr)
-        allowed = _iso_3166_1_literals_by_format_lower()[normalized_format]
-    condition = F.when(col_expr.isNotNull(), ~col_expr_compare.isin(*allowed)).otherwise(F.lit(None))
+        allowed = literals[(normalized_format, True)]
+    # isin() already yields NULL for NULL input (SQL null propagation), and make_condition treats
+    # NULL as a pass, so no explicit isNotNull() guard is needed.
+    condition = ~col_expr_compare.isin(*allowed)
     return make_condition(
         condition,
         F.concat_ws(

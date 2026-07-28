@@ -38,6 +38,10 @@ class ComputationError(DQXError):
     """Raised when an internal computation fails (e.g. aggregation returned no result, empty data)."""
 
 
+class MissingResourceError(DQXError):
+    """Raised when a packaged resource is missing or empty (e.g. a data file not shipped in the wheel)."""
+
+
 class ModelLoadError(DQXError):
     """Raised when a model cannot be loaded (e.g. version mismatch, corrupted artifact)."""
 
