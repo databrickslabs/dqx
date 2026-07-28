@@ -5954,7 +5954,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
-        "col_email: string"
+        "col_email: string, col_ssn: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -5974,6 +5974,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "123-45-6789",
             ],
             [
                 "val2",
@@ -5991,6 +5992,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "223-45-6789",
             ],
             [
                 "val3",
@@ -6008,6 +6010,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "323-45-6789",
             ],
         ],
         schema,
@@ -6049,6 +6052,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "123-45-6789",
                 None,
                 None,
             ],
@@ -6068,6 +6072,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "223-45-6789",
                 None,
                 None,
             ],
@@ -6087,6 +6092,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "323-45-6789",
                 None,
                 None,
             ],
@@ -6241,7 +6247,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
-        "col_email: string"
+        "col_email: string, col_ssn: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -6261,6 +6267,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "123-45-6789",
             ],
             [
                 "val2",
@@ -6278,6 +6285,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "223-45-6789",
             ],
             [
                 "val3",
@@ -6295,6 +6303,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "323-45-6789",
             ],
         ],
         schema,
@@ -6324,6 +6333,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
+                "123-45-6789",
                 None,
                 None,
             ],
@@ -6343,6 +6353,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
+                "223-45-6789",
                 None,
                 None,
             ],
@@ -6362,6 +6373,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
+                "323-45-6789",
                 None,
                 None,
             ],
@@ -7153,6 +7165,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col_json_str2",
             check_func_kwargs={"schema": "STRUCT<a: STRING, b: STRING>"},
         ),
+        # is_valid_national_id check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_national_id,
+            column="col_ssn",
+            check_func_kwargs={"country": "US"},
+        ),
     ]
 
     dq_engine = DQEngine(ws)
@@ -7160,7 +7179,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string"
+        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, col_ssn: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -7179,6 +7198,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
+                "123-45-6789",
             ],
             [
                 "val2",
@@ -7195,6 +7215,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
+                "223-45-6789",
             ],
             [
                 "val3",
@@ -7211,6 +7232,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
+                "323-45-6789",
             ],
         ],
         schema,
@@ -7239,6 +7261,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
+                "123-45-6789",
                 None,
                 None,
             ],
@@ -7257,6 +7280,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
+                "223-45-6789",
                 None,
                 None,
             ],
@@ -7275,6 +7299,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
+                "323-45-6789",
                 None,
                 None,
             ],
@@ -10103,6 +10128,38 @@ def test_apply_checks_with_has_valid_schema_extra_columns_in_params(ws, spark):
         expected_schema,
     )
 
+    assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
+def test_apply_checks_with_has_valid_schema_special_char_columns_are_valid(ws, spark):
+    """Column names with spaces / non-ASCII characters (that require SQL identifier escaping)
+    must be treated as valid and the check must run instead of being skipped."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, `Customer Name` string, `Ääkkönen` int"
+    test_df = spark.createDataFrame([[1, "Alice", 10], [2, "Bob", 20]], schema)
+
+    checks = [
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, `Customer Name` string, `Ääkkönen` int",
+                "columns": ["id", "Customer Name", "Ääkkönen"],
+                "strict": False,
+            },
+        ),
+    ]
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, "Alice", 10, None, None],
+            [2, "Bob", 20, None, None],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
     assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
 
 
