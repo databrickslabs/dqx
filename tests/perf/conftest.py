@@ -345,17 +345,22 @@ def generated_national_id_df(spark):
 
 @pytest.fixture
 def generated_country_code_df(spark):
+    # Mostly-valid vs mostly-invalid mixes (rather than a single fixed value) so the benchmark
+    # exercises isin() with a realistic hit ratio in both directions, since isin performance can
+    # differ between an all-miss workload and one with a mix of hits and misses.
     country_schema_str = "col1_country_code: string, col2_country_code: string"
     schema = _parse_datatype_string(country_schema_str)
 
-    country_templates = {
-        "col1_country_code": r"AA",
-        "col2_country_code": r"KK",
+    country_value_lists = {
+        "col1_country_code": ["US", "GB", "DE", "FR", "JP", "AA"],
+        "col2_country_code": ["AA", "KK", "ZZ", "US"],
     }
 
-    _, gen = make_data_gen(spark, n_rows=DEFAULT_ROWS, n_columns=len(country_templates), partitions=DEFAULT_PARTITIONS)
+    _, gen = make_data_gen(
+        spark, n_rows=DEFAULT_ROWS, n_columns=len(country_value_lists), partitions=DEFAULT_PARTITIONS
+    )
     gen = gen.withSchema(schema)
-    for col, template in country_templates.items():
-        gen = gen.withColumnSpec(col, template=template)
+    for col, values in country_value_lists.items():
+        gen = gen.withColumnSpec(col, values=values)
 
     return gen.build()

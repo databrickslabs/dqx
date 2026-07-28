@@ -4,8 +4,8 @@ import warnings
 import ipaddress
 import uuid
 from decimal import Decimal
+from functools import lru_cache
 from importlib.resources import files
-from pathlib import Path
 from collections.abc import Callable, Sequence
 from enum import Enum
 from itertools import zip_longest
@@ -1095,8 +1095,9 @@ def _load_iso_codes(resource_name: str) -> frozenset[str]:
     readable and easy to regenerate. See the files under *databricks/labs/dqx/resources* for the
     values and their authoritative sources.
     """
-    resource = Path(str(files("databricks.labs.dqx.resources") / resource_name))
-    codes = frozenset(resource.read_text(encoding="utf-8").split())
+    # Read directly off the Traversable returned by files(): wrapping it in Path(str(...)) assumes a
+    # real filesystem path, which is not guaranteed under a zipped wheel (zipimport).
+    codes = frozenset((files("databricks.labs.dqx.resources") / resource_name).read_text(encoding="utf-8").split())
     if not codes:
         raise ComputationError(
             f"ISO code resource '{resource_name}' is missing or empty; reinstall the package or "
@@ -1111,19 +1112,34 @@ def _load_iso_codes(resource_name: str) -> frozenset[str]:
 # resources package and loaded via importlib.resources. To regenerate them, iterate
 # pycountry.countries (which packages the ISO 3166-1 data) as a convenience, then reconcile against
 # the official ISO list above before committing.
-_ISO_3166_1_CODES_BY_FORMAT: dict[str, frozenset[str]] = {
-    "alpha-2": _load_iso_codes("iso_3166_1_alpha_2.txt"),
-    "alpha-3": _load_iso_codes("iso_3166_1_alpha_3.txt"),
-    "numeric": _load_iso_codes("iso_3166_1_numeric.txt"),
-}
-# Precomputed once at module load: the literal lists never change at runtime, so building them per
-# call (sorted() + one F.lit() per code) would repeat needless work on every check evaluation.
-_ISO_3166_1_LITERALS_BY_FORMAT: dict[str, list[Column]] = {
-    fmt: [F.lit(code) for code in sorted(codes)] for fmt, codes in _ISO_3166_1_CODES_BY_FORMAT.items()
-}
-_ISO_3166_1_LITERALS_BY_FORMAT_LOWER: dict[str, list[Column]] = {
-    fmt: [F.lit(code.lower()) for code in sorted(codes)] for fmt, codes in _ISO_3166_1_CODES_BY_FORMAT.items()
-}
+#
+# Loaded lazily (on first call, then cached) rather than at module import time, so that a resource
+# packaging problem only breaks this check, not the import of the whole check_funcs module.
+@lru_cache(maxsize=1)
+def _iso_3166_1_codes_by_format() -> dict[str, frozenset[str]]:
+    return {
+        "alpha-2": _load_iso_codes("iso_3166_1_alpha_2.txt"),
+        "alpha-3": _load_iso_codes("iso_3166_1_alpha_3.txt"),
+        "numeric": _load_iso_codes("iso_3166_1_numeric.txt"),
+    }
+
+
+# Precomputed once on first use and cached: the literal lists never change at runtime, so building
+# them per call (sorted() + one F.lit() per code) would repeat needless work on every check
+# evaluation. Only the alpha formats need a lowercase variant — numeric codes have no case and never
+# use it.
+@lru_cache(maxsize=1)
+def _iso_3166_1_literals_by_format() -> dict[str, list[Column]]:
+    return {fmt: [F.lit(code) for code in sorted(codes)] for fmt, codes in _iso_3166_1_codes_by_format().items()}
+
+
+@lru_cache(maxsize=1)
+def _iso_3166_1_literals_by_format_lower() -> dict[str, list[Column]]:
+    return {
+        fmt: [F.lit(code.lower()) for code in sorted(codes)]
+        for fmt, codes in _iso_3166_1_codes_by_format().items()
+        if fmt != "numeric"
+    }
 
 
 @register_rule("row")
@@ -1149,6 +1165,10 @@ def is_valid_country_code(column: str | Column, code_format: str = "alpha-2", ca
     *code_format* matching itself is case-insensitive (*"NUMERIC"*/*"Alpha-2"* are also accepted).
     Null values will pass the check with no violation reported.
 
+    For best performance with large lists in general, prefer the *foreign_key* check function; the
+    fixed ISO 3166-1 code lists used here are small enough (up to 249 codes) that this is not a
+    concern.
+
     Args:
         column: column to check; can be a string column name or a column expression
         code_format: ISO 3166-1 code representation to validate against: *alpha-2* (default),
@@ -1168,9 +1188,10 @@ def is_valid_country_code(column: str | Column, code_format: str = "alpha-2", ca
     if not isinstance(code_format, str):
         raise InvalidParameterError(f"'code_format' must be a string, got {type(code_format)} instead.")
     normalized_format = code_format.lower()
-    allowed_codes = _ISO_3166_1_CODES_BY_FORMAT.get(normalized_format)
+    codes_by_format = _iso_3166_1_codes_by_format()
+    allowed_codes = codes_by_format.get(normalized_format)
     if allowed_codes is None:
-        supported = ", ".join(sorted(_ISO_3166_1_CODES_BY_FORMAT))
+        supported = ", ".join(sorted(codes_by_format))
         raise InvalidParameterError(
             f"Unsupported code_format for country code validation: '{code_format}'. Supported: [{supported}]."
         )
@@ -1181,13 +1202,13 @@ def is_valid_country_code(column: str | Column, code_format: str = "alpha-2", ca
         # makes Spark coerce the literals to the column's type instead, silently stripping leading
         # zeros (e.g. "004" -> 4) and letting an unpadded value like 4 match a code that requires "004".
         col_expr_compare = col_expr.cast("string")
-        allowed = _ISO_3166_1_LITERALS_BY_FORMAT[normalized_format]
+        allowed = _iso_3166_1_literals_by_format()[normalized_format]
     elif case_sensitive:
         col_expr_compare = col_expr
-        allowed = _ISO_3166_1_LITERALS_BY_FORMAT[normalized_format]
+        allowed = _iso_3166_1_literals_by_format()[normalized_format]
     else:
         col_expr_compare = to_lowercase(col_expr)
-        allowed = _ISO_3166_1_LITERALS_BY_FORMAT_LOWER[normalized_format]
+        allowed = _iso_3166_1_literals_by_format_lower()[normalized_format]
     condition = F.when(col_expr.isNotNull(), ~col_expr_compare.isin(*allowed)).otherwise(F.lit(None))
     return make_condition(
         condition,
