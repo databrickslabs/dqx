@@ -16,6 +16,18 @@ from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.io import read_input_data
 from databricks.labs.dqx.profiler.generator import DQGenerator
+from databricks.labs.dqx.profiler.profile_options import (
+    PROFILE_OPTION_FILTER,
+    PROFILE_OPTION_LIMIT,
+    PROFILE_OPTION_LLM_PRIMARY_KEY_DETECTION,
+    PROFILE_OPTION_MAX_EMPTY_RATIO,
+    PROFILE_OPTION_MAX_NULL_RATIO,
+    PROFILE_OPTION_SAMPLE_BY_COLUMN,
+    PROFILE_OPTION_SAMPLE_BY_VALUES_LIMIT,
+    PROFILE_OPTION_SAMPLE_FRACTION,
+    PROFILE_OPTION_SAMPLE_SEED,
+    PROFILE_OPTION_OUTLIERS_RATIO,
+)
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.blueprint.installation import Installation
 
@@ -65,18 +77,23 @@ class ProfilerRunner:
 
         df = read_input_data(self.spark, run_config.input_config)
         options = {
-            "sample_fraction": run_config.profiler_config.sample_fraction,
-            "sample_seed": run_config.profiler_config.sample_seed,
-            "sample_by_column": run_config.profiler_config.sample_by_column,
-            "sample_by_values_limit": run_config.profiler_config.sample_by_values_limit,
-            "limit": run_config.profiler_config.limit,
-            "filter": run_config.profiler_config.filter,
-            "llm_primary_key_detection": run_config.profiler_config.llm_primary_key_detection,
+            PROFILE_OPTION_SAMPLE_FRACTION: run_config.profiler_config.sample_fraction,
+            PROFILE_OPTION_SAMPLE_SEED: run_config.profiler_config.sample_seed,
+            PROFILE_OPTION_SAMPLE_BY_COLUMN: run_config.profiler_config.sample_by_column,
+            PROFILE_OPTION_SAMPLE_BY_VALUES_LIMIT: run_config.profiler_config.sample_by_values_limit,
+            PROFILE_OPTION_LIMIT: run_config.profiler_config.limit,
+            PROFILE_OPTION_FILTER: run_config.profiler_config.filter,
+            PROFILE_OPTION_LLM_PRIMARY_KEY_DETECTION: run_config.profiler_config.llm_primary_key_detection,
         }
         if run_config.profiler_config.max_null_ratio is not None:
-            options["max_null_ratio"] = run_config.profiler_config.max_null_ratio
+            options[PROFILE_OPTION_MAX_NULL_RATIO] = run_config.profiler_config.max_null_ratio
+
         if run_config.profiler_config.max_empty_ratio is not None:
-            options["max_empty_ratio"] = run_config.profiler_config.max_empty_ratio
+            options[PROFILE_OPTION_MAX_EMPTY_RATIO] = run_config.profiler_config.max_empty_ratio
+
+        if run_config.profiler_config.outliers_ratio is not None:
+            options[PROFILE_OPTION_OUTLIERS_RATIO] = run_config.profiler_config.outliers_ratio
+
         summary_stats, profiles = self.profiler.profile(df, options=options)
         checks = generator.generate_dq_rules(profiles, criticality=run_config.profiler_config.criticality)
         logger.info(f"Using options: \n{run_config.profiler_config}")
@@ -119,14 +136,16 @@ class ProfilerRunner:
             max_parallelism: Maximum number of parallel threads to use for profiling.
         """
         pattern_options = {
-            "sample_fraction": run_config.profiler_config.sample_fraction,
-            "sample_seed": run_config.profiler_config.sample_seed,
-            "limit": run_config.profiler_config.limit,
+            PROFILE_OPTION_SAMPLE_FRACTION: run_config.profiler_config.sample_fraction,
+            PROFILE_OPTION_SAMPLE_SEED: run_config.profiler_config.sample_seed,
+            PROFILE_OPTION_LIMIT: run_config.profiler_config.limit,
         }
         if run_config.profiler_config.max_null_ratio is not None:
-            pattern_options["max_null_ratio"] = run_config.profiler_config.max_null_ratio
+            pattern_options[PROFILE_OPTION_MAX_NULL_RATIO] = run_config.profiler_config.max_null_ratio
         if run_config.profiler_config.max_empty_ratio is not None:
-            pattern_options["max_empty_ratio"] = run_config.profiler_config.max_empty_ratio
+            pattern_options[PROFILE_OPTION_MAX_EMPTY_RATIO] = run_config.profiler_config.max_empty_ratio
+        if run_config.profiler_config.outliers_ratio is not None:
+            pattern_options[PROFILE_OPTION_OUTLIERS_RATIO] = run_config.profiler_config.outliers_ratio
         options = [{"table": "*", "options": pattern_options}]
         logger.info(f"Using options: \n{options}")
 
