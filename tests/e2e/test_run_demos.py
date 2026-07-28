@@ -187,12 +187,21 @@ def test_run_dqx_demo_pii_detection(ws, make_notebook, make_job, library_ref):
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_pii_detection")
 
 
-@pytest.mark.parametrize("demo_notebook", ["dqx_dlt_demo.py", "dqx_dlt_demo_quarantine.py"])
+@pytest.mark.parametrize(
+    "demo_notebook",
+    [
+        "dqx_dlt_demo.py",
+        "dqx_dlt_demo_quarantine.py",
+        "dqx_dlt_demo_foreach_batch.py",
+        "dqx_dlt_demo_foreach_batch_quarantine.py",
+    ],
+)
 def test_run_dqx_dlt_demo(
     skip_if_classic_compute, ws, make_notebook, make_schema, make_pipeline, make_job, library_ref, demo_notebook
 ):
     """
-    Test running the DLT demo notebooks (report-as-columns and quarantine variants) in a serverless pipeline.
+    Test running the DLT demo notebooks in a serverless pipeline: the materialized-view report-as-columns and
+    quarantine variants, plus the foreachBatch-sink report-as-columns and quarantine variants.
     No need to trigger from non-serverless runtime, since the dlt pipeline use own cluster anyway.
     """
     catalog = TEST_CATALOG
@@ -203,6 +212,11 @@ def test_run_dqx_dlt_demo(
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
     notebook_path = notebook.as_fuse().as_posix()
+    # The foreachBatch-sink demos write to fully-qualified tables *outside* the pipeline (an unqualified
+    # name would be captured as a pipeline-managed streaming table and rejected). Pass the test catalog /
+    # schema as pipeline configuration so the sink writes into the ephemeral test schema rather than its
+    # hardcoded default. The materialized-view demos ignore this configuration (they use pipeline-managed
+    # datasets), so it is harmless for them.
     pipeline = make_pipeline(
         # DLT / Lakeflow support 3 modes of execution:
         # * Full Unity Catalog (UC) mode, the so called DPM (Direct Publishing Mode).
@@ -213,6 +227,7 @@ def test_run_dqx_dlt_demo(
         # As part of this test we use the latest full UC mode.
         catalog=catalog,
         schema=schema,
+        configuration={"demo_catalog": catalog, "demo_schema": schema},
         libraries=[PipelineLibrary(notebook=NotebookLibrary(notebook_path))],
         environment=PipelinesEnvironment(dependencies=[library_ref]),
     )

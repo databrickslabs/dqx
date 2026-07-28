@@ -485,8 +485,10 @@ When writing DQX results to Lakeflow Materialized Views, you can set *run_time_o
   </TabItem>
 </Tabs>
 
-### Applying checks using foreachBatch  
+### Applying checks using Spark Structured Streaming foreachBatch  
   
+This section covers Spark's native Structured Streaming `foreachBatch` (`writeStream.foreachBatch(...)`), outside a Lakeflow pipeline. For applying checks and computing summary metrics per micro-batch inside a Lakeflow pipeline foreachBatch sink, see [Enabling summary metrics in Lakeflow Pipelines](#enabling-summary-metrics-in-lakeflow-pipelines) below.
+
 Spark's `foreachBatch` allows users to define an arbitrary processing function run for each streaming batch. DQX requires authentication with a Databricks SDK `WorkspaceClient` which is not supported inside `foreachBatch`. To use DQX in a `foreachBatch` function, create a `DQEngine` instance with a mock `WorkspaceClient`.  
   
 <Admonition type="warning" title="Engine functionality with mocked WorkspaceClient">  
@@ -1061,8 +1063,53 @@ This works for both batch and streaming pipelines. See the [Lakeflow pipeline de
 <Admonition type="info" title="Summary Metrics: Snapshot vs. history">
 The example is using a materialized view to compute the summary metrics. On each pipeline update the view is refreshed — **incrementally** when the query is deterministic (set static *run_time_overwrite* / *run_id_overwrite*, see the note above) and the engine can incrementalize the aggregation, otherwise fully recomputed. Either way it holds a **current snapshot** over all rows in the checked table, so `input_row_count` is the cumulative total, not a per-run count.
 
-To keep a **history** of metrics over time you need an append target: for **streaming** pipelines append per-window metrics from a windowed streaming table (recommended), and for **batch** pipelines append `compute_summary_metrics` output from a companion job. See the [Summary Metrics guide](/docs/guide/summary_metrics) for examples.
+To keep a **history** of metrics over time you need an append target. For **streaming** pipelines, compute the metrics per micro-batch inside a [foreachBatch sink](https://docs.databricks.com/aws/en/ldp/for-each-batch) and append them (see below).
 </Admonition>
+
+#### Per-batch metrics with a foreachBatch sink
+
+Instead of a materialized view, you can compute summary metrics inside a Lakeflow [foreachBatch sink](https://docs.databricks.com/aws/en/ldp/for-each-batch). The sink function receives each streaming micro-batch, so you apply the checks, write the checked rows, and compute and append the metrics **per batch**. Use this when you want:
+
+- a **history** of metrics — one set of counts appended per micro-batch — rather than a cumulative snapshot;
+- better **performance on large or growing tables** — the sink aggregates only the current micro-batch, whereas the materialized view re-aggregates the whole checked table on each pipeline update; and/or
+- a **metrics table shared across pipelines** — the sink appends to a fully-qualified external Delta table (not a pipeline-managed dataset), and Delta accepts concurrent appends, so several pipelines can write into one common metrics table. A materialized view is owned by a single pipeline's query and cannot be a shared target. Set a distinct observer `name` per source so rows stay filterable.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from pyspark import pipelines as dp
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+    from databricks.sdk import WorkspaceClient
+
+    # compute_summary_metrics requires an observer on the engine; it reads any custom_metrics from it.
+    dq_engine = DQEngine(WorkspaceClient(), observer=DQMetricsObserver())
+
+    @dp.table
+    def bronze():
+      return spark.readStream.table("catalog.schema.input")
+
+    # foreachBatch sink: apply checks, write the checked rows, and append per-batch summary metrics.
+    # compute_summary_metrics runs per micro-batch here (incremental history), rather than as a
+    # cumulative-snapshot materialized view over the whole table.
+    # A foreachBatch sink writes to tables *outside* the pipeline, so use fully-qualified names —
+    # unqualified names would be captured as pipeline-managed streaming tables and rejected.
+    @dp.foreach_batch_sink(name="silver_sink")
+    def silver_sink(batch_df, batch_id):
+      checked_df = dq_engine.apply_checks_by_metadata(batch_df, checks)
+      checked_df.write.format("delta").mode("append").saveAsTable("catalog.schema.silver")
+      
+      metrics_df = dq_engine.compute_summary_metrics(checked_df, checks=checks)
+      metrics_df.write.format("delta").mode("append").saveAsTable("catalog.schema.dq_summary_metrics")
+
+    @dp.append_flow(target="silver_sink")
+    def silver_flow():
+      return spark.readStream.table("bronze")
+    ```
+  </TabItem>
+</Tabs>
+
+See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_dlt_demo_foreach_batch.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_dlt_demo_foreach_batch_quarantine.py) that splits valid and invalid records into separate tables in the same batch.
 
 **Why not the observer directly?** The observer (`observe()`) and the streaming metrics listener do not work inside a declarative pipeline: the pipeline runtime — not your code — triggers the write action, so the Spark Observation is never populated (`observation.get` stalls) and the streaming listener receives no events. DQX detects the pipeline runtime and automatically skips wiring `observe()` there. `compute_summary_metrics` computes the same metrics as an aggregation instead, but still reads from the engine's observer — so **an observer must be configured** on the engine (calling it without one raises `InvalidParameterError`), and if you need **custom metrics**, configure it with them (`DQMetricsObserver(custom_metrics=[...])`). See the [Summary Metrics guide](/docs/guide/summary_metrics) for details.
 

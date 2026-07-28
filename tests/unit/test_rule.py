@@ -47,7 +47,7 @@ def test_compute_rule_fingerprint_set_arguments_order_independent():
         def __iter__(self) -> Iterator[object]:
             return iter(self.iteration_order)
 
-    values: list[object] = [NestedValue.DICT, 1, "1", ("pair", 2), frozenset({3, "3"})]
+    values = [NestedValue.DICT, 1, "1", ("pair", 2), frozenset({3, "3"})]
     check = {"check": {"function": "is_in_list", "arguments": {"allowed": IterationOrderedSet(values)}}}
     reversed_check = {
         "check": {"function": "is_in_list", "arguments": {"allowed": IterationOrderedSet(list(reversed(values)))}}

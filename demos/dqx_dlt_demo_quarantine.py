@@ -12,6 +12,11 @@ import dlt
 # MAGIC a materialized view over all rows. For a simpler pipeline that reports issues as columns without
 # MAGIC quarantining, see `dqx_dlt_demo.py`.
 # MAGIC
+# MAGIC This is the simple, recommended default for quarantining: the summary-metrics materialized view gives
+# MAGIC a cumulative snapshot over the whole table. If instead you want summary metrics computed incrementally
+# MAGIC per micro-batch and appended as a history, use the foreachBatch sink variant in
+# MAGIC `dqx_dlt_demo_foreach_batch_quarantine.py`.
+# MAGIC
 # MAGIC Create new ETL Pipeline to execute this notebook (see [here](https://docs.databricks.com/aws/en/getting-started/data-pipeline-get-started)):
 # MAGIC 1. Upload the notebook to a Databricks Workspace
 # MAGIC 2. Go to `Workflows` tab > `Create` > `ETL Pipeline` > `Add existing assets` > select the source code path and root directory
@@ -150,9 +155,11 @@ def quarantine():
 # One row per metric (input / error / warning / valid row counts and per-check breakdown).
 # Note: this MV is a cumulative snapshot over the whole table (input_row_count is the running
 # total, not a per-run count). It refreshes incrementally only when the query is deterministic —
-# set static run_time_overwrite / run_id_overwrite in ExtraParams for that. For per-run / per-window
-# metrics on large or incrementally-checked tables, append from a windowed streaming table instead
-# (see the "Snapshot vs. history" section of the Summary Metrics guide).
+# set static run_time_overwrite / run_id_overwrite in ExtraParams for that.
+# To keep a per-batch history of metrics instead of a cumulative snapshot — and to avoid re-aggregating
+# the whole table on each update (potentially more performant on large or growing tables) — compute the
+# metrics inside a foreachBatch sink over each micro-batch instead; see
+# `dqx_dlt_demo_foreach_batch_quarantine.py`.
 @dlt.table
 def dq_summary_metrics():
   df = dlt.read("bronze_dq_check")

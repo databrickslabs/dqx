@@ -1,21 +1,25 @@
 # Databricks notebook source
-import dlt
+from pyspark import pipelines as dp
 
 # COMMAND ----------
 
 # MAGIC
 # MAGIC %md
-# MAGIC ## DQX in a Lakeflow Pipeline (formerly Delta Live Tables - DLT)
+# MAGIC ## DQX in a Lakeflow Pipeline using a foreachBatch sink
 # MAGIC
-# MAGIC This demo applies DQX checks and reports issues as additional columns (`_errors` / `_warnings`),
-# MAGIC persisting the checked data as a `silver` table. Summary metrics are then computed as a materialized
-# MAGIC view over that table. For a pipeline that quarantines invalid records into a separate table, see
-# MAGIC `dqx_dlt_demo_quarantine.py`.
+# MAGIC This demo applies DQX checks in a streaming Lakeflow pipeline, reports issues as additional columns
+# MAGIC (`_errors` / `_warnings`) in a `silver` table, and appends **per-batch summary metrics** — one set of
+# MAGIC counts computed and appended for each micro-batch to a `dq_summary_metrics` table.
 # MAGIC
-# MAGIC This is the simple, recommended default: the summary-metrics materialized view gives a cumulative
-# MAGIC snapshot over the whole table. If instead you want summary metrics computed incrementally per
-# MAGIC micro-batch and appended as a history, use the foreachBatch sink variant in
-# MAGIC `dqx_dlt_demo_foreach_batch.py`.
+# MAGIC **When to use this (foreachBatch sink) instead of the simple pipeline (`dqx_dlt_demo.py`):**
+# MAGIC use it when you want summary metrics computed **incrementally per micro-batch** and appended as a
+# MAGIC history (one row set per batch), rather than the cumulative full-table snapshot the materialized-view
+# MAGIC demo produces. This is also **potentially more performant on large or growing tables**: metrics are
+# MAGIC aggregated over only the current micro-batch, whereas the materialized view re-aggregates over the
+# MAGIC whole checked table on each pipeline update. If you just need to apply checks and report issues into a
+# MAGIC table, prefer the simpler `dqx_dlt_demo.py`.
+# MAGIC
+# MAGIC For the quarantine variant of this pattern, see `dqx_dlt_demo_foreach_batch_quarantine.py`.
 # MAGIC
 # MAGIC Create new ETL Pipeline to execute this notebook (see [here](https://docs.databricks.com/aws/en/getting-started/data-pipeline-get-started)):
 # MAGIC 1. Upload the notebook to a Databricks Workspace
@@ -40,6 +44,12 @@ from databricks.sdk import WorkspaceClient
 
 # compute_summary_metrics requires an observer on the engine; it reads any custom_metrics from it.
 dq_engine = DQEngine(WorkspaceClient(), observer=DQMetricsObserver())
+
+# A foreachBatch sink writes to tables *outside* the pipeline, so it must use fully-qualified names
+# (unqualified names would be captured as pipeline-managed streaming tables and rejected). The target
+# catalog and schema are read from the pipeline configuration, defaulting to the demo schema.
+output_catalog = spark.conf.get("demo_catalog", "main")
+output_schema = spark.conf.get("demo_schema", "dqx_dlt_demo_foreach_batch")
 
 # COMMAND ----------
 
@@ -114,36 +124,37 @@ checks = yaml.safe_load("""
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Define Lakeflow Pipeline (bronze -> silver -> metrics)
+# MAGIC ## Define Lakeflow Pipeline (bronze -> foreachBatch sink -> silver + metrics)
 
 # COMMAND ----------
 
-# Bronze: raw input as a streaming view.
-@dlt.view
+# Bronze: raw input as a streaming table.
+@dp.table
 def bronze():
   return spark.readStream.format("delta") \
     .load("/databricks-datasets/delta-sharing/samples/nyctaxi_2019")
 
 # COMMAND ----------
 
-# Silver: apply checks and report issues as additional columns (_errors / _warnings).
-# Persist as a table so it can be used downstream (including by the metrics view below).
-@dlt.table
-def silver():
-  df = dlt.read_stream("bronze")
-  return dq_engine.apply_checks_by_metadata(df, checks)
+# foreachBatch sink: apply checks per micro-batch, append the checked data, and append summary metrics
+# for that batch. Computing metrics inside the sink gives a per-batch history, unlike a @dp.table
+# materialized view which recomputes a cumulative snapshot over the whole table.
+# The sink writes to fully-qualified tables outside the pipeline (see output_catalog/output_schema above).
+@dp.foreach_batch_sink(name="silver_sink")
+def silver_sink(batch_df, batch_id):
+  # Apply checks and report issues as additional columns (_errors / _warnings).
+  checked_df = dq_engine.apply_checks_by_metadata(batch_df, checks)
+  checked_df.write.format("delta").mode("append").saveAsTable(f"{output_catalog}.{output_schema}.silver")
+
+  # Summary metrics: computed per micro-batch and appended to a metrics table.
+  # Note: with a foreachBatch sink these are per-batch counts (one set of rows per micro-batch), not a
+  # cumulative snapshot; aggregate across batches downstream if you need running totals.
+  metrics_df = dq_engine.compute_summary_metrics(checked_df, checks=checks)
+  metrics_df.write.format("delta").mode("append").saveAsTable(f"{output_catalog}.{output_schema}.dq_summary_metrics")
 
 # COMMAND ----------
 
-# Summary Metrics: materialized view computed by aggregation over the silver table.
-# One row per metric (input / error / warning / valid row counts and per-check breakdown).
-# Note: this MV is a cumulative snapshot over the whole table (input_row_count is the running
-# total, not a per-run count). It refreshes incrementally only when the query is deterministic —
-# set static run_time_overwrite / run_id_overwrite in ExtraParams for that.
-# To keep a per-batch history of metrics instead of a cumulative snapshot — and to avoid re-aggregating
-# the whole table on each update (potentially more performant on large or growing tables) — compute the
-# metrics inside a foreachBatch sink over each micro-batch instead; see `dqx_dlt_demo_foreach_batch.py`.
-@dlt.table
-def dq_summary_metrics():
-  df = dlt.read("silver")
-  return dq_engine.compute_summary_metrics(df, checks=checks)
+# Wire the streaming bronze table into the sink via an append flow.
+@dp.append_flow(target="silver_sink")
+def silver_flow():
+  return spark.readStream.table("bronze")
