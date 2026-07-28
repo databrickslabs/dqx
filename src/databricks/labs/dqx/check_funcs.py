@@ -32,7 +32,6 @@ _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
 IPV4_MAX_OCTET_COUNT = 4
 IPV4_BIT_LENGTH = 32
 _VALID_STRING_CASES = {"upper", "lower", "title", "sentence"}
-_MAX_SUBSTRING_LENGTH = 2_147_483_647
 
 # Email helpers (RFC 5322 §3.2.3, §3.2.4 + RFC 5321 §4.1.3, §4.5.3.1).
 _EMAIL_ATEXT = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]"
@@ -299,36 +298,38 @@ def has_valid_string_case(column: str | Column, case: str) -> Column:
     elif case == "lower":
         normalized_case = F.lower(col_expr_cast)
     elif case == "title":
+        # Uppercase the first character of each space-delimited word, leaving the rest unchanged.
+        # Passing F.length(word) as the substring length returns from position 2 to the end.
         words = F.split(col_expr_cast, " ")
         normalized_case = F.array_join(
             F.transform(
                 words,
-                lambda word: F.concat(
-                    F.upper(F.substring(word, 1, 1)),
-                    F.substring(word, 2, _MAX_SUBSTRING_LENGTH),
-                ),
+                lambda word: F.concat(F.upper(F.substring(word, 1, 1)), F.substring(word, 2, F.length(word))),
             ),
             " ",
         )
     else:
+        # Uppercase the first non-whitespace character of each period-delimited segment, preserving
+        # any leading whitespace and the rest of the segment. The leading-whitespace prefix is the
+        # part of the segment before the stripped remainder, so it is derived from a single strip.
         segments = F.split(col_expr_cast, r"\.")
-        normalized_case = F.array_join(
-            F.transform(
-                segments,
-                lambda segment: F.concat(
-                    F.regexp_extract(segment, r"^(\s*)", 1),
-                    F.upper(F.substring(F.regexp_replace(segment, r"^\s*", ""), 1, 1)),
-                    F.substring(F.regexp_replace(segment, r"^\s*", ""), 2, _MAX_SUBSTRING_LENGTH),
-                ),
-            ),
-            ".",
-        )
 
-    condition = F.when(col_expr.isNotNull(), col_expr_cast != normalized_case).otherwise(F.lit(None))
+        def normalize_segment(segment: Column) -> Column:
+            stripped = F.regexp_replace(segment, r"^\s*", "")
+            prefix = F.substring(segment, 1, F.length(segment) - F.length(stripped))
+            return F.concat(
+                prefix, F.upper(F.substring(stripped, 1, 1)), F.substring(stripped, 2, F.length(stripped))
+            )
+
+        normalized_case = F.array_join(F.transform(segments, normalize_segment), ".")
+
+    # col_expr_cast != normalized_case already yields NULL for NULL input (SQL null propagation),
+    # and make_condition treats NULL as a pass, so no explicit isNotNull() guard is needed.
+    condition = col_expr_cast != normalized_case
     message = F.concat_ws(
         "",
         F.lit("Value '"),
-        col_expr.cast("string"),
+        col_expr_cast,
         F.lit(f"' in Column '{col_expr_str}' does not have valid '{case}' string case"),
     )
     return make_condition(condition, message, f"{col_str_norm}_has_invalid_{case}_string_case")
