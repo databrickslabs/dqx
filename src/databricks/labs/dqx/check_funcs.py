@@ -272,8 +272,12 @@ def has_valid_string_case(column: str | Column, case: str) -> Column:
 
     * `upper` requires all alphabetic characters to be uppercase
     * `lower` requires all alphabetic characters to be lowercase
-    * `title` requires the first character of each space-delimited word to be uppercase
-    * `sentence` requires each period-delimited segment's first non-whitespace character to be uppercase
+    * `title` requires the first character of each word to be uppercase; words are split on the ASCII
+      space character only, so other whitespace (tabs, newlines, non-breaking spaces) is not treated
+      as a word boundary. Only the first character of each word is checked; the rest is left as-is, so
+      an all-uppercase word (e.g. *HELLO*) also passes.
+    * `sentence` requires each segment's first non-whitespace character to be uppercase; segments are
+      split on the period only. Only that first character is checked; the rest is left as-is.
 
     Args:
         column: column to check; can be a string column name or a column expression
@@ -310,15 +314,17 @@ def has_valid_string_case(column: str | Column, case: str) -> Column:
         )
     else:
         # Uppercase the first non-whitespace character of each period-delimited segment, preserving
-        # any leading whitespace and the rest of the segment. The leading-whitespace prefix is the
-        # part of the segment before the stripped remainder, so it is derived from a single strip.
+        # any leading whitespace and the rest of the segment. The leading-whitespace prefix is matched
+        # directly (regexp_extract of the '^\s*' run); the remainder starts right after it.
         segments = F.split(col_expr_cast, r"\.")
 
         def normalize_segment(segment: Column) -> Column:
-            stripped = F.regexp_replace(segment, r"^\s*", "")
-            prefix = F.substring(segment, 1, F.length(segment) - F.length(stripped))
+            prefix = F.regexp_extract(segment, r"^(\s*)", 1)
+            rest_start = F.length(prefix) + 1
             return F.concat(
-                prefix, F.upper(F.substring(stripped, 1, 1)), F.substring(stripped, 2, F.length(stripped))
+                F.substring(segment, 1, F.length(prefix)),
+                F.upper(F.substring(segment, rest_start, 1)),
+                F.substring(segment, rest_start + 1, F.length(segment)),
             )
 
         normalized_case = F.array_join(F.transform(segments, normalize_segment), ".")

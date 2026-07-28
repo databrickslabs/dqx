@@ -135,6 +135,28 @@ def test_has_valid_string_case(spark):
     assertDataFrameEqual(actual, expected)
 
 
+def test_has_valid_string_case_all_uppercase_passes_title_and_sentence(spark):
+    """title/sentence only check the first character of each word/segment and leave the rest as-is,
+    so an all-uppercase value passes both (documented behavior). This pins that intentional quirk so a
+    future change (e.g. switching to full initcap title-casing) can't silently alter it."""
+    test_df = spark.createDataFrame(
+        [["HELLO WORLD", "HELLO WORLD. GOODBYE WORLD"]],
+        "title: string, sentence: string",
+    )
+
+    actual = test_df.select(
+        has_valid_string_case("title", "title"),
+        has_valid_string_case("sentence", "sentence"),
+    )
+
+    expected = spark.createDataFrame(
+        [[None, None]],
+        "title_has_invalid_title_string_case: string, sentence_has_invalid_sentence_string_case: string",
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_col_is_not_null_and_not_empty(spark):
     input_schema = "a: string, b: int, c: map<string, string>, d: array<string>, e: string"
     test_df = spark.createDataFrame(
