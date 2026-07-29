@@ -61,7 +61,7 @@ def test_get_tables_and_paths_from_code_dataframe(ws, spark, make_schema, make_r
 def test_get_tables_and_paths_from_table_dataframe(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
 
     input_schema = T.StructType([T.StructField("id", T.IntegerType())])
     df = spark.createDataFrame([[1]], schema=input_schema)
@@ -80,7 +80,7 @@ def test_get_tables_and_paths_from_table_dataframe(ws, spark, make_schema, make_
 def test_get_tables_and_paths_from_aggregated_table_dataframe(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
 
     input_schema = T.StructType([T.StructField("id", T.IntegerType())])
     df = spark.createDataFrame([[1]], schema=input_schema).groupBy("id").count()
@@ -99,8 +99,8 @@ def test_get_tables_and_paths_from_aggregated_table_dataframe(ws, spark, make_sc
 def test_get_tables_and_paths_from_joined_tables_dataframe(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name1 = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
-    table_name2 = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table_name1 = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
+    table_name2 = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
 
     input_schema = T.StructType([T.StructField("id", T.IntegerType())])
     df = spark.createDataFrame([[1]], schema=input_schema)
@@ -123,8 +123,8 @@ def test_get_tables_and_paths_from_joined_tables_dataframe(ws, spark, make_schem
 def test_get_tables_and_paths_from_unioned_tables_dataframe(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name1 = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
-    table_name2 = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table_name1 = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
+    table_name2 = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
 
     input_schema = T.StructType([T.StructField("id", T.IntegerType())])
     df = spark.createDataFrame([[1]], schema=input_schema)
@@ -147,7 +147,7 @@ def test_get_tables_and_paths_from_unioned_tables_dataframe(ws, spark, make_sche
 def test_get_tables_and_paths_from_mixed_dataframe(ws, spark, make_schema, make_random, make_volume):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     volume_path = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
 
@@ -174,7 +174,7 @@ def test_get_tables_and_paths_from_mixed_dataframe(ws, spark, make_schema, make_
 def test_get_tables_and_paths_from_streaming_table_based_dataframe(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
 
     input_schema = T.StructType([T.StructField("id", T.IntegerType())])
     df = spark.createDataFrame([[1]], schema=input_schema)
