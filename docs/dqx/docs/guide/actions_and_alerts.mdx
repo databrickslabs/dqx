@@ -720,6 +720,18 @@ The two knobs compose, and `alert_frequency` is applied **first** as a hard cap:
 into unhealthy to notify, use `DQAlertFrequency.ALWAYS` with `NotifyOn.STATUS_CHANGE`.
 </Admonition>
 
+<Admonition type="note" title="A failed delivery still consumes the frequency window">
+The frequency window opens when an alert **fires** (its condition and gates pass), which is decided
+*before* the notification is delivered. If delivery then fails after the in-attempt retries are
+exhausted, the window is still considered used: the alert is **not** re-attempted for the rest of
+that `HOURLY` / `DAILY` window, and only fires again on a run that falls in a **new** window (and
+only if the condition still holds). In other words, a failed delivery is retried in the *next*
+window, not the current one. This deliberately favors "never send duplicate alerts under concurrent
+(e.g. streaming) evaluation" over "guaranteed re-delivery within the window". If you need a failed
+alert to re-attempt on every run until it succeeds, use `DQAlertFrequency.ALWAYS` (no window to
+consume).
+</Admonition>
+
 The `DQAlertFrequency.HOURLY` / `DQAlertFrequency.DAILY` windows and `NotifyOn.STATUS_CHANGE`
 gating rely on suppression state that, by default, lives only in memory for the lifetime of the
 `DQEngine`. To make them behave correctly across engine restarts (for example each scheduled job
@@ -1020,7 +1032,7 @@ All webhook destinations validate that the resolved URL uses HTTPS only and that
 
 ### Delivery retries and fault isolation
 
-Each destination is attempted concurrently. A delivery failure in one destination is isolated: the error is recorded in `ActionResult.destination_errors` but the other destinations still receive the alert. Transient failures are retried with exponential backoff before the error is recorded.
+Each destination is attempted concurrently. A delivery failure in one destination is isolated: the error is recorded in `ActionResult.destination_errors` but the other destinations still receive the alert. Transient failures are retried with exponential backoff before the error is recorded; when a webhook responds with HTTP `429` and a `Retry-After` header, that delay is honored instead of the backoff (bounded by the client's configured maximum delay so a large or malformed value cannot stall delivery).
 
 <Admonition type="warning" title="Plaintext credentials are development-only">
 Passing webhook URLs, usernames, or passwords as plain strings is convenient for local development but must not be used in production. Always use *DQSecret* references in deployed pipelines.
