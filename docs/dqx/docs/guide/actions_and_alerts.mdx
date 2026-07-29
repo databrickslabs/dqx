@@ -8,7 +8,9 @@ import TabItem from '@theme/TabItem';
 
 # Actions and Alerting
 
-DQX **actions** let you react automatically when observed summary metrics cross a threshold. After checks are applied and the Spark observation is materialized, each action evaluates its optional *condition* against the observed metrics and, when the condition is satisfied (or when there is no condition), executes its inner logic.
+DQX **actions** let you react automatically when observed summary metrics cross a threshold. Actions can be used to notify stakeholders or fail a pipeline when data quality issues are detected.
+
+After checks are applied and the Spark observation is materialized, each action evaluates its optional *condition* against the observed metrics and, when the condition is satisfied (or when there is no condition), executes its inner logic.
 
 The built-in action types are:
 
