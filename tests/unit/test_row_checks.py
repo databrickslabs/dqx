@@ -1,3 +1,4 @@
+from typing import cast
 import pytest
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.check_funcs import (
@@ -10,9 +11,12 @@ from databricks.labs.dqx.check_funcs import (
     is_in_list,
     is_not_null_and_is_in_list,
     is_aggr_not_greater_than,
+    has_valid_string_case,
     is_ipv4_address_in_cidr,
     is_ipv6_address_in_cidr,
     is_valid_national_id,
+    is_valid_country_code,
+    is_valid_currency_code,
     sql_expression,
 )
 from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
@@ -51,6 +55,23 @@ def test_col_is_not_null_and_is_in_list_missing_allowed_list():
 def test_col_is_in_list_missing_allowed_list():
     with pytest.raises(InvalidParameterError, match="allowed list must not be empty."):
         is_in_list("a", allowed=[])
+
+
+@pytest.mark.parametrize(
+    "case, expected_message",
+    [
+        ("camel", "'case' must be one of ['lower', 'sentence', 'title', 'upper'], got 'camel'"),
+        ("", "'case' must be one of ['lower', 'sentence', 'title', 'upper'], got ''"),
+        ("Upper", "'case' must be one of ['lower', 'sentence', 'title', 'upper'], got 'Upper'"),
+        (None, "'case' must be a string, got <class 'NoneType'> instead."),
+        (1, "'case' must be a string, got <class 'int'> instead."),
+    ],
+)
+def test_has_valid_string_case_rejects_invalid_case(case: object, expected_message: str):
+    with pytest.raises(InvalidParameterError) as error:
+        has_valid_string_case("a", cast(str, case))
+
+    assert str(error.value) == expected_message
 
 
 def test_incorrect_aggr_type():
@@ -172,3 +193,78 @@ def test_is_valid_national_id_non_string_country():
 def test_is_valid_national_id_unsupported_country():
     with pytest.raises(InvalidParameterError, match="Unsupported country code for national ID validation"):
         is_valid_national_id("a", country="ZZ")
+
+
+def test_is_valid_country_code_default_format_auto_name():
+    result = is_valid_country_code("a")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_country_code"
+
+
+def test_is_valid_country_code_alpha_3_format_auto_name():
+    result = is_valid_country_code("a", code_format="alpha-3")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_country_code"
+
+
+def test_is_valid_country_code_numeric_format_auto_name():
+    result = is_valid_country_code("a", code_format="numeric")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_country_code"
+
+
+def test_is_valid_country_code_format_is_case_insensitive():
+    result = is_valid_country_code("a", code_format="Alpha-2")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_country_code"
+
+
+def test_is_valid_country_code_missing_code_format():
+    with pytest.raises(MissingParameterError, match="'code_format' is not provided."):
+        is_valid_country_code("a", code_format=None)
+
+
+def test_is_valid_country_code_non_string_code_format():
+    with pytest.raises(InvalidParameterError, match="'code_format' must be a string"):
+        is_valid_country_code("a", code_format=123)
+
+
+def test_is_valid_country_code_unsupported_code_format():
+    with pytest.raises(InvalidParameterError, match="Unsupported code_format for country code validation"):
+        is_valid_country_code("a", code_format="alpha-4")
+
+
+def test_is_valid_country_code_case_insensitive_auto_name():
+    result = is_valid_country_code("a", case_sensitive=False)
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_country_code"
+
+
+def test_is_valid_currency_code_default_format_auto_name():
+    result = is_valid_currency_code("a")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_currency_code"
+
+
+def test_is_valid_currency_code_numeric_format_auto_name():
+    result = is_valid_currency_code("a", code_format="numeric")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_currency_code"
+
+
+def test_is_valid_currency_code_format_is_case_insensitive():
+    result = is_valid_currency_code("a", code_format="Alphabetic")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_currency_code"
+
+
+def test_is_valid_currency_code_missing_code_format():
+    with pytest.raises(MissingParameterError, match="'code_format' is not provided."):
+        is_valid_currency_code("a", code_format=None)
+
+
+def test_is_valid_currency_code_non_string_code_format():
+    with pytest.raises(InvalidParameterError, match="'code_format' must be a string"):
+        is_valid_currency_code("a", code_format=123)
+
+
+def test_is_valid_currency_code_unsupported_code_format():
+    with pytest.raises(InvalidParameterError, match="Unsupported code_format for currency code validation"):
+        is_valid_currency_code("a", code_format="alpha-3")
+
+
+def test_is_valid_currency_code_case_insensitive_auto_name():
+    result = is_valid_currency_code("a", case_sensitive=False)
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_currency_code"
