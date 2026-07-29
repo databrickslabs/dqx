@@ -536,3 +536,72 @@ def test_should_fire_and_record_are_thread_safe() -> None:
     # run_times up to base+7min, so a subsequent HOURLY check well within the hour is suppressed.
     within_window = _make_context(run_time=base + timedelta(minutes=30))
     assert store.should_fire(dq_action, within_window, condition_result=True) is False
+
+
+def test_try_fire_prevents_concurrent_double_fire() -> None:
+    """Concurrent try_fire for the same HOURLY alert must let exactly one caller through (#2).
+
+    Many threads call try_fire with the same run_time. Because try_fire atomically checks the
+    frequency gate AND reserves the fire slot under one lock hold, only the first should win; the
+    rest observe the reservation and are suppressed. should_fire (the pure predicate) cannot make
+    this guarantee, which is why the evaluator uses try_fire.
+    """
+    store = ActionStateStore()
+    dq_action = _make_dq_action(_make_dq_alert(frequency=DQAlertFrequency.HOURLY, notify_on=NotifyOn.EACH))
+    ctx = _make_context()  # single fixed run_time -> all calls compete for the same window
+    granted = 0
+    granted_lock = threading.Lock()
+    barrier = threading.Barrier(16)
+
+    def worker() -> None:
+        barrier.wait(timeout=5)
+        if store.try_fire(dq_action, ctx, condition_result=True):
+            with granted_lock:
+                nonlocal granted
+                granted += 1
+
+    threads = [threading.Thread(target=worker) for _ in range(16)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads)
+    # Exactly one thread may fire within the HOURLY window.
+    assert granted == 1
+
+
+def test_try_fire_does_not_reserve_for_non_alert_action() -> None:
+    """try_fire must not stamp last_fired for a non-DQAlert action (no frequency gating applies)."""
+    store = ActionStateStore()
+    dq_action = DQAction(action=FailPipeline(name="stop"))
+    ctx = _make_context()
+    # Repeated try_fire for a non-alert action always returns True (never reserved/suppressed).
+    assert store.try_fire(dq_action, ctx, condition_result=True) is True
+    assert store.try_fire(dq_action, ctx, condition_result=True) is True
+
+
+def test_record_append_failure_is_logged_not_raised() -> None:
+    """A failing persistent append must not propagate; in-memory state still updates (#4)."""
+
+    class _FailingEventStore(ActionEventStore):
+        def append(self, events: list[AlertEvent]) -> None:
+            raise RuntimeError("transient store outage")
+
+        def load_latest_per_action(self) -> dict[str, AlertEvent]:
+            return {}
+
+        def load_last_fired_per_action(self) -> dict[str, datetime]:
+            return {}
+
+    store = ActionStateStore(event_store=_FailingEventStore())
+    dq_action = _make_dq_action(_make_dq_alert(frequency=DQAlertFrequency.HOURLY, notify_on=NotifyOn.EACH))
+    event = _make_event(action_name=dq_action.name, fired=True, status=ActionStatus.UNHEALTHY)
+
+    # Must not raise even though append() fails.
+    store.record(event)
+
+    # In-memory suppression state advanced despite the durable append failure: a subsequent
+    # should_fire within the HOURLY window is suppressed.
+    within_window = _make_context(run_time=event.run_time + timedelta(minutes=5))
+    assert store.should_fire(dq_action, within_window, condition_result=True) is False

@@ -133,7 +133,9 @@ class ActionEvaluator:
             # ------------------------------------------------------------------
             # Step 2: suppression check
             # ------------------------------------------------------------------
-            if not self._state_store.should_fire(dq_action, context, condition_result=condition_result):
+            # try_fire (not should_fire) so the gate decision and the fire reservation are atomic:
+            # concurrent streaming callbacks cannot both pass the check and double-fire the same alert.
+            if not self._state_store.try_fire(dq_action, context, condition_result=condition_result):
                 logger.debug(f"Action '{safe_name}' suppressed by state store.")
                 # The condition fired (the data is unhealthy) but the notification was suppressed by
                 # frequency / status-change gating. Record UNHEALTHY — not HEALTHY — so *last_status*

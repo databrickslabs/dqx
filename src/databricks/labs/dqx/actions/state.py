@@ -215,6 +215,46 @@ class ActionStateStore:
         Returns:
             *True* if the action should execute this run; *False* otherwise.
         """
+        # Read the in-memory maps under the lock: record()/seed() mutate them, and a single store may
+        # be driven concurrently by a streaming query's progress callbacks (Spark listener thread
+        # pool), so the frequency/notify-on reads must be serialized against those writes. RLock lets
+        # the same thread re-enter (record()/try_fire() acquire it too) without deadlocking.
+        with self._lock:
+            return self._should_fire_locked(dq_action, context, condition_result)
+
+    def try_fire(self, dq_action: DQAction, context: ActionContext, condition_result: bool) -> bool:
+        """Atomically decide whether *dq_action* should fire **and reserve the fire slot**.
+
+        This is the concurrency-safe variant used by the evaluator. *should_fire* is a pure
+        predicate: two threads can both call it, both get *True*, and both fire before either
+        records — defeating *HOURLY* / *DAILY* dedup. *try_fire* closes that check-then-act race by
+        running the same gates and, when they pass for a *DQAlert*, stamping *_last_fired* to
+        *context.run_time* **under the same lock hold**, so a concurrent *try_fire* for the same
+        action observes the reservation and is suppressed.
+
+        A later *record()* for the fired event stamps the same *_last_fired* value (idempotent) and
+        updates *_last_status*. Non-*DQAlert* actions are never frequency-gated, so nothing is
+        reserved for them.
+
+        Args:
+            dq_action: The bound action configuration being evaluated.
+            context: Immutable run-time snapshot carrying *run_time* and *metrics*.
+            condition_result: Result of evaluating *dq_action.condition*; *True* means it passed.
+
+        Returns:
+            *True* if the action should execute this run (and the slot is now reserved); else *False*.
+        """
+        with self._lock:
+            if not self._should_fire_locked(dq_action, context, condition_result):
+                return False
+            # Reserve the slot so a concurrent try_fire for the same alert is suppressed before this
+            # thread's execute()/record() completes. Only DQAlert is frequency-gated.
+            if isinstance(dq_action.action, DQAlert):
+                self._last_fired[dq_action.name] = context.run_time
+            return True
+
+    def _should_fire_locked(self, dq_action: DQAction, context: ActionContext, condition_result: bool) -> bool:
+        """Shared gate logic for *should_fire* / *try_fire*. Caller must hold *_lock*."""
         if not condition_result:
             return False
 
@@ -225,22 +265,15 @@ class ActionStateStore:
         action_name = dq_action.name
         safe_name = sanitize_for_log(action_name)  # action_name is operator-supplied (CWE-117)
 
-        # Read the in-memory maps under the lock: record()/seed() mutate them, and a single store may
-        # be driven concurrently by a streaming query's progress callbacks (Spark listener thread
-        # pool), so the frequency/notify-on reads must be serialized against those writes. RLock lets
-        # the same thread re-enter (record() acquires it too) without deadlocking.
-        with self._lock:
-            # --- Frequency gate ---
-            frequency_allows = self._check_frequency(alert.alert_frequency, action_name, context.run_time)
-            if not frequency_allows:
-                logger.debug(f"Action '{safe_name}' suppressed by frequency window ({alert.alert_frequency}).")
-                return False
+        # --- Frequency gate ---
+        if not self._check_frequency(alert.alert_frequency, action_name, context.run_time):
+            logger.debug(f"Action '{safe_name}' suppressed by frequency window ({alert.alert_frequency}).")
+            return False
 
-            # --- Notify-on gate ---
-            notify_allows = self._check_notify_on(alert.notify_on, action_name)
-            if not notify_allows:
-                logger.debug(f"Action '{safe_name}' suppressed by notify_on={alert.notify_on} (already UNHEALTHY).")
-                return False
+        # --- Notify-on gate ---
+        if not self._check_notify_on(alert.notify_on, action_name):
+            logger.debug(f"Action '{safe_name}' suppressed by notify_on={alert.notify_on} (already UNHEALTHY).")
+            return False
 
         return True
 
@@ -258,6 +291,13 @@ class ActionStateStore:
         would stall every concurrent *should_fire*/*record* on this store behind the
         slowest network call. Only the in-memory map updates need the lock.
 
+        In-memory state intentionally leads persistence (the in-memory maps are the source of truth
+        for suppression within a process; the store only seeds a fresh process). If the durable
+        append fails, the in-memory update already stands, so this run's suppression state can differ
+        from what a later *seed()* would reload. That divergence is logged at *warning* rather than
+        raised, so a transient store outage degrades to "suppression not durable across restart"
+        instead of crashing the (possibly streaming-listener-thread) caller.
+
         Args:
             event: The *AlertEvent* to record.
         """
@@ -267,7 +307,14 @@ class ActionStateStore:
             self._last_status[event.action_name] = event.status
 
         if self._event_store is not None:
-            self._event_store.append([event])
+            try:
+                self._event_store.append([event])
+            except Exception as exc:  # noqa: BLE001 - persistence is best-effort; never crash the caller
+                safe_name = sanitize_for_log(event.action_name)
+                logger.warning(
+                    f"Failed to persist action event for '{safe_name}'; in-memory suppression state "
+                    f"stands but will not survive a restart: {sanitize_for_log(str(exc))}"
+                )
 
     # ------------------------------------------------------------------
     # Private helpers

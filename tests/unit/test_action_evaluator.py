@@ -172,7 +172,7 @@ def test_condition_none_fires_unconditionally() -> None:
 
     dq_action = _make_dq_action(action_mock, condition=None, name="unconditional")
     state_store = create_autospec(ActionStateStore, instance=True)
-    state_store.should_fire.return_value = True
+    state_store.try_fire.return_value = True
 
     evaluator = ActionEvaluator(
         actions=[dq_action],
@@ -208,7 +208,7 @@ def test_condition_true_should_fire_true_executes_and_records() -> None:
 
     dq_action = _make_dq_action(action_mock, condition="error_row_count > 0", name="alert_action")
     state_store = create_autospec(ActionStateStore, instance=True)
-    state_store.should_fire.return_value = True
+    state_store.try_fire.return_value = True
 
     evaluator = ActionEvaluator(
         actions=[dq_action],
@@ -245,7 +245,7 @@ def test_should_fire_false_suppresses() -> None:
 
     dq_action = _make_dq_action(action_mock, condition="error_row_count > 0", name="suppressed_action")
     state_store = create_autospec(ActionStateStore, instance=True)
-    state_store.should_fire.return_value = False  # suppressed
+    state_store.try_fire.return_value = False  # suppressed
 
     evaluator = ActionEvaluator(
         actions=[dq_action],
@@ -288,7 +288,7 @@ def test_terminal_action_deferred() -> None:
     dq_b = _make_dq_action(action_b, condition=None, name="terminal_action")
 
     state_store = create_autospec(ActionStateStore, instance=True)
-    state_store.should_fire.return_value = True
+    state_store.try_fire.return_value = True
 
     evaluator = ActionEvaluator(
         actions=[dq_a, dq_b],
@@ -323,7 +323,7 @@ def test_no_isinstance_on_action_type() -> None:
     dq_b = _make_dq_action(action_b, condition=None, name="fake_b")
 
     state_store = create_autospec(ActionStateStore, instance=True)
-    state_store.should_fire.return_value = True
+    state_store.try_fire.return_value = True
 
     evaluator = ActionEvaluator(
         actions=[dq_a, dq_b],
@@ -362,7 +362,7 @@ def test_destination_errors_recorded_in_event() -> None:
 
     dq_action = _make_dq_action(action_mock, condition=None, name="delivery_action")
     state_store = create_autospec(ActionStateStore, instance=True)
-    state_store.should_fire.return_value = True
+    state_store.try_fire.return_value = True
 
     evaluator = ActionEvaluator(
         actions=[dq_action],
@@ -396,7 +396,7 @@ def test_terminal_error_ordering_raises_first() -> None:
     dq_term2 = _make_dq_action(term2, condition=None, name="terminal_second")
 
     state_store = create_autospec(ActionStateStore, instance=True)
-    state_store.should_fire.return_value = True
+    state_store.try_fire.return_value = True
 
     evaluator = ActionEvaluator(
         actions=[dq_term1, dq_term2],
@@ -425,7 +425,7 @@ def test_alert_fires_before_terminal_abort() -> None:
     dq_terminal = _make_dq_action(terminal_action, condition=None, name="terminal")
 
     state_store = create_autospec(ActionStateStore, instance=True)
-    state_store.should_fire.return_value = True
+    state_store.try_fire.return_value = True
 
     evaluator = ActionEvaluator(
         actions=[dq_alert, dq_terminal],
@@ -538,4 +538,4 @@ def test_runtime_condition_error_records_unhealthy_and_no_raise() -> None:
     assert event.status == ActionStatus.UNHEALTHY
     assert event.action_name == "bad_action"
     # should_fire / execute are never reached for a condition that errors.
-    state_store.should_fire.assert_not_called()
+    state_store.try_fire.assert_not_called()

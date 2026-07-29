@@ -21,7 +21,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from http.client import HTTPMessage
 from typing import IO, Protocol
@@ -40,9 +40,15 @@ def _sanitize_host(host: str) -> str:
 def _parse_retry_after(value: str | None) -> float | None:
     """Parse an HTTP *Retry-After* header value into a non-negative delay in seconds.
 
-    Per RFC 9110 the value is either delta-seconds (an integer) or an HTTP-date. Returns *None*
-    when the header is absent or cannot be parsed, so the caller falls back to its own backoff.
-    A negative or past-dated value is clamped to 0.
+    Per RFC 9110 the value is either delta-seconds or an HTTP-date. Returns *None* when the header is
+    absent or cannot be parsed, so the caller falls back to its own backoff. A negative or past-dated
+    value is clamped to 0.
+
+    Robustness: any parse failure yields *None* rather than propagating. The delta-seconds branch
+    accepts a plain *float* (so a non-conformant fractional value like *"1.5"* is honored rather than
+    falling through), and *parsedate_to_datetime* — which raises *ValueError*/*TypeError* on malformed
+    input in Python 3.10+ — is guarded. HTTP-dates are defined in GMT, so a parsed value without an
+    explicit timezone is treated as UTC and compared against *now* in UTC.
 
     Args:
         value: The raw *Retry-After* header value, or *None* if the header was absent.
@@ -55,17 +61,24 @@ def _parse_retry_after(value: str | None) -> float | None:
     value = value.strip()
     if not value:
         return None
-    # delta-seconds form (most common for webhook APIs).
+    # delta-seconds form (most common for webhook APIs). Accept float so a fractional value is
+    # honored instead of falling through to the (stricter) HTTP-date parser.
     try:
-        return max(0.0, float(int(value)))
+        return max(0.0, float(value))
     except ValueError:
         pass
-    # HTTP-date form: compute seconds from now, clamped at 0 for past dates.
-    parsed = parsedate_to_datetime(value)
-    if parsed is None:
+    # HTTP-date form: compute seconds from now, clamped at 0 for past dates. parsedate_to_datetime
+    # raises on malformed input, so treat any failure as "unparseable" -> None.
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (ValueError, TypeError):
         return None
-    now = datetime.now(parsed.tzinfo) if parsed.tzinfo is not None else datetime.now()
-    return max(0.0, (parsed - now).total_seconds())
+    if parsed is None:  # older Pythons returned None instead of raising
+        return None
+    # HTTP-dates are GMT; a naive parsed value (e.g. a "-0000" offset) must be read as UTC, not local.
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return max(0.0, (parsed - datetime.now(timezone.utc)).total_seconds())
 
 
 def validate_webhook_url(url: str, allowed_host_suffixes: list[str] | None = None) -> None:

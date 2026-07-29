@@ -370,6 +370,37 @@ class TestWebhookClientPost:
         assert len(delays) == 1
         assert 5.0 <= delays[0] <= 30.0
 
+    def test_429_malformed_retry_after_does_not_crash(self) -> None:
+        """A malformed Retry-After (e.g. 'garbage') must not raise; delivery falls back to backoff."""
+        headers = HTTPMessage()
+        headers["Retry-After"] = "not-a-date-or-int"
+        http_err = urllib.error.HTTPError(
+            url="https://hooks.slack.com/x", code=429, msg="Too Many Requests", hdrs=headers, fp=io.BytesIO(b"")
+        )
+        opener = FakeOpener([http_err, _StubResponse(200)])
+        delays: list[float] = []
+
+        client = WebhookClient(max_retries=3, base_delay=1.0, max_delay=30.0, opener=opener, sleeper=delays.append)
+        # Must not raise ValueError from the Retry-After parse.
+        client.post("https://hooks.slack.com/x", {"k": "v"})
+
+        assert delays == [1.0]  # fell back to exponential backoff
+
+    def test_429_fractional_retry_after_is_honored(self) -> None:
+        """A fractional Retry-After like '2.5' is honored as 2.5s, not treated as a crash/fall-through."""
+        headers = HTTPMessage()
+        headers["Retry-After"] = "2.5"
+        http_err = urllib.error.HTTPError(
+            url="https://hooks.slack.com/x", code=429, msg="Too Many Requests", hdrs=headers, fp=io.BytesIO(b"")
+        )
+        opener = FakeOpener([http_err, _StubResponse(200)])
+        delays: list[float] = []
+
+        client = WebhookClient(max_retries=3, base_delay=1.0, max_delay=30.0, opener=opener, sleeper=delays.append)
+        client.post("https://hooks.slack.com/x", {"k": "v"})
+
+        assert delays == [2.5]
+
     def test_429_without_retry_after_uses_backoff(self) -> None:
         """A 429 with no Retry-After header falls back to the normal exponential backoff."""
         http_err = urllib.error.HTTPError(
