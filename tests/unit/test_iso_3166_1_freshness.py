@@ -1,6 +1,6 @@
 import pycountry
 
-from databricks.labs.dqx.check_funcs import load_iso_codes
+from tests.unit.iso_code_freshness import assert_packaged_codes_match
 
 
 def test_iso_3166_1_codes_match_pycountry():
@@ -16,21 +16,22 @@ def test_iso_3166_1_codes_match_pycountry():
     packaged list contains that pycountry no longer does (stale/invalid codes). The packaged lists are
     reconciled against the official ISO 3166-1 list before committing; if a future intentional
     divergence from pycountry is introduced, record it as an explicit allow-list here rather than
-    loosening the assertion. The test reads via the production loader (load_iso_codes) so it covers
-    what actually runs rather than reimplementing the reader.
+    loosening the assertion.
+
+    Country attributes are read with getattr(..., None) and the None values filtered out, so a
+    future pycountry release that renames an attribute or omits it for some entries surfaces as a
+    readable code-set mismatch here rather than an AttributeError raised during collection.
     """
     expected = {
-        "iso_3166_1_alpha_2.txt": frozenset(country.alpha_2 for country in pycountry.countries),
-        "iso_3166_1_alpha_3.txt": frozenset(country.alpha_3 for country in pycountry.countries),
-        "iso_3166_1_numeric.txt": frozenset(country.numeric for country in pycountry.countries),
+        "iso_3166_1_alpha_2.txt": frozenset(
+            code for country in pycountry.countries if (code := getattr(country, "alpha_2", None)) is not None
+        ),
+        "iso_3166_1_alpha_3.txt": frozenset(
+            code for country in pycountry.countries if (code := getattr(country, "alpha_3", None)) is not None
+        ),
+        "iso_3166_1_numeric.txt": frozenset(
+            code for country in pycountry.countries if (code := getattr(country, "numeric", None)) is not None
+        ),
     }
 
-    for resource_name, expected_codes in expected.items():
-        packaged = load_iso_codes(resource_name)
-        missing = expected_codes - packaged
-        stale = packaged - expected_codes
-        assert packaged == expected_codes, (
-            f"Packaged codes in '{resource_name}' do not match pycountry. "
-            f"Missing (in pycountry, not packaged): {sorted(missing)}. "
-            f"Stale (packaged, not in pycountry): {sorted(stale)}."
-        )
+    assert_packaged_codes_match(expected)
