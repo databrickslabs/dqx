@@ -20,7 +20,9 @@ from databricks.labs.dqx.check_funcs import (
     foreign_key,
     compare_datasets,
     is_data_fresh_per_time_window,
+    has_no_gaps_per_time_window,
     has_valid_schema,
+    sql_query,
     aggr_matches_dataset,
 )
 from databricks.labs.dqx.utils import get_column_name_or_alias
@@ -30,6 +32,49 @@ from tests.constants import TEST_CATALOG
 
 
 SCHEMA = "a: string, b: int"
+
+
+@pytest.mark.parametrize(
+    "schema, merge_columns, rows",
+    [
+        (
+            "row_id: string, amount: int",
+            ["row_id"],
+            [(None, 100), ("row-1", 100), ("row-2", -1)],
+        ),
+        (
+            "row_id: string, part_id: string, amount: int",
+            ["row_id", "part_id"],
+            [(None, "part-1", 100), ("row-1", None, 100), ("row-2", "part-2", -1)],
+        ),
+    ],
+)
+def test_sql_query_with_null_merge_columns(
+    spark: SparkSession,
+    schema: str,
+    merge_columns: list[str],
+    rows: list[tuple[str | int | None, ...]],
+):
+    """A true query condition must survive null keys in single and composite joins."""
+    test_df = spark.createDataFrame(rows, schema)
+    query_columns = ", ".join(merge_columns)
+    condition, apply_method = sql_query(
+        f"SELECT {query_columns}, amount > 0 AS condition FROM {{{{ input_view }}}}",
+        merge_columns=merge_columns,
+        msg="positive amount",
+    )
+
+    actual = apply_method(test_df, spark, {}).select(*merge_columns, "amount", condition.alias("violation"))
+    assert actual.count() == len(rows)
+    violations = {tuple(row[column] for column in merge_columns): row["violation"] for row in actual.collect()}
+
+    expected = {}
+    for row in rows:
+        amount = row[-1]
+        assert isinstance(amount, int)
+        expected[tuple(row[:-1])] = "positive amount" if amount > 0 else None
+
+    assert violations == expected
 
 
 def test_has_no_outliers_int_numeric_types(spark: SparkSession):
@@ -1260,6 +1305,27 @@ def test_is_aggr_with_count_distinct_and_group_by(spark: SparkSession):
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+def test_is_aggr_with_count_distinct_and_null_group(spark: SparkSession):
+    """A violating null group must retain its aggregated metric after reattachment."""
+    test_df = spark.createDataFrame(
+        [[None, "val1"], [None, "val2"], ["group2", "val3"]],
+        "a: string, b: string",
+    )
+
+    actual = _apply_checks(
+        test_df,
+        [is_aggr_not_greater_than("b", limit=1, aggr_type="count_distinct", group_by=["a"])],
+    )
+
+    message = "Distinct count value 2 in column 'b' per group of columns 'a' is greater than limit: 1"
+    expected = spark.createDataFrame(
+        [[None, "val1", message], [None, "val2", message], ["group2", "val3", None]],
+        "a: string, b: string, b_count_distinct_group_by_a_greater_than_limit: string",
+    )
+
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
 def test_is_aggr_with_count_distinct_and_column_expression_in_group_by(spark: SparkSession):
     """Test count_distinct with Column expression (F.col) in group_by.
 
@@ -1891,7 +1957,7 @@ def test_aggr_matches_dataset_with_ref_table(spark: SparkSession, make_schema, m
 
     catalog_name = TEST_CATALOG
     ref_table_schema = make_schema(catalog_name=catalog_name)
-    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(10).lower()}"
+    ref_table = f"{catalog_name}.{ref_table_schema.name}.t{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)
 
     condition, apply = aggr_matches_dataset("a", ref_table=ref_table, aggr_type="count")
@@ -2041,24 +2107,23 @@ def test_aggr_matches_dataset_count_distinct_group_by_mismatch(spark: SparkSessi
 def test_aggr_matches_dataset_count_distinct_group_by_null_key(spark: SparkSession):
     """count_distinct + group_by with a NULL group key.
 
-    count_distinct is a window-incompatible aggregate, so the grouped join is not null-safe (documented on
-    aggr_matches_dataset). A legitimately NULL group key therefore cannot be matched to the reference and is
-    surfaced with a NULL limit (mismatch) rather than being silently compared. This test pins that documented
-    behavior so a future change to the join is a conscious decision.
+    count_distinct is a window-incompatible aggregate that uses a two-stage groupBy join, but that join is
+    null-safe on both the checked and reference sides. A legitimately NULL group key is therefore matched to
+    the reference and compared like any other group rather than being dropped. This test pins that behavior so
+    a future change to the join is a conscious decision.
     """
-    # NULL group: distinct b = {1, 2} (2); group "y": distinct b = {3} (1)
+    # NULL group: checked distinct b = {1, 2} (2), ref distinct b = {10, 20} (2) -> equal -> passes.
+    # Group "y": checked distinct b = {3} (1), ref distinct b = {30} (1) -> equal -> passes.
     test_df = spark.createDataFrame([[None, 1], [None, 2], ["y", 3]], SCHEMA)
     ref_df = spark.createDataFrame([[None, 10], [None, 20], ["y", 30]], SCHEMA)
 
     condition, apply_fn = aggr_matches_dataset("b", ref_df_name="ref_df", aggr_type="count_distinct", group_by=["a"])
     checked = apply_fn(test_df, spark, {"ref_df": ref_df}).select("a", "b", condition.alias("cond"))
-    # Assert the flagging behavior (which rows are flagged) rather than the exact NULL-limit message text:
-    # the non-null group "y" matches (distinct 1 == 1) and passes; the NULL-key group cannot join
-    # null-safely for a window-incompatible aggregate, so it is surfaced (condition is non-null).
+    # Both groups match null-safely and their distinct counts are equal, so no row is flagged.
     results = {(row["a"], row["b"]): row["cond"] for row in checked.collect()}
     assert results[("y", 3)] is None
-    assert results[(None, 1)] is not None
-    assert results[(None, 2)] is not None
+    assert results[(None, 1)] is None
+    assert results[(None, 2)] is None
 
 
 def test_aggr_matches_dataset_group_by_null_key_mismatch(spark: SparkSession):
@@ -2492,7 +2557,7 @@ def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_
 
     catalog_name = TEST_CATALOG
     ref_table_schema = make_schema(catalog_name=catalog_name)
-    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(10).lower()}"
+    ref_table = f"{catalog_name}.{ref_table_schema.name}.t{make_random(10).lower()}"
     df_ref.write.saveAsTable(ref_table)
 
     columns = ["id1", "id2"]
@@ -3216,6 +3281,386 @@ def test_is_data_fresh_per_time_window_check_entire_dataset(spark: SparkSession,
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+def _gap_violation_message(window_start: str, next_window_start: str) -> str:
+    return (
+        f"Gap in time series: no data between the window starting at {window_start} "
+        f"and the next present window starting at {next_window_start}"
+    )
+
+
+def _trailing_gap_violation_message(window_start: str, current_window_start: str) -> str:
+    return (
+        f"Gap in time series: no data between the window starting at {window_start} "
+        f"and the current time; the current window starts at {current_window_start}"
+    )
+
+
+def test_has_no_gaps_per_time_window(spark: SparkSession, set_utc_timezone):
+    schema = "event_date date, val int"
+    data = [
+        (date(2025, 7, 14), 1),
+        (date(2025, 7, 14), 2),  # same daily window as the first row
+        (date(2025, 7, 16), 3),  # 2025-07-15 is missing -> gap after 2025-07-14
+        (date(2025, 7, 17), 4),  # consecutive with 2025-07-16 -> no gap
+        (None, 5),  # null date passes with no violation
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_gaps_per_time_window(column="event_date", window_minutes=1440)
+    actual: DataFrame = apply_method(df)
+    condition_column = get_column_name_or_alias(condition)
+    actual = actual.select("event_date", "val", condition)
+
+    gap_violation = _gap_violation_message
+
+    expected_schema = f"event_date date, val int, {condition_column} string"
+    expected = spark.createDataFrame(
+        [
+            {
+                "event_date": date(2025, 7, 14),
+                "val": 1,
+                condition_column: gap_violation("2025-07-14 00:00:00", "2025-07-16 00:00:00"),
+            },
+            {
+                "event_date": date(2025, 7, 14),
+                "val": 2,
+                condition_column: gap_violation("2025-07-14 00:00:00", "2025-07-16 00:00:00"),
+            },
+            {"event_date": date(2025, 7, 16), "val": 3, condition_column: None},
+            {"event_date": date(2025, 7, 17), "val": 4, condition_column: None},
+            {"event_date": None, "val": 5, condition_column: None},
+        ],
+        expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_gaps_per_time_window_non_utc_timezone_dst_crossing(spark: SparkSession):
+    original_tz = spark.conf.get("spark.sql.session.timeZone")
+    assert original_tz is not None
+    spark.conf.set("spark.sql.session.timeZone", "America/New_York")
+    try:
+        # Daily windows are anchored to UTC epoch boundaries regardless of session timezone, so window
+        # starts land at UTC midnight, not local midnight; the DST transition (2025-03-09 02:00 local)
+        # only shifts how that UTC instant renders back to a local string, not the window arithmetic.
+        raw = spark.createDataFrame(
+            [
+                ("2025-03-08 20:00:00", 1),  # pre-DST (EST, UTC-5) -> UTC window start 2025-03-09 00:00 UTC
+                ("2025-03-10 20:00:00", 2),  # post-DST (EDT, UTC-4) -> UTC window start 2025-03-11 00:00 UTC
+            ],
+            "ts_str string, val int",
+        )
+        df = raw.select(F.col("ts_str").cast("timestamp").alias("event_ts"), "val")
+
+        condition, apply_method = has_no_gaps_per_time_window(column="event_ts", window_minutes=1440)
+        condition_column = get_column_name_or_alias(condition)
+        actual = apply_method(df).select("val", condition)
+
+        expected = spark.createDataFrame(
+            [
+                {
+                    "val": 1,
+                    condition_column: _gap_violation_message("2025-03-08 19:00:00", "2025-03-10 20:00:00"),
+                },
+                {"val": 2, condition_column: None},
+            ],
+            f"val int, {condition_column} string",
+        )
+        assertDataFrameEqual(actual, expected, checkRowOrder=False)
+    finally:
+        spark.conf.set("spark.sql.session.timeZone", original_tz)
+
+
+def test_has_no_gaps_per_time_window_sub_day_window(spark: SparkSession, set_utc_timezone):
+    schema = "event_ts timestamp, val int"
+    data = [
+        (datetime(2025, 1, 1, 10, 15), 1),  # 10:00 window
+        (datetime(2025, 1, 1, 10, 45), 2),  # same 10:00 window
+        (datetime(2025, 1, 1, 11, 30), 3),  # 11:00 window, exactly one window after 10:00 -> no gap
+        (datetime(2025, 1, 1, 13, 20), 4),  # 13:00 window, 12:00 window missing -> gap after 11:00
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_gaps_per_time_window(column="event_ts", window_minutes=60)
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("event_ts", "val", condition)
+
+    expected_schema = f"event_ts timestamp, val int, {condition_column} string"
+    expected = spark.createDataFrame(
+        [
+            {"event_ts": datetime(2025, 1, 1, 10, 15), "val": 1, condition_column: None},
+            {"event_ts": datetime(2025, 1, 1, 10, 45), "val": 2, condition_column: None},
+            {
+                "event_ts": datetime(2025, 1, 1, 11, 30),
+                "val": 3,
+                condition_column: _gap_violation_message("2025-01-01 11:00:00", "2025-01-01 13:00:00"),
+            },
+            {"event_ts": datetime(2025, 1, 1, 13, 20), "val": 4, condition_column: None},
+        ],
+        expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_gaps_per_time_window_multiple_gaps(spark: SparkSession, set_utc_timezone):
+    schema = "event_date date, val int"
+    data = [
+        (date(2025, 7, 14), 1),  # 2025-07-15 missing -> gap to 2025-07-16
+        (date(2025, 7, 16), 2),  # 2025-07-17..19 missing -> multi-window gap to 2025-07-20
+        (date(2025, 7, 20), 3),  # last present window -> trailing gap is not reported
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_gaps_per_time_window(column="event_date", window_minutes=1440)
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("event_date", "val", condition)
+
+    expected_schema = f"event_date date, val int, {condition_column} string"
+    expected = spark.createDataFrame(
+        [
+            {
+                "event_date": date(2025, 7, 14),
+                "val": 1,
+                condition_column: _gap_violation_message("2025-07-14 00:00:00", "2025-07-16 00:00:00"),
+            },
+            {
+                "event_date": date(2025, 7, 16),
+                "val": 2,
+                condition_column: _gap_violation_message("2025-07-16 00:00:00", "2025-07-20 00:00:00"),
+            },
+            {"event_date": date(2025, 7, 20), "val": 3, condition_column: None},
+        ],
+        expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_gaps_per_time_window_no_gaps(spark: SparkSession, set_utc_timezone):
+    schema = "event_date date, val int"
+    data = [(date(2025, 7, 14), 1), (date(2025, 7, 15), 2), (date(2025, 7, 16), 3)]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_gaps_per_time_window(column="event_date", window_minutes=1440)
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("event_date", "val", condition)
+
+    expected_schema = f"event_date date, val int, {condition_column} string"
+    expected = spark.createDataFrame(
+        [
+            {"event_date": date(2025, 7, 14), "val": 1, condition_column: None},
+            {"event_date": date(2025, 7, 15), "val": 2, condition_column: None},
+            {"event_date": date(2025, 7, 16), "val": 3, condition_column: None},
+        ],
+        expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_gaps_per_time_window_single_row(spark: SparkSession, set_utc_timezone):
+    schema = "event_date date, val int"
+    df = spark.createDataFrame([(date(2025, 7, 14), 1)], schema)
+
+    condition, apply_method = has_no_gaps_per_time_window(column="event_date", window_minutes=1440)
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("event_date", "val", condition)
+
+    expected_schema = f"event_date date, val int, {condition_column} string"
+    expected = spark.createDataFrame(
+        [{"event_date": date(2025, 7, 14), "val": 1, condition_column: None}],
+        expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_gaps_per_time_window_empty_dataframe(spark: SparkSession, set_utc_timezone):
+    schema = "event_date date, val int"
+    df = spark.createDataFrame([], schema)
+
+    condition, apply_method = has_no_gaps_per_time_window(column="event_date", window_minutes=1440)
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("event_date", "val", condition)
+
+    expected = spark.createDataFrame([], f"event_date date, val int, {condition_column} string")
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_gaps_per_time_window_group_by(spark: SparkSession, set_utc_timezone):
+    schema = "device string, event_date date, val int"
+    data = [
+        ("A", date(2025, 7, 14), 1),  # device A: 2025-07-15 missing -> gap on this boundary row
+        ("A", date(2025, 7, 16), 2),
+        ("B", date(2025, 7, 14), 3),  # device B: consecutive, no gaps
+        ("B", date(2025, 7, 15), 4),
+        ("B", date(2025, 7, 16), 5),
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_gaps_per_time_window(column="event_date", window_minutes=1440, group_by=["device"])
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("device", "event_date", "val", condition)
+
+    expected_schema = f"device string, event_date date, val int, {condition_column} string"
+    expected = spark.createDataFrame(
+        [
+            {
+                "device": "A",
+                "event_date": date(2025, 7, 14),
+                "val": 1,
+                condition_column: _gap_violation_message("2025-07-14 00:00:00", "2025-07-16 00:00:00"),
+            },
+            {"device": "A", "event_date": date(2025, 7, 16), "val": 2, condition_column: None},
+            {"device": "B", "event_date": date(2025, 7, 14), "val": 3, condition_column: None},
+            {"device": "B", "event_date": date(2025, 7, 15), "val": 4, condition_column: None},
+            {"device": "B", "event_date": date(2025, 7, 16), "val": 5, condition_column: None},
+        ],
+        expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_gaps_per_time_window_group_by_column_expression(spark: SparkSession, set_utc_timezone):
+    schema = "device string, event_date date, val int"
+    data = [
+        ("A", date(2025, 7, 14), 1),  # device A: 2025-07-15 missing -> gap on this boundary row
+        ("A", date(2025, 7, 16), 2),
+        ("B", date(2025, 7, 14), 3),  # device B: consecutive, no gaps
+        ("B", date(2025, 7, 15), 4),
+        ("B", date(2025, 7, 16), 5),
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_gaps_per_time_window(
+        column="event_date", window_minutes=1440, group_by=[F.col("device")]
+    )
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("device", "event_date", "val", condition)
+
+    expected_schema = f"device string, event_date date, val int, {condition_column} string"
+    expected = spark.createDataFrame(
+        [
+            {
+                "device": "A",
+                "event_date": date(2025, 7, 14),
+                "val": 1,
+                condition_column: _gap_violation_message("2025-07-14 00:00:00", "2025-07-16 00:00:00"),
+            },
+            {"device": "A", "event_date": date(2025, 7, 16), "val": 2, condition_column: None},
+            {"device": "B", "event_date": date(2025, 7, 14), "val": 3, condition_column: None},
+            {"device": "B", "event_date": date(2025, 7, 15), "val": 4, condition_column: None},
+            {"device": "B", "event_date": date(2025, 7, 16), "val": 5, condition_column: None},
+        ],
+        expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_gaps_per_time_window_trailing_gap_flagged(spark: SparkSession, set_utc_timezone):
+    schema = "event_date date, val int"
+    data = [
+        (date(2025, 7, 14), 1),  # 2025-07-15 missing -> interior gap to 2025-07-16
+        (date(2025, 7, 16), 2),  # last present window, 6 days before curr_timestamp -> trailing gap
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_gaps_per_time_window(
+        column="event_date",
+        window_minutes=1440,
+        trailing_gap=True,
+        curr_timestamp=F.lit("2025-07-22 10:00:00").cast("timestamp"),
+    )
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("event_date", "val", condition)
+
+    expected_schema = f"event_date date, val int, {condition_column} string"
+    expected = spark.createDataFrame(
+        [
+            {
+                "event_date": date(2025, 7, 14),
+                "val": 1,
+                condition_column: _gap_violation_message("2025-07-14 00:00:00", "2025-07-16 00:00:00"),
+            },
+            {
+                "event_date": date(2025, 7, 16),
+                "val": 2,
+                condition_column: _trailing_gap_violation_message("2025-07-16 00:00:00", "2025-07-22 00:00:00"),
+            },
+        ],
+        expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_gaps_per_time_window_trailing_gap_within_one_window_not_flagged(spark: SparkSession, set_utc_timezone):
+    schema = "event_date date, val int"
+    data = [(date(2025, 7, 14), 1)]  # only row; curr_timestamp is exactly one window later -> no trailing gap
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_gaps_per_time_window(
+        column="event_date",
+        window_minutes=1440,
+        trailing_gap=True,
+        curr_timestamp=F.lit("2025-07-15 10:00:00").cast("timestamp"),
+    )
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("event_date", "val", condition)
+
+    expected = spark.createDataFrame(
+        [{"event_date": date(2025, 7, 14), "val": 1, condition_column: None}],
+        f"event_date date, val int, {condition_column} string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_gaps_per_time_window_trailing_gap_disabled_by_default(spark: SparkSession, set_utc_timezone):
+    schema = "event_date date, val int"
+    data = [(date(2025, 7, 14), 1)]  # stale last window, but trailing_gap defaults to False -> not reported
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_gaps_per_time_window(column="event_date", window_minutes=1440)
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("event_date", "val", condition)
+
+    expected = spark.createDataFrame(
+        [{"event_date": date(2025, 7, 14), "val": 1, condition_column: None}],
+        f"event_date date, val int, {condition_column} string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_gaps_per_time_window_trailing_gap_group_by(spark: SparkSession, set_utc_timezone):
+    schema = "device string, event_date date, val int"
+    data = [
+        ("A", date(2025, 7, 14), 1),  # device A: stale, last window is 6 days before curr_timestamp -> trailing gap
+        ("B", date(2025, 7, 20), 2),  # device B: last window matches the current window -> no trailing gap
+    ]
+    df = spark.createDataFrame(data, schema)
+
+    condition, apply_method = has_no_gaps_per_time_window(
+        column="event_date",
+        window_minutes=1440,
+        group_by=["device"],
+        trailing_gap=True,
+        curr_timestamp=F.lit("2025-07-20 10:00:00").cast("timestamp"),
+    )
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("device", "event_date", "val", condition)
+
+    expected_schema = f"device string, event_date date, val int, {condition_column} string"
+    expected = spark.createDataFrame(
+        [
+            {
+                "device": "A",
+                "event_date": date(2025, 7, 14),
+                "val": 1,
+                condition_column: _trailing_gap_violation_message("2025-07-14 00:00:00", "2025-07-20 00:00:00"),
+            },
+            {"device": "B", "event_date": date(2025, 7, 20), "val": 2, condition_column: None},
+        ],
+        expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
 def test_has_valid_schema_invalid_schema_exceptions():
     expected_schema = "INVALID_SCHEMA"
     with pytest.raises(InvalidParameterError, match=f"Invalid schema string '{expected_schema}'.*"):
@@ -3611,7 +4056,7 @@ def test_has_valid_schema_with_specific_columns_mismatch(spark: SparkSession):
 def test_has_valid_schema_with_ref_table(spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    ref_table_name = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    ref_table_name = f"{catalog_name}.{schema.name}.t{make_random(8).lower()}"
 
     ref_df = spark.createDataFrame(
         [

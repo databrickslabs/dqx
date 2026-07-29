@@ -4,11 +4,13 @@ import warnings
 import ipaddress
 import uuid
 from decimal import Decimal
+from functools import lru_cache
+from importlib.resources import files
 from collections.abc import Callable, Sequence
 from enum import Enum
 from itertools import zip_longest
 import operator as py_operator
-from typing import Any
+from typing import Any, NamedTuple
 import pandas as pd  # type: ignore[import-untyped]
 import pyspark.sql.functions as F
 from pyspark.sql import types
@@ -25,12 +27,18 @@ from databricks.labs.dqx.utils import (
     get_columns_as_strings,
     to_lowercase,
 )
-from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError, UnsafeSqlQueryError
+from databricks.labs.dqx.errors import (
+    MissingParameterError,
+    MissingResourceError,
+    InvalidParameterError,
+    UnsafeSqlQueryError,
+)
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
 IPV4_MAX_OCTET_COUNT = 4
 IPV4_BIT_LENGTH = 32
+_VALID_STRING_CASES = {"upper", "lower", "title", "sentence"}
 
 # Email helpers (RFC 5322 §3.2.3, §3.2.4 + RFC 5321 §4.1.3, §4.5.3.1).
 _EMAIL_ATEXT = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]"
@@ -263,6 +271,81 @@ def is_null_or_empty(column: str | Column, trim_strings: bool | None = False) ->
         f"Column '{col_expr_str}' value is not null and not empty",
         f"{col_str_norm}_is_not_null_and_not_empty",
     )
+
+
+@register_rule("row")
+def has_valid_string_case(column: str | Column, case: str) -> Column:
+    """Checks whether string values match the requested letter case:
+
+    * `upper` requires all alphabetic characters to be uppercase
+    * `lower` requires all alphabetic characters to be lowercase
+    * `title` requires the first character of each word to be uppercase; words are split on the ASCII
+      space character only, so other whitespace (tabs, newlines, non-breaking spaces) is not treated
+      as a word boundary. Only the first character of each word is checked; the rest is left as-is, so
+      an all-uppercase word (e.g. *HELLO*) also passes.
+    * `sentence` requires each segment's first non-whitespace character to be uppercase; segments are
+      split on the period only. Only that first character is checked; the rest is left as-is.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        case: expected case; one of *upper*, *lower*, *title*, or *sentence*
+
+    Returns:
+        Column object for condition
+
+    Raises:
+        InvalidParameterError: If *case* is not a supported string case.
+    """
+    if not isinstance(case, str):
+        raise InvalidParameterError(f"'case' must be a string, got {type(case)} instead.")
+    if case not in _VALID_STRING_CASES:
+        raise InvalidParameterError(f"'case' must be one of {sorted(_VALID_STRING_CASES)}, got '{case}'")
+
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    col_expr_cast = col_expr.cast("string")
+
+    if case == "upper":
+        normalized_case = F.upper(col_expr_cast)
+    elif case == "lower":
+        normalized_case = F.lower(col_expr_cast)
+    elif case == "title":
+        # Uppercase the first character of each space-delimited word, leaving the rest unchanged.
+        # Passing F.length(word) as the substring length returns from position 2 to the end.
+        words = F.split(col_expr_cast, " ")
+        normalized_case = F.array_join(
+            F.transform(
+                words,
+                lambda word: F.concat(F.upper(F.substring(word, 1, 1)), F.substring(word, 2, F.length(word))),
+            ),
+            " ",
+        )
+    else:
+        # Uppercase the first non-whitespace character of each period-delimited segment, preserving
+        # any leading whitespace and the rest of the segment. The leading-whitespace prefix is matched
+        # directly (regexp_extract of the '^\s*' run); the remainder starts right after it.
+        segments = F.split(col_expr_cast, r"\.")
+
+        def normalize_segment(segment: Column) -> Column:
+            prefix = F.regexp_extract(segment, r"^(\s*)", 1)
+            rest_start = F.length(prefix) + 1
+            return F.concat(
+                F.substring(segment, 1, F.length(prefix)),
+                F.upper(F.substring(segment, rest_start, 1)),
+                F.substring(segment, rest_start + 1, F.length(segment)),
+            )
+
+        normalized_case = F.array_join(F.transform(segments, normalize_segment), ".")
+
+    # col_expr_cast != normalized_case already yields NULL for NULL input (SQL null propagation),
+    # and make_condition treats NULL as a pass, so no explicit isNotNull() guard is needed.
+    condition = col_expr_cast != normalized_case
+    message = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr_cast,
+        F.lit(f"' in Column '{col_expr_str}' does not have valid '{case}' string case"),
+    )
+    return make_condition(condition, message, f"{col_str_norm}_has_invalid_{case}_string_case")
 
 
 @register_rule("row")
@@ -1081,6 +1164,230 @@ def is_valid_national_id(column: str | Column, country: str = "US") -> Column:
     return _matches_pattern(column, pattern)
 
 
+def load_iso_codes(resource_name: str) -> frozenset[str]:
+    """Load a set of standard codes from a newline-delimited data file in the resources package.
+
+    The large standard code lists are stored as data files rather than inline literals to keep them
+    readable and easy to regenerate. See the files under *databricks/labs/dqx/resources* for the
+    values and their authoritative sources.
+    """
+    # Read directly off the Traversable returned by files(): wrapping it in Path(str(...)) assumes a
+    # real filesystem path, which is not guaranteed under a zipped wheel (zipimport).
+    codes = frozenset((files("databricks.labs.dqx.resources") / resource_name).read_text(encoding="utf-8").split())
+    if not codes:
+        raise MissingResourceError(
+            f"ISO code resource '{resource_name}' is missing or empty; reinstall the package or "
+            "regenerate the resource file."
+        )
+    return codes
+
+
+# ISO 3166-1 country codes. The authoritative source is
+# https://www.iso.org/iso-3166-country-codes.html; the values were verified against it and cover the
+# officially assigned codes as of July 2026. The code lists are stored as data files under the
+# resources package and loaded via importlib.resources. To regenerate them, iterate
+# pycountry.countries (which packages the ISO 3166-1 data) as a convenience, then reconcile against
+# the official ISO list above before committing.
+#
+# Loaded lazily (on first call, then cached) rather than at module import time, so that a resource
+# packaging problem only breaks this check, not the import of the whole check_funcs module.
+@lru_cache(maxsize=1)
+def _iso_3166_1_codes_by_format() -> dict[str, frozenset[str]]:
+    return {
+        "alpha-2": load_iso_codes("iso_3166_1_alpha_2.txt"),
+        "alpha-3": load_iso_codes("iso_3166_1_alpha_3.txt"),
+        "numeric": load_iso_codes("iso_3166_1_numeric.txt"),
+    }
+
+
+# ISO 4217 currency codes. The authoritative source is
+# https://www.iso.org/iso-4217-currency-codes.html; the values were verified against it and cover
+# the active codes as of July 2026. The code lists are stored as data files under the resources
+# package and loaded via importlib.resources. To regenerate them, iterate pycountry.currencies
+# (which packages the ISO 4217 data) as a convenience, reading each entry's alphabetic code (exposed
+# by pycountry as the alpha_3 attribute) and numeric code, then reconcile against the official ISO
+# list above before committing.
+#
+# Loaded lazily (on first call, then cached) rather than at module import time, so that a resource
+# packaging problem only breaks this check, not the import of the whole check_funcs module.
+@lru_cache(maxsize=1)
+def _iso_4217_codes_by_format() -> dict[str, frozenset[str]]:
+    return {
+        "alphabetic": load_iso_codes("iso_4217_alphabetic.txt"),
+        "numeric": load_iso_codes("iso_4217_numeric.txt"),
+    }
+
+
+class _IsoStandard(NamedTuple):
+    """Registry entry for an ISO standard: its lazy code-set loader and user-facing noun.
+
+    *kind* ("country"/"currency") is the word used in error and violation messages. Carrying it here
+    (rather than deriving it from the standard name) means adding a third standard forces supplying
+    its label instead of silently defaulting.
+    """
+
+    codes_by_format: Callable[[], dict[str, frozenset[str]]]
+    kind: str
+
+
+# Registry of the ISO standards these checks validate against, keyed by the standard's name.
+_ISO_3166_1 = "ISO 3166-1"
+_ISO_4217 = "ISO 4217"
+_ISO_CODES_BY_STANDARD: dict[str, _IsoStandard] = {
+    _ISO_3166_1: _IsoStandard(_iso_3166_1_codes_by_format, "country"),
+    _ISO_4217: _IsoStandard(_iso_4217_codes_by_format, "currency"),
+}
+
+
+# Precomputed once on first use and cached: the literal lists never change at runtime, so building
+# them per call (sorted() + one F.lit() per code) would repeat needless work on every check
+# evaluation. Keyed by (standard, format, lower) so the case-sensitive and case-insensitive variants
+# share one cache across both ISO standards; numeric never requests lower=True since it has no case.
+@lru_cache(maxsize=None)
+def _iso_literals(standard: str, fmt: str, lower: bool) -> list[Column]:
+    codes = _ISO_CODES_BY_STANDARD[standard].codes_by_format()[fmt]
+    return [F.lit(code.lower() if lower else code) for code in sorted(codes)]
+
+
+def _is_valid_iso_code(column: str | Column, code_format: str, case_sensitive: bool, standard: str) -> Column:
+    """Shared implementation for the ISO 3166-1 country and ISO 4217 currency code checks.
+
+    Validates *column* against the code set for *standard* (one of the keys of
+    *_ISO_CODES_BY_STANDARD*) in the requested *code_format*, using a case-sensitive membership test
+    by default. See *is_valid_country_code* / *is_valid_currency_code* for the user-facing contract.
+    """
+    if code_format is None:
+        raise MissingParameterError("'code_format' is not provided.")
+    if not isinstance(code_format, str):
+        raise InvalidParameterError(f"'code_format' must be a string, got {type(code_format)} instead.")
+    iso_standard = _ISO_CODES_BY_STANDARD[standard]
+    kind = iso_standard.kind
+    normalized_format = code_format.lower()
+    codes_by_format = iso_standard.codes_by_format()
+    if normalized_format not in codes_by_format:
+        supported = ", ".join(sorted(codes_by_format))
+        raise InvalidParameterError(
+            f"Unsupported code_format for {kind} code validation: '{code_format}'. Supported: [{supported}]."
+        )
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    if normalized_format == "numeric":
+        # Numeric codes have no case, so case_sensitive is a no-op. Cast explicitly to string: without
+        # it, comparing a non-string (e.g. int) column against the string literals below makes Spark
+        # coerce the literals to the column's type instead, silently stripping leading zeros (e.g.
+        # "004" -> 4) and letting an unpadded value like 4 match a code that requires "004".
+        col_expr_compare = col_expr.cast("string")
+        allowed = _iso_literals(standard, normalized_format, lower=False)
+    elif case_sensitive:
+        col_expr_compare = col_expr
+        allowed = _iso_literals(standard, normalized_format, lower=False)
+    else:
+        col_expr_compare = to_lowercase(col_expr)
+        allowed = _iso_literals(standard, normalized_format, lower=True)
+    # isin() already yields NULL for NULL input (SQL null propagation), and make_condition treats
+    # NULL as a pass, so no explicit isNotNull() guard is needed.
+    condition = ~col_expr_compare.isin(*allowed)
+    return make_condition(
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not a valid {standard} {kind} code"),
+        ),
+        f"{col_str_norm}_is_not_a_valid_{kind}_code",
+    )
+
+
+@register_rule("row")
+def is_valid_country_code(column: str | Column, code_format: str = "alpha-2", case_sensitive: bool = True) -> Column:
+    """Checks whether the values in the input column are valid ISO 3166-1 country codes.
+
+    ISO 3166-1 defines three code representations, selected with *code_format*:
+
+    * *alpha-2* (default): the two-letter code, e.g. *US*, *GB*, *DE*.
+    * *alpha-3*: the three-letter code, e.g. *USA*, *GBR*, *DEU*.
+    * *numeric*: the three-digit code, e.g. *840*, *826*, *276*.
+
+    The valid codes follow the ISO 3166-1 standard; see https://www.iso.org/iso-3166-country-codes.html.
+    Only officially assigned codes are accepted; user-assigned codes (e.g. *XK* for Kosovo) and
+    reserved codes are intentionally excluded. Numeric codes are the three-digit, zero-padded form
+    (e.g. *004*), so a numeric input column must preserve the leading zeros; a non-string column is
+    cast to string for comparison, but the cast does not add back zero-padding an integer type may
+    have dropped (e.g. an *int* column value *4* is compared as the string *"4"*, not *"004"*, and is
+    correctly flagged as invalid).
+
+    By default the comparison is case-sensitive; pass *case_sensitive* as False to accept values in
+    any case. *case_sensitive* has no effect for *numeric* codes, which contain only digits.
+    *code_format* matching itself is case-insensitive (*"NUMERIC"*/*"Alpha-2"* are also accepted).
+    Null values will pass the check with no violation reported.
+
+    For best performance with large lists in general, prefer the *foreign_key* check function; the
+    fixed ISO 3166-1 code lists used here are small enough (up to 249 codes) that this is not a
+    concern.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        code_format: ISO 3166-1 code representation to validate against: *alpha-2* (default),
+            *alpha-3*, or *numeric*; matching is case-insensitive
+        case_sensitive: whether to perform a case-sensitive comparison (default: True); ignored when
+            *code_format* is *numeric*
+
+    Returns:
+        Column object for condition
+
+    Raises:
+        MissingParameterError: if *code_format* is None.
+        InvalidParameterError: if *code_format* is not a string, or is not a supported representation.
+    """
+    return _is_valid_iso_code(column, code_format, case_sensitive, standard=_ISO_3166_1)
+
+
+@register_rule("row")
+def is_valid_currency_code(
+    column: str | Column, code_format: str = "alphabetic", case_sensitive: bool = True
+) -> Column:
+    """Checks whether the values in the input column are valid ISO 4217 currency codes.
+
+    ISO 4217 defines two code representations, selected with *code_format*:
+
+    * *alphabetic* (default): the three-letter code, e.g. *USD*, *EUR*, *JPY*.
+    * *numeric*: the three-digit code, e.g. *840*, *978*, *392*.
+
+    The valid codes follow the ISO 4217 standard; see https://www.iso.org/iso-4217-currency-codes.html.
+    Every code assigned by the standard is accepted, which includes codes that are not spendable
+    currencies, such as *XXX* (no currency), *XTS* (reserved for testing), the precious metals
+    (*XAU*, *XAG*, *XPT*, *XPD*) and *XDR* (IMF special drawing rights). Numeric codes are the
+    three-digit, zero-padded form (e.g. *036*), so a numeric input column must preserve the leading
+    zeros; a non-string column is cast to string for comparison, but the cast does not add back
+    zero-padding an integer type may have dropped (e.g. an *int* column value *8* is compared as the
+    string *"8"*, not *"008"*, and is flagged as invalid). If codes are stored as unpadded integers,
+    zero-pad the column before calling this check, e.g. *F.lpad(column.cast("string"), 3, "0")*.
+
+    By default the comparison is case-sensitive; pass *case_sensitive* as False to accept values in
+    any case. *case_sensitive* has no effect for *numeric* codes, which contain only digits.
+    *code_format* matching itself is case-insensitive (*"NUMERIC"*/*"Alphabetic"* are also accepted).
+    Null values will pass the check with no violation reported.
+
+    For best performance with large lists in general, prefer the *foreign_key* check function; the
+    fixed ISO 4217 code lists used here are small enough (178 codes) that this is not a concern.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        code_format: ISO 4217 code representation to validate against, either *alphabetic* (default)
+            or *numeric*; matching is case-insensitive
+        case_sensitive: whether to perform a case-sensitive comparison (default: True); ignored when
+            *code_format* is *numeric*
+
+    Returns:
+        Column object for condition
+
+    Raises:
+        MissingParameterError: if *code_format* is None.
+        InvalidParameterError: if *code_format* is not a string, or is not a supported representation.
+    """
+    return _is_valid_iso_code(column, code_format, case_sensitive, standard=_ISO_4217)
+
+
 @register_rule("row")
 def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     """
@@ -1687,12 +1994,7 @@ def sql_query(
         # To retain the original records we need to join back to the input DataFrame.
         # Therefore, applying this check multiple times at once can potentially lead to long spark plans.
         # When applying large number of sql query checks, it may be beneficial to split it into separate runs.
-        joined_df = df.join(user_query_df_unique, on=merge_columns, how="left")
-
-        # we only care about original columns + condition
-        result_df = joined_df.select(*[joined_df[col] for col in df.columns], joined_df[unique_condition_column])
-
-        return result_df
+        return _join_results_on_null_safe_columns(df, user_query_df_unique, merge_columns, [unique_condition_column])
 
     if negate:
         message_expr = F.lit(msg) if msg else F.lit(f"Value is matching query: '{query}'")
@@ -1998,6 +2300,9 @@ def has_no_aggr_outliers(
     unique_str = uuid.uuid4().hex
     condition_col = f"__dq_outlier_cond_{aggr_col_str_norm}_{aggr_type}_{unique_str}"
     msg_col = f"__dq_outlier_msg_{aggr_col_str_norm}_{aggr_type}_{unique_str}"
+    internal_cols = {
+        name: f"__dq_{name}_{unique_str}" for name in ("grain", "metric", "rn", "current", "mu", "sigma", "n", "jkey")
+    }
 
     def apply(df: DataFrame) -> DataFrame:
         """
@@ -2024,69 +2329,79 @@ def has_no_aggr_outliers(
         aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
 
         group_cols = [F.col(c) if isinstance(c, str) else c for c in (group_by or [])]
-        grain_col = F.date_trunc(time_interval, F.col(time_column)).alias("__dq_grain")
+        grain_expr = F.date_trunc(time_interval, F.col(time_column)).alias(internal_cols["grain"])
 
         # Step 1: aggregate per time-grain (and group)
-        aggregate_df = df.groupBy(*group_cols, grain_col).agg(aggr_expr.alias("__dq_metric"))
+        aggregate_df = df.groupBy(*group_cols, grain_expr).agg(aggr_expr.alias(internal_cols["metric"]))
 
         # Step 2: rank grains per group, most-recent first
         window_spec = (
-            Window.partitionBy(*group_cols).orderBy(F.col("__dq_grain").desc())
+            Window.partitionBy(*group_cols).orderBy(F.col(internal_cols["grain"]).desc())
             if group_by
-            else Window.orderBy(F.col("__dq_grain").desc())
+            else Window.orderBy(F.col(internal_cols["grain"]).desc())
         )
-        ranked = aggregate_df.withColumn("__dq_rn", F.row_number().over(window_spec))
+        ranked = aggregate_df.withColumn(internal_cols["rn"], F.row_number().over(window_spec))
 
         # Step 3: most-recent bucket (rank 1) and history (ranks 2..lookback_num_intervals+1)
-        current = ranked.filter(F.col("__dq_rn") == 1).select(
+        current = ranked.filter(F.col(internal_cols["rn"]) == 1).select(
             *group_cols,
-            F.col("__dq_metric").alias("__dq_current"),
+            F.col(internal_cols["metric"]).alias(internal_cols["current"]),
         )
-        hist = ranked.filter((F.col("__dq_rn") >= 2) & (F.col("__dq_rn") <= lookback_num_intervals + 1))
+        hist = ranked.filter(
+            (F.col(internal_cols["rn"]) >= 2) & (F.col(internal_cols["rn"]) <= lookback_num_intervals + 1)
+        )
 
         # Step 4: rolling baseline stats
         stats = hist.groupBy(*group_cols).agg(
-            F.avg("__dq_metric").alias("__dq_mu"),
-            F.stddev_pop("__dq_metric").alias("__dq_sigma"),
-            F.count("*").alias("__dq_n"),
+            F.avg(internal_cols["metric"]).alias(internal_cols["mu"]),
+            F.stddev_pop(internal_cols["metric"]).alias(internal_cols["sigma"]),
+            F.count("*").alias(internal_cols["n"]),
         )
 
         # Step 5: join current bucket + stats (left-join so current bucket always survives)
         if group_by:
             join_keys = [c if isinstance(c, str) else get_column_name_or_alias(c) for c in group_by]
-            joined = current.join(stats, on=join_keys, how="left")
+            joined = _join_results_on_null_safe_columns(
+                current,
+                stats,
+                join_keys,
+                [internal_cols["mu"], internal_cols["sigma"], internal_cols["n"]],
+            )
         else:
             # Use a dummy-key left-join so the current bucket row survives even when stats
             # is empty (e.g. only 1 bucket of data → hist is empty → stats has 0 rows).
             # A plain crossJoin with empty stats would produce 0 rows and discard all df rows.
             joined = (
-                current.withColumn("__dq_jkey", F.lit(1))
+                current.withColumn(internal_cols["jkey"], F.lit(1))
                 .join(
-                    stats.withColumn("__dq_jkey", F.lit(1)),
-                    on="__dq_jkey",
+                    stats.withColumn(internal_cols["jkey"], F.lit(1)),
+                    on=internal_cols["jkey"],
                     how="left",
                 )
-                .drop("__dq_jkey")
+                .drop(internal_cols["jkey"])
             )
 
         # Step 6: compute violation and message string (2 output columns: condition + msg)
-        # Guard on NULL __dq_n: occurs when hist is empty (fewer than 2 buckets)
-        insufficient_history = F.col("__dq_n").isNull() | (F.col("__dq_n") < warmup_num_intervals)
-        delta_expr = F.abs(F.col("__dq_current") - F.col("__dq_mu"))
+        # A NULL history count occurs when hist is empty (fewer than 2 buckets).
+        insufficient_history = F.col(internal_cols["n"]).isNull() | (F.col(internal_cols["n"]) < warmup_num_intervals)
+        delta_expr = F.abs(F.col(internal_cols["current"]) - F.col(internal_cols["mu"]))
         violation = (
             F.when(insufficient_history, F.lit(False))
-            .when(F.col("__dq_sigma").isNull() | (F.col("__dq_sigma") == 0), F.lit(False))
-            .when(F.col("__dq_current").isNull(), F.lit(False))
-            .otherwise(delta_expr > F.lit(sigma) * F.col("__dq_sigma"))
+            .when(
+                F.col(internal_cols["sigma"]).isNull() | (F.col(internal_cols["sigma"]) == 0),
+                F.lit(False),
+            )
+            .when(F.col(internal_cols["current"]).isNull(), F.lit(False))
+            .otherwise(delta_expr > F.lit(sigma) * F.col(internal_cols["sigma"]))
         )
         message = F.concat_ws(
             "",
             F.lit(f"{aggr_type}({aggr_col_str}): current="),
-            F.col("__dq_current").cast("string"),
+            F.col(internal_cols["current"]).cast("string"),
             F.lit(", baseline="),
-            F.col("__dq_mu").cast("string"),
+            F.col(internal_cols["mu"]).cast("string"),
             F.lit(", stddev="),
-            F.col("__dq_sigma").cast("string"),
+            F.col(internal_cols["sigma"]).cast("string"),
             F.lit(", delta="),
             delta_expr.cast("string"),
             F.lit(f" exceeds {sigma} x stddev (lookback={lookback_num_intervals} intervals)"),
@@ -2100,7 +2415,7 @@ def has_no_aggr_outliers(
         select_cols = [condition_col, msg_col]
         if group_by:
             join_keys = [c if isinstance(c, str) else get_column_name_or_alias(c) for c in group_by]
-            return df.join(result.select(*join_keys, *select_cols), on=join_keys, how="left")
+            return _join_results_on_null_safe_columns(df, result, join_keys, select_cols)
         return df.crossJoin(result.select(*select_cols))
 
     # Build alias
@@ -2162,9 +2477,10 @@ def aggr_matches_dataset(
         group_by: Optional list of column names or Column expressions in the checked DataFrame to compare
             the aggregate per group instead of dataset-wide. Only simple column expressions are supported,
             e.g. *F.col("region")*. A group present in the checked DataFrame but absent from the reference
-            is reported as a mismatch; groups present only in the reference are not surfaced. Note that
-            when *aggr_type* is a window-incompatible aggregate (e.g. *count_distinct*), the checked-side
-            grouping join is not null-safe, so a legitimately null group key may under-report.
+            is reported as a mismatch; groups present only in the reference are not surfaced. Group keys are
+            matched null-safely on both the checked and reference sides (including window-incompatible
+            aggregates such as *count_distinct*), so a legitimately null group key is compared like any
+            other rather than being dropped.
         ref_group_by: Optional list of group-by columns on the reference (upstream) side, matched to
             *group_by* by position. Defaults to *group_by* when omitted. Must have the same length as
             *group_by*. Requires *group_by* to be set.
@@ -2570,6 +2886,156 @@ def is_data_fresh_per_time_window(
             F.lit(f", expected at least {min_records_per_window} records"),
         ),
         alias=f"{col_str_norm}_is_data_fresh_per_time_window",
+    )
+
+    return condition, apply
+
+
+@register_rule("dataset")
+def has_no_gaps_per_time_window(
+    column: str | Column,
+    window_minutes: int,
+    group_by: list[str | Column] | None = None,
+    trailing_gap: bool = False,
+    curr_timestamp: Column | None = None,
+) -> tuple[Column, Callable]:
+    """Checks whether a time-series column has gaps, i.e. time windows that contain no rows at all
+    between windows that do (for example no data for 2025-07-15 while 2025-07-14 and 2025-07-16 are
+    present).
+
+    A missing window has no row to attach a violation to, so the gap is reported on every row in the
+    last present window before the gap. Distinct values of *column* are bucketed into
+    fixed time windows of *window_minutes* (a fixed grid aligned to absolute time), and a gap is
+    flagged whenever the next present window starts more than one window after the current one. Gaps
+    are therefore measured against this fixed absolute-time grid, not the elapsed time between
+    consecutive events.
+
+    When *group_by* is provided, gaps are detected independently within each group (for example per
+    device or session) and the work partitions by the group key, which is the common case for IoT or
+    clickstream data. When it is omitted, the whole column is treated as a single series.
+
+    By default, only interior gaps are detected: a trailing gap (no data for the most recent windows
+    up to the current time) is not reported, because there is no later row to anchor it to. Set
+    *trailing_gap* to *True* to additionally flag the last present window when it ends more than one
+    window before the current time, so that missing recent data (for example no rows reported today)
+    is caught even at the tail of the series. Null values are ignored and pass with no violation
+    reported.
+
+    In streaming, gaps are detected within individual micro-batches only.
+
+    Args:
+        column: timestamp or date column to check; can be a string column name or a column expression
+        window_minutes: size of the time window in minutes that defines the expected data grain
+            (for example 1440 for daily)
+        group_by: optional list of column names or Column expressions to detect gaps independently
+            within each group; when omitted, the whole column is treated as a single global series
+        trailing_gap: if *True*, also flags the last present window (per group) when it ends more
+            than one window before *curr_timestamp*, anchoring the trailing boundary to the current
+            time instead of leaving it unchecked; defaults to *False*
+        curr_timestamp: optional current timestamp column used to anchor trailing-gap detection; only
+            used when *trailing_gap* is *True*; if not provided, *current_timestamp()* is used. The
+            anchor is bucketed onto the same absolute-time grid as the event windows, which aligns to
+            UTC epoch boundaries regardless of *spark.sql.session.timeZone*. With daily windows this
+            means the "current window" is the UTC day, which can differ from the local day near
+            midnight (e.g. 21:00 in a UTC-4 timezone is already the next UTC day); pass an explicit
+            *curr_timestamp* shifted to your timezone if you need local-day anchoring.
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the gap condition.
+            - A closure that applies the gap detection and adds the necessary condition columns.
+
+    Raises:
+        InvalidParameterError: if *window_minutes* is not a positive integer, if *group_by* is not
+            a list, or if *curr_timestamp* is provided while *trailing_gap* is *False*.
+    """
+    if not isinstance(window_minutes, int) or isinstance(window_minutes, bool) or window_minutes <= 0:
+        raise InvalidParameterError("window_minutes must be a positive integer")
+    if group_by is not None and not isinstance(group_by, list):
+        raise InvalidParameterError("group_by must be a list of column names or column expressions")
+    if curr_timestamp is not None and not trailing_gap:
+        raise InvalidParameterError("curr_timestamp can only be provided when trailing_gap is enabled")
+    if trailing_gap and curr_timestamp is None:
+        curr_timestamp = F.current_timestamp()
+
+    col_str_norm, _, col_expr = get_normalized_column_and_expr(column)
+    # Resolve group_by to plain column-name strings so a Column expression (e.g. F.col("region"))
+    # is used consistently for partitioning, selection, and the join below; get_column_name_or_alias
+    # would otherwise yield a rendered expression string that is not a real column and breaks the join.
+    group_by_names = get_columns_as_strings(group_by, allow_simple_expressions_only=True) if group_by else []
+
+    unique_str = uuid.uuid4().hex
+    interval_col = f"__gap_interval_{col_str_norm}_{unique_str}"
+    window_start_col = f"__gap_window_start_{col_str_norm}_{unique_str}"
+    next_window_start_col = f"__gap_next_window_start_{col_str_norm}_{unique_str}"
+    is_trailing_gap_col = f"__gap_is_trailing_{col_str_norm}_{unique_str}" if trailing_gap else None
+    condition_col = f"__gap_condition_{col_str_norm}_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        """Bucket rows into fixed time windows and flag the boundary row before each gap."""
+        input_columns = df.columns
+
+        # Bucket each row into a fixed time window and keep the window start. Null timestamps are
+        # coalesced to a sentinel first, because Spark's time-window operator drops rows whose window
+        # is null; those rows are excluded from gap detection below (distinct_windows filters nulls)
+        # and never match a gap window, so they pass through with no violation and are not lost.
+        safe_col_expr = F.coalesce(col_expr.cast("timestamp"), F.lit("1900-01-01 00:00:00").cast("timestamp"))
+        df = df.withColumn(interval_col, F.window(safe_col_expr, f"INTERVAL {window_minutes} MINUTES"))
+        df = df.withColumn(window_start_col, F.col(interval_col).start)
+
+        # For each present window (within each group) find the next present window over the ordered
+        # windows. Partitioning the window by the group key keeps per-group gap detection independent
+        # and lets the work scale across partitions for per-entity data. When group_by is omitted,
+        # there is no partitionBy and the sort below is a single partition, but distinct() has already
+        # collapsed rows to the occupied-window count, so the sort scales with that count, not with
+        # row count; this holds for realistic grids (thousands to low millions of occupied windows).
+        distinct_windows = df.filter(col_expr.isNotNull()).select(*group_by_names, window_start_col).distinct()
+        ordered_windows = (
+            Window.partitionBy(*group_by_names).orderBy(window_start_col)
+            if group_by_names
+            else Window.orderBy(window_start_col)
+        )
+        gaps = distinct_windows.withColumn(next_window_start_col, F.lead(window_start_col).over(ordered_windows))
+
+        # lead() is null only for the last present window in each group. When trailing_gap is enabled,
+        # anchor that boundary to the window containing curr_timestamp instead of leaving it unchecked,
+        # so a stale tail (no recent data) is flagged the same way an interior gap is.
+        extra_cols: list[str] = []
+        if trailing_gap:
+            assert is_trailing_gap_col is not None and curr_timestamp is not None
+            anchor_window_start = F.window(curr_timestamp.cast("timestamp"), f"INTERVAL {window_minutes} MINUTES").start
+            gaps = gaps.withColumn(is_trailing_gap_col, F.col(next_window_start_col).isNull())
+            gaps = gaps.withColumn(next_window_start_col, F.coalesce(F.col(next_window_start_col), anchor_window_start))
+            extra_cols = [is_trailing_gap_col]
+
+        # A gap exists when the next present window starts more than one window after the current one.
+        gap_seconds = window_minutes * 60
+        gaps = gaps.withColumn(
+            condition_col,
+            F.col(next_window_start_col).isNotNull()
+            & ((F.unix_timestamp(next_window_start_col) - F.unix_timestamp(window_start_col)) > F.lit(gap_seconds)),
+        )
+
+        # Attach the per-window gap flag back to every row of the boundary window, keeping column order.
+        joined = df.join(gaps, on=[*group_by_names, window_start_col], how="left")
+        return joined.select(*input_columns, window_start_col, next_window_start_col, *extra_cols, condition_col)
+
+    next_window_phrase = F.lit(" and the next present window starting at ")
+    if trailing_gap:
+        assert is_trailing_gap_col is not None
+        next_window_phrase = F.when(
+            F.col(is_trailing_gap_col), F.lit(" and the current time; the current window starts at ")
+        ).otherwise(next_window_phrase)
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("Gap in time series: no data between the window starting at "),
+            F.col(window_start_col).cast("string"),
+            next_window_phrase,
+            F.col(next_window_start_col).cast("string"),
+        ),
+        alias=f"{col_str_norm}_has_no_gaps_per_time_window",
     )
 
     return condition, apply
@@ -3159,6 +3625,42 @@ def _match_rows(
     return results
 
 
+def _join_results_on_null_safe_columns(
+    df: DataFrame, result_df: DataFrame, join_columns: list[str], result_columns: list[str]
+) -> DataFrame:
+    """
+    Left-join computed result columns while matching null join keys.
+
+    Preconditions are the caller's responsibility and are not validated here (all current callers
+    satisfy them):
+
+    - *join_columns* must be non-empty. An empty list makes the null-safe join condition reduce to a
+      constant TRUE, i.e. an unconditional cross join.
+    - *result_df* must have at most one row per join key. Otherwise the left join multiplies *df* rows.
+    - *result_columns* must be disjoint from *df.columns*. Otherwise the final select emits two columns
+      with the same name.
+
+    The helper aliases the two sides internally as "df" and "ref_df".
+
+    Args:
+        df: The input DataFrame whose rows and columns must be preserved.
+        result_df: The computed results, unique per combination of join key values.
+        join_columns: Non-empty list of column names shared by both DataFrames and used for matching.
+        result_columns: Non-overlapping result columns to append from *result_df*.
+
+    Returns:
+        The input rows and columns with the requested result columns appended.
+    """
+    joined = _match_rows(
+        df.alias("df"),
+        result_df.alias("ref_df"),
+        join_columns,
+        join_columns,
+        check_missing_records=False,
+    )
+    return joined.select("df.*", *[F.col(f"ref_df.{column}").alias(column) for column in result_columns])
+
+
 def _add_row_diffs(
     df: DataFrame, pk_column_names: list[str], ref_pk_column_names: list[str], row_missing_col: str, row_extra_col: str
 ) -> DataFrame:
@@ -3675,7 +4177,7 @@ def _is_aggr_compare(
                 # Note: Aliased Column expressions in group_by are not supported for window-incompatible
                 # aggregates (e.g., count_distinct). Use string column names or simple F.col() expressions.
                 join_cols = [col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by]
-                df = df.join(agg_df, on=join_cols, how="left")
+                df = _join_results_on_null_safe_columns(df, agg_df, join_cols, [metric_col])
             else:
                 # Use standard window function approach for window-compatible aggregates
                 window_spec = Window.partitionBy(*group_cols)

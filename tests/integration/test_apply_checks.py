@@ -67,6 +67,55 @@ def test_apply_checks_and_split_on_empty_checks(ws, spark):
     assert_df_equality(bad, expected_df)
 
 
+def test_apply_checks_and_split_has_no_gaps_per_time_window(ws, spark, set_utc_timezone):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    schema = "event_ts timestamp, val int"
+    test_df = spark.createDataFrame(
+        [
+            (datetime(2025, 7, 14), 1),  # 2025-07-15 missing -> gap, boundary row is quarantined
+            (datetime(2025, 7, 16), 2),  # consecutive with 2025-07-17 -> valid
+            (datetime(2025, 7, 17), 3),  # valid
+        ],
+        schema,
+    )
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.has_no_gaps_per_time_window,
+            column="event_ts",
+            check_func_kwargs={"window_minutes": 1440},
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+    good, bad = dq_engine.apply_checks_and_split(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                datetime(2025, 7, 14),
+                1,
+                [
+                    build_quality_violation(
+                        "event_ts_has_no_gaps_per_time_window",
+                        "Gap in time series: no data between the window starting at 2025-07-14 00:00:00 "
+                        "and the next present window starting at 2025-07-16 00:00:00",
+                        ["event_ts"],
+                        function="has_no_gaps_per_time_window",
+                    ),
+                ],
+                None,
+            ],
+            [datetime(2025, 7, 16), 2, None, None],
+            [datetime(2025, 7, 17), 3, None, None],
+        ],
+        expected_schema,
+    )
+
+    assert_check_and_split_results(checked, good, bad, expected, ["event_ts", "val"])
+
+
 def test_apply_checks_passed(ws, spark):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
@@ -95,7 +144,7 @@ def test_apply_checks_passed(ws, spark):
 def test_apply_checks_failed(ws, spark, make_schema, make_table, make_random):
     catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
-    output_table = f"{catalog}.{schema}.{make_random(8).lower()}"
+    output_table = f"{catalog}.{schema}.t{make_random(8).lower()}"
 
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 1, 1], [None, 1, 2], [1, None, 3]], SCHEMA)
@@ -831,7 +880,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
 
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    ref_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    ref_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)
 
     ref_df2 = spark.createDataFrame(
@@ -844,7 +893,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
         SCHEMA,
     )
 
-    ref_table2 = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    ref_table2 = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
     ref_df2.write.saveAsTable(ref_table2)
 
     checks = [
@@ -3301,6 +3350,18 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "run_id": RUN_ID,
                         "user_metadata": {},
                     },
+                    # null-safe merge on [b, c]: this row's key (b=NULL, c=3) now matches the query
+                    # group (b=NULL, c=3) because NULL<=>NULL is True on b (and 3==3 on c)
+                    {
+                        "name": "multiple_key_check_violation",
+                        "message": "multiple key check failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
                 ],
             ],
             [
@@ -3336,6 +3397,18 @@ def test_apply_checks_with_sql_query(ws, spark):
                     {
                         "name": "non_unique_merge_key",
                         "message": f"Value is not matching query: '{query_non_unique_merge_key}'",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                    # null-safe merge on [b, c]: this row's key (b=NULL, c=4) now matches the query
+                    # group (b=NULL, c=4) because NULL<=>NULL is True on b (and 4==4 on c)
+                    {
+                        "name": "multiple_key_check_violation",
+                        "message": "multiple key check failed",
                         "columns": None,
                         "filter": None,
                         "function": "sql_query",
@@ -5890,8 +5963,8 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
 def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, make_random, make_volume, spark):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    input_table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
-    output_table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    input_table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema_name)
 
     file_path = Path(__file__).parent.parent / "resources" / "all_row_checks.yaml"
@@ -5905,7 +5978,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
-        "col_email: string, col_ssn: string"
+        "col_email: string, col_ssn: string, col_country: string, col_currency: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -5926,6 +5999,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
                 "123-45-6789",
+                "US",
+                "USD",
             ],
             [
                 "val2",
@@ -5944,6 +6019,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
                 "223-45-6789",
+                "GB",
+                "EUR",
             ],
             [
                 "val3",
@@ -5962,6 +6039,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
                 "323-45-6789",
+                "DE",
+                "GBP",
             ],
         ],
         schema,
@@ -6004,6 +6083,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
                 "123-45-6789",
+                "US",
+                "USD",
                 None,
                 None,
             ],
@@ -6024,6 +6105,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
                 "223-45-6789",
+                "GB",
+                "EUR",
                 None,
                 None,
             ],
@@ -6044,6 +6127,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
                 "323-45-6789",
+                "DE",
+                "GBP",
                 None,
                 None,
             ],
@@ -6059,8 +6144,8 @@ def test_apply_checks_all_row_geo_checks_as_yaml_with_streaming(
 ):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema_name)
 
     file_path = Path(__file__).parent.parent / "resources" / "all_row_geo_checks.yaml"
@@ -6198,7 +6283,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
-        "col_email: string, col_ssn: string"
+        "col_email: string, col_ssn: string, col_country: string, col_currency: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -6219,6 +6304,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
                 "123-45-6789",
+                "US",
+                "USD",
             ],
             [
                 "val2",
@@ -6237,6 +6324,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
                 "223-45-6789",
+                "GB",
+                "EUR",
             ],
             [
                 "val3",
@@ -6255,6 +6344,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
                 "323-45-6789",
+                "DE",
+                "GBP",
             ],
         ],
         schema,
@@ -6285,6 +6376,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{"a" : 1, "b": 2}',
                 "user@example.com",
                 "123-45-6789",
+                "US",
+                "USD",
                 None,
                 None,
             ],
@@ -6305,6 +6398,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 '"quoted_user"@example.co.uk',
                 "223-45-6789",
+                "GB",
+                "EUR",
                 None,
                 None,
             ],
@@ -6325,6 +6420,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "user@[12.96.144.202]",
                 "323-45-6789",
+                "DE",
+                "GBP",
                 None,
                 None,
             ],
@@ -7077,6 +7174,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col6",
             check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
         ),
+        # has_no_gaps_per_time_window check
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.has_no_gaps_per_time_window,
+            column="col6",
+            check_func_kwargs={"window_minutes": 1440},
+        ),
         # aggr_matches_dataset check — row count matches the reference dataset
         DQDatasetRule(
             criticality="error",
@@ -7116,6 +7220,19 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col_ssn",
             check_func_kwargs={"country": "US"},
         ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_country_code,
+            column="col_country",
+            check_func_kwargs={"code_format": "alpha-2"},
+        ),
+        # is_valid_currency_code check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_currency_code,
+            column="col_currency",
+            check_func_kwargs={"code_format": "alphabetic"},
+        ),
     ]
 
     dq_engine = DQEngine(ws)
@@ -7123,7 +7240,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, col_ssn: string"
+        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, col_ssn: string, col_country: string, col_currency: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -7143,6 +7260,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "123-45-6789",
+                "US",
+                "USD",
             ],
             [
                 "val2",
@@ -7160,6 +7279,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 "223-45-6789",
+                "GB",
+                "EUR",
             ],
             [
                 "val3",
@@ -7177,6 +7298,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "323-45-6789",
+                "DE",
+                "GBP",
             ],
         ],
         schema,
@@ -7206,6 +7329,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 '{"key1": "1"}',
                 '{"a" : 1, "b": 2}',
                 "123-45-6789",
+                "US",
+                "USD",
                 None,
                 None,
             ],
@@ -7225,6 +7350,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 '{"key1": "1", "key2": "2"}',
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 "223-45-6789",
+                "GB",
+                "EUR",
                 None,
                 None,
             ],
@@ -7244,6 +7371,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 '{"key1": "[1, 2, 3]"}',
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "323-45-6789",
+                "DE",
+                "GBP",
                 None,
                 None,
             ],
@@ -9413,7 +9542,7 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
 
     catalog_name = TEST_CATALOG
     ref_table_schema = make_schema(catalog_name=catalog_name)
-    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(10).lower()}"
+    ref_table = f"{catalog_name}.{ref_table_schema.name}.t{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)
 
     pk_columns = ["id"]
