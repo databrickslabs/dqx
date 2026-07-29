@@ -211,6 +211,15 @@
       - ref_col2
       ref_df_name: ref_df_key
 
+# aggr_matches_dataset check — row count matches the reference dataset (validates ingestion completeness)
+- criticality: error
+  check:
+    function: aggr_matches_dataset
+    arguments:
+      column: '*'
+      aggr_type: count # other types: sum, avg, min, max, count_distinct, ...
+      ref_df_name: ref_df_key
+
 # is_data_fresh_per_time_window check
 - criticality: error
   check:

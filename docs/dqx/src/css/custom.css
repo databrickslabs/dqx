@@ -793,3 +793,10 @@ button {
 .bv-fact-enter {
   animation: bvFactSlideUp 0.5s ease-out forwards;
 }
+
+/* ── Feature-status badge: brand red (matches the DQX logo, #ff3621) ── */
+.badge--beta {
+  background-color: #ff3621;
+  border-color: #ff3621;
+  color: #fff;
+}

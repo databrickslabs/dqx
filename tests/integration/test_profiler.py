@@ -71,12 +71,21 @@ def test_profiler(spark, ws):
     )
 
     profiler = DQProfiler(ws)
-    stats, profiles = profiler.profile(inp_df, options={"sample_fraction": None, "llm_primary_key_detection": False})
+    stats, profiles = profiler.profile(
+        inp_df, options={"sample_fraction": None, "llm_primary_key_detection": False, "has_no_outliers": True}
+    )
 
     expected_profiles = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
+        ),
+        DQProfile(
+            name='has_no_outliers',
+            column='t1',
+            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            parameters=None,
+            filter=None,
         ),
         DQProfile(name="is_not_null", column="d1", description=None, parameters=None),
         DQProfile(
@@ -210,12 +219,21 @@ def test_profiler_rounding_midnight_behavior(spark, ws):
     )
 
     profiler = DQProfiler(ws)
-    stats, profiles = profiler.profile(inp_df, options={"sample_fraction": None, "llm_primary_key_detection": False})
+    stats, profiles = profiler.profile(
+        inp_df, options={"sample_fraction": None, "llm_primary_key_detection": False, "has_no_outliers": True}
+    )
 
     expected_profiles = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
+        ),
+        DQProfile(
+            name='has_no_outliers',
+            column='t1',
+            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            parameters=None,
+            filter=None,
         ),
         DQProfile(name="is_not_null", column="d1", description=None, parameters=None),
         DQProfile(
@@ -326,6 +344,7 @@ def test_profiler_non_default_profile_options(spark, ws):
         "limit": 1000,  # limit the number of samples
         "filter": "t1 > 0",  # filter out the first row
         "llm_primary_key_detection": False,  # disable pk detection
+        "has_no_outliers": True,  # generate has_no_outliers profile
     }
 
     stats, profiles = profiler.profile(input_df, columns=input_df.columns, options=profile_options)
@@ -337,6 +356,13 @@ def test_profiler_non_default_profile_options(spark, ws):
             column="t1",
             description="Real min/max values were used",
             parameters={"min": 1, "max": 3},
+            filter="t1 > 0",
+        ),
+        DQProfile(
+            name='has_no_outliers',
+            column='t1',
+            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            parameters=None,
             filter="t1 > 0",
         ),
         DQProfile(
@@ -441,6 +467,7 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
         "llm_primary_key_detection": False,  # disable pk detection
+        "has_no_outliers": True,  # generate has_no_outliers profile
     }
 
     stats, profiles = profiler.profile(inp_df, columns=inp_df.columns, options=profile_options)
@@ -449,6 +476,13 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
+        ),
+        DQProfile(
+            name='has_no_outliers',
+            column='t1',
+            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            parameters=None,
+            filter=None,
         ),
         DQProfile(
             name="is_not_empty", column="t2", description=None, parameters={"trim_strings": False}
@@ -544,6 +578,7 @@ def test_profiler_non_default_profile_options_with_rounding_enabled(spark, ws):
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
         "llm_primary_key_detection": False,  # disable pk detection
+        "has_no_outliers": True,  # generate has_no_outliers profile
     }
 
     stats, profiles = profiler.profile(inp_df, columns=inp_df.columns, options=profile_options)
@@ -552,6 +587,13 @@ def test_profiler_non_default_profile_options_with_rounding_enabled(spark, ws):
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
+        ),
+        DQProfile(
+            name='has_no_outliers',
+            column='t1',
+            description='Column t1 has 0.0% of outliers (allowed: 1.0%). Lower boundary - -1.5, upper boundary - 5.5.',
+            parameters=None,
+            filter=None,
         ),
         DQProfile(name="is_not_empty", column="t2", description=None, parameters={"trim_strings": False}),
         DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None),
@@ -1664,6 +1706,7 @@ def test_profile_with_dataset_filter(spark, ws):
         "limit": None,
         "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         "llm_primary_key_detection": False,
+        "has_no_outliers": True,
     }
 
     profiler = DQProfiler(ws)
@@ -1713,6 +1756,13 @@ def test_profile_with_dataset_filter(spark, ws):
             },
             filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
             description="Real min/max values were used",
+        ),
+        DQProfile(
+            name='has_no_outliers',
+            column='cost',
+            description='Column cost has 0.0% of outliers (allowed: 1.0%). Lower boundary - -25.0, upper boundary - 325.0.',
+            parameters=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         ),
         DQProfile(
             name="is_not_null",
@@ -1914,7 +1964,7 @@ def test_profiler_with_pk_detection(spark, ws):
 
     llm_model_config = LLMModelConfig()
     profiler = DQProfiler(ws, llm_model_config=llm_model_config)
-    stats, profiles = profiler.profile(input_df, options={"sample_fraction": None})
+    stats, profiles = profiler.profile(input_df, options={"sample_fraction": None, "has_no_outliers": True})
 
     expected_profiles = [
         DQProfile(name="is_not_null", column="order_id", description=None, parameters=None),
@@ -1924,6 +1974,13 @@ def test_profiler_with_pk_detection(spark, ws):
             description="Real min/max values were used",
             parameters={"max": 5, "min": 1},
         ),
+        DQProfile(
+            name='has_no_outliers',
+            column='order_id',
+            description='Column order_id has 0.0% of outliers (allowed: 1.0%). Lower boundary - -0.5, upper boundary - 6.5.',
+            parameters=None,
+            filter=None,
+        ),
         DQProfile(name="is_not_null", column="customer_id", description=None, parameters=None),
         DQProfile(
             name="min_max",
@@ -1931,12 +1988,26 @@ def test_profiler_with_pk_detection(spark, ws):
             description="Real min/max values were used",
             parameters={"max": 102, "min": 100},
         ),
+        DQProfile(
+            name='has_no_outliers',
+            column='customer_id',
+            description='Column customer_id has 0.0% of outliers (allowed: 1.0%). Lower boundary - 97.5, upper boundary - 104.5.',
+            parameters=None,
+            filter=None,
+        ),
         DQProfile(name="is_not_null", column="amount", description=None, parameters=None),
         DQProfile(
             name="min_max",
             column="amount",
             description="Real min/max values were used",
             parameters={"max": 90, "min": 45},
+        ),
+        DQProfile(
+            name='has_no_outliers',
+            column='amount',
+            description='Column amount has 0.0% of outliers (allowed: 1.0%). Lower boundary - 7.5, upper boundary - 112.5.',
+            parameters=None,
+            filter=None,
         ),
         DQProfile(name="is_not_null_or_empty", column="status", description=None, parameters={"trim_strings": True}),
         DQProfile(
@@ -2252,6 +2323,59 @@ def test_profiler_count_distinct_computed(spark, ws):
 
     assert stats["color"]["count_distinct"] == 2
     assert stats["value"]["count_distinct"] == 3
+
+
+def test_profiler_generates_has_no_outliers_for_clean_numeric_data(spark, ws):
+    """End-to-end: has_no_outliers profile is emitted when the outlier fraction is below the threshold.
+
+    20 clean integer values → 0 outliers → 0 % < 1 % threshold → profile generated.
+    MAD bounds for [1..20]: median=10.5, MAD=5.0, bounds=(-7.0, 28.0) → no values outside.
+    """
+    schema = T.StructType([T.StructField("value", T.IntegerType())])
+    data = [(i,) for i in range(1, 21)]
+    input_df = spark.createDataFrame(data, schema)
+
+    profiler = DQProfiler(ws)
+    _, profiles = profiler.profile(
+        input_df,
+        options={
+            "sample_fraction": None,
+            "llm_primary_key_detection": False,
+            "remove_outliers": False,
+            "outliers_ratio": 0.01,
+            "has_no_outliers": True,
+        },
+    )
+
+    has_no_outliers_profiles = [p for p in profiles if p.name == "has_no_outliers"]
+    assert len(has_no_outliers_profiles) == 1
+    assert has_no_outliers_profiles[0].column == "value"
+    assert has_no_outliers_profiles[0].filter is None
+
+
+def test_profiler_no_has_no_outliers_when_outliers_exceed_threshold(spark, ws):
+    """End-to-end: has_no_outliers profile is suppressed when the outlier fraction exceeds the threshold.
+
+    7 values — 4 normal + 3 extreme → 3/7 ≈ 43 % > 10 % threshold → no profile.
+    MAD bounds: median=4, MAD=3, bounds=(-6.5, 14.5) → 100, 200, 300 are outliers.
+    """
+    schema = T.StructType([T.StructField("value", T.IntegerType())])
+    data = [(1,), (2,), (3,), (4,), (100,), (200,), (300,)]
+    input_df = spark.createDataFrame(data, schema)
+
+    profiler = DQProfiler(ws)
+    _, profiles = profiler.profile(
+        input_df,
+        options={
+            "sample_fraction": None,
+            "llm_primary_key_detection": False,
+            "outliers_ratio": 0.1,
+            "has_no_outliers": True,
+        },
+    )
+
+    has_no_outliers_profiles = [p for p in profiles if p.name == "has_no_outliers"]
+    assert len(has_no_outliers_profiles) == 0
 
 
 def _round_stats(

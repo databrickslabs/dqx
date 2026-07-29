@@ -44,12 +44,12 @@ lint: ## Check Python without modifying (black --check, ruff, mypy, pylint)
 	$(UV_RUN) mypy .
 	$(UV_RUN) pylint --output-format=colorized -j 0 src tests
 
-fmt: ## Format and auto-fix Python (black, ruff --fix, mypy, pylint, docs URL refresh)
+fmt: ## Format and auto-fix Python (black, ruff --fix, mypy, pylint, version sync of docs URLs + DQX pins)
 	$(UV_RUN) black .
 	$(UV_RUN) ruff check . --fix
 	$(UV_RUN) mypy .
 	$(UV_RUN) pylint --output-format=colorized -j 0 src tests
-	$(UV_RUN) python docs/dqx/update_github_urls.py
+	$(UV_RUN) python docs/dqx/sync_versions.py
 
 ##@ Tests (DQX library)
 
@@ -67,6 +67,15 @@ perf: ## Run performance benchmarks (long timeout)
 
 anomaly: ## Run anomaly integration tests (long timeout, with reruns)
 	$(UV_RUN) pytest tests/integration_anomaly/ -v -n 10 --timeout 1200 --durations 20 --reruns 2 --reruns-delay 5
+
+# The integration test's deploy (ci_deploy.sh -> bundle deploy) builds the runner wheel with
+# `uv build ./runner` from inside mcp-server/, so the global *relative* UV_BUILD_CONSTRAINT
+# (.build-constraints.txt) would resolve against the wrong directory and fail with
+# "File not found: .build-constraints.txt". Pin it to the absolute repo-root path (same fix as
+# mcp-deploy). CI doesn't hit this — it runs via the acceptance harness, not make.
+mcp-integration: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
+mcp-integration: ## Run MCP server integration tests (deploys an isolated app; requires workspace auth + Databricks CLI)
+	$(UV_RUN) pytest tests/integration_mcp/ -v --timeout 1800 --durations 10
 
 coverage: ## Run all tests (excl. e2e/perf) and open HTML coverage report
 	$(UV_TEST) --ignore=tests/e2e --ignore=tests/perf --cov --cov-report=html tests/
@@ -172,6 +181,60 @@ app-test: ## Run app backend pytest suite (K=<expr> filter, COV=1 for coverage)
 	  $(if $(K),-k "$(K)") \
 	  $(if $(COV),--cov=src/databricks_labs_dqx_app/backend --cov-report=term-missing --cov-report=xml:coverage-app.xml)
 
+# Run the MCP server's unit-test suite (pytest, no Databricks/Spark dependencies).
+# Usage:  make mcp-test           # run everything
+#         make mcp-test K=expr    # forward -k filter to pytest
+#
+# pytest is not declared in mcp-server's pyproject/uv.lock — the suite only
+# needs anyio, which ships transitively. With UV_FROZEN=1 we can't add pytest
+# to the lock from here, so inject it ephemerally with ``uv run --with pytest``
+# over the synced runtime env (anyio's pytest plugin handles the async tests).
+mcp-test: ## Run MCP server pytest suite (K=<expr> filter)
+	cd mcp-server && uv run --with pytest pytest tests/ \
+	  $(if $(K),-k "$(K)")
+
+# Static type-check the MCP server (parity with app-check). basedpyright is not in mcp-server's
+# pyproject/uv.lock (like pytest), so inject it ephemerally with ``uv run --with basedpyright`` over
+# the synced runtime env. Scoped to ``server`` (the app package): the runner sub-project's
+# pyspark/dqx deps aren't in this env — it type-checks separately as its own wheel. ``standard`` mode
+# + ``--level error`` config lives in mcp-server/pyproject.toml [tool.basedpyright].
+mcp-check: ## Type-check the MCP server with basedpyright (standard mode, errors only)
+	cd mcp-server && uv run --with basedpyright basedpyright --level error server
+
+# One-command MCP server deploy (parity with app-deploy). Ensures the runner-wheel volume
+# exists, deploys the bundle (app + runner job + setup job), runs the one-time setup job (UC
+# grants + temp-schema ownership), then deploys & starts the app via ``bundle run``. The catalog
+# is passed as CATALOG below and injected into the app as the DQX_CATALOG config value (no secret).
+#
+# Usage: make mcp-deploy PROFILE=my-profile CATALOG=main
+# CATALOG is REQUIRED: workspace.artifact_path is the UC volume /Volumes/<CATALOG>/dqx_mcp_tmp/dqx_artifacts
+# that hosts the runner wheels; it is resolved at deploy time and must pre-exist. It is also the
+# catalog the app + runner use for temp views and per-user output schemas.
+# TARGET defaults to the bundle's default target (dev); override with TARGET=<t>.
+# The bundle artifact build runs `uv build ./runner` from inside mcp-server/, so the global
+# relative UV_BUILD_CONSTRAINT (.build-constraints.txt) would resolve against the wrong
+# directory. Pin it to the absolute repo-root path so the wheel build finds it.
+mcp-deploy: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
+mcp-deploy: ## Deploy the MCP server bundle, run setup, and (re)deploy + start the app
+	@test -n "$(PROFILE)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>] [BUNDLE_VARS=...]"; exit 1)
+	@test -n "$(CATALOG)" || (echo "Usage: make mcp-deploy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>] [BUNDLE_VARS=...]"; exit 1)
+	cd mcp-server && DQX_MCP_CATALOG=$(CATALOG) DATABRICKS_PROFILE=$(PROFILE) ./scripts/ensure_artifacts_volume.sh
+	cd mcp-server && databricks bundle deploy -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
+	cd mcp-server && databricks bundle run dqx_setup -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
+	cd mcp-server && databricks bundle run mcp-dqx -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
+
+# One-command teardown (nothing in the MCP bundle is destroy-protected, so — unlike the Studio's
+# multi-step unbind-then-destroy uninstall — this is a single command). Removes the app + runner/
+# setup jobs, then drops the out-of-band runner-wheel volume. Leaves the <catalog>.dqx_mcp_tmp schema and any
+# dqx_mcp_<user> output schemas intact (they may hold user data) — drop those manually if you want a
+# fully clean wipe. runner_service_principal_id isn't needed to destroy, so its placeholder is fine.
+mcp-destroy: ## Tear down the MCP server (app + jobs + runner-wheel volume). Requires PROFILE + CATALOG
+	@test -n "$(PROFILE)" || (echo "Usage: make mcp-destroy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>]"; exit 1)
+	@test -n "$(CATALOG)" || (echo "Usage: make mcp-destroy PROFILE=<databricks-profile> CATALOG=<catalog> [TARGET=<bundle-target>]"; exit 1)
+	cd mcp-server && databricks bundle destroy -p $(PROFILE) $(if $(TARGET),-t $(TARGET)) --auto-approve --var catalog_name=$(CATALOG) $(BUNDLE_VARS)
+	cd mcp-server && databricks volumes delete $(CATALOG).dqx_mcp_tmp.dqx_artifacts -p $(PROFILE) 2>/dev/null || true
+	@echo "Destroyed the MCP app + jobs and the dqx_artifacts volume. The $(CATALOG).dqx_mcp_tmp schema and any $(CATALOG).dqx_mcp_<user> output schemas are left intact — drop them manually if you want a full wipe."
+
 ##@ App deploy (require PROFILE=<databricks-profile>; most also need TARGET=<bundle-target>)
 
 # Minimum Databricks CLI version required to deploy. The ``postgres_roles``
@@ -250,6 +313,14 @@ lock-app-dependencies: ## Regenerate app/uv.lock, app/yarn.lock, app/.build-cons
 	$(UV_RUN) --group yq tomlq -r '.["build-system"].requires[]' app/pyproject.toml | \
 	  uv pip compile --generate-hashes --universal --no-header - > app/build-constraints-new.txt
 	mv app/build-constraints-new.txt app/.build-constraints.txt
+
+# Regenerate the MCP server lockfile and scrub private-proxy URLs so the
+# committed file resolves against whatever registry the install environment
+# is configured for (JFrog in CI, public in fork PRs).
+lock-mcp-dependencies: export UV_FROZEN := 0
+lock-mcp-dependencies: ## Regenerate mcp-server/uv.lock
+	cd mcp-server && uv lock --exclude-newer "7 days"
+	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g' mcp-server/uv.lock
 
 lock-dependencies: export UV_FROZEN := 0
 lock-dependencies: ## Regenerate top-level uv.lock and .build-constraints.txt
