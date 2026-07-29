@@ -1,6 +1,6 @@
 import pycountry
 
-from databricks.labs.dqx.check_funcs import load_iso_codes
+from tests.unit.iso_code_freshness import assert_packaged_codes_match
 
 
 def test_iso_4217_codes_match_pycountry():
@@ -16,8 +16,7 @@ def test_iso_4217_codes_match_pycountry():
     packaged list contains that pycountry no longer does (stale/invalid codes). The packaged lists are
     reconciled against the official ISO 4217 list before committing; if a future intentional
     divergence from pycountry is introduced, record it as an explicit allow-list here rather than
-    loosening the assertion. The test reads via the production loader (load_iso_codes) so it covers
-    what actually runs rather than reimplementing the reader.
+    loosening the assertion.
 
     Currency attributes are read with getattr(..., None) and the None values filtered out, so a
     future pycountry release that renames an attribute or omits it for some entries surfaces as a
@@ -32,12 +31,4 @@ def test_iso_4217_codes_match_pycountry():
         ),
     }
 
-    for resource_name, expected_codes in expected.items():
-        packaged = load_iso_codes(resource_name)
-        missing = expected_codes - packaged
-        stale = packaged - expected_codes
-        assert packaged == expected_codes, (
-            f"Packaged codes in '{resource_name}' do not match pycountry. "
-            f"Missing (in pycountry, not packaged): {sorted(missing)}. "
-            f"Stale (packaged, not in pycountry): {sorted(stale)}."
-        )
+    assert_packaged_codes_match(expected)
