@@ -5929,7 +5929,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
-        "col_email: string, col_ssn: string, col_country: string"
+        "col_email: string, col_ssn: string, col_country: string, col_currency: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -5951,6 +5951,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "user@example.com",
                 "123-45-6789",
                 "US",
+                "USD",
             ],
             [
                 "val2",
@@ -5970,6 +5971,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '"quoted_user"@example.co.uk',
                 "223-45-6789",
                 "GB",
+                "EUR",
             ],
             [
                 "val3",
@@ -5989,6 +5991,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "user@[12.96.144.202]",
                 "323-45-6789",
                 "DE",
+                "GBP",
             ],
         ],
         schema,
@@ -6032,6 +6035,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "user@example.com",
                 "123-45-6789",
                 "US",
+                "USD",
                 None,
                 None,
             ],
@@ -6053,6 +6057,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 '"quoted_user"@example.co.uk',
                 "223-45-6789",
                 "GB",
+                "EUR",
                 None,
                 None,
             ],
@@ -6074,6 +6079,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "user@[12.96.144.202]",
                 "323-45-6789",
                 "DE",
+                "GBP",
                 None,
                 None,
             ],
@@ -6228,7 +6234,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
-        "col_email: string, col_ssn: string, col_country: string"
+        "col_email: string, col_ssn: string, col_country: string, col_currency: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -6250,6 +6256,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "user@example.com",
                 "123-45-6789",
                 "US",
+                "USD",
             ],
             [
                 "val2",
@@ -6269,6 +6276,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '"quoted_user"@example.co.uk',
                 "223-45-6789",
                 "GB",
+                "EUR",
             ],
             [
                 "val3",
@@ -6288,6 +6296,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "user@[12.96.144.202]",
                 "323-45-6789",
                 "DE",
+                "GBP",
             ],
         ],
         schema,
@@ -6319,6 +6328,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "user@example.com",
                 "123-45-6789",
                 "US",
+                "USD",
                 None,
                 None,
             ],
@@ -6340,6 +6350,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 '"quoted_user"@example.co.uk',
                 "223-45-6789",
                 "GB",
+                "EUR",
                 None,
                 None,
             ],
@@ -6361,6 +6372,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "user@[12.96.144.202]",
                 "323-45-6789",
                 "DE",
+                "GBP",
                 None,
                 None,
             ],
@@ -7158,6 +7170,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col_country",
             check_func_kwargs={"code_format": "alpha-2"},
         ),
+        # is_valid_currency_code check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_currency_code,
+            column="col_currency",
+            check_func_kwargs={"code_format": "alphabetic"},
+        ),
     ]
 
     dq_engine = DQEngine(ws)
@@ -7165,7 +7184,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, col_ssn: string, col_country: string"
+        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, col_ssn: string, col_country: string, col_currency: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -7186,6 +7205,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 '{"a" : 1, "b": 2}',
                 "123-45-6789",
                 "US",
+                "USD",
             ],
             [
                 "val2",
@@ -7204,6 +7224,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 "223-45-6789",
                 "GB",
+                "EUR",
             ],
             [
                 "val3",
@@ -7222,6 +7243,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "323-45-6789",
                 "DE",
+                "GBP",
             ],
         ],
         schema,
@@ -7252,6 +7274,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 '{"a" : 1, "b": 2}',
                 "123-45-6789",
                 "US",
+                "USD",
                 None,
                 None,
             ],
@@ -7272,6 +7295,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
                 "223-45-6789",
                 "GB",
+                "EUR",
                 None,
                 None,
             ],
@@ -7292,6 +7316,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 '{ "a" : 1, "b": 1023455,  "c": null }',
                 "323-45-6789",
                 "DE",
+                "GBP",
                 None,
                 None,
             ],
