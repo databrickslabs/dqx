@@ -10,7 +10,7 @@ from collections.abc import Callable, Sequence
 from enum import Enum
 from itertools import zip_longest
 import operator as py_operator
-from typing import Any
+from typing import Any, NamedTuple
 import pandas as pd  # type: ignore[import-untyped]
 import pyspark.sql.functions as F
 from pyspark.sql import types
@@ -1218,19 +1218,34 @@ def _iso_4217_codes_by_format() -> dict[str, frozenset[str]]:
     }
 
 
+class _IsoStandard(NamedTuple):
+    """Registry entry for an ISO standard: its lazy code-set loader and user-facing noun.
+
+    *kind* ("country"/"currency") is the word used in error and violation messages. Carrying it here
+    (rather than deriving it from the standard name) means adding a third standard forces supplying
+    its label instead of silently defaulting.
+    """
+
+    codes_by_format: Callable[[], dict[str, frozenset[str]]]
+    kind: str
+
+
+# Registry of the ISO standards these checks validate against, keyed by the standard's name.
+_ISO_3166_1 = "ISO 3166-1"
+_ISO_4217 = "ISO 4217"
+_ISO_CODES_BY_STANDARD: dict[str, _IsoStandard] = {
+    _ISO_3166_1: _IsoStandard(_iso_3166_1_codes_by_format, "country"),
+    _ISO_4217: _IsoStandard(_iso_4217_codes_by_format, "currency"),
+}
+
+
 # Precomputed once on first use and cached: the literal lists never change at runtime, so building
 # them per call (sorted() + one F.lit() per code) would repeat needless work on every check
 # evaluation. Keyed by (standard, format, lower) so the case-sensitive and case-insensitive variants
 # share one cache across both ISO standards; numeric never requests lower=True since it has no case.
-_ISO_CODES_BY_STANDARD: dict[str, Callable[[], dict[str, frozenset[str]]]] = {
-    "ISO 3166-1": _iso_3166_1_codes_by_format,
-    "ISO 4217": _iso_4217_codes_by_format,
-}
-
-
 @lru_cache(maxsize=None)
 def _iso_literals(standard: str, fmt: str, lower: bool) -> list[Column]:
-    codes = _ISO_CODES_BY_STANDARD[standard]()[fmt]
+    codes = _ISO_CODES_BY_STANDARD[standard].codes_by_format()[fmt]
     return [F.lit(code.lower() if lower else code) for code in sorted(codes)]
 
 
@@ -1245,9 +1260,10 @@ def _is_valid_iso_code(column: str | Column, code_format: str, case_sensitive: b
         raise MissingParameterError("'code_format' is not provided.")
     if not isinstance(code_format, str):
         raise InvalidParameterError(f"'code_format' must be a string, got {type(code_format)} instead.")
-    kind = "country" if standard == "ISO 3166-1" else "currency"
+    iso_standard = _ISO_CODES_BY_STANDARD[standard]
+    kind = iso_standard.kind
     normalized_format = code_format.lower()
-    codes_by_format = _ISO_CODES_BY_STANDARD[standard]()
+    codes_by_format = iso_standard.codes_by_format()
     if normalized_format not in codes_by_format:
         supported = ", ".join(sorted(codes_by_format))
         raise InvalidParameterError(
@@ -1323,7 +1339,7 @@ def is_valid_country_code(column: str | Column, code_format: str = "alpha-2", ca
         MissingParameterError: if *code_format* is None.
         InvalidParameterError: if *code_format* is not a string, or is not a supported representation.
     """
-    return _is_valid_iso_code(column, code_format, case_sensitive, standard="ISO 3166-1")
+    return _is_valid_iso_code(column, code_format, case_sensitive, standard=_ISO_3166_1)
 
 
 @register_rule("row")
@@ -1369,7 +1385,7 @@ def is_valid_currency_code(
         MissingParameterError: if *code_format* is None.
         InvalidParameterError: if *code_format* is not a string, or is not a supported representation.
     """
-    return _is_valid_iso_code(column, code_format, case_sensitive, standard="ISO 4217")
+    return _is_valid_iso_code(column, code_format, case_sensitive, standard=_ISO_4217)
 
 
 @register_rule("row")
