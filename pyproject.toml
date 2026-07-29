@@ -147,6 +147,7 @@ test = [
     "fastapi>=0.119.0,<1.0",
     "dbt-core~=1.11.6",
     "dbt-databricks~=1.11.6",
+    "pycountry~=26.2.16",  # used only to test that the packaged ISO 4217 code lists stay up to date
 ]
 docs = [
     "pydoc-markdown>=4.8.2,<5.0",

@@ -15,6 +15,7 @@ from databricks.labs.dqx.check_funcs import (
     is_ipv4_address_in_cidr,
     is_ipv6_address_in_cidr,
     is_valid_national_id,
+    is_valid_currency_code,
     sql_expression,
 )
 from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
@@ -191,3 +192,38 @@ def test_is_valid_national_id_non_string_country():
 def test_is_valid_national_id_unsupported_country():
     with pytest.raises(InvalidParameterError, match="Unsupported country code for national ID validation"):
         is_valid_national_id("a", country="ZZ")
+
+
+def test_is_valid_currency_code_default_format_auto_name():
+    result = is_valid_currency_code("a")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_currency_code"
+
+
+def test_is_valid_currency_code_numeric_format_auto_name():
+    result = is_valid_currency_code("a", code_format="numeric")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_currency_code"
+
+
+def test_is_valid_currency_code_format_is_case_insensitive():
+    result = is_valid_currency_code("a", code_format="Alphabetic")
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_currency_code"
+
+
+def test_is_valid_currency_code_missing_code_format():
+    with pytest.raises(MissingParameterError, match="'code_format' is not provided."):
+        is_valid_currency_code("a", code_format=None)
+
+
+def test_is_valid_currency_code_non_string_code_format():
+    with pytest.raises(InvalidParameterError, match="'code_format' must be a string"):
+        is_valid_currency_code("a", code_format=123)
+
+
+def test_is_valid_currency_code_unsupported_code_format():
+    with pytest.raises(InvalidParameterError, match="Unsupported code_format for currency code validation"):
+        is_valid_currency_code("a", code_format="alpha-3")
+
+
+def test_is_valid_currency_code_case_insensitive_auto_name():
+    result = is_valid_currency_code("a", case_sensitive=False)
+    assert get_column_name_or_alias(result) == "a_is_not_a_valid_currency_code"
