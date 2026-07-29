@@ -14,27 +14,40 @@ from tests.integration.conftest import setup_custom_check_func
 from tests.constants import TEST_CATALOG
 
 
-def _assert_ai_regex_match_excludes_c_prefix(checks):
-    """Assert the AI generated a regex_match check on the 'name' column that targets the letter 'c'.
+def _assert_ai_excludes_c_prefix_on_name(checks):
+    """Assert the AI generated a check on the 'name' column that targets the letter 'c'.
 
     This validates the AI-generation pipeline (the model turned the "name should not start with 'c'"
-    requirement into a regex_match rule on the right column), not the exact regex. LLM output is
-    non-deterministic and varies by model — observed forms include ``^[^cC].*`` (negate=False),
-    ``^[cC].*`` (negate=True), ``^((?!c).)*$``, and ``^c.*`` — and smaller serving models do not
-    reliably pick a semantically perfect construct. Asserting the exact exclusion logic therefore
-    makes the test flaky, so we only require a regex_match on 'name' whose pattern references 'c'.
+    requirement into a rule on the right column referencing 'c'), not the exact check function or its
+    arguments. LLM output is non-deterministic and varies by model, both in the function it picks and in
+    the exact argument shape:
+
+    - ``regex_match`` — observed regex forms include ``^[^cC].*`` (negate=False), ``^[cC].*``
+      (negate=True), ``^((?!c).)*$``, and ``^c.*``.
+    - ``is_not_in_list`` / ``is_not_equal_to`` — smaller serving models sometimes express the
+      requirement as forbidding the literal ``c`` rather than a prefix regex.
+
+    Smaller serving models do not reliably pick a semantically perfect construct, so asserting the exact
+    function or exclusion logic makes the test flaky. We only require some check on 'name' whose
+    arguments reference 'c'.
     """
-    actual = next((c for c in checks if c["check"]["function"] == "regex_match"), None)
-    assert actual is not None, "AI generated regex_match check not found in the loaded checks"
+    name_checks = [c for c in checks if c["check"].get("arguments", {}).get("column") == "name"]
+    assert name_checks, f"AI did not generate any check targeting the 'name' column: {checks}"
+
+    def _references_c(check) -> bool:
+        args = check["check"].get("arguments", {})
+        for key in ("regex", "value", "suffix", "prefix", "substring"):
+            if "c" in str(args.get(key, "")).lower():
+                return True
+        for key in ("allowed", "forbidden", "in_list", "not_in_list"):
+            values = args.get(key, [])
+            if isinstance(values, (list, tuple)) and any("c" in str(v).lower() for v in values):
+                return True
+        return False
+
+    actual = next((c for c in name_checks if _references_c(c)), None)
+    assert actual is not None, f"AI generated no 'name' check referencing 'c': {name_checks}"
     assert actual.get("criticality") in {"error", "warn"}, f"Unexpected criticality: {actual}"
-
-    args = actual["check"].get("arguments", {})
-    assert args.get("column") == "name", (
-        f"AI generated regex_match check must target the 'name' column via the required " f"'column' argument: {actual}"
-    )
-
-    regex = args.get("regex", "")
-    assert "c" in regex.lower(), f"AI generated regex does not reference 'c' for the name rule: regex={regex!r}"
 
 
 def test_profiler_workflow_when_missing_input_location_in_config(ws, setup_serverless_workflows):
@@ -387,7 +400,7 @@ def test_profiler_workflow_with_ai_rules_generation(ws, spark_keep_alive, setup_
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
-    _assert_ai_regex_match_excludes_c_prefix(checks)
+    _assert_ai_excludes_c_prefix_on_name(checks)
 
 
 def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secrets(
@@ -423,7 +436,7 @@ def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secret
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
-    _assert_ai_regex_match_excludes_c_prefix(checks)
+    _assert_ai_excludes_c_prefix_on_name(checks)
 
 
 def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark_keep_alive, setup_serverless_workflows):

@@ -521,18 +521,20 @@ def test_save_summary_metrics_with_streaming_and_custom_params(ws, spark, make_s
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
     volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
 
-    input_config = InputConfig(location=f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}", is_streaming=True)
+    input_config = InputConfig(location=f"{TEST_CATALOG}.{schema_name}.input_{make_random(6).lower()}", is_streaming=True)
     output_config = OutputConfig(
-        location=f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}",
+        location=f"{TEST_CATALOG}.{schema_name}.output_{make_random(6).lower()}",
         options={"checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_name}/{volume_name}/{make_random(6).lower()}"},
         trigger={"availableNow": True},
     )
     quarantine_config = OutputConfig(
-        location=f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}",
+        location=f"{TEST_CATALOG}.{schema_name}.quarantine_{make_random(6).lower()}",
         options={"checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_name}/{volume_name}/{make_random(6).lower()}"},
         trigger={"availableNow": True},
     )
-    metrics_config = OutputConfig(location=f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}", mode="overwrite")
+    metrics_config = OutputConfig(
+        location=f"{TEST_CATALOG}.{schema_name}.metrics_{make_random(6).lower()}", mode="overwrite"
+    )
 
     user_metadata = {"key1": "value1", "key2": "value2"}
     dq_engine = DQEngine(
