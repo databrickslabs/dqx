@@ -41,7 +41,6 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 
-
 # ---------------------------------------------------------------------------
 # render_check — pure function, shape parity
 # ---------------------------------------------------------------------------
@@ -376,11 +375,13 @@ class TestRenderCheckDefinitionFilter:
 
     def test_definition_filter_slot_substituted(self):
         """{{col_a}} in definition.filter with mapping {col_a: amount} -> 'amount > 0'."""
-        definition = RuleDefinition.model_validate({
-            "body": {"function": "is_not_null", "arguments": {"column": "{{col_a}}"}},
-            "slots": [{"name": "col_a", "family": "any", "position": 0, "cardinality": "one"}],
-            "filter": "{{col_a}} > 0",
-        })
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_not_null", "arguments": {"column": "{{col_a}}"}},
+                "slots": [{"name": "col_a", "family": "any", "position": 0, "cardinality": "one"}],
+                "filter": "{{col_a}} > 0",
+            }
+        )
         version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
         check, _ = render_check(
             mode="dqx_native",
@@ -452,11 +453,13 @@ class TestRenderCheckDefinitionFilter:
 
     def test_definition_filter_plain_string_no_slots(self):
         """A filter with no slot placeholders is passed through unchanged."""
-        definition = RuleDefinition.model_validate({
-            "body": {"function": "is_not_null", "arguments": {"column": "{{column}}"}},
-            "slots": [{"name": "column", "family": "any", "position": 0}],
-            "filter": "region = 'US'",
-        })
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_not_null", "arguments": {"column": "{{column}}"}},
+                "slots": [{"name": "column", "family": "any", "position": 0}],
+                "filter": "region = 'US'",
+            }
+        )
         version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
         check, _ = render_check(
             mode="dqx_native",
@@ -483,11 +486,13 @@ class TestRenderCheckDefinitionFilter:
         filter must be re-validated with ``is_sql_query_safe`` — exactly as the
         predicate/sql_query paths already do — before it reaches DQRule.filter.
         """
-        definition = RuleDefinition.model_validate({
-            "body": {"function": "is_not_null", "arguments": {"column": "{{col_a}}"}},
-            "slots": [{"name": "col_a", "family": "any", "position": 0, "cardinality": "one"}],
-            "filter": "{{col_a}} > 0",
-        })
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_not_null", "arguments": {"column": "{{col_a}}"}},
+                "slots": [{"name": "col_a", "family": "any", "position": 0, "cardinality": "one"}],
+                "filter": "{{col_a}} > 0",
+            }
+        )
         version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
         with pytest.raises(UnsafeSqlQueryError):
             render_check(
@@ -622,27 +627,26 @@ class TestRenderCheckSqlMode:
         )
         assert check["check"]["arguments"]["negate"] is True
 
-    def test_table_slot_binds_an_fqn_and_is_not_reported_as_a_column(self):
-        """A cross-table rule's joined table is a slot, so the rule stays portable.
+    def test_joined_table_is_named_in_the_query_and_binds_nothing(self):
+        """A cross-table rule names the table it joins in its own SQL.
 
-        Its bound value is an FQN, which must be substituted into the query text
-        like any other slot but must NOT leak into the rule's mapped columns —
-        that list drives the by-column attribution view (and DQX's own
-        input-DataFrame validation), neither of which knows what a table is.
+        The rule belongs to one table, so only that table's COLUMNS are slots the
+        binding maps; the joined table survives substitution untouched and stays
+        out of the mapped columns that drive by-column attribution (and DQX's own
+        input-DataFrame validation).
         """
         definition = RuleDefinition.model_validate(
             {
                 "body": {
                     "sql_query": (
                         "SELECT {{amount}}, (NOT ({{amount}} * fx.rate < 10000)) AS condition "
-                        "FROM {{input_view}} LEFT JOIN {{fx_table}} fx ON fx.country = {{country}}"
+                        "FROM {{input_view}} LEFT JOIN main.ref.fx_rates fx ON fx.country = {{country}}"
                     ),
                     "merge_columns": ["{{amount}}"],
                 },
                 "slots": [
                     {"name": "amount", "family": "numeric", "position": 0, "cardinality": "one"},
                     {"name": "country", "family": "text", "position": 1, "cardinality": "one"},
-                    {"name": "fx_table", "family": "table", "position": 2, "cardinality": "one"},
                 ],
                 "parameters": [],
             }
@@ -651,7 +655,7 @@ class TestRenderCheckSqlMode:
         check, is_tableless = render_check(
             mode="sql",
             version=version,
-            group={"amount": "sales_amount", "country": "country_code", "fx_table": "main.ref.fx_rates"},
+            group={"amount": "sales_amount", "country": "country_code"},
             effective_severity="Medium",
             per_application_tags={},
             registry_rule_id="r1",
@@ -665,7 +669,7 @@ class TestRenderCheckSqlMode:
         assert "sales_amount * fx.rate < 10000" in args["query"]
         assert args["merge_columns"] == ["sales_amount"]
         # sql_query carries its columns in user_metadata (its check function
-        # rejects a `columns` argument) — the FQN must not appear among them.
+        # rejects a `columns` argument) — only real columns belong there.
         assert json.loads(check["user_metadata"]["mapped_columns"]) == ["sales_amount", "country_code"]
 
     def test_dataset_sql_query_without_slots_is_tableless(self):
@@ -1973,7 +1977,12 @@ class TestRenderAppliedChecks:
 
     def test_unresolvable_ref_contributes_nothing(self, materializer, registry):
         applied = AppliedRule(
-            id="ar1", binding_id="b1", rule_id="r1", pinned_version=1, column_mapping=[{"column": "c"}], mapping_hash="h"
+            id="ar1",
+            binding_id="b1",
+            rule_id="r1",
+            pinned_version=1,
+            column_mapping=[{"column": "c"}],
+            mapping_hash="h",
         )
         registry.get_rules_many.return_value = {}  # registry rule vanished
         registry.get_versions_many.return_value = {}

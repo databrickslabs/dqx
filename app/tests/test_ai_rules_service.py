@@ -19,6 +19,7 @@ from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIRes
 from databricks_labs_dqx_app.backend.services.ai_rules_service import (
     _DEFAULT_DIMENSIONS,
     _DEFAULT_SEVERITIES,
+    _DQX_NATIVE_COVERAGE_GUIDANCE,
     _EXPLAIN_SQL_SYSTEM_TEMPLATE,
     _IMPROVE_SQL_SYSTEM_TEMPLATE,
     _LOWCODE_PROPOSAL_SYSTEM_TEMPLATE,
@@ -26,7 +27,6 @@ from databricks_labs_dqx_app.backend.services.ai_rules_service import (
     _WRITE_SQL_SYSTEM_TEMPLATE,
     AiRulesService,
     parse_rule_type_intent,
-    prefers_basic_check,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 
@@ -49,12 +49,12 @@ def _gateway_returning(*contents: str) -> MagicMock:
     return gateway
 
 
-# A parsable but UNUSABLE low-code response (empty rows -> compiles to nothing),
-# so the low-code pass (tried first, B2-132) falls through to dqx_native/sql.
-# Prepended to gateway scripts whose intent is to exercise a native/sql result.
-_LOWCODE_MISS = json.dumps(
-    {"name": "n", "description": "d", "lowcode_ast": {"rows": [], "joins": []}}
-)
+# Sentinels that make one pass of the cascade miss, so a gateway script can reach
+# the pass it actually means to exercise (B2-132: dqx_native -> lowcode -> sql).
+# A native response DECLINING the requirement (no single built-in covers it):
+_NATIVE_DECLINE = json.dumps({"decline": True})
+# A parsable but UNUSABLE low-code response (empty rows -> compiles to nothing):
+_LOWCODE_MISS = json.dumps({"name": "n", "description": "d", "lowcode_ast": {"rows": [], "joins": []}})
 
 
 class TestGenerateChecksViaGateway:
@@ -167,7 +167,7 @@ class TestGenerateRule:
                 "definition": {"function": "is_valid_email", "arguments": {"column": "user_email"}},
             }
         )
-        service = _service(_gateway_returning(_LOWCODE_MISS, proposal))
+        service = _service(_gateway_returning(proposal))
 
         result = await service.generate_rule(description="email must be valid", user_email="a@x")
 
@@ -177,10 +177,8 @@ class TestGenerateRule:
 
     async def test_sql_proposal_carries_no_slots(self):
         invalid_dqx_native = json.dumps({"definition": {"function": "nope", "arguments": {}}})
-        valid_sql = json.dumps(
-            {"name": "sql", "description": "d", "definition": {"sql_query": "id IS NOT NULL"}}
-        )
-        service = _service(_gateway_returning(_LOWCODE_MISS, invalid_dqx_native, valid_sql))
+        valid_sql = json.dumps({"name": "sql", "description": "d", "definition": {"sql_query": "id IS NOT NULL"}})
+        service = _service(_gateway_returning(invalid_dqx_native, _LOWCODE_MISS, valid_sql))
 
         result = await service.generate_rule(description="d", user_email="a@x")
 
@@ -218,7 +216,7 @@ class TestGenerateRule:
                 "definition": {"function": "is_not_null", "arguments": {"column": "id"}},
             }
         )
-        gateway = _gateway_returning(_LOWCODE_MISS, proposal)
+        gateway = _gateway_returning(proposal)
         service = _service(gateway)
 
         await service.generate_rule(description="d", user_email="a@x")
@@ -247,14 +245,14 @@ class TestGenerateRule:
                 "definition": {"sql_query": "id IS NOT NULL"},
             }
         )
-        gateway = _gateway_returning(_LOWCODE_MISS, invalid_dqx_native, valid_sql)
+        gateway = _gateway_returning(invalid_dqx_native, _LOWCODE_MISS, valid_sql)
         service = _service(gateway)
 
         result = await service.generate_rule(description="d", user_email="a@x")
 
         assert result["mode"] == "sql"
         assert result["definition"] == {"sql_query": "id IS NOT NULL"}
-        # Three passes: lowcode (miss) -> dqx_native (invalid) -> sql (accepted).
+        # Three passes: dqx_native (invalid) -> lowcode (miss) -> sql (accepted).
         assert gateway.query.call_count == 3
 
     async def test_unsafe_sql_candidate_is_rejected_and_generation_fails(self):
@@ -266,7 +264,7 @@ class TestGenerateRule:
                 "definition": {"sql_query": "DROP TABLE foo; --"},
             }
         )
-        gateway = _gateway_returning(_LOWCODE_MISS, invalid_dqx_native, unsafe_sql)
+        gateway = _gateway_returning(invalid_dqx_native, _LOWCODE_MISS, unsafe_sql)
         service = _service(gateway)
 
         with pytest.raises(ValueError):
@@ -278,7 +276,7 @@ class TestGenerateRule:
 
         with pytest.raises(ValueError):
             await service.generate_rule(description="d", user_email="a@x")
-        # lowcode, dqx_native, sql — all three unparsable.
+        # dqx_native, lowcode, sql — all three unparsable.
         assert gateway.query.call_count == 3
 
     async def test_bounds_sample_rows_sent_to_the_model(self):
@@ -289,7 +287,7 @@ class TestGenerateRule:
                 "definition": {"function": "is_not_null", "arguments": {"column": "id"}},
             }
         )
-        gateway = _gateway_returning(_LOWCODE_MISS, proposal)
+        gateway = _gateway_returning(proposal)
         service = _service(gateway)
         # More than the AI sample cap (500) — the service must forward at most
         # the first AI_SAMPLE_ROW_LIMIT rows, dropping the overflow.
@@ -320,11 +318,26 @@ def _lowcode_proposal(**over: object) -> str:
     return json.dumps(base)
 
 
-class TestGenerateRuleLowcode:
-    """Low-code-first ordering (B2-132): lowcode tried first, then dqx_native, then sql."""
+def _sql_proposal() -> str:
+    """A valid, safe sql proposal — the cascade's last resort."""
+    return json.dumps(
+        {
+            "name": "Amount Positive",
+            "description": "amount must be positive",
+            "dimension": "Validity",
+            "severity": "Medium",
+            "polarity": "pass",
+            "definition": {"sql_query": "{{amount}} > 0"},
+            "columns": [{"name": "amount", "family": "numeric"}],
+        }
+    )
 
-    async def test_valid_lowcode_proposal_is_returned_first(self):
-        gateway = _gateway_returning(_lowcode_proposal())
+
+class TestGenerateRuleLowcode:
+    """Cascade ordering (B2-132): dqx_native tried first, then lowcode, then sql."""
+
+    async def test_valid_lowcode_proposal_is_returned_when_native_declines(self):
+        gateway = _gateway_returning(_NATIVE_DECLINE, _lowcode_proposal())
         service = _service(gateway)
 
         result = await service.generate_rule(description="amount must be positive", user_email="a@x")
@@ -339,8 +352,8 @@ class TestGenerateRuleLowcode:
         assert result["slots"] == [
             {"name": "amount", "family": "numeric", "position": 0, "cardinality": "one", "arg_key": None}
         ]
-        # Accepted on the first pass — no dqx_native/sql fallback needed.
-        assert gateway.query.call_count == 1
+        # dqx_native (declined) -> lowcode (accepted); no sql fallback needed.
+        assert gateway.query.call_count == 2
         assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:lowcode"
 
     async def test_group_by_lowcode_compiles_to_sql_query_body(self):
@@ -361,7 +374,7 @@ class TestGenerateRuleLowcode:
                 "joins": [],
             },
         )
-        service = _service(_gateway_returning(proposal))
+        service = _service(_gateway_returning(_NATIVE_DECLINE, proposal))
 
         result = await service.generate_rule(description="no customer over 100 orders", user_email="a@x")
 
@@ -380,8 +393,8 @@ class TestGenerateRuleLowcode:
     def test_col_vs_col_value_compiles_rhs_column_and_declares_both_slots(self):
         # Item 42 / col-vs-col bug: a row whose value is a column reference
         # {"$col": "b"} must compile to a NON-blank RHS ({{b}}) and declare both
-        # column slots, so the lowcode pass (tried first) produces a runnable
-        # rule instead of `{{a}} < <empty>` that never falls through to sql.
+        # column slots, so the lowcode pass produces a runnable rule instead of
+        # `{{a}} < <empty>` that never falls through to sql.
         proposal = json.loads(
             _lowcode_proposal(
                 name="A Less Than B",
@@ -412,20 +425,16 @@ class TestGenerateRuleLowcode:
         assert {s["name"] for s in validated["slots"]} == {"a", "b"}
         assert {s["name"]: s["family"] for s in validated["slots"]} == {"a": "numeric", "b": "numeric"}
 
-    async def test_unusable_lowcode_falls_through_to_dqx_native(self):
-        # Low-code AST has no compilable rows -> fall through to dqx_native.
-        native = json.dumps(
-            {"name": "n", "description": "d", "definition": {"function": "is_not_null", "arguments": {"column": "id"}}}
-        )
-        gateway = _gateway_returning(_LOWCODE_MISS, native)
+    async def test_unusable_lowcode_falls_through_to_sql(self):
+        # Low-code AST has no compilable rows -> fall through to the last resort.
+        unusable_lowcode = json.dumps({"name": "n", "description": "d", "lowcode_ast": {"rows": [], "joins": []}})
+        gateway = _gateway_returning(_NATIVE_DECLINE, unusable_lowcode, _sql_proposal())
         service = _service(gateway)
 
-        # Neutral description (no basic-check signal) so the default low-code-first
-        # cascade applies and this exercises the low-code -> dqx_native fallthrough.
         result = await service.generate_rule(description="amount must be positive", user_email="a@x")
 
-        assert result["mode"] == "dqx_native"
-        assert gateway.query.call_count == 2
+        assert result["mode"] == "sql"
+        assert gateway.query.call_count == 3
 
     async def test_unsafe_compiled_lowcode_is_rejected_and_falls_through(self):
         # A text value carrying a forbidden keyword compiles to unsafe SQL, so
@@ -445,99 +454,29 @@ class TestGenerateRuleLowcode:
                 "joins": [],
             },
         )
-        native = json.dumps(
-            {"name": "n", "description": "d", "definition": {"function": "is_not_null", "arguments": {"column": "id"}}}
-        )
-        gateway = _gateway_returning(unsafe_lowcode, native)
+        gateway = _gateway_returning(_NATIVE_DECLINE, unsafe_lowcode, _sql_proposal())
         service = _service(gateway)
 
         result = await service.generate_rule(description="d", user_email="a@x")
 
-        assert result["mode"] == "dqx_native"
-        assert gateway.query.call_count == 2
+        assert result["mode"] == "sql"
+        assert gateway.query.call_count == 3
 
     async def test_unparsable_lowcode_falls_through(self):
-        native = json.dumps(
-            {"name": "n", "description": "d", "definition": {"function": "is_not_null", "arguments": {"column": "id"}}}
-        )
-        gateway = _gateway_returning("not json", native)
+        gateway = _gateway_returning(_NATIVE_DECLINE, "not json", _sql_proposal())
         service = _service(gateway)
 
         result = await service.generate_rule(description="d", user_email="a@x")
 
-        assert result["mode"] == "dqx_native"
-        assert gateway.query.call_count == 2
+        assert result["mode"] == "sql"
+        assert gateway.query.call_count == 3
 
 
-class TestPrefersBasicCheck:
-    """Pure signal parse: a close match to a named basic check -> True (else False)."""
-
-    @pytest.mark.parametrize(
-        "description",
-        [
-            # Uniqueness / duplicates -> is_unique
-            "values must be unique",
-            "the id column should be unique",
-            "no duplicate emails",
-            "flag duplicates in the order table",
-            # Outliers / anomalies -> has_no_outliers
-            "there should be no outliers in amount",
-            "detect anomalies in the metric",
-            # Null / empty presence -> is_not_null / is_not_empty
-            "customer_id must not be null",
-            "there should be no nulls in the email column",
-            "the name column should never be empty",
-            # Bounded range (both edges) -> is_in_range
-            "score must be between 0 and 100",
-            "the discount must stay within the range 0 to 1",
-            # Allowed / forbidden value sets -> is_in_list / is_not_in_list
-            "status must be one of active, inactive, pending",
-            "country must be in the allowed list",
-            # Pattern matching -> regex_match
-            "phone must match the pattern for E.164",
-            "sku should satisfy a regex",
-            # Well-known formats -> is_valid_email / is_valid_timestamp / is_valid_json / ipv4
-            "contact must be a valid email",
-            "created_at must be a valid timestamp",
-            "payload must be valid json",
-            "source must be a valid ipv4 address",
-            # Freshness -> is_data_fresh
-            "the data must be fresh within 24 hours",
-            "flag stale records",
-            # Temporal recency -> is_not_in_future / is_older_than_n_days
-            "order date cannot be in the future",
-            "records must not be older than 30 days",
-            # Schema conformance -> has_valid_schema
-            "the table must have the expected schema",
-        ],
-    )
-    def test_close_basic_match(self, description: str):
-        assert prefers_basic_check(description) is True
-
-    @pytest.mark.parametrize(
-        "description",
-        [
-            "amount must be positive",
-            "email must be a valid format",
-            # Bare magnitude comparisons stay low-code-first ON PURPOSE: a native
-            # pass can satisfy a compound description with a single-bound check
-            # that drops half the requirement (see _BASIC_CHECK_SIGNALS).
-            "total must be greater than the discount",
-            "amount must be positive and less than 1000000",
-            "revenue should equal price times quantity",
-            "",
-        ],
-    )
-    def test_no_basic_match(self, description: str):
-        assert prefers_basic_check(description) is False
-
-
-class TestGenerateRulePrefersBasicCheck:
-    """A strong basic-check match tries dqx_native FIRST (B: prefer named basic check)."""
+class TestGenerateRulePrefersBuiltInCheck:
+    """The cascade tries dqx_native FIRST, and only falls through when it can't cover the ask."""
 
     async def test_unique_description_goes_to_native_first(self):
-        # "unique" maps crisply onto is_unique — dqx_native is tried before
-        # low-code, so a valid basic check wins on the FIRST pass.
+        # "unique" maps crisply onto is_unique — the built-in wins on the FIRST pass.
         native = json.dumps(
             {
                 "name": "ID unique",
@@ -555,9 +494,33 @@ class TestGenerateRulePrefersBasicCheck:
         assert gateway.query.call_count == 1
         assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:dqx_native"
 
-    async def test_basic_first_still_falls_through_to_lowcode(self):
-        # dqx_native is tried first for a "unique" prompt, but if it can't produce
-        # a valid basic check the cascade still falls through to low-code.
+    async def test_simple_comparison_also_goes_to_native_first(self):
+        # A plain "must be positive" is a built-in (is_not_less_than), so it no
+        # longer lands in the low-code builder just because it reads like a
+        # magnitude comparison.
+        native = json.dumps(
+            {
+                "name": "Amount positive",
+                "description": "amount must be positive",
+                "definition": {
+                    "function": "is_not_less_than",
+                    "arguments": {"column": "order_amount", "limit": 0},
+                },
+                "columns": [{"name": "order_amount", "family": "numeric"}],
+            }
+        )
+        gateway = _gateway_returning(native)
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="order amount must be positive", user_email="a@x")
+
+        assert result["mode"] == "dqx_native"
+        assert gateway.query.call_count == 1
+        assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:dqx_native"
+
+    async def test_native_first_falls_through_to_lowcode_when_invalid(self):
+        # dqx_native goes first, but if it can't produce a DQX-valid check the
+        # cascade still falls through to low-code.
         invalid_native = json.dumps({"definition": {"function": "not_a_real_check", "arguments": {}}})
         gateway = _gateway_returning(invalid_native, _lowcode_proposal())
         service = _service(gateway)
@@ -565,21 +528,25 @@ class TestGenerateRulePrefersBasicCheck:
         result = await service.generate_rule(description="no duplicate amounts", user_email="a@x")
 
         assert result["mode"] == "lowcode"
-        # dqx_native (invalid) -> lowcode (accepted).
         assert gateway.query.call_count == 2
         assert gateway.query.call_args_list[0].kwargs["purpose"] == "generate_rule:dqx_native"
         assert gateway.query.call_args_list[1].kwargs["purpose"] == "generate_rule:lowcode"
 
-    async def test_non_basic_description_keeps_lowcode_first(self):
-        # No basic-check signal -> unchanged low-code-first cascade.
-        gateway = _gateway_returning(_lowcode_proposal())
+    async def test_declined_native_falls_through_to_lowcode(self):
+        # The guard that makes native-first safe: when no single built-in covers
+        # the whole requirement the native pass declines, and the compound
+        # condition is built in low-code instead of as a half-complete check.
+        gateway = _gateway_returning(json.dumps({"decline": True}), _lowcode_proposal())
         service = _service(gateway)
 
-        result = await service.generate_rule(description="amount must be positive", user_email="a@x")
+        result = await service.generate_rule(
+            description="amount must be positive and less than 1000000", user_email="a@x"
+        )
 
         assert result["mode"] == "lowcode"
-        assert gateway.query.call_count == 1
-        assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:lowcode"
+        assert gateway.query.call_count == 2
+        assert gateway.query.call_args_list[0].kwargs["purpose"] == "generate_rule:dqx_native"
+        assert gateway.query.call_args_list[1].kwargs["purpose"] == "generate_rule:lowcode"
 
     async def test_bounded_range_description_goes_to_native_first(self):
         # "between X and Y" maps onto is_in_range, so the built-in wins the first
@@ -604,20 +571,11 @@ class TestGenerateRulePrefersBasicCheck:
         assert gateway.query.call_count == 1
         assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:dqx_native"
 
-    async def test_compound_comparison_is_left_to_lowcode(self):
-        # Regression guard for the deliberate exclusion of bare comparisons: a
-        # compound "positive AND under a cap" must NOT be reordered to native,
-        # where a single-bound check could validate while dropping a bound.
-        gateway = _gateway_returning(_lowcode_proposal())
-        service = _service(gateway)
-
-        result = await service.generate_rule(
-            description="amount must be positive and less than 1000000", user_email="a@x"
-        )
-
-        assert result["mode"] == "lowcode"
-        assert gateway.query.call_count == 1
-        assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:lowcode"
+    def test_native_prompt_offers_the_decline_escape_hatch(self):
+        # Without an explicit way to decline, a model asked for one check always
+        # produces one — so the coverage wording is what the fall-through rests on.
+        assert "IN FULL" in _DQX_NATIVE_COVERAGE_GUIDANCE
+        assert '{"decline": true}' in _DQX_NATIVE_COVERAGE_GUIDANCE
 
 
 class TestParseRuleTypeIntent:
@@ -661,7 +619,8 @@ class TestParseRuleTypeIntent:
             "use a native check",
             "a built-in function to validate emails",
             "native function that checks not null",
-            # New friendly name for the dqx_native mode: "Basic Rules".
+            # The "basic"/"simple" phrasings predate the current friendly name
+            # for the dqx_native mode ("Built-in check") and still route here.
             "a basic rule for null ids",
             "make a basic check that validates emails",
             # "Simple Rule"/"Simple Check" also route to dqx_native.
@@ -689,9 +648,7 @@ class TestGenerateRuleExplicitType:
     """generate_rule honours an explicit rule-type request, bypassing the cascade (B2-140)."""
 
     async def test_explicit_sql_goes_straight_to_sql(self):
-        valid_sql = json.dumps(
-            {"name": "sql", "description": "d", "definition": {"sql_query": "id IS NOT NULL"}}
-        )
+        valid_sql = json.dumps({"name": "sql", "description": "d", "definition": {"sql_query": "id IS NOT NULL"}})
         gateway = _gateway_returning(valid_sql)
         service = _service(gateway)
 
@@ -750,7 +707,7 @@ class TestGenerateRuleExplicitType:
         assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:lowcode"
 
     async def test_friendly_basic_rule_name_goes_straight_to_native(self):
-        # "Basic Rules" is the user-facing name for the dqx_native mode.
+        # "basic rule" is a legacy user-facing name for the dqx_native mode.
         native = json.dumps(
             {"name": "n", "description": "d", "definition": {"function": "is_not_null", "arguments": {"column": "id"}}}
         )
@@ -764,27 +721,26 @@ class TestGenerateRuleExplicitType:
         assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:dqx_native"
 
     async def test_no_explicit_type_still_cascades(self):
-        # No type named -> unchanged lowcode -> dqx_native -> sql cascade.
+        # No type named -> the default dqx_native -> lowcode -> sql cascade, which
+        # a valid built-in check wins on the first pass.
         native = json.dumps(
             {"name": "n", "description": "d", "definition": {"function": "is_not_null", "arguments": {"column": "id"}}}
         )
-        gateway = _gateway_returning(_LOWCODE_MISS, native)
+        gateway = _gateway_returning(native)
         service = _service(gateway)
 
-        # Neutral description so the default cascade order is the one under test.
         result = await service.generate_rule(description="amount must be positive", user_email="a@x")
 
         assert result["mode"] == "dqx_native"
-        assert gateway.query.call_count == 2
+        assert gateway.query.call_count == 1
+        assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:dqx_native"
 
 
 class TestDeriveNativeSlots:
     """Direct unit tests for the typed-column-slot derivation (item B2-32)."""
 
     def test_names_slot_from_argument_and_locks_family(self):
-        slots = AiRulesService._derive_native_slots(
-            "is_valid_email", {"column": "{{user_email}}"}, None
-        )
+        slots = AiRulesService._derive_native_slots("is_valid_email", {"column": "{{user_email}}"}, None)
         assert slots == [
             {"name": "user_email", "family": "text", "position": 0, "cardinality": "one", "arg_key": "column"}
         ]
@@ -792,9 +748,7 @@ class TestDeriveNativeSlots:
     def test_falls_back_to_declared_columns_then_stays_locked_family(self):
         # No column reference in the arguments -> name drawn from the model's
         # columns array; family stays locked to the check function (numeric hint ignored).
-        slots = AiRulesService._derive_native_slots(
-            "is_not_null", {}, [{"name": "customer_id", "family": "numeric"}]
-        )
+        slots = AiRulesService._derive_native_slots("is_not_null", {}, [{"name": "customer_id", "family": "numeric"}])
         assert slots == [
             {"name": "customer_id", "family": "any", "position": 0, "cardinality": "one", "arg_key": "column"}
         ]
@@ -832,9 +786,7 @@ class TestWriteSql:
         gateway = _gateway_returning(json.dumps({"predicate": "{{amount}} > 0", "polarity": "pass"}))
         service = _service(gateway)
 
-        result = await service.write_sql(
-            description="amount must be positive", user_email="a@x", columns=["amount"]
-        )
+        result = await service.write_sql(description="amount must be positive", user_email="a@x", columns=["amount"])
 
         assert result == {
             "predicate": "{{amount}} > 0",
@@ -847,24 +799,24 @@ class TestWriteSql:
         # Declared slots are forwarded so the model reuses them as {{slot}}s.
         assert "amount" in gateway.query.call_args.kwargs["messages"][-1]["content"]
 
-    async def test_cross_table_join_predicate_declares_a_table_slot(self):
-        """A joined table is a {{slot}} of family "table", never a hardcoded FQN.
+    async def test_cross_table_join_names_the_table_outright_not_as_a_slot(self):
+        """A joined table is written as a literal FQN, so it declares no slot.
 
-        This is what keeps a cross-table registry rule portable: the rule ships
-        the JOIN shape, and each monitored table binds its own reference table.
+        A rule belongs to one table; the table it joins is part of the rule's own
+        SQL rather than something each binding rebinds, so only the COLUMNS the
+        rule reads come back as slots for the author to map.
         """
         gateway = _gateway_returning(
             json.dumps(
                 {
                     "predicate": (
                         "{{amount}} * fx.rate_to_usd < 10000\n"
-                        "LEFT JOIN {{fx_rates_table}} fx ON fx.country_code = {{country_code}}"
+                        "LEFT JOIN main.ref.fx_rates fx ON fx.country_code = {{country_code}}"
                     ),
                     "polarity": "pass",
                     "slots": [
                         {"name": "amount", "family": "numeric"},
                         {"name": "country_code", "family": "text"},
-                        {"name": "fx_rates_table", "family": "table"},
                     ],
                 }
             )
@@ -873,11 +825,10 @@ class TestWriteSql:
 
         result = await service.write_sql(description="sales below 10000 in USD", user_email="a@x")
 
-        assert "LEFT JOIN {{fx_rates_table}}" in result["predicate"]
+        assert "LEFT JOIN main.ref.fx_rates fx" in result["predicate"]
         # Slot order follows the predicate, not the model's declaration order.
         assert result["slots"] == [
             {"name": "amount", "family": "numeric"},
-            {"name": "fx_rates_table", "family": "table"},
             {"name": "country_code", "family": "text"},
         ]
 
@@ -941,7 +892,9 @@ class TestWriteSql:
 
 class TestImproveSql:
     async def test_returns_safe_refined_predicate(self):
-        gateway = _gateway_returning(json.dumps({"predicate": "{{amount}} > 0 AND {{amount}} < 100", "polarity": "pass"}))
+        gateway = _gateway_returning(
+            json.dumps({"predicate": "{{amount}} > 0 AND {{amount}} < 100", "polarity": "pass"})
+        )
         service = _service(gateway)
 
         result = await service.improve_sql(
@@ -1028,11 +981,12 @@ class TestPassPreferencePrompts:
             # The placeholder syntax the author actually types stays double-braced.
             assert "{{slot}}" in template
 
-    def test_write_sql_template_teaches_portable_cross_table_joins(self):
+    def test_write_sql_template_teaches_cross_table_joins_on_a_named_table(self):
         assert "JOIN" in _WRITE_SQL_SYSTEM_TEMPLATE
-        # A joined table must be a slot, never a hardcoded FQN.
-        assert '"table"' in _WRITE_SQL_SYSTEM_TEMPLATE
-        assert "catalog.schema.table" in _WRITE_SQL_SYSTEM_TEMPLATE
+        # A joined table is named outright; only the checked table's columns are
+        # placeholders, so the author has nothing extra to bind.
+        assert "never a {{placeholder}}" in _WRITE_SQL_SYSTEM_TEMPLATE
+        assert "catalog.schema.<table>" in _WRITE_SQL_SYSTEM_TEMPLATE
         assert '"slots"' in _WRITE_SQL_SYSTEM_TEMPLATE
 
 
@@ -1210,15 +1164,13 @@ class TestVocabDrivenPrompt:
         proposal = json.dumps(
             {"name": "n", "description": "d", "definition": {"function": "is_not_null", "arguments": {"column": "id"}}}
         )
-        gateway = _gateway_returning(_LOWCODE_MISS, proposal)
+        gateway = _gateway_returning(proposal)
         service = _service(gateway, app_settings=app_settings)
 
-        # Neutral description keeps the low-code-first order, so the dqx_native
-        # pass is the 2nd query asserted below.
         await service.generate_rule(description="amount must be positive", user_email="a@x")
 
-        # The dqx_native pass (2nd query) carries the configured vocab in its system prompt.
-        native_system = gateway.query.call_args_list[1].kwargs["messages"][0]["content"]
+        # The dqx_native pass (1st query) carries the configured vocab in its system prompt.
+        native_system = gateway.query.call_args_list[0].kwargs["messages"][0]["content"]
         assert "Relevance" in native_system
         assert "Blocker" in native_system
         # A default value the admin removed is no longer offered.
@@ -1231,12 +1183,15 @@ class TestVocabDrivenPrompt:
                 {"key": "severity", "values": ["Blocker"]},
             ]
         )
-        gateway = _gateway_returning(_lowcode_proposal(dimension="Relevance", severity="Blocker"))
+        gateway = _gateway_returning(
+            _NATIVE_DECLINE, _lowcode_proposal(dimension="Relevance", severity="Blocker")
+        )
         service = _service(gateway, app_settings=app_settings)
 
         await service.generate_rule(description="amount must be positive", user_email="a@x")
 
-        lowcode_system = gateway.query.call_args_list[0].kwargs["messages"][0]["content"]
+        # The lowcode pass is the 2nd query, after the native pass declines.
+        lowcode_system = gateway.query.call_args_list[1].kwargs["messages"][0]["content"]
         assert "Relevance" in lowcode_system
         assert "Blocker" in lowcode_system
         # Escaped JSON braces in the lowcode template survive .format() intact.

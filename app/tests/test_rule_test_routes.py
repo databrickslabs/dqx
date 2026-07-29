@@ -50,7 +50,10 @@ class TestRun:
         async def _run(**kwargs):
             return TestRunResult(
                 columns=["a"],
-                rows=[TestRow(cells={"a": "5"}, passed=True, row_idx=0), TestRow(cells={"a": "-3"}, passed=False, row_idx=1)],
+                rows=[
+                    TestRow(cells={"a": "5"}, passed=True, row_idx=0),
+                    TestRow(cells={"a": "-3"}, passed=False, row_idx=1),
+                ],
                 truncated=False,
             )
 
@@ -114,7 +117,9 @@ class TestRun:
     @pytest.mark.asyncio
     async def test_simple_lowcode_is_testable(self, svc):
         async def _run(**kwargs):
-            return TestRunResult(columns=["a"], rows=[TestRow(cells={"a": "5"}, passed=True, row_idx=0)], truncated=False)
+            return TestRunResult(
+                columns=["a"], rows=[TestRow(cells={"a": "5"}, passed=True, row_idx=0)], truncated=False
+            )
 
         svc.run_adhoc.side_effect = _run
         body = _adhoc_body()
@@ -159,24 +164,9 @@ class TestRun:
         svc.run_table.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_unbound_table_slot_maps_to_400(self, svc):
-        body = RuleTestRunIn(
-            mode="sql",
-            predicate="SELECT (c.id IS NULL) AS condition FROM {{input_view}} JOIN {{ref}} c",
-            slots=[SlotIn(name="ref", family="table")],
-            source_kind="table",
-            table=TableRunIn(table_fqn="c.s.t", column_mapping={}),
-        )
-        with pytest.raises(HTTPException) as exc:
-            await run_rule_test(body, svc)
-        assert exc.value.status_code == 400
-        assert "ref" in exc.value.detail
-        svc.run_table.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_table_slot_is_not_demanded_as_a_column(self, svc):
-        # A table slot binds via table_mapping, so an otherwise fully-bound rule
-        # must not be rejected for "missing" a column mapping for it.
+    async def test_a_joined_table_needs_no_binding_in_table_mode(self, svc):
+        # A cross-table rule names the table it joins by its own FQN, so table mode
+        # resolves it against real data; only the rule's COLUMN slots need mapping.
         captured: dict[str, object] = {}
 
         async def _run(**kwargs):
@@ -186,34 +176,20 @@ class TestRun:
         svc.run_table.side_effect = _run
         body = RuleTestRunIn(
             mode="sql",
-            predicate="SELECT {{order_id}}, (c.id IS NULL) AS condition FROM {{input_view}} JOIN {{ref}} c",
-            slots=[SlotIn(name="order_id", family="any"), SlotIn(name="ref", family="table")],
-            source_kind="table",
-            table=TableRunIn(
-                table_fqn="c.s.t",
-                column_mapping={"order_id": "order_id"},
-                table_mapping={"ref": "main.sales.customers"},
+            predicate=(
+                "SELECT {{order_id}}, (c.id IS NULL) AS condition "
+                "FROM {{input_view}} JOIN main.sales.customers c ON c.id = {{order_id}}"
             ),
+            slots=[SlotIn(name="order_id", family="any")],
+            source_kind="table",
+            table=TableRunIn(table_fqn="c.s.t", column_mapping={"order_id": "order_id"}),
         )
         await run_rule_test(body, svc)
         source = captured["source"]
-        assert source.table_mapping == {"ref": "main.sales.customers"}
         assert source.column_mapping == {"order_id": "order_id"}
 
     @pytest.mark.asyncio
-    async def test_manual_mode_rejects_a_reference_table_with_no_grid(self, svc):
-        # Joining an empty grid would compare against nothing and silently pass
-        # every row, so the author is asked to fill it in instead.
-        body = _adhoc_body()
-        body.slots = [SlotIn(name="a", family="numeric"), SlotIn(name="ref", family="table")]
-        with pytest.raises(HTTPException) as exc:
-            await run_rule_test(body, svc)
-        assert exc.value.status_code == 400
-        assert "ref" in str(exc.value.detail)
-        svc.run_adhoc.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_manual_mode_passes_reference_grids_through(self, svc):
+    async def test_manual_mode_passes_reference_grids_through_keyed_by_table(self, svc):
         captured: dict[str, object] = {}
 
         async def _run(**kwargs):
@@ -222,33 +198,21 @@ class TestRun:
 
         svc.run_adhoc.side_effect = _run
         body = _adhoc_body()
-        body.slots = [SlotIn(name="a", family="numeric"), SlotIn(name="ref", family="table")]
         body.adhoc = AdhocRunIn(
             columns=["a"],
             rows=[["5"]],
-            ref_grids={"ref": AdhocGridIn(columns=["id"], rows=[["5"]], families={"id": "numeric"})},
+            ref_grids={"main.sales.customers": AdhocGridIn(columns=["id"], rows=[["5"]], families={"id": "numeric"})},
         )
         await run_rule_test(body, svc)
         source = captured["source"]
-        assert source.ref_grids["ref"].columns == ["id"]
-        assert source.ref_grids["ref"].rows == [["5"]]
-
-    @pytest.mark.asyncio
-    async def test_a_slot_named_input_view_needs_no_grid(self, svc):
-        # `{{input_view}}` is DQX's reserved token for the data being checked, which
-        # the builder resolves itself — demanding a grid for it would block a test
-        # that needs none.
-        async def _run(**_kwargs):
-            return TestRunResult(columns=["a"], rows=[], truncated=False)
-
-        svc.run_adhoc.side_effect = _run
-        body = _adhoc_body()
-        body.slots = [SlotIn(name="a", family="numeric"), SlotIn(name="input_view", family="table")]
-        await run_rule_test(body, svc)
-        svc.run_adhoc.assert_called_once()
+        assert source.ref_grids["main.sales.customers"].columns == ["id"]
+        assert source.ref_grids["main.sales.customers"].rows == [["5"]]
 
     @pytest.mark.asyncio
     async def test_a_slot_named_input_view_needs_no_table_binding(self, svc):
+        # `{{input_view}}` is DQX's reserved token for the data being checked, which
+        # the builders resolve themselves — demanding a column for it would block a
+        # test that needs none.
         async def _run(**_kwargs):
             return TestRunResult(columns=["a"], rows=[], truncated=False)
 
@@ -256,41 +220,12 @@ class TestRun:
         body = RuleTestRunIn(
             mode="sql",
             predicate="SELECT (x IS NULL) AS condition FROM {{input_view}}",
-            slots=[SlotIn(name="input_view", family="table")],
+            slots=[SlotIn(name="input_view", family="any")],
             source_kind="table",
-            table=TableRunIn(table_fqn="c.s.t", column_mapping={}, table_mapping={}),
+            table=TableRunIn(table_fqn="c.s.t", column_mapping={}),
         )
         await run_rule_test(body, svc)
         svc.run_table.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_manual_mode_keeps_cells_aligned_when_dropping_a_table_column(self, svc):
-        # A table slot resolves to a CTE, not a grid column. If a client still
-        # sends a column for it, dropping that column must not shift the other
-        # cells onto the wrong columns.
-        captured: dict[str, object] = {}
-
-        async def _run(**kwargs):
-            captured.update(kwargs)
-            return TestRunResult(columns=["a"], rows=[], truncated=False)
-
-        svc.run_adhoc.side_effect = _run
-        body = _adhoc_body()
-        body.slots = [
-            SlotIn(name="a", family="numeric"),
-            SlotIn(name="ref", family="table"),
-            SlotIn(name="b", family="text"),
-        ]
-        body.adhoc = AdhocRunIn(
-            columns=["a", "ref", "b"],
-            rows=[["5", "junk", "x"]],
-            ref_grids={"ref": AdhocGridIn(columns=["id"], rows=[["5"]], families={})},
-        )
-        await run_rule_test(body, svc)
-        source = captured["source"]
-        assert source.columns == ["a", "b"]
-        assert source.rows == [["5", "x"]]
-        assert "ref" not in source.column_mapping
 
 
 class TestGenerate:
@@ -317,23 +252,26 @@ class TestGenerate:
             return GeneratedTestData(
                 columns=["customer_id"],
                 rows=[["C-1"], ["C-9"]],
-                refs={"ref": GeneratedGrid(columns=[("id", "text")], rows=[["C-1"]])},
+                refs={"main.sales.customers": GeneratedGrid(columns=[("id", "text")], rows=[["C-1"]])},
             )
 
         svc.generate_test_data.side_effect = _gen
         out = await generate_rule_test_data(
             GenerateDataIn(
-                predicate="SELECT (c.id IS NULL) AS condition FROM {{input_view}} JOIN {{ref}} c",
+                predicate=(
+                    "SELECT (c.id IS NULL) AS condition FROM {{input_view}} "
+                    "JOIN main.sales.customers c ON c.id = {{customer_id}}"
+                ),
                 polarity="pass",
                 columns=[SlotIn(name="customer_id", family="text")],
-                ref_tables=["ref"],
+                ref_tables=["main.sales.customers"],
             ),
             svc,
             "u@x",
         )
-        assert captured["ref_tables"] == ["ref"]
-        assert out.refs["ref"].columns == [SlotIn(name="id", family="text")]
-        assert out.refs["ref"].rows == [["C-1"]]
+        assert captured["ref_tables"] == ["main.sales.customers"]
+        assert out.refs["main.sales.customers"].columns == [SlotIn(name="id", family="text")]
+        assert out.refs["main.sales.customers"].rows == [["C-1"]]
 
     @pytest.mark.asyncio
     async def test_ai_unavailable_maps_to_503(self, svc):
@@ -342,7 +280,5 @@ class TestGenerate:
 
         svc.generate_test_data.side_effect = _boom
         with pytest.raises(HTTPException) as exc:
-            await generate_rule_test_data(
-                GenerateDataIn(predicate="p", columns=[SlotIn(name="a")]), svc, "u@x"
-            )
+            await generate_rule_test_data(GenerateDataIn(predicate="p", columns=[SlotIn(name="a")]), svc, "u@x")
         assert exc.value.status_code == 503

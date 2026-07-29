@@ -9,22 +9,21 @@ import type { RuleGranularity } from "@/lib/lowcodeCompile";
  * semantic axes of a rule ("what counts as a pass", "what gets a verdict") read
  * as the same kind of control.
  *
- * It is deliberately ONE control for every rule type rather than a badge in some
- * places and a toggle in others, because granularity is a property of every rule
- * but only sometimes the author's to pick:
+ * Granularity is a property of EVERY rule but only sometimes the author's to
+ * pick, so it renders as a control only where the pick is real:
  *
  *   • a native check runs at the granularity DQX registered it at (33 of the
- *     exposed checks are row-level, 12 dataset-level) — frozen;
+ *     exposed checks are row-level, 12 dataset-level) — derived;
  *   • the visual builder derives it from what was built, since joins and
- *     grouping compile to merge keys that keep the check row-level — frozen;
- *   • raw SQL genuinely chooses, because presence of `merge_columns` is the
- *     whole difference — live.
+ *     grouping compile to merge keys that keep the check row-level — derived;
+ *   • raw SQL holding a full query genuinely chooses, because presence of
+ *     `merge_columns` is the whole difference — live, this component.
  *
- * Frozen states pass `disabledReason` and stay visible rather than disappearing,
- * so the axis is always legible even where it can't be changed. Never render
- * this from a stored flag — derive it from what will actually run
- * (`bodyGranularity`, or the check's `rule_type`) so the label cannot drift from
- * DQX's behaviour.
+ * Derived states render {@link GranularityTag} instead: a disabled two-way pill
+ * invites a click it will always refuse, whereas a tag reads as the status it
+ * actually is. Never render either from a stored flag — derive it from what will
+ * actually run (`bodyGranularity`, or the check's `rule_type`) so the label
+ * cannot drift from DQX's behaviour.
  */
 export function GranularitySwitch({
   value,
@@ -113,4 +112,53 @@ export function GranularitySwitch({
     );
   }
   return control;
+}
+
+/** Tone per granularity, shared by the tag and the switch's active segment so
+ *  the same level is the same colour wherever it appears. */
+const GRANULARITY_TONE: Record<RuleGranularity, string> = {
+  row: "text-sky-700 dark:text-sky-300 bg-sky-500/10 ring-sky-500/30",
+  dataset: "text-violet-700 dark:text-violet-300 bg-violet-500/10 ring-violet-500/30",
+};
+
+/**
+ * Read-only granularity indicator: what the rule WILL run at, where that is not
+ * the author's choice. Used on the Condition header for native checks and the
+ * visual builder, and in the check picker to mark dataset-level checks before
+ * one is chosen (so the level is known before selecting rather than after).
+ *
+ * *reason* explains WHY it isn't a choice and becomes the tooltip.
+ */
+export function GranularityTag({
+  value,
+  reason,
+  className,
+}: {
+  value: RuleGranularity;
+  reason?: string;
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  const tag = (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium whitespace-nowrap ring-1",
+        GRANULARITY_TONE[value],
+        className,
+      )}
+    >
+      {value === "row" ? t("rulesRegistry.granularityRowLevel") : t("rulesRegistry.granularityDatasetLevel")}
+    </span>
+  );
+  if (!reason) return tag;
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex">{tag}</span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">{reason}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
 }

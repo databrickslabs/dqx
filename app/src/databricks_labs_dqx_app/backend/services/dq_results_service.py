@@ -137,6 +137,9 @@ class CheckResultRow:
     rule_id: str | None = None
     run_mode: str | None = None
     rule_name: str | None = None
+    # Runtime granularity derived from the rendered check frozen with the run.
+    # Dataset checks contribute one binary verdict to the quality score.
+    check_granularity: str = "row"
     # DQX criticality of the check ("error"/"warn"); None for untagged rows
     # (defaults to "error" — DQX's default — when evaluating a breach).
     # error_count/warning_count are kept SEPARATE from the collapsed *failed*
@@ -232,6 +235,7 @@ def parse_check_rows(raw_rows: list[dict[str, str | None]]) -> list[CheckResultR
                 rule_id=row.get("registry_rule_id"),
                 run_mode=row.get("run_mode"),
                 rule_name=row.get("rule_name"),
+                check_granularity=row.get("check_granularity") or "row",
                 error_count=error_count,
                 warning_count=warning_count,
                 criticality=row.get("criticality"),
@@ -284,6 +288,10 @@ class _GroupAcc:
     total: int | None = None
     rule_keys: set[str] = field(default_factory=set)
     check_rows: int = 0
+    # A reusable rule may fan out into several per-column checks. Accumulate
+    # those checks by run/table/rule instance, then give each rule instance
+    # one equal share of the displayed score.
+    rule_check_scores: dict[tuple[str, str | None, str], tuple[float, int]] = field(default_factory=dict)
     # Breach roll-up: any child check breached, and the worst breaching
     # child's criticality ("error" beats "warn"). Both stay falsy/None when
     # no resolver is supplied (breach evaluation is off).
@@ -296,6 +304,14 @@ class _GroupAcc:
             self.total = (self.total or 0) + row.total
         self.rule_keys.add(_rule_key(row))
         self.check_rows += 1
+        if row.total is not None and row.total > 0:
+            if row.check_granularity == "dataset":
+                check_score = 0.0 if row.failed > 0 else 1.0
+            else:
+                check_score = 1.0 - row.failed / row.total
+            instance = (row.table_fqn, row.run_id, _rule_key(row))
+            score_sum, count = self.rule_check_scores.get(instance, (0.0, 0))
+            self.rule_check_scores[instance] = (score_sum + check_score, count + 1)
         if resolve is not None:
             crit = _breach_criticality(row, resolve(row))
             if crit is not None:
@@ -304,10 +320,13 @@ class _GroupAcc:
 
     @property
     def pass_rate(self) -> float | None:
-        # SQL analogue: 1 - SUM(failed) / NULLIF(SUM(total), 0).
-        if not self.total:
+        # SQL analogue: mean(AVG(check_score) per rule instance).
+        # Failed/total remain row-test diagnostics and intentionally no longer
+        # reconstruct this score.
+        if not self.rule_check_scores:
             return None
-        return 1 - self.failed / self.total
+        per_rule = [score_sum / count for score_sum, count in self.rule_check_scores.values()]
+        return sum(per_rule) / len(per_rule)
 
 
 def _group_rows(
@@ -510,7 +529,7 @@ def _trend_grouped(
     resolve_threshold: ThresholdResolver | None = None,
 ) -> list[TrendPointOut]:
     """Per-instant grouped series: one point per (instant, series), each
-    pooling the rows AT that instant (1 - SUM(failed)/SUM(total)).
+    taking the equal-weight mean of rule scores at that instant.
 
     *instant_of* selects each row's x position; it defaults to the row's
     own ``run_date``. The ``trend_by_table`` caller overrides it with the

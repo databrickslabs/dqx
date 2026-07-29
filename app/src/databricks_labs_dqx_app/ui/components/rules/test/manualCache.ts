@@ -17,7 +17,7 @@ export interface RefGridState {
 export interface ManualState {
   columns: string[];
   rows: (string | null)[][];
-  /** Table-slot name -> the grid standing in for that reference table. */
+  /** Table FQN, as the rule's query joins it -> the grid standing in for it. */
   refs: Record<string, RefGridState>;
 }
 

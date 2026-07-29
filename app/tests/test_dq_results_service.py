@@ -54,6 +54,7 @@ def make_row(
     warning_count: int = 0,
     criticality: str | None = None,
     pass_threshold: int | None = None,
+    check_granularity: str = "row",
 ) -> CheckResultRow:
     return CheckResultRow(
         table_fqn=fqn,
@@ -71,6 +72,7 @@ def make_row(
         warning_count=warning_count,
         criticality=criticality,
         pass_threshold=pass_threshold,
+        check_granularity=check_granularity,
     )
 
 
@@ -272,6 +274,33 @@ class TestBreakdowns:
         assert by_dim["Validity"].pass_rate == pytest.approx(0.7)
         # dqlake: ORDER BY failed_tests DESC.
         assert [g.label for g in out.by_dimension] == ["Validity", "Completeness"]
+
+    def test_dataset_check_contributes_one_binary_verdict(self):
+        rows = [
+            make_row("row", failed=10, total=100, dimension="Validity"),
+            make_row(
+                "table",
+                failed=100,
+                total=100,
+                dimension="Validity",
+                check_granularity="dataset",
+            ),
+        ]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.by_dimension[0].pass_rate == pytest.approx((0.9 + 0.0) / 2)
+        # Raw counters remain useful row-test diagnostics but do not define
+        # the equal-check-weight score.
+        assert out.by_dimension[0].failed_tests == 110
+        assert out.by_dimension[0].total_tests == 200
+
+    def test_multiple_checks_of_one_rule_get_one_rule_weight(self):
+        rows = [
+            make_row("a_col_1", failed=0, total=100, dimension="Validity", rule_id="a"),
+            make_row("a_col_2", failed=0, total=100, dimension="Validity", rule_id="a"),
+            make_row("b", failed=100, total=100, dimension="Validity", rule_id="b"),
+        ]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.by_dimension[0].pass_rate == pytest.approx((1.0 + 0.0) / 2)
 
     def test_untagged_checks_land_in_null_label_bucket(self):
         # dqlake parity: a rule without a dimension tag groups under a NULL
@@ -880,16 +909,16 @@ class TestAsOfGroupedTrends:
         # t3: A's t3 run (0/100) pooled with B carried from t2 (50/100).
         assert completeness[2].pass_rate == pytest.approx(1 - 50 / 200)
 
-    def test_grouped_series_pools_counts_not_mean_of_table_rates(self):
-        # dqlake's grouped trend is SUM/SUM over the carried rows — with very
-        # different test volumes the pooled rate diverges from the mean.
+    def test_grouped_series_uses_equal_check_weight_not_test_volume(self):
+        # Each check contributes one pass rate, so a large table cannot drown
+        # out a check from a small table.
         rows = [
             make_row("c1", failed=0, total=1000, run_id="a1", run_date=self.T1, fqn=self.A, dimension="Completeness"),
             make_row("c1", failed=5, total=10, run_id="b1", run_date=self.T1, fqn=self.B, dimension="Completeness"),
         ]
         out = self._compute(rows)
         point = next(p for p in out.trend_by_dimension if p.series == "Completeness")
-        assert point.pass_rate == pytest.approx(1 - 5 / 1010)  # pooled, not (1.0 + 0.5) / 2
+        assert point.pass_rate == pytest.approx((1.0 + 0.5) / 2)
         assert point.total_tests == 1010
 
     def test_carried_rows_pool_rule_counts_across_tables(self):

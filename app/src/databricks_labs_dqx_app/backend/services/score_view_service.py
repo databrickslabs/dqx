@@ -43,9 +43,9 @@ architecture):
   rule_name, severity, dimension, criticality) and measures
   *failed_tests* / *error_tests* / *warning_tests* / *total_tests* /
   *score* / *failed_checks* / *total_checks* / *rule_count* /
-  *failed_rule_count*. The score measure uses TRY_DIVIDE so a zero or
-  NULL denominator yields SQL NULL — the exact analogue of
-  ScoreService.compute_table_score returning None. The count measures
+  *failed_rule_count*. The score measure first averages each reusable rule's
+  checks, then gives every rule equal weight. Empty
+  runs yield SQL NULL, matching ScoreService.compute_table_score. The count measures
   answer authoring/coverage questions ("how many rules", "how many
   rules are failing") directly at the run x table grain. The
   run-picker route reads MEASURE(score) / MEASURE(failed_tests) /
@@ -53,8 +53,7 @@ architecture):
 
 The score formula is numerically identical to
 *ScoreService.compute_table_score* (including the approved filter
-approximation: every check is treated as evaluated against all input
-rows). ScoreService remains the formula's unit-tested specification;
+approximation for row-level checks). ScoreService remains the formula's unit-tested specification;
 see tests/test_score_view_service.py for the parity test.
 
 Permission model: both views are created by the app's service
@@ -71,6 +70,12 @@ definition changes ship with the app — see *app._ensure_score_views*.
 from __future__ import annotations
 
 import logging
+
+# Importing check_funcs registers every built-in function's execution
+# granularity in CHECK_FUNC_REGISTRY.
+import databricks.labs.dqx.check_funcs  # noqa: F401
+from databricks.labs.dqx.checks_resolver import _load_optional_check_module
+from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn
@@ -111,10 +116,28 @@ _CHECKS_JSON_SCHEMA = (
     "ARRAY<STRUCT<"
     "name: STRING, "
     "criticality: STRING, "
-    "check: STRUCT<arguments: STRUCT<column: STRING, columns: ARRAY<STRING>>>, "
+    "check: STRUCT<"
+    "function: STRING, "
+    "arguments: STRUCT<column: STRING, columns: ARRAY<STRING>, merge_columns: ARRAY<STRING>>"
+    ">, "
     "user_metadata: MAP<STRING, STRING>"
     ">>"
 )
+
+for _optional_check_module in (
+    "databricks.labs.dqx.anomaly.check_funcs",
+    "databricks.labs.dqx.pii.pii_detection_funcs",
+):
+    _load_optional_check_module(_optional_check_module)
+
+_DATASET_CHECK_FUNCTIONS = tuple(
+    sorted(name for name, rule_type in CHECK_FUNC_REGISTRY.items() if rule_type == "dataset" and name != "sql_query")
+)
+
+
+def _dataset_function_sql_list() -> str:
+    """Return a SQL literal list for built-in dataset-level check functions."""
+    return ", ".join("'" + name.replace("'", "''") + "'" for name in _DATASET_CHECK_FUNCTIONS)
 
 
 def metric_view_fqn(catalog: str, schema: str) -> str:
@@ -206,8 +229,10 @@ class ScoreViewService:
             "    c.col.name AS check_name,\n"
             "    c.col.criticality AS criticality,\n"
             "    c.col.user_metadata AS user_metadata,\n"
+            "    c.col.check.function AS check_function,\n"
             "    c.col.check.arguments.column AS arg_column,\n"
-            "    c.col.check.arguments.columns AS arg_columns\n"
+            "    c.col.check.arguments.columns AS arg_columns,\n"
+            "    c.col.check.arguments.merge_columns AS merge_columns\n"
             "  FROM run_checks r\n"
             "  LATERAL VIEW posexplode(\n"
             f"    from_json(r.checks_json, '{_CHECKS_JSON_SCHEMA}')\n"
@@ -223,6 +248,18 @@ class ScoreViewService:
             "  user_metadata['dimension'] AS dimension,\n"
             "  user_metadata['registry_rule_id'] AS registry_rule_id,\n"
             "  user_metadata['name'] AS rule_name,\n"
+            # Granularity is derived from the exact rendered check frozen with
+            # the run. sql_query is the one polymorphic function: merge keys
+            # make it row-level; without them its single verdict is broadcast
+            # over the dataset. Unknown/custom functions conservatively remain
+            # row-level rather than being turned into binary gates.
+            "  CASE\n"
+            "    WHEN check_function = 'sql_query' AND (merge_columns IS NULL OR size(merge_columns) = 0)\n"
+            "      THEN 'dataset'\n"
+            "    WHEN check_function = 'sql_query' THEN 'row'\n"
+            f"    WHEN check_function IN ({_dataset_function_sql_list()}) THEN 'dataset'\n"
+            "    ELSE 'row'\n"
+            "  END AS check_granularity,\n"
             # The resolved effective pass threshold the runner FROZE per-run
             # into user_metadata at materialization time — breach eval reads
             # this frozen value so a later admin/rule setting change never
@@ -328,6 +365,16 @@ class ScoreViewService:
             "       ELSE COALESCE(e.warning_count, 0) END AS warning_count,\n"
             "  CASE WHEN e.is_placeholder THEN CAST(NULL AS BIGINT)\n"
             "       ELSE TRY_CAST(TRY_CAST(e.input_row_count_str AS DOUBLE) AS BIGINT) END AS input_row_count,\n"
+            "  CASE\n"
+            "    WHEN e.is_placeholder THEN CAST(NULL AS DOUBLE)\n"
+            "    WHEN TRY_CAST(TRY_CAST(e.input_row_count_str AS DOUBLE) AS BIGINT) <= 0 THEN CAST(NULL AS DOUBLE)\n"
+            "    WHEN a.check_granularity = 'dataset'\n"
+            "      THEN CASE WHEN COALESCE(e.error_count, 0) + COALESCE(e.warning_count, 0) > 0 THEN 0.0 ELSE 1.0 END\n"
+            "    ELSE 1.0 - TRY_DIVIDE(\n"
+            "      COALESCE(e.error_count, 0) + COALESCE(e.warning_count, 0),\n"
+            "      TRY_CAST(TRY_CAST(e.input_row_count_str AS DOUBLE) AS BIGINT)\n"
+            "    )\n"
+            "  END AS check_score,\n"
             # Run-mode resolution: the run-level tag wins; untagged
             # (legacy) runs classify as published — see the docstring
             # for why no run_type heuristic is applied here.
@@ -338,6 +385,14 @@ class ScoreViewService:
             "  a.dimension,\n"
             "  a.registry_rule_id,\n"
             "  a.rule_name,\n"
+            "  a.check_granularity,\n"
+            "  CASE WHEN e.check_name IS NULL THEN CAST(NULL AS STRING) ELSE concat(\n"
+            "    COALESCE(e.run_id, ''), '\\u001f', e.input_location, '\\u001f',\n"
+            "    COALESCE(a.registry_rule_id, e.check_name)\n"
+            "  ) END AS rule_instance_key,\n"
+            "  COUNT(e.check_name) OVER (\n"
+            "    PARTITION BY e.run_id, e.input_location, COALESCE(a.registry_rule_id, e.check_name)\n"
+            "  ) AS rule_check_count,\n"
             "  a.pass_threshold,\n"
             "  a.columns\n"
             "FROM exploded e\n"
@@ -422,6 +477,7 @@ class ScoreViewService:
             "  c.error_count,\n"
             "  c.warning_count,\n"
             "  c.input_row_count,\n"
+            "  c.check_score,\n"
             "  c.run_mode,\n"
             "  c.binding_version,\n"
             "  c.criticality,\n"
@@ -429,6 +485,9 @@ class ScoreViewService:
             "  c.dimension,\n"
             "  c.registry_rule_id,\n"
             "  c.rule_name,\n"
+            "  c.check_granularity,\n"
+            "  c.rule_instance_key,\n"
+            "  c.rule_check_count,\n"
             "  c.pass_threshold,\n"
             "  c.columns\n"
             "FROM asof a\n"
@@ -441,11 +500,11 @@ class ScoreViewService:
         """CREATE OR REPLACE VIEW ... WITH METRICS LANGUAGE YAML for *mv_dq_scores*.
 
         The grain is one source row per CHECK (a rule-to-column application
-        at a run x table); a TEST is one record-level evaluation of a check.
+        at a run x table); checks first roll up to their reusable rule, then
+        each rule contributes equally to the score.
         Every DQ concept is a DENORMALIZED DIMENSION with a rich comment (the
         comments ARE the Genie grounding) and every number a
-        re-aggregation-safe MEASURE read via MEASURE() — never AVG a rate,
-        always recompute pass rate from the summed failed/total tests.
+        re-aggregation-safe MEASURE read via MEASURE().
 
         Compatibility contract: the run-picker route (dq_results.py) reads
         MEASURE(score) / MEASURE(failed_tests) / MEASURE(total_tests), so
@@ -456,8 +515,8 @@ class ScoreViewService:
             # Double-quoted: a backtick may not start a YAML plain scalar
             # (it is a reserved indicator character).
             f'source: "{self.shaping_view_fqn_quoted}"\n'
-            "comment: Per-check DQ results — row-weighted pass-rate and test/check/rule counts "
-            "over run x table x check, at test grain\n"
+            "comment: Per-check DQ results — equal-rule-weight score and test/check/rule counts "
+            "over run x table x check\n"
             "dimensions:\n"
             "  - name: input_location\n"
             "    expr: input_location\n"
@@ -490,6 +549,9 @@ class ScoreViewService:
             "    expr: check_name\n"
             "    comment: Display name of the check AS OF the run — a rule applied to N columns fans out into "
             "N check_names sharing one registry_rule_id, and can change on rename\n"
+            "  - name: check_granularity\n"
+            "    expr: check_granularity\n"
+            "    comment: Row means per-record checks and dataset means one whole-table verdict\n"
             # Rule identity — registry_rule_id is the rule's STABLE id
             # (survives renames); rule_name is the underlying rule name
             # (the per-column check_name is suffixed). Both already emitted
@@ -529,9 +591,10 @@ class ScoreViewService:
             "    expr: SUM(input_row_count)\n"
             "    comment: Total evaluated tests (input rows x checks) across the grouped check rows\n"
             "  - name: score\n"
-            "    expr: 1 - TRY_DIVIDE(SUM(error_count + warning_count), SUM(input_row_count))\n"
-            "    comment: Row-weighted pass rate between 0 and 1 (NULL when no rows or no checks). "
-            "Report as a percentage and never AVG it across runs/tables — recompute from the sums\n"
+            "    expr: TRY_DIVIDE(SUM(TRY_DIVIDE(check_score, rule_check_count)), "
+            "COUNT(DISTINCT rule_instance_key))\n"
+            "    comment: Equal-weight mean of rule scores between 0 and 1. A rule score averages its row-check "
+            "pass rates and binary dataset verdicts. NULL when no rows or rules\n"
             "  - name: failed_checks\n"
             "    expr: COUNT(1) FILTER (WHERE (error_count + warning_count) > 0)\n"
             "    comment: Number of checks with at least one failing test across the grouped rows\n"

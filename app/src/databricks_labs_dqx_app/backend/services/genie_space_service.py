@@ -157,8 +157,9 @@ TEXT_INSTRUCTIONS = [
     ),
     (
         "A test is one record-level evaluation of one check. Read every metric-view measure with "
-        "MEASURE(); pass rate is 1 - SUM(failed_tests) / SUM(total_tests) at test grain, and you "
-        "never average rates across runs or tables — recompute from the sums. State every score or "
+        "MEASURE(); the quality score is the equal-weight mean of rule scores. A rule first averages "
+        "its row-check pass rates and binary dataset-check verdicts. failed_tests "
+        "and total_tests remain row-test diagnostics and do not reconstruct the score. State every score or "
         'rate as a percentage with one decimal ("91.5%", never a bare fraction like 0.915), and '
         'report failures as a share of tests with the denominator ("1,250 of 50,000 tests, 2.5%"), '
         "not a bare count.\n"
@@ -196,8 +197,8 @@ TEXT_INSTRUCTIONS = [
         "v_dq_check_results_asof (NOT include_drafts) grouped by as_of_time and input_location for "
         "per-table rates, scoped with input_location IN the members, and average those. "
         "`(Rule: <name>)` scopes every metric to that ONE registry rule across all its "
-        "tables/columns — filter rule_name, group on registry_rule_id, and report its pooled pass "
-        "rate recomputed from summed failed/total over each table's latest published run. Without "
+        "tables/columns — filter rule_name, group on registry_rule_id, and report the mean of its "
+        "latest per-table scores. Without "
         "a subject, answer across all tables.\n"
     ),
     (
@@ -430,7 +431,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     # by v_dq_check_results_asof (at each run instant every table repeats
     # its most recent run at-or-before that instant; NOT include_drafts =
     # the published-runs-only partition), so this is two plain GROUP BYs:
-    # pool each table's carried rows into its rate per instant, then take
+    # average each table's equally weighted check scores per instant, then take
     # the equal-weight mean across tables (AVG skips NULL-rate tables).
     # Deliberately UNPARAMETERIZED: the member set is a table LIST, which
     # Genie's scalar trusted-asset parameters cannot express — the example
@@ -440,7 +441,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     asof_average_trend = (
         "WITH per_table AS (\n"
         "  SELECT `as_of_time`, `input_location`,\n"
-        "         1 - TRY_DIVIDE(SUM(`error_count` + `warning_count`), SUM(`input_row_count`)) AS pass_rate\n"
+        "         TRY_DIVIDE(SUM(TRY_DIVIDE(`check_score`, `rule_check_count`)),\n"
+        "                    COUNT(DISTINCT `rule_instance_key`)) AS pass_rate\n"
         f"  FROM {va}\n"
         "  WHERE NOT `include_drafts`\n"
         "  GROUP BY `as_of_time`, `input_location`\n"
@@ -667,13 +669,14 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     # (:rule_name), grouped on registry_rule_id for cross-run identity. The
     # metric view now carries rule_name / registry_rule_id dimensions, so the
     # flat per-table rollups read mv_dq_scores; per-column attribution reads
-    # the shaping view. Pooled headline = recompute from summed failed/total
-    # over each table's latest published run (NOT an average of rates).
+    # the shaping view. The headline follows the app's equal-table rollup over
+    # each table's latest published run.
 
-    # Each table's latest published run for this rule, pooled into one rate.
+    # Each table's latest published run for this rule, then equal-table mean.
     rule_overall_pass_rate = (
         "WITH per_table AS (\n"
         "  SELECT `input_location`, `run_time`,\n"
+        "         MEASURE(`score`) AS pass_rate,\n"
         "         MEASURE(`failed_tests`) AS failed_tests,\n"
         "         MEASURE(`total_tests`) AS total_tests\n"
         f"  FROM {mv}\n"
@@ -684,7 +687,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  SELECT * FROM per_table\n"
         "  QUALIFY ROW_NUMBER() OVER (PARTITION BY `input_location` ORDER BY `run_time` DESC) = 1\n"
         ")\n"
-        "SELECT 1 - TRY_DIVIDE(SUM(failed_tests), SUM(total_tests)) AS pass_rate,\n"
+        "SELECT AVG(pass_rate) AS pass_rate,\n"
         "       SUM(failed_tests) AS failed_tests, SUM(total_tests) AS total_tests\n"
         "FROM latest"
     )
@@ -1050,10 +1053,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "sql": _lines(rule_overall_pass_rate),
             "parameters": rule_name_param,
             "usage_guidance": [
-                "The rule's POOLED pass rate across every table it runs on, from mv_dq_scores "
-                "scoped by rule_name. Takes each table's latest published run, then recomputes "
-                "the rate from the summed failed/total tests (never an average of per-table "
-                "rates). Report the pooled pass rate as the headline; failed/total tests as "
+                "The mean of the rule's latest per-table scores across every table it runs on, "
+                "from mv_dq_scores scoped by rule_name. Report that score as the headline; "
+                "failed/total row tests as "
                 "context."
             ],
         },
@@ -1454,7 +1456,9 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                     "Per-check DQ results — one row per (run_id, input_location, check_name) "
                     "across all runs. Columns: run_id, input_location (the monitored table's "
                     "fully-qualified name), run_time, is_latest_run, check_name, error_count, "
-                    "warning_count, input_row_count (tests evaluated for the check), run_mode "
+                    "warning_count, input_row_count (tests evaluated for the check), check_score "
+                    "(the check's 0-1 contribution to quality score), check_granularity "
+                    "('row' | 'dataset'), rule_instance_key, rule_check_count, run_mode "
                     "('published' | 'draft' — default to published), binding_version, and the "
                     "AS-OF-RUN attribution the check executed with: criticality, severity "
                     "(Critical/High/Medium/Low), dimension (quality dimension), "
@@ -1477,7 +1481,9 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                     "them), as_of_time (the consolidated instant — group by it for trends), "
                     "then the same shape as v_dq_check_results: run_id, input_location, "
                     "run_time (the carried run's own time), is_latest_run, check_name, "
-                    "error_count, warning_count, input_row_count, run_mode, binding_version, "
+                    "error_count, warning_count, input_row_count, check_score, check_granularity, "
+                    "rule_instance_key, rule_check_count, "
+                    "run_mode, binding_version, "
                     "criticality, severity, dimension, registry_rule_id, columns. Use ONLY for "
                     "average-over-time / trend questions spanning several tables (group by "
                     "as_of_time and input_location for per-table rates, then average); for "
@@ -1573,7 +1579,8 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                         "dimensions input_location, run_id, run_time, is_latest_run, run_mode, "
                         "pass_threshold (frozen per-run breach threshold, 0-100), binding_version "
                         "(rule-set version), check_name, registry_rule_id (the rule's stable id), "
-                        "rule_name (the underlying rule name — scope to one rule by this), severity "
+                        "rule_name (the underlying rule name — scope to one rule by this), "
+                        "check_granularity, severity "
                         "(APPLIED), dimension, criticality. Read every measure with MEASURE(); group "
                         "by run_time for trends; filter run_mode = 'published' by default."
                     ],

@@ -34,7 +34,6 @@ import {
   MultiColumnPicker,
   columnsForSlot,
 } from "./ColumnPicker";
-import { JoinTablePickerModal } from "@/components/rules/lowcode/JoinTablePickerModal";
 
 const PALETTE = [
   "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 dark:text-emerald-400",
@@ -354,96 +353,6 @@ function PendingSlotChip({
 }
 
 /**
- * `family: "table"` variant of the chips above — a cross-table rule's joined
- * table binds to a fully-qualified table name, not to a column of the table
- * under test, so it opens the catalog → schema → table browser instead of the
- * column picker. Used for both an already-bound value and the pending
- * "add mapping group" slot, since a table has no column list to auto-advance
- * through.
- */
-function TableSlotChip({
-  colorClass,
-  value,
-  colorDashed,
-  readOnly,
-  onSelect,
-  onRemove,
-  removeTitle,
-  onCancel,
-}: {
-  colorClass: string;
-  value?: string;
-  colorDashed?: boolean;
-  readOnly?: boolean;
-  onSelect: (fqn: string) => void;
-  onRemove?: () => void;
-  removeTitle?: string;
-  onCancel?: () => void;
-}) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-mono",
-        colorDashed && "border-dashed",
-        colorClass,
-      )}
-    >
-      <button
-        type="button"
-        disabled={readOnly}
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen(true);
-        }}
-        className={cn(
-          "cursor-pointer hover:underline focus:outline-none disabled:cursor-default disabled:no-underline",
-          !value && "text-muted-foreground font-sans",
-        )}
-        aria-label={t("monitoredTables.selectTableLabel")}
-      >
-        {value || t("monitoredTables.selectTablePlaceholder")}
-      </button>
-      {onRemove && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
-          title={removeTitle}
-          aria-label={removeTitle}
-          className="ml-0.5 opacity-60 hover:opacity-100 focus:outline-none leading-none"
-        >
-          ×
-        </button>
-      )}
-      {onCancel && (
-        <button
-          type="button"
-          onClick={onCancel}
-          title={t("common.cancel")}
-          aria-label={t("common.cancel")}
-          className="ml-0.5 opacity-60 hover:opacity-100 focus:outline-none leading-none"
-        >
-          &times;
-        </button>
-      )}
-      <JoinTablePickerModal
-        open={open}
-        onOpenChange={setOpen}
-        value={value ?? ""}
-        onSelect={(fqn) => {
-          onSelect(fqn);
-          setOpen(false);
-        }}
-      />
-    </span>
-  );
-}
-
-/**
  * `cardinality: "many"` variant of `PendingSlotChip` — a slot bound to
  * several columns at once can't auto-advance on a single click (there's no
  * signal for "the multi-select is done"), so it keeps one explicit confirm
@@ -698,25 +607,7 @@ export function MappingChips({
                         key={groupIdx}
                         className="inline-flex flex-col items-start gap-1"
                       >
-                        {slot.family === "table" ? (
-                          <TableSlotChip
-                            colorClass={paletteAt(groupIdx)}
-                            value={colName}
-                            readOnly={!onChangeGroup}
-                            onSelect={(fqn) =>
-                              onChangeGroup?.(groupIdx, slot.name, fqn)
-                            }
-                            onRemove={
-                              onRemoveGroup
-                                ? () => onRemoveGroup(groupIdx)
-                                : undefined
-                            }
-                            removeTitle={t(
-                              "monitoredTables.removeMappingGroupTitle",
-                              { count: groupIdx + 1 },
-                            )}
-                          />
-                        ) : onChangeGroup ? (
+                        {onChangeGroup ? (
                           <EditableChip
                             colorClass={paletteAt(groupIdx)}
                             label={colName}
@@ -802,16 +693,7 @@ export function MappingChips({
                       ...usedColumns,
                       ...pendingSiblingColumns,
                     ];
-                    return slot.family === "table" ? (
-                      <TableSlotChip
-                        key="pending"
-                        colorClass={paletteAt(columnMapping.length)}
-                        colorDashed
-                        value={pendingValues?.[slot.name]}
-                        onSelect={(fqn) => onPendingSelect(slot.name, fqn)}
-                        onCancel={isLastSlot ? onCancelAdd : undefined}
-                      />
-                    ) : slot.cardinality === "many" ? (
+                    return slot.cardinality === "many" ? (
                       <PendingManySlotChip
                         key="pending"
                         slot={slot}

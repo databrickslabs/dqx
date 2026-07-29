@@ -53,14 +53,20 @@ introduce a new table:
 **Formula** (per table, per run):
 
 ```
-score = 1 − (Σ failed_tests / Σ input_row_count)
+row_check_score = 1 − failed_rows / input_row_count
+dataset_check_score = 1 if the table verdict passed, otherwise 0
+rule_score = mean(check_score for checks produced by that rule)
+score = mean(rule_score)
 ```
 
-summed across all rules applied to that table in the run. `failed_tests` per
-rule is already emitted today in `dq_metrics.check_metrics[].error_count` /
-`.warning_count` (a genuine, already-filter-aware per-rule failed-row count).
-`input_row_count` is the existing table-wide row count already emitted per
-run.
+Every applied rule has equal weight, including a rule that fans out into checks
+on several columns. `failed_tests` per check is emitted in
+`dq_metrics.check_metrics[].error_count` / `.warning_count`. DQX broadcasts a
+dataset-level verdict onto every input row, but scoring collapses that broadcast
+back to one binary table verdict so table-level checks are not weighted by table
+size. `input_row_count` is the existing table-wide row count emitted per run.
+The failed/total test counters remain row-test diagnostics and do not
+reconstruct this equal-rule-weight score.
 
 **Known, accepted approximation:** per-rule `filter` scoping is not accounted
 for in the denominator — a rule scoped to a subset of rows via `filter` will

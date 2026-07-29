@@ -52,11 +52,11 @@ Guidelines:
 Available check functions:
 {available_functions}"""
 
-# Three-pass rule proposal prompt (B2-132): the caller tries "lowcode" first
-# (a guided, most-editable visual AST — see the dedicated template below),
-# falling back to "dqx_native" (a single named check function + arguments) and
-# finally to "sql" (a predicate SQL expression). This template backs the
-# dqx_native and sql passes only — both share the same response shape so
+# Three-pass rule proposal prompt (B2-132): the caller tries "dqx_native" first
+# (a single named check function + arguments), falling back to "lowcode" (a
+# guided visual AST — see the dedicated template below) and finally to "sql" (a
+# predicate SQL expression). This template backs the dqx_native and sql passes
+# only — both share the same response shape so
 # `AiRulesService._validate_and_repair_proposal` can validate either uniformly.
 # The lowcode pass has its own richer template and validator.
 _RULE_PROPOSAL_SYSTEM_TEMPLATE = """\
@@ -78,7 +78,7 @@ complex/unnatural, OR when the user's description EXPLICITLY frames it as a fail
 
 Guidelines:
 - Use double quotes for all JSON keys and string values.
-- Do not include any prose outside the JSON object.{columns_guidance}
+- Do not include any prose outside the JSON object.{columns_guidance}{coverage_guidance}
 
 Available check functions:
 {available_functions}"""
@@ -89,19 +89,20 @@ _SQL_DEFINITION_SHAPE = '{"sql_query": "<a SELECT-only predicate expression, no 
 # Friendly, user-facing names for each internal mode id — used only in the
 # human-readable PROSE the model reads (the internal ids "dqx_native"/"sql"/
 # "lowcode" remain the app-wide contract; see parse_rule_type_intent). Aligned
-# to the current UI rule-type picker labels (en.json: coreBasicChecks="Basic
-# Rules", coreConditionBuilder="Condition Builder", coreSql="SQL").
-_MODE_LABELS = {"dqx_native": "Basic Rules", "sql": "SQL", "lowcode": "Condition Builder"}
+# to the current UI rule-type labels (en.json: modeDqxNative="Built-in check",
+# coreConditionBuilder="Condition Builder", coreSql="SQL").
+_MODE_LABELS = {"dqx_native": "Built-in check", "sql": "SQL", "lowcode": "Condition Builder"}
 
 # Low-code proposal prompt (B2-132). Ported from dqlake's `_GENERATE_LOWCODE_SYSTEM`
 # and adapted to DQX: the model emits a low-code AST (`rows` + `joins`) plus the
 # declared `columns`, an optional `group_by_columns`, and a PASS/FAIL polarity.
 # The backend compiles that AST to the same `body` payload the visual builder
 # stores (`lowcode_compile.compile_lowcode_body`) and safety-validates it, so a
-# lowcode proposal loads straight into the low-code editor. This is the FIRST
-# attempt: it has no SQL escape hatch, so the model puts its full effort into a
-# valid AST instead of bailing to a SQL string — if the AST can't represent the
-# check, `generate_rule` falls through to the dqx_native, then sql, passes.
+# lowcode proposal loads straight into the low-code editor. This runs after the
+# dqx_native pass, for the requirements no single built-in check covers. It has
+# no SQL escape hatch, so the model puts its full effort into a valid AST instead
+# of bailing to a SQL string — if the AST can't represent the check either,
+# `generate_rule` falls through to the sql pass.
 _LOWCODE_PROPOSAL_SYSTEM_TEMPLATE = """\
 You are a data quality rule design assistant for the DQX Rules Registry. Given a business \
 description of a data quality requirement (and optional table schema/sample data), propose \
@@ -156,6 +157,23 @@ _DQX_NATIVE_COLUMNS_GUIDANCE = (
     'inside "definition".arguments.'
 )
 
+# The escape hatch that makes trying dqx_native FIRST safe (see _DEFAULT_CASCADE).
+# Built-in checks are preferred, but only where ONE of them says everything the
+# description says. Without an explicit way to decline, a model asked for a single
+# check will always produce one — and a partial check that validates is worse than
+# falling through to the low-code builder, which can express the full condition.
+# Native-only: sql is the last resort in the cascade, so it has nowhere to decline to.
+_DQX_NATIVE_COVERAGE_GUIDANCE = (
+    "\n- The check you name MUST express the requirement IN FULL. If the description carries "
+    "several independent conditions (e.g. \"positive AND under 1,000,000\") and no single check "
+    "function covers ALL of them, do NOT answer with a check that covers only part of it: return "
+    'exactly {"decline": true} and nothing else, and the requirement will be built on a surface '
+    "that can express all of it. Prefer a built-in check whenever one genuinely covers the "
+    "whole requirement."
+)
+# Sentinel key the native pass returns to decline (see above).
+_DECLINE_KEY = "decline"
+
 _FIELD_SUGGESTION_SYSTEM_TEMPLATE = """\
 You are helping a data steward fill in one field of a data quality rule definition. Given the \
 rule's context, suggest a concise value for the field "{field}".
@@ -173,7 +191,7 @@ _WRITE_SQL_SYSTEM_TEMPLATE = """\
 You produce data-quality rule predicates for the DQX Rules Registry. Respond with ONLY a JSON \
 object:
 {"predicate": "<sql>", "polarity": "pass"|"fail", "slots": [{"name": "<slot_name>", \
-"family": "numeric"|"text"|"temporal"|"boolean"|"array"|"any"|"table"}]}
+"family": "numeric"|"text"|"temporal"|"boolean"|"array"|"any"}]}
 
 STRONGLY PREFER writing the predicate for the PASSING case: express the condition that is TRUE \
 when the row is VALID, and set polarity to "pass". This is almost always possible and is the \
@@ -190,22 +208,22 @@ column identifier. A registry rule is table-agnostic, so its own columns are alw
 Cross-table checks (JOINs):
 - When the check needs data from ANOTHER table, write the boolean expression first, then append \
 one or more JOIN clauses AFTER it, each on its own line. Do NOT write a SELECT.
-- Reference the joined TABLE as a {{slot}} placeholder as well, and declare that slot with \
-family "table". NEVER hardcode a literal catalog.schema.table name — the rule must stay portable.
+- Write the joined TABLE as a LITERAL name, never a {{placeholder}}: only the table under test's \
+columns are placeholders, because only they are re-bound per monitored table. Use the \
+fully-qualified name the description gives you; when it names no catalog or schema, write \
+`catalog.schema.<table>` verbatim so the author can see exactly what to replace.
 - Give every joined table a short alias, and reference the joined table's own columns as \
-`alias.column` (raw identifiers). Only the table under test's columns are placeholders, because \
-only they are re-bound per monitored table.
-- Example — "sales amount, converted via the FX rates table, must stay below 10000":
-{"predicate": "{{amount}} * fx.rate_to_usd < 10000\\nLEFT JOIN {{fx_rates_table}} fx ON \
+`alias.column` (raw identifiers).
+- Example — "sales amount, converted via the main.ref.fx_rates table, must stay below 10000":
+{"predicate": "{{amount}} * fx.rate_to_usd < 10000\\nLEFT JOIN main.ref.fx_rates fx ON \
 fx.country_code = {{country_code}}", "polarity": "pass", "slots": [{"name": "amount", \
-"family": "numeric"}, {"name": "country_code", "family": "text"}, {"name": "fx_rates_table", \
-"family": "table"}]}
+"family": "numeric"}, {"name": "country_code", "family": "text"}]}
 
 "slots" rules:
 - Declare EVERY {{placeholder}} that appears in your predicate, and nothing else.
 - Reuse the caller's declared slot names (and their intent) wherever they fit.
 - Pick the family from the value the column holds: numeric, text, temporal, boolean, array, or \
-any when unsure. Use "table" ONLY for a joined table name.
+any when unsure.
 
 Safety rules:
 - No SELECT, no semicolons, no trailing punctuation, and no DDL/DML \
@@ -215,7 +233,7 @@ _IMPROVE_SQL_SYSTEM_TEMPLATE = """\
 You refine a DQX SQL boolean predicate per the user's instruction. Respond with ONLY a JSON \
 object:
 {"predicate": "<sql>", "polarity": "pass"|"fail", "slots": [{"name": "<slot_name>", \
-"family": "numeric"|"text"|"temporal"|"boolean"|"array"|"any"|"table"}]}
+"family": "numeric"|"text"|"temporal"|"boolean"|"array"|"any"}]}
 
 Keep every reference to a column of the table under test as a {{slot}} placeholder; keep \
 declared slot names unchanged. STRONGLY PREFER writing the predicate for the PASSING case: set \
@@ -225,14 +243,15 @@ the user's instruction EXPLICITLY describes a failure condition; when in doubt c
 
 Cross-table checks (JOINs):
 - The predicate may be followed by JOIN clauses on their own lines when the check spans tables. \
-Preserve any that are already there. Do NOT write a SELECT.
-- Reference a joined TABLE as a {{slot}} placeholder declared with family "table" — never a \
-literal catalog.schema.table name — and reference its columns as `alias.column`.
+Preserve any that are already there, INCLUDING the joined table's name exactly as written.
+Do NOT write a SELECT.
+- A joined TABLE is a literal catalog.schema.table name, never a {{placeholder}}; reference its \
+columns as `alias.column`.
 
 "slots" rules:
 - Declare EVERY {{placeholder}} that appears in your predicate, and nothing else.
 - Pick the family from the value the column holds: numeric, text, temporal, boolean, array, or \
-any when unsure. Use "table" ONLY for a joined table name.
+any when unsure.
 
 Safety rules:
 - No SELECT, no semicolons, no trailing punctuation, and no DDL/DML."""
@@ -241,8 +260,7 @@ _EXPLAIN_SQL_SYSTEM_TEMPLATE = """\
 Explain a DQX SQL boolean predicate for a data steward in plain language. Aim for one sentence; \
 two at the absolute most. Declarative voice, plain language, no apologies, no preamble \
 ("This rule…"), no markdown, no quotes. Describe what the predicate is checking — not how the \
-SQL is written. Treat {{slot}} placeholders as column names, except one used as a joined table \
-name, which is a table.
+SQL is written. Treat {{slot}} placeholders as column names.
 
 Return ONLY a JSON object: {"explanation": "<plain-language explanation>"}"""
 
@@ -250,9 +268,9 @@ Return ONLY a JSON object: {"explanation": "<plain-language explanation>"}"""
 class SqlPredicateResult(TypedDict):
     """An AI-written SQL predicate, its inferred PASS/FAIL polarity, and its slots.
 
-    ``slots`` covers every ``{{placeholder}}`` in ``predicate`` — including the
-    ``family="table"`` slot of a cross-table rule's joined table — so the editor
-    can declare them without the author retyping each one.
+    ``slots`` covers every ``{{placeholder}}`` in ``predicate`` so the editor can
+    declare them without the author retyping each one. A joined table is written
+    as a literal name, so it never appears here.
     """
 
     predicate: str
@@ -293,8 +311,8 @@ _INTENT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
-        # "Basic Rules" is the current friendly name for the dqx_native mode
-        # (UI: coreBasicChecks); the older "native" / "built-in function" and the
+        # "Built-in check" is the current friendly name for the dqx_native mode
+        # (UI: modeDqxNative); the older "native" / "built-in function" and the
         # "basic"/"simple" phrasings all route here too.
         "dqx_native",
         re.compile(
@@ -333,102 +351,23 @@ def parse_rule_type_intent(description: str) -> str | None:
     return None
 
 
-# High-signal phrases that a single named basic (``dqx_native``) check function
-# expresses crisply and directly. When a description clearly asks for one of
-# these, the built-in check is a better, tidier rule than a hand-rolled
-# low-code / SQL equivalent — so generation tries ``dqx_native`` FIRST for these
-# (instead of the usual low-code-first cascade), while still falling through to
-# low-code and SQL if the model can't produce a valid basic check.
+# Cascade order tried when no explicit rule type is requested. Built-in checks
+# come FIRST: a named DQX check is the tidiest, most portable expression of a
+# requirement (it carries DQX's own semantics, needs no hand-rolled predicate,
+# and reads as one line in the registry), so it wins whenever it can express the
+# requirement in full. The visual builder is the fallback for requirements no
+# single built-in covers, and SQL the last resort.
 #
-# Matching here only REORDERS the cascade — it never forces a basic check. The
-# dqx_native pass must still survive ``DQEngine.validate_checks`` in
-# `_validate_and_repair_proposal`, and `generate_rule` falls through to low-code
-# then sql when it doesn't. That makes a false positive cheap (one extra model
-# call), which is why this list covers the common phrasings of DQX's built-ins
-# rather than only the four most distinctive ones.
-#
-# Bare magnitude comparisons ("greater than", "less than", "at most") are
-# deliberately NOT listed. They are what the low-code builder is best at, and a
-# native pass can answer a COMPOUND description ("positive AND under 1,000,000")
-# with a single-bound check like `is_not_greater_than` that validates while
+# Trying native first is only safe because the native pass may DECLINE: a
+# compound description ("positive AND under 1,000,000") has no single built-in
+# that covers it, and a model forced to answer would pick a single-bound check
+# like ``is_not_greater_than`` that passes ``DQEngine.validate_checks`` while
 # silently dropping half the requirement — a worse rule than the low-code
-# equivalent. Bounded phrasings that carry both edges ("between X and Y",
-# "in range") map cleanly onto `is_in_range` and ARE listed.
-_BASIC_CHECK_SIGNALS: tuple[re.Pattern[str], ...] = (
-    # Uniqueness / duplicates -> is_unique
-    re.compile(r"\buniqu\w*\b", re.IGNORECASE),  # unique / uniqueness / uniquely
-    re.compile(r"\bduplicat\w*\b", re.IGNORECASE),  # duplicate(s) / duplication
-    # Statistical outliers / anomalies -> has_no_outliers / has_no_aggr_outliers
-    re.compile(r"\boutlier\w*\b", re.IGNORECASE),
-    re.compile(r"\banomal\w*\b", re.IGNORECASE),
-    # Null / empty presence -> is_not_null / is_null / is_not_empty /
-    # is_not_null_and_not_empty. The bare concept is the signal: whichever way a
-    # description phrases the negation ("must not be null", "cannot be null",
-    # "no nulls"), a built-in covers it, so matching the word beats enumerating
-    # every negation form.
-    re.compile(r"\bnulls?\b|\bnon[\s-]?null\b", re.IGNORECASE),
-    re.compile(r"\b(?:empty|blank)\b", re.IGNORECASE),
-    # Bounded ranges (both edges present) -> is_in_range / is_not_in_range
-    re.compile(r"\bbetween\b.+?\band\b", re.IGNORECASE),
-    re.compile(r"\b(?:in|out\s+of|outside|within)\s+(?:the\s+)?range\b", re.IGNORECASE),
-    # Allowed / forbidden value sets -> is_in_list / is_not_in_list
-    re.compile(r"\b(?:one|any)\s+of\b", re.IGNORECASE),
-    re.compile(
-        r"\b(?:allowed|permitted|accepted|valid|expected|forbidden|disallowed)\s+(?:list|set|values?)\b",
-        re.IGNORECASE,
-    ),
-    # Pattern matching -> regex_match
-    re.compile(r"\bregex\w*\b|\bregular\s+expression\b", re.IGNORECASE),
-    re.compile(r"\bmatch\w*\s+(?:the\s+)?(?:pattern|format)\b", re.IGNORECASE),
-    # Well-known value formats -> is_valid_email / is_valid_date / is_valid_timestamp /
-    # is_valid_ipv4_address / is_valid_ipv6_address / is_ipv*_address_in_cidr / is_valid_json
-    re.compile(r"\bvalid\s+email\b|\bemail\s+address(?:es)?\b", re.IGNORECASE),
-    re.compile(r"\bvalid\s+(?:date|timestamp|datetime)\b", re.IGNORECASE),
-    re.compile(r"\bipv?[46]\b|\bip\s+address(?:es)?\b|\bcidr\b", re.IGNORECASE),
-    re.compile(r"\bvalid\s+json\b|\bjson\s+(?:keys?|schema)\b", re.IGNORECASE),
-    # Freshness / staleness -> is_data_fresh / is_data_fresh_per_time_window
-    re.compile(r"\bfresh\w*\b|\bstale\w*\b", re.IGNORECASE),
-    # Temporal recency bounds -> is_not_in_future / is_not_in_near_future /
-    # is_older_than_n_days / is_older_than_col2_for_n_days
-    re.compile(r"\bin\s+the\s+(?:near\s+)?future\b", re.IGNORECASE),
-    re.compile(r"\bolder\s+than\b", re.IGNORECASE),
-    # Schema conformance -> has_valid_schema
-    re.compile(r"\b(?:valid|expected|matching)\s+schema\b", re.IGNORECASE),
-)
-
-
-def prefers_basic_check(description: str) -> bool:
-    """Whether a description matches a concept a named basic (``dqx_native``) check expresses.
-
-    Pure and case-insensitive. Returns ``True`` when the description names a
-    concept one built-in check covers directly (see
-    :data:`_BASIC_CHECK_SIGNALS`) — e.g. "values must be unique" ->
-    ``is_unique``, "must be between 0 and 100" -> ``is_in_range``, "must be a
-    valid email" -> ``is_valid_email`` — so :func:`generate_rule` tries
-    ``dqx_native`` first for it.
-
-    This is a PREFERENCE, not a commitment: a ``True`` here only reorders the
-    cascade, and generation still falls through to low-code then sql when the
-    native pass can't produce a DQX-valid check. Bare magnitude comparisons are
-    excluded on purpose — see :data:`_BASIC_CHECK_SIGNALS` for why.
-
-    Args:
-        description: The user's natural-language rule description.
-
-    Returns:
-        True when the description matches a named basic check's concept.
-    """
-    if not description:
-        return False
-    return any(pattern.search(description) for pattern in _BASIC_CHECK_SIGNALS)
-
-
-# Cascade orders tried when no explicit rule type is requested. The default is
-# low-code-first (the guided, most-editable surface); when the description
-# closely matches a named basic check, ``dqx_native`` is tried first so the
-# crisp built-in wins over a hand-rolled equivalent.
-_DEFAULT_CASCADE: tuple[str, ...] = ("lowcode", "dqx_native", "sql")
-_BASIC_FIRST_CASCADE: tuple[str, ...] = ("dqx_native", "lowcode", "sql")
+# equivalent. ``_DQX_NATIVE_COVERAGE_GUIDANCE`` makes the model say so instead,
+# and ``_declines_coverage`` turns that into a fall-through to low-code. Asking
+# the model whether one check covers the requirement replaced an earlier regex
+# word-list that tried to guess it from phrasing.
+_DEFAULT_CASCADE: tuple[str, ...] = ("dqx_native", "lowcode", "sql")
 
 
 # Fallback dimension/severity vocabularies. The LIVE vocab is admin-configurable
@@ -451,12 +390,9 @@ _DEFAULT_SEVERITIES: tuple[str, ...] = ("Low", "Medium", "High", "Critical")
 _DIMENSION_LABEL_KEY = "dimension"
 _SEVERITY_LABEL_KEY = "severity"
 _VALID_POLARITIES = frozenset({"pass", "fail"})
-# Mirrors registry_models.SlotFamily — the closed vocabulary a native column slot's
+# Mirrors registry_models.SlotFamily — the closed vocabulary a column slot's
 # family may take. Used to validate any family hint the model returns for a slot.
-# ``table`` only ever applies to a cross-table SQL rule's joined-table placeholder,
-# so it is excluded here and allowed only by ``_VALID_SQL_SLOT_FAMILIES`` below.
 _VALID_SLOT_FAMILIES = frozenset({"numeric", "text", "temporal", "boolean", "array", "any"})
-_VALID_SQL_SLOT_FAMILIES = _VALID_SLOT_FAMILIES | {"table"}
 _SLOT_TOKEN_RE = re.compile(r"^\{\{\s*(.+?)\s*\}\}$")
 
 
@@ -713,16 +649,16 @@ class AiRulesService:
         columns: list[str] | None = None,
         sample_rows: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Generate a full registry-rule proposal, three-pass: lowcode → dqx_native → sql (B2-132).
+        """Generate a full registry-rule proposal, three-pass: dqx_native → lowcode → sql (B2-132).
 
-        Mirrors dqlake's low-code-first "build with AI": the low-code mode is the guided,
-        most-editable authoring surface, so it is tried FIRST; the caller falls through to
-        ``dqx_native`` and then ``sql`` only when the current mode cannot express the check.
-        The one exception is a description that clearly names a concept a single named basic
-        (``dqx_native``) check expresses crisply (e.g. "values must be unique" -> ``is_unique``):
-        :func:`prefers_basic_check` detects it and the cascade tries ``dqx_native`` FIRST, so the
-        tidy built-in wins over a hand-rolled low-code/SQL equivalent (still falling through to
-        low-code then sql if the model can't produce a valid basic check).
+        A named DQX built-in check is the tidiest expression of a requirement, so it is tried
+        FIRST ("values must be unique" -> ``is_unique``, "must be a valid email" ->
+        ``is_valid_email``). The caller falls through to ``lowcode`` and then ``sql`` only when
+        the built-in catalog cannot express the requirement — either because the native pass
+        DECLINED it (no single check covers the whole description; see
+        :data:`_DQX_NATIVE_COVERAGE_GUIDANCE`) or because what it proposed failed DQX
+        validation. That decline is what keeps native-first honest: without it a compound
+        requirement would come back as a check covering only half of it.
 
         When the *description* EXPLICITLY asks for a specific rule type (B2-140) — e.g.
         "write a SQL rule…", "low-code rule…", "use a built-in function…" —
@@ -760,16 +696,13 @@ class AiRulesService:
             if validated is not None:
                 validated["author_kind"] = "ai_generated"
                 return validated
-            raise ValueError(
-                f"AI could not generate a valid, safe {requested_mode} rule for this description."
-            )
+            raise ValueError(f"AI could not generate a valid, safe {requested_mode} rule for this description.")
 
-        # No explicit type — run the cascade. Default is low-code-first, but a
-        # description that clearly names a concept a single basic check expresses
-        # crisply (e.g. "unique") tries dqx_native FIRST so the built-in wins over
-        # a hand-rolled low-code/SQL equivalent (still falling through if it can't).
-        cascade = _BASIC_FIRST_CASCADE if prefers_basic_check(description) else _DEFAULT_CASCADE
-        for mode in cascade:
+        # No explicit type — run the cascade: a built-in check first, then the
+        # visual builder, then SQL. The native pass declines the descriptions no
+        # single built-in can express in full, which is what makes falling
+        # through land on the right surface instead of a half-complete check.
+        for mode in _DEFAULT_CASCADE:
             validated = await self._generate_in_mode(mode, context, user_email, vocab)
             if validated is not None:
                 validated["author_kind"] = "ai_generated"
@@ -798,7 +731,14 @@ class AiRulesService:
             return self._validate_lowcode_proposal(raw, vocab) if raw is not None else None
         shape = _DQX_NATIVE_DEFINITION_SHAPE if mode == "dqx_native" else _SQL_DEFINITION_SHAPE
         proposal = await self._generate_rule_candidate(mode, shape, context, user_email, vocab)
-        return self._validate_and_repair_proposal(proposal, vocab) if proposal is not None else None
+        if proposal is None:
+            return None
+        if proposal.get(_DECLINE_KEY) is True:
+            # No single built-in expresses the whole requirement — fall through
+            # rather than accept a check covering only part of it.
+            logger.info("AI rule proposal (mode=%s) declined: no single check covers the requirement", mode)
+            return None
+        return self._validate_and_repair_proposal(proposal, vocab)
 
     async def _generate_lowcode_candidate(
         self,
@@ -847,6 +787,7 @@ class AiRulesService:
             definition_shape=definition_shape,
             columns_field=_DQX_NATIVE_COLUMNS_FIELD if is_native else "",
             columns_guidance=_DQX_NATIVE_COLUMNS_GUIDANCE if is_native else "",
+            coverage_guidance=_DQX_NATIVE_COVERAGE_GUIDANCE if is_native else "",
             dimensions=", ".join(dimensions),
             severities=", ".join(severities),
             available_functions=self._get_available_functions(),
@@ -1392,8 +1333,7 @@ class AiRulesService:
         slot (in first-appearance order) whether or not the model remembered to
         declare it, and a declared slot that appears nowhere in the text is
         dropped. The model's declaration only contributes the ``family`` hint —
-        validated against :data:`_VALID_SQL_SLOT_FAMILIES` and falling back to
-        ``any`` — which is what lets a joined table come back as ``table``.
+        validated against :data:`_VALID_SLOT_FAMILIES` and falling back to ``any``.
         """
         families: dict[str, str] = {}
         if isinstance(declared, list):
@@ -1403,9 +1343,6 @@ class AiRulesService:
                 name = entry.get("name")
                 family = entry.get("family")
                 if isinstance(name, str) and name.strip() and isinstance(family, str):
-                    if family in _VALID_SQL_SLOT_FAMILIES:
+                    if family in _VALID_SLOT_FAMILIES:
                         families[name.strip()] = family
-        return [
-            {"name": name, "family": families.get(name, "any")}
-            for name in extract_slot_tokens(predicate)
-        ]
+        return [{"name": name, "family": families.get(name, "any")} for name in extract_slot_tokens(predicate)]

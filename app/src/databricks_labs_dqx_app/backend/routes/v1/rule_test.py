@@ -57,19 +57,6 @@ from databricks_labs_dqx_app.backend.services.rule_test_service import RuleTestS
 
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
 
-# Slot family naming a reference TABLE rather than a column (see RuleSlot).
-_TABLE_FAMILY = "table"
-
-
-def _reference_slots(table_slots: list[str]) -> list[str]:
-    """Table slots the author has to supply, i.e. excluding ``{{input_view}}``.
-
-    A slot named ``input_view`` collides with DQX's reserved token for the data
-    being checked, which the builders resolve themselves — demanding a binding for
-    it would block a test that needs none.
-    """
-    return [n for n in table_slots if n != INPUT_VIEW_SLOT]
-
 router = APIRouter(dependencies=[require_role(*_AUTHORS_AND_ABOVE)])
 
 
@@ -96,17 +83,13 @@ class AdhocRunIn(BaseModel):
     rows: list[list[Any]]
     ref_grids: dict[str, AdhocGridIn] = Field(
         default_factory=dict,
-        description="Cross-table rules: family='table' slot name -> the grid standing in for that reference table.",
+        description="Cross-table rules: table FQN, as the rule's query joins it -> the grid standing in for it.",
     )
 
 
 class TableRunIn(BaseModel):
     table_fqn: str = Field(min_length=1, max_length=512)
     column_mapping: dict[str, str] = Field(default_factory=dict)
-    table_mapping: dict[str, str] = Field(
-        default_factory=dict,
-        description="Cross-table rules only: family='table' slot name -> reference table FQN.",
-    )
     sample_kind: Literal["records", "percent", "full"] = "records"
     sample_value: int = Field(default=10000, ge=1, le=10_000_000)
 
@@ -176,27 +159,15 @@ async def run_rule_test(
         if body.source_kind == "adhoc":
             if body.adhoc is None:
                 raise ValueError("Manual test rows are required.")
-            # Each table slot stands in as its own inline grid, so a cross-table
-            # rule is testable here too — but only if the author actually supplied
-            # rows for it; joining an empty grid would silently "pass" everything.
-            table_slots = [s.name for s in body.slots if s.family == _TABLE_FAMILY]
-            unfilled = [n for n in _reference_slots(table_slots) if not (body.adhoc.ref_grids.get(n) or AdhocGridIn()).columns]
-            if unfilled:
-                raise ValueError(f"Add columns and rows for the reference table: {', '.join(unfilled)}")
-            families = {s.name: s.family for s in body.slots}
-            # Column slots map to the identically-named grid column; a table slot
-            # resolves to a CTE instead, so it is dropped from the input grid —
-            # by INDEX, so each remaining row keeps its cells aligned even if a
-            # client still sends a column for it.
-            keep = [i for i, c in enumerate(body.adhoc.columns) if c not in set(table_slots)]
-            kept_columns = [body.adhoc.columns[i] for i in keep]
-            mapping = {c: c for c in kept_columns}
             source = AdhocSource(
-                columns=kept_columns,
-                rows=[[row[i] if i < len(row) else None for i in keep] for row in body.adhoc.rows],
-                families=families,
-                column_mapping=mapping,
+                columns=body.adhoc.columns,
+                rows=body.adhoc.rows,
+                families={s.name: s.family for s in body.slots},
+                column_mapping={c: c for c in body.adhoc.columns},
                 display_cap=body.display_cap,
+                # A grid per table the rule's query joins, keyed by that table's
+                # FQN; the builder is what checks each one is actually there and
+                # has columns, since only it knows which tables the query reads.
                 ref_grids={
                     name: AdhocGrid(columns=g.columns, rows=g.rows, families=g.families)
                     for name, g in body.adhoc.ref_grids.items()
@@ -206,21 +177,18 @@ async def run_rule_test(
         else:
             if body.table is None:
                 raise ValueError("A table and column mapping are required.")
-            # Column slots bind to a column of the sampled table; table slots bind
-            # to a reference table's FQN. Each is looked up in its own map, so a
-            # table slot is never asked for (nor matched against) a column.
-            column_slots = [s.name for s in body.slots if s.family != _TABLE_FAMILY]
-            table_slots = [s.name for s in body.slots if s.family == _TABLE_FAMILY]
-            missing = [n for n in column_slots if n not in body.table.column_mapping]
+            # Every declared slot names a column of the sampled table. The reserved
+            # `input_view` is the one exception — it stands for the sampled data
+            # itself, which the builders resolve, so demanding a column for it would
+            # block a test that needs none.
+            missing = [
+                s.name for s in body.slots if s.name != INPUT_VIEW_SLOT and s.name not in body.table.column_mapping
+            ]
             if missing:
                 raise ValueError(f"Map a column for: {', '.join(missing)}")
-            missing_tables = [n for n in _reference_slots(table_slots) if n not in body.table.table_mapping]
-            if missing_tables:
-                raise ValueError(f"Pick a table for: {', '.join(missing_tables)}")
             table_source = TableSource(
                 table=body.table.table_fqn,
-                column_mapping={k: v for k, v in body.table.column_mapping.items() if k not in set(table_slots)},
-                table_mapping=body.table.table_mapping,
+                column_mapping=body.table.column_mapping,
                 sample_kind=body.table.sample_kind,
                 sample_value=body.table.sample_value,
                 display_cap=body.display_cap,
@@ -256,7 +224,7 @@ class GenerateDataIn(BaseModel):
     row_count: int = Field(default=8, ge=5, le=20)
     ref_tables: list[str] = Field(
         default_factory=list,
-        description="family='table' slot names the rule joins; asks the model for a consistent "
+        description="Fully-qualified names of the tables the rule joins; asks the model for a consistent "
         "cross-table mix (some input rows matching a reference row, some deliberately not).",
     )
 

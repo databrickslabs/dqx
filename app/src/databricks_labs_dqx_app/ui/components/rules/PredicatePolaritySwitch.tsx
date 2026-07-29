@@ -51,10 +51,11 @@ export function PredicatePolaritySwitch({
   const invert = () => onChange(value === "pass" ? "fail" : "pass");
 
   const control = (
-    // Same 28px pill as the granularity switch and the rule-type chip (see
-    // GranularitySwitch): one family of controls, one height and text size.
+    // 32px tall — this pill reads as part of the rule body, inline with the
+    // h-8 selects and editors above it, so it keeps their height rather than
+    // the 28px of the header chips (GranularitySwitch, rule-type chip).
     <div
-      className="relative inline-grid h-7 grid-cols-2 items-stretch rounded-full border bg-muted/30 p-1 text-xs"
+      className="relative inline-grid h-8 grid-cols-2 items-stretch rounded-full border bg-muted/30 p-1 text-xs"
       role="radiogroup"
       aria-label={t("rulesRegistry.polarityAriaLabel")}
     >

@@ -65,6 +65,16 @@ class RegistryService:
     _VALID_POLARITIES: frozenset[str] = frozenset(get_args(Polarity))
     _VALID_AUTHOR_KINDS: frozenset[str] = frozenset(get_args(AuthorKind))
 
+    # Slot families this app no longer understands. ``table`` slots used to
+    # bind a fully-qualified table name so a cross-table rule could stay
+    # workspace-portable; a rule now belongs to one table and names any joined
+    # table inline in its SQL, so the family was retired from
+    # :data:`SlotFamily`. Rows authored before that change still carry such
+    # slots, and they are stripped at the read boundary (see
+    # ``_drop_retired_slots``) rather than rejected — one legacy rule must not
+    # be able to fail the whole listing.
+    _RETIRED_SLOT_FAMILIES: frozenset[str] = frozenset({"table"})
+
     # An ``approved`` rule can be re-submitted for review (approved ->
     # pending_approval): this is how an edit-in-place REVISION of an
     # already-published rule is sent back through the approval gate to be
@@ -1052,7 +1062,7 @@ class RegistryService:
 
     def _row_to_rule(self, row: list[str]) -> RegistryRule:
         rule_id = row[0]
-        definition = self._parse_definition(row[6])
+        definition = self._parse_definition(row[6], rule_id=rule_id)
         user_metadata = self._parse_metadata(row[7])
         return RegistryRule(
             rule_id=rule_id,
@@ -1076,7 +1086,7 @@ class RegistryService:
 
     def _row_to_version(self, row: list[str]) -> RuleVersion:
         rule_id = row[0]
-        definition = self._parse_definition(row[2])
+        definition = self._parse_definition(row[2], rule_id=rule_id)
         user_metadata = self._parse_metadata(row[4])
         mode_raw = row[7] if len(row) > 7 else None
         return RuleVersion(
@@ -1176,8 +1186,8 @@ class RegistryService:
             logger.warning("Registry rule %s has unparsable %s timestamp %r; treating as None", rule_id, field, value)
             return None
 
-    @staticmethod
-    def _parse_definition(raw: str | None) -> RuleDefinition:
+    @classmethod
+    def _parse_definition(cls, raw: str | None, *, rule_id: str) -> RuleDefinition:
         if not raw:
             return RuleDefinition()
         try:
@@ -1186,7 +1196,40 @@ class RegistryService:
             return RuleDefinition()
         if not isinstance(parsed, dict):
             return RuleDefinition()
+        cls._drop_retired_slots(parsed, rule_id=rule_id)
         return RuleDefinition.model_validate(parsed)
+
+    @classmethod
+    def _drop_retired_slots(cls, parsed: dict[str, Any], *, rule_id: str) -> None:
+        """Strip slots whose family is no longer part of :data:`SlotFamily`, in place.
+
+        A retired family would otherwise fail ``RuleDefinition`` validation and,
+        because ``list_rules`` builds every rule in one comprehension, take the
+        entire Rules listing down over a single legacy row. Dropping the slot
+        keeps the rule visible and editable: its body still carries the
+        ``{{name}}`` reference, so the author can see what needs rewriting
+        instead of the page going blank. Same degrade-and-warn contract as
+        :meth:`_parse_timestamp` — a stale slot is not part of rule identity.
+        """
+        slots = parsed.get("slots")
+        if not isinstance(slots, list):
+            return
+        retired = [
+            s.get("name") for s in slots if isinstance(s, dict) and s.get("family") in cls._RETIRED_SLOT_FAMILIES
+        ]
+        if not retired:
+            return
+        parsed["slots"] = [
+            s for s in slots if not (isinstance(s, dict) and s.get("family") in cls._RETIRED_SLOT_FAMILIES)
+        ]
+        logger.warning(
+            "Registry rule %s declares slot(s) %s with a retired family (one of %s); "
+            "dropping them so the rule still loads. Its body may still reference them — "
+            "re-author the rule to name the table inline in its SQL.",
+            rule_id,
+            retired,
+            sorted(cls._RETIRED_SLOT_FAMILIES),
+        )
 
     @staticmethod
     def _parse_metadata(raw: str | None) -> dict[str, Any]:

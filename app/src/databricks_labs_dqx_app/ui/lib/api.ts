@@ -75,14 +75,14 @@ export interface AdhocGridIn {
 }
 
 /**
- * Cross-table rules: family='table' slot name -> the grid standing in for that reference table.
+ * Cross-table rules: table FQN, as the rule's query joins it -> the grid standing in for it.
  */
 export type AdhocRunInRefGrids = {[key: string]: AdhocGridIn};
 
 export interface AdhocRunIn {
   columns: string[];
   rows: unknown[][];
-  /** Cross-table rules: family='table' slot name -> the grid standing in for that reference table. */
+  /** Cross-table rules: table FQN, as the rule's query joins it -> the grid standing in for it. */
   ref_grids?: AdhocRunInRefGrids;
 }
 
@@ -258,7 +258,7 @@ export interface AiSqlOut {
   predicate: string;
   /** pass | fail — whether a TRUE predicate is a pass or fail */
   polarity?: AiSqlOutPolarity;
-  /** Every {{placeholder}} used by the predicate, in first-appearance order, so the editor can declare them automatically. A cross-table rule's joined table comes back with family 'table' (it binds to a table FQN, not a column). */
+  /** Every {{placeholder}} used by the predicate, in first-appearance order, so the editor can declare them automatically. A cross-table rule's joined table is written as a literal name, so it never appears here. */
   slots?: RuleSlot[];
 }
 
@@ -1597,7 +1597,7 @@ export interface GenerateDataIn {
    * @maximum 20
    */
   row_count?: number;
-  /** family='table' slot names the rule joins; asks the model for a consistent cross-table mix (some input rows matching a reference row, some deliberately not). */
+  /** Fully-qualified names of the tables the rule joins; asks the model for a consistent cross-table mix (some input rows matching a reference row, some deliberately not). */
   ref_tables?: string[];
 }
 
@@ -2281,7 +2281,7 @@ export type MonitoredTableSummaryOutScoreComputedAt = string | null;
  * A monitored table plus lightweight list-view counters, for ``listMonitoredTables``.
 
 The ``score*`` fields are LEFT-JOINed from the ``dq_score_cache`` OLTP
-table in the same round-trip (P3.4) — the cached row-weighted DQ score
+table in the same round-trip (P3.4) — the cached equal-rule-weight DQ score
 of the table's latest PUBLISHED run. All None when the table has never
 been scored (no cache row yet).
  */
@@ -3220,7 +3220,7 @@ export interface RuleScoreOut {
 }
 
 /**
- * Column family the slot accepts ('table' binds a table FQN instead)
+ * Column family the slot accepts
  */
 export type RuleSlotFamily = typeof RuleSlotFamily[keyof typeof RuleSlotFamily];
 
@@ -3233,7 +3233,6 @@ export const RuleSlotFamily = {
   boolean: 'boolean',
   array: 'array',
   any: 'any',
-  table: 'table',
 } as const;
 
 /**
@@ -3263,17 +3262,11 @@ when a rule is applied to a monitored table. ``position`` fixes a stable
 display/substitution order; ``cardinality`` distinguishes a single-column
 slot (``one``) from a composite/multi-column slot (``many``, e.g.
 ``is_unique`` over a list of columns).
-
-A ``family="table"`` slot is the exception: it binds to a fully-qualified
-table name rather than a column, so a cross-table SQL rule can reference a
-joined table as ``{{rates_table}}`` and stay portable across workspaces.
-Such a slot is bound with an FQN input at apply time (not the column
-picker) and is never reported as one of the rule's mapped columns.
  */
 export interface RuleSlot {
   /** Slot placeholder name, e.g. 'column' */
   name: string;
-  /** Column family the slot accepts ('table' binds a table FQN instead) */
+  /** Column family the slot accepts */
   family: RuleSlotFamily;
   /** Stable ordering position among a rule's slots */
   position?: number;
@@ -3971,11 +3964,6 @@ export interface TableQueryIn {
 
 export type TableRunInColumnMapping = {[key: string]: string};
 
-/**
- * Cross-table rules only: family='table' slot name -> reference table FQN.
- */
-export type TableRunInTableMapping = {[key: string]: string};
-
 export type TableRunInSampleKind = typeof TableRunInSampleKind[keyof typeof TableRunInSampleKind];
 
 
@@ -3993,8 +3981,6 @@ export interface TableRunIn {
    */
   table_fqn: string;
   column_mapping?: TableRunInColumnMapping;
-  /** Cross-table rules only: family='table' slot name -> reference table FQN. */
-  table_mapping?: TableRunInTableMapping;
   sample_kind?: TableRunInSampleKind;
   /**
    * @minimum 1

@@ -34,6 +34,7 @@ import type {
   RuleSlot,
 } from "@/lib/api";
 import { RESERVED_NAME_KEY, RESERVED_SEVERITY_KEY } from "@/components/RegistryRuleBadges";
+import { findRefs, isReservedRef } from "@/lib/columnRefs";
 
 export const COLUMN_KINDS = new Set(["column", "columns"]);
 
@@ -388,6 +389,42 @@ export function paramValueToRaw(value: RuleParameter["value"]): string {
 const SQL_FUNCTION_NAMES = new Set(["sql_query", "sql_expression"]);
 
 /**
+ * Declare a column slot for every `{{token}}` in a SQL-mode body that isn't
+ * declared already, so an IMPORTED sql_expression/sql_query rule arrives with
+ * its templated columns bound.
+ *
+ * The materializer only substitutes a placeholder that has a matching declared
+ * slot, so a rule imported with none renders its `{{token}}`s literally and
+ * cannot run. Native checks already recover their slot names from the authored
+ * `{{token}}` arguments (see {@link extractSlotNames}); this is the same
+ * recovery for the SQL modes, matching the backend's own derivation for
+ * AI-authored SQL rules (`_derive_sql_slots`): one slot per distinct token in
+ * first-appearance order, `family` "any" (the check carries no family
+ * information to lock it to) and `arg_key` null, since a SQL slot fills a
+ * placeholder rather than a function parameter. `{{input_view}}` is resolved by
+ * DQX itself and is never a column slot.
+ *
+ * Existing slots are kept as-is and take precedence: when a rule's JSON is
+ * edited in place, its already-declared families and names must survive, so
+ * this only ADDS the undeclared tokens rather than rebuilding the list.
+ */
+function withSlotsForSqlTokens(existing: RuleSlot[], ...fragments: unknown[]): RuleSlot[] {
+  const declared = new Set(existing.map((s) => s.name));
+  const slots = [...existing];
+  for (const fragment of fragments) {
+    if (typeof fragment !== "string" || !fragment) continue;
+    for (const name of findRefs(fragment)) {
+      if (declared.has(name) || isReservedRef(name)) continue;
+      declared.add(name);
+      slots.push({ name, family: "any", position: 0, cardinality: "one", arg_key: null });
+    }
+  }
+  // Positions must stay contiguous and in list order — the form renders slots by
+  // position, and appended slots all start at 0 above.
+  return slots.map((slot, position) => ({ ...slot, position }));
+}
+
+/**
  * The minimal shape {@link buildDqxCheckJson} materializes: a rule's authoring
  * `mode`/`polarity`, its structured `definition`, and its tag `user_metadata`.
  * Widened from `RegistryRuleOut` so a FROZEN `dq_rule_versions` snapshot
@@ -575,6 +612,12 @@ export function parseDqxCheckJson(
     if (functionName === "sql_query" && Array.isArray(args.merge_columns)) {
       body.merge_columns = args.merge_columns.filter((c) => typeof c === "string");
     }
+    const slots = withSlotsForSqlTokens(
+      currentDefinition.slots ?? [],
+      body.sql_query,
+      body.predicate,
+      ...((body.merge_columns as unknown[]) ?? []),
+    );
     // Preserve LOW-CODE identity when editing a low-code rule's JSON: keep
     // mode "lowcode" and carry the re-editable AST + group-by forward from
     // the stored body (the JSON is only the compiled sql_check view — it
@@ -589,7 +632,7 @@ export function parseDqxCheckJson(
         polarity,
         definition: {
           body,
-          slots: currentDefinition.slots ?? [],
+          slots,
           parameters: currentDefinition.parameters ?? [],
           error_message: errorMessage,
         },
@@ -601,7 +644,7 @@ export function parseDqxCheckJson(
       polarity,
       definition: {
         body,
-        slots: currentDefinition.slots ?? [],
+        slots,
         parameters: currentDefinition.parameters ?? [],
         error_message: errorMessage,
       },

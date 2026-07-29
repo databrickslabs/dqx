@@ -80,7 +80,7 @@ def _row_to_table_score(table_fqn: str, row: dict[str, str | None]) -> TableScor
 def _compute_score_for_table(
     table_fqn: str, sql: SqlExecutor, app_conf: AppConfig, include_drafts: bool = False
 ) -> TableScoreOut:
-    """Read the row-weighted DQ score for *table_fqn*'s latest run.
+    """Read the equal-rule-weight DQ score for *table_fqn*'s latest run.
 
     By default the latest PUBLISHED run is scored (``run_mode`` filter on
     the metric view — stamped run-level tag, untagged legacy runs

@@ -203,8 +203,8 @@ class AiSqlOut(BaseModel):
         default_factory=list,
         description=(
             "Every {{placeholder}} used by the predicate, in first-appearance order, so the editor "
-            "can declare them automatically. A cross-table rule's joined table comes back with "
-            "family 'table' (it binds to a table FQN, not a column)."
+            "can declare them automatically. A cross-table rule's joined table is written as a "
+            "literal name, so it never appears here."
         ),
     )
 
@@ -1029,7 +1029,7 @@ class MonitoredTableSummaryOut(BaseModel):
     """A monitored table plus lightweight list-view counters, for ``listMonitoredTables``.
 
     The ``score*`` fields are LEFT-JOINed from the ``dq_score_cache`` OLTP
-    table in the same round-trip (P3.4) — the cached row-weighted DQ score
+    table in the same round-trip (P3.4) — the cached equal-rule-weight DQ score
     of the table's latest PUBLISHED run. All None when the table has never
     been scored (no cache row yet).
     """

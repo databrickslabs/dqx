@@ -79,9 +79,15 @@ type Props = {
 export function ModeSwitchDialog({ open, direction, onCancel, onConfirm }: Props) {
   const { t } = useTranslation();
   if (!direction) return null;
-  const title = t(`rulesRegistry.modeSwitch.${direction}.title`);
-  const body = t(`rulesRegistry.modeSwitch.${direction}.body`);
-  const confirm = t(`rulesRegistry.modeSwitch.${direction}.confirm`);
+  // Title and action are DIRECTION-AGNOSTIC on purpose. The dialog opens only
+  // AFTER the author has already picked their new rule type, so announcing the
+  // destination ("Switch to X?") re-asks a question they just answered. What
+  // they haven't been told is the CONSEQUENCE — that the work already in the
+  // editor goes away — so that is what the dialog leads with. Only the body
+  // varies, naming what specifically is about to be discarded.
+  const title = t("rulesRegistry.modeSwitch.title");
+  const body = t(`rulesRegistry.modeSwitch.body.${direction}`);
+  const confirm = t("rulesRegistry.modeSwitch.confirm");
   return (
     <AlertDialog
       open={open}

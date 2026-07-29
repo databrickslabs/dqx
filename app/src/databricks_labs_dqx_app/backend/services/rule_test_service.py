@@ -44,7 +44,6 @@ from databricks_labs_dqx_app.backend.rule_test_sql import (
     is_query_shaped,
     parse_result,
     substitute_slots,
-    substitute_table_slots,
 )
 from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
 from databricks_labs_dqx_app.backend.sql_utils import strip_sql_line_comments, validate_fqn
@@ -72,15 +71,15 @@ _GEN_TEST_DATA_SYSTEM = (
 # some input rows finding a match and some deliberately not.
 _GEN_CROSS_TABLE_SYSTEM = (
     "You generate test data for a cross-table data-quality rule. You are given the "
-    "rule's SQL query, the columns of the table being checked, and the names of the "
-    "reference tables it joins (each appears in the SQL as a {{placeholder}}). "
-    "Return JSON only: "
+    "rule's SQL query, the columns of the table being checked, and the fully-qualified "
+    "names of the reference tables it joins (each appears in the SQL as a "
+    "catalog.schema.table name). Return JSON only: "
     '{"columns": [..], "rows": [[..], ..], '
-    '"refs": {"<ref_name>": {"columns": [{"name": .., "family": ..}], "rows": [[..], ..]}}}. '
+    '"refs": {"<table_name>": {"columns": [{"name": .., "family": ..}], "rows": [[..], ..]}}}. '
     "'columns'/'rows' are the table being checked; 'refs' holds one entry per "
-    "reference table, keyed by the placeholder name EXACTLY as given. "
+    "reference table, keyed by the table name EXACTLY as given. "
     "Infer each reference table's columns from how the SQL joins and filters it "
-    "(e.g. `LEFT JOIN {{ref}} c ON c.id = {{customer_id}}` means the reference "
+    "(e.g. `LEFT JOIN main.ref.customers c ON c.id = {{customer_id}}` means that "
     "table needs an 'id' column whose values are comparable to 'customer_id'). "
     "CRITICAL: make the data CONSISTENT across tables — some input rows MUST match "
     "a reference row and some MUST NOT, so the rule produces both passing and "
@@ -105,7 +104,7 @@ class GeneratedGrid:
 class GeneratedTestData:
     columns: list[str]
     rows: list[list[str | None]]
-    # Cross-table only: reference-table slot name -> its generated grid.
+    # Cross-table only: reference table FQN -> its generated grid.
     refs: dict[str, GeneratedGrid] = field(default_factory=dict)
 
 
@@ -150,7 +149,7 @@ class RuleTestService:
         condition column (see :func:`build_query_test_sql`).
         """
         validate_fqn(source.table)
-        self._guard_predicate(predicate, source.column_mapping, source.table_mapping)
+        self._guard_predicate(predicate, source.column_mapping)
         sql = (
             build_query_test_sql(predicate, polarity, source)
             if is_query_shaped(predicate)
@@ -180,7 +179,7 @@ class RuleTestService:
             columns: ``(name, family)`` pairs, in grid order.
             row_count: Requested number of rows (clamped to [5, 20]).
             user_email: Caller identity (rate limiting + hashed audit).
-            ref_tables: ``family="table"`` slot names the rule joins. When given,
+            ref_tables: fully-qualified names of the tables the rule joins. When given,
                 the model is asked to invent each reference table's columns and to
                 keep the data consistent across tables (some input rows matching,
                 some deliberately not) — otherwise a cross-table rule's generated
@@ -220,18 +219,9 @@ class RuleTestService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _guard_predicate(
-        predicate: str,
-        column_mapping: dict[str, str],
-        table_mapping: dict[str, str] | None = None,
-    ) -> None:
-        """Reject a predicate that fails DQX's SQL-safety gate after substitution.
-
-        Table slots are substituted too (as quoted FQNs) so a cross-table rule is
-        scanned in the shape it will actually run.
-        """
-        substituted = substitute_table_slots(predicate, table_mapping or {})
-        substituted = substitute_slots(substituted, column_mapping)
+    def _guard_predicate(predicate: str, column_mapping: dict[str, str]) -> None:
+        """Reject a predicate that fails DQX's SQL-safety gate after substitution."""
+        substituted = substitute_slots(predicate, column_mapping)
         # Scan with comments removed (item 6): a leading `-- explanation` block is
         # inert at runtime and its prose must not trip the keyword scan. Quote-
         # aware, so a `--` inside a string literal still counts as live SQL.
@@ -274,7 +264,9 @@ class RuleTestService:
         for raw_row in raw_rows:
             if not isinstance(raw_row, list):
                 continue
-            normalized.append([_cell_to_text(raw_row[i] if i < len(raw_row) else None) for i in range(len(expected_columns))])
+            normalized.append(
+                [_cell_to_text(raw_row[i] if i < len(raw_row) else None) for i in range(len(expected_columns))]
+            )
         return GeneratedTestData(
             columns=list(expected_columns),
             rows=normalized,

@@ -324,6 +324,85 @@ describe("parseDqxCheckJson — sql_query imports without the single-table picke
   });
 });
 
+describe("parseDqxCheckJson — imported SQL rules recover their templated column slots", () => {
+  // The materializer only substitutes a {{token}} that has a declared slot, so a
+  // sql_expression imported with none would render its placeholders literally.
+  test("declares a slot per {{token}} in an imported sql_expression", () => {
+    const result = parse(
+      {
+        criticality: "error",
+        check: {
+          function: "sql_expression",
+          arguments: { negate: false, expression: "{{order_amount}} > 0" },
+        },
+        user_metadata: { name: "Order amount must be positive" },
+      },
+      [],
+    );
+    expect(result.mode).toBe("sql");
+    expect(result.definition.slots).toEqual([
+      { name: "order_amount", family: "any", position: 0, cardinality: "one", arg_key: null },
+    ]);
+  });
+
+  test("declares one slot per distinct token, in first-appearance order", () => {
+    const result = parse(
+      {
+        criticality: "error",
+        check: {
+          function: "sql_expression",
+          arguments: { expression: "{{amount}} <= {{credit_limit}} AND {{amount}} > 0" },
+        },
+      },
+      [],
+    );
+    expect(result.definition.slots?.map((s) => s.name)).toEqual(["amount", "credit_limit"]);
+    expect(result.definition.slots?.map((s) => s.position)).toEqual([0, 1]);
+  });
+
+  test("skips {{input_view}}, which DQX resolves itself", () => {
+    const result = parse(
+      {
+        criticality: "error",
+        check: {
+          function: "sql_query",
+          arguments: {
+            query: "SELECT {{customer_id}} FROM {{input_view}} GROUP BY {{customer_id}}",
+            merge_columns: ["{{customer_id}}"],
+          },
+        },
+      },
+      [],
+    );
+    expect(result.definition.slots?.map((s) => s.name)).toEqual(["customer_id"]);
+  });
+
+  test("keeps already-declared slots (and their families) when editing in place", () => {
+    const declared: RuleDefinition = {
+      body: {},
+      slots: [{ name: "amount", family: "numeric", position: 0, cardinality: "one", arg_key: null }],
+      parameters: [],
+    } as unknown as RuleDefinition;
+
+    const result = parseDqxCheckJson(
+      JSON.stringify({
+        criticality: "error",
+        check: { function: "sql_expression", arguments: { expression: "{{amount}} > {{floor}}" } },
+      }),
+      declared,
+      null,
+      [],
+      identity,
+    );
+
+    // The declared slot keeps its numeric family; only the new token is added.
+    expect(result.definition.slots).toEqual([
+      { name: "amount", family: "numeric", position: 0, cardinality: "one", arg_key: null },
+      { name: "floor", family: "any", position: 1, cardinality: "one", arg_key: null },
+    ]);
+  });
+});
+
 describe("slot_tags helpers (apply-on-tag) — mirror backend get_slot_tags/set_slot_tags", () => {
   test("round-trips a slot -> tags map through user_metadata", () => {
     const md = userMetadataWithSlotTags({ name: "x" }, { c1: ["class.pii"] });

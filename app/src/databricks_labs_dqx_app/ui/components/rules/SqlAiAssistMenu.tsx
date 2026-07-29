@@ -27,8 +27,7 @@ interface SqlAiAssistMenuProps {
   onPredicateReplace: (next: string) => void;
   /** Sync the PASS/FAIL polarity switch when the AI infers one. */
   onPolarityChange: (polarity: Polarity) => void;
-  /** Declare the `{{slot}}`s the AI's predicate references — including a
-   *  cross-table rule's `family: "table"` joined-table slot — so the author
+  /** Declare the `{{slot}}`s the AI's predicate references, so the author
    *  doesn't have to re-add each one by hand to clear the save gate. */
   onSlotsDeclare: (slots: RuleSlot[]) => void;
   /** Shared AI availability gate — the toolbar is hidden entirely when AI is unavailable. */

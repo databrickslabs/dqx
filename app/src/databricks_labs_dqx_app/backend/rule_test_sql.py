@@ -71,13 +71,26 @@ SAMPLE_CTE = "src"
 CONDITION_COL = "condition"
 INPUT_VIEW_SLOT = "input_view"
 # Prefix for a manual reference grid's CTE, so it cannot collide with the input
-# grid's ``src`` even for a slot named ``src``.
+# grid's ``src`` even for a table literally named ``src``.
 REF_CTE_PREFIX = "__ref_"
 # Matches DQX's own placeholder scan (``check_funcs.sql_query._replace_template``),
 # whitespace inside the braces included.
 _INPUT_VIEW_RE = re.compile(r"\{\{\s*" + INPUT_VIEW_SLOT + r"\s*\}\}")
 _QUERY_SHAPE_RE = re.compile(r"^\s*select\b", re.IGNORECASE)
 _CONDITION_REF_RE = re.compile(r"\b" + CONDITION_COL + r"\b", re.IGNORECASE)
+
+# One part of a table reference: bare, or backtick-quoted (which is how an
+# exotic name must be written in SQL, doubling any backtick it contains).
+_REF_PART = r"(?:`(?:[^`]|``)+`|[A-Za-z_][A-Za-z0-9_$]*)"
+_REF_PART_RE = re.compile(_REF_PART)
+# A relation introduced by FROM / JOIN and written as a DOTTED name — i.e. a real
+# table, as opposed to the ``{{input_view}}`` marker, the ``src`` CTE, or a
+# subquery. Whitespace around the dots is tolerated, so the reference is found
+# however the author spelled it.
+_TABLE_REF_RE = re.compile(
+    rf"\b(?:FROM|JOIN)\s+({_REF_PART}(?:\s*\.\s*{_REF_PART}){{1,2}})",
+    re.IGNORECASE,
+)
 
 # C0/C1 control characters other than the common whitespace (\n, \r, \t), which
 # are re-emitted as Spark escape sequences by ``_lit``. These have no legitimate
@@ -132,20 +145,63 @@ def is_query_shaped(text: str) -> bool:
     return bool(_QUERY_SHAPE_RE.match(strip_sql_line_comments(text).strip()))
 
 
-def substitute_table_slots(text: str, mapping: dict[str, str]) -> str:
-    """Replace every ``family="table"`` ``{{slot}}`` with a quoted table FQN.
+def _unquote_ref_part(part: str) -> str:
+    inner = part[1:-1] if len(part) >= 2 and part.startswith("`") and part.endswith("`") else part
+    return inner.replace("``", "`")
 
-    The column counterpart (:func:`substitute_slots`) emits a single quoted
-    identifier, which would render ``main.sales.customers`` as one absurd column
-    name; a table slot must become a three-part quoted FQN instead. Each value is
-    validated by ``validate_fqn`` before quoting, so a malformed or injected name
-    is rejected rather than assembled into the query.
+
+def normalize_table_ref(ref: str) -> str:
+    """Canonical spelling of a table reference as written in SQL.
+
+    Backticks and the whitespace around the dots are the author's typing, not
+    part of the name, so ``` `main` . `ref`.`fx` ``` and ``main.ref.fx`` are the
+    same table and must key the same reference grid. (A part containing a literal
+    dot is folded like a separator — such a table can't be matched to a grid, and
+    isn't a name any picker in the app can produce.)
     """
-    result = text
-    for slot_name, fqn in mapping.items():
-        validate_fqn(fqn)
-        result = result.replace("{{" + slot_name + "}}", quote_fqn(fqn))
-    return result
+    return ".".join(_unquote_ref_part(m.group(0)) for m in _REF_PART_RE.finditer(ref))
+
+
+def find_table_refs(query: str) -> list[str]:
+    """Dotted tables a query reads through FROM / JOIN, in first-appearance order.
+
+    A cross-table rule names its joined table by its literal fully-qualified name,
+    so this is what tells the manual test which reference tables need a grid — the
+    counterpart of ``lib/refTables.findReferenceTables`` on the authoring side.
+    Names are returned normalized (see :func:`normalize_table_ref`) and
+    de-duplicated case-insensitively, since Unity Catalog identifiers are.
+
+    Comments are stripped first: a ``-- LEFT JOIN main.ref.old`` line the author
+    left behind must not be demanded as a data source.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for match in _TABLE_REF_RE.finditer(strip_sql_line_comments(query)):
+        ref = normalize_table_ref(match.group(1))
+        key = ref.lower()
+        if not ref or key in seen:
+            continue
+        seen.add(key)
+        out.append(ref)
+    return out
+
+
+def _replace_table_refs(query: str, cte_by_key: dict[str, str]) -> str:
+    """Point each reference table at the CTE standing in for it.
+
+    Rewrites the matched span in place rather than doing a textual
+    search-and-replace per name, so whatever spelling the author used (quoted,
+    spaced, mixed case) is the thing that gets replaced. A reference with no CTE
+    is left alone.
+    """
+
+    def repl(match: re.Match[str]) -> str:
+        cte = cte_by_key.get(normalize_table_ref(match.group(1)).lower())
+        if cte is None:
+            return match.group(0)
+        return match.group(0)[: match.start(1) - match.start(0)] + cte
+
+    return _TABLE_REF_RE.sub(repl, query)
 
 
 def substitute_input_view(text: str, alias: str = SAMPLE_CTE) -> str:
@@ -230,8 +286,6 @@ class TableSource:
     sample_kind: SampleKind = "records"
     sample_value: int = 10000
     display_cap: int = 5000
-    # Cross-table rules only: ``family="table"`` slot name -> reference table FQN.
-    table_mapping: dict[str, str] = field(default_factory=dict)
 
 
 def _sample_clause(kind: SampleKind, value: int) -> str:
@@ -283,10 +337,12 @@ def build_query_test_sql(query: str, polarity: str, src: TableSource) -> str:
     keys and condition), not every sampled input row — a query with a ``WHERE``
     that keeps only violations legitimately returns just those.
 
-    Substitution order matters: table slots and column slots are resolved first,
-    then ``{{input_view}}``. A slot sharing the reserved ``input_view`` name is
-    dropped from both mappings beforehand, so an author who mistakenly declared
-    it can't redirect the query away from the sample being tested.
+    Any table the query joins is named by its own fully-qualified name and needs
+    no substitution: it resolves against the real Unity Catalog table, which is
+    the point of testing against real data. Only column slots and then
+    ``{{input_view}}`` are resolved — in that order, and a slot sharing the
+    reserved ``input_view`` name is dropped beforehand, so an author who
+    mistakenly declared it can't redirect the query away from the sample.
 
     Raises:
         ValueError: the table FQN or an identifier is malformed, the query has no
@@ -299,11 +355,9 @@ def build_query_test_sql(query: str, polarity: str, src: TableSource) -> str:
             f"A cross-table rule's query must return a '{CONDITION_COL}' column "
             f"(e.g. `(c.id IS NULL) AS {CONDITION_COL}`) for the test to read a verdict from."
         )
-    table_mapping = {k: v for k, v in src.table_mapping.items() if k != INPUT_VIEW_SLOT}
     column_mapping = {k: v for k, v in src.column_mapping.items() if k != INPUT_VIEW_SLOT}
     require_input_view(query, column_mapping)
-    resolved = substitute_table_slots(query, table_mapping)
-    resolved = substitute_slots(resolved, column_mapping)
+    resolved = substitute_slots(query, column_mapping)
     resolved = substitute_input_view(resolved)
     passed = condition_passed_expr(f"q.{_q(CONDITION_COL)}", polarity)
     sample = _sample_clause(src.sample_kind, src.sample_value)
@@ -342,9 +396,9 @@ class AdhocSource:
     families: dict[str, str] = field(default_factory=dict)  # column name -> family
     column_mapping: dict[str, str] = field(default_factory=dict)  # slot -> column (identity)
     display_cap: int = 5000
-    # Cross-table rules: ``family="table"`` slot name -> the grid standing in for
-    # that reference table. Each becomes its own CTE, so an orphan check can be
-    # tested against fabricated data without creating any table.
+    # Cross-table rules: table FQN (as the query joins it) -> the grid standing in
+    # for it. Each becomes its own CTE, so an orphan check can be tested against
+    # fabricated data without creating any table.
     ref_grids: dict[str, AdhocGrid] = field(default_factory=dict)
 
 
@@ -434,15 +488,17 @@ def _grid_select(
     return f"SELECT {cast_cols} FROM ({values_block}) AS raw2"
 
 
-def ref_cte_name(slot_name: str) -> str:
-    """Quoted CTE identifier standing in for the reference table in *slot_name*.
+def ref_cte_name(index: int, ref: str) -> str:
+    """Quoted CTE identifier standing in for the reference table *ref*.
 
-    Prefixed so it can never collide with the input grid's ``src`` CTE, even if a
-    slot is itself named ``src``. Validated before quoting, like every other
-    identifier that reaches the assembled SQL.
+    Named by POSITION, with the table's own name appended so the generated SQL
+    stays readable: folding an FQN's dots into one identifier can collide
+    (``a.b.c_d`` and ``a.b_c.d`` both give ``a_b_c_d``), and the ordinal is what
+    keeps two reference tables apart. The ``__ref_`` prefix is what stops a
+    collision with the input grid's ``src``.
     """
-    validate_identifier(slot_name)
-    return _q(f"{REF_CTE_PREFIX}{slot_name}")
+    suffix = re.sub(r"[^A-Za-z0-9_]", "_", ref.rsplit(".", 1)[-1])[:40]
+    return _q(f"{REF_CTE_PREFIX}{index}_{suffix}" if suffix else f"{REF_CTE_PREFIX}{index}")
 
 
 def build_adhoc_sql(predicate: str, polarity: str, src: AdhocSource) -> str:
@@ -463,17 +519,17 @@ def build_adhoc_sql(predicate: str, polarity: str, src: AdhocSource) -> str:
 def build_adhoc_query_sql(query: str, polarity: str, src: AdhocSource) -> str:
     """Build the test query for a cross-table / dataset-level rule over manual grids.
 
-    The manual counterpart of :func:`build_query_test_sql`: instead of sampling
-    real tables, every data source the rule reads is an inline ``VALUES`` grid —
-    the input grid becomes ``src``, and each ``family="table"`` slot becomes its
-    own CTE — so an orphan check can be exercised on fabricated rows without
-    creating a single table:
+    The manual counterpart of :func:`build_query_test_sql`: instead of reading
+    real tables, every data source the rule names is an inline ``VALUES`` grid —
+    the input grid becomes ``src``, and each table the query joins becomes its own
+    CTE, swapped in for the FQN wherever the query mentions it — so an orphan
+    check can be exercised on fabricated rows without creating a single table:
 
     .. code-block:: sql
 
-        WITH src AS (SELECT …VALUES…), `__ref_ref_table` AS (SELECT …VALUES…)
+        WITH src AS (SELECT …VALUES…), `__ref_0_fx_rates` AS (SELECT …VALUES…)
         SELECT q.*, (NOT COALESCE(q.`condition`, FALSE)) AS __passed
-        FROM (<the rule's query, placeholders resolved>) q
+        FROM (<the rule's query, tables and placeholders resolved>) q
 
     No ``__row_idx`` is projected: the rule's query decides which rows come back
     (it may aggregate to one, or filter to violations only), so verdicts can't be
@@ -481,28 +537,40 @@ def build_adhoc_query_sql(query: str, polarity: str, src: AdhocSource) -> str:
 
     Raises:
         ValueError: an identifier is malformed, the query has no condition column,
-            a table slot has no grid to stand in for it, or the query uses column
-            slots without reading ``{{input_view}}``.
+            a table the query joins has no grid to stand in for it, or the query
+            uses column slots without reading ``{{input_view}}``.
     """
     if not _CONDITION_REF_RE.search(strip_sql_line_comments(query)):
         raise ValueError(
             f"A cross-table rule's query must return a '{CONDITION_COL}' column "
             f"(e.g. `(c.id IS NULL) AS {CONDITION_COL}`) for the test to read a verdict from."
         )
-    ref_grids = {k: v for k, v in src.ref_grids.items() if k != INPUT_VIEW_SLOT}
     column_mapping = {k: v for k, v in src.column_mapping.items() if k != INPUT_VIEW_SLOT}
     require_input_view(query, column_mapping)
 
-    resolved = query
-    for slot_name in ref_grids:
-        resolved = resolved.replace("{{" + slot_name + "}}", ref_cte_name(slot_name))
+    # Every table the query reads must have a grid: without one the reference
+    # would still point at the REAL table, so a manual test would silently be
+    # half real data — or fail deep in the warehouse if the table doesn't exist.
+    supplied = {normalize_table_ref(k).lower(): v for k, v in src.ref_grids.items()}
+    cte_by_key: dict[str, str] = {}
+    ref_ctes: list[str] = []
+    missing: list[str] = []
+    for index, ref in enumerate(find_table_refs(query)):
+        grid = supplied.get(ref.lower())
+        if grid is None or not grid.columns:
+            missing.append(ref)
+            continue
+        name = ref_cte_name(index, ref)
+        cte_by_key[ref.lower()] = name
+        ref_ctes.append(f"{name} AS ({_grid_select(grid.columns, grid.rows, grid.families, row_idx=False)})")
+    if missing:
+        raise ValueError(f"Add columns and rows for the reference table: {', '.join(missing)}")
+
+    resolved = _replace_table_refs(query, cte_by_key)
     resolved = substitute_slots(resolved, column_mapping)
     resolved = substitute_input_view(resolved)
 
-    ctes = [f"{SAMPLE_CTE} AS ({_grid_select(src.columns, src.rows, src.families, row_idx=False)})"]
-    for slot_name, grid in ref_grids.items():
-        body = _grid_select(grid.columns, grid.rows, grid.families, row_idx=False)
-        ctes.append(f"{ref_cte_name(slot_name)} AS ({body})")
+    ctes = [f"{SAMPLE_CTE} AS ({_grid_select(src.columns, src.rows, src.families, row_idx=False)})", *ref_ctes]
 
     passed = condition_passed_expr(f"q.{_q(CONDITION_COL)}", polarity)
     return (

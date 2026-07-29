@@ -14,10 +14,11 @@
 //
 // Beyond dqlake, which only ever tested a single table's rows:
 //  - A cross-table rule gets one manual grid PER data source — the table being
-//    checked plus one per `{{table}}` slot it joins, whose columns the author
-//    owns (they mirror a real table, not the rule's slots) and which are seeded
-//    from the rule's own join conditions. So an orphan check can be exercised on
-//    fabricated rows without creating a single table.
+//    checked plus one per table its query joins (read off the query's own FROM /
+//    JOIN clauses), whose columns the author owns (they mirror a real table, not
+//    the rule's slots) and which are seeded from the rule's own join conditions.
+//    So an orphan check can be exercised on fabricated rows without creating a
+//    single table.
 //  - Such a rule runs as a whole query, which decides for itself which rows come
 //    back (it may aggregate to one), so its verdicts can't be tinted onto input
 //    rows — the query's output is shown as its own grid instead.
@@ -53,7 +54,7 @@ import {
   type RuleSlot,
   type RuleTestRunOut,
 } from "@/lib/api";
-import { inferRefTableColumns, isReferenceTableSlot } from "@/lib/refTableColumns";
+import { findReferenceTables, inferRefTableColumns } from "@/lib/refTableColumns";
 import { ManualGrid, type ManualColumn } from "./ManualGrid";
 import { ResultGrid, type ResultColumn } from "./ResultGrid";
 import { TableTestSource, type TableSourcePayload } from "./TableTestSource";
@@ -105,12 +106,6 @@ function DisabledTooltip({
   );
 }
 
-/** Reference tables the author must fabricate a grid for. */
-const isTableSlot = isReferenceTableSlot;
-/** Any table-family slot — none of them are grid COLUMNS, including the
- *  reserved `{{input_view}}`, which resolves to the grid under test itself. */
-const isColumnSlot = (s: RuleSlot): boolean => s.family !== "table";
-
 /** First unused `column_N` for a reference grid the author is filling by hand. */
 function nextRefColumnName(existing: string[]): string {
   const taken = new Set(existing);
@@ -118,16 +113,15 @@ function nextRefColumnName(existing: string[]): string {
 }
 
 /** Seed the manual grids: one for the table being checked (columns = the rule's
- *  column slots) plus one per reference table the rule joins, pre-headed with
- *  the columns the SQL reads off it (see `inferRefTableColumns`) so the author
- *  isn't handed a blank canvas. */
-function buildInitialManual(slots: RuleSlot[], predicate: string): ManualState {
-  const columnSlots = slots.filter(isColumnSlot);
-  const columns = columnSlots.length ? columnSlots.map((s) => s.name) : ["value"];
+ *  slots) plus one per table the rule joins, pre-headed with the columns the SQL
+ *  reads off it (see `inferRefTableColumns`) so the author isn't handed a blank
+ *  canvas. */
+function buildInitialManual(slots: RuleSlot[], predicate: string, refTables: string[]): ManualState {
+  const columns = slots.length ? slots.map((s) => s.name) : ["value"];
   const refs: Record<string, RefGridState> = {};
-  for (const slot of slots.filter(isTableSlot)) {
-    const inferred = inferRefTableColumns(predicate, slot.name);
-    refs[slot.name] = {
+  for (const table of refTables) {
+    const inferred = inferRefTableColumns(predicate, table);
+    refs[table] = {
       columns: inferred,
       rows: inferred.length ? [inferred.map(() => null)] : [],
       families: Object.fromEntries(inferred.map((c) => [c, "any"])),
@@ -169,12 +163,17 @@ export function RuleTestPanel({
   const ai = useAiAvailability();
   const { ready: warehouseReady } = useWarehousePrewarm();
 
-  // Each table slot the rule joins gets its own manual grid, so a cross-table
-  // rule can be exercised on fabricated rows without creating any table.
-  const tableSlots = useMemo(() => slots.filter(isTableSlot), [slots]);
   // Whole-SELECT rules (`sql_query`) run as a query against the data instead of
   // as a per-row predicate, which changes what the result grid holds.
   const isCrossTable = sqlEditorShape(predicate) === "query";
+  // Each table the rule's query joins gets its own manual grid, so a cross-table
+  // rule can be exercised on fabricated rows without creating any table. Read off
+  // the query text, since that is where a joined table is named — and only for a
+  // query-shaped rule, because that is the only shape the backend swaps grids into.
+  const refTables = useMemo(
+    () => (isCrossTable ? findReferenceTables(predicate) : []),
+    [isCrossTable, predicate],
+  );
   const [mode, setMode] = useState<Mode>("adhoc");
   const [result, setResult] = useState<RuleTestRunOut | null>(null);
   const [tablePayload, setTablePayload] = useState<TableSourcePayload | null>(null);
@@ -196,7 +195,7 @@ export function RuleTestPanel({
     args: nativeArguments,
   });
   const [manual, setManualState] = useState<ManualState>(
-    () => getManual(CACHE_KEY, logicHash) ?? buildInitialManual(slots, predicate),
+    () => getManual(CACHE_KEY, logicHash) ?? buildInitialManual(slots, predicate, refTables),
   );
 
   const runMutation = useRunRuleTest();
@@ -216,7 +215,7 @@ export function RuleTestPanel({
   useEffect(() => {
     if (prevHash.current === logicHash) return;
     prevHash.current = logicHash;
-    const fresh = buildInitialManual(slots, predicate);
+    const fresh = buildInitialManual(slots, predicate, refTables);
     setManualState(fresh);
     setManual(CACHE_KEY, logicHash, fresh);
     setResult(null);
@@ -240,21 +239,21 @@ export function RuleTestPanel({
 
   // Reference grids: the author owns both the rows AND the columns here, since
   // these mirror a real table's shape rather than the rule's slots.
-  const patchRef = (slot: string, patch: (g: RefGridState) => RefGridState) => {
-    const current = manual.refs[slot] ?? { columns: [], rows: [], families: {} };
-    setManualAndReset({ ...manual, refs: { ...manual.refs, [slot]: patch(current) } });
+  const patchRef = (table: string, patch: (g: RefGridState) => RefGridState) => {
+    const current = manual.refs[table] ?? { columns: [], rows: [], families: {} };
+    setManualAndReset({ ...manual, refs: { ...manual.refs, [table]: patch(current) } });
   };
-  const refHandlers = (slot: string) => ({
+  const refHandlers = (table: string) => ({
     onCellChange: (ri: number, ci: number, v: string | null) =>
-      patchRef(slot, (g) => {
+      patchRef(table, (g) => {
         const rows = g.rows.map((r) => [...r]);
         rows[ri][ci] = v;
         return { ...g, rows };
       }),
-    onAddRow: () => patchRef(slot, (g) => ({ ...g, rows: [...g.rows, g.columns.map(() => null)] })),
-    onDeleteRow: (ri: number) => patchRef(slot, (g) => ({ ...g, rows: g.rows.filter((_, i) => i !== ri) })),
+    onAddRow: () => patchRef(table, (g) => ({ ...g, rows: [...g.rows, g.columns.map(() => null)] })),
+    onDeleteRow: (ri: number) => patchRef(table, (g) => ({ ...g, rows: g.rows.filter((_, i) => i !== ri) })),
     onAddColumn: () =>
-      patchRef(slot, (g) => {
+      patchRef(table, (g) => {
         const name = nextRefColumnName(g.columns);
         return {
           columns: [...g.columns, name],
@@ -263,24 +262,24 @@ export function RuleTestPanel({
         };
       }),
     onDeleteColumn: (ci: number) =>
-      patchRef(slot, (g) => ({
+      patchRef(table, (g) => ({
         ...g,
         columns: g.columns.filter((_, i) => i !== ci),
         rows: g.rows.map((r) => r.filter((_, i) => i !== ci)),
       })),
     onRenameColumn: (ci: number, name: string) =>
-      patchRef(slot, (g) => {
+      patchRef(table, (g) => {
         const columns = g.columns.map((c, i) => (i === ci ? name : c));
         const family = g.families[g.columns[ci]] ?? "any";
         return { ...g, columns, families: { ...g.families, [name]: family } };
       }),
     onRetypeColumn: (ci: number, family: CellFamily) =>
-      patchRef(slot, (g) => ({ ...g, families: { ...g.families, [g.columns[ci]]: family } })),
+      patchRef(table, (g) => ({ ...g, families: { ...g.families, [g.columns[ci]]: family } })),
   });
 
   // A reference grid with no columns can't stand in for its table: the join
   // would compare against nothing and every row would silently "pass".
-  const unfilledRefs = tableSlots.filter((s) => !(manual.refs[s.name]?.columns.length ?? 0)).map((s) => s.name);
+  const unfilledRefs = refTables.filter((tbl) => !(manual.refs[tbl]?.columns.length ?? 0));
   const adhocReady = manual.rows.length > 0 && unfilledRefs.length === 0;
   const canRun = mode === "adhoc" ? adhocReady : !!tablePayload;
 
@@ -290,7 +289,6 @@ export function RuleTestPanel({
     // Naming the reference tables asks for a mix that is consistent ACROSS grids
     // (some input rows matching a reference row, some deliberately not) — without
     // that, a cross-table rule's generated data can't produce both verdicts.
-    const refTables = tableSlots.map((s) => s.name);
     const generateBody =
       ruleMode === "dqx_native"
         ? {
@@ -356,10 +354,10 @@ export function RuleTestPanel({
               columns: manual.columns,
               rows: manual.rows,
               ref_grids: Object.fromEntries(
-                tableSlots
-                  .map((s) => [s.name, manual.refs[s.name]] as const)
+                refTables
+                  .map((tbl) => [tbl, manual.refs[tbl]] as const)
                   .filter(([, g]) => !!g)
-                  .map(([name, g]) => [name, { columns: g.columns, rows: g.rows, families: g.families }]),
+                  .map(([tbl, g]) => [tbl, { columns: g.columns, rows: g.rows, families: g.families }]),
               ),
             },
           },
@@ -376,7 +374,6 @@ export function RuleTestPanel({
             table: {
               table_fqn: tablePayload.table,
               column_mapping: tablePayload.column_mapping,
-              table_mapping: tablePayload.table_mapping,
               sample_kind: sampleKind,
               sample_value: sampleValue,
             },
@@ -447,7 +444,7 @@ export function RuleTestPanel({
         <div className="space-y-4">
           {/* Label the grids only when there is more than one, so a plain
               single-table rule keeps its uncluttered look. */}
-          {tableSlots.length > 0 && (
+          {refTables.length > 0 && (
             <p className="text-xs font-medium text-muted-foreground">{t("ruleTest.inputGridLabel")}</p>
           )}
           <ManualGrid
@@ -458,12 +455,12 @@ export function RuleTestPanel({
             onAddRow={addRow}
             onDeleteRow={removeRow}
           />
-          {tableSlots.map((slot) => {
-            const grid = manual.refs[slot.name] ?? { columns: [], rows: [], families: {} };
+          {refTables.map((tbl) => {
+            const grid = manual.refs[tbl] ?? { columns: [], rows: [], families: {} };
             return (
-              <div key={slot.name} className="space-y-1.5">
+              <div key={tbl} className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground">
-                  {t("ruleTest.refGridLabel")} <code className="font-mono">{`{{${slot.name}}}`}</code>
+                  {t("ruleTest.refGridLabel")} <code className="font-mono">{tbl}</code>
                 </p>
                 {grid.columns.length === 0 && (
                   <p className="text-xs text-muted-foreground">{t("ruleTest.refGridEmpty")}</p>
@@ -471,7 +468,7 @@ export function RuleTestPanel({
                 <ManualGrid
                   columns={grid.columns.map((c) => ({ name: c, family: (grid.families[c] ?? "any") as CellFamily }))}
                   rows={grid.rows}
-                  {...refHandlers(slot.name)}
+                  {...refHandlers(tbl)}
                 />
               </div>
             );

@@ -375,6 +375,7 @@ class TestMetricViewDdl:
             "pass_threshold": "pass_threshold",
             "binding_version": "binding_version",
             "check_name": "check_name",
+            "check_granularity": "check_granularity",
             # Rule identity — stable id survives renames; rule_name scopes
             # to one rule.
             "registry_rule_id": "registry_rule_id",
@@ -399,9 +400,10 @@ class TestMetricViewDdl:
         measures = {m["name"]: m["expr"] for m in body["measures"]}
         assert measures["failed_tests"] == "SUM(error_count + warning_count)"
         assert measures["total_tests"] == "SUM(input_row_count)"
-        # TRY_DIVIDE (not /) so a zero/NULL denominator yields NULL —
-        # the SQL equivalent of ScoreService's None-when-no-rows.
-        assert measures["score"] == "1 - TRY_DIVIDE(SUM(error_count + warning_count), SUM(input_row_count))"
+        assert (
+            measures["score"]
+            == "TRY_DIVIDE(SUM(TRY_DIVIDE(check_score, rule_check_count)), COUNT(DISTINCT rule_instance_key))"
+        )
 
     def test_yaml_carries_the_count_and_severity_split_measures(self, svc):
         # dqlake-style composing measures that answer authoring/coverage
@@ -473,22 +475,39 @@ class TestStartupWiring:
 
 
 def _simulate_measure_path(
-    check_metrics: list[CheckMetricBreakdown], input_row_count: int
+    check_metrics: list[CheckMetricBreakdown],
+    input_row_count: int,
+    dataset_check_names: set[str] | None = None,
+    check_rule_ids: dict[str, str] | None = None,
 ) -> tuple[float | None, int, int]:
     """Evaluate the metric-view measures over the shaping-view row shape.
 
     Mirrors exactly what the warehouse computes: the shaping view emits
     one row per check carrying (error_count, warning_count,
     input_row_count); the measures are ``SUM(error_count +
-    warning_count)``, ``SUM(input_row_count)``, and ``1 -
-    TRY_DIVIDE(failed, total)`` (NULL on zero/NULL denominator). A run
+    warning_count)``, ``SUM(input_row_count)``, and the equal-rule-weight
+    score measure. Dataset checks have a binary check_score; row checks use
+    their row pass rate. A run
     with no checks emits a single all-NULL placeholder row, so every
     SUM is NULL (-> None/0 here).
     """
     rows = [(m.error_count, m.warning_count, input_row_count) for m in check_metrics]
     failed = sum(e + w for e, w, _ in rows) if rows else 0
     total = sum(irc for _, _, irc in rows) if rows else 0
-    score = None if total <= 0 else 1.0 - failed / total
+    dataset_names = dataset_check_names or set()
+    rules: dict[str, list[float]] = {}
+    for metric, (error_count, warning_count, row_count) in zip(check_metrics, rows, strict=True):
+        if row_count <= 0:
+            continue
+        check_score = (
+            (0.0 if error_count + warning_count > 0 else 1.0)
+            if metric.check_name in dataset_names
+            else 1.0 - (error_count + warning_count) / row_count
+        )
+        rule_key = (check_rule_ids or {}).get(metric.check_name, metric.check_name)
+        rules.setdefault(rule_key, []).append(check_score)
+    per_rule = [sum(check_scores) / len(check_scores) for check_scores in rules.values()]
+    score = sum(per_rule) / len(per_rule) if per_rule else None
     return score, failed, total
 
 
@@ -530,6 +549,29 @@ class TestMeasureFormulaMatchesScoreService:
             # And the supporting measures match the Python aggregates.
             assert simulated_failed == sum(m.error_count + m.warning_count for m in check_metrics)
             assert simulated_total == input_row_count * len(check_metrics)
+
+    def test_dataset_check_is_binary_on_both_paths(self):
+        check_metrics = [
+            CheckMetricBreakdown(check_name="row", error_count=10, warning_count=0),
+            CheckMetricBreakdown(check_name="dataset", error_count=100, warning_count=0),
+        ]
+        dataset_names = {"dataset"}
+        expected = ScoreService.compute_table_score(check_metrics, 100, dataset_names)
+        simulated_score, _, _ = _simulate_measure_path(check_metrics, 100, dataset_names)
+        assert simulated_score == pytest.approx(expected)
+        assert simulated_score == pytest.approx(0.45)
+
+    def test_multiple_checks_of_one_rule_get_one_rule_weight_on_both_paths(self):
+        check_metrics = [
+            CheckMetricBreakdown(check_name="a_col_1", error_count=0, warning_count=0),
+            CheckMetricBreakdown(check_name="a_col_2", error_count=0, warning_count=0),
+            CheckMetricBreakdown(check_name="b", error_count=100, warning_count=0),
+        ]
+        rule_ids = {"a_col_1": "a", "a_col_2": "a", "b": "b"}
+        expected = ScoreService.compute_table_score(check_metrics, 100, check_rule_ids=rule_ids)
+        simulated_score, _, _ = _simulate_measure_path(check_metrics, 100, check_rule_ids=rule_ids)
+        assert simulated_score == pytest.approx(expected)
+        assert simulated_score == pytest.approx(0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -585,6 +627,14 @@ def _simulate_attribution_extraction(check: dict) -> dict[str, object]:
     arguments = (check.get("check") or {}).get("arguments") or {}
     arg_column = arguments.get("column") if isinstance(arguments.get("column"), str) else None
     arg_columns = arguments.get("columns") if isinstance(arguments.get("columns"), list) else None
+    merge_columns = arguments.get("merge_columns") if isinstance(arguments.get("merge_columns"), list) else None
+    function = (check.get("check") or {}).get("function")
+    if function == "sql_query":
+        check_granularity = "row" if merge_columns else "dataset"
+    else:
+        from databricks_labs_dqx_app.backend.services.score_view_service import _DATASET_CHECK_FUNCTIONS
+
+        check_granularity = "dataset" if function in _DATASET_CHECK_FUNCTIONS else "row"
     columns = arg_columns if arg_columns is not None else ([arg_column] if arg_column is not None else None)
     return {
         "check_name": check.get("name"),
@@ -592,6 +642,7 @@ def _simulate_attribution_extraction(check: dict) -> dict[str, object]:
         "severity": metadata.get("severity"),
         "dimension": metadata.get("dimension"),
         "registry_rule_id": metadata.get("registry_rule_id"),
+        "check_granularity": check_granularity,
         "columns": columns,
     }
 
@@ -647,6 +698,7 @@ class TestChecksJsonAttributionContract:
             "severity": "High",
             "dimension": "Completeness",
             "registry_rule_id": "r1",
+            "check_granularity": "row",
             "columns": ["customer_id"],
         }
 

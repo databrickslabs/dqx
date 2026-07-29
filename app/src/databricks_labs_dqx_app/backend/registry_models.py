@@ -36,12 +36,11 @@ RuleStatus = Literal["draft", "pending_approval", "approved", "rejected", "depre
 Polarity = Literal["pass", "fail"]
 AuthorKind = Literal["human", "ai_generated", "ai_assisted"]
 
-# ``table`` is the one family that does NOT bind to a column of the monitored
-# table: it binds to a fully-qualified table name, so a cross-table SQL rule can
-# stay table-agnostic (``JOIN {{rates_table}} ...``) instead of hardcoding an
-# FQN that only exists in one workspace. Everything downstream that treats a
-# slot value as a column name must skip this family — see ``_mapped_columns``.
-SlotFamily = Literal["numeric", "text", "temporal", "boolean", "array", "any", "table"]
+# Every slot binds to a COLUMN of the monitored table. A cross-table rule names
+# the table it joins by its fully-qualified name, written into the rule's SQL —
+# a rule belongs to one table, so there is nothing for a table-shaped slot to be
+# re-bound to per monitored table.
+SlotFamily = Literal["numeric", "text", "temporal", "boolean", "array", "any"]
 SlotCardinality = Literal["one", "many"]
 
 ParamType = Literal["number", "string", "list", "boolean", "regex", "ref_table", "ref_column"]
@@ -67,16 +66,10 @@ class RuleSlot(BaseModel):
     display/substitution order; ``cardinality`` distinguishes a single-column
     slot (``one``) from a composite/multi-column slot (``many``, e.g.
     ``is_unique`` over a list of columns).
-
-    A ``family="table"`` slot is the exception: it binds to a fully-qualified
-    table name rather than a column, so a cross-table SQL rule can reference a
-    joined table as ``{{rates_table}}`` and stay portable across workspaces.
-    Such a slot is bound with an FQN input at apply time (not the column
-    picker) and is never reported as one of the rule's mapped columns.
     """
 
     name: str = Field(description="Slot placeholder name, e.g. 'column'")
-    family: SlotFamily = Field(description="Column family the slot accepts ('table' binds a table FQN instead)")
+    family: SlotFamily = Field(description="Column family the slot accepts")
     position: int = Field(default=0, description="Stable ordering position among a rule's slots")
     cardinality: SlotCardinality = Field(default="one", description="Whether the slot binds one or many columns")
     arg_key: str | None = Field(
