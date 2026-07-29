@@ -573,7 +573,7 @@ def _make_second_input_table(spark, catalog_name, schema_name, first_table, make
 def _setup_ref_table(spark, installation_ctx, make_random, run_config):
     schema_and_catalog = run_config.input_config.location.split(".")
     catalog, schema = schema_and_catalog[0], schema_and_catalog[1]
-    ref_table = f"{catalog}.{schema}.{make_random(10).lower()}"
+    ref_table = f"{catalog}.{schema}.t{make_random(10).lower()}"
 
     spark.createDataFrame(
         [

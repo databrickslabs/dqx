@@ -12,10 +12,10 @@ from tests.constants import TEST_CATALOG
 def test_save_results_in_table(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.t{make_random(8).lower()}"
     output_table_mode = "overwrite"
     output_config = OutputConfig(location=output_table, mode=output_table_mode)
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.t{make_random(8).lower()}"
     quarantine_table_mode = "overwrite"
     quarantine_config = OutputConfig(location=quarantine_table, mode=quarantine_table_mode)
 
@@ -56,7 +56,7 @@ def test_save_results_in_table(ws, spark, make_schema, make_random):
 def test_save_results_in_table_only_output(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.t{make_random(8).lower()}"
     output_table_mode = "overwrite"
     output_config = OutputConfig(location=output_table, mode=output_table_mode)
 
@@ -76,7 +76,7 @@ def test_save_results_in_table_only_output(ws, spark, make_schema, make_random):
 def test_save_results_in_table_only_quarantine(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.t{make_random(8).lower()}"
     quarantine_table_mode = "overwrite"
     quarantine_config = OutputConfig(location=quarantine_table, mode=quarantine_table_mode)
 
@@ -93,8 +93,8 @@ def test_save_results_in_table_only_quarantine(ws, spark, make_schema, make_rand
 def test_save_results_in_table_in_user_installation(ws, spark, installation_ctx, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -126,7 +126,7 @@ def test_save_results_in_table_in_user_installation(ws, spark, installation_ctx,
 def test_save_results_in_table_in_user_installation_only_output(ws, spark, installation_ctx, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -154,7 +154,7 @@ def test_save_results_in_table_in_user_installation_only_quarantine(
 ):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -182,8 +182,8 @@ def test_save_results_in_table_in_user_installation_output_table_provided(
 ):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -217,8 +217,8 @@ def test_save_results_in_table_in_user_installation_quarantine_table_provided(
 ):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -252,8 +252,8 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
 ):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -297,8 +297,8 @@ def test_save_results_in_table_in_custom_folder_installation(
 ):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
 
     config = installation_ctx_custom_install_folder.config
     run_config = config.get_run_config()
@@ -332,7 +332,7 @@ def test_save_results_in_table_in_custom_folder_installation(
 def test_save_streaming_results_in_table(ws, spark, make_schema, make_random, make_volume):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    input_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    input_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
     random_name = make_random(10).lower()
     output_table = f"{catalog_name}.{schema.name}.{random_name}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)

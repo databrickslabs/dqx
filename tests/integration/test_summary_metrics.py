@@ -521,7 +521,9 @@ def test_save_summary_metrics_with_streaming_and_custom_params(ws, spark, make_s
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
     volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
 
-    input_config = InputConfig(location=f"{TEST_CATALOG}.{schema_name}.input_{make_random(6).lower()}", is_streaming=True)
+    input_config = InputConfig(
+        location=f"{TEST_CATALOG}.{schema_name}.input_{make_random(6).lower()}", is_streaming=True
+    )
     output_config = OutputConfig(
         location=f"{TEST_CATALOG}.{schema_name}.output_{make_random(6).lower()}",
         options={"checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_name}/{volume_name}/{make_random(6).lower()}"},
@@ -724,9 +726,9 @@ def test_observer_metrics_output_with_empty_checks(
     # NOTE: This test is skipped during the 'integration' workflow. Data quality summary metrics are not supported on classic compute in Dedicated access mode for DBR versions < 17.
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
 
     custom_metrics = [
         "avg(case when _errors is not null then age else null end) as avg_error_age",
@@ -875,10 +877,10 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(
     # NOTE: This test is skipped during the 'integration' workflow. Data quality summary metrics are not supported on classic compute in Dedicated access mode for DBR versions < 17.
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    quarantine_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
+    quarantine_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
 
     custom_metrics = [
         "avg(case when _errors is not null then age else null end) as avg_error_age",
@@ -1033,9 +1035,9 @@ def test_observer_metrics_output(skip_if_classic_compute, apply_checks_method, s
     # NOTE: This test is skipped during the 'integration' workflow. Data quality summary metrics are not supported on classic compute in Dedicated access mode for DBR versions < 17.
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
 
     custom_metrics = [
         "avg(case when _errors is not null then age else null end) as avg_error_age",
@@ -1208,10 +1210,10 @@ def test_observer_metrics_output_with_quarantine(
 ):
     # NOTE: This test is skipped during the 'integration' workflow. Data quality summary metrics are not supported on classic compute in Dedicated access mode for DBR versions < 17.
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
-    input_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    quarantine_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    output_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    quarantine_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
 
     custom_metrics = [
         "avg(case when _errors is not null then age else null end) as avg_error_age",
@@ -1389,9 +1391,9 @@ def test_observer_metrics_output_with_quarantine_only(
 ):
     # NOTE: This test is skipped during the 'integration' workflow. Data quality summary metrics are not supported on classic compute in Dedicated access mode for DBR versions < 17.
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
-    input_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    quarantine_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    quarantine_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
 
     custom_metrics = [
         "avg(case when _errors is not null then age else null end) as avg_error_age",
@@ -1557,10 +1559,10 @@ def test_observer_metrics_output_with_quarantine_only(
 def test_observer_metrics_workflow_with_quarantine_only(skip_if_classic_compute, spark, ws, make_schema, make_random):
     # NOTE: This test is skipped during the 'integration' workflow. Data quality summary metrics are not supported on classic compute in Dedicated access mode for DBR versions < 17.
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
-    input_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    quarantine_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    checks_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    quarantine_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    checks_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
 
     observer = DQMetricsObserver(name="test_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
@@ -1609,9 +1611,9 @@ def test_observer_metrics_workflow_with_quarantine_only(skip_if_classic_compute,
 def test_observer_metrics_workflow_metrics_only(skip_if_classic_compute, spark, ws, make_schema, make_random):
     # NOTE: This test is skipped during the 'integration' workflow. Data quality summary metrics are not supported on classic compute in Dedicated access mode for DBR versions < 17.
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
-    input_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    checks_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    checks_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
 
     observer = DQMetricsObserver(name="test_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
@@ -1663,9 +1665,9 @@ def test_save_results_in_table_batch_with_metrics(
     # NOTE: This test is skipped during the 'integration' workflow. Data quality summary metrics are not supported on classic compute in Dedicated access mode for DBR versions < 17.
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    quarantine_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
+    quarantine_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
 
     observer = DQMetricsObserver(name="test_save_batch_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
@@ -1795,7 +1797,7 @@ def test_save_results_in_table_batch_with_metrics(
 
 def test_save_results_in_table_batch_metrics_only(skip_if_classic_compute, spark, ws, make_schema, make_random):
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
 
     observer = DQMetricsObserver(name="test_save_batch_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
@@ -1839,7 +1841,7 @@ def test_save_results_in_table_batch_metrics_only(skip_if_classic_compute, spark
 @pytest.mark.usefixtures("skip_if_classic_compute")
 def test_save_results_in_table_batch_metrics_only_without_observer(spark, ws, make_schema, make_random):
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
 
     observer = DQMetricsObserver(name="test_save_batch_observer")
     observed_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
@@ -1883,9 +1885,9 @@ def test_save_results_in_table_batch_with_rule_set_fingerprint(
     """Verify that rule_set_fingerprint passed to save_results_in_table is written to the metrics table."""
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    quarantine_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
+    quarantine_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
 
     observer = DQMetricsObserver(name="test_save_batch_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
@@ -1964,9 +1966,9 @@ def test_apply_checks_and_save_in_table_writes_rule_set_fingerprint(
     """Verify that apply_checks_and_save_in_table / apply_checks_by_metadata_and_save_in_table write non-null rule_set_fingerprint."""
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{catalog_name}.{schema_name}.t{make_random(6).lower()}"
 
     observer = DQMetricsObserver(name="test_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
@@ -2019,10 +2021,10 @@ def test_apply_checks_and_save_in_table_metrics_only(
     skip_if_classic_compute, apply_checks_method, spark, ws, make_schema, make_random
 ):
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
-    input_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    quarantine_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    output_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    quarantine_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
 
     observer = DQMetricsObserver(name="test_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
@@ -2091,8 +2093,8 @@ def test_save_results_in_table_streaming_with_metrics(
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
     volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
 
-    input_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
 
     observer = DQMetricsObserver(name="test_save_batch_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
@@ -2118,12 +2120,12 @@ def test_save_results_in_table_streaming_with_metrics(
         raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
     output_config = OutputConfig(
-        location=f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}",
+        location=f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}",
         options={"checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_name}/{volume_name}/{make_random(6).lower()}"},
         trigger={"availableNow": True},
     )
     quarantine_config = OutputConfig(
-        location=f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}",
+        location=f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}",
         options={
             "checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_name}/{volume_name}/quarantine_{make_random(6).lower()}"
         },
@@ -2240,7 +2242,7 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
     volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
 
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
     checkpoint_location = f"/Volumes/{TEST_CATALOG}/{schema_name}/{volume_name}/{make_random(6).lower()}"
 
     dq_engine = DQEngine(
@@ -2256,9 +2258,9 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
         extra_params=EXTRA_PARAMS,
     )
 
-    input_config = InputConfig(location=f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}", is_streaming=True)
+    input_config = InputConfig(location=f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}", is_streaming=True)
     output_config = OutputConfig(
-        location=f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}",
+        location=f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}",
         options={"checkPointLocation": checkpoint_location},
         trigger={"availableNow": True},
     )
@@ -2428,10 +2430,10 @@ def test_streaming_observer_metrics_output_and_quarantine(
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
     volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
 
-    input_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    quarantine_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    output_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    quarantine_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
 
     observer = DQMetricsObserver(
         name="test_streaming_observer_with_quarantine",
@@ -2621,9 +2623,9 @@ def test_streaming_observer_metrics_output_with_empty_checks(
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
     volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
 
-    input_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    output_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
 
     dq_engine = DQEngine(
         workspace_client=ws,
@@ -2783,10 +2785,10 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
     volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
 
-    input_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    quarantine_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    output_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    quarantine_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
 
     observer = DQMetricsObserver(
         name="test_streaming_observer",
@@ -3074,7 +3076,7 @@ def test_observer_check_metrics_change_between_runs(ws, spark):
 def test_save_results_in_table_with_observer_no_observation(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.t{make_random(8).lower()}"
     quarantine_config = OutputConfig(location=quarantine_table, mode="overwrite")
 
     quarantine_df = spark.createDataFrame([[3, 4]], "a: int, b: int")
