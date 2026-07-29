@@ -121,7 +121,7 @@ def test_config_hash_mismatch_raises(
 ):
     """Model config hash mismatch should raise a clear error."""
     model_name = f"{anomaly_registry_prefix}.test_config_mismatch_{make_random(4).lower()}"
-    registry_table = f"{anomaly_registry_prefix}.{make_random(8).lower()}_registry"
+    registry_table = f"{anomaly_registry_prefix}.t{make_random(8).lower()}_registry"
 
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
     full_model_name = qualify_model_name(model_name, registry_table)
@@ -244,7 +244,7 @@ def test_model_not_found_error(spark: SparkSession, make_random, test_df_factory
 def test_internal_row_id_collision(ws, spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):
     """Ensure scoring fails fast if _dqx_row_id already exists in the input."""
     model_name = f"{anomaly_registry_prefix}.test_row_id_collision_{make_random(4).lower()}"
-    registry_table = f"{anomaly_registry_prefix}.{make_random(8).lower()}_registry"
+    registry_table = f"{anomaly_registry_prefix}.t{make_random(8).lower()}_registry"
 
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
@@ -264,7 +264,7 @@ def test_internal_row_id_collision(ws, spark: SparkSession, make_random, anomaly
 def test_internal_score_column_collision(ws, spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):
     """Ensure existing anomaly_score columns are preserved and _dq_info is still added."""
     model_name = f"{anomaly_registry_prefix}.test_score_collision_{make_random(4).lower()}"
-    registry_table = f"{anomaly_registry_prefix}.{make_random(8).lower()}_registry"
+    registry_table = f"{anomaly_registry_prefix}.t{make_random(8).lower()}_registry"
 
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
@@ -319,7 +319,7 @@ def test_row_filter_scores_only_matching_rows(
 ):
     """Ensure row_filter only scores matching rows and joins results back."""
     model_name = f"{anomaly_registry_prefix}.test_row_filter_{make_random(4).lower()}"
-    registry_table = f"{anomaly_registry_prefix}.{make_random(8).lower()}_registry"
+    registry_table = f"{anomaly_registry_prefix}.t{make_random(8).lower()}_registry"
 
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
@@ -400,7 +400,7 @@ def test_sklearn_version_mismatch_warns(
 ):
     """A mismatched sklearn version should emit a warning."""
     model_name = f"{anomaly_registry_prefix}.test_sklearn_warn_{make_random(4).lower()}"
-    registry_table = f"{anomaly_registry_prefix}.{make_random(8).lower()}_registry"
+    registry_table = f"{anomaly_registry_prefix}.t{make_random(8).lower()}_registry"
 
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
     full_model_name = qualify_model_name(model_name, registry_table)
@@ -435,7 +435,7 @@ def test_sklearn_version_parse_error_silently_skips(
 ):
     """Unparseable sklearn version should not crash scoring."""
     model_name = f"{anomaly_registry_prefix}.test_sklearn_badver_{make_random(4).lower()}"
-    registry_table = f"{anomaly_registry_prefix}.{make_random(8).lower()}_registry"
+    registry_table = f"{anomaly_registry_prefix}.t{make_random(8).lower()}_registry"
 
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
     full_model_name = qualify_model_name(model_name, registry_table)
@@ -493,7 +493,7 @@ def test_unknown_algorithm_raises(
 ):
     """Unknown model algorithm should raise a clear error."""
     model_name = f"{anomaly_registry_prefix}.test_unknown_algo_{make_random(4).lower()}"
-    registry_table = f"{anomaly_registry_prefix}.{make_random(8).lower()}_registry"
+    registry_table = f"{anomaly_registry_prefix}.t{make_random(8).lower()}_registry"
 
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
     full_model_name = qualify_model_name(model_name, registry_table)
