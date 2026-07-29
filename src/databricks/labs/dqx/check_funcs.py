@@ -4,11 +4,13 @@ import warnings
 import ipaddress
 import uuid
 from decimal import Decimal
+from functools import lru_cache
+from importlib.resources import files
 from collections.abc import Callable, Sequence
 from enum import Enum
 from itertools import zip_longest
 import operator as py_operator
-from typing import Any
+from typing import Any, NamedTuple
 import pandas as pd  # type: ignore[import-untyped]
 import pyspark.sql.functions as F
 from pyspark.sql import types
@@ -25,7 +27,12 @@ from databricks.labs.dqx.utils import (
     get_columns_as_strings,
     to_lowercase,
 )
-from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError, UnsafeSqlQueryError
+from databricks.labs.dqx.errors import (
+    MissingParameterError,
+    MissingResourceError,
+    InvalidParameterError,
+    UnsafeSqlQueryError,
+)
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
@@ -1155,6 +1162,230 @@ def is_valid_national_id(column: str | Column, country: str = "US") -> Column:
             f"Unsupported country code for national ID validation: '{country}'. Supported: [{supported}]."
         )
     return _matches_pattern(column, pattern)
+
+
+def load_iso_codes(resource_name: str) -> frozenset[str]:
+    """Load a set of standard codes from a newline-delimited data file in the resources package.
+
+    The large standard code lists are stored as data files rather than inline literals to keep them
+    readable and easy to regenerate. See the files under *databricks/labs/dqx/resources* for the
+    values and their authoritative sources.
+    """
+    # Read directly off the Traversable returned by files(): wrapping it in Path(str(...)) assumes a
+    # real filesystem path, which is not guaranteed under a zipped wheel (zipimport).
+    codes = frozenset((files("databricks.labs.dqx.resources") / resource_name).read_text(encoding="utf-8").split())
+    if not codes:
+        raise MissingResourceError(
+            f"ISO code resource '{resource_name}' is missing or empty; reinstall the package or "
+            "regenerate the resource file."
+        )
+    return codes
+
+
+# ISO 3166-1 country codes. The authoritative source is
+# https://www.iso.org/iso-3166-country-codes.html; the values were verified against it and cover the
+# officially assigned codes as of July 2026. The code lists are stored as data files under the
+# resources package and loaded via importlib.resources. To regenerate them, iterate
+# pycountry.countries (which packages the ISO 3166-1 data) as a convenience, then reconcile against
+# the official ISO list above before committing.
+#
+# Loaded lazily (on first call, then cached) rather than at module import time, so that a resource
+# packaging problem only breaks this check, not the import of the whole check_funcs module.
+@lru_cache(maxsize=1)
+def _iso_3166_1_codes_by_format() -> dict[str, frozenset[str]]:
+    return {
+        "alpha-2": load_iso_codes("iso_3166_1_alpha_2.txt"),
+        "alpha-3": load_iso_codes("iso_3166_1_alpha_3.txt"),
+        "numeric": load_iso_codes("iso_3166_1_numeric.txt"),
+    }
+
+
+# ISO 4217 currency codes. The authoritative source is
+# https://www.iso.org/iso-4217-currency-codes.html; the values were verified against it and cover
+# the active codes as of July 2026. The code lists are stored as data files under the resources
+# package and loaded via importlib.resources. To regenerate them, iterate pycountry.currencies
+# (which packages the ISO 4217 data) as a convenience, reading each entry's alphabetic code (exposed
+# by pycountry as the alpha_3 attribute) and numeric code, then reconcile against the official ISO
+# list above before committing.
+#
+# Loaded lazily (on first call, then cached) rather than at module import time, so that a resource
+# packaging problem only breaks this check, not the import of the whole check_funcs module.
+@lru_cache(maxsize=1)
+def _iso_4217_codes_by_format() -> dict[str, frozenset[str]]:
+    return {
+        "alphabetic": load_iso_codes("iso_4217_alphabetic.txt"),
+        "numeric": load_iso_codes("iso_4217_numeric.txt"),
+    }
+
+
+class _IsoStandard(NamedTuple):
+    """Registry entry for an ISO standard: its lazy code-set loader and user-facing noun.
+
+    *kind* ("country"/"currency") is the word used in error and violation messages. Carrying it here
+    (rather than deriving it from the standard name) means adding a third standard forces supplying
+    its label instead of silently defaulting.
+    """
+
+    codes_by_format: Callable[[], dict[str, frozenset[str]]]
+    kind: str
+
+
+# Registry of the ISO standards these checks validate against, keyed by the standard's name.
+_ISO_3166_1 = "ISO 3166-1"
+_ISO_4217 = "ISO 4217"
+_ISO_CODES_BY_STANDARD: dict[str, _IsoStandard] = {
+    _ISO_3166_1: _IsoStandard(_iso_3166_1_codes_by_format, "country"),
+    _ISO_4217: _IsoStandard(_iso_4217_codes_by_format, "currency"),
+}
+
+
+# Precomputed once on first use and cached: the literal lists never change at runtime, so building
+# them per call (sorted() + one F.lit() per code) would repeat needless work on every check
+# evaluation. Keyed by (standard, format, lower) so the case-sensitive and case-insensitive variants
+# share one cache across both ISO standards; numeric never requests lower=True since it has no case.
+@lru_cache(maxsize=None)
+def _iso_literals(standard: str, fmt: str, lower: bool) -> list[Column]:
+    codes = _ISO_CODES_BY_STANDARD[standard].codes_by_format()[fmt]
+    return [F.lit(code.lower() if lower else code) for code in sorted(codes)]
+
+
+def _is_valid_iso_code(column: str | Column, code_format: str, case_sensitive: bool, standard: str) -> Column:
+    """Shared implementation for the ISO 3166-1 country and ISO 4217 currency code checks.
+
+    Validates *column* against the code set for *standard* (one of the keys of
+    *_ISO_CODES_BY_STANDARD*) in the requested *code_format*, using a case-sensitive membership test
+    by default. See *is_valid_country_code* / *is_valid_currency_code* for the user-facing contract.
+    """
+    if code_format is None:
+        raise MissingParameterError("'code_format' is not provided.")
+    if not isinstance(code_format, str):
+        raise InvalidParameterError(f"'code_format' must be a string, got {type(code_format)} instead.")
+    iso_standard = _ISO_CODES_BY_STANDARD[standard]
+    kind = iso_standard.kind
+    normalized_format = code_format.lower()
+    codes_by_format = iso_standard.codes_by_format()
+    if normalized_format not in codes_by_format:
+        supported = ", ".join(sorted(codes_by_format))
+        raise InvalidParameterError(
+            f"Unsupported code_format for {kind} code validation: '{code_format}'. Supported: [{supported}]."
+        )
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    if normalized_format == "numeric":
+        # Numeric codes have no case, so case_sensitive is a no-op. Cast explicitly to string: without
+        # it, comparing a non-string (e.g. int) column against the string literals below makes Spark
+        # coerce the literals to the column's type instead, silently stripping leading zeros (e.g.
+        # "004" -> 4) and letting an unpadded value like 4 match a code that requires "004".
+        col_expr_compare = col_expr.cast("string")
+        allowed = _iso_literals(standard, normalized_format, lower=False)
+    elif case_sensitive:
+        col_expr_compare = col_expr
+        allowed = _iso_literals(standard, normalized_format, lower=False)
+    else:
+        col_expr_compare = to_lowercase(col_expr)
+        allowed = _iso_literals(standard, normalized_format, lower=True)
+    # isin() already yields NULL for NULL input (SQL null propagation), and make_condition treats
+    # NULL as a pass, so no explicit isNotNull() guard is needed.
+    condition = ~col_expr_compare.isin(*allowed)
+    return make_condition(
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not a valid {standard} {kind} code"),
+        ),
+        f"{col_str_norm}_is_not_a_valid_{kind}_code",
+    )
+
+
+@register_rule("row")
+def is_valid_country_code(column: str | Column, code_format: str = "alpha-2", case_sensitive: bool = True) -> Column:
+    """Checks whether the values in the input column are valid ISO 3166-1 country codes.
+
+    ISO 3166-1 defines three code representations, selected with *code_format*:
+
+    * *alpha-2* (default): the two-letter code, e.g. *US*, *GB*, *DE*.
+    * *alpha-3*: the three-letter code, e.g. *USA*, *GBR*, *DEU*.
+    * *numeric*: the three-digit code, e.g. *840*, *826*, *276*.
+
+    The valid codes follow the ISO 3166-1 standard; see https://www.iso.org/iso-3166-country-codes.html.
+    Only officially assigned codes are accepted; user-assigned codes (e.g. *XK* for Kosovo) and
+    reserved codes are intentionally excluded. Numeric codes are the three-digit, zero-padded form
+    (e.g. *004*), so a numeric input column must preserve the leading zeros; a non-string column is
+    cast to string for comparison, but the cast does not add back zero-padding an integer type may
+    have dropped (e.g. an *int* column value *4* is compared as the string *"4"*, not *"004"*, and is
+    correctly flagged as invalid).
+
+    By default the comparison is case-sensitive; pass *case_sensitive* as False to accept values in
+    any case. *case_sensitive* has no effect for *numeric* codes, which contain only digits.
+    *code_format* matching itself is case-insensitive (*"NUMERIC"*/*"Alpha-2"* are also accepted).
+    Null values will pass the check with no violation reported.
+
+    For best performance with large lists in general, prefer the *foreign_key* check function; the
+    fixed ISO 3166-1 code lists used here are small enough (up to 249 codes) that this is not a
+    concern.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        code_format: ISO 3166-1 code representation to validate against: *alpha-2* (default),
+            *alpha-3*, or *numeric*; matching is case-insensitive
+        case_sensitive: whether to perform a case-sensitive comparison (default: True); ignored when
+            *code_format* is *numeric*
+
+    Returns:
+        Column object for condition
+
+    Raises:
+        MissingParameterError: if *code_format* is None.
+        InvalidParameterError: if *code_format* is not a string, or is not a supported representation.
+    """
+    return _is_valid_iso_code(column, code_format, case_sensitive, standard=_ISO_3166_1)
+
+
+@register_rule("row")
+def is_valid_currency_code(
+    column: str | Column, code_format: str = "alphabetic", case_sensitive: bool = True
+) -> Column:
+    """Checks whether the values in the input column are valid ISO 4217 currency codes.
+
+    ISO 4217 defines two code representations, selected with *code_format*:
+
+    * *alphabetic* (default): the three-letter code, e.g. *USD*, *EUR*, *JPY*.
+    * *numeric*: the three-digit code, e.g. *840*, *978*, *392*.
+
+    The valid codes follow the ISO 4217 standard; see https://www.iso.org/iso-4217-currency-codes.html.
+    Every code assigned by the standard is accepted, which includes codes that are not spendable
+    currencies, such as *XXX* (no currency), *XTS* (reserved for testing), the precious metals
+    (*XAU*, *XAG*, *XPT*, *XPD*) and *XDR* (IMF special drawing rights). Numeric codes are the
+    three-digit, zero-padded form (e.g. *036*), so a numeric input column must preserve the leading
+    zeros; a non-string column is cast to string for comparison, but the cast does not add back
+    zero-padding an integer type may have dropped (e.g. an *int* column value *8* is compared as the
+    string *"8"*, not *"008"*, and is flagged as invalid). If codes are stored as unpadded integers,
+    zero-pad the column before calling this check, e.g. *F.lpad(column.cast("string"), 3, "0")*.
+
+    By default the comparison is case-sensitive; pass *case_sensitive* as False to accept values in
+    any case. *case_sensitive* has no effect for *numeric* codes, which contain only digits.
+    *code_format* matching itself is case-insensitive (*"NUMERIC"*/*"Alphabetic"* are also accepted).
+    Null values will pass the check with no violation reported.
+
+    For best performance with large lists in general, prefer the *foreign_key* check function; the
+    fixed ISO 4217 code lists used here are small enough (178 codes) that this is not a concern.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        code_format: ISO 4217 code representation to validate against, either *alphabetic* (default)
+            or *numeric*; matching is case-insensitive
+        case_sensitive: whether to perform a case-sensitive comparison (default: True); ignored when
+            *code_format* is *numeric*
+
+    Returns:
+        Column object for condition
+
+    Raises:
+        MissingParameterError: if *code_format* is None.
+        InvalidParameterError: if *code_format* is not a string, or is not a supported representation.
+    """
+    return _is_valid_iso_code(column, code_format, case_sensitive, standard=_ISO_4217)
 
 
 @register_rule("row")
