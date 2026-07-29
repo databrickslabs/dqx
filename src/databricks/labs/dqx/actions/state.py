@@ -225,17 +225,22 @@ class ActionStateStore:
         action_name = dq_action.name
         safe_name = sanitize_for_log(action_name)  # action_name is operator-supplied (CWE-117)
 
-        # --- Frequency gate ---
-        frequency_allows = self._check_frequency(alert.alert_frequency, action_name, context.run_time)
-        if not frequency_allows:
-            logger.debug(f"Action '{safe_name}' suppressed by frequency window ({alert.alert_frequency}).")
-            return False
+        # Read the in-memory maps under the lock: record()/seed() mutate them, and a single store may
+        # be driven concurrently by a streaming query's progress callbacks (Spark listener thread
+        # pool), so the frequency/notify-on reads must be serialized against those writes. RLock lets
+        # the same thread re-enter (record() acquires it too) without deadlocking.
+        with self._lock:
+            # --- Frequency gate ---
+            frequency_allows = self._check_frequency(alert.alert_frequency, action_name, context.run_time)
+            if not frequency_allows:
+                logger.debug(f"Action '{safe_name}' suppressed by frequency window ({alert.alert_frequency}).")
+                return False
 
-        # --- Notify-on gate ---
-        notify_allows = self._check_notify_on(alert.notify_on, action_name)
-        if not notify_allows:
-            logger.debug(f"Action '{safe_name}' suppressed by notify_on={alert.notify_on} (already UNHEALTHY).")
-            return False
+            # --- Notify-on gate ---
+            notify_allows = self._check_notify_on(alert.notify_on, action_name)
+            if not notify_allows:
+                logger.debug(f"Action '{safe_name}' suppressed by notify_on={alert.notify_on} (already UNHEALTHY).")
+                return False
 
         return True
 
@@ -248,7 +253,10 @@ class ActionStateStore:
         - *_last_status* is always updated to *event.status*.
 
         If an *event_store* was provided, *event_store.append([event])* is
-        called to persist the record.
+        called to persist the record. The persistent append runs **outside** the
+        lock: it is remote I/O (UC/Lakebase write), and holding the lock across it
+        would stall every concurrent *should_fire*/*record* on this store behind the
+        slowest network call. Only the in-memory map updates need the lock.
 
         Args:
             event: The *AlertEvent* to record.
@@ -258,8 +266,8 @@ class ActionStateStore:
                 self._last_fired[event.action_name] = event.run_time
             self._last_status[event.action_name] = event.status
 
-            if self._event_store is not None:
-                self._event_store.append([event])
+        if self._event_store is not None:
+            self._event_store.append([event])
 
     # ------------------------------------------------------------------
     # Private helpers

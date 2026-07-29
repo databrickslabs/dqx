@@ -21,6 +21,8 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 from http.client import HTTPMessage
 from typing import IO, Protocol
 
@@ -33,6 +35,37 @@ _CLOUD_METADATA_IP = ipaddress.IPv4Address("169.254.169.254")
 def _sanitize_host(host: str) -> str:
     """Strip newlines and ASCII control characters from *host* (CWE-117)."""
     return "".join(ch for ch in host if ch >= " " and ch != "\x7f")
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """Parse an HTTP *Retry-After* header value into a non-negative delay in seconds.
+
+    Per RFC 9110 the value is either delta-seconds (an integer) or an HTTP-date. Returns *None*
+    when the header is absent or cannot be parsed, so the caller falls back to its own backoff.
+    A negative or past-dated value is clamped to 0.
+
+    Args:
+        value: The raw *Retry-After* header value, or *None* if the header was absent.
+
+    Returns:
+        The delay in seconds (>= 0), or *None* when unparseable/absent.
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    # delta-seconds form (most common for webhook APIs).
+    try:
+        return max(0.0, float(int(value)))
+    except ValueError:
+        pass
+    # HTTP-date form: compute seconds from now, clamped at 0 for past dates.
+    parsed = parsedate_to_datetime(value)
+    if parsed is None:
+        return None
+    now = datetime.now(parsed.tzinfo) if parsed.tzinfo is not None else datetime.now()
+    return max(0.0, (parsed - now).total_seconds())
 
 
 def validate_webhook_url(url: str, allowed_host_suffixes: list[str] | None = None) -> None:
@@ -278,6 +311,7 @@ class WebhookClient:
 
         for attempt in range(total_attempts):
             req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+            retry_after: float | None = None
             try:
                 with self._opener.open(req, timeout=self._timeout):
                     return  # success
@@ -289,10 +323,16 @@ class WebhookClient:
                     code = exc.code
                     if 400 <= code < 500 and code != 429:
                         raise AlertDeliveryError(f"Webhook delivery to '{host}' failed (HTTP {code})") from exc
+                    if code == 429:
+                        retry_after = _parse_retry_after(exc.headers.get("Retry-After"))
                 last_exc = exc
 
             if attempt < total_attempts - 1:
-                delay = min(self._base_delay * (2**attempt), self._max_delay)
+                backoff = min(self._base_delay * (2**attempt), self._max_delay)
+                # Honor a 429 Retry-After when the server sends one, but never wait longer than
+                # max_delay: a hostile or misconfigured endpoint could otherwise return a huge
+                # Retry-After and stall the (possibly listener-thread) caller indefinitely.
+                delay = min(retry_after, self._max_delay) if retry_after is not None else backoff
                 self._sleeper(delay)
 
         raise AlertDeliveryError(f"Webhook delivery to '{host}' failed after {total_attempts} attempt(s)") from last_exc

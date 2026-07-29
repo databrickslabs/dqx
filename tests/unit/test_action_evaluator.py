@@ -479,3 +479,63 @@ def test_status_change_full_cycle_fires_only_on_transitions_into_unhealthy() -> 
     _run(3)  # -> unhealthy     -> transition into unhealthy again, fires
 
     assert fires == [5, 3]
+
+
+# ---------------------------------------------------------------------------
+# Test: a condition that fails at evaluation time (e.g. unknown metric) is
+# isolated to its own action and does not abort sibling actions (#2).
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_condition_error_isolated_from_other_actions() -> None:
+    """A runtime InvalidConditionError on one action must not prevent later actions from running.
+
+    The first action's condition references a metric absent from this run's metrics, which raises
+    InvalidConditionError at evaluate time (validation at construction does not resolve names). The
+    evaluator must record that action as a non-fired UNHEALTHY event and continue, so the second
+    action still executes.
+    """
+    executed: list[str] = []
+
+    def _run_good(_context: ActionContext, _services: ActionServices) -> ActionResult:
+        executed.append("good")
+        return ActionResult(action_name="good_action", fired=True, status=ActionStatus.UNHEALTHY)
+
+    good_action = create_autospec(Action, instance=True)
+    good_action.name = "good_action"
+    good_action.execute.side_effect = _run_good
+
+    # Condition references a metric not present in _make_context (only error_row_count is set).
+    bad_action = create_autospec(Action, instance=True)
+    bad = _make_dq_action(bad_action, condition="missing_metric > 0", name="bad_action")
+    good = _make_dq_action(good_action, condition="error_row_count > 0", name="good_action")
+
+    store = ActionStateStore()  # real in-memory store
+    evaluator = ActionEvaluator(actions=[bad, good], state_store=store, services=_make_services())
+
+    results = evaluator.evaluate(_make_context())
+
+    # The good action still ran despite the bad action's condition error.
+    assert executed == ["good"]
+    assert any(r.action_name == "good_action" for r in results)
+
+
+def test_runtime_condition_error_records_unhealthy_and_no_raise() -> None:
+    """A runtime condition error is recorded as a non-fired UNHEALTHY event and does not propagate."""
+    bad_action = create_autospec(Action, instance=True)
+    bad = _make_dq_action(bad_action, condition="missing_metric > 0", name="bad_action")
+    state_store = create_autospec(ActionStateStore, instance=True)
+
+    evaluator = ActionEvaluator(actions=[bad], state_store=state_store, services=_make_services())
+
+    # Must not raise InvalidConditionError.
+    results = evaluator.evaluate(_make_context())
+
+    assert not results
+    assert state_store.record.call_count == 1
+    event: AlertEvent = state_store.record.call_args[0][0]
+    assert event.fired is False
+    assert event.status == ActionStatus.UNHEALTHY
+    assert event.action_name == "bad_action"
+    # should_fire / execute are never reached for a condition that errors.
+    state_store.should_fire.assert_not_called()

@@ -30,7 +30,7 @@ from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log as _saniti
 from databricks.labs.dqx.actions.conditions import ConditionEvaluator
 from databricks.labs.dqx.actions.message import StandardMessageBuilder
 from databricks.labs.dqx.actions.state import ActionStateStore, AlertEvent
-from databricks.labs.dqx.errors import TerminalActionError
+from databricks.labs.dqx.errors import InvalidConditionError, TerminalActionError
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,22 @@ class ActionEvaluator:
             # ------------------------------------------------------------------
             if dq_action.condition is not None:
                 safe_condition = _sanitize(dq_action.condition)
-                condition_result = ConditionEvaluator.evaluate(dq_action.condition, context.metrics)
+                try:
+                    condition_result = ConditionEvaluator.evaluate(dq_action.condition, context.metrics)
+                except InvalidConditionError as exc:
+                    # A condition that is structurally valid can still fail at evaluation time — e.g. it
+                    # references a metric absent from this run, or live metric values trigger a
+                    # divide-by-zero. Isolate the failure to this action: record it as UNHEALTHY and move
+                    # on, so a later critical action (FailPipeline, another alert) still runs instead of
+                    # the whole loop aborting.
+                    logger.warning(
+                        f"Action '{safe_name}' skipped: condition '{safe_condition}' could not be "
+                        f"evaluated: {_sanitize(str(exc))}"
+                    )
+                    self._state_store.record(
+                        self._build_event(dq_action, context, fired=False, status=ActionStatus.UNHEALTHY)
+                    )
+                    continue
                 if not condition_result:
                     logger.debug(f"Action '{safe_name}' skipped: condition '{safe_condition}' evaluated to False.")
                     self._state_store.record(

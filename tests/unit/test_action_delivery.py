@@ -11,6 +11,8 @@ import io
 import json
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from http.client import HTTPMessage
 from unittest.mock import create_autospec
 
@@ -318,6 +320,68 @@ class TestWebhookClientPost:
 
         # Two failures before success — sleeper called twice
         assert len(delays) == 2
+
+    def test_429_honors_retry_after_delta_seconds(self) -> None:
+        """A 429 with a numeric Retry-After header overrides the exponential backoff delay."""
+        headers = HTTPMessage()
+        headers["Retry-After"] = "12"
+        http_err = urllib.error.HTTPError(
+            url="https://hooks.slack.com/x", code=429, msg="Too Many Requests", hdrs=headers, fp=io.BytesIO(b"")
+        )
+        opener = FakeOpener([http_err, _StubResponse(200)])
+        delays: list[float] = []
+
+        client = WebhookClient(max_retries=3, base_delay=1.0, max_delay=30.0, opener=opener, sleeper=delays.append)
+        client.post("https://hooks.slack.com/x", {"k": "v"})
+
+        # The Retry-After value (12s) is used instead of the exponential backoff first delay (1s).
+        assert delays == [12.0]
+
+    def test_429_retry_after_capped_at_max_delay(self) -> None:
+        """A Retry-After larger than max_delay is clamped so a hostile endpoint cannot stall the caller."""
+        headers = HTTPMessage()
+        headers["Retry-After"] = "99999"
+        http_err = urllib.error.HTTPError(
+            url="https://hooks.slack.com/x", code=429, msg="Too Many Requests", hdrs=headers, fp=io.BytesIO(b"")
+        )
+        opener = FakeOpener([http_err, _StubResponse(200)])
+        delays: list[float] = []
+
+        client = WebhookClient(max_retries=3, base_delay=1.0, max_delay=30.0, opener=opener, sleeper=delays.append)
+        client.post("https://hooks.slack.com/x", {"k": "v"})
+
+        assert delays == [30.0]  # clamped to max_delay
+
+    def test_429_retry_after_http_date_is_used(self) -> None:
+        """A 429 with an HTTP-date Retry-After is honored as seconds-from-now (clamped to max_delay)."""
+        future = datetime.now(timezone.utc) + timedelta(seconds=10)
+        headers = HTTPMessage()
+        headers["Retry-After"] = format_datetime(future)
+        http_err = urllib.error.HTTPError(
+            url="https://hooks.slack.com/x", code=429, msg="Too Many Requests", hdrs=headers, fp=io.BytesIO(b"")
+        )
+        opener = FakeOpener([http_err, _StubResponse(200)])
+        delays: list[float] = []
+
+        client = WebhookClient(max_retries=3, base_delay=1.0, max_delay=30.0, opener=opener, sleeper=delays.append)
+        client.post("https://hooks.slack.com/x", {"k": "v"})
+
+        # ~10s from now; allow slack for clock/execution drift, but clearly not the 1.0s backoff.
+        assert len(delays) == 1
+        assert 5.0 <= delays[0] <= 30.0
+
+    def test_429_without_retry_after_uses_backoff(self) -> None:
+        """A 429 with no Retry-After header falls back to the normal exponential backoff."""
+        http_err = urllib.error.HTTPError(
+            url="https://hooks.slack.com/x", code=429, msg="Too Many Requests", hdrs=HTTPMessage(), fp=io.BytesIO(b"")
+        )
+        opener = FakeOpener([http_err, _StubResponse(200)])
+        delays: list[float] = []
+
+        client = WebhookClient(max_retries=3, base_delay=1.0, max_delay=30.0, opener=opener, sleeper=delays.append)
+        client.post("https://hooks.slack.com/x", {"k": "v"})
+
+        assert delays == [1.0]  # 1.0 * 2**0 backoff, no Retry-After
 
     def test_4xx_fails_fast_no_retry(self) -> None:
         """HTTP 400 must NOT be retried: AlertDeliveryError after a single attempt, sleeper never called."""

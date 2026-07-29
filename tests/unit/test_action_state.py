@@ -20,6 +20,7 @@ Tests cover:
 """
 
 import dataclasses
+import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -431,3 +432,107 @@ def test_non_alert_action_always_fires() -> None:
     store = ActionStateStore()
     ctx = _make_context()
     assert store.should_fire(dq_action, ctx, condition_result=True) is True
+
+
+# ---------------------------------------------------------------------------
+# Concurrency: should_fire reads are serialized against record() writes (#1),
+# and the persistent append runs outside the lock (#6).
+# ---------------------------------------------------------------------------
+
+
+class _BlockingEventStore(ActionEventStore):
+    """Event store whose append blocks until released, to observe locking behavior.
+
+    append() sets *append_started* and then waits on *release* before returning, so a test can
+    hold a record() call inside append and check whether a concurrent should_fire is blocked.
+    """
+
+    def __init__(self) -> None:
+        self.append_started = threading.Event()
+        self.release = threading.Event()
+        self.appended: list[AlertEvent] = []
+        # Records whether append was ever entered while the state lock was held by the caller.
+        self.lock_held_during_append: bool | None = None
+
+    def append(self, events: list[AlertEvent]) -> None:
+        self.appended.extend(events)
+        self.append_started.set()
+        self.release.wait(timeout=5)
+
+    def load_latest_per_action(self) -> dict[str, AlertEvent]:
+        return {}
+
+    def load_last_fired_per_action(self) -> dict[str, datetime]:
+        return {}
+
+
+def test_record_append_runs_outside_lock() -> None:
+    """A blocking persistent append must not hold the state lock (#6).
+
+    While one thread is stuck inside event_store.append (called from record), a second thread
+    calling should_fire must be able to proceed rather than blocking on the store's lock.
+    """
+    event_store = _BlockingEventStore()
+    store = ActionStateStore(event_store=event_store)
+    dq_action = _make_dq_action(_make_dq_alert(frequency=DQAlertFrequency.ALWAYS, notify_on=NotifyOn.EACH))
+    ctx = _make_context()
+
+    def do_record() -> None:
+        store.record(_make_event(fired=True, status=ActionStatus.UNHEALTHY))
+
+    recorder = threading.Thread(target=do_record)
+    recorder.start()
+    try:
+        # Wait until the recorder is parked inside append (in-memory maps already updated, lock released).
+        assert event_store.append_started.wait(timeout=5), "append was never entered"
+        # should_fire must not be blocked by the in-flight append; it should return promptly.
+        result = store.should_fire(dq_action, ctx, condition_result=True)
+        assert result is True
+    finally:
+        event_store.release.set()
+        recorder.join(timeout=5)
+        assert not recorder.is_alive()
+
+    assert len(event_store.appended) == 1
+
+
+def test_should_fire_and_record_are_thread_safe() -> None:
+    """Concurrent should_fire/record on one store must not corrupt state or raise (#1).
+
+    Drives a single store from multiple threads (mirroring a streaming query's progress
+    callbacks on Spark's listener thread pool) and asserts every call completes without error
+    and the in-memory maps stay consistent.
+    """
+    store = ActionStateStore()
+    dq_action = _make_dq_action(_make_dq_alert(frequency=DQAlertFrequency.HOURLY, notify_on=NotifyOn.EACH))
+    base = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    errors: list[Exception] = []
+    barrier = threading.Barrier(8)
+
+    def worker(index: int) -> None:
+        try:
+            barrier.wait(timeout=5)
+            ctx = _make_context(run_time=base + timedelta(minutes=index))
+            for _ in range(50):
+                store.should_fire(dq_action, ctx, condition_result=True)
+                # Record under the same action_name should_fire looks up (dq_action.name).
+                store.record(
+                    _make_event(
+                        action_name=dq_action.name, fired=True, status=ActionStatus.UNHEALTHY, run_time=ctx.run_time
+                    )
+                )
+        except Exception as exc:  # noqa: BLE001 - surface any thread failure to the assertion below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert not errors, f"concurrent access raised: {errors}"
+    assert all(not thread.is_alive() for thread in threads)
+    # Observable post-condition: state stayed consistent under concurrency — an action fired at
+    # run_times up to base+7min, so a subsequent HOURLY check well within the hour is suppressed.
+    within_window = _make_context(run_time=base + timedelta(minutes=30))
+    assert store.should_fire(dq_action, within_window, condition_result=True) is False
