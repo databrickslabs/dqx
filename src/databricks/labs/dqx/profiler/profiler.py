@@ -455,13 +455,12 @@ class DQProfiler(DQEngineBase):
         self._add_llm_primary_key_for_dataframe(df, dq_rules, summary_stats, opts)
 
     def _build_column_metrics(
-        self,
         column_df: DataFrame,
         column_label: str,
         field: T.StructField,
         summary_stats: dict[str, Any],
         total_count: int,
-    ) -> Any:
+    ) -> dict[str, Any]:
         field_metric_aggregations = []
         for metric_name, metric_function in PROFILE_COLUMN_METRIC_REGISTRY.items():
             metric_col = metric_function(field, column_label)
