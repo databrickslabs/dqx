@@ -7,7 +7,6 @@ import pyspark.sql.types as T
 from databricks.labs.dqx.profiler.common import is_text, val_maybe_to_str, val_to_str
 
 
-
 @pytest.mark.parametrize("column_type", [T.StringType(), T.CharType(10), T.VarcharType(50)])
 def test_is_text_returns_true_for_text_types(column_type):
     assert is_text(column_type) is True

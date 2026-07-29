@@ -73,7 +73,6 @@ def test_profile_builder_registry_has_expected_builders():
     assert "min_max" in PROFILE_BUILDER_REGISTRY
 
 
-
 def _mock_agg_df(agg_dict: dict) -> MagicMock:
     mock_row = MagicMock()
     mock_row.asDict.return_value = agg_dict

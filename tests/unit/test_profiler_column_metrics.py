@@ -9,6 +9,7 @@ from databricks.labs.dqx.profiler.profiler_column_metrics import (
     register_profile_column_metric,
 )
 
+
 def test_register_profile_column_metric_registers_under_function_name():
     @register_profile_column_metric()
     def _test_metric(_field, _column_label):
@@ -19,7 +20,6 @@ def test_register_profile_column_metric_registers_under_function_name():
         assert PROFILE_COLUMN_METRIC_REGISTRY["_test_metric"] is _test_metric
     finally:
         PROFILE_COLUMN_METRIC_REGISTRY.pop("_test_metric", None)
-
 
 
 @pytest.mark.parametrize("column_type", [T.StringType(), T.CharType(10), T.VarcharType(50)])
@@ -34,12 +34,10 @@ def test_empty_count_returns_literal_zero_for_non_text_types(column_type):
     assert empty_count(field, "col") is not None
 
 
-
 @pytest.mark.parametrize("column_type", [T.StringType(), T.IntegerType(), T.DoubleType(), T.DateType()])
 def test_count_distinct_returns_column_for_any_type(column_type):
     field = T.StructField("col", column_type)
     assert count_distinct(field, "col") is not None
-
 
 
 @pytest.mark.parametrize("column_type", [T.StringType(), T.IntegerType(), T.DoubleType(), T.DateType()])
