@@ -254,7 +254,7 @@ def test_end_to_end_installation_and_workflow_with_upload_dependencies(ws, make_
     prompts = MockPrompts(
         {
             r"Provide location for the input data .*": input_table.full_name,
-            r"Provide output table .*": f"{catalog_name}.{schema.name}.{make_random(10).lower()}",
+            r"Provide output table .*": f"{catalog_name}.{schema.name}.t{make_random(10).lower()}",
             r"Do you want to uninstall DQX .*": "yes",
             r".*PRO or SERVERLESS SQL warehouse.*": "1",
             r"Does the given workspace block Internet access\?": "yes",  # Enable upload_dependencies
@@ -296,7 +296,7 @@ def _configure_test_workspace(installer, input_table, catalog_name, schema_name,
 
     run_config = workspace_config.get_run_config()
     run_config.input_config = InputConfig(location=input_table.full_name, options={"versionAsOf": "0"})
-    output_table = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    output_table = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
     run_config.output_config = OutputConfig(location=output_table)
     run_config.profiler_config = ProfilerConfig(sample_fraction=1.0, sample_seed=100)
 

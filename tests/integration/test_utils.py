@@ -9,8 +9,8 @@ from tests.constants import TEST_CATALOG
 def test_list_tables(spark, ws, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
 
     input_schema = "col1: int"
     input_df = spark.createDataFrame([[1]], input_schema)
@@ -34,7 +34,7 @@ def test_list_tables(spark, ws, make_schema, make_random):
 def test_list_tables_extended(spark, ws, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
 
     input_schema = "col1: int"
     input_df = spark.createDataFrame([[1]], input_schema)
@@ -53,7 +53,7 @@ def test_list_tables_extended(spark, ws, make_schema, make_random):
 def test_list_tables_with_exclude_patterns(spark, ws, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
 
     output_table_name = f"{table_name}_dq_output"
     quarantine_table_name = f"{table_name}_dq_quarantine"
@@ -112,7 +112,7 @@ def test_get_table_primary_keys_no_constraint(spark, make_schema, make_random):
     """Test get_table_primary_keys on a table without primary key constraint."""
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
 
     # Create table without primary key
     spark.sql(
@@ -134,7 +134,7 @@ def test_get_table_primary_keys_single_column(spark, make_schema, make_random):
     """Test get_table_primary_keys on a table with single column primary key."""
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
 
     # Create table with primary key
     spark.sql(
@@ -165,7 +165,7 @@ def test_get_table_primary_keys_composite(spark, make_schema, make_random):
     """Test get_table_primary_keys on a table with composite primary key."""
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
 
     # Create table
     spark.sql(
