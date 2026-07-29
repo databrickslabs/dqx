@@ -228,7 +228,7 @@ def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     table_name = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
-    random_name = make_random(10).lower()
+    random_name = f"t{make_random(10).lower()}"
     result_table_name = f"{catalog_name}.{schema.name}.{random_name}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
     options = {"checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"}
@@ -255,7 +255,7 @@ def test_save_streaming_dataframe_in_table_with_partition_by(spark, make_schema,
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     table_name = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
-    random_name = make_random(10).lower()
+    random_name = f"t{make_random(10).lower()}"
     result_table_name = f"{catalog_name}.{schema.name}.{random_name}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
     options = {"checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"}
@@ -286,7 +286,7 @@ def test_save_streaming_dataframe_in_table_with_cluster_by_missing_env_var(
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     table_name = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
-    random_name = make_random(10).lower()
+    random_name = f"t{make_random(10).lower()}"
     result_table_name = f"{catalog_name}.{schema.name}.{random_name}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
     options = {"checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"}
@@ -323,7 +323,7 @@ def test_save_streaming_dataframe_in_table_with_cluster_by_invalid_env_var(
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     table_name = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
-    random_name = make_random(10).lower()
+    random_name = f"t{make_random(10).lower()}"
     result_table_name = f"{catalog_name}.{schema.name}.{random_name}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
     options = {"checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"}
@@ -362,7 +362,7 @@ def test_save_streaming_dataframe_in_table_with_cluster_by_serverless_env(
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     table_name = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
-    random_name = make_random(10).lower()
+    random_name = f"t{make_random(10).lower()}"
     result_table_name = f"{catalog_name}.{schema.name}.{random_name}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
     options = {"checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"}
@@ -403,7 +403,7 @@ def test_save_streaming_dataframe_in_table_with_cluster_by_unsupported_env(
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     table_name = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
-    random_name = make_random(10).lower()
+    random_name = f"t{make_random(10).lower()}"
     result_table_name = f"{catalog_name}.{schema.name}.{random_name}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
     options = {"checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"}

@@ -333,7 +333,7 @@ def test_save_streaming_results_in_table(ws, spark, make_schema, make_random, ma
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
-    random_name = make_random(10).lower()
+    random_name = f"t{make_random(10).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{random_name}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
 
