@@ -14,7 +14,7 @@ After checks are applied and the Spark observation is materialized, each action 
 
 The built-in action types are:
 
-- *DQAlert* — delivers a notification to one or more destinations (Slack, Microsoft Teams, generic HTTPS webhook, or an in-process callback).
+- *DQAlert* — delivers a notification to one or more destinations (Slack, Microsoft Teams, generic HTTPS webhook, log — the Spark driver logger, or an in-process callback).
 - *FailPipeline* — raises `PipelineFailedError` to abort the current pipeline run.
 - *NoOpAction* — fires when its condition is met but performs no side effect; useful for testing and for dry-run/audit runs that record what *would* have fired.
 
@@ -26,9 +26,11 @@ A `DQAction` binds an inner *action* to an optional gating *condition*. When *co
 
 Actions can be defined **either** programmatically with the DQX classes **or** declaratively as metadata — a list of plain dicts, typically loaded from a YAML or JSON file — exactly like DQX checks. The two forms are equivalent, and every example on this page shows both. In the metadata form each list entry has an `action` key carrying a `type` discriminator (for example `alert`, `fail_pipeline`, or `noop`) plus an optional `condition`; a `DQSecret` credential is written as a nested mapping with a single `secret` key whose value is a `scope/key` reference. Callback destinations are the one exception — they hold a live Python callable and have no metadata form, so they can only be configured in code.
 
-To run actions, attach them to a `DQEngine` together with a `DQMetricsObserver`. `DQEngine` accepts `DQAction` instances, raw metadata dicts, or a list loaded from a file with `DQActionManager` — and mixed lists of instances and dicts are supported.
-
 The reference sections below cover the [action types](#action-types) ([DQAlert](#dqalert), [FailPipeline](#failpipeline), [NoOpAction](#noopaction-dry-run--audit)), the [alert types](#alert-types) (`DQAlert` destinations), [controlling when alerts are sent](#controlling-when-alerts-are-sent), and [persisting actions and their history](#persisting-actions-and-their-history).
+
+### Configuring actions
+
+To run actions, attach them to a `DQEngine` together with a `DQMetricsObserver`. `DQEngine` accepts `DQAction` instances, raw metadata dicts, or a list loaded from a file with `DQActionManager` — and mixed lists of instances and dicts are supported. Once configured, actions are triggered either automatically by the save methods (below) or explicitly via [`evaluate_actions`](#manual-evaluation-with-evaluate_actions).
 
 ### Auto-fire on save methods (recommended)
 
@@ -141,7 +143,7 @@ Passing *actions* to *DQEngine* without also passing an *observer* raises `Inval
 
 ### Streaming pipelines
 
-The same pattern works for streaming: attach the actions to the engine exactly as above, then run a streaming save. Actions fire per micro-batch after the observation for that batch is materialized. The example below reuses the `engine` configured in the previous section:
+The same pattern works for streaming: attach the actions to the engine exactly as above, then run a streaming save. Actions fire per micro-batch after the observation for that batch is materialized. Because a streaming query produces a continuous sequence of micro-batches, give each streaming action a *condition* (so it fires only when metrics cross a threshold) and/or an `alert_frequency` (so it is rate-limited); an unconditional action would otherwise fire on every micro-batch. The example below reuses the `engine` configured in the previous section:
 
 ```python
 from databricks.labs.dqx.config import InputConfig, OutputConfig
@@ -185,7 +187,12 @@ streaming that fires alerts frequently against slow endpoints.
 
 ### Manual evaluation with evaluate_actions
 
-For pipelines that do not use the save methods (e.g. Lakeflow Pipelines or custom `writeStream` code), call `evaluate_actions` explicitly after triggering a Spark action on the checked DataFrame:
+For pipelines that do not use the save methods (e.g. Lakeflow Pipelines or custom `writeStream` code), call `evaluate_actions` explicitly after triggering a Spark action on the checked DataFrame.
+
+Which Spark action to trigger depends on what the actions do:
+
+- **For notifications**, prefer `write` (the DataFrame is being persisted anyway), then call `evaluate_actions` — this avoids a separate `count` just to materialize the observation.
+- **To fail the pipeline**, trigger `count` first, then call `evaluate_actions` so the pipeline aborts *before* writing bad data downstream.
 
 <Tabs>
   <TabItem value="Python" label="Python (classes)" default>
@@ -407,6 +414,8 @@ alert = DQAction(
 ### FailPipeline
 
 `FailPipeline` raises `PipelineFailedError` to abort the current run. The evaluator defers the error until all other non-terminal actions (e.g. alert notifications) have completed, so alerts are always delivered before the pipeline is stopped.
+
+The immediate-abort guarantee applies to the **batch** path. In **streaming**, `FailPipeline` is raised inside the `StreamingQueryListener` callback, which runs independently of the query, so Spark generally isolates and logs the listener exception rather than stopping the query — see the [streaming action-evaluation note](#streaming-pipelines) above. Do not rely on `FailPipeline` to hard-stop a streaming query; use a downstream gate if you need a guaranteed stop.
 
 <Tabs>
   <TabItem value="Python" label="Python (classes)" default>
