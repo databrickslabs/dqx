@@ -17,6 +17,7 @@ from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
+from databricks.labs.dqx.profiler.common import is_text
 from databricks.labs.dqx.profiler.profile import DQProfile
 from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, TEXT_TYPES, validate_profile_options
 from databricks.labs.dqx.profiler.profile_options import (
@@ -30,6 +31,7 @@ from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_SAMPLE_SEED,
     PROFILE_OPTION_TRIM_STRINGS,
 )
+from databricks.labs.dqx.profiler.profiler_column_metrics import PROFILE_COLUMN_METRIC_REGISTRY
 from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.telemetry import telemetry_logger
 
@@ -100,9 +102,7 @@ class DQProfiler(DQEngineBase):
         df_columns = [f for f in df.schema.fields if f.name in columns]
         df = df.select(*[f.name for f in df_columns])
 
-        if options is None:
-            options = {}
-
+        options = options or {}
         options = {**DEFAULT_PROFILE_OPTIONS, **options}  # merge default options with user-provided options
         validate_profile_options(options)  # fail fast on misconfiguration before any profiling work
         df = self._sample(df, options)
@@ -419,7 +419,7 @@ class DQProfiler(DQEngineBase):
         df_cols: list[T.StructField],
         dq_rules: list[DQProfile],
         opts: dict[str, Any],
-        summary_stats: dict[str, Any],
+        summary_stats: dict[str, int | float],
         total_count: int,
     ) -> None:
         """
@@ -442,33 +442,39 @@ class DQProfiler(DQEngineBase):
         for field in self.get_columns_or_fields(df_cols):
             field_name = field.name
             field_type = field.dataType
-            if field_name not in summary_stats:
-                summary_stats[field_name] = {}
-            metrics = summary_stats[field_name]
 
             column_df = df.select(field_name).dropna()
             column_label = column_df.columns[0]
-            is_text = isinstance(field_type, TEXT_TYPES)
-            if is_text and trim_strings:
+            if is_text(field_type) and trim_strings:
                 column_df = column_df.select(F.trim(F.col(column_label)).alias(column_label))
 
-            aggr_stats = column_df.agg(
-                F.count(column_label).alias("cnt"),
-                F.countDistinct(column_label).alias("cnt_distinct"),
-            ).first()
-            count_non_null = aggr_stats[0] if aggr_stats else 0
-            metrics["count"] = total_count
-            metrics["count_null"] = total_count - count_non_null
-            metrics["count_non_null"] = count_non_null
-            metrics["count_distinct"] = aggr_stats[1] if aggr_stats else 0
-            if is_text:
-                metrics["empty_count"] = column_df.filter(F.col(column_label) == "").count()
-            else:
-                metrics["empty_count"] = 0
+            metrics = self._build_column_metrics(column_df, column_label, field, summary_stats, total_count)
 
             self._build_profiles_for_column(column_df, field_name, field_type, metrics, opts, dq_rules)
 
         self._add_llm_primary_key_for_dataframe(df, dq_rules, summary_stats, opts)
+
+    def _build_column_metrics(
+        self,
+        column_df: DataFrame,
+        column_label: str,
+        field: T.StructField,
+        summary_stats: dict[str, Any],
+        total_count: int,
+    ) -> Any:
+        field_metric_aggregations = []
+        for metric_name, metric_function in PROFILE_COLUMN_METRIC_REGISTRY.items():
+            metric_col = metric_function(field, column_label)
+            if metric_col is not None:
+                metric_col.alias(metric_name)
+                field_metric_aggregations.append(metric_col)
+
+        field_aggregation_row = column_df.agg(*field_metric_aggregations).first()
+        field_aggregation_stats = field_aggregation_row.asDict() if field_aggregation_row else {}
+        field_summary_stats = summary_stats.get(field.name, {})
+        metrics = {**field_summary_stats, **field_aggregation_stats}
+        metrics["count_null"] = total_count - metrics["count_non_null"]
+        return metrics
 
     def _build_profiles_for_column(
         self,

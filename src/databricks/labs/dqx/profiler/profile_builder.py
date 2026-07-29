@@ -10,6 +10,7 @@ from pyspark.sql import types as T, functions as F
 
 from databricks.labs.dqx.check_funcs import get_limit_expr
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.profiler.common import is_text
 from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileBuilder
 from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
 from databricks.labs.dqx.profiler.profile_options import (
@@ -68,7 +69,7 @@ def make_null_or_empty_profile(
     Returns:
         A DQProfile if the correct conditions are met, otherwise None
     """
-    if _is_text(column_type):
+    if is_text(column_type):
         return _make_null_or_empty_profile(column_name, profiler_metrics, profiler_options)
 
     return _make_null_profile(column_name, profiler_metrics, profiler_options)
@@ -161,19 +162,6 @@ def make_min_max_profile(
     return _make_min_max_profile_without_outlier_removal(
         df, column_name, column_type, profiler_metrics, profiler_options
     )
-
-
-def _is_text(column_type: T.DataType) -> bool:
-    """
-    Validates that the input column type is a Spark text type.
-
-    Args:
-        column_type: Input column type
-
-    Returns:
-        True if the column is a Spark text type, otherwise False
-    """
-    return isinstance(column_type, TEXT_TYPES)
 
 
 def _make_null_or_empty_profile(
