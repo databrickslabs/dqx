@@ -236,6 +236,14 @@ class ActionStateStore:
         updates *_last_status*. Non-*DQAlert* actions are never frequency-gated, so nothing is
         reserved for them.
 
+        Trade-off: the reservation is **optimistic** — *_last_fired* is stamped before the action's
+        *execute()* runs, so if delivery then fails (a non-terminal error, e.g. a webhook timeout),
+        the slot stays reserved and the alert is suppressed for the rest of the frequency window even
+        though it never actually delivered. This deliberately favors "never double-fire under
+        concurrency" over "guaranteed delivery", consistent with the subsystem's best-effort model;
+        if an alert's delivery must be retried on the next run despite a failure, use
+        *DQAlertFrequency.ALWAYS* (no frequency window to reserve).
+
         Args:
             dq_action: The bound action configuration being evaluated.
             context: Immutable run-time snapshot carrying *run_time* and *metrics*.
