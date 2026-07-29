@@ -702,3 +702,59 @@ Combining either limit with `sample_by_column` may filter out values and lead to
 Summary statistics from limited samples may not reflect the characteristics of the overall dataset. Balance the sampling rate and limits
 with your desired profile accuracy. Manually review and tune rules generated from profiles on sample data to ensure correctness.
 </Admonition>
+
+## Extending the profiler with custom column metrics
+
+Use `register_profile_column_metric` to add your own per-column metrics.
+Metrics are computed once per column before any profile builder runs, so they are available to every builder at no extra cost.
+The function name becomes the key under which the value is available inside profile builders.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from pyspark.sql import Column
+    from pyspark.sql import functions as F
+    from pyspark.sql import types as T
+    from databricks.labs.dqx.profiler.profiler_column_metrics import register_profile_column_metric
+
+    @register_profile_column_metric()
+    def percentile_10(field: T.StructField, column_label: str) -> Column | None:
+        # Return None to skip for column types where the metric does not apply
+        if not isinstance(field.dataType, T.NumericType):
+            return None
+        return F.percentile_approx(column_label, 0.1)
+    ```
+  </TabItem>
+</Tabs>
+
+Combine this with `register_profile_builder` to generate rules based on the metric:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.profile import DQProfile
+    from databricks.labs.dqx.profiler.profile_builder import register_profile_builder
+    from pyspark.sql import DataFrame
+    from pyspark.sql import types as T
+    from typing import Any
+
+    @register_profile_builder("p10_lower_bound")
+    def make_p10_lower_bound_profile(
+        df: DataFrame,
+        column_name: str,
+        column_type: T.DataType,
+        profiler_metrics: dict[str, Any],
+        profiler_options: dict[str, Any],
+    ) -> DQProfile | None:
+        p10 = profiler_metrics.get("percentile_10")
+        if p10 is None:
+            return None
+        return DQProfile(
+            name="min_max",
+            column=column_name,
+            description=f"Lower bound set to 10th percentile ({p10})",
+            parameters={"min": p10},
+        )
+    ```
+  </TabItem>
+</Tabs>

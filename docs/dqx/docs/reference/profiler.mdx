@@ -124,6 +124,40 @@ The `DQDltGenerator` class creates Delta Live Tables expectation statements from
 | -------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
 | `generate_dlt_rules` | Generates Delta Live Table rules in the specified language.        | `rules`: List of DQProfile objects; `action`: Optional violation action ("drop", "fail", or None); `language`: Target language ("SQL", "Python", or "Python_Dict").     | Yes                      |
 
+## Custom Column Metrics
+
+Use `register_profile_column_metric` to add your own per-column metrics. Metrics are computed once per column before any profile builder runs and are available to all builders.
+
+A metric function receives the column's *field* (`StructField`) and *column_label* (its name in the DataFrame), and returns a PySpark aggregation `Column` or `None` to skip for that column type. The function name becomes the key in the metrics dictionary that all profile builders receive.
+
+```python
+from pyspark.sql import Column
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+from databricks.labs.dqx.profiler.profiler_column_metrics import register_profile_column_metric
+
+@register_profile_column_metric()
+def percentile_10(field: T.StructField, column_label: str) -> Column | None:
+    if not isinstance(field.dataType, T.NumericType):
+        return None
+    return F.percentile_approx(column_label, 0.1)
+```
+
+### Built-in column metrics
+
+The following metrics are available to all profile builders:
+
+| Metric key | Applicable types | Description |
+|---|---|---|
+| `count_non_null` | All | Non-null value count |
+| `count_null` | All | Null value count |
+| `count_distinct` | All | Distinct non-null value count |
+| `empty_count` | Text only | Empty-string count; `0` for non-text |
+
+Spark's `DataFrame.summary()` additionally contributes `count`, `mean`, `stddev`, `min`, `25`, `50`, `75`, and `max` for numeric columns.
+
+See the [Data Profiling Guide](/docs/guide/data_profiling#extending-the-profiler-with-custom-column-metrics) for a complete example including a custom profile builder that consumes a custom metric.
+
 <Admonition type="info" title="Complete Profiling Guide">
     For comprehensive examples, advanced options, and best practices, see the [Data Profiling
     Guide](/docs/guide/data_profiling).
