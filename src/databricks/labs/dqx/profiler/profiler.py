@@ -466,8 +466,7 @@ class DQProfiler(DQEngineBase):
         for metric_name, metric_function in PROFILE_COLUMN_METRIC_REGISTRY.items():
             metric_col = metric_function(field, column_label)
             if metric_col is not None:
-                metric_col.alias(metric_name)
-                field_metric_aggregations.append(metric_col)
+                field_metric_aggregations.append(metric_col.alias(metric_name))
 
         field_aggregation_row = column_df.agg(*field_metric_aggregations).first()
         field_aggregation_stats = field_aggregation_row.asDict() if field_aggregation_row else {}
