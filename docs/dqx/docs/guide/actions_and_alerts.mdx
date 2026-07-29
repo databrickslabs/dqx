@@ -381,7 +381,7 @@ Every action is wrapped in a `DQAction` that binds it to an optional [condition]
 
 ### DQAlert
 
-`DQAlert` delivers a notification to one or more destinations (Slack, Microsoft Teams, generic HTTPS webhook, log, or an in-process callback). A single alert message is dispatched concurrently to every configured destination, and a delivery failure in one destination is isolated — the others still receive the alert, and per-destination errors are captured in `ActionResult.destination_errors`. The available destinations are listed under [Alert types](#alert-types), and [Controlling when alerts are sent](#controlling-when-alerts-are-sent) covers rate-limiting and status-change-only delivery.
+`DQAlert` delivers a notification to one or more destinations (Slack, Microsoft Teams, generic HTTPS webhook, log — the Spark driver logs, or an in-process callback). A single alert message is dispatched concurrently to every configured destination, and a delivery failure in one destination is isolated — the others still receive the alert, and per-destination errors are captured in `ActionResult.destination_errors`. The available destinations are listed under [Alert types](#alert-types), and [Controlling when alerts are sent](#controlling-when-alerts-are-sent) covers rate-limiting and status-change-only delivery.
 
 <Tabs>
   <TabItem value="Python" label="Python (classes)" default>
