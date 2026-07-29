@@ -472,8 +472,8 @@ class DQProfiler(DQEngineBase):
         field_aggregation_row = column_df.agg(*field_metric_aggregations).first()
         field_aggregation_stats = field_aggregation_row.asDict() if field_aggregation_row else {}
         field_summary_stats = summary_stats.get(field.name, {})
-        metrics = {**field_summary_stats, **field_aggregation_stats}
-        metrics["count_null"] = total_count - metrics["count_non_null"]
+        base_metrics = {**field_summary_stats, **field_aggregation_stats}
+        metrics = {**base_metrics, "count_null": total_count - base_metrics["count_non_null"]}
         return metrics
 
     def _build_profiles_for_column(

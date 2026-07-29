@@ -1,5 +1,5 @@
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 from pyspark.sql import Column
 from pyspark.sql import functions as F
@@ -45,18 +45,16 @@ def empty_count(field: T.StructField, column_label: str) -> Column | None:
 
 
 @register_profile_column_metric()
-def count_distinct(field: T.StructField, column_label: str) -> Column | None:
+def count_distinct(_field: T.StructField, column_label: str) -> Column | None:
     """
     Profiling column metric for count distinct. Applicable for all columns.
     """
-    field = field
     return F.countDistinct(column_label)
 
 
 @register_profile_column_metric()
-def count_non_null(field: T.StructField, column_label: str) -> Column | None:
+def count_non_null(_field: T.StructField, column_label: str) -> Column | None:
     """
     Profiling column metric for count not null values. Applicable for all columns.
     """
-    field = field
     return F.count(column_label)
