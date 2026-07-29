@@ -479,7 +479,7 @@ def _setup_workflows_deps(
     if quarantine_only:
         run_config.output_config = None
     else:
-        output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+        output_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
         run_config.output_config = OutputConfig(
             location=output_table,
             trigger=trigger,
@@ -487,7 +487,7 @@ def _setup_workflows_deps(
         )
 
     if quarantine or quarantine_only:
-        quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}_quarantine"
+        quarantine_table = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}_quarantine"
         run_config.quarantine_config = OutputConfig(
             location=quarantine_table,
             trigger=trigger,

@@ -1956,7 +1956,7 @@ def test_aggr_matches_dataset_with_ref_table(spark: SparkSession, make_schema, m
 
     catalog_name = TEST_CATALOG
     ref_table_schema = make_schema(catalog_name=catalog_name)
-    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(10).lower()}"
+    ref_table = f"{catalog_name}.{ref_table_schema.name}.t{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)
 
     condition, apply = aggr_matches_dataset("a", ref_table=ref_table, aggr_type="count")
@@ -2556,7 +2556,7 @@ def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_
 
     catalog_name = TEST_CATALOG
     ref_table_schema = make_schema(catalog_name=catalog_name)
-    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(10).lower()}"
+    ref_table = f"{catalog_name}.{ref_table_schema.name}.t{make_random(10).lower()}"
     df_ref.write.saveAsTable(ref_table)
 
     columns = ["id1", "id2"]
@@ -3675,7 +3675,7 @@ def test_has_valid_schema_with_specific_columns_mismatch(spark: SparkSession):
 def test_has_valid_schema_with_ref_table(spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    ref_table_name = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    ref_table_name = f"{catalog_name}.{schema.name}.t{make_random(8).lower()}"
 
     ref_df = spark.createDataFrame(
         [

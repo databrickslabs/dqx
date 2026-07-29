@@ -89,7 +89,7 @@ def all_dataset_geo_checks():
 def table_name(make_schema, make_random):
     catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
-    return f"{catalog}.{schema}.{make_random(10).lower()}"
+    return f"{catalog}.{schema}.t{make_random(10).lower()}"
 
 
 @pytest.fixture
