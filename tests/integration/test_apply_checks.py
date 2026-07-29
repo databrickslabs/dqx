@@ -67,6 +67,55 @@ def test_apply_checks_and_split_on_empty_checks(ws, spark):
     assert_df_equality(bad, expected_df)
 
 
+def test_apply_checks_and_split_has_no_gaps_per_time_window(ws, spark, set_utc_timezone):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    schema = "event_ts timestamp, val int"
+    test_df = spark.createDataFrame(
+        [
+            (datetime(2025, 7, 14), 1),  # 2025-07-15 missing -> gap, boundary row is quarantined
+            (datetime(2025, 7, 16), 2),  # consecutive with 2025-07-17 -> valid
+            (datetime(2025, 7, 17), 3),  # valid
+        ],
+        schema,
+    )
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.has_no_gaps_per_time_window,
+            column="event_ts",
+            check_func_kwargs={"window_minutes": 1440},
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+    good, bad = dq_engine.apply_checks_and_split(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                datetime(2025, 7, 14),
+                1,
+                [
+                    build_quality_violation(
+                        "event_ts_has_no_gaps_per_time_window",
+                        "Gap in time series: no data between the window starting at 2025-07-14 00:00:00 "
+                        "and the next present window starting at 2025-07-16 00:00:00",
+                        ["event_ts"],
+                        function="has_no_gaps_per_time_window",
+                    ),
+                ],
+                None,
+            ],
+            [datetime(2025, 7, 16), 2, None, None],
+            [datetime(2025, 7, 17), 3, None, None],
+        ],
+        expected_schema,
+    )
+
+    assert_check_and_split_results(checked, good, bad, expected, ["event_ts", "val"])
+
+
 def test_apply_checks_passed(ws, spark):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
@@ -7124,6 +7173,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=check_funcs.is_data_fresh_per_time_window,
             column="col6",
             check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
+        ),
+        # has_no_gaps_per_time_window check
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.has_no_gaps_per_time_window,
+            column="col6",
+            check_func_kwargs={"window_minutes": 1440},
         ),
         # aggr_matches_dataset check — row count matches the reference dataset
         DQDatasetRule(

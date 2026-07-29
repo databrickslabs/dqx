@@ -230,6 +230,14 @@
       min_records_per_window: 1
       lookback_windows: 3
 
+# has_no_gaps_per_time_window check
+- criticality: error
+  check:
+    function: has_no_gaps_per_time_window
+    arguments:
+      column: col6
+      window_minutes: 1440
+
 # has_valid_schema check
 - criticality: error
   check:
