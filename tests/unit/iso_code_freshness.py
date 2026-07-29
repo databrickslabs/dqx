@@ -17,7 +17,7 @@ def assert_packaged_codes_match(expected: dict[str, frozenset[str]]) -> None:
         missing = expected_codes - packaged
         stale = packaged - expected_codes
         assert packaged == expected_codes, (
-            f"Packaged codes in '{resource_name}' do not match pycountry. "
-            f"Missing (in pycountry, not packaged): {sorted(missing)}. "
-            f"Stale (packaged, not in pycountry): {sorted(stale)}."
+            f"Packaged codes in '{resource_name}' do not match the expected code set. "
+            f"Missing (expected, not packaged): {sorted(missing)}. "
+            f"Stale (packaged, not expected): {sorted(stale)}."
         )

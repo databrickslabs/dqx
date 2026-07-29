@@ -1200,19 +1200,86 @@ def _iso_3166_1_codes_by_format() -> dict[str, frozenset[str]]:
     }
 
 
+# ISO 4217 currency codes. The authoritative source is
+# https://www.iso.org/iso-4217-currency-codes.html; the values were verified against it and cover
+# the active codes as of July 2026. The code lists are stored as data files under the resources
+# package and loaded via importlib.resources. To regenerate them, iterate pycountry.currencies
+# (which packages the ISO 4217 data) as a convenience, reading each entry's alphabetic code (exposed
+# by pycountry as the alpha_3 attribute) and numeric code, then reconcile against the official ISO
+# list above before committing.
+#
+# Loaded lazily (on first call, then cached) rather than at module import time, so that a resource
+# packaging problem only breaks this check, not the import of the whole check_funcs module.
+@lru_cache(maxsize=1)
+def _iso_4217_codes_by_format() -> dict[str, frozenset[str]]:
+    return {
+        "alphabetic": load_iso_codes("iso_4217_alphabetic.txt"),
+        "numeric": load_iso_codes("iso_4217_numeric.txt"),
+    }
+
+
 # Precomputed once on first use and cached: the literal lists never change at runtime, so building
 # them per call (sorted() + one F.lit() per code) would repeat needless work on every check
-# evaluation. Keyed by (format, case_folded): the case_folded=True variant lowercases each code for
-# case-insensitive matching. Numeric codes have no case, so no lowercase variant is built for them.
-@lru_cache(maxsize=1)
-def _iso_3166_1_literals() -> dict[tuple[str, bool], list[Column]]:
-    literals: dict[tuple[str, bool], list[Column]] = {}
-    for fmt, codes in _iso_3166_1_codes_by_format().items():
-        sorted_codes = sorted(codes)
-        literals[(fmt, False)] = [F.lit(code) for code in sorted_codes]
-        if fmt != "numeric":
-            literals[(fmt, True)] = [F.lit(code.lower()) for code in sorted_codes]
-    return literals
+# evaluation. Keyed by (standard, format, lower) so the case-sensitive and case-insensitive variants
+# share one cache across both ISO standards; numeric never requests lower=True since it has no case.
+_ISO_CODES_BY_STANDARD: dict[str, Callable[[], dict[str, frozenset[str]]]] = {
+    "ISO 3166-1": _iso_3166_1_codes_by_format,
+    "ISO 4217": _iso_4217_codes_by_format,
+}
+
+
+@lru_cache(maxsize=None)
+def _iso_literals(standard: str, fmt: str, lower: bool) -> list[Column]:
+    codes = _ISO_CODES_BY_STANDARD[standard]()[fmt]
+    return [F.lit(code.lower() if lower else code) for code in sorted(codes)]
+
+
+def _is_valid_iso_code(column: str | Column, code_format: str, case_sensitive: bool, standard: str) -> Column:
+    """Shared implementation for the ISO 3166-1 country and ISO 4217 currency code checks.
+
+    Validates *column* against the code set for *standard* (one of the keys of
+    *_ISO_CODES_BY_STANDARD*) in the requested *code_format*, using a case-sensitive membership test
+    by default. See *is_valid_country_code* / *is_valid_currency_code* for the user-facing contract.
+    """
+    if code_format is None:
+        raise MissingParameterError("'code_format' is not provided.")
+    if not isinstance(code_format, str):
+        raise InvalidParameterError(f"'code_format' must be a string, got {type(code_format)} instead.")
+    kind = "country" if standard == "ISO 3166-1" else "currency"
+    normalized_format = code_format.lower()
+    codes_by_format = _ISO_CODES_BY_STANDARD[standard]()
+    if normalized_format not in codes_by_format:
+        supported = ", ".join(sorted(codes_by_format))
+        raise InvalidParameterError(
+            f"Unsupported code_format for {kind} code validation: '{code_format}'. Supported: [{supported}]."
+        )
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    if normalized_format == "numeric":
+        # Numeric codes have no case, so case_sensitive is a no-op. Cast explicitly to string: without
+        # it, comparing a non-string (e.g. int) column against the string literals below makes Spark
+        # coerce the literals to the column's type instead, silently stripping leading zeros (e.g.
+        # "004" -> 4) and letting an unpadded value like 4 match a code that requires "004".
+        col_expr_compare = col_expr.cast("string")
+        allowed = _iso_literals(standard, normalized_format, lower=False)
+    elif case_sensitive:
+        col_expr_compare = col_expr
+        allowed = _iso_literals(standard, normalized_format, lower=False)
+    else:
+        col_expr_compare = to_lowercase(col_expr)
+        allowed = _iso_literals(standard, normalized_format, lower=True)
+    # isin() already yields NULL for NULL input (SQL null propagation), and make_condition treats
+    # NULL as a pass, so no explicit isNotNull() guard is needed.
+    condition = ~col_expr_compare.isin(*allowed)
+    return make_condition(
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not a valid {standard} {kind} code"),
+        ),
+        f"{col_str_norm}_is_not_a_valid_{kind}_code",
+    )
 
 
 @register_rule("row")
@@ -1256,74 +1323,7 @@ def is_valid_country_code(column: str | Column, code_format: str = "alpha-2", ca
         MissingParameterError: if *code_format* is None.
         InvalidParameterError: if *code_format* is not a string, or is not a supported representation.
     """
-    if code_format is None:
-        raise MissingParameterError("'code_format' is not provided.")
-    if not isinstance(code_format, str):
-        raise InvalidParameterError(f"'code_format' must be a string, got {type(code_format)} instead.")
-    normalized_format = code_format.lower()
-    codes_by_format = _iso_3166_1_codes_by_format()
-    allowed_codes = codes_by_format.get(normalized_format)
-    if allowed_codes is None:
-        supported = ", ".join(sorted(codes_by_format))
-        raise InvalidParameterError(
-            f"Unsupported code_format for country code validation: '{code_format}'. Supported: [{supported}]."
-        )
-    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
-    literals = _iso_3166_1_literals()
-    if normalized_format == "numeric":
-        # Numeric codes have no case, so case_sensitive is a no-op. Cast explicitly to string:
-        # without it, comparing a non-string (e.g. int) column against the string literals below
-        # makes Spark coerce the literals to the column's type instead, silently stripping leading
-        # zeros (e.g. "004" -> 4) and letting an unpadded value like 4 match a code that requires "004".
-        col_expr_compare = col_expr.cast("string")
-        allowed = literals[(normalized_format, False)]
-    elif case_sensitive:
-        col_expr_compare = col_expr
-        allowed = literals[(normalized_format, False)]
-    else:
-        col_expr_compare = to_lowercase(col_expr)
-        allowed = literals[(normalized_format, True)]
-    # isin() already yields NULL for NULL input (SQL null propagation), and make_condition treats
-    # NULL as a pass, so no explicit isNotNull() guard is needed.
-    condition = ~col_expr_compare.isin(*allowed)
-    return make_condition(
-        condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is not a valid ISO 3166-1 country code"),
-        ),
-        f"{col_str_norm}_is_not_a_valid_country_code",
-    )
-
-
-# ISO 4217 currency codes. The authoritative source is
-# https://www.iso.org/iso-4217-currency-codes.html; the values were verified against it and cover
-# the active codes as of July 2026. The code lists are stored as data files under the resources
-# package and loaded via importlib.resources. To regenerate them, iterate pycountry.currencies
-# (which packages the ISO 4217 data) as a convenience, reading each entry's alphabetic code (exposed
-# by pycountry as the alpha_3 attribute) and numeric code, then reconcile against the official ISO
-# list above before committing.
-#
-# Loaded lazily (on first call, then cached) rather than at module import time, so that a resource
-# packaging problem only breaks this check, not the import of the whole check_funcs module.
-@lru_cache(maxsize=1)
-def _iso_4217_codes_by_format() -> dict[str, frozenset[str]]:
-    return {
-        "alphabetic": load_iso_codes("iso_4217_alphabetic.txt"),
-        "numeric": load_iso_codes("iso_4217_numeric.txt"),
-    }
-
-
-# Precomputed once on first use and cached: the literal lists never change at runtime, so building
-# them per call (sorted() + one F.lit() per code) would repeat needless work on every check
-# evaluation. Keyed by (format, lower) so the case-sensitive and case-insensitive variants share one
-# cache instead of separate helpers; numeric never requests lower=True since it has no case.
-@lru_cache(maxsize=None)
-def _iso_4217_literals(fmt: str, lower: bool) -> list[Column]:
-    codes = _iso_4217_codes_by_format()[fmt]
-    return [F.lit(code.lower() if lower else code) for code in sorted(codes)]
+    return _is_valid_iso_code(column, code_format, case_sensitive, standard="ISO 3166-1")
 
 
 @register_rule("row")
@@ -1369,45 +1369,7 @@ def is_valid_currency_code(
         MissingParameterError: if *code_format* is None.
         InvalidParameterError: if *code_format* is not a string, or is not a supported representation.
     """
-    if code_format is None:
-        raise MissingParameterError("'code_format' is not provided.")
-    if not isinstance(code_format, str):
-        raise InvalidParameterError(f"'code_format' must be a string, got {type(code_format)} instead.")
-    normalized_format = code_format.lower()
-    codes_by_format = _iso_4217_codes_by_format()
-    allowed_codes = codes_by_format.get(normalized_format)
-    if allowed_codes is None:
-        supported = ", ".join(sorted(codes_by_format))
-        raise InvalidParameterError(
-            f"Unsupported code_format for currency code validation: '{code_format}'. Supported: [{supported}]."
-        )
-    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
-    if normalized_format == "numeric":
-        # Numeric codes have no case, so case_sensitive is a no-op. Cast explicitly to string: without
-        # it, comparing a non-string (e.g. int) column against the string literals below makes Spark
-        # coerce the literals to the column's type instead, silently stripping leading zeros (e.g.
-        # "008" -> 8) and letting an unpadded value like 8 match a code that requires "008".
-        col_expr_compare = col_expr.cast("string")
-        allowed = _iso_4217_literals(normalized_format, lower=False)
-    elif case_sensitive:
-        col_expr_compare = col_expr
-        allowed = _iso_4217_literals(normalized_format, lower=False)
-    else:
-        col_expr_compare = to_lowercase(col_expr)
-        allowed = _iso_4217_literals(normalized_format, lower=True)
-    # isin() already yields NULL for NULL input (SQL null propagation), and make_condition treats
-    # NULL as a pass, so no explicit isNotNull() guard is needed.
-    condition = ~col_expr_compare.isin(*allowed)
-    return make_condition(
-        condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is not a valid ISO 4217 currency code"),
-        ),
-        f"{col_str_norm}_is_not_a_valid_currency_code",
-    )
+    return _is_valid_iso_code(column, code_format, case_sensitive, standard="ISO 4217")
 
 
 @register_rule("row")
