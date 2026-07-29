@@ -945,4 +945,3 @@ def test_quote_column_name():
     column_name = "my `column` name"
     result = quote_column_name(column_name)
     assert result == "`my ``column`` name`"
-
