@@ -38,7 +38,14 @@ variables:
 # home directory. The volume MUST already exist before `bundle deploy` uploads artifacts into it
 # — scripts/ensure_artifacts_volume.sh (run by ci_deploy.sh and `make mcp-deploy`) creates it.
 workspace:
-  artifact_path: "/Volumes/${var.catalog_name}/dqx_mcp_tmp/dqx_artifacts"
+  # Both paths are scoped by name_prefix so concurrent deploys (e.g. two PRs' CI runs, each with a
+  # unique name_prefix) never share bundle state or overwrite each other's uploaded wheels. Without
+  # this, the CLI's default root_path (.../.bundle/mcp-dqx/dev) and a shared artifact folder are
+  # identical across runs by the same deployer, so parallel `bundle deploy`s race on the state file
+  # and clobber wheels. A normal `make mcp-deploy` leaves name_prefix at its default ("mcp-dqx"), so
+  # its paths stay stable and predictable.
+  root_path: "/Workspace/Users/${workspace.current_user.userName}/.bundle/${var.name_prefix}/${bundle.target}"
+  artifact_path: "/Volumes/${var.catalog_name}/dqx_mcp_tmp/dqx_artifacts/${var.name_prefix}"
 
 resources:
   jobs:
