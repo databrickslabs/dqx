@@ -29,7 +29,7 @@ const RELEASE_NOTES_BASE = 'https://github.com/databrickslabs/dqx/releases/tag/v
 type Stage = 'experimental' | 'beta' | 'ga' | 'deprecated';
 
 const STAGE_META: Record<Stage, { label: string; badgeClass: string; anchor: string }> = {
-  experimental: { label: 'Experimental', badgeClass: 'badge--secondary', anchor: 'experimental' },
+  experimental: { label: 'Experimental', badgeClass: 'badge--warning', anchor: 'experimental' },
   beta: { label: 'Beta', badgeClass: 'badge--beta', anchor: 'beta' },
   ga: { label: 'GA', badgeClass: 'badge--success', anchor: 'ga' },
   deprecated: { label: 'Deprecated', badgeClass: 'badge--secondary', anchor: 'deprecated' },
@@ -51,7 +51,7 @@ const INLINE_BADGE_STYLE: CSSProperties = {
 };
 
 /**
- * Renders a lifecycle status badge (Experimental, Beta, GA, Deprecated) linked to
+ * Renders a lifecycle status badge (Experimental, Beta, Deprecated) linked to
  * the matching section of the Feature lifecycle reference page.
  *
  * @param stage    the lifecycle stage to display.
@@ -108,11 +108,15 @@ export function AvailableSinceVersion({
   return (
     <Link
       to={`${RELEASE_NOTES_BASE}${version}`}
-      className="badge badge--version"
       title={`Available since DQX v${version}`}
-      style={{ ...(heading ? HEADING_BADGE_STYLE : INLINE_BADGE_STYLE), textDecoration: 'none' }}
+      style={{ textDecoration: 'none' }}
     >
-      Available since v{version}
+      <span
+        className={`badge badge--secondary`}
+        style={heading ? HEADING_BADGE_STYLE : INLINE_BADGE_STYLE}
+      >
+        Available since v{version}
+      </span>
     </Link>
   );
 }
@@ -143,9 +147,14 @@ export function DeprecatedInVersion({
       to={`${RELEASE_NOTES_BASE}${version}`}
       className="badge badge--version"
       title={title}
-      style={{ ...(heading ? HEADING_BADGE_STYLE : INLINE_BADGE_STYLE), textDecoration: 'none' }}
+      style={{ textDecoration: 'none' }}
     >
-      Deprecated in v{version}
+      <span
+        className={`badge badge--secondary`}
+        style={heading ? HEADING_BADGE_STYLE : INLINE_BADGE_STYLE}
+      >
+        Deprecated in v{version}
+      </span>
     </Link>
   );
 }
