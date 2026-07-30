@@ -1605,7 +1605,7 @@ function SlotsPanel({
                     stopPropagation so opening the dropdown doesn't also toggle
                     the row. */}
                 {disabled || lockFamily ? (
-                  <div className="flex items-center gap-1.5 h-7">
+                  <div className="flex items-center gap-1.5">
                     <Badge variant="outline" className="text-[10px] font-medium">
                       {familyLabel(slot.family)}
                     </Badge>
@@ -1617,7 +1617,7 @@ function SlotsPanel({
                       value={slot.family}
                       onValueChange={(v) => setAt(i, { family: v as RuleSlotFamilyType })}
                     >
-                      <SelectTrigger className="h-7 text-[11px] w-[7.5rem]" aria-label={t("rulesRegistry.slotsPanelFamilyLabel")}>
+                      <SelectTrigger className="h-6 text-[11px] w-[7.5rem]" aria-label={t("rulesRegistry.slotsPanelFamilyLabel")}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent position="popper">
