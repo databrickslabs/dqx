@@ -1496,7 +1496,6 @@
     "sqlConditionShortcutDesc": "Write custom single-table or cross-table SQL",
     "customSurfaceLabel": "Write with",
     "customSurfaceVisual": "Visual builder",
-    "customSurfaceVisualHint": "Your SQL is read back into conditions as far as the builder can express it. Anything it can't is listed, and stays in the SQL tab.",
     "customSurfaceSql": "SQL",
     "granularityRowLevel": "Row-level",
     "granularityDatasetLevel": "Table-level",

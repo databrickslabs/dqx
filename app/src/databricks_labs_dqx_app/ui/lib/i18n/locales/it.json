@@ -1496,7 +1496,6 @@
     "sqlConditionShortcutDesc": "Scrivi SQL personalizzato su tabella singola o tra tabelle",
     "customSurfaceLabel": "Scrivi con",
     "customSurfaceVisual": "Costruttore visuale",
-    "customSurfaceVisualHint": "Il tuo SQL viene riletto come condizioni fin dove il costruttore riesce a esprimerlo. Ciò che non riesce viene elencato e resta nella scheda SQL.",
     "customSurfaceSql": "SQL",
     "granularityRowLevel": "Per riga",
     "granularityDatasetLevel": "Per tabella",

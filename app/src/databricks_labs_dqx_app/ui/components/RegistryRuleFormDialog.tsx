@@ -384,21 +384,23 @@ const COMMAND_GROUP_HEADING_CLASS =
 
 /** Shared styling for BOTH authoring-surface tabs (visual builder / SQL).
  *
- * One tone deliberately, not one per tab: the surfaces are two ways to write the
- * SAME rule type, so colouring them differently implied they were different
- * kinds of rule. The pill still shows which surface is active (fill + ring on the
- * active tab); only the hue stops carrying meaning it never had. Declared for the
- * base AND `dark:` variants because the shared TabsTrigger sets a dark-only
- * active background a base-variant override alone would not reliably beat. */
+ * Inverse active state: the active tab uses foreground/background tokens so it
+ * flips with the theme — dark text on a light chip in light mode, light text on a
+ * dark chip in dark mode. No hue: the surfaces are two ways to write the same rule
+ * type, so colour should not imply they are different kinds. Declared for the base
+ * AND `dark:` variants because the shared TabsTrigger sets a dark-only active
+ * background that a base-variant override alone would not reliably beat. */
 const CUSTOM_SURFACE_TAB_CLASS = [
   "gap-1.5 rounded-full px-3 text-xs",
-  "data-[state=active]:bg-indigo-500/15 dark:data-[state=active]:bg-indigo-500/15",
-  "data-[state=active]:text-indigo-700 dark:data-[state=active]:text-indigo-300",
-  "data-[state=active]:ring-1 data-[state=active]:ring-indigo-500/40",
+  // Inverse active state: dark-on-light in light mode, light-on-dark in dark mode.
+  // Uses foreground/background tokens (no hue) so it inverts with the theme.
+  "data-[state=active]:bg-foreground data-[state=active]:text-background",
+  "dark:data-[state=active]:bg-foreground dark:data-[state=active]:text-background",
+  "data-[state=active]:ring-1 data-[state=active]:ring-foreground/20",
   "dark:data-[state=active]:border-transparent",
   "data-[state=inactive]:text-muted-foreground",
-  "data-[state=inactive]:hover:bg-indigo-500/10 data-[state=inactive]:hover:text-indigo-700",
-  "dark:data-[state=inactive]:hover:text-indigo-300",
+  "data-[state=inactive]:hover:bg-foreground/10 data-[state=inactive]:hover:text-foreground",
+  "dark:data-[state=inactive]:hover:text-foreground",
 ];
 
 /**
@@ -3975,18 +3977,14 @@ export function RegistryRuleFormDialog({
                       }
                     >
                       <TabsList className="h-7 gap-1 rounded-full border bg-muted/30 p-1">
-                        <CursorTooltip
-                          text={mode === "sql" ? t("rulesRegistry.customSurfaceVisualHint") : undefined}
+                        <TabsTrigger
+                          value="lowcode"
+                          disabled={readOnly}
+                          className={cn(CUSTOM_SURFACE_TAB_CLASS)}
                         >
-                          <TabsTrigger
-                            value="lowcode"
-                            disabled={readOnly}
-                            className={cn(CUSTOM_SURFACE_TAB_CLASS)}
-                          >
-                            <SlidersHorizontal className="h-3.5 w-3.5" />
-                            {t("rulesRegistry.customSurfaceVisual")}
-                          </TabsTrigger>
-                        </CursorTooltip>
+                          <SlidersHorizontal className="h-3.5 w-3.5" />
+                          {t("rulesRegistry.customSurfaceVisual")}
+                        </TabsTrigger>
                         <TabsTrigger value="sql" disabled={readOnly} className={cn(CUSTOM_SURFACE_TAB_CLASS)}>
                           <Code2 className="h-3.5 w-3.5" />
                           {t("rulesRegistry.customSurfaceSql")}

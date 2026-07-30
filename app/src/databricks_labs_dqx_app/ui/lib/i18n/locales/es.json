@@ -1496,7 +1496,6 @@
     "sqlConditionShortcutDesc": "Escribe SQL personalizado de una sola tabla o entre tablas",
     "customSurfaceLabel": "Escribir con",
     "customSurfaceVisual": "Constructor visual",
-    "customSurfaceVisualHint": "Tu SQL se interpreta como condiciones hasta donde el constructor puede expresarlo. Lo que no pueda se indica y permanece en la pestaña SQL.",
     "customSurfaceSql": "SQL",
     "granularityRowLevel": "Por fila",
     "granularityDatasetLevel": "Por tabla",
