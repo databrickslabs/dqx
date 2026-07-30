@@ -121,8 +121,8 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
         // mode (that framing word stays above the condition editor for the
         // Native / SQL modes only, where there's no per-row grid to anchor
         // to).
-        <div className="flex items-center h-8 pl-2 justify-self-start">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="flex items-center h-8 justify-self-start">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
             {t("rulesRegistry.ifCondition")}
           </span>
         </div>
