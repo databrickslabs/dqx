@@ -116,7 +116,6 @@ import {
   isV2Ast,
   renameColumnInAst,
   type AnyRow,
-  type JoinAst,
   type LowcodeAstV2,
 } from "@/lib/lowcodeAst";
 import { cn } from "@/lib/utils";
@@ -1776,9 +1775,6 @@ interface RuleEditSnapshot {
   functionName: string;
   paramRawValues: Record<string, string>;
   sqlPredicate: string;
-  /** Joins declared in the SQL editor — derived body type (predicate vs sql_query)
-   * is computed from join presence at save time rather than stored as a flag. */
-  sqlJoins: JoinAst[];
   sqlSlots: RuleSlot[];
   nativeSlots: RuleSlot[];
   /** apply-on-tag: per-slot `class.*` tag map (slot name -> tags). Hydrated
@@ -1832,8 +1828,6 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
     functionName: isNative ? String((rule.definition?.body ?? {}).function ?? "") : "",
     paramRawValues,
     sqlPredicate,
-    // Joins are not round-trippable from stored sql_query — always start empty.
-    sqlJoins: [],
     sqlSlots: isNative ? [] : (rule.definition?.slots ?? []),
     nativeSlots: isNative ? (rule.definition?.slots ?? []) : [],
     slotTags: slotTagsFromUserMetadata(md),
@@ -1878,7 +1872,6 @@ const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   functionName: "",
   paramRawValues: {},
   sqlPredicate: "",
-  sqlJoins: [],
   sqlSlots: [seededFirstSlot()],
   nativeSlots: [],
   slotTags: {},
@@ -1962,7 +1955,6 @@ export function RegistryRuleFormDialog({
   /** Joins declared in the SQL editor. An empty array = single-table SQL (predicate);
    * one or more joins = cross-table SQL (sql_query) — derived at save time via
    * compileJoinsToSql, no separate body-type flag needed. */
-  const [sqlJoins, setSqlJoins] = useState<JoinAst[]>([]);
   const [sqlSlots, setSqlSlots] = useState<RuleSlot[]>([]);
   // Low-Code authoring state (shares `sqlSlots` for its "Columns used"
   // placeholders — the row/aggregate pickers bind to the same declared
@@ -2213,7 +2205,6 @@ export function RegistryRuleFormDialog({
           setSqlMergeColumns("");
           setSqlPredicate(typeof body.predicate === "string" ? body.predicate : "");
         }
-        setSqlJoins([]);
         setSqlSlots(sourceRule.definition?.slots ?? []);
         setFunctionName("");
         setParamRawValues({});
@@ -2236,7 +2227,6 @@ export function RegistryRuleFormDialog({
       setFunctionName("");
       setParamRawValues({});
       setSqlPredicate("");
-      setSqlJoins([]);
       setSqlGranularity("row");
       setSqlMergeColumns("");
       setSqlSlots([seededFirstSlot()]);
@@ -2386,7 +2376,6 @@ export function RegistryRuleFormDialog({
     functionName,
     paramRawValues,
     sqlPredicate,
-    sqlJoins,
     sqlSlots,
     nativeSlots,
     slotTags,
@@ -2458,14 +2447,6 @@ export function RegistryRuleFormDialog({
     return t("rulesRegistry.granularityMergeColumnsMissingFromQuery", { columns: absent.join(", ") });
   })();
 
-  // A join card AND a JOIN (or full SELECT) in the editor both claim the FROM
-  // clause. buildSqlBody's structured-joins branch wins and would wrap the typed
-  // JOIN inside `NOT (…)`, emitting invalid SQL — so it's one or the other. A
-  // rule LOADED as a cross-table sql_query is safe: it reopens with no structured
-  // joins (CRIT-2), only the query text.
-  const sqlJoinsConflict =
-    mode === "sql" && sqlJoins.length > 0 && sqlShape === "query" ? t("rulesRegistry.sqlJoinsConflict") : null;
-
   // A typed SELECT reads the monitored table only through `{{input_view}}`.
   // Omitting it while still referencing a column slot is dead on arrival — DQX
   // resolves the slots to bare identifiers over no relation at all — so it is
@@ -2481,7 +2462,7 @@ export function RegistryRuleFormDialog({
       : null;
   const sqlError =
     mode === "sql"
-      ? (validateSqlPredicate(sqlPredicate, t) ?? sqlJoinsConflict ?? missingInputView ?? granularityError)
+      ? (validateSqlPredicate(sqlPredicate, t) ?? missingInputView ?? granularityError)
       : null;
 
   // -- Save gating -------------------------------------------------------
@@ -2558,16 +2539,8 @@ export function RegistryRuleFormDialog({
       });
     }
     if (mode === "sql") {
-      // Join column_refs: plain (no dot) refs are slot names
-      const joinRefs = new Set<string>();
-      for (const j of sqlJoins) {
-        for (const k of j.keys ?? []) {
-          if (k.column_ref && !k.column_ref.includes(".")) joinRefs.add(k.column_ref);
-        }
-      }
       return sqlSlots.filter((s) => {
         if (sqlPredicate.includes(`{{${s.name}}}`)) return false;
-        if (joinRefs.has(s.name)) return false;
         if (filter.includes(`{{${s.name}}}`)) return false;
         return true;
       });
@@ -2599,7 +2572,7 @@ export function RegistryRuleFormDialog({
       });
     }
     return [];
-  }, [mode, functionName, nativeSlots, selectedFn, sqlSlots, sqlPredicate, sqlJoins, lowcodeAst, groupBy, filter]);
+  }, [mode, functionName, nativeSlots, selectedFn, sqlSlots, sqlPredicate, lowcodeAst, groupBy, filter]);
 
   const structurallyValid =
     mode === "dqx_native"
@@ -2676,7 +2649,7 @@ export function RegistryRuleFormDialog({
       // re-declaring joins recompiles regardless.
       const sqlBody = buildSqlBody({
         sqlPredicate,
-        sqlJoins,
+        sqlJoins: [],
         sqlQueryPassthrough: loadedSqlQueryRef.current,
         // Only pass the toggle when it was a real choice; for a bare predicate
         // buildSqlBody's own row-level path applies and the loaded body's merge
@@ -3560,10 +3533,6 @@ export function RegistryRuleFormDialog({
     if (next !== null) setSqlMergeColumns(next);
   }, [sqlGranularityIsChoice, sqlGranularity, sqlSlots, sqlMergeColumns, setSqlMergeColumns]);
 
-  // JoinsBuilder is written against a low-code AST but only ever reads/writes
-  // `.joins`, so the SQL surface hands it its own join list in that shape.
-  const sqlJoinsAst = useMemo(() => ({ ...EMPTY_LOWCODE_AST, joins: sqlJoins }), [sqlJoins]);
-
   // Update the filter builder's AST and keep the compiled SQL (`filter`, what
   // materializes into DQRule.filter) in sync. compileAstToSql yields the raw
   // predicate (no NOT wrapping) — exactly a WHERE clause.
@@ -3692,10 +3661,6 @@ export function RegistryRuleFormDialog({
       if (predicate && (current === "" || current === ours || lowcodeEditedRef.current)) {
         setSqlPredicate(predicate);
         autoTranslatedSqlRef.current = predicate;
-        // The joins travel with the predicate: it can reference joined columns,
-        // and buildSqlBody needs them to emit the matching FROM clause. Without
-        // this a cross-table builder rule translated to SQL that couldn't run.
-        setSqlJoins(lowcodeAst.joins);
         // Granularity + merge keys come from what the BUILDER would have emitted,
         // so the translated rule runs identically. The builder derives row keys
         // implicitly (join keys, or the group-by columns); the SQL surface makes
@@ -3731,9 +3696,7 @@ export function RegistryRuleFormDialog({
         if (choice.operator) {
           rows[0] = { ...rows[0], kind: "row", column_ref: rows[0].column_ref || anchor, operator: choice.operator };
         }
-        // Structured joins belong to both surfaces, so they travel across rather
-        // than having to be re-declared in the builder.
-        setLowcodeAst({ rows, joins: sqlJoins });
+        setLowcodeAst({ rows, joins: [] });
         setSqlImportNotice({ mapped: imported.rows.length, unmapped: imported.unmapped });
       }
       if (choice.operatorFamily) applyOperatorFamilyToAnchor(choice.operatorFamily);
@@ -3777,7 +3740,6 @@ export function RegistryRuleFormDialog({
       // requestModeChange upstream.
       if (mode === "dqx_native") {
         setSqlPredicate("");
-        setSqlJoins([]);
         autoTranslatedSqlRef.current = null;
       }
       setMode("sql");
@@ -4185,30 +4147,14 @@ export function RegistryRuleFormDialog({
                 {sqlError}
               </p>
             )}
-            {/* Whichever granularity is chosen, this is the obligation it brings.
-                Row-level needs merge keys returned by the query — the step whose
-                absence makes a hand-written JOIN raise at runtime. Table-level
-                needs none but must collapse to a single row, so it gets the
-                warning instead. A bare predicate has neither obligation, which is
-                why this only appears for a query. */}
-            {sqlGranularityIsChoice &&
-              (sqlGranularity === "row" ? (
-                <div className="space-y-1.5">
-                  <GroupByField
-                    value={sqlMergeColumns}
-                    onChange={setSqlMergeColumns}
-                    declaredColumns={sqlMergeColumnOptions}
-                    disabled={readOnly}
-                    label={t("rulesRegistry.granularityMergeColumnsLabel")}
-                    placeholder={t("rulesRegistry.granularityMergeColumnsPlaceholder")}
-                  />
-                </div>
-              ) : (
-                <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-start gap-1">
-                  <AlertCircle className="mt-0.5 h-2.5 w-2.5 shrink-0" />
-                  {t("rulesRegistry.granularityAggregateWarning")}
-                </p>
-              ))}
+            {/* Table-level SQL query warning: the query must collapse to one row.
+                Merge-columns picker is in the Advanced section below. */}
+            {sqlGranularityIsChoice && sqlGranularity === "dataset" && (
+              <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-start gap-1">
+                <AlertCircle className="mt-0.5 h-2.5 w-2.5 shrink-0" />
+                {t("rulesRegistry.granularityAggregateWarning")}
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -4428,22 +4374,26 @@ export function RegistryRuleFormDialog({
           {/* The IF row + editor render up in the Condition section (so the IF
               lands in the same spot as the builder's); this block holds only the
               Advanced section + THEN THE ROW, mirroring the low-code split. */}
-          {/* Advanced in SQL mode holds the JOINS card and a ROW FILTER code box
-              authored in the same slot-aware SQL editor as the predicate. Kept
-              closed by default so opening a custom condition — or swapping
-              between the visual builder and SQL — doesn't expand it. */}
+          {/* Advanced in SQL mode holds the MERGE COLUMNS picker (for row-level
+              queries), a ROW FILTER code box authored in the same slot-aware SQL
+              editor as the predicate, and the threshold field. Kept closed by
+              default so opening a custom condition — or swapping between the
+              visual builder and SQL — doesn't expand it. */}
           <AdvancedDisclosure label={t("rulesRegistry.advancedSectionLabel")}>
-            {/* The structured join path for SQL. Declaring a join here also
-                derives `merge_columns` from the join keys
-                (buildSqlBody, same as the visual builder), so a row-level joined
-                check needs no merge keys picked by hand. Authors can still type a
-                full `SELECT … JOIN …` instead — but not both, see sqlJoinsConflict. */}
-            <JoinsBuilder
-              ast={sqlJoinsAst}
-              onChange={(next) => setSqlJoins(next.joins)}
-              declaredColumns={sqlMergeColumnOptions}
-              readOnly={readOnly}
-            />
+            {/* "Merge results back on" — only relevant for row-level full queries.
+                Moved here from below the SQL editor so the editor area stays clean. */}
+            {sqlGranularityIsChoice && sqlGranularity === "row" && (
+              <div className="space-y-1.5">
+                <GroupByField
+                  value={sqlMergeColumns}
+                  onChange={setSqlMergeColumns}
+                  declaredColumns={sqlMergeColumnOptions}
+                  disabled={readOnly}
+                  label={t("rulesRegistry.granularityMergeColumnsLabel")}
+                  placeholder={t("rulesRegistry.granularityMergeColumnsPlaceholder")}
+                />
+              </div>
+            )}
             {/* Row filter — a SQL WHERE predicate applied before the rule
                 condition. In SQL mode this uses the SAME code editor as the
                 predicate (slot autocomplete + linting), not a plain input —
@@ -4484,15 +4434,15 @@ export function RegistryRuleFormDialog({
   );
   const testSlots = mode === "dqx_native" ? nativeSlots : sqlSlots;
   // Test what the rule will actually BE, not the raw editor text: buildSqlBody is
-  // the same compile the save path uses, so a structured join card or a
-  // predicate carrying JOIN clauses reaches the runner as the `sql_query` it
-  // becomes (wrapped, keys projected) rather than as text that isn't valid SQL on
-  // its own. A bare predicate still comes back as `predicate`, unchanged.
+  // the same compile the save path uses, so a predicate carrying JOIN clauses
+  // reaches the runner as the `sql_query` it becomes (wrapped, keys projected)
+  // rather than as text that isn't valid SQL on its own. A bare predicate still
+  // comes back as `predicate`, unchanged.
   const sqlTestBody =
     mode === "sql"
       ? buildSqlBody({
           sqlPredicate,
-          sqlJoins,
+          sqlJoins: [],
           sqlQueryPassthrough: loadedSqlQueryRef.current,
           granularity: sqlGranularityIsChoice ? sqlGranularity : undefined,
           mergeColumns: mergeColumnList,
