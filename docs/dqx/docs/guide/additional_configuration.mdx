@@ -5,6 +5,7 @@ sidebar_position: 312
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import { AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
 
 
 # Additional Configuration
@@ -132,6 +133,10 @@ The `_dq_info` reporting column is an **array of structs**: one element per data
 
 ## Suppressing skipped check entries
 
+<FeatureTags>
+  <AvailableSinceVersion version="0.14.0" heading={false} />
+</FeatureTags>
+
 By default, when a check is skipped (e.g. because a referenced column or filter cannot be resolved in the input DataFrame), DQX records an entry in `_errors` or `_warnings` with `skipped=True` and a message describing why the check was skipped.
 
 You can suppress these entries entirely by setting `suppress_skipped=True` in `ExtraParams`. When enabled, skipped checks produce no entry in `_errors` or `_warnings`, so the row is not included in the bad DataFrame.
@@ -173,6 +178,10 @@ skipped = checked_df.select(F.explode("_errors").alias("e")).filter(F.col("e.ski
 ```
 
 ## Defining default variables for substitution
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.14.0" heading={false} />
+</FeatureTags>
 
 DQX allows you to define engine-level defaults for variables used in declarative check definitions (YAML, JSON, or Delta tables). These defaults are automatically applied during `load_checks` and `save_checks` unless overridden by the per-call `variables` parameter.
 

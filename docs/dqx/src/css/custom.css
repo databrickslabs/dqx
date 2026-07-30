@@ -800,3 +800,17 @@ button {
   border-color: #ff3621;
   color: #fff;
 }
+
+/* ── Version tag (Available since / Deprecated in): neutral gray, kept distinct
+   from every lifecycle-stage color so it reads as metadata, not a status.
+   These badges are links, so pin the text white across every interaction state
+   (hover/focus/active/visited) to override Docusaurus's default link coloring. ── */
+.badge--version,
+.badge--version:hover,
+.badge--version:focus,
+.badge--version:active,
+.badge--version:visited {
+  background-color: #78716c;
+  border-color: #78716c;
+  color: #fff;
+}

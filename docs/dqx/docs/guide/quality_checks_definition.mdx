@@ -5,6 +5,7 @@ sidebar_position: 306
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import { AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
 
 
 # Quality Checks Definition
@@ -722,6 +723,10 @@ If `run_config_name` is not provided, "default" is used. Typically, the input ta
 
 ## Variable Substitution
 
+<FeatureTags>
+  <AvailableSinceVersion version="0.14.0" heading={false} />
+</FeatureTags>
+
 DQX supports variable substitution in declarative check definitions (YAML, JSON, or Delta tables). This allows you to parameterize your quality rules and inject values at **load time** or **save time** from engine-level defaults and/or via the `variables` parameter in `load_checks` or `save_checks`.
 
 ### Syntax and Scope
@@ -789,6 +794,10 @@ dq_engine.save_checks(
 ```
 
 ## Default Variables
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.14.0" heading={false} />
+</FeatureTags>
 
 In addition to specifying variables during the load or save process, you can define engine-level defaults using the `ExtraParams` class. These constants are automatically applied to all checks unless explicitly overridden.
 

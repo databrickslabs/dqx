@@ -134,6 +134,62 @@ make docs-build
 
 It will throw an error on any unresolved link. 
 
+## Tagging features with lifecycle stage and version
+
+Annotate a feature page or subsection with its lifecycle stage and the release it relates to, using 
+the components in `src/components/FeatureTags.tsx`. Import the ones you need, then place a `<FeatureTags>` 
+row directly **under** the heading (not inline in the `#` line), passing the tags as children with 
+`heading={{false}}`:
+
+```mdx
+import { FeatureLifecycleStage, AvailableSinceVersion, FeatureTags }
+  from '@site/src/components/FeatureTags';
+
+# My Feature
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.14.0" heading={{false}} />
+  <FeatureLifecycleStage stage="beta" heading={{false}} />
+</FeatureTags>
+```
+
+This pattern works for page,section, and subsection headings. Use a subsection tag when it documents a
+capability that arrived in a *later* release than the page itself (for example a new capability added to
+an existing feature). Do not tag structural or explanatory subsections (Overview, Prerequisites, Basic
+Usage, Best Practices, Troubleshooting).
+
+Available components:
+
+- `<FeatureLifecycleStage stage="experimental | beta | ga | deprecated" />` — a status badge linked
+  to the matching section of the [Feature lifecycle](/docs/reference/feature_lifecycle) reference.
+- `<AvailableSinceVersion version="0.14.0" />` — "Available since v0.14.0", linked to that release's notes.
+- `<DeprecatedInVersion version="0.16.0" replacement="the new_check function" />` — "Deprecated in
+  v0.16.0", with an optional replacement named in the tooltip.
+- `<FeatureTags>` — the row container that places the tags on their own line under the heading.
+
+Each tag also accepts `heading` (default `true`) for the rarer case of sitting inline next to
+heading text; inside a `<FeatureTags>` row, pass `heading={{false}}` so the badges render at their
+normal size.
+
+Version strings are literal props — an annotation records a historical fact tied to a specific
+release, so it is set explicitly, not inferred.
+
+<Admonition type="note" title="Keep tags out of the heading line">
+Place tags in a `<FeatureTags>` row under the heading, not inside the `#` line. Docusaurus derives
+the browser tab title and sidebar label from the raw heading text. A tag left in the heading would
+leak the component markup into these elements.
+</Admonition>
+
+There is intentionally no "Changed in vX" component. When behavior or a name changes, bump
+`AvailableSinceVersion` to the release that introduced the current behavior and document the previous
+behavior in an admonition, for example:
+
+```mdx
+<Admonition type="note" title="Changed in v0.16.0">
+Prior to v0.16.0, this option was called `foo`.
+</Admonition>
+```
+
 ## Content alignment and structure of folders
 
 When writing documentation, make sure to align the content with the existing documentation.
