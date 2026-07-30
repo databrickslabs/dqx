@@ -225,61 +225,6 @@ function validateSqlPredicate(predicate: string, t: (key: string) => string): st
   return null;
 }
 
-/**
- * Result of a best-effort SQL -> builder import, shown above the rows.
- *
- * Raised even when everything mapped: what the author sees is a TRANSLATION of
- * their SQL, and the moment they edit a row the builder — not their text —
- * becomes the rule. A partial import additionally lists the fragments that have
- * no builder representation, verbatim, so nothing is dropped silently.
- */
-function SqlImportNotice({
-  notice,
-  onDismiss,
-}: {
-  notice: { mapped: number; unmapped: string[] };
-  onDismiss: () => void;
-}) {
-  const { t } = useTranslation();
-  const lossy = notice.unmapped.length > 0;
-  return (
-    <div
-      className={cn(
-        "flex items-start gap-2 rounded-md border px-3 py-2 text-xs",
-        lossy
-          ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200"
-          : "border-border bg-muted/40 text-muted-foreground",
-      )}
-    >
-      <Info className="mt-0.5 size-3.5 shrink-0" />
-      <div className="min-w-0 flex-1 space-y-1">
-        <p>
-          {lossy
-            ? t("rulesRegistry.sqlImportPartial", { mapped: notice.mapped, dropped: notice.unmapped.length })
-            : t("rulesRegistry.sqlImportBestEffort", { mapped: notice.mapped })}
-        </p>
-        {lossy && (
-          <ul className="list-disc space-y-0.5 pl-4">
-            {notice.unmapped.map((fragment, i) => (
-              <li key={i} className="break-all font-mono">
-                {fragment}
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="opacity-80">{t("rulesRegistry.sqlImportOverwriteHint")}</p>
-      </div>
-      <button
-        type="button"
-        onClick={onDismiss}
-        aria-label={t("common.close")}
-        className="shrink-0 rounded p-0.5 opacity-60 hover:opacity-100"
-      >
-        <X className="size-3.5" />
-      </button>
-    </div>
-  );
-}
 
 function apiFunctionsGrouped(functions: ApiCheckFunctionDef[], query: string) {
   const q = query.trim().toLowerCase();
@@ -1990,10 +1935,6 @@ export function RegistryRuleFormDialog({
   // look at the builder untouched, but once a row has been edited the builder is
   // what the author last expressed, so it re-translates over the editor.
   const lowcodeEditedRef = useRef(false);
-  // Outcome of the last best-effort SQL -> builder import, shown as a banner
-  // above the rows. `unmapped` holds the SQL fragments that have no builder
-  // representation, verbatim.
-  const [sqlImportNotice, setSqlImportNotice] = useState<{ mapped: number; unmapped: string[] } | null>(null);
   // CRIT-2: non-null while the editor holds a rule loaded as a cross-table
   // sql_query. Joins aren't round-trippable from a raw sql_query string, so such
   // a rule reopens with sqlJoins=[] and its whole SELECT sitting in the
@@ -3631,9 +3572,6 @@ export function RegistryRuleFormDialog({
   // change-type re-pick so both stay byte-identical.
   const applyChoice = (choice: DecisionPointChoice) => {
     const next = choiceTargetMode(choice);
-    // The import banner describes ONE crossing from SQL into the builder; every
-    // other transition replaces the state it was reporting on.
-    if (!(mode === "sql" && next === "lowcode")) setSqlImportNotice(null);
     // CRIT-2: a rule-TYPE change abandons the loaded cross-table sql_query body
     // (its SELECT is being replaced by a fresh native/lowcode/single-table
     // surface), so drop the passthrough — a later switch back to SQL must build
@@ -3687,7 +3625,6 @@ export function RegistryRuleFormDialog({
       if (cache && compileAstToSql(cache.ast).trim() === currentSql) {
         setLowcodeAst(cache.ast);
         setGroupBy(cache.groupBy);
-        setSqlImportNotice(null);
       } else {
         lowcodeCacheRef.current = null;
         setGroupBy("");
@@ -3700,7 +3637,6 @@ export function RegistryRuleFormDialog({
           rows[0] = { ...rows[0], kind: "row", column_ref: rows[0].column_ref || anchor, operator: choice.operator };
         }
         setLowcodeAst({ rows, joins: [] });
-        setSqlImportNotice({ mapped: imported.rows.length, unmapped: imported.unmapped });
       }
       if (choice.operatorFamily) applyOperatorFamilyToAnchor(choice.operatorFamily);
       lowcodeEditedRef.current = false;
@@ -4040,9 +3976,6 @@ export function RegistryRuleFormDialog({
             operator cell (incl. aggregated) is the merged ConditionSelector: the
             FIRST row hosts escalation / change-rule-type; secondary rows (2+)
             are operators-only. Advanced + THEN THE ROW follow below. */}
-        {decisionPointChosen && mode === "lowcode" && sqlImportNotice && (
-          <SqlImportNotice notice={sqlImportNotice} onDismiss={() => setSqlImportNotice(null)} />
-        )}
         {decisionPointChosen && mode === "lowcode" && (
           <LowcodeBuilder
             ast={lowcodeAst}
