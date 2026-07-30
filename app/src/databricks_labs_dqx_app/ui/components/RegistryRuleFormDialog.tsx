@@ -3944,6 +3944,25 @@ export function RegistryRuleFormDialog({
           action={
             conditionChosen ? (
               <div className="flex items-center gap-3">
+                {conditionChosen && !readOnly && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                      {t("rulesRegistry.ruleTypeLabel")}
+                    </span>
+                    <div className="max-w-[20rem]">
+                      <ConditionSelector
+                        checkFunctions={checkFunctions}
+                        currentSlots={currentSlots}
+                        operatorFamily={anchorOperatorFamily}
+                        onSelect={requestModeChange}
+                        disabled={readOnly}
+                        currentLabel={currentTypeLabel}
+                        initialView="root"
+                        variant="chip"
+                      />
+                    </div>
+                  </div>
+                )}
                 {mode !== "dqx_native" && (
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -3976,31 +3995,21 @@ export function RegistryRuleFormDialog({
                     </Tabs>
                   </div>
                 )}
-                {granularityDescribesSomething && (
+                {granularityDescribesSomething && granularityFrozenReason === undefined && (
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
                       {t("rulesRegistry.granularityLabel")}
                     </span>
-                    {/* A two-way pill only where the pick is real (SQL holding a
-                        full query, where merge_columns is the whole difference).
-                        Everywhere else granularity is DERIVED — from the check's
-                        registered rule_type, or from what the builder compiled —
-                        so it shows as a tag carrying the same reason as its
-                        tooltip, instead of a control that refuses every click. */}
-                    {granularityFrozenReason === undefined ? (
-                      <GranularitySwitch
-                        value={effectiveGranularity}
-                        onChange={readOnly ? undefined : setSqlGranularity}
-                        disabled={readOnly}
-                        disabledReason={
-                          effectiveGranularity === "row"
-                            ? t("rulesRegistry.granularityRowTooltip")
-                            : t("rulesRegistry.granularityDatasetTooltip")
-                        }
-                      />
-                    ) : (
-                      <GranularityTag value={effectiveGranularity} reason={granularityFrozenReason} />
-                    )}
+                    <GranularitySwitch
+                      value={effectiveGranularity}
+                      onChange={readOnly ? undefined : setSqlGranularity}
+                      disabled={readOnly}
+                      disabledReason={
+                        effectiveGranularity === "row"
+                          ? t("rulesRegistry.granularityRowTooltip")
+                          : t("rulesRegistry.granularityDatasetTooltip")
+                      }
+                    />
                   </div>
                 )}
               </div>
@@ -4009,16 +4018,6 @@ export function RegistryRuleFormDialog({
         >
           {t("rulesRegistry.conditionLabel")}
         </SectionHeader>
-        {conditionChosen && mode !== "dqx_native" && !readOnly && (
-          <button
-            type="button"
-            onClick={() => setDecisionPointChosen(false)}
-            className="inline-flex items-center gap-1.5 rounded-md px-1 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            {t("rulesRegistry.changeRuleTypeHeader")}
-          </button>
-        )}
         {/* Unified top row — the low-code condition-row chrome
             (`IF [column ▾] [selector] …`) is reused for EVERY rule type. The
             operator cell is the merged ConditionSelector: a cycling rule-type
