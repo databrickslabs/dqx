@@ -110,15 +110,16 @@ class ActionEvaluator:
                 except InvalidConditionError as exc:
                     # A condition that is structurally valid can still fail at evaluation time — e.g. it
                     # references a metric absent from this run, or live metric values trigger a
-                    # divide-by-zero. Isolate the failure to this action: record it as UNHEALTHY and move
-                    # on, so a later critical action (FailPipeline, another alert) still runs instead of
-                    # the whole loop aborting.
+                    # divide-by-zero. Isolate the failure to this action and move on, so a later critical
+                    # action (FailPipeline, another alert) still runs instead of the whole loop aborting.
+                    # Record CONFIG_ERROR (not UNHEALTHY): the data is not known to be bad, the action's
+                    # condition is misconfigured, so this must not seed STATUS_CHANGE suppression state.
                     logger.warning(
                         f"Action '{safe_name}' skipped: condition '{safe_condition}' could not be "
                         f"evaluated: {_sanitize(str(exc))}"
                     )
                     self._state_store.record(
-                        self._build_event(dq_action, context, fired=False, status=ActionStatus.UNHEALTHY)
+                        self._build_event(dq_action, context, fired=False, status=ActionStatus.CONFIG_ERROR)
                     )
                     continue
                 if not condition_result:

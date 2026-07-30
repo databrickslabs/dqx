@@ -12,6 +12,7 @@ Tests cover:
 """
 
 import inspect
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal
@@ -246,7 +247,8 @@ def test_teams_allowed_host_suffixes():
     suffixes = client.calls[0].allowed_host_suffixes
     assert suffixes is not None
     assert "logic.azure.com" in suffixes
-    assert "environment.api.powerplatform.com" in suffixes
+    # powerplatform endpoints require an Entra bearer token DQX does not send, so they are not allowed.
+    assert "environment.api.powerplatform.com" not in suffixes
 
 
 def test_teams_payload_has_message_card_type():
@@ -451,36 +453,24 @@ def test_webhook_with_dqsecret_credentials_resolves_and_passes_webhook_auth():
     assert auth.password == "resolved_creds_password"
 
 
-def test_webhook_only_username_no_auth():
-    """Only username set (no password) → auth=None."""
-    client = FakeWebhookClient()
-    services = _make_services(webhook_client=client)
-    context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
-
-    dest = WebhookDQAlertDestination(
-        name="wh_test",
-        webhook_url="https://example.com/hook",
-        username="user1",
-    )
-    dest.deliver(_make_message(), context, services)
-
-    assert client.calls[0].auth is None
+def test_webhook_only_username_rejected():
+    """Only username set (no password) → construction fails rather than silently dropping auth."""
+    with pytest.raises(InvalidActionError, match="both 'username' and 'password'"):
+        WebhookDQAlertDestination(
+            name="wh_test",
+            webhook_url="https://example.com/hook",
+            username="user1",
+        )
 
 
-def test_webhook_only_password_no_auth():
-    """Only password set (no username) → auth=None."""
-    client = FakeWebhookClient()
-    services = _make_services(webhook_client=client)
-    context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
-
-    dest = WebhookDQAlertDestination(
-        name="wh_test",
-        webhook_url="https://example.com/hook",
-        password="pass1",
-    )
-    dest.deliver(_make_message(), context, services)
-
-    assert client.calls[0].auth is None
+def test_webhook_only_password_rejected():
+    """Only password set (no username) → construction fails rather than silently dropping auth."""
+    with pytest.raises(InvalidActionError, match="both 'username' and 'password'"):
+        WebhookDQAlertDestination(
+            name="wh_test",
+            webhook_url="https://example.com/hook",
+            password="pass1",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -623,3 +613,38 @@ def test_alert_destination_base_rejects_empty_name():
     """The base name validator raises InvalidActionError for an empty name."""
     with pytest.raises(InvalidActionError):
         _MinimalDestination(name="")
+
+
+# ---------------------------------------------------------------------------
+# Plaintext secret-in-URL warning (Slack/Teams webhook_url embeds a token)
+# ---------------------------------------------------------------------------
+
+_WEBHOOK_BASE_LOGGER = "databricks.labs.dqx.actions.destinations.webhook_base"
+
+
+def test_slack_plaintext_url_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """A plaintext Slack webhook_url (which embeds a token) warns to prefer DQSecret."""
+    with caplog.at_level(logging.WARNING, logger=_WEBHOOK_BASE_LOGGER):
+        SlackDQAlertDestination(name="slack", webhook_url="https://hooks.slack.com/services/T/B/x")
+    assert any("plaintext" in r.message.lower() and "DQSecret" in r.message for r in caplog.records)
+
+
+def test_teams_plaintext_url_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """A plaintext Teams webhook_url also warns to prefer DQSecret."""
+    with caplog.at_level(logging.WARNING, logger=_WEBHOOK_BASE_LOGGER):
+        TeamsDQAlertDestination(name="teams", webhook_url="https://x.logic.azure.com/workflows/a?sig=b")
+    assert any("plaintext" in r.message.lower() and "DQSecret" in r.message for r in caplog.records)
+
+
+def test_slack_dqsecret_url_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    """A DQSecret Slack webhook_url must NOT emit the plaintext warning."""
+    with caplog.at_level(logging.WARNING, logger=_WEBHOOK_BASE_LOGGER):
+        SlackDQAlertDestination(name="slack", webhook_url=DQSecret(scope="s", key="k"))
+    assert not any("plaintext" in r.message.lower() for r in caplog.records)
+
+
+def test_generic_webhook_plaintext_url_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    """The generic webhook (url_contains_secret=False) must not warn for a plaintext URL."""
+    with caplog.at_level(logging.WARNING, logger=_WEBHOOK_BASE_LOGGER):
+        WebhookDQAlertDestination(name="wh", webhook_url="https://example.com/hook")
+    assert not any("plaintext" in r.message.lower() for r in caplog.records)

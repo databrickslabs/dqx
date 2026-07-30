@@ -43,7 +43,7 @@ from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log as _sanitize
 from databricks.labs.dqx.actions.serializer import ActionSerializer
 from databricks.labs.dqx.config import LakebaseActionsStorageConfig, TableActionsStorageConfig
-from databricks.labs.dqx.errors import UnsafeSqlQueryError
+from databricks.labs.dqx.errors import InvalidActionError, UnsafeSqlQueryError
 from databricks.labs.dqx.lakebase_engine import LakebaseConnectionMixin
 
 logger = logging.getLogger(__name__)
@@ -211,11 +211,18 @@ class TableActionsStorageHandler(ActionsStorageHandler[TableActionsStorageConfig
 
         result: list[DQAction] = []
         for row in df.collect():
+            # Fail loud: a stored action that cannot be deserialized must NOT be silently dropped.
+            # Skipping it could remove a FailPipeline (or other guard) the pipeline was configured to
+            # rely on, so the run would then process bad data as if the action never existed. Surface
+            # the corruption instead so the operator fixes the stored definition.
             try:
                 action_dict = json.loads(row["action_json"])
                 result.append(ActionSerializer.from_dict(action_dict))
-            except Exception as exc:  # broad catch: isolate deserialization errors
-                logger.warning(f"Failed to deserialize action from table '{safe_location}': {_sanitize(str(exc))}")
+            except Exception as exc:
+                raise InvalidActionError(
+                    f"Failed to deserialize a stored action from table '{safe_location}' "
+                    f"(run_config={safe_run_config!r}): {_sanitize(str(exc))}"
+                ) from exc
 
         logger.info(f"Loaded {len(result)} action(s) from '{safe_location}' (run_config={safe_run_config!r}).")
         return result
@@ -357,13 +364,16 @@ class LakebaseActionsStorageHandler(LakebaseConnectionMixin, ActionsStorageHandl
             rows = conn.execute(stmt).mappings().all()
 
         for row in rows:
+            # Fail loud (see the UC-table handler above): never silently drop an action that cannot
+            # be deserialized, or a guard the pipeline relies on (e.g. FailPipeline) could vanish.
             try:
                 action_dict = json.loads(row["action_json"])
                 result.append(ActionSerializer.from_dict(action_dict))
-            except Exception as exc:  # broad catch: isolate deserialization errors
-                logger.warning(
-                    f"Failed to deserialize action from Lakebase table '{safe_location}': {_sanitize(str(exc))}"
-                )
+            except Exception as exc:
+                raise InvalidActionError(
+                    f"Failed to deserialize a stored action from Lakebase table '{safe_location}' "
+                    f"(run_config={safe_run_config!r}): {_sanitize(str(exc))}"
+                ) from exc
 
         logger.info(f"Loaded {len(result)} action(s) from Lakebase '{safe_location}' (run_config={safe_run_config!r}).")
         return result

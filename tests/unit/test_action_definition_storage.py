@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
 from pyspark.sql import SparkSession
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Column, DateTime, Engine, MetaData, String, Table, Text, create_engine, event, insert
 
 from databricks.sdk import WorkspaceClient
 
@@ -20,7 +20,7 @@ from databricks.labs.dqx.actions.dq_action import DQAction
 from databricks.labs.dqx.actions.fail_pipeline import FailPipeline
 from databricks.labs.dqx.actions.serializer import ActionSerializer
 from databricks.labs.dqx.config import LakebaseActionsStorageConfig, TableActionsStorageConfig
-from databricks.labs.dqx.errors import UnsafeSqlQueryError
+from databricks.labs.dqx.errors import InvalidActionError, UnsafeSqlQueryError
 
 
 # ---------------------------------------------------------------------------
@@ -323,8 +323,13 @@ class TestTableActionsStorageHandlerLoad:
 
         assert len(result) == 2
 
-    def test_deserialization_error_is_isolated(self, caplog: pytest.LogCaptureFixture) -> None:
-        """A bad row must be skipped with a warning; valid rows must still be returned."""
+    def test_deserialization_error_fails_loud(self) -> None:
+        """A bad row must fail loud, not be silently skipped.
+
+        Silently dropping an undeserializable action could remove a guard the pipeline relies on
+        (e.g. FailPipeline), letting bad data through. Loading must raise so the operator fixes the
+        stored definition.
+        """
         spark = self._make_spark(table_exists=True)
         ws = create_autospec(WorkspaceClient, instance=True)
 
@@ -337,11 +342,8 @@ class TestTableActionsStorageHandlerLoad:
         spark.read.table.return_value.filter.return_value.collect.return_value = rows
 
         handler = TableActionsStorageHandler(spark=spark, ws=ws)
-        with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.actions.definition_storage"):
-            result = handler.load(_make_table_config())
-
-        assert len(result) == 1
-        assert any("failed to deserialize" in r.message.lower() for r in caplog.records)
+        with pytest.raises(InvalidActionError, match="Failed to deserialize"):
+            handler.load(_make_table_config())
 
     def test_load_logs_count_on_success(self, caplog: pytest.LogCaptureFixture) -> None:
         """A completion log with the count of loaded actions must be emitted."""
@@ -562,6 +564,43 @@ class TestLakebaseActionsStorageHandlerLoad:
             handler.load(config)
 
         assert any("not found" in r.message.lower() for r in caplog.records)
+
+    def test_deserialization_error_fails_loud(self) -> None:
+        """A bad Lakebase row must fail loud (same guarantee as the UC-table handler).
+
+        Uses a real in-memory SQLite engine with the actual table created and one undeserializable
+        row inserted (an in-memory DB is attached as the named schema so has_table(schema=...) is
+        satisfied), so the real load/deserialize path runs with no mocking. Loading must raise
+        InvalidActionError rather than silently dropping the row (which could remove a FailPipeline
+        guard).
+        """
+        spark = create_autospec(SparkSession)
+        ws = create_autospec(WorkspaceClient, instance=True)
+        config = _make_lakebase_config(location="mydb.myschema.mytable")
+
+        engine = create_engine("sqlite:///:memory:")
+        # Attach an in-memory database as the schema so schema-qualified reflection/reads work.
+        event.listen(engine, "connect", lambda dbapi_conn, _rec: dbapi_conn.execute("ATTACH ':memory:' AS myschema"))
+        # Define the actions table with its own metadata (matching name/schema/columns) and seed one
+        # undeserializable row. The handler reflects its own table definition internally.
+        table = Table(
+            "mytable",
+            MetaData(schema="myschema"),
+            Column("action_json", Text),
+            Column("run_config_name", String(255)),
+            Column("created_at", DateTime(timezone=True)),
+        )
+        table.create(engine)
+        with engine.begin() as conn:
+            conn.execute(
+                insert(table).values(
+                    action_json="{invalid json{{", run_config_name=config.run_config_name, created_at=None
+                )
+            )
+
+        handler = LakebaseActionsStorageHandler(spark=spark, ws=ws, config=config, engine=engine)
+        with pytest.raises(InvalidActionError, match="Failed to deserialize"):
+            handler.load(config)
 
 
 # ---------------------------------------------------------------------------

@@ -2081,6 +2081,8 @@ class DQEngine(DQEngineBase):
         location = run_config.action_events_location
         if not location:
             return None
+        # Both config types validate that the location is a table (not a file) at construction, so a
+        # file location is rejected regardless of which backend branch is taken here.
         if run_config.lakebase_instance_name:
             return LakebaseActionsStorageConfig(
                 location=location,
@@ -2088,11 +2090,6 @@ class DQEngine(DQEngineBase):
                 client_id=run_config.lakebase_client_id,
                 port=run_config.lakebase_port or "5432",
                 run_config_name=run_config.name,
-            )
-        if not is_table_location(location):
-            raise InvalidConfigError(
-                "action_events_location must be a Unity Catalog table (catalog.schema.table) or a Lakebase table; "
-                "file locations are not supported for action events."
             )
         return ActionEventsConfig(location=location, run_config_name=run_config.name)
 

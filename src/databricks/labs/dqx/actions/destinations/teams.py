@@ -7,9 +7,9 @@ using the MessageCard payload format.
 Microsoft retired the legacy Office 365 Connector incoming webhooks
 (*webhook.office.com*) in May 2026; the Workflows webhook is the supported
 replacement. Workflows still accepts MessageCard payloads — text and facts
-render — but interactive elements such as buttons do not. Hosts are restricted
-to the Workflows webhook domains *logic.azure.com* and
-*environment.api.powerplatform.com*.
+render — but interactive elements such as buttons do not. Delivery is restricted
+to the *logic.azure.com* Workflows webhook domain, whose URLs carry their
+authorization in the URL signature so an anonymous POST works.
 """
 
 from typing import ClassVar, Literal
@@ -34,13 +34,13 @@ class TeamsDQAlertDestination(WebhookAlertDestination):
     Note:
         Workflows webhook URLs on *logic.azure.com* carry their authorization in
         the URL (a signature query parameter), so an anonymous POST works. Newer
-        *environment.api.powerplatform.com* endpoints may require an Entra bearer
-        token, which this destination does not send, so such endpoints are not
-        currently supported.
+        *environment.api.powerplatform.com* endpoints require an Entra bearer
+        token, which this destination does not send, so those endpoints are not
+        supported and are not on the allowlist.
 
     Class attributes:
-        allowed_host_suffixes: Restricts delivery to the Workflows webhook hosts
-            *logic.azure.com* and *environment.api.powerplatform.com*.
+        allowed_host_suffixes: Restricts delivery to the *logic.azure.com*
+            Workflows webhook host.
 
     Attributes:
         type: Discriminator literal, always *"teams"*.
@@ -49,7 +49,11 @@ class TeamsDQAlertDestination(WebhookAlertDestination):
     """
 
     type: Literal["teams"] = "teams"
-    allowed_host_suffixes: ClassVar[list[str] | None] = ["logic.azure.com", "environment.api.powerplatform.com"]
+    # Only logic.azure.com is supported: Workflows webhooks there carry auth in the URL signature so
+    # an anonymous POST works. environment.api.powerplatform.com endpoints require an Entra bearer
+    # token that this destination does not send, so they are intentionally not allowed.
+    allowed_host_suffixes: ClassVar[list[str] | None] = ["logic.azure.com"]
+    url_contains_secret: ClassVar[bool] = True  # Teams Workflows URL embeds a signature; prefer DQSecret
 
     def _build_payload(self, message: AlertMessage) -> dict[str, object]:
         """Build a Teams MessageCard payload from *message*.

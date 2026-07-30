@@ -9,13 +9,14 @@ enable HTTP Basic-auth.
 
 from typing import ClassVar, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from databricks.labs.dqx.actions.base import ActionServices
 from databricks.labs.dqx.actions.delivery import WebhookAuth
 from databricks.labs.dqx.actions.destinations.webhook_base import WebhookAlertDestination
 from databricks.labs.dqx.actions.message import AlertMessage
 from databricks.labs.dqx.actions.secret_field import SecretOrStr
+from databricks.labs.dqx.errors import InvalidActionError
 
 
 class WebhookDQAlertDestination(WebhookAlertDestination):
@@ -48,6 +49,26 @@ class WebhookDQAlertDestination(WebhookAlertDestination):
     username: SecretOrStr | None = Field(default=None)
     password: SecretOrStr | None = Field(default=None)
 
+    @model_validator(mode="after")
+    def _validate_auth_pair(self) -> "WebhookDQAlertDestination":
+        """Reject a half-configured Basic-auth credential.
+
+        Basic-auth needs both *username* and *password*. Providing exactly one is almost certainly a
+        mistake, and silently sending an unauthenticated request (the previous behavior) could leak a
+        payload to an endpoint that expected auth. Fail fast at construction instead.
+
+        Raises:
+            InvalidActionError: If exactly one of *username* / *password* is set.
+        """
+        # XOR: `!=` on the two "is None" booleans is True only when exactly one of username/password
+        # is set (both-set and both-None are allowed; exactly-one is the misconfiguration).
+        if (self.username is None) != (self.password is None):
+            raise InvalidActionError(
+                "WebhookDQAlertDestination Basic-auth requires both 'username' and 'password' to be set "
+                "(or neither); exactly one was provided."
+            )
+        return self
+
     def _build_auth(self, services: ActionServices) -> WebhookAuth | None:
         """Build *WebhookAuth* when both *username* and *password* are set.
 
@@ -55,12 +76,17 @@ class WebhookDQAlertDestination(WebhookAlertDestination):
         being packaged — this handles both plain strings and *DQSecret*
         references transparently.
 
+        Construction enforces that *username* and *password* are set together (see
+        *_validate_auth_pair*), so in normal use this returns *WebhookAuth* when both are present and
+        *None* when neither is. The *is None* guard here is a defensive backstop for the case where a
+        field is cleared by post-construction mutation (the model does not set *validate_assignment*).
+
         Args:
             services: Injected services containing the secret resolver.
 
         Returns:
-            A *WebhookAuth* instance when both credentials are present, or
-            *None* when either is absent.
+            A *WebhookAuth* instance when both credentials are present, or *None* when neither is
+            (or, defensively, if one was cleared after construction).
         """
         if self.username is None or self.password is None:
             return None

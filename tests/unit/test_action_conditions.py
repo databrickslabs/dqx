@@ -310,6 +310,15 @@ class TestValidate:
         with pytest.raises(InvalidConditionError):
             ConditionEvaluator.validate("__import__('os')")
 
+    def test_validate_allows_divisor_condition(self):
+        # Regression: validate-mode resolves metric names to a non-zero placeholder, so a legitimate
+        # ratio condition must not spuriously fail with a division-by-zero before any metrics exist.
+        ConditionEvaluator.validate("error_row_count / input_row_count < 0.1")
+
+    def test_validate_allows_modulo_condition(self):
+        # Same non-zero-placeholder guarantee for modulo, which also divides by zero on a 0 placeholder.
+        ConditionEvaluator.validate("input_row_count % error_row_count == 0")
+
 
 # ---------------------------------------------------------------------------
 # Full-tree pre-pass: short-circuit must NOT bypass allowlist (Fix round 1)

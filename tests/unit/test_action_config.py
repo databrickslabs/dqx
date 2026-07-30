@@ -57,6 +57,18 @@ class TestDQSecret:
         with pytest.raises(InvalidParameterError):
             DQSecret.from_reference("scope/")
 
+    def test_from_reference_strips_whitespace(self):
+        # Leading/trailing whitespace around scope/key is trimmed so a stray space in config does
+        # not produce a scope/key that fails at secret lookup with a confusing error.
+        secret = DQSecret.from_reference("  myscope / mykey  ")
+        assert secret.scope == "myscope"
+        assert secret.key == "mykey"
+
+    def test_from_reference_raises_for_whitespace_only_part(self):
+        # A part that is only whitespace is empty after stripping and must still be rejected.
+        with pytest.raises(InvalidParameterError):
+            DQSecret.from_reference("scope/   ")
+
     def test_frozen_dataclass(self):
         secret = DQSecret(scope="s", key="k")
         with pytest.raises((AttributeError, TypeError)):
@@ -146,6 +158,40 @@ class TestActionEventsConfig:
     def test_invalid_mode_raises(self):
         with pytest.raises(InvalidConfigError, match="Invalid mode"):
             ActionEventsConfig(location="catalog.schema.events", mode="upsert")
+
+    def test_file_location_raises(self):
+        # Action events must go to a UC/Lakebase table, never a file path.
+        with pytest.raises(InvalidConfigError, match="must be a Unity Catalog table"):
+            ActionEventsConfig(location="/Volumes/cat/sch/vol/events.json")
+
+    def test_three_part_file_extension_location_raises(self):
+        # A 3-part name that is actually a serializer file (e.g. .yml/.json) must be rejected as a
+        # file, not accepted as a table (regression guard for the table-vs-file check).
+        with pytest.raises(InvalidConfigError, match="must be a Unity Catalog table"):
+            ActionEventsConfig(location="my.checks.yml")
+        with pytest.raises(InvalidConfigError, match="must be a Unity Catalog table"):
+            ActionEventsConfig(location="cat.schema.events.json")
+
+    def test_leading_digit_location_is_accepted(self):
+        # Databricks allows leading digits in unquoted identifiers (verified against a live
+        # workspace: '1catalog.schema.events' resolves as a table name, not a parse error).
+        cfg = ActionEventsConfig(location="1catalog.schema.events")
+        assert cfg.location == "1catalog.schema.events"
+
+    def test_backtick_quoted_dotted_name_is_accepted(self):
+        # A backtick-quoted part containing a dot is a single valid identifier, not four parts.
+        cfg = ActionEventsConfig(location="cat.schema.`weird.name`")
+        assert cfg.location == "cat.schema.`weird.name`"
+
+    def test_two_part_table_location_is_accepted(self):
+        # A two-part schema.table name (default catalog) is a valid UC table location.
+        cfg = ActionEventsConfig(location="schema.events")
+        assert cfg.location == "schema.events"
+
+    def test_single_part_location_raises(self):
+        # A bare single-part name is not a table location.
+        with pytest.raises(InvalidConfigError, match="must be a Unity Catalog table"):
+            ActionEventsConfig(location="events")
 
 
 # ---------------------------------------------------------------------------

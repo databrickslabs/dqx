@@ -6,6 +6,7 @@ concrete subclasses via *_build_payload*.
 """
 
 import abc
+import logging
 from typing import ClassVar
 
 from pydantic import model_validator
@@ -13,9 +14,13 @@ from pydantic import model_validator
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices
 from databricks.labs.dqx.actions.delivery import WebhookAuth
 from databricks.labs.dqx.actions.destinations.base import AlertDestination
+from databricks.labs.dqx.actions.log_sanitize import sanitize_for_log
 from databricks.labs.dqx.actions.message import AlertMessage
 from databricks.labs.dqx.actions.secret_field import SecretOrStr
+from databricks.labs.dqx.config import DQSecret
 from databricks.labs.dqx.errors import InvalidActionError
+
+logger = logging.getLogger(__name__)
 
 
 class WebhookAlertDestination(AlertDestination, abc.ABC):
@@ -41,12 +46,15 @@ class WebhookAlertDestination(AlertDestination, abc.ABC):
     """
 
     allowed_host_suffixes: ClassVar[list[str] | None] = None
+    # Set True by subclasses whose webhook URL embeds a secret token (Slack, Teams). Such URLs should
+    # be supplied as a DQSecret; a plain string is accepted for simplicity but warns.
+    url_contains_secret: ClassVar[bool] = False
 
     webhook_url: SecretOrStr
 
     @model_validator(mode="after")
     def _validate_webhook_url(self) -> "WebhookAlertDestination":
-        """Validate that *webhook_url* is a non-empty string or a *DQSecret*.
+        """Validate *webhook_url* and warn when a token-bearing URL is a plaintext string.
 
         Returns:
             This destination instance.
@@ -56,6 +64,14 @@ class WebhookAlertDestination(AlertDestination, abc.ABC):
         """
         if isinstance(self.webhook_url, str) and not self.webhook_url:
             raise InvalidActionError("AlertDestination 'webhook_url' must be a non-empty string or DQSecret.")
+        # Token-bearing webhook URLs (Slack/Teams) should be secret references. Allow a plain string
+        # for local development but warn — the token would otherwise sit in config/logs in plaintext.
+        if self.url_contains_secret and not isinstance(self.webhook_url, DQSecret):
+            logger.warning(
+                f"Destination '{sanitize_for_log(self.name)}' ({type(self).__name__}) was given a plaintext "
+                "webhook_url that embeds a secret token. Prefer a DQSecret (scope/key) reference; plaintext is "
+                "for local development only."
+            )
         return self
 
     @abc.abstractmethod

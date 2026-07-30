@@ -1,3 +1,4 @@
+import re
 from abc import ABC
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -79,7 +80,9 @@ class DQSecret:
         """
         if "/" not in ref:
             raise InvalidParameterError(f"Secret reference must be in the form 'scope/key', got {ref!r}.")
-        scope, _, key = ref.partition("/")
+        raw_scope, _, raw_key = ref.partition("/")
+        scope = raw_scope.strip()
+        key = raw_key.strip()
         if not scope or not key:
             raise InvalidParameterError(f"Secret reference must have non-empty scope and key parts, got {ref!r}.")
         return cls(scope=scope, key=key)
@@ -389,6 +392,42 @@ class WorkspaceConfig:
         raise InvalidConfigError("No run configurations available")
 
 
+# Matches a two- or three-part table identifier (optional catalog), each part a bare or
+# backtick-quoted name: e.g. catalog.schema.table, schema.table, cat.sch.`weird.name`.
+# Databricks permits leading digits in unquoted identifiers (e.g. `1abc` is a valid table name;
+# verified against a live workspace), so a bare part is [a-zA-Z0-9_]+; special characters must be
+# backtick-quoted.
+_IDENT = r"(?:`[^`]+`|[a-zA-Z0-9_]+)"
+TABLE_PATTERN = re.compile(rf"^(?:{_IDENT}\.)?{_IDENT}\.{_IDENT}$")
+
+
+def is_table_location(location: str) -> bool:
+    """Return True if *location* is a Delta table name (catalog.schema.table), not a file path.
+
+    A location is a table when it matches the table-identifier pattern AND does not end with a known
+    checks-serializer file extension (.json/.yml/...). This is the single source of truth for the
+    table-vs-file distinction; *io.py* and *checks_storage.py* re-export it.
+
+    Args:
+        location: The location string to classify.
+
+    Returns:
+        True if *location* names a table, False if it is a file path or otherwise not a table.
+    """
+    return bool(TABLE_PATTERN.match(location)) and not location.lower().endswith(
+        SerializerFactory.get_supported_extensions()
+    )
+
+
+def _is_three_part_table_location(location: str) -> bool:
+    """Return True if *location* is a table (not a file) with an exact three-part name.
+
+    Stricter than *is_table_location* (which also accepts the two-part *schema.table* form): Lakebase
+    requires a fully qualified *database.schema.table*.
+    """
+    return is_table_location(location) and len(location.split(".")) == 3
+
+
 class BaseChecksStorageConfig(BaseModel, ABC):
     """Marker base class for storage configuration.
 
@@ -537,7 +576,8 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
         if not self.instance_name:
             raise InvalidParameterError("Instance name must not be empty or None.")
 
-        if len(self.location.split(".")) != 3:
+        # Lakebase requires an exact three-part database.schema.table name that is a table, not a file.
+        if not _is_three_part_table_location(self.location):
             raise InvalidConfigError(
                 f"Invalid Lakebase table name '{self.location}'. Must be in the format 'database.schema.table'."
             )
@@ -703,7 +743,8 @@ class LakebaseActionsStorageConfig(BaseChecksStorageConfig):
         if not self.instance_name:
             raise InvalidParameterError("Instance name must not be empty or None.")
 
-        if len(self.location.split(".")) != 3:
+        # Lakebase requires an exact three-part database.schema.table name that is a table, not a file.
+        if not _is_three_part_table_location(self.location):
             raise InvalidConfigError(
                 f"Invalid Lakebase table name '{self.location}'. Must be in the format 'database.schema.table'."
             )
@@ -754,6 +795,18 @@ class ActionEventsConfig(BaseChecksStorageConfig):
         if cls is ActionEventsConfig and isinstance(data, dict) and not data.get("location"):
             raise InvalidConfigError("The events table name ('location' field) must not be empty or None.")
         return data
+
+    @model_validator(mode="after")
+    def validate_location_is_table(self) -> "ActionEventsConfig":
+        # Action events are always written to a Unity Catalog or Lakebase table, never a file. Validate
+        # here (at construction) so the guarantee holds regardless of how the config is built, rather
+        # than relying on a caller to check the location before constructing it.
+        if not is_table_location(self.location):
+            raise InvalidConfigError(
+                f"action_events_location '{self.location}' must be a Unity Catalog table "
+                "(catalog.schema.table) or a Lakebase table; file locations are not supported for action events."
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_mode(self) -> "ActionEventsConfig":

@@ -581,6 +581,25 @@ def test_try_fire_does_not_reserve_for_non_alert_action() -> None:
     assert store.try_fire(dq_action, ctx, condition_result=True) is True
 
 
+def test_try_fire_reserves_status_change_to_suppress_duplicate() -> None:
+    """try_fire stamps _last_status=UNHEALTHY so a second STATUS_CHANGE fire is suppressed (#3).
+
+    With notify_on=STATUS_CHANGE and frequency=ALWAYS (no frequency window), the only thing that
+    should stop a second fire in the same window is the status reservation. The first try_fire wins
+    and stamps UNHEALTHY; the second must see that status and be suppressed, mirroring what record()
+    would do — without relying on record() having run yet (the concurrency-safety point).
+    """
+    store = ActionStateStore()
+    dq_action = _make_dq_action(_make_dq_alert(frequency=DQAlertFrequency.ALWAYS, notify_on=NotifyOn.STATUS_CHANGE))
+    ctx = _make_context()
+
+    # First fire: last_status is unset (not UNHEALTHY) -> transition into unhealthy -> fires and reserves.
+    assert store.try_fire(dq_action, ctx, condition_result=True) is True
+    # Second fire in the same window: try_fire already stamped _last_status=UNHEALTHY, so STATUS_CHANGE
+    # sees "already unhealthy" and suppresses — even though record() has not been called.
+    assert store.try_fire(dq_action, ctx, condition_result=True) is False
+
+
 def test_record_append_failure_is_logged_not_raised() -> None:
     """A failing persistent append must not propagate; in-memory state still updates (#4)."""
 

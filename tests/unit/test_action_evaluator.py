@@ -520,8 +520,8 @@ def test_runtime_condition_error_isolated_from_other_actions() -> None:
     assert any(r.action_name == "good_action" for r in results)
 
 
-def test_runtime_condition_error_records_unhealthy_and_no_raise() -> None:
-    """A runtime condition error is recorded as a non-fired UNHEALTHY event and does not propagate."""
+def test_runtime_condition_error_records_config_error_and_no_raise() -> None:
+    """A runtime condition error is recorded as a non-fired CONFIG_ERROR event and does not propagate."""
     bad_action = create_autospec(Action, instance=True)
     bad = _make_dq_action(bad_action, condition="missing_metric > 0", name="bad_action")
     state_store = create_autospec(ActionStateStore, instance=True)
@@ -535,7 +535,9 @@ def test_runtime_condition_error_records_unhealthy_and_no_raise() -> None:
     assert state_store.record.call_count == 1
     event: AlertEvent = state_store.record.call_args[0][0]
     assert event.fired is False
-    assert event.status == ActionStatus.UNHEALTHY
+    # CONFIG_ERROR (not UNHEALTHY): a broken condition is a misconfiguration, not bad data, so it
+    # must not seed STATUS_CHANGE suppression state.
+    assert event.status == ActionStatus.CONFIG_ERROR
     assert event.action_name == "bad_action"
-    # should_fire / execute are never reached for a condition that errors.
+    # try_fire / execute are never reached for a condition that errors.
     state_store.try_fire.assert_not_called()

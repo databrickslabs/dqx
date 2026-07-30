@@ -256,9 +256,13 @@ class ActionStateStore:
             if not self._should_fire_locked(dq_action, context, condition_result):
                 return False
             # Reserve the slot so a concurrent try_fire for the same alert is suppressed before this
-            # thread's execute()/record() completes. Only DQAlert is frequency-gated.
+            # thread's execute()/record() completes. Only DQAlert is frequency-gated. Stamp both
+            # _last_fired (frequency window) and _last_status=UNHEALTHY (a firing DQAlert always
+            # reports UNHEALTHY): otherwise a concurrent STATUS_CHANGE evaluation would still see the
+            # prior non-UNHEALTHY status and fire a duplicate. record() later confirms the same values.
             if isinstance(dq_action.action, DQAlert):
                 self._last_fired[dq_action.name] = context.run_time
+                self._last_status[dq_action.name] = ActionStatus.UNHEALTHY
             return True
 
     def _should_fire_locked(self, dq_action: DQAction, context: ActionContext, condition_result: bool) -> bool:

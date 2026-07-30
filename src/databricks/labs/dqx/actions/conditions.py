@@ -301,7 +301,10 @@ def _eval_name(node: ast.Name, metrics: dict[str, object] | None) -> object:
     Returns a placeholder when *metrics* is *None* (validate-only mode).
     """
     if metrics is None:
-        return 0  # placeholder that satisfies downstream arithmetic
+        # Validate-only mode checks structure, not real values. Use a non-zero placeholder so a
+        # legitimate divisor/modulo condition (e.g. "error_row_count / input_row_count < 0.1") does
+        # not spuriously fail validation with a division-by-zero before any metrics exist.
+        return 1
     name = node.id
     if name not in metrics:
         raise InvalidConditionError(f"Condition references unknown metric '{name}'; available: {sorted(metrics)}")

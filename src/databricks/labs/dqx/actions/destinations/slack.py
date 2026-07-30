@@ -35,6 +35,7 @@ class SlackDQAlertDestination(WebhookAlertDestination):
 
     type: Literal["slack"] = "slack"
     allowed_host_suffixes: ClassVar[list[str] | None] = ["hooks.slack.com"]
+    url_contains_secret: ClassVar[bool] = True  # Slack webhook URL embeds a token; prefer DQSecret
 
     def _build_payload(self, message: AlertMessage) -> dict[str, object]:
         """Build a Slack Block Kit payload from *message*.

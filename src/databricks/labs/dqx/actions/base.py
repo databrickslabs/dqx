@@ -39,12 +39,16 @@ class ActionStatus(enum.Enum):
 
     Attributes:
         HEALTHY: The action completed without detecting a quality violation.
-        UNHEALTHY: The action detected a quality violation or encountered an
-            unrecoverable error.
+        UNHEALTHY: The action detected a quality violation.
+        CONFIG_ERROR: The action could not be evaluated because of a configuration
+            problem (e.g. its condition failed to evaluate against the observed
+            metrics). This is distinct from *UNHEALTHY*: the data is not known to be
+            bad, the action itself is misconfigured.
     """
 
     HEALTHY = "healthy"
     UNHEALTHY = "unhealthy"
+    CONFIG_ERROR = "config_error"
 
 
 # ---------------------------------------------------------------------------

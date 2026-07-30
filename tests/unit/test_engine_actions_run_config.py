@@ -97,7 +97,7 @@ def test_events_config_table_location() -> None:
 
 def test_events_config_rejects_file_location() -> None:
     run_config = RunConfig(name="rc", action_events_location="/Volumes/cat/sch/vol/events.json")
-    with pytest.raises(InvalidConfigError, match="action_events_location must be"):
+    with pytest.raises(InvalidConfigError, match="must be a Unity Catalog table"):
         DQEngine._run_config_action_events_config(run_config)
 
 
