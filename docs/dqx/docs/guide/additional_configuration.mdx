@@ -166,6 +166,10 @@ You can suppress these entries entirely by setting `suppress_skipped=True` in `E
 
 ## Identifying skipped checks in results
 
+<FeatureTags>
+  <AvailableSinceVersion version="0.14.0" heading={false} />
+</FeatureTags>
+
 When a check is skipped and `suppress_skipped` is not enabled, the result struct includes a `skipped` boolean field set to `True`. This allows downstream consumers to distinguish skipped checks from actual data quality failures without parsing the message string.
 
 ```python
