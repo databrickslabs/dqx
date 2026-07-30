@@ -1509,7 +1509,6 @@
     "granularityDerivedFromBuilder": "Derivado do que você montou: adicionar junções ou agrupamento a mantém por linha, unindo os resultados por essas chaves.",
     "granularityMergeColumnsLabel": "Unir os resultados por",
     "granularityMergeColumnsPlaceholder": "Escolha as colunas chave",
-    "granularityMergeColumnsHelp": "Colunas chave presentes na tabela monitorada. Sua consulta deve retorná-las para que o veredito de cada linha possa ser reassociado.",
     "granularityMergeColumnsRequired": "SQL por linha precisa de pelo menos uma coluna de união, caso contrário a verificação falha em execução.",
     "granularityMergeColumnsMissingFromQuery": "Sua consulta não seleciona {{columns}}. Adicione à lista SELECT, ou não será possível reassociá-la às linhas.",
     "granularityAggregateWarning": "SQL por tabela deve agregar para exatamente uma linha. Uma consulta que retorna uma linha por linha de entrada falha em execução.",

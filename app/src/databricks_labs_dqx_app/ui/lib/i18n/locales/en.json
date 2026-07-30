@@ -1509,7 +1509,6 @@
     "granularityDerivedFromBuilder": "Derived from what you built: adding joins or grouping keeps it row-level by merging results back on those keys.",
     "granularityMergeColumnsLabel": "Merge results back on",
     "granularityMergeColumnsPlaceholder": "Choose the key columns",
-    "granularityMergeColumnsHelp": "Key columns present on the monitored table. Your query must return them so each row's verdict can be matched back.",
     "granularityMergeColumnsRequired": "Row-level SQL needs at least one merge column, otherwise the check fails at runtime.",
     "granularityMergeColumnsMissingFromQuery": "Your query does not select {{columns}}. Add it to the SELECT list, or it cannot be matched back to rows.",
     "granularityAggregateWarning": "Table-level SQL must aggregate to exactly one row. A query returning one row per input row fails at runtime.",

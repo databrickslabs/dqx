@@ -1509,7 +1509,6 @@
     "granularityDerivedFromBuilder": "Derivado de lo que construiste: añadir uniones o agrupaciones lo mantiene por fila, uniendo los resultados por esas claves.",
     "granularityMergeColumnsLabel": "Unir los resultados por",
     "granularityMergeColumnsPlaceholder": "Elige las columnas clave",
-    "granularityMergeColumnsHelp": "Columnas clave presentes en la tabla monitorizada. Tu consulta debe devolverlas para poder emparejar el veredicto de cada fila.",
     "granularityMergeColumnsRequired": "El SQL por fila necesita al menos una columna de unión; si no, la comprobación falla en ejecución.",
     "granularityMergeColumnsMissingFromQuery": "Tu consulta no selecciona {{columns}}. Añádelo a la lista SELECT o no podrá emparejarse con las filas.",
     "granularityAggregateWarning": "El SQL por tabla debe agregarse a exactamente una fila. Una consulta que devuelve una fila por fila de entrada falla en ejecución.",

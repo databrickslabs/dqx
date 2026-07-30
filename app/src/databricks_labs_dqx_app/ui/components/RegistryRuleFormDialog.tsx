@@ -176,6 +176,7 @@ import { SqlAiAssistMenu } from "@/components/rules/SqlAiAssistMenu";
 import { useDefaultPassThreshold } from "@/hooks/use-default-pass-threshold";
 import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 import { useRulesResultsTabEnabled } from "@/hooks/use-global-results-enabled";
+import { computeMergeColumnsAutofill } from "@/lib/mergeColumnsAutofill";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
@@ -3547,6 +3548,18 @@ export function RegistryRuleFormDialog({
     name: s.name,
     family: slotFamilyToLowcode(s.family),
   }));
+
+  // Autofill "Merge results back on" from the declared Columns used the first
+  // time a row-level SQL query needs it, without clobbering a typed/loaded value.
+  useEffect(() => {
+    if (!(sqlGranularityIsChoice && sqlGranularity === "row")) return;
+    const next = computeMergeColumnsAutofill(
+      sqlMergeColumns,
+      sqlSlots.map((s) => s.name),
+    );
+    if (next !== null) setSqlMergeColumns(next);
+  }, [sqlGranularityIsChoice, sqlGranularity, sqlSlots, sqlMergeColumns, setSqlMergeColumns]);
+
   // JoinsBuilder is written against a low-code AST but only ever reads/writes
   // `.joins`, so the SQL surface hands it its own join list in that shape.
   const sqlJoinsAst = useMemo(() => ({ ...EMPTY_LOWCODE_AST, joins: sqlJoins }), [sqlJoins]);
@@ -4189,9 +4202,6 @@ export function RegistryRuleFormDialog({
                     label={t("rulesRegistry.granularityMergeColumnsLabel")}
                     placeholder={t("rulesRegistry.granularityMergeColumnsPlaceholder")}
                   />
-                  <p className="text-[10px] text-muted-foreground">
-                    {t("rulesRegistry.granularityMergeColumnsHelp")}
-                  </p>
                 </div>
               ) : (
                 <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-start gap-1">
