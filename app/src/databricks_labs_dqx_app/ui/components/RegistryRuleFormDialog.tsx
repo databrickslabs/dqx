@@ -386,8 +386,8 @@ const COMMAND_GROUP_HEADING_CLASS =
 /** Shared styling for BOTH authoring-surface tabs (visual builder / SQL).
  *
  * Inverse active state: the active tab uses foreground/background tokens so it
- * flips with the theme — dark text on a light chip in light mode, light text on a
- * dark chip in dark mode. No hue: the surfaces are two ways to write the same rule
+ * flips with the theme — a dark chip with light text in light mode, a light chip
+ * with dark text in dark mode. No hue: the surfaces are two ways to write the same rule
  * type, so colour should not imply they are different kinds. Declared for the base
  * AND `dark:` variants because the shared TabsTrigger sets a dark-only active
  * background that a base-variant override alone would not reliably beat. */
@@ -4112,7 +4112,7 @@ export function RegistryRuleFormDialog({
         )}
         {/* SQL surface renders in the SAME slot inside the Condition section as
             the builder's rows, and its IF sits in a cell shaped like
-            LowcodeRow's first column (py-1 row, h-8 pl-2 cell), so the framing
+            LowcodeRow's first column (py-1 row, h-8 cell), so the framing
             word keeps one position when swapping between the two surfaces. */}
         {decisionPointChosen && mode === "sql" && (
           <div className="space-y-3">
