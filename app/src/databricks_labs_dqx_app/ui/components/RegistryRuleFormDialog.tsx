@@ -1522,7 +1522,7 @@ function SlotsPanel({
               )}
               onClick={() => !disabled && setExpanded(isOpen ? null : i)}
             >
-              <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-3 py-2">
+              <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-3 py-2 min-h-[2.5rem]">
                 <div className="flex flex-wrap items-center gap-2 min-w-0">
                   {/* The row expands to the rename field, but nothing said so —
                       the same invisible affordance that hid the type control. */}
