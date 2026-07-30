@@ -469,6 +469,25 @@ checked_df = engine.apply_checks_by_metadata(df, checks_list)
 - **[docs/](./docs/)** — Full site including contribution workflow (Docusaurus): [https://databrickslabs.github.io/dqx/](https://databrickslabs.github.io/dqx/)
 - **[CHANGELOG.md](./CHANGELOG.md)** — Release history
 
+### Authoring documentation (`docs/dqx/docs/`)
+
+See [Authoring Documentation](https://databrickslabs.github.io/dqx/docs/dev/docs_authoring/) for full guidance. Key convention:
+
+- **Tag new features with lifecycle stage and version** using the components in `src/components/FeatureTags.tsx`. Put a `<FeatureTags>` row directly under the heading (page, section, or subsection) with `heading={false}` on each tag:
+
+  ```mdx
+  import { FeatureLifecycleStage, AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
+
+  # My Feature
+
+  <FeatureTags>
+    <FeatureLifecycleStage stage="beta" heading={false} />
+    <AvailableSinceVersion version="0.16.0" heading={false} />
+  </FeatureTags>
+  ```
+
+  Version strings are literal props (a historical fact tied to a release), never inferred. Tag a subsection only when it documents functionality newer than its page; do not tag structural headings (Overview, Prerequisites, Best Practices, Troubleshooting). There is no "Changed in" component — bump `AvailableSinceVersion` and note prior behavior in an admonition.
+
 ---
 
 **Stack**: Python 3.10+ · PySpark · Databricks SDK · databricks-labs-blueprint · databricks-labs-pytester · DSPy · Presidio · MLflow

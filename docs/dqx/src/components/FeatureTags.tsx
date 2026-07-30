@@ -145,7 +145,6 @@ export function DeprecatedInVersion({
   return (
     <Link
       to={`${RELEASE_NOTES_BASE}${version}`}
-      className="badge badge--version"
       title={title}
       style={{ textDecoration: 'none' }}
     >
