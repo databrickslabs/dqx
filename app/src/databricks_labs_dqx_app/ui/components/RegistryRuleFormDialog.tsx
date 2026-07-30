@@ -3924,25 +3924,6 @@ export function RegistryRuleFormDialog({
           action={
             conditionChosen ? (
               <div className="flex items-center gap-3">
-                {conditionChosen && !readOnly && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                      {t("rulesRegistry.ruleTypeLabel")}
-                    </span>
-                    <div className="max-w-[20rem]">
-                      <ConditionSelector
-                        checkFunctions={checkFunctions}
-                        currentSlots={currentSlots}
-                        operatorFamily={anchorOperatorFamily}
-                        onSelect={requestModeChange}
-                        disabled={readOnly}
-                        currentLabel={currentTypeLabel}
-                        initialView="root"
-                        variant="chip"
-                      />
-                    </div>
-                  </div>
-                )}
                 {mode !== "dqx_native" && (
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -4117,7 +4098,18 @@ export function RegistryRuleFormDialog({
         {decisionPointChosen && mode === "sql" && (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2 py-1">
-              <div className="flex h-8 items-center">
+              <div className="flex h-8 items-center gap-2">
+                {!readOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setDecisionPointChosen(false)}
+                    aria-label={t("rulesRegistry.changeRuleTypeHeader")}
+                    title={t("rulesRegistry.changeRuleTypeHeader")}
+                    className="text-muted-foreground hover:text-foreground -ml-1 p-0.5 rounded"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" />
+                  </button>
+                )}
                 <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                   {t("rulesRegistry.ifCondition")}
                 </span>
