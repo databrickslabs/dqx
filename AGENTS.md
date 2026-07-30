@@ -41,6 +41,8 @@ make lock-app-dependencies    # refresh app/uv.lock + app/yarn.lock
 
 App docs (read these before touching `app/`): [`app/CLAUDE.md`](app/CLAUDE.md), [`app/DEPLOYMENT.md`](app/DEPLOYMENT.md), [`app/DEVELOPMENT.md`](app/DEVELOPMENT.md), [`app/README.md`](app/README.md), and the backend / UI CLAUDEs under `app/src/databricks_labs_dqx_app/`.
 
+**What's new:** when you ship a major, user-facing DQX Studio feature or improvement, add a short entry (a bold headline + 1–2 sentences) to the What's new page at `docs/dqx/docs/studio/whats-new/index.mdx`. It's the single place users look to see what changed, and it's part of the [Definition of Done](docs/dqx/docs/dev/contributing.mdx).
+
 ### Dependency installs and lock files
 
 - Use **`make dev`** from the repo root to create `.venv` and install Python dependencies. Do **not** run `uv sync`, `uv lock`, or `uv add` for normal setup — that bypasses `UV_FROZEN=1` and may modify `uv.lock` or bake in internal registry URLs.

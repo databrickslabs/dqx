@@ -124,40 +124,50 @@ const config: Config = {
               ],
             },
             {
-              id: 'user-guide',
-              name: 'User Guide',
-              description: 'Complete guide for using DQX features',
+              id: 'dqx-core',
+              name: 'DQX Core',
+              description: 'The DQX Python package for code-level data quality',
               position: 2,
               routes: [
                 { route: '/dqx/docs/guide/**' }
               ],
             },
             {
-              id: 'reference',
-              name: 'Reference',
-              description: 'API reference, CLI commands, and technical documentation',
+              id: 'dqx-studio',
+              name: 'DQX Studio',
+              description: 'The no-code web app for authoring, reviewing, running, and monitoring data quality rules',
               position: 3,
               routes: [
+                { route: '/dqx/docs/studio' },
+                { route: '/dqx/docs/studio/**' }
+              ],
+            },
+            {
+              id: 'reference',
+              name: 'DQX Core — Reference',
+              description: 'DQX Core API reference, CLI commands, and technical documentation',
+              position: 5,
+              routes: [
                 { route: '/dqx/docs/reference/**' }
+              ],
+            },
+            {
+              id: 'demos',
+              name: 'DQX Core — Demos',
+              description: 'DQX Core example implementations and demos',
+              position: 4,
+              routes: [
+                { route: '/dqx/docs/demos' },
+                { route: '/dqx/docs/demos/**' }
               ],
             },
             {
               id: 'development',
               name: 'Development',
               description: 'Contributing and development documentation',
-              position: 4,
+              position: 6,
               routes: [
                 { route: '/dqx/docs/dev/**' }
-              ],
-            },
-            {
-              id: 'demos',
-              name: 'Demos',
-              description: 'Example implementations and demos',
-              position: 5,
-              routes: [
-                { route: '/dqx/docs/demos' },
-                { route: '/dqx/docs/demos/**' }
               ],
             },
             {

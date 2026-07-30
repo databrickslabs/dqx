@@ -1,0 +1,137 @@
+---
+sidebar_position: 1
+title: "Permissions & Entitlements"
+---
+
+import Admonition from '@theme/Admonition';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Permissions & Entitlements
+
+This page is for anyone who wants to know what they can do in DQX Studio, and for admins who decide what everyone else can do.
+
+There are two different ideas here, and it helps to keep them apart:
+
+- **Entitlements** are your **role across the whole app** — whether you can view rules, write them, approve them, or change settings.
+- **Permissions** are your **access to one specific object** — a single rule, monitored table, or collection.
+
+Your entitlement follows you everywhere. Permissions apply object by object. The rest of this page covers each in turn.
+
+## Entitlements
+
+Your entitlement is your role in DQX Studio. It controls what you can do anywhere in the app.
+
+### Which role am I, and what can I do?
+
+Find yourself below, then read across.
+
+- **I just want to see the rules and results.** You're a **Viewer**. You can look at everything but change nothing.
+- **I write, edit, and run rules.** You're a **Rule Author**. You create rules, edit your own drafts, and run checks — but someone else approves your work before it goes live.
+- **I sign off on other people's work.** You're a **Rule Approver**. You approve or reject drafts from anyone. Approvers review; they don't author or run.
+- **I run the whole thing and change settings.** You're an **Admin**. You can do everything, including admin settings.
+
+Not sure which one you are? Your [Profile page](#how-to-find-your-role) tells you exactly.
+
+### The four roles
+
+Every person has one role. **Author and Approver are complementary, not ranked** — an author writes and runs rules, an approver signs off on them, and the two are deliberately kept apart (see [four-eyes approval](#keeping-authoring-and-approval-separate)). Only an **Admin** can do everything.
+
+| Task | Viewer | Rule Author | Rule Approver | Admin |
+|---|:---:|:---:|:---:|:---:|
+| View rules, tables, collections, and results | ✅ | ✅ | ✅ | ✅ |
+| Create rules and edit your own drafts | | ✅ | | ✅ |
+| Submit drafts for approval | | ✅ | | ✅ |
+| Run checks (profiling & validation) | | ✅ | | ✅ |
+| Approve or reject anyone's drafts | | | ✅ | ✅ |
+| Change admin settings (entitlements, retention, tags) | | | | ✅ |
+
+<Admonition type="note" title="Who can run checks">
+Running checks is part of the **Rule Author** role (and Admins have it too). Approvers and Viewers cannot trigger runs. Running a particular table or collection also needs the **Execute** permission on that object — see [Permissions](#permissions) below.
+</Admonition>
+
+### Keeping authoring and approval separate
+
+DQX Studio uses **four-eyes approval**: the person who writes a rule can't be the only person who approves it. If you're a Rule Author, you submit your draft and someone with approver rights reviews it before it goes live. This keeps a second set of eyes on every change — which is why authoring and approving are separate roles.
+
+An admin who writes a rule still can't approve their own draft in the same step — the review is meant to be independent. See [Approval workflow](/docs/studio/governance/approval-workflow) for the full draft → submit → review → approve → active path.
+
+### How to find your role
+
+Open the menu in the top-right corner and go to your **Profile** page. It shows:
+
+- Your **role** (Viewer, Rule Author, Rule Approver, or Admin).
+- Which **workspace groups** mapped you to that role, so you know where your access comes from.
+
+### How roles are assigned
+
+You don't get a role assigned to you by name. Instead, an admin maps your **Databricks workspace groups** to DQX Studio roles. If you belong to a group that's mapped to Rule Author, you're a Rule Author. If your groups map you to more than one role, the **highest permission wins**.
+
+Admins do this in **Admin Settings → Entitlements**.
+
+<ThemedImage
+  alt="Admin Settings Entitlements tab, mapping workspace groups to DQX Studio roles"
+  sources={{
+    light: useBaseUrl('/img/studio/settings_entitlements_light.png'),
+    dark: useBaseUrl('/img/studio/settings_entitlements_dark.png'),
+  }}
+/>
+
+<Admonition type="tip" title="Setting this up for your team">
+If you're an admin getting DQX Studio ready for your organization, the group-to-role mapping is one of the first things to configure. See <a href="/docs/studio/governance/">Governance & security</a>.
+</Admonition>
+
+## Permissions
+
+Entitlements decide what you can do across the app. **Permissions** decide who can reach a *specific* object — one rule, one monitored table, or one collection. Every rule, monitored table, and collection has its own **Permissions tab**.
+
+Open that tab on any object to see two things: who the **Steward** is, and a list of who has access.
+
+<ThemedImage
+  alt="A monitored table's Permissions tab showing the steward and a list of principals with their privileges"
+  sources={{
+    light: useBaseUrl('/img/studio/permissions_tab_light.png'),
+    dark: useBaseUrl('/img/studio/permissions_tab_dark.png'),
+  }}
+/>
+
+### The Steward
+
+Each object has a **Steward** — the person who owns data quality for it. The steward is the point of contact for that rule, table, or collection, and reviews changes to it. Think of them as the accountable owner, not just someone with access.
+
+### The access list
+
+Below the steward is the list of who can use the object. You grant access to specific **principals** — individual users or whole workspace groups — and give each one one or more privileges on **that object only**:
+
+- **View** (SELECT) — can see the object and its results.
+- **Modify** — can edit the object's configuration and logic, and delete it.
+- **Apply** — can attach the object to others (apply a rule to a table, or add a table to a collection).
+- **Execute** — can run profiling and validation on this **table or collection**. (Execute doesn't apply to rules, so it isn't offered on a rule's Permissions tab.)
+- **ALL PRIVILEGES** — the full set above, including managing the object's permissions.
+
+Anything you can act on, you can also see, so ticking **Modify**, **Apply**, or **Execute** automatically includes **View**. For each principal you can **grant**, **edit**, or **remove** access at any time.
+
+<Admonition type="note" title="Running needs both a role and Execute">
+Triggering a run takes two things: the **Rule Author** or **Admin** role (Approvers and Viewers can't run at all), *and* the **Execute** permission on the specific table or collection. Admins and approvers reach every object regardless of its permission list.
+</Admonition>
+
+### The defaults (and how to narrow them)
+
+When you create an object, DQX Studio sets it up so nothing is blocked out of the box:
+
+- **You, the creator, become the owner** with ALL PRIVILEGES.
+- **All workspace users** get View, Apply, and Execute, so your team can use and run it straight away. (Modify is held back — editing an object's logic is the privilege you grant deliberately.)
+
+These are real grant rows, so you can tighten them whenever you like — narrow the "All workspace users" row to specific groups, or remove it entirely and add only the principals who should have access. Every row, including the owner and the all-users defaults, can be edited or removed.
+
+<Admonition type="note" title="Admins and approvers always keep access">
+Workspace admins and rule approvers can always reach an object, whatever its permission list says. This makes sure someone can always review, approve, and step in — you can't accidentally lock governance out of an object.
+</Admonition>
+
+### Permissions cascade downward
+
+By default, permissions **cascade** through the hierarchy. Granting someone access on a collection also grants it on the tables in that collection and the rules applied to them; granting on a table cascades to its underlying rules. This saves you from setting the same access in three places. Admins control whether cascade is on by default in **Admin Settings → Entitlements**.
+
+<Admonition type="note" title="Permission changes are recorded">
+Every change to who has which role, and to the permissions on an object, is audited — who changed it, when, and what it was before and after.
+</Admonition>

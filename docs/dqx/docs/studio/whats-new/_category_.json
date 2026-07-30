@@ -1,0 +1,10 @@
+{
+  "label": "What's new",
+  "position": 0,
+  "collapsible": true,
+  "collapsed": true,
+  "link": {
+    "type": "doc",
+    "id": "studio/whats-new/index"
+  }
+}
