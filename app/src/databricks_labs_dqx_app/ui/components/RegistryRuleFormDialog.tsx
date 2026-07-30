@@ -176,6 +176,7 @@ import { useDefaultPassThreshold } from "@/hooks/use-default-pass-threshold";
 import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 import { useRulesResultsTabEnabled } from "@/hooks/use-global-results-enabled";
 import { computeMergeColumnsAutofill } from "@/lib/mergeColumnsAutofill";
+import { AI_EXAMPLE_COUNT, pickAiExampleKey } from "@/lib/aiExamplePrompt";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
@@ -1897,6 +1898,8 @@ export function RegistryRuleFormDialog({
   headerTitle,
 }: RegistryRuleFormDialogProps) {
   const { t } = useTranslation();
+  // Pick one example prompt per dialog open — empty deps so it doesn't reshuffle on keystrokes.
+  const aiExampleKey = useMemo(() => pickAiExampleKey(AI_EXAMPLE_COUNT), []);
   const sourceRule = editingRule ?? viewingRule;
   // Read-only only applies when explicitly viewing a rule (viewingRule set).
   // Creating a new rule also has editingRule === null, so gating on that
@@ -4585,7 +4588,7 @@ export function RegistryRuleFormDialog({
           }}
           disabled={aiBusy}
           maxLength={4000}
-          aria-label={t("rulesRegistry.aiBuildPlaceholder")}
+          aria-label={t(`rulesRegistry.${aiExampleKey}`)}
           className="min-h-[36px] resize-none border-0 bg-transparent dark:bg-transparent shadow-none focus-visible:ring-0 px-0 py-1.5 text-sm overflow-hidden"
         />
         {aiDescription === "" && (
@@ -4593,7 +4596,7 @@ export function RegistryRuleFormDialog({
             aria-hidden
             className="ai-text-shine pointer-events-none absolute left-0 top-1.5 text-sm whitespace-nowrap"
           >
-            {t("rulesRegistry.aiBuildPlaceholder")}
+            {t(`rulesRegistry.${aiExampleKey}`)}
           </span>
         )}
       </div>
