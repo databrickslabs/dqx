@@ -47,8 +47,8 @@ export function GranularitySwitch({
     {
       value: "dataset",
       label: t("rulesRegistry.granularityDatasetLevel"),
-      activeTone: "bg-violet-500/15 text-violet-700 dark:text-violet-300 ring-1 ring-violet-500/40",
-      hoverTone: "hover:bg-violet-500/10 hover:text-violet-700 dark:hover:text-violet-300",
+      activeTone: "bg-muted text-foreground ring-1 ring-border",
+      hoverTone: "hover:bg-muted/60 hover:text-foreground",
     },
   ];
   const activeIndex = options.findIndex((o) => o.value === value);
@@ -114,11 +114,14 @@ export function GranularitySwitch({
   return control;
 }
 
-/** Tone per granularity, shared by the tag and the switch's active segment so
- *  the same level is the same colour wherever it appears. */
+/** Tone per granularity for the tag. Keep in step with the switch's
+ *  `activeTone` above (same hue per level, different class shape) so one level
+ *  isn't two colours across the two components. Dataset-level is NEUTRAL grey:
+ *  it is a property of the check, not a problem with it, and a saturated colour
+ *  next to a check name in the picker reads as a warning. */
 const GRANULARITY_TONE: Record<RuleGranularity, string> = {
   row: "text-sky-700 dark:text-sky-300 bg-sky-500/10 ring-sky-500/30",
-  dataset: "text-violet-700 dark:text-violet-300 bg-violet-500/10 ring-violet-500/30",
+  dataset: "text-muted-foreground bg-muted ring-border",
 };
 
 /**
