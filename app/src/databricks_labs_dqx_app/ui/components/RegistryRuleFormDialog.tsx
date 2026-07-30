@@ -1605,7 +1605,7 @@ function SlotsPanel({
                     stopPropagation so opening the dropdown doesn't also toggle
                     the row. */}
                 {disabled || lockFamily ? (
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 h-7">
                     <Badge variant="outline" className="text-[10px] font-medium">
                       {familyLabel(slot.family)}
                     </Badge>
