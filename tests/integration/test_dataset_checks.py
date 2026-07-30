@@ -3518,6 +3518,81 @@ def test_has_no_gaps_per_time_window_group_by(spark: SparkSession, set_utc_timez
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
+def test_has_no_gaps_per_time_window_group_by_null_key(spark: SparkSession, set_utc_timezone):
+    schema = "device string, event_date date, val int"
+    df = spark.createDataFrame(
+        [
+            (None, date(2025, 7, 14), 1),
+            (None, date(2025, 7, 16), 2),
+        ],
+        schema,
+    )
+
+    condition, apply_method = has_no_gaps_per_time_window(column="event_date", window_minutes=1440, group_by=["device"])
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("device", "event_date", "val", condition)
+
+    expected_schema = f"device string, event_date date, val int, {condition_column} string"
+    expected = spark.createDataFrame(
+        [
+            {
+                "device": None,
+                "event_date": date(2025, 7, 14),
+                "val": 1,
+                condition_column: _gap_violation_message("2025-07-14 00:00:00", "2025-07-16 00:00:00"),
+            },
+            {"device": None, "event_date": date(2025, 7, 16), "val": 2, condition_column: None},
+        ],
+        expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_has_no_gaps_per_time_window_group_by_mixed_null_and_named_keys(spark: SparkSession, set_utc_timezone):
+    # A batch that mixes a NULL-key group with a named group: the null-safe join must keep each group's
+    # gaps isolated (NULL rows must not match the named group's windows, and vice versa).
+    schema = "device string, event_date date, val int"
+    df = spark.createDataFrame(
+        [
+            (None, date(2025, 7, 14), 1),  # NULL group: 2025-07-15 missing -> gap on this boundary row
+            (None, date(2025, 7, 16), 2),
+            ("A", date(2025, 7, 20), 3),  # device A: 2025-07-21 missing -> gap on this boundary row
+            ("A", date(2025, 7, 22), 4),
+            ("B", date(2025, 7, 14), 5),  # device B: consecutive, no gaps
+            ("B", date(2025, 7, 15), 6),
+        ],
+        schema,
+    )
+
+    condition, apply_method = has_no_gaps_per_time_window(column="event_date", window_minutes=1440, group_by=["device"])
+    condition_column = get_column_name_or_alias(condition)
+    actual = apply_method(df).select("device", "event_date", "val", condition)
+
+    expected_schema = f"device string, event_date date, val int, {condition_column} string"
+    expected = spark.createDataFrame(
+        [
+            {
+                "device": None,
+                "event_date": date(2025, 7, 14),
+                "val": 1,
+                condition_column: _gap_violation_message("2025-07-14 00:00:00", "2025-07-16 00:00:00"),
+            },
+            {"device": None, "event_date": date(2025, 7, 16), "val": 2, condition_column: None},
+            {
+                "device": "A",
+                "event_date": date(2025, 7, 20),
+                "val": 3,
+                condition_column: _gap_violation_message("2025-07-20 00:00:00", "2025-07-22 00:00:00"),
+            },
+            {"device": "A", "event_date": date(2025, 7, 22), "val": 4, condition_column: None},
+            {"device": "B", "event_date": date(2025, 7, 14), "val": 5, condition_column: None},
+            {"device": "B", "event_date": date(2025, 7, 15), "val": 6, condition_column: None},
+        ],
+        expected_schema,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
 def test_has_no_gaps_per_time_window_group_by_column_expression(spark: SparkSession, set_utc_timezone):
     schema = "device string, event_date date, val int"
     data = [

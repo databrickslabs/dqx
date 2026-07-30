@@ -3017,7 +3017,12 @@ def has_no_gaps_per_time_window(
         )
 
         # Attach the per-window gap flag back to every row of the boundary window, keeping column order.
-        joined = df.join(gaps, on=[*group_by_names, window_start_col], how="left")
+        joined = _join_results_on_null_safe_columns(
+            df,
+            gaps,
+            [*group_by_names, window_start_col],
+            [next_window_start_col, *extra_cols, condition_col],
+        )
         return joined.select(*input_columns, window_start_col, next_window_start_col, *extra_cols, condition_col)
 
     next_window_phrase = F.lit(" and the next present window starting at ")
