@@ -12,6 +12,7 @@ This module provides:
 """
 
 import logging
+import threading
 from datetime import datetime
 
 from pyspark.sql import SparkSession, functions as F
@@ -216,6 +217,11 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
         engine: Engine | None = None,
     ) -> None:
         super().__init__(spark=spark, ws=ws, config=config, engine=engine)
+        # Schema/table creation is idempotent but issues remote DDL round-trips, so run it once per
+        # store rather than on every append(). The lock serializes the check-and-set because append()
+        # may be driven concurrently by a streaming query's listener-thread pool.
+        self._bootstrapped = False
+        self._bootstrap_lock = threading.Lock()
 
     @staticmethod
     def _get_table_definition(schema_name: str, table_name: str) -> Table:
@@ -243,6 +249,16 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
             Column("delivery_errors", JSONB),
             Column("run_config_name", String(255)),
         )
+
+    def _ensure_bootstrapped(self, engine: Engine) -> None:
+        """Bootstrap the schema/table once per store, serialized against concurrent callers."""
+        if self._bootstrapped:
+            return
+        with self._bootstrap_lock:
+            if self._bootstrapped:  # re-check under the lock (another thread may have bootstrapped)
+                return
+            self._bootstrap(engine)
+            self._bootstrapped = True
 
     def _bootstrap(self, engine: Engine) -> None:
         """Ensure schema and table exist, creating them if necessary.
@@ -272,7 +288,7 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
             return
 
         engine = self._get_engine()
-        self._bootstrap(engine)
+        self._ensure_bootstrapped(engine)
 
         table = self._get_table_definition(self._config.schema_name, self._config.table_name)
         rows = [
@@ -314,12 +330,15 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
 
         table = self._get_table_definition(self._config.schema_name, self._config.table_name)
 
-        # Subquery: rank rows per action_name by run_time descending.
-        # Use a raw approach: load all (scoped to this run config) and deduplicate in Python for portability.
+        # Return the latest row per action_name directly from the database using Postgres DISTINCT ON,
+        # so only one row per action is transferred instead of every historical row deduped in Python.
+        # NULLS LAST keeps a real timestamp ahead of a missing one; rows with a NULL run_time are
+        # filtered out below (defensive against externally-inserted data).
         stmt = (
             select(table)
             .where(table.c.run_config_name == self._config.run_config_name)
-            .order_by(table.c.run_time.desc())
+            .distinct(table.c.action_name)
+            .order_by(table.c.action_name, table.c.run_time.desc().nullslast())
         )
 
         result: dict[str, AlertEvent] = {}
@@ -328,8 +347,6 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
 
         for row in rows:
             action_name = row["action_name"]
-            if action_name in result:
-                continue  # already have the most recent (ordered by run_time desc)
             if row["run_time"] is None:
                 continue  # defensive: skip rows with a missing timestamp (e.g. externally-inserted data)
             metrics_raw = row["observed_metrics"] or {}
@@ -366,10 +383,14 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
             return {}
 
         table = self._get_table_definition(self._config.schema_name, self._config.table_name)
+        # One latest fired row per action_name, deduped in the database via DISTINCT ON. The fired and
+        # run_config_name filters are applied in SQL; NULLS LAST keeps a real timestamp ahead of a
+        # missing one, and NULL run_times are filtered out below.
         stmt = (
             select(table.c.action_name, table.c.run_time)
             .where((table.c.run_config_name == self._config.run_config_name) & (table.c.fired.is_(True)))
-            .order_by(table.c.run_time.desc())
+            .distinct(table.c.action_name)
+            .order_by(table.c.action_name, table.c.run_time.desc().nullslast())
         )
 
         last_fired: dict[str, datetime] = {}
@@ -379,8 +400,7 @@ class LakebaseActionEventStore(LakebaseConnectionMixin, ActionEventStore):
             action_name = row["action_name"]
             if row["run_time"] is None:
                 continue  # defensive: skip rows with a missing timestamp (e.g. externally-inserted data)
-            if action_name not in last_fired:  # rows are run_time-descending, so first seen is latest
-                last_fired[action_name] = to_utc(row["run_time"])
+            last_fired[action_name] = to_utc(row["run_time"])
         return last_fired
 
 

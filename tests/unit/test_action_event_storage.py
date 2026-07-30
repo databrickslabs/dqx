@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, create_autospec, patch
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.catalog import Catalog
 from sqlalchemy import Engine
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import Connection, Inspector
 from sqlalchemy.engine.interfaces import Dialect
 
@@ -446,6 +447,26 @@ def test_lakebase_append_bootstraps_then_inserts() -> None:
     assert inserted["run_config_name"] == "prod"
 
 
+def test_lakebase_append_bootstraps_only_once_across_appends() -> None:
+    """Bootstrap (schema check + DDL) runs once per store, not on every append."""
+    spark = create_autospec(SparkSession)
+    ws = create_autospec(WorkspaceClient, instance=True)
+    engine = create_autospec(Engine, instance=True)
+
+    conn = _make_conn(schema_exists=True)
+    engine.begin.return_value.__enter__ = lambda s: conn
+    engine.begin.return_value.__exit__ = lambda s, *a: None
+
+    store = LakebaseActionEventStore(spark=spark, ws=ws, config=_LAKEBASE_CONFIG, engine=engine)
+
+    store.append([_make_event()])
+    store.append([_make_event()])
+    store.append([_make_event()])
+
+    # The schema-existence check inside _bootstrap runs exactly once despite three appends.
+    assert conn.dialect.has_schema.call_count == 1
+
+
 def test_lakebase_append_creates_schema_when_absent() -> None:
     """append creates the PostgreSQL schema when it does not yet exist."""
     spark = create_autospec(SparkSession)
@@ -603,22 +624,21 @@ def test_lakebase_load_latest_returns_events_per_action() -> None:
     assert evt.delivery_errors == []
 
 
-def test_lakebase_load_latest_deduplicates_keeping_first() -> None:
-    """load_latest_per_action keeps only the first row per action (run_time-desc order)."""
+def test_lakebase_load_latest_uses_distinct_on_query() -> None:
+    """load_latest_per_action relies on the database to return one row per action (DISTINCT ON).
+
+    Deduplication is done in SQL (DISTINCT ON (action_name) ORDER BY action_name, run_time DESC),
+    so the query returns a single already-latest row per action; the store just maps it. This test
+    pins that the emitted statement uses DISTINCT ON and that a single returned row is mapped through.
+    """
     spark = create_autospec(SparkSession)
     ws = create_autospec(WorkspaceClient, instance=True)
     engine = create_autospec(Engine, instance=True)
 
-    newer = _make_db_row(action_name="action-a", fired=True, status="unhealthy", run_time=_NOW)
-    older = _make_db_row(
-        action_name="action-a",
-        fired=False,
-        status="healthy",
-        run_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
-    )
+    latest = _make_db_row(action_name="action-a", fired=True, status="unhealthy", run_time=_NOW)
 
     mock_conn = create_autospec(Connection, instance=True)
-    mock_conn.execute.return_value.mappings.return_value.all.return_value = [newer, older]
+    mock_conn.execute.return_value.mappings.return_value.all.return_value = [latest]
     engine.connect.return_value.__enter__ = lambda s: mock_conn
     engine.connect.return_value.__exit__ = lambda s, *a: None
 
@@ -633,6 +653,11 @@ def test_lakebase_load_latest_deduplicates_keeping_first() -> None:
     assert len(result) == 1
     assert result["action-a"].fired is True
     assert result["action-a"].status == ActionStatus.UNHEALTHY
+    # The executed statement must dedup in the DB via DISTINCT ON, not in Python. DISTINCT ON is
+    # PostgreSQL-specific, so compile with the postgres dialect to see it (Lakebase is PostgreSQL).
+    stmt = mock_conn.execute.call_args[0][0]
+    compiled = str(stmt.compile(dialect=postgresql.dialect()))
+    assert "DISTINCT ON" in compiled
 
 
 def test_lakebase_load_latest_none_safe_fields() -> None:
@@ -715,18 +740,20 @@ def test_lakebase_load_last_fired_returns_mapping() -> None:
     assert result == {"action-x": _NOW}
 
 
-def test_lakebase_load_last_fired_deduplicates_keeping_first() -> None:
-    """load_last_fired_per_action keeps the first (most recent) row per action."""
+def test_lakebase_load_last_fired_uses_distinct_on_query() -> None:
+    """load_last_fired_per_action relies on the database (DISTINCT ON) to return one row per action.
+
+    Deduplication is done in SQL, so the query returns a single already-latest fired row per action;
+    the store just maps it. This pins that the emitted statement uses DISTINCT ON.
+    """
     spark = create_autospec(SparkSession)
     ws = create_autospec(WorkspaceClient, instance=True)
     engine = create_autospec(Engine, instance=True)
 
-    old_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    recent = _Row({"action_name": "action-x", "run_time": _NOW})
-    old = _Row({"action_name": "action-x", "run_time": old_time})
+    latest = _Row({"action_name": "action-x", "run_time": _NOW})
 
     mock_conn = create_autospec(Connection, instance=True)
-    mock_conn.execute.return_value.mappings.return_value.all.return_value = [recent, old]
+    mock_conn.execute.return_value.mappings.return_value.all.return_value = [latest]
     engine.connect.return_value.__enter__ = lambda s: mock_conn
     engine.connect.return_value.__exit__ = lambda s, *a: None
 
@@ -739,6 +766,9 @@ def test_lakebase_load_last_fired_deduplicates_keeping_first() -> None:
         result = store.load_last_fired_per_action()
 
     assert result == {"action-x": _NOW}
+    # DISTINCT ON is PostgreSQL-specific; compile with the postgres dialect to assert it (Lakebase is PG).
+    stmt = mock_conn.execute.call_args[0][0]
+    assert "DISTINCT ON" in str(stmt.compile(dialect=postgresql.dialect()))
 
 
 # ---------------------------------------------------------------------------
