@@ -44,9 +44,9 @@ def _make_services() -> ActionServices:
 def _make_dq_action(action: object, condition: str | None, name: str) -> DQAction:
     """Build a *DQAction* wrapping an arbitrary test *action*.
 
-    *DQAction.action* is the discriminated *AnyAction* union, which only accepts
-    real *DQAlert* / *FailPipeline* instances at construction.  These evaluator
-    tests instead need to inject mocks or lightweight fakes to observe dispatch.
+    *DQAction.action* only accepts registered *Action* subclasses (e.g. *DQAlert* /
+    *FailPipeline*) at construction.  These evaluator tests instead need to inject
+    mocks or lightweight fakes to observe dispatch.
     The action is therefore assigned after construction (attribute assignment
     bypasses validation, since *validate_assignment* is not enabled), which is
     exactly the seam the evaluator exercises: it only ever calls

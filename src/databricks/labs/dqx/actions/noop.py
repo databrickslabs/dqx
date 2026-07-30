@@ -11,8 +11,10 @@ table without acting on it.
 from typing import Literal
 
 from databricks.labs.dqx.actions.base import Action, ActionContext, ActionResult, ActionServices, ActionStatus
+from databricks.labs.dqx.actions.registry import register_action
 
 
+@register_action
 class NoOpAction(Action):
     """Action that fires without any side effect.
 

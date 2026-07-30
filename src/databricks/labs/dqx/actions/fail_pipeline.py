@@ -9,9 +9,11 @@ defers this error until all other non-terminal actions have completed.
 from typing import Literal
 
 from databricks.labs.dqx.actions.base import Action, ActionContext, ActionResult, ActionServices
+from databricks.labs.dqx.actions.registry import register_action
 from databricks.labs.dqx.errors import PipelineFailedError
 
 
+@register_action
 class FailPipeline(Action):
     """Raises *PipelineFailedError* to terminate the current DQX run.
 

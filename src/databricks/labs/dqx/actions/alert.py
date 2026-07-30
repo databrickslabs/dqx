@@ -21,6 +21,7 @@ from databricks.labs.dqx.actions.destinations.base import AlertDestination
 from databricks.labs.dqx.actions.destinations.callback import CallbackDQAlertDestination
 from databricks.labs.dqx.actions.destinations.union import AnyDestination
 from databricks.labs.dqx.actions.message import AlertMessage, StandardMessageBuilder
+from databricks.labs.dqx.actions.registry import register_action
 from databricks.labs.dqx.errors import InvalidActionError
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ def _make_deliver_task(
         error_map[destination.name] = sanitized
 
 
+@register_action
 class DQAlert(Action):
     """Sends alert notifications to one or more *AlertDestination* instances.
 

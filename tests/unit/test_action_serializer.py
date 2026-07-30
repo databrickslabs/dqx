@@ -500,10 +500,14 @@ class TestBuildReplaceWhere:
 
 
 class TestUnknownActionTypeRejected:
-    """An *Action* subclass outside the *AnyAction* union is rejected when wrapped."""
+    """An *Action* subclass that is not registered is rejected when wrapped in a *DQAction*."""
 
-    def test_unknown_action_type_raises_on_construction(self) -> None:
-        """A concrete Action subclass not in the discriminated union must raise InvalidActionError."""
+    def test_unregistered_action_raises_on_construction(self) -> None:
+        """A concrete Action subclass not registered via @register_action must raise InvalidActionError.
+
+        The subclass here also omits the literal 'type' field, so it is doubly ineligible; either
+        condition (no type / not registered) is sufficient for rejection.
+        """
 
         class _UnknownAction(Action):
             name: str = "unknown_test_action"

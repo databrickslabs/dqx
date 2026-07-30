@@ -33,10 +33,10 @@ from databricks.labs.dqx.errors import InvalidActionError
 class ActionSerializer:
     """Converts *DQAction* instances to plain dicts and back via Pydantic.
 
-    Adding a new action or destination type requires only declaring the new
-    Pydantic model with its literal *type* discriminator and registering it in
-    the relevant discriminated union (*AnyAction* or *AnyDestination*); the
-    serializer itself needs no changes.
+    Adding a new action type requires only declaring the new Pydantic model with
+    its literal *type* discriminator and registering it via *@register_action*; a
+    new destination type is added to the *AnyDestination* discriminated union. In
+    both cases the serializer itself needs no changes.
 
     *DQSecret* values round-trip as a tagged dict (key *secret* mapped to a
     *scope/key* reference) so the reference survives JSON / YAML without being

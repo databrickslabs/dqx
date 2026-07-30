@@ -32,8 +32,8 @@ def test_metadata_round_trip() -> None:
     assert NoOpAction.model_validate(dumped) == original
 
 
-def test_resolves_from_action_union_via_dqaction() -> None:
-    # A metadata dict with type "noop" must deserialize to a NoOpAction through the AnyAction union.
+def test_resolves_from_registry_via_dqaction() -> None:
+    # A metadata dict with type "noop" must deserialize to a NoOpAction through the action registry.
     dq_action = DQAction(condition="error_row_count > 0", action={"type": "noop", "name": "record_only"})
     assert isinstance(dq_action.action, NoOpAction)
     assert dq_action.name == "record_only"

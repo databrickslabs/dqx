@@ -488,6 +488,94 @@ audit = DQAction(
   </TabItem>
 </Tabs>
 
+## Registering a custom action
+
+The built-in actions (`DQAlert`, `FailPipeline`, `NoOpAction`) cover the common cases, but you can add
+your own. A custom action is any subclass of `Action` that:
+
+1. declares a **literal `type` discriminator** (a unique string identifying the action in metadata),
+2. implements **`execute(self, context, services)`** returning an `ActionResult`, and
+3. is **registered** with the `@register_action` decorator.
+
+Once registered, a custom action works exactly like a built-in — it can be attached to `DQEngine`
+programmatically, authored as a metadata dict (`type` + its own fields), and persisted/loaded via
+`DQActionManager`.
+
+Every action — built-in or custom — always receives the observed **summary metrics** as input:
+`execute` is called with an `ActionContext` whose `context.metrics` maps each metric name to its
+observed value (the same [built-in metrics](#condition-syntax-and-available-metrics) — `input_row_count`,
+`error_row_count`, `warning_row_count`, `valid_row_count` — plus any custom metrics defined on the
+`DQMetricsObserver`). Your action can read any of these regardless of the gating `condition`. The
+`ActionContext` also carries run metadata (`run_id`, `run_time`, `run_name`, input/output/quarantine
+locations, and the gating `condition`); `ActionServices` provides the injected workspace client,
+Spark session, secret resolver, and webhook client.
+
+```python
+import logging
+from typing import Literal
+
+from databricks.labs.dqx.actions import (
+    Action,
+    ActionContext,
+    ActionResult,
+    ActionServices,
+    ActionStatus,
+    DQAction,
+    register_action,
+)
+
+logger = logging.getLogger(__name__)
+
+
+@register_action
+class LogErrorCount(Action):
+    # The literal 'type' is the discriminator used in metadata; it must be unique.
+    type: Literal["log_error_count"] = "log_error_count"
+
+    def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
+        # context.metrics always holds the observed summary metrics, keyed by metric name; services
+        # provides the workspace client, Spark session, secret resolver, and webhook client.
+        errors = context.metrics.get("error_row_count", 0)
+        logger.warning(f"{errors} error rows observed")
+        return ActionResult(action_name=self.name or self.type, fired=True, status=ActionStatus.UNHEALTHY)
+```
+
+You can add your own configuration options to an action by declaring them as ordinary Pydantic fields
+(e.g. `threshold: int = 0`); they are set when you construct the action or via metadata keys, and read
+inside `execute`. The action above keeps things minimal and declares none.
+
+Once the class above has been imported (so `@register_action` has run), attach it exactly like a
+built-in action — either programmatically or as metadata. The `type` selects the registered class:
+
+<Tabs>
+  <TabItem value="Python" label="Python (classes)" default>
+
+```python
+action = DQAction(condition="error_row_count > 0", action=LogErrorCount())
+```
+
+  </TabItem>
+  <TabItem value="YAML" label="YAML (metadata)">
+
+```yaml
+- criticality: error
+  condition: error_row_count > 0
+  action:
+    type: log_error_count   # matches the registered action's `type`
+```
+
+  </TabItem>
+</Tabs>
+
+<Admonition type="warning" title="The process running DQX must be able to import your action">
+Registration happens when the `@register_action`-decorated class is **imported**, so the class must
+live somewhere the process that runs DQX can import *before* it constructs or loads the action —
+otherwise the `type` is unknown and loading raises `InvalidActionError`. Custom actions are code, not
+configuration: they are **not** stored with the metadata in `actions_location`. The `type` must be
+unique: registering a *different* class under a `type` already taken by another raises
+`InvalidActionError`, but re-running the same definition (e.g. a notebook cell) simply overwrites it.
+</Admonition>
+
 ## Alert Types
 
 `DQAlert` can deliver to any of the following destination types. Each is configured as an entry in the alert's `destinations` list.

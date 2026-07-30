@@ -33,11 +33,10 @@ from databricks.labs.dqx.errors import InvalidActionError, InvalidConditionError
 
 
 def _named_action(name: str = "dummy_action") -> FailPipeline:
-    """Return a real union-member action carrying the given *name*.
+    """Return a real registered action carrying the given *name*.
 
-    *DQAction.action* is the discriminated *AnyAction* union, so the action
-    wrapped by a *DQAction* must be a real member (here *FailPipeline*).  The
-    name-derivation behaviour under test does not depend on the action type.
+    *DQAction.action* must be a registered *Action* subclass (here *FailPipeline*).
+    The name-derivation behaviour under test does not depend on the action type.
     """
     return FailPipeline(name=name)
 
