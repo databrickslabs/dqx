@@ -746,27 +746,47 @@ function ConditionSelector({
               // where the author returns to CHANGE the rule type, so every choice
               // routes through the parent's guarded onSelect.
               <>
-                {customConditionMatchesQuery && (
+                {(customConditionMatchesQuery || sqlEntryMatchesQuery) && (
                   <CommandGroup
                     heading={t("rulesRegistry.customConditionGroup")}
                     className={COMMAND_GROUP_HEADING_CLASS}
                   >
-                    <CommandItem
-                      value="__custom_condition__"
-                      onSelect={() => {
-                        setQuery("");
-                        onSelect({ type: "lowcode" });
-                        setOpen(false);
-                      }}
-                      className="items-start gap-2 text-xs"
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="font-medium">{t("rulesRegistry.customConditionGroup")}</span>
-                        <span className="block text-[10px] text-muted-foreground">
-                          {t("rulesRegistry.customConditionDesc")}
+                    {customConditionMatchesQuery && (
+                      <CommandItem
+                        value="__custom_condition__"
+                        onSelect={() => {
+                          setQuery("");
+                          onSelect({ type: "lowcode" });
+                          setOpen(false);
+                        }}
+                        className="items-start gap-2 text-xs"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="font-medium">{t("rulesRegistry.customConditionGroup")}</span>
+                          <span className="block text-[10px] text-muted-foreground">
+                            {t("rulesRegistry.customConditionDesc")}
+                          </span>
                         </span>
-                      </span>
-                    </CommandItem>
+                      </CommandItem>
+                    )}
+                    {sqlEntryMatchesQuery && (
+                      <CommandItem
+                        value="__sql_condition__"
+                        onSelect={() => {
+                          setQuery("");
+                          onSelect({ type: "sql" });
+                          setOpen(false);
+                        }}
+                        className="items-start gap-2 text-xs"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="font-medium">{t("rulesRegistry.sqlConditionShortcut")}</span>
+                          <span className="block text-[10px] text-muted-foreground">
+                            {t("rulesRegistry.sqlConditionShortcutDesc")}
+                          </span>
+                        </span>
+                      </CommandItem>
+                    )}
                   </CommandGroup>
                 )}
                 <CommandEmpty>
@@ -801,32 +821,6 @@ function ConditionSelector({
                     ))}
                   </CommandGroup>
                 ))}
-                {/* SQL last: the escape hatch below the named checks. Its own
-                    group (not folded in beside Custom condition) so it reads as
-                    "the other way to write it" rather than a second rule type,
-                    and the description names DQX's own `sql_expression` /
-                    `sql_query` — which is what the entry actually compiles to,
-                    and what someone arriving from the DQX docs is looking for. */}
-                {sqlEntryMatchesQuery && (
-                  <CommandGroup heading={t("rulesRegistry.sqlGroup")} className={COMMAND_GROUP_HEADING_CLASS}>
-                    <CommandItem
-                      value="__sql_condition__"
-                      onSelect={() => {
-                        setQuery("");
-                        onSelect({ type: "sql" });
-                        setOpen(false);
-                      }}
-                      className="items-start gap-2 text-xs"
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="font-medium">{t("rulesRegistry.sqlConditionShortcut")}</span>
-                        <span className="block text-[10px] text-muted-foreground">
-                          {t("rulesRegistry.sqlConditionShortcutDesc")}
-                        </span>
-                      </span>
-                    </CommandItem>
-                  </CommandGroup>
-                )}
               </>
             )}
 
