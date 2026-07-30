@@ -1500,7 +1500,6 @@
     "granularityRowLevel": "Por fila",
     "granularityDatasetLevel": "Por tabla",
     "granularityLabel": "Se aplica a",
-    "ruleTypeLabel": "Tipo de regla",
     "granularityRowTooltip": "Cada fila obtiene su propio veredicto, así que los fallos se atribuyen a filas concretas.",
     "granularityDatasetTooltip": "Un único veredicto para toda la tabla, sin atribución por fila.",
     "granularityRowByCheck": "Esta comprobación evalúa cada fila por separado: lo fija la comprobación, no es una elección.",

@@ -1500,7 +1500,6 @@
     "granularityRowLevel": "Por linha",
     "granularityDatasetLevel": "Por tabela",
     "granularityLabel": "Aplica-se a",
-    "ruleTypeLabel": "Tipo de regra",
     "granularityRowTooltip": "Cada linha recebe seu próprio veredito, então as falhas são atribuídas a linhas individuais.",
     "granularityDatasetTooltip": "Um único veredito para a tabela inteira, sem atribuição por linha.",
     "granularityRowByCheck": "Esta verificação avalia cada linha individualmente — é definido pela verificação, não é uma escolha.",

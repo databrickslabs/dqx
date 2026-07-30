@@ -1500,7 +1500,6 @@
     "granularityRowLevel": "Per riga",
     "granularityDatasetLevel": "Per tabella",
     "granularityLabel": "Si applica a",
-    "ruleTypeLabel": "Tipo di regola",
     "granularityRowTooltip": "Ogni riga ottiene il proprio verdetto, quindi gli errori sono attribuiti alle singole righe.",
     "granularityDatasetTooltip": "Un solo verdetto per l'intera tabella, senza attribuzione per riga.",
     "granularityRowByCheck": "Questo controllo valuta ogni riga singolarmente: è stabilito dal controllo, non è una scelta.",

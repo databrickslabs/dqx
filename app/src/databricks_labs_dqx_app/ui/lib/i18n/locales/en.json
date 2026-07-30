@@ -1500,7 +1500,6 @@
     "granularityRowLevel": "Row-level",
     "granularityDatasetLevel": "Table-level",
     "granularityLabel": "Applies to",
-    "ruleTypeLabel": "Rule type",
     "granularityRowTooltip": "Each row gets its own verdict, so failures are attributed to individual rows.",
     "granularityDatasetTooltip": "One verdict for the whole table — no per-row attribution.",
     "granularityRowByCheck": "This check evaluates each row on its own — fixed by the check, not a choice.",
