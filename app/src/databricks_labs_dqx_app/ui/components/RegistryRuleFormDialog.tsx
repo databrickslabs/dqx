@@ -913,13 +913,19 @@ function SectionHeader({
   children,
   tooltip,
   action,
+  className,
 }: {
   children: ReactNode;
   tooltip?: string;
   action?: ReactNode;
+  /** Extra classes for the header row. The Condition header passes `min-h-7` so
+   *  it always reserves the authoring-surface pill's height — otherwise the row
+   *  (flex, no fixed height) grows only in SQL/custom modes where the pill
+   *  renders, shifting the IF row and everything below it down on mode change. */
+  className?: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div className={cn("flex items-center justify-between gap-3", className)}>
       <div className="flex items-center gap-1.5">
         {/* Match the About field <Label>s and the Permissions "Steward" header
             (text-sm font-medium leading-none) so the section headers read
@@ -3820,6 +3826,7 @@ export function RegistryRuleFormDialog({
             without hunting. Live only where it's genuinely a choice (see
             GranularitySwitch); frozen states carry the reason as a tooltip. */}
         <SectionHeader
+          className="min-h-7"
           action={
             conditionChosen ? (
               <div className="flex items-center gap-3">
