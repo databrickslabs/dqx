@@ -121,6 +121,7 @@ import {
 import { cn } from "@/lib/utils";
 import selector from "@/lib/selector";
 import { stripSqlLineComments } from "@/lib/sqlComments";
+import { mergeCarriedSlotsIntoSignature } from "@/lib/slotCarry";
 import type { LabelDefinition } from "@/lib/api-custom";
 import {
   useCreateRegistryRule,
@@ -1185,8 +1186,6 @@ function SlotTagRegion({
     </TooltipProvider>
   );
 }
-
-import { mergeCarriedSlotsIntoSignature } from "@/lib/slotCarry";
 
 /**
  * Reconcile the slots a SQL AI assistant declared against the ones already on
