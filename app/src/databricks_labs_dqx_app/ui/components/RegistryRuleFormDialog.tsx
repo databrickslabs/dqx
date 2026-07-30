@@ -336,26 +336,15 @@ type ConditionSelectorView = "root" | "operators";
 const COMMAND_GROUP_HEADING_CLASS =
   "[&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:text-[10px]";
 
-/** Shared styling for BOTH authoring-surface tabs (visual builder / SQL).
- *
- * Inverse active state: the active tab uses foreground/background tokens so it
- * flips with the theme — a dark chip with light text in light mode, a light chip
- * with dark text in dark mode. No hue: the surfaces are two ways to write the same rule
- * type, so colour should not imply they are different kinds. Declared for the base
- * AND `dark:` variants because the shared TabsTrigger sets a dark-only active
- * background that a base-variant override alone would not reliably beat. */
-const CUSTOM_SURFACE_TAB_CLASS = [
-  "gap-1.5 rounded-full px-3 text-xs",
-  // Inverse active state: dark-on-light in light mode, light-on-dark in dark mode.
-  // Uses foreground/background tokens (no hue) so it inverts with the theme.
-  "data-[state=active]:bg-foreground data-[state=active]:text-background",
-  "dark:data-[state=active]:bg-foreground dark:data-[state=active]:text-background",
-  "data-[state=active]:ring-1 data-[state=active]:ring-foreground/20",
-  "dark:data-[state=active]:border-transparent",
-  "data-[state=inactive]:text-muted-foreground",
-  "data-[state=inactive]:hover:bg-foreground/10 data-[state=inactive]:hover:text-foreground",
-  "dark:data-[state=inactive]:hover:text-foreground",
-];
+/** Per-segment styling for BOTH authoring-surface toggle buttons (visual builder
+ * / SQL). Layout + z-index only — the ACTIVE fill is a separate sliding thumb
+ * (an absolutely-positioned `bg-foreground` span that translateX-es between the
+ * two segments on change, matching the AND/OR combinator + PASS/FAIL polarity
+ * switches). Each button gets its text colour inline: `text-background` when it
+ * sits over the thumb, muted otherwise. The inverse (hue-less) fill flips with
+ * the theme — a dark chip in light mode, a light chip in dark mode. */
+const CUSTOM_SURFACE_THUMB_TAB_CLASS =
+  "relative z-10 flex items-center justify-center gap-1.5 rounded-full px-3 text-xs transition-colors duration-200 ease-out";
 
 /**
  * The single merged condition selector that sits in the operator-cell position
@@ -3962,27 +3951,38 @@ export function RegistryRuleFormDialog({
                     <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
                       {t("rulesRegistry.customSurfaceLabel")}
                     </span>
-                    <Tabs
-                      value={mode === "sql" ? "sql" : "lowcode"}
-                      onValueChange={(v) =>
-                        requestModeChange(v === "sql" ? { type: "sql" } : { type: "lowcode" })
-                      }
-                    >
-                      <TabsList className="h-7 gap-1 rounded-full border bg-muted/30 p-1">
-                        <TabsTrigger
-                          value="lowcode"
-                          disabled={readOnly}
-                          className={cn(CUSTOM_SURFACE_TAB_CLASS)}
-                        >
-                          <SlidersHorizontal className="h-3.5 w-3.5" />
-                          {t("rulesRegistry.customSurfaceVisual")}
-                        </TabsTrigger>
-                        <TabsTrigger value="sql" disabled={readOnly} className={cn(CUSTOM_SURFACE_TAB_CLASS)}>
-                          <Code2 className="h-3.5 w-3.5" />
-                          {t("rulesRegistry.customSurfaceSql")}
-                        </TabsTrigger>
-                      </TabsList>
-                    </Tabs>
+                    {/* Sliding-thumb toggle (matching the AND/OR combinator +
+                        PASS/FAIL polarity switches): an absolutely-positioned
+                        thumb slides between the two segments on change rather
+                        than the active fill swapping instantly. Clicking a
+                        segment routes through the guarded requestModeChange. */}
+                    <div className="relative inline-grid grid-cols-2 h-7 items-center rounded-full border bg-muted/30 p-1">
+                      <span
+                        aria-hidden
+                        className={cn(
+                          "absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] rounded-full bg-foreground ring-1 ring-foreground/20 transition-transform duration-200 ease-out",
+                          mode === "sql" && "translate-x-full",
+                        )}
+                      />
+                      <button
+                        type="button"
+                        disabled={readOnly}
+                        onClick={() => requestModeChange({ type: "lowcode" })}
+                        className={cn(CUSTOM_SURFACE_THUMB_TAB_CLASS, mode !== "sql" ? "text-background" : "text-muted-foreground hover:text-foreground")}
+                      >
+                        <SlidersHorizontal className="h-3.5 w-3.5" />
+                        {t("rulesRegistry.customSurfaceVisual")}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={readOnly}
+                        onClick={() => requestModeChange({ type: "sql" })}
+                        className={cn(CUSTOM_SURFACE_THUMB_TAB_CLASS, mode === "sql" ? "text-background" : "text-muted-foreground hover:text-foreground")}
+                      >
+                        <Code2 className="h-3.5 w-3.5" />
+                        {t("rulesRegistry.customSurfaceSql")}
+                      </button>
+                    </div>
                   </div>
                 )}
                 {granularityDescribesSomething && granularityFrozenReason === undefined && (
