@@ -4029,10 +4029,10 @@ export function RegistryRuleFormDialog({
           // native / Condition Builder. This anchor row has no value input, so
           // there is no 4th track.
           <div className="grid grid-cols-[80px_11rem_18rem] gap-2 items-center py-1">
-            <div className="flex items-center h-8 pl-2 justify-self-start">
+            <div className="flex items-center h-8 justify-self-start">
               {/* Same IF styling as LowcodeRow's inline IF so the framing word is
                   identical in size across native / low-code / SQL. */}
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 {t("rulesRegistry.ifCondition")}
               </span>
             </div>
@@ -4139,8 +4139,8 @@ export function RegistryRuleFormDialog({
         {decisionPointChosen && mode === "sql" && (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2 py-1">
-              <div className="flex h-8 items-center pl-2">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <div className="flex h-8 items-center">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                   {t("rulesRegistry.ifCondition")}
                 </span>
               </div>
