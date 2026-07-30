@@ -1789,8 +1789,8 @@
       "title": "Replace your current condition?",
       "confirm": "Replace condition",
       "body": {
-        "LOWCODE_TO_NATIVE": "The conditions you built will be removed.",
-        "SQL_TO_NATIVE": "The SQL you wrote will be removed.",
+        "LOWCODE_TO_NATIVE": "The conditions you built will be removed, along with any columns the check doesn't use.",
+        "SQL_TO_NATIVE": "The SQL you wrote will be removed, along with any columns the check doesn't use.",
         "NATIVE_TO_LOWCODE": "The check you selected, and the parameters you filled in, will be removed.",
         "NATIVE_TO_SQL": "The check you selected, and the parameters you filled in, will be removed."
       }

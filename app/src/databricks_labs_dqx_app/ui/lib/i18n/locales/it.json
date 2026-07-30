@@ -1789,8 +1789,8 @@
       "title": "Sostituire la condizione attuale?",
       "confirm": "Sostituisci condizione",
       "body": {
-        "LOWCODE_TO_NATIVE": "Le condizioni che hai creato verranno rimosse.",
-        "SQL_TO_NATIVE": "Il SQL che hai scritto verrà rimosso.",
+        "LOWCODE_TO_NATIVE": "Le condizioni che hai creato verranno rimosse, insieme alle colonne che la verifica non usa.",
+        "SQL_TO_NATIVE": "Il SQL che hai scritto verrà rimosso, insieme alle colonne che la verifica non usa.",
         "NATIVE_TO_LOWCODE": "Il controllo selezionato e i parametri che hai compilato verranno rimossi.",
         "NATIVE_TO_SQL": "Il controllo selezionato e i parametri che hai compilato verranno rimossi."
       }

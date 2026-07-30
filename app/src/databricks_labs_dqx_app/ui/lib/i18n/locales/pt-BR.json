@@ -1789,8 +1789,8 @@
       "title": "Substituir a condição atual?",
       "confirm": "Substituir condição",
       "body": {
-        "LOWCODE_TO_NATIVE": "As condições que você criou serão removidas.",
-        "SQL_TO_NATIVE": "O SQL que você escreveu será removido.",
+        "LOWCODE_TO_NATIVE": "As condições que você criou serão removidas, junto com as colunas que a verificação não usa.",
+        "SQL_TO_NATIVE": "O SQL que você escreveu será removido, junto com as colunas que a verificação não usa.",
         "NATIVE_TO_LOWCODE": "A verificação que você selecionou e os parâmetros que você preencheu serão removidos.",
         "NATIVE_TO_SQL": "A verificação que você selecionou e os parâmetros que você preencheu serão removidos."
       }
