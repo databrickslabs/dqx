@@ -34,12 +34,19 @@ import dlt
 # COMMAND ----------
 
 import yaml
+from databricks.labs.dqx.config import ExtraParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.sdk import WorkspaceClient
 
 # compute_summary_metrics requires an observer on the engine; it reads any custom_metrics from it.
-dq_engine = DQEngine(WorkspaceClient(), observer=DQMetricsObserver())
+# The static run_time_overwrite / run_id_overwrite make the checked query deterministic so the
+# summary-metrics materialized view can refresh incrementally (see the markdown cell below for why).
+extra_params = ExtraParams(
+    run_time_overwrite="2025-01-01T00:00:00",
+    run_id_overwrite="lakeflow_pipeline_run",
+)
+dq_engine = DQEngine(WorkspaceClient(), observer=DQMetricsObserver(), extra_params=extra_params)
 
 # COMMAND ----------
 
@@ -151,15 +158,25 @@ def quarantine():
 
 # COMMAND ----------
 
-# Summary Metrics: materialized view computed by aggregation over the checked table.
-# One row per metric (input / error / warning / valid row counts and per-check breakdown).
-# Note: this MV is a cumulative snapshot over the whole table (input_row_count is the running
-# total, not a per-run count). It refreshes incrementally only when the query is deterministic —
-# set static run_time_overwrite / run_id_overwrite in ExtraParams for that.
-# To keep a per-batch history of metrics instead of a cumulative snapshot — and to avoid re-aggregating
-# the whole table on each update (potentially more performant on large or growing tables) — compute the
-# metrics inside a foreachBatch sink over each micro-batch instead; see
-# `dqx_dlt_demo_foreach_batch_quarantine.py`.
+# MAGIC %md
+# MAGIC ## Summary Metrics
+# MAGIC
+# MAGIC A materialized view computed by aggregation over the checked table — one row per metric
+# MAGIC (input / error / warning / valid row counts and a per-check breakdown).
+# MAGIC
+# MAGIC This materialized view is a **cumulative snapshot** over the whole table (`input_row_count` is the
+# MAGIC running total, not a per-run count). It refreshes *incrementally* only when the query is
+# MAGIC deterministic — which is why the engine above sets static `run_time_overwrite` /
+# MAGIC `run_id_overwrite` in `ExtraParams`; otherwise the changing run time / run id force a full
+# MAGIC recompute on every update.
+# MAGIC
+# MAGIC To keep a **per-batch history** of metrics instead of a cumulative snapshot — and to avoid
+# MAGIC re-aggregating the whole table on each update (potentially more performant on large or growing
+# MAGIC tables) — compute the metrics inside a foreachBatch sink over each micro-batch instead; see
+# MAGIC `dqx_dlt_demo_foreach_batch_quarantine.py`.
+
+# COMMAND ----------
+
 @dlt.table
 def dq_summary_metrics():
   df = dlt.read("bronze_dq_check")

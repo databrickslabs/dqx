@@ -23,7 +23,8 @@ class DQMetricsObservation:
 
     Args:
         run_id: Unique observation id.
-        run_name: Name of the observations (default is 'dqx').
+        run_name: Name of the observations, taken from the engine's observer. None when the engine has no
+            observer configured (e.g. metrics persisted via save_results_in_table without an observer).
         observed_metrics: Dictionary of observed metrics.
         run_time_overwrite: Run time when the data quality summary metrics were observed. If None, current_timestamp() is used.
         error_column_name: Name of the error column when running quality checks.
@@ -41,7 +42,7 @@ class DQMetricsObservation:
     """
 
     run_id: str
-    run_name: str
+    run_name: str | None
     error_column_name: str
     warning_column_name: str
     run_time_overwrite: datetime | None = None
@@ -225,6 +226,11 @@ class DQMetricsObserver:
         The input must be a **single-row global aggregation** (the output of *get_metrics* selected with no
         *groupBy*). A multi-row input would emit one metrics row-set per input row, each stamped with the
         same run metadata and no grouping key, so this must not be used for windowed/grouped aggregations.
+        The single-row property is guaranteed by construction — the only caller
+        (*DQEngine.compute_summary_metrics*) feeds *get_metrics* aggregates selected without *groupBy*,
+        which always yield exactly one row — and is intentionally not enforced with a runtime row-count
+        check: counting the rows would trigger a Spark action and defeat this method's whole purpose of
+        staying lazy so it can back a Spark Declarative Pipeline materialized view.
 
         Args:
             aggregated_df: A single-row DataFrame whose columns are the metric expressions produced by

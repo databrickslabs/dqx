@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from datetime import datetime
 
@@ -1839,7 +1840,7 @@ def test_save_results_in_table_batch_metrics_only(skip_if_classic_compute, spark
 
 
 @pytest.mark.usefixtures("skip_if_classic_compute")
-def test_save_results_in_table_batch_metrics_only_without_observer(spark, ws, make_schema, make_random):
+def test_save_results_in_table_batch_metrics_only_without_observer(spark, ws, make_schema, make_random, caplog):
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
     metrics_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
 
@@ -1860,11 +1861,12 @@ def test_save_results_in_table_batch_metrics_only_without_observer(spark, ws, ma
     checked_df.count()
 
     save_engine = DQEngine(workspace_client=ws, spark=spark, extra_params=EXTRA_PARAMS)
-    save_engine.save_results_in_table(
-        observation=observation,
-        metrics_config=OutputConfig(location=metrics_table_name, mode="overwrite"),
-        rule_set_fingerprint=TEST_CHECKS_RULE_SET_FINGERPRINT,
-    )
+    with caplog.at_level(logging.INFO, logger="databricks.labs.dqx.engine"):
+        save_engine.save_results_in_table(
+            observation=observation,
+            metrics_config=OutputConfig(location=metrics_table_name, mode="overwrite"),
+            rule_set_fingerprint=TEST_CHECKS_RULE_SET_FINGERPRINT,
+        )
 
     metrics_rows = spark.table(metrics_table_name).collect()
     metric_names = {row["metric_name"] for row in metrics_rows}
@@ -1877,6 +1879,10 @@ def test_save_results_in_table_batch_metrics_only_without_observer(spark, ws, ma
     }
     rule_set_fingerprints = {row["rule_set_fingerprint"] for row in metrics_rows}
     assert rule_set_fingerprints == {TEST_CHECKS_RULE_SET_FINGERPRINT}
+    # The saving engine has no observer, so run_name is null (not a fabricated default observer name)
+    # and an info log makes the null run_name visible to the user.
+    assert {row["run_name"] for row in metrics_rows} == {None}
+    assert "No observer configured on this engine; run_name will be null" in caplog.text
 
 
 def test_save_results_in_table_batch_with_rule_set_fingerprint(
@@ -3204,6 +3210,30 @@ def test_compute_summary_metrics_without_checks(ws, spark):
         "warning_row_count": "1",
         "valid_row_count": "2",
     }
+
+
+def test_compute_summary_metrics_loads_checks_from_location(ws, spark, make_schema, make_random):
+    """When checks are not passed inline, they are loaded from checks_location so the per-check breakdown
+    and rule_set_fingerprint are still produced (rather than left empty)."""
+    schema_name = make_schema(catalog_name=TEST_CATALOG).name
+    checks_table_name = f"{TEST_CATALOG}.{schema_name}.t{make_random(6).lower()}"
+
+    observer = DQMetricsObserver(name=TEST_OBSERVER_NAME)
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+    dq_engine.save_checks(TEST_CHECKS, config=TableChecksStorageConfig(location=checks_table_name))
+
+    checked_df, _ = dq_engine.apply_checks_by_metadata(_standard_test_df(spark), TEST_CHECKS)
+
+    # Pass only checks_location (no inline checks): the method loads the checks from the table.
+    metrics_df = dq_engine.compute_summary_metrics(checked_df, checks_location=checks_table_name)
+    rows = metrics_df.collect()
+    metric_names = {row["metric_name"] for row in rows}
+
+    # The per-check breakdown is present (proving checks were loaded, not skipped)...
+    assert "check_metrics" in metric_names
+    # ...and the fingerprint matches the one computed from the same checks applied inline.
+    assert {row["rule_set_fingerprint"] for row in rows} == {TEST_CHECKS_RULE_SET_FINGERPRINT}
+    assert {row["checks_location"] for row in rows} == {checks_table_name}
 
 
 def test_compute_summary_metrics_with_dotted_custom_metric_name(ws, spark):

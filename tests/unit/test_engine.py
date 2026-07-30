@@ -580,3 +580,13 @@ def test_compute_summary_metrics_raises_without_observer(mock_workspace_client, 
     engine = DQEngine(mock_workspace_client, mock_spark)
     with pytest.raises(InvalidParameterError, match="no observer"):
         engine.compute_summary_metrics(Mock(), checks=[])
+
+
+def test_compute_summary_metrics_raises_when_result_columns_missing(mock_workspace_client, mock_spark):
+    """compute_summary_metrics fails early with a clear error if checked_df lacks the DQX result columns
+    (e.g. the caller passed a DataFrame after get_valid / get_invalid dropped _errors / _warnings)."""
+    engine = DQEngine(mock_workspace_client, mock_spark, observer=DQMetricsObserver())
+    checked_df = Mock()
+    checked_df.columns = ["id", "name"]  # no _errors / _warnings columns
+    with pytest.raises(InvalidParameterError, match="missing the DQX result column"):
+        engine.compute_summary_metrics(checked_df)

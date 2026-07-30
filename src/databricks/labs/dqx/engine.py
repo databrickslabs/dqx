@@ -641,9 +641,9 @@ class DQEngineCore(DQEngineCoreBase):
         # instead computed by DQEngine.compute_summary_metrics over the checked table. The engine's
         # observer (incl. its custom_metrics) is still used by that method.
         if is_dlt_pipeline(self.spark):
-            logger.info(
+            logger.warning(
                 "Spark Declarative Pipeline detected: observe()-based summary metrics are disabled. "
-                "Compute metrics with DQEngine.compute_summary_metrics(...) in a materialized view instead."
+                "Compute metrics with DQEngine.compute_summary_metrics(...) instead (e.g. in a materialized view or a foreachBatch sink)."
             )
             return df
 
@@ -1555,9 +1555,22 @@ class DQEngine(DQEngineBase):
         Returns:
             A *DQMetricsObservation* populated from the engine's run id, run time, result column names, and metadata.
         """
+        # run_name comes from the engine's observer. It is None only on the metrics-only
+        # save_results_in_table path, where the caller persists a previously produced Observation
+        # through an engine that has no observer of its own — the raw Spark Observation carries only
+        # metric values, not the originating observer's name, so the name is unrecoverable here.
+        if self._engine.observer is not None:
+            run_name = self._engine.observer.name
+        else:
+            run_name = None
+            logger.info(
+                "No observer configured on this engine; run_name will be null in the saved summary metrics. "
+                "Pass the engine that produced the metrics (the one with the DQMetricsObserver) to record its name."
+            )
+
         return DQMetricsObservation(
             run_id=self._engine.run_id,
-            run_name=self._engine.observer.name if self._engine.observer else DQMetricsObserver().name,
+            run_name=run_name,
             run_time_overwrite=self._engine.run_time_overwrite,
             observed_metrics=observed_metrics,
             error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
@@ -1580,6 +1593,7 @@ class DQEngine(DQEngineBase):
         output_config: OutputConfig | None = None,
         quarantine_config: OutputConfig | None = None,
         checks_location: str | None = None,
+        run_config_name: str = "default",
     ) -> DataFrame:
         """Compute data quality summary metrics from a checked DataFrame by aggregation.
 
@@ -1596,8 +1610,8 @@ class DQEngine(DQEngineBase):
                 *apply_checks_by_metadata*). When provided, a per-check breakdown (*check_metrics*) is
                 included covering every applied check, including checks with zero violations. The breakdown
                 is derived from the check names and cannot be reconstructed from data alone, so pass the
-                same checks used when applying. When omitted, only dataset-level metrics (row counts and
-                any observer custom metrics) are produced.
+                same checks used when applying. When omitted (and no *checks_location* is given), only
+                dataset-level metrics (row counts and any observer custom metrics) are produced.
             custom_check_functions: Optional custom check functions used to resolve metadata checks. Pass the
                 *same* functions that were used when the checks were applied — if the applied checks referenced a
                 custom function and it is not supplied here, deserialization fails or resolves a different check
@@ -1605,18 +1619,23 @@ class DQEngine(DQEngineBase):
             input_config: Optional input configuration recorded in the metrics for traceability.
             output_config: Optional output configuration recorded in the metrics for traceability.
             quarantine_config: Optional quarantine configuration recorded in the metrics for traceability.
-            checks_location: Optional checks location recorded in the metrics for traceability.
+            checks_location: Optional checks location. Recorded in the metrics for traceability, and — when
+                *checks* is not passed — the checks are loaded from here so the per-check breakdown and
+                *rule_set_fingerprint* are still produced.
+            run_config_name: Name of the run configuration to use when loading checks from a table
+                (only used when *checks* is None and *checks_location* points to a table).
 
         Note:
             A *DQMetricsObserver* must be configured on this engine (*DQEngine(..., observer=...)*); its
             *custom_metrics* (if any) are included alongside the built-in dataset-level metrics and the
-            per-check breakdown (when *checks* is provided).
+            per-check breakdown (when *checks* is provided or loaded from *checks_location*).
 
         Returns:
             A lazy DataFrame matching *OBSERVATION_TABLE_SCHEMA* with one row per metric.
 
         Raises:
-            InvalidParameterError: If no *DQMetricsObserver* is configured on the engine.
+            InvalidParameterError: If no *DQMetricsObserver* is configured on the engine, or if *checked_df*
+                does not contain the DQX result columns.
         """
         observer = self._engine.observer
         if observer is None:
@@ -1624,6 +1643,26 @@ class DQEngine(DQEngineBase):
                 "Summary metrics cannot be computed for an engine with no observer. "
                 "Configure a DQMetricsObserver on the engine, e.g. DQEngine(workspace_client, observer=DQMetricsObserver(...))."
             )
+
+        # selectExpr below references the DQX result columns (_errors / _warnings). Fail early with a
+        # clear message if they are absent — e.g. the caller passed a DataFrame after get_valid /
+        # get_invalid dropped them — rather than letting Spark raise a cryptic column-not-found error.
+        error_column = self._engine.result_column_names[ColumnArguments.ERRORS]
+        warning_column = self._engine.result_column_names[ColumnArguments.WARNINGS]
+        missing_columns = [c for c in (error_column, warning_column) if c not in checked_df.columns]
+        if missing_columns:
+            raise InvalidParameterError(
+                f"checked_df is missing the DQX result column(s) {missing_columns}. Pass the DataFrame returned "
+                "by apply_checks / apply_checks_by_metadata (before get_valid / get_invalid drop the result columns)."
+            )
+
+        # Load checks from the location when they were not passed inline, so the per-check breakdown and
+        # rule_set_fingerprint are still produced (mirrors apply_checks_by_metadata).
+        if checks is None and checks_location:
+            storage_handler, storage_config = self._checks_handler_factory.create_for_location(
+                location=checks_location, run_config_name=run_config_name
+            )
+            checks = storage_handler.load(storage_config)
 
         check_names: list[str] | None = None
         rule_set_fingerprint: str | None = None
