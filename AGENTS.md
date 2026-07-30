@@ -121,6 +121,10 @@ tests/
 - Avoid `unittest.mock.patch` and `pytest.monkeypatch` unless the target is a module-level constant or a third-party boundary with no injectable seam. Patching internal symbols couples tests to implementation details.
 - Tests must be **deterministic and isolated**: no timing dependencies, randomness, shared mutable state, or real network calls in unit tests.
 
+### Naming Conventions
+- Use descriptive, easy-to-understand names for modules, classes, functions, variables, and constants
+- Use a "DQ" prefix for user-facing classes (`DQEngine`, `DQProfiler`)
+
 ### Agent Behaviour
 
 - Keep responses **concise and practical**.

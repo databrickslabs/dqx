@@ -24,31 +24,30 @@ import Link from '@docusaurus/Link';
 // what shipped in that release.
 const RELEASE_NOTES_BASE = 'https://github.com/databrickslabs/dqx/releases/tag/v';
 
-// The four lifecycle stages, each mapped to an Infima badge class and the anchor of
-// its explanation on the Feature lifecycle reference page.
+// The four lifecycle stages, each mapped to a DQX badge color-modifier class
+// (defined in src/css/custom.css) and the anchor of its explanation on the
+// Feature lifecycle reference page. All DQX badges also carry the shared
+// `dqx-badge` geometry class so they render identically in size.
 type Stage = 'experimental' | 'beta' | 'ga' | 'deprecated';
 
 const STAGE_META: Record<Stage, { label: string; badgeClass: string; anchor: string }> = {
-  experimental: { label: 'Experimental', badgeClass: 'badge--warning', anchor: 'experimental' },
-  beta: { label: 'Beta', badgeClass: 'badge--beta', anchor: 'beta' },
-  ga: { label: 'GA', badgeClass: 'badge--success', anchor: 'ga' },
-  deprecated: { label: 'Deprecated', badgeClass: 'badge--secondary', anchor: 'deprecated' },
+  experimental: { label: 'Experimental', badgeClass: 'dqx-badge--experimental', anchor: 'experimental' },
+  beta: { label: 'Beta', badgeClass: 'dqx-badge--beta', anchor: 'beta' },
+  ga: { label: 'GA', badgeClass: 'dqx-badge--ga', anchor: 'ga' },
+  deprecated: { label: 'Deprecated', badgeClass: 'dqx-badge--deprecated', anchor: 'deprecated' },
 };
 
-// Shared badge styling so a badge sits nicely next to heading text. Kept here so
-// authors never copy inline styles into the markdown.
+// Sizing sits in the `dqx-badge` CSS class; these style objects only handle how
+// a badge is positioned relative to heading text. When `heading` is true the
+// badge shrinks to sit inline next to a large title; otherwise it renders at its
+// normal (CSS-defined) size.
 const HEADING_BADGE_STYLE: CSSProperties = {
   verticalAlign: 'text-top',
   marginLeft: '0.4rem',
   fontSize: '0.19em',
-  textTransform: 'uppercase',
-  letterSpacing: '0.05em',
 };
 
-const INLINE_BADGE_STYLE: CSSProperties = {
-  textTransform: 'uppercase',
-  letterSpacing: '0.05em',
-};
+const INLINE_BADGE_STYLE: CSSProperties = {};
 
 /**
  * Renders a lifecycle status badge (Experimental, Beta, Deprecated) linked to
@@ -79,7 +78,7 @@ export function FeatureLifecycleStage({
       style={{ textDecoration: 'none' }}
     >
       <span
-        className={`badge ${meta.badgeClass}`}
+        className={`dqx-badge ${meta.badgeClass}`}
         style={heading ? HEADING_BADGE_STYLE : INLINE_BADGE_STYLE}
       >
         {meta.label}
@@ -112,7 +111,7 @@ export function AvailableSinceVersion({
       style={{ textDecoration: 'none' }}
     >
       <span
-        className={`badge badge--secondary`}
+        className='dqx-badge dqx-badge--version'
         style={heading ? HEADING_BADGE_STYLE : INLINE_BADGE_STYLE}
       >
         Available since v{version}
@@ -149,7 +148,7 @@ export function DeprecatedInVersion({
       style={{ textDecoration: 'none' }}
     >
       <span
-        className={`badge badge--secondary`}
+        className='dqx-badge dqx-badge--version'
         style={heading ? HEADING_BADGE_STYLE : INLINE_BADGE_STYLE}
       >
         Deprecated in v{version}
