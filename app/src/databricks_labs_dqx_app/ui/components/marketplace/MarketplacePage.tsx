@@ -21,6 +21,7 @@ import {
   togglePack,
   selectedCheckDicts,
   formatTagLabel,
+  regionTier,
 } from "@/lib/marketplace-selection";
 import { importChecksAsRegistryDrafts } from "@/lib/import-registry-rules";
 import { Input } from "@/components/ui/input";
@@ -219,7 +220,10 @@ function MarketplaceContent() {
           flexible space and fades on its RIGHT edge to hint at more chips
           scrolled off before the region group. A divider separates the two. */}
       {(industries.length > 1 || regions.length > 1) && (
-        <div className="flex items-center gap-3">
+        // Both groups are flex-1 + min-w-0 so they split the width evenly and
+        // each scrolls INTERNALLY — the row can never exceed the container and
+        // clip the "Industry:" label off the left edge.
+        <div className="flex items-center gap-3 overflow-hidden">
           {industries.length > 1 && (
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <span className="shrink-0 text-xs font-medium text-muted-foreground">
@@ -238,21 +242,26 @@ function MarketplaceContent() {
             </div>
           )}
           {regions.length > 1 && (
-            <div className="flex min-w-0 max-w-[55%] items-center gap-2">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
               <span className="shrink-0 text-xs font-medium text-muted-foreground">
                 {t("marketplace.regionLabel")}
               </span>
-              {/* Regions stay tier-ORDERED (global → macro → country) but with
-                  no divider lines — those read as stray artifacts. */}
+              {/* Tier-ordered (global → macro → country) with a divider between
+                  tier groups. */}
               <div className="dq-scroll-auto flex min-w-0 items-center gap-2 overflow-x-auto py-0.5">
-                {regions.map((reg) => (
-                  <FilterChip
-                    key={reg}
-                    label={reg === "all" ? t("marketplace.all") : formatTagLabel(reg)}
-                    active={filters.region === reg}
-                    onClick={() => setFilters((prev) => ({ ...prev, region: reg }))}
-                  />
-                ))}
+                {regions.map((reg, i) => {
+                  const showDivider = i > 0 && regionTier(reg) !== regionTier(regions[i - 1]);
+                  return (
+                    <div key={reg} className="flex shrink-0 items-center gap-2">
+                      {showDivider && <div className="h-5 w-px bg-border" aria-hidden />}
+                      <FilterChip
+                        label={reg === "all" ? t("marketplace.all") : formatTagLabel(reg)}
+                        active={filters.region === reg}
+                        onClick={() => setFilters((prev) => ({ ...prev, region: reg }))}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
