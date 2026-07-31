@@ -1,12 +1,18 @@
 ---
+title: AI-Assisted Quality Checks Generation
 sidebar_position: 302
 ---
 
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import { AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
 
 # AI-Assisted Quality Checks Generation
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.10.0" heading={false} />
+</FeatureTags>
 
 DQX provides the capability to generate data quality rule candidates using AI/LLM assistance based on natural language descriptions of your data quality requirements. This feature leverages Large Language Models (LLMs) to automatically create appropriate data quality checks from business descriptions significantly reducing the time and effort required to define quality rules.
 
@@ -115,6 +121,10 @@ The LLM will analyze the schema of the input data to generate more accurate rule
 </Tabs>
 
 ### Using with Profiler Summary Statistics
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.12.0" heading={false} />
+</FeatureTags>
 
 You can generate AI-assisted quality rules directly from profiler-generated summary statistics.
 This approach leverages the statistical patterns discovered during profiling to create appropriate data quality checks.
