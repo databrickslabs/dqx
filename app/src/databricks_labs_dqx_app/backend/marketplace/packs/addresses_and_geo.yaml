@@ -1,0 +1,163 @@
+id: addresses-and-geo
+title: Addresses & Geography
+icon: MapPin
+description: >
+  Postal, country, coordinate and administrative-region checks across
+  several regions.
+rules:
+  - name: Valid UK postcode
+    description: Postcode matches the UK outward and inward code structure.
+    regions: [uk]
+    dimension: Validity
+    severity: Medium
+    check:
+      function: regex_match
+      arguments:
+        column: "{{postcode}}"
+        regex: "^[A-Za-z]{1,2}[0-9][0-9A-Za-z]? ?[0-9][A-Za-z]{2}$"
+  - name: Valid Canadian postal code
+    description: Postal code matches the Canadian alternating-letter-digit pattern.
+    regions: [canada]
+    dimension: Validity
+    severity: Low
+    check:
+      function: regex_match
+      arguments:
+        column: "{{postal_code}}"
+        regex: "^[A-Za-z][0-9][A-Za-z] ?[0-9][A-Za-z][0-9]$"
+  - name: Valid Netherlands postcode
+    description: Postcode matches the Dutch four-digit plus two-letter format.
+    regions: [eu]
+    dimension: Validity
+    severity: Low
+    check:
+      function: regex_match
+      arguments:
+        column: "{{postcode}}"
+        regex: "^[0-9]{4} ?[A-Za-z]{2}$"
+  - name: Valid German postcode
+    description: Postcode is exactly five digits as required in Germany.
+    regions: [eu]
+    dimension: Validity
+    severity: Low
+    check:
+      function: regex_match
+      arguments:
+        column: "{{postcode}}"
+        regex: "^[0-9]{5}$"
+  - name: Valid French postcode
+    description: Postcode is exactly five digits as required in France.
+    regions: [eu]
+    dimension: Validity
+    severity: Low
+    check:
+      function: regex_match
+      arguments:
+        column: "{{postcode}}"
+        regex: "^[0-9]{5}$"
+  - name: Valid Australian postcode
+    description: Postcode is exactly four digits as required in Australia.
+    regions: [australia]
+    dimension: Validity
+    severity: Low
+    check:
+      function: regex_match
+      arguments:
+        column: "{{postcode}}"
+        regex: "^[0-9]{4}$"
+  - name: Valid postcode (generic)
+    description: Postcode contains only alphanumeric characters, spaces, and hyphens.
+    regions: [global]
+    dimension: Validity
+    severity: Low
+    check:
+      function: regex_match
+      arguments:
+        column: "{{postcode}}"
+        regex: "^[A-Za-z0-9][A-Za-z0-9 -]{1,10}[A-Za-z0-9]$"
+  - name: Valid ISO-2 country code
+    description: Country code is exactly two letters per ISO 3166-1 alpha-2.
+    dimension: Validity
+    severity: Medium
+    check:
+      function: regex_match
+      arguments:
+        column: "{{country}}"
+        regex: "^[A-Za-z]{2}$"
+  - name: Valid ISO-3 country code
+    description: Country code is exactly three letters per ISO 3166-1 alpha-3.
+    dimension: Validity
+    severity: Medium
+    check:
+      function: regex_match
+      arguments:
+        column: "{{country}}"
+        regex: "^[A-Za-z]{3}$"
+  - name: Valid latitude
+    description: Latitude value falls within the valid range of -90 to 90 degrees.
+    dimension: Validity
+    severity: Medium
+    check:
+      function: is_in_range
+      arguments:
+        column: "{{lat}}"
+        min_limit: -90
+        max_limit: 90
+  - name: Valid longitude
+    description: Longitude value falls within the valid range of -180 to 180 degrees.
+    dimension: Validity
+    severity: Medium
+    check:
+      function: is_in_range
+      arguments:
+        column: "{{lon}}"
+        min_limit: -180
+        max_limit: 180
+  - name: Valid US state code
+    description: State code is one of the recognised US state and territory abbreviations.
+    regions: [us]
+    dimension: Validity
+    severity: Medium
+    check:
+      function: is_in_list
+      arguments:
+        column: "{{state}}"
+        allowed: [AL, AK, AZ, AR, CA, CO, CT, DE, FL, GA, HI, ID, IL, IN, IA, KS, KY, LA, ME, MD, MA, MI, MN, MS, MO, MT, NE, NV, NH, NJ, NM, NY, NC, ND, OH, OK, OR, PA, RI, SC, SD, TN, TX, UT, VT, VA, WA, WV, WI, WY, DC, PR, GU, VI, AS, MP]
+  - name: Valid Canadian province code
+    description: Province code is one of the recognised Canadian province and territory abbreviations.
+    regions: [canada]
+    dimension: Validity
+    severity: Medium
+    check:
+      function: is_in_list
+      arguments:
+        column: "{{province}}"
+        allowed: [AB, BC, MB, NB, NL, NS, NT, NU, ON, PE, QC, SK, YT]
+  - name: Valid Australian state code
+    description: State code is one of the recognised Australian state and territory abbreviations.
+    regions: [australia]
+    dimension: Validity
+    severity: Medium
+    check:
+      function: is_in_list
+      arguments:
+        column: "{{state}}"
+        allowed: [NSW, VIC, QLD, SA, WA, TAS, NT, ACT]
+  - name: Valid ISO-639 language code
+    description: Language code is exactly two lowercase letters per ISO 639-1.
+    dimension: Validity
+    severity: Low
+    check:
+      function: regex_match
+      arguments:
+        column: "{{language}}"
+        regex: "^[a-z]{2}$"
+  - name: Valid continent code
+    description: Continent code is one of the seven standard two-letter continent abbreviations.
+    dimension: Validity
+    severity: Low
+    check:
+      function: is_in_list
+      arguments:
+        column: "{{continent}}"
+        allowed: [AF, AN, AS, EU, NA, OC, SA]

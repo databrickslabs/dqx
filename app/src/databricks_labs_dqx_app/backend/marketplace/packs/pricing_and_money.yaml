@@ -1,0 +1,91 @@
+id: pricing-and-money
+title: Pricing & Money
+icon: DollarSign
+description: >
+  Money-column checks — non-negativity, decimal precision, currency codes,
+  card and IBAN structure, and cost-vs-price consistency.
+rules:
+  - name: Amount must be non-zero
+    description: Monetary amount is not exactly zero.
+    industries: [banking, retail]
+    dimension: Validity
+    severity: Medium
+    check:
+      function: is_not_equal_to
+      arguments:
+        column: "{{amount}}"
+        value: 0
+  - name: Price cannot be negative
+    description: Price is greater than or equal to zero.
+    industries: [retail]
+    dimension: Validity
+    severity: High
+    check:
+      function: is_not_less_than
+      arguments:
+        column: "{{price}}"
+        limit: 0
+  - name: At most two decimal places
+    description: Amount is rounded to at most two decimal places.
+    dimension: Consistency
+    severity: Low
+    check:
+      function: sql_expression
+      arguments:
+        expression: "{{amount}} = round({{amount}}, 2)"
+  - name: Valid ISO-4217 currency code
+    description: Currency is a three-letter alphabetic code.
+    dimension: Validity
+    severity: Medium
+    check:
+      function: regex_match
+      arguments:
+        column: "{{currency}}"
+        regex: "^[A-Za-z]{3}$"
+  - name: Valid numeric currency code
+    description: Numeric currency code is exactly three digits.
+    dimension: Validity
+    severity: Low
+    check:
+      function: regex_match
+      arguments:
+        column: "{{currency_code}}"
+        regex: "^[0-9]{3}$"
+  - name: Cost cannot exceed price
+    description: Cost is less than or equal to price.
+    industries: [retail]
+    dimension: Consistency
+    severity: Medium
+    check:
+      function: sql_expression
+      arguments:
+        expression: "{{cost}} <= {{price}}"
+  - name: Margin not extreme
+    description: Gross margin falls between zero and ninety-five percent.
+    industries: [retail]
+    dimension: Accuracy
+    severity: Medium
+    check:
+      function: sql_expression
+      arguments:
+        expression: "({{price}} - {{cost}}) / nullif({{price}}, 0) between 0 and 0.95"
+  - name: Valid credit card (Luhn)
+    description: Card number passes the Luhn checksum after stripping non-digit characters.
+    industries: [banking]
+    dimension: Validity
+    severity: High
+    check:
+      function: sql_expression
+      arguments:
+        expression: "luhn_check(regexp_replace({{card_number}}, '[^0-9]', ''))"
+  - name: Valid IBAN format
+    description: IBAN matches the two-letter country plus check-digit structure.
+    industries: [banking]
+    regions: [eu]
+    dimension: Validity
+    severity: Medium
+    check:
+      function: regex_match
+      arguments:
+        column: "{{iban}}"
+        regex: "^[A-Za-z]{2}[0-9]{2}[A-Za-z0-9]{1,30}$"
