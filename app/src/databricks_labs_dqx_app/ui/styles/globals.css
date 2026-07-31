@@ -256,12 +256,13 @@
   background-color: var(--border);
 }
 
-/* Left-edge fade mask — hints there's more content scrolled off the left.
-   Applied to the industry filter group so its leading chips fade rather
-   than hard-clip at the scroll boundary. */
-.dq-fade-left {
-  -webkit-mask-image: linear-gradient(to right, transparent 0, black 16px);
-  mask-image: linear-gradient(to right, transparent 0, black 16px);
+/* Right-edge fade mask — hints there's more content scrolled off to the
+   right. Applied to the industry filter group (which shares a line with the
+   region group) so its trailing chips fade into the divider rather than
+   hard-clipping at the scroll boundary. */
+.dq-fade-right {
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
 }
 
 /* ---------------------------------------------------------------------

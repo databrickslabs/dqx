@@ -26,24 +26,33 @@ export function RuleTestModal({
   const { t } = useTranslation();
   const preview = checkDictToPreviewRule(rule, checkFunctions, t);
   const def: RuleDefinition | undefined = preview?.definition;
-  const body = (def?.body ?? {}) as Record<string, unknown>;
 
   const mode = (preview?.mode ?? "sql") as "sql" | "lowcode" | "dqx_native";
   const polarity: "pass" | "fail" = preview?.polarity === "fail" ? "fail" : "pass";
   const slots = def?.slots ?? [];
 
-  const nativeFunction = typeof body.function === "string" ? body.function : undefined;
+  // Read the ORIGINAL normalized check ({criticality, check:{function,
+  // arguments}, user_metadata}), NOT the parsed preview definition — the
+  // parser splits scalar args like `regex` / `allowed` out into
+  // `parameters`, so the preview body drops them. The test panel's native
+  // path needs the FULL arguments (function + regex/allowed/min_limit/…),
+  // exactly as the editor's Test tab passes them.
+  const innerCheck =
+    rule.check && typeof rule.check === "object"
+      ? ((rule.check as Record<string, unknown>).check as Record<string, unknown> | undefined)
+      : undefined;
+  const nativeFunction = typeof innerCheck?.function === "string" ? innerCheck.function : undefined;
   const nativeArguments =
-    body.arguments && typeof body.arguments === "object" && !Array.isArray(body.arguments)
-      ? (body.arguments as Record<string, unknown>)
+    innerCheck?.arguments && typeof innerCheck.arguments === "object" && !Array.isArray(innerCheck.arguments)
+      ? (innerCheck.arguments as Record<string, unknown>)
       : {};
 
-  // For sql/lowcode rules the effective predicate is the stored predicate /
-  // sql_query. dqx_native rules pass function + arguments and compile on the
-  // backend, so their predicate is unused.
+  // sql_expression rules carry their predicate in arguments.expression; sql
+  // rules may carry sql_query/predicate. dqx_native rules compile on the
+  // backend from function + arguments, so their predicate is unused.
   const predicate =
-    (typeof body.sql_query === "string" && body.sql_query) ||
-    (typeof body.predicate === "string" && body.predicate) ||
+    (typeof nativeArguments.expression === "string" && nativeArguments.expression) ||
+    (typeof nativeArguments.sql_query === "string" && nativeArguments.sql_query) ||
     "";
 
   const canTest =

@@ -199,17 +199,18 @@ function MarketplaceContent() {
         />
       </div>
 
-      {/* Filters — industry and region on their OWN rows, each scrolling
-          independently with an auto-hiding scrollbar. The industry row fades
-          on its left edge to hint at scrolled-off chips. No shared bar. */}
+      {/* Filters — industry and region on ONE line. Each group scrolls
+          independently (auto-hiding scrollbar); the industry group takes the
+          flexible space and fades on its RIGHT edge to hint at more chips
+          scrolled off before the region group. A divider separates the two. */}
       {(industries.length > 1 || regions.length > 1) && (
-        <div className="space-y-2">
+        <div className="flex items-center gap-3">
           {industries.length > 1 && (
-            <div className="flex items-center gap-2">
-              <span className="w-16 shrink-0 text-xs font-medium text-muted-foreground">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="shrink-0 text-xs font-medium text-muted-foreground">
                 {t("marketplace.industryLabel")}
               </span>
-              <div className="dq-scroll-auto dq-fade-left flex flex-1 items-center gap-2 overflow-x-auto py-0.5 pl-2">
+              <div className="dq-scroll-auto dq-fade-right flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-0.5 pr-6">
                 {industries.map((ind) => (
                   <FilterChip
                     key={ind}
@@ -221,12 +222,15 @@ function MarketplaceContent() {
               </div>
             </div>
           )}
+          {industries.length > 1 && regions.length > 1 && (
+            <div className="h-6 w-px shrink-0 bg-border" aria-hidden />
+          )}
           {regions.length > 1 && (
-            <div className="flex items-center gap-2">
-              <span className="w-16 shrink-0 text-xs font-medium text-muted-foreground">
+            <div className="flex min-w-0 max-w-[55%] items-center gap-2">
+              <span className="shrink-0 text-xs font-medium text-muted-foreground">
                 {t("marketplace.regionLabel")}
               </span>
-              <div className="dq-scroll-auto flex flex-1 items-center gap-2 overflow-x-auto py-0.5">
+              <div className="dq-scroll-auto flex min-w-0 items-center gap-2 overflow-x-auto py-0.5">
                 {regions.map((reg, i) => {
                   // Vertical divider whenever the tier changes (global | macro |
                   // country) so the tiered grouping reads — never before the first.
