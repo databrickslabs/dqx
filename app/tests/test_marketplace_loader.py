@@ -1,7 +1,4 @@
 import logging
-from pathlib import Path
-
-from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 
 from databricks_labs_dqx_app.backend.marketplace import loader
 from databricks_labs_dqx_app.backend.marketplace.models import (
@@ -80,7 +77,7 @@ def test_normalize_check_shape():
     }
 
 
-def test_load_packs_returns_sorted_nonempty(tmp_path):
+def test_load_packs_returns_sorted_nonempty():
     loader.clear_cache()
     packs = loader.load_packs(_real_validator)
     assert packs, "expected bundled packs to load"
