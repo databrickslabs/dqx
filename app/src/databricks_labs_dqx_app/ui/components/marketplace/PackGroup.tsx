@@ -51,10 +51,18 @@ export function PackGroup({
 
   return (
     <div className="rounded-lg border bg-muted/50">
-      {/* Header — checkbox cell + a full-height toggle button. Padding lives on
-          the button (not the row div) so the ENTIRE header area toggles the
-          pack, not just its vertical centre. */}
-      <div className="flex items-stretch">
+      {/* Header — checkbox cell + a full-height toggle button. The hover tint
+          lives on the WHOLE row wrapper (not just the button) so the checkbox
+          cell and the toggle tint together as one surface rather than
+          two-tone. Padding stays on the button so the entire header area
+          toggles the pack, not just its vertical centre. Rounding matches the
+          card so the tint doesn't spill past the corners. */}
+      <div
+        className={cn(
+          "flex items-stretch rounded-t-lg transition-colors hover:bg-muted",
+          !expanded && "rounded-b-lg",
+        )}
+      >
         <div className="flex items-center pl-4">
           <Checkbox
             checked={selState === "all" ? true : selState === "some" ? "indeterminate" : false}
@@ -67,13 +75,7 @@ export function PackGroup({
           type="button"
           onClick={onToggleExpanded}
           aria-expanded={expanded}
-          className={cn(
-            "flex flex-1 items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-muted",
-            // Match the card's rounding so the hover tint doesn't spill past
-            // the corners — top-right always, bottom-right only when collapsed.
-            "rounded-tr-lg",
-            !expanded && "rounded-br-lg",
-          )}
+          className="flex flex-1 items-center gap-3 px-3 py-3 text-left"
         >
           <Icon className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
           <span className="text-sm font-semibold">{pack.title}</span>
