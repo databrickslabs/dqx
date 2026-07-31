@@ -2822,5 +2822,10 @@
     "categoryDrilldown": "Desglose",
     "categoryTrends": "Tendencias a lo largo del tiempo",
     "categoryDiagnose": "Diagnóstico"
+  },
+  "marketplace": {
+    "selectRule": "Seleccionar {{name}}",
+    "selectPack": "Seleccionar todas las reglas en {{title}}",
+    "packSelectedCount": "{{selected}} / {{total}} seleccionados"
   }
 }

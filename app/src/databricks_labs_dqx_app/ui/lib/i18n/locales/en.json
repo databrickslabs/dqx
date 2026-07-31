@@ -2822,5 +2822,10 @@
     "categoryDrilldown": "Drilldown",
     "categoryTrends": "Trends over time",
     "categoryDiagnose": "Diagnose"
+  },
+  "marketplace": {
+    "selectRule": "Select {{name}}",
+    "selectPack": "Select all rules in {{title}}",
+    "packSelectedCount": "{{selected}} / {{total}} selected"
   }
 }
