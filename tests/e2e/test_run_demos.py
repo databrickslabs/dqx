@@ -190,10 +190,10 @@ def test_run_dqx_demo_pii_detection(ws, make_notebook, make_job, library_ref):
 @pytest.mark.parametrize(
     "demo_notebook",
     [
-        "dqx_dlt_demo.py",
-        "dqx_dlt_demo_quarantine.py",
-        "dqx_dlt_demo_foreach_batch.py",
-        "dqx_dlt_demo_foreach_batch_quarantine.py",
+        "dqx_ldp_demo.py",
+        "dqx_ldp_demo_quarantine.py",
+        "dqx_ldp_demo_foreach_batch.py",
+        "dqx_ldp_demo_foreach_batch_quarantine.py",
     ],
 )
 def test_run_dqx_dlt_demo(

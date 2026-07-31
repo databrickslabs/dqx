@@ -1040,10 +1040,14 @@ To enable summary metrics programmatically, create and pass a `DQMetricsObserver
 
 ### Enabling summary metrics in Lakeflow Pipelines
 
-Inside a Lakeflow Pipeline (Spark Declarative Pipeline / DLT), do the following:
+<FeatureTags>
+  <AvailableSinceVersion version="0.16.0" heading={false} />
+</FeatureTags>
 
-1. Persist the checked data as a table (so the result columns are available downstream).
-2. Add a materialized view that calls `compute_summary_metrics` on that table, passing the same `checks` you applied.
+Inside a Lakeflow Pipeline (a.k.a. Spark Declarative Pipeline or DLT Pipeline), use the following approach:
+
+1. Persist the checked data to a table so the result columns are available downstream
+2. Add a materialized view that calls `compute_summary_metrics` on that table, passing the same `checks` you applied when checking the data
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -1078,18 +1082,21 @@ Inside a Lakeflow Pipeline (Spark Declarative Pipeline / DLT), do the following:
 This works for both batch and streaming pipelines. See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
 
 <Admonition type="info" title="Summary Metrics: Snapshot vs. history">
-The example is using a materialized view to compute the summary metrics. On each pipeline update the view is refreshed — **incrementally** when the query is deterministic (set static *run_time_overwrite* / *run_id_overwrite*, see the note above) and the engine can incrementalize the aggregation, otherwise fully recomputed. Either way it holds a **current snapshot** over all rows in the checked table, so `input_row_count` is the cumulative total, not a per-run count.
+This example uses a materialized view to compute summary metrics for the entire table. On each pipeline update the entire view is refreshed. This can be either:
+* **Incremental** when the query is deterministic (see the note above about setting a static *run_time_overwrite* and *run_id_overwrite*) and the engine can incrementalize the aggregation
+* **Fully recomputed** when the query is non-deterministic or the engine cannot incrementalize the aggregation
 
-To keep a **history** of metrics over time you need an append target. For **streaming** pipelines, compute the metrics per micro-batch inside a [foreachBatch sink](https://docs.databricks.com/aws/en/ldp/for-each-batch) and append them (see below).
+The metrics view contains a **cumulative snapshot** over all rows in the checked table. Metrics are cumulative totals representing the current quality of the entire dataset and do not contain any per-run history.  
+To maintain a **history** of metrics over time, compute the metrics per micro-batch inside a [foreachBatch sink](https://docs.databricks.com/aws/en/ldp/for-each-batch) and append them to a table.
 </Admonition>
 
 #### Per-batch metrics with a foreachBatch sink
 
-Instead of a materialized view, you can compute summary metrics inside a Lakeflow [foreachBatch sink](https://docs.databricks.com/aws/en/ldp/for-each-batch). The sink function receives each streaming micro-batch, so you apply the checks, write the checked rows, and compute and append the metrics **per batch**. Use this when you want:
+Instead of a materialized view, you can compute summary metrics inside a Lakeflow [foreachBatch sink](https://docs.databricks.com/aws/en/ldp/for-each-batch). The sink function receives each streaming micro-batch, applies quality checks, writes the checked rows, and appends the per-batch `compute_summary_metrics` output. Use this when:
 
-- a **history** of metrics — one set of counts appended per micro-batch — rather than a cumulative snapshot;
-- better **performance on large or growing tables** — the sink aggregates only the current micro-batch, whereas the materialized view re-aggregates the whole checked table on each pipeline update; and/or
-- a **metrics table shared across pipelines** — the sink appends to a fully-qualified external Delta table (not a pipeline-managed dataset), and Delta accepts concurrent appends, so several pipelines can write into one common metrics table. A materialized view is owned by a single pipeline's query and cannot be a shared target. Set a distinct observer `name` per source so rows stay filterable.
+- You want a **history** of metrics for each streaming micro-batch rather than a cumulative snapshot
+- You need better **performance on large or growing tables**; Only the current batch is aggregated rather than the whole table
+- You want to **share a metrics table across pipelines**; The sink appends to an external Delta table (not a pipeline-managed dataset); Several pipelines can write into a common metrics table; Set a distinct observer `name` per source so rows stay filterable
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -1127,8 +1134,6 @@ Instead of a materialized view, you can compute summary metrics inside a Lakeflo
 </Tabs>
 
 See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_dlt_demo_foreach_batch.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.15.0/demos/dqx_dlt_demo_foreach_batch_quarantine.py) that splits valid and invalid records into separate tables in the same batch.
-
-**Why not the observer directly?** The observer (`observe()`) and the streaming metrics listener do not work inside a declarative pipeline: the pipeline runtime — not your code — triggers the write action, so the Spark Observation is never populated (`observation.get` stalls) and the streaming listener receives no events. DQX detects the pipeline runtime and automatically skips wiring `observe()` there. `compute_summary_metrics` computes the same metrics as an aggregation instead, but still reads from the engine's observer — so **an observer must be configured** on the engine (calling it without one raises `InvalidParameterError`), and if you need **custom metrics**, configure it with them (`DQMetricsObserver(custom_metrics=[...])`). See the [Summary Metrics guide](/docs/guide/summary_metrics) for details.
 
 ### Enabling summary metrics in DQX workflows
 

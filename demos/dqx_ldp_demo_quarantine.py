@@ -1,26 +1,26 @@
-# Databricks notebook source
-import dlt
+  # Databricks notebook source
+from pyspark import pipelines as dp
 
 # COMMAND ----------
 
 # MAGIC
 # MAGIC %md
-# MAGIC ## DQX in a Lakeflow Pipeline (formerly Delta Live Tables - DLT) — data quality with quarantine pattern
+# MAGIC ## Using DQX in a Lakeflow Declarative Pipeline (formerly Delta Live Tables - DLT) — data quality with quarantine pattern
 # MAGIC
 # MAGIC This demo applies DQX checks and **splits** the data into a valid `silver` table and a `quarantine`
 # MAGIC table. It also persists the checked layer (`bronze_dq_check`) so summary metrics can be computed as
 # MAGIC a materialized view over all rows. For a simpler pipeline that reports issues as columns without
-# MAGIC quarantining, see `dqx_dlt_demo.py`.
+# MAGIC quarantining, see `dqx_ldp_demo.py`.
 # MAGIC
-# MAGIC This is the simple, recommended default for quarantining: the summary-metrics materialized view gives
-# MAGIC a cumulative snapshot over the whole table. If instead you want summary metrics computed incrementally
-# MAGIC per micro-batch and appended as a history, use the foreachBatch sink variant in
-# MAGIC `dqx_dlt_demo_foreach_batch_quarantine.py`.
+# MAGIC This is the recommended approach for quarantining data with DQX in a Lakeflow Declarative Pipeline. The
+# MAGIC summary-metrics materialized view gives a cumulative snapshot over the whole table. If instead you want
+# MAGIC summary metrics computed incrementally per micro-batch and appended as a history, use the foreachBatch
+# MAGIC sink variant in `dqx_ldp_demo_foreach_batch_quarantine.py`.
 # MAGIC
-# MAGIC Create new ETL Pipeline to execute this notebook (see [here](https://docs.databricks.com/aws/en/getting-started/data-pipeline-get-started)):
+# MAGIC Create a new ETL Pipeline to execute this notebook (see [here](https://docs.databricks.com/aws/en/getting-started/data-pipeline-get-started)):
 # MAGIC 1. Upload the notebook to a Databricks Workspace
 # MAGIC 2. Go to `Workflows` tab > `Create` > `ETL Pipeline` > `Add existing assets` > select the source code path and root directory
-# MAGIC 3. Add DQX library as a [dependency](https://docs.databricks.com/aws/en/dlt/dlt-multi-file-editor#environment) to the pipeline: Go to `Settings` > `Edit environment` > Add `databricks‑labs‑dqx` as dependency
+# MAGIC 3. Add the DQX library as a [dependency](https://docs.databricks.com/aws/en/dlt/dlt-multi-file-editor#environment) to the pipeline: Go to `Settings` > `Edit environment` > Add `databricks‑labs‑dqx` as a dependency
 # MAGIC 4. Run the pipeline
 # MAGIC
 # MAGIC
@@ -39,9 +39,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.sdk import WorkspaceClient
 
-# compute_summary_metrics requires an observer on the engine; it reads any custom_metrics from it.
-# The static run_time_overwrite / run_id_overwrite make the checked query deterministic so the
-# summary-metrics materialized view can refresh incrementally (see the markdown cell below for why).
+# Set a static 'run_time' and 'run_id' to avoid recomputing any materialized views
 extra_params = ExtraParams(
     run_time_overwrite="2025-01-01T00:00:00",
     run_id_overwrite="lakeflow_pipeline_run",
@@ -52,10 +50,10 @@ dq_engine = DQEngine(WorkspaceClient(), observer=DQMetricsObserver(), extra_para
 
 # MAGIC %md
 # MAGIC ## Define Data Quality checks
+# MAGIC Define your quality checks in YAML. These can also be defined using DQX classes or loaded from a table of file.
 
 # COMMAND ----------
 
-# Define checks in YAML format. They can also be defined using classes or loaded from a file or a table.
 checks = yaml.safe_load("""
 - check:
     function: is_not_null
@@ -121,39 +119,58 @@ checks = yaml.safe_load("""
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Define Lakeflow Pipeline (bronze -> silver + quarantine -> metrics)
+# MAGIC ## Bronze Layer
+# MAGIC Stream the source data from a Delta table as a virtualized view.
 
 # COMMAND ----------
 
-# Bronze: raw input as a streaming view.
-@dlt.view
+@dp.view
 def bronze():
   return spark.readStream.format("delta") \
     .load("/databricks-datasets/delta-sharing/samples/nyctaxi_2019")
 
 # COMMAND ----------
 
-# Apply checks and persist the checked data as a table so the summary-metrics materialized view
-# below can read the result columns (_errors/_warnings) after the pipeline writes them.
-@dlt.table
+# MAGIC %md
+# MAGIC ## Apply Quality Checks
+# MAGIC Stream the `bronze` data and apply quality checks using `dq_engine.apply_checks_by_metadata`. Pass the
+# MAGIC streaming DataFrame and the checks. Issues are reported in additional metadata columns `_warnings` and
+# MAGIC `_errors`. The checked data is persisted to a `bronze_dq_check` table so the valid, quarantine, and
+# MAGIC summary-metrics datasets below can read it.
+
+# COMMAND ----------
+
+@dp.table
 def bronze_dq_check():
-  df = dlt.read_stream("bronze")
+  df = spark.readStream.table("bronze")
   return dq_engine.apply_checks_by_metadata(df, checks)
 
 # COMMAND ----------
 
-# Silver: rows without errors or warnings, with the auxiliary result columns dropped.
-@dlt.table
+# MAGIC %md
+# MAGIC ## Silver Layer
+# MAGIC Read the checked `bronze_dq_check` data and write the valid rows without errors or warnings,
+# MAGIC with the auxiliary result columns dropped, to a `silver` table using `dq_engine.get_valid`.
+
+# COMMAND ----------
+
+@dp.table
 def silver():
-  df = dlt.read_stream("bronze_dq_check")
+  df = spark.readStream.table("bronze_dq_check")
   return dq_engine.get_valid(df)
 
 # COMMAND ----------
 
-# Quarantine: only rows with errors or warnings.
-@dlt.table
+# MAGIC %md
+# MAGIC ## Quarantine Layer
+# MAGIC Read the checked `bronze_dq_check` data and write only the rows with errors or warnings to a
+# MAGIC `quarantine` table using `dq_engine.get_invalid`.
+
+# COMMAND ----------
+
+@dp.table
 def quarantine():
-  df = dlt.read_stream("bronze_dq_check")
+  df = spark.readStream.table("bronze_dq_check")
   return dq_engine.get_invalid(df)
 
 # COMMAND ----------
@@ -161,23 +178,19 @@ def quarantine():
 # MAGIC %md
 # MAGIC ## Summary Metrics
 # MAGIC
-# MAGIC A materialized view computed by aggregation over the checked table — one row per metric
-# MAGIC (input / error / warning / valid row counts and a per-check breakdown).
+# MAGIC Compute data quality summary metrics as a materialized view by aggregating over the `bronze_dq_check` table.
+# MAGIC Using `compute_summary_metrics` builds an output DataFrame with one row per metric. The metrics include
+# MAGIC both a per-check breakdown and the input, error, warning, and valid row counts.
 # MAGIC
-# MAGIC This materialized view is a **cumulative snapshot** over the whole table (`input_row_count` is the
-# MAGIC running total, not a per-run count). It refreshes *incrementally* only when the query is
-# MAGIC deterministic — which is why the engine above sets static `run_time_overwrite` /
-# MAGIC `run_id_overwrite` in `ExtraParams`; otherwise the changing run time / run id force a full
-# MAGIC recompute on every update.
-# MAGIC
-# MAGIC To keep a **per-batch history** of metrics instead of a cumulative snapshot — and to avoid
-# MAGIC re-aggregating the whole table on each update (potentially more performant on large or growing
-# MAGIC tables) — compute the metrics inside a foreachBatch sink over each micro-batch instead; see
-# MAGIC `dqx_dlt_demo_foreach_batch_quarantine.py`.
+# MAGIC This materialized view computes a **cumulative snapshot** over the entire checked table. The `input_row_count`
+# MAGIC is the running total number of rows in the table, not a per-run count.  To keep a **per-batch history** of
+# MAGIC metrics instead of a cumulative snapshot and to avoid re-aggregating the whole table on each update,
+# MAGIC persist the metrics using a [foreachBatch sink](https://docs.databricks.com/aws/en/ldp/for-each-batch)
+# MAGIC over each micro-batch instead. See `dqx_ldp_demo_foreach_batch_quarantine.py` for an example.
 
 # COMMAND ----------
 
-@dlt.table
+@dp.table
 def dq_summary_metrics():
-  df = dlt.read("bronze_dq_check")
+  df = spark.read.table("bronze_dq_check")
   return dq_engine.compute_summary_metrics(df, checks=checks)
