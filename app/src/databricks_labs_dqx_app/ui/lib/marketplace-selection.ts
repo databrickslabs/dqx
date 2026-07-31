@@ -51,6 +51,7 @@ export function packSelectionState(
   packRuleKeys: string[],
   selected: Set<string>,
 ): "none" | "some" | "all" {
+  if (packRuleKeys.length === 0) return "none";
   const n = packRuleKeys.filter((k) => selected.has(k)).length;
   if (n === 0) return "none";
   if (n === packRuleKeys.length) return "all";

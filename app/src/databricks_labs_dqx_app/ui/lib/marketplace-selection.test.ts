@@ -58,6 +58,10 @@ describe("ruleMatchesFilters", () => {
     expect(ruleMatchesFilters(rule({ name: "Valid email" }), { industry: "all", region: "all", search: "EMAIL" })).toBe(true);
     expect(ruleMatchesFilters(rule({ name: "Valid email" }), { industry: "all", region: "all", search: "phone" })).toBe(false);
   });
+  it("search matches description when name does not match", () => {
+    const r = rule({ name: "Generic rule", description: "Checks that the phone number is valid" });
+    expect(ruleMatchesFilters(r, { industry: "all", region: "all", search: "phone" })).toBe(true);
+  });
 });
 
 describe("collectIndustries / collectRegions", () => {
@@ -78,6 +82,10 @@ describe("selection", () => {
     expect(packSelectionState(keys, new Set(["a"]))).toBe("some");
     expect(packSelectionState(keys, new Set(["a", "b", "c"]))).toBe("all");
   });
+  it("empty packRuleKeys returns none regardless of selected set", () => {
+    expect(packSelectionState([], new Set())).toBe("none");
+    expect(packSelectionState([], new Set(["a", "b"]))).toBe("none");
+  });
   it("toggleRule adds/removes", () => {
     expect(toggleRule(new Set(), "a").has("a")).toBe(true);
     expect(toggleRule(new Set(["a"]), "a").has("a")).toBe(false);
@@ -90,8 +98,10 @@ describe("selection", () => {
     expect(s2.size).toBe(0);
   });
   it("selectedCheckDicts returns check dicts of selected rules", () => {
-    const packs = [{ rules: [rule({ rule_key: "p:a" }), rule({ rule_key: "p:b" })] }] as unknown as MarketplacePackOut[];
+    const ruleA = rule({ rule_key: "p:a" });
+    const packs = [{ rules: [ruleA, rule({ rule_key: "p:b" })] }] as unknown as MarketplacePackOut[];
     const dicts = selectedCheckDicts(packs, new Set(["p:a"]));
     expect(dicts).toHaveLength(1);
+    expect(dicts[0]).toEqual(ruleA.check);
   });
 });
