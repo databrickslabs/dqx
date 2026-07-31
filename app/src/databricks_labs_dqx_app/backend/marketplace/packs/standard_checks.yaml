@@ -1,0 +1,13 @@
+id: standard-checks
+title: Standard Checks
+icon: SquareCheck
+description: Reusable baseline data quality checks suitable for any dataset.
+rules:
+  - name: Must not be null
+    description: Value must be present and not null.
+    dimension: Completeness
+    severity: High
+    check:
+      function: is_not_null
+      arguments:
+        column: "{{column}}"
