@@ -24,16 +24,17 @@ import Link from '@docusaurus/Link';
 // what shipped in that release.
 const RELEASE_NOTES_BASE = 'https://github.com/databrickslabs/dqx/releases/tag/v';
 
-// The four lifecycle stages, each mapped to a DQX badge color-modifier class
+// The taggable lifecycle stages, each mapped to a DQX badge color-modifier class
 // (defined in src/css/custom.css) and the anchor of its explanation on the
 // Feature lifecycle reference page. All DQX badges also carry the shared
 // `dqx-badge` geometry class so they render identically in size.
-type Stage = 'experimental' | 'beta' | 'ga' | 'deprecated';
+// GA is intentionally not a taggable stage: a generally available feature carries no badge (an
+// unbadged page is GA by default), so there is no dqx-badge--ga. See the Feature lifecycle reference.
+type Stage = 'experimental' | 'beta' | 'deprecated';
 
 const STAGE_META: Record<Stage, { label: string; badgeClass: string; anchor: string }> = {
   experimental: { label: 'Experimental', badgeClass: 'dqx-badge--experimental', anchor: 'experimental' },
   beta: { label: 'Beta', badgeClass: 'dqx-badge--beta', anchor: 'beta' },
-  ga: { label: 'GA', badgeClass: 'dqx-badge--ga', anchor: 'ga' },
   deprecated: { label: 'Deprecated', badgeClass: 'dqx-badge--deprecated', anchor: 'deprecated' },
 };
 

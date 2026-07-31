@@ -816,6 +816,5 @@ button {
    text). */
 .dqx-badge--experimental { background-color: #eab308; border-color: #eab308; color: #1b1b1d; }  /* amber  — Experimental */
 .dqx-badge--beta         { background-color: #ff3621; border-color: #ff3621; color: #fff; }      /* brand red — Beta */
-.dqx-badge--ga           { background-color: #16a34a; border-color: #16a34a; color: #fff; }      /* green  — GA */
 .dqx-badge--deprecated   { background-color: #6b7280; border-color: #6b7280; color: #fff; }      /* gray   — Deprecated */
 .dqx-badge--version      { background-color: #1b3139; border-color: #1b3139; color: #fff; }      /* navy   — version tag */
