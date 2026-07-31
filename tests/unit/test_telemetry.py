@@ -2,7 +2,6 @@ from unittest.mock import Mock, PropertyMock
 
 import pytest
 
-import databricks.labs.dqx.telemetry as telemetry_module
 from databricks.labs.dqx.telemetry import (
     is_dlt_pipeline,
     get_tables_from_spark_plan,
@@ -10,6 +9,7 @@ from databricks.labs.dqx.telemetry import (
     get_spark_plan_as_string,
     log_telemetry,
     log_dataframe_telemetry,
+    reset_telemetry_cache,
 )
 
 
@@ -348,12 +348,12 @@ class _FakeWorkspaceClient:
 @pytest.fixture(autouse=True)
 def _reset_telemetry_state():
     """Reset the process-level dedup cache and fake-client state around each test."""
-    telemetry_module._sent_telemetry.clear()
+    reset_telemetry_cache()
     _FakeWorkspaceClient.call_count = 0
     _FakeWorkspaceClient.raise_exc = None
     _FakeWorkspaceClient.last_config = None
     yield
-    telemetry_module._sent_telemetry.clear()
+    reset_telemetry_cache()
 
 
 def test_log_telemetry_sends_once_and_sets_bounded_timeouts():
@@ -362,9 +362,10 @@ def test_log_telemetry_sends_once_and_sets_bounded_timeouts():
     assert _FakeWorkspaceClient.call_count == 1
     cfg = _FakeWorkspaceClient.last_config
     assert ("check", "is_not_null") in cfg.user_agent_extra
-    # The control-plane ping must be bounded so a brownout cannot stall the caller for minutes.
-    assert cfg.retry_timeout_seconds == telemetry_module._TELEMETRY_TIMEOUT_SECONDS
-    assert cfg.http_timeout_seconds == telemetry_module._TELEMETRY_TIMEOUT_SECONDS
+    # The control-plane ping must be bounded (a few seconds) so a brownout cannot stall the caller
+    # for minutes; assert the behavior (a small positive timeout) rather than the exact constant.
+    assert cfg.retry_timeout_seconds is not None and 0 < cfg.retry_timeout_seconds <= 60
+    assert cfg.http_timeout_seconds is not None and 0 < cfg.http_timeout_seconds <= 60
 
 
 def test_log_telemetry_deduplicates_same_key_value():

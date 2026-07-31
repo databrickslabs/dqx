@@ -28,6 +28,15 @@ _TELEMETRY_TIMEOUT_SECONDS = 5
 _sent_telemetry: set[tuple[str, str]] = set()
 
 
+def reset_telemetry_cache() -> None:
+    """Clear the per-process telemetry dedup cache so previously sent signals can be sent again.
+
+    Telemetry is deduplicated per process (each *(key, value)* is sent at most once). This resets that
+    state; mainly useful for tests that assert on send behavior in isolation.
+    """
+    _sent_telemetry.clear()
+
+
 def log_telemetry(ws: WorkspaceClient, key: str, value: str) -> None:
     """
     Trace specific telemetry information in the Databricks workspace by setting user agent extra info.
