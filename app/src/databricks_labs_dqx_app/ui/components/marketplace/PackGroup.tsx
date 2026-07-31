@@ -50,20 +50,25 @@ export function PackGroup({
 
   return (
     <div className="rounded-lg border">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3">
-        <Checkbox
-          checked={selState === "all" ? true : selState === "some" ? "indeterminate" : false}
-          onCheckedChange={handlePackCheckbox}
-          aria-label={t("marketplace.selectPack", { title: pack.title })}
-          onClick={(e) => e.stopPropagation()}
-        />
-        <Icon className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
+      {/* Header — checkbox cell + a full-height toggle button. Padding lives on
+          the button (not the row div) so the ENTIRE header area toggles the
+          pack, not just its vertical centre. */}
+      <div className="flex items-stretch">
+        <div className="flex items-center pl-4">
+          <Checkbox
+            checked={selState === "all" ? true : selState === "some" ? "indeterminate" : false}
+            onCheckedChange={handlePackCheckbox}
+            aria-label={t("marketplace.selectPack", { title: pack.title })}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
         <button
           type="button"
           onClick={onToggleExpanded}
-          className="flex flex-1 items-center gap-2 text-left"
+          aria-expanded={expanded}
+          className="flex flex-1 items-center gap-3 px-3 py-3 text-left"
         >
+          <Icon className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
           <span className="text-sm font-semibold">{pack.title}</span>
           <span className="text-xs text-muted-foreground ml-auto shrink-0">
             {t("marketplace.packSelectedCount", {

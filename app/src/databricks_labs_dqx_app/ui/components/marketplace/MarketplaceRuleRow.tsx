@@ -33,27 +33,30 @@ export function MarketplaceRuleRow({
 }) {
   const { t } = useTranslation();
   const previewRule = checkDictToPreviewRule(rule, checkFunctions, t);
+  const tags = [...rule.industries, ...rule.regions];
 
   return (
     <div className={cn("rounded-md border transition-colors", selected && "border-primary/50 bg-primary/5")}>
-      <div className="flex items-start gap-3 px-3 py-2">
-        <Checkbox
-          checked={selected}
-          onCheckedChange={onToggleSelect}
-          aria-label={t("marketplace.selectRule", { name: rule.name })}
-          onClick={(e) => e.stopPropagation()}
-          className="mt-0.5"
-        />
-        {/* Single toggle: the button owns open/close. The disclosure body
-            below is a plain animated region (no second toggle), so one click
-            always opens exactly what was clicked — no close-one-layer bug. */}
+      {/* items-stretch + padding-on-children so both the checkbox cell and the
+          toggle button fill the FULL row height — no dead padding zone that
+          only lets you open the card by clicking its vertical centre. */}
+      <div className="flex items-stretch">
+        <div className="flex items-start pl-3 pt-2.5">
+          <Checkbox
+            checked={selected}
+            onCheckedChange={onToggleSelect}
+            aria-label={t("marketplace.selectRule", { name: rule.name })}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+        {/* The whole button (its own px/py) is the click target. */}
         <button
           type="button"
           onClick={onToggleOpen}
           aria-expanded={open}
-          className="flex flex-1 items-start gap-2 text-left"
+          className="flex flex-1 items-start gap-2 px-3 py-2.5 text-left"
         >
-          <div className="flex-1 space-y-1">
+          <div className="min-w-0 flex-1 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-medium">{rule.name}</span>
               <TagBadge
@@ -64,15 +67,18 @@ export function MarketplaceRuleRow({
                 severity={rule.severity}
                 color={colorFor(labelDefinitions, RESERVED_SEVERITY_KEY, rule.severity)}
               />
-              {rule.industries.map((i) => (
-                <TagBadge key={`i-${i}`} label={formatTagLabel(i)} />
-              ))}
-              {rule.regions.map((r) => (
-                <TagBadge key={`r-${r}`} label={formatTagLabel(r)} />
-              ))}
             </div>
             <p className="text-xs text-muted-foreground">{rule.description}</p>
           </div>
+          {/* Industry/region tags pinned to the top-right corner, away from the
+              dimension/severity that describe the rule itself. */}
+          {tags.length > 0 && (
+            <div className="flex max-w-[45%] flex-wrap justify-end gap-1">
+              {tags.map((tag) => (
+                <TagBadge key={tag} label={formatTagLabel(tag)} />
+              ))}
+            </div>
+          )}
           <ChevronDown
             className={cn(
               "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
@@ -83,10 +89,8 @@ export function MarketplaceRuleRow({
         </button>
       </div>
 
-      {/* Animated open/close via a grid-rows height transition. The open
-          state is owned by the parent pack accordion (one rule open at a
-          time), so switching rules animates the old one closed and the new
-          one open in a single click. */}
+      {/* Animated open/close via a grid-rows height transition. Open state is
+          owned by the parent pack accordion (one rule open at a time). */}
       <div
         className={cn(
           "grid transition-[grid-template-rows] duration-200 ease-out",

@@ -346,7 +346,7 @@
     "resetDbPartial": "Database reset, but {{count}} table(s) could not be cleared. See server logs.",
     "resetDbFailed": "Failed to reset the database.",
     "demoTitle": "Deploy demo content",
-    "demoBody": "Populate this workspace with a realistic sample data-quality deployment — sample tables, rules across every quality dimension, and several weeks of run history.",
+    "demoBody": "Fills this workspace with example tables, rules, and past run results so you can explore the Studio with realistic data.",
     "demoButton": "Deploy demo content",
     "demoAdminOnly": "Only admins can deploy demo content.",
     "demoDialogTitle": "Deploy demo content?",

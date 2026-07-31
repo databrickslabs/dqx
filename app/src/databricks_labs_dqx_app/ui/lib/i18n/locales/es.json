@@ -346,7 +346,7 @@
     "resetDbPartial": "Base de datos restablecida, pero no se pudieron borrar {{count}} tabla(s). Consulta los registros del servidor.",
     "resetDbFailed": "No se pudo restablecer la base de datos.",
     "demoTitle": "Implementar contenido de demostración",
-    "demoBody": "Rellena este workspace con una implementación de calidad de datos de muestra realista: tablas de ejemplo, reglas en todas las dimensiones de calidad y varias semanas de historial de ejecuciones.",
+    "demoBody": "Rellena este workspace con tablas, reglas y resultados de ejecuciones de ejemplo para explorar el Studio con datos realistas.",
     "demoButton": "Implementar contenido de demostración",
     "demoAdminOnly": "Solo los administradores pueden implementar contenido de demostración.",
     "demoDialogTitle": "¿Implementar contenido de demostración?",

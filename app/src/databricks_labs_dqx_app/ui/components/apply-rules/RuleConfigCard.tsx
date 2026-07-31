@@ -172,12 +172,7 @@ function PolarityLine({ registryRule }: { registryRule: RegistryRuleOut }) {
       <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
         {t("rulesRegistry.thenTheRow")}
       </span>
-      <PredicatePolaritySwitch
-        value={polarity}
-        onChange={() => {}}
-        disabled
-        disabledReason={t("rulesRegistry.polarityHint")}
-      />
+      <PredicatePolaritySwitch value={polarity} onChange={() => {}} disabled />
     </div>
   );
 }

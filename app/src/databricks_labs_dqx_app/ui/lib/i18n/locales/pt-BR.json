@@ -346,7 +346,7 @@
     "resetDbPartial": "Banco de dados redefinido, mas {{count}} tabela(s) não puderam ser apagadas. Consulte os logs do servidor.",
     "resetDbFailed": "Falha ao redefinir o banco de dados.",
     "demoTitle": "Implantar conteúdo de demonstração",
-    "demoBody": "Preencha este workspace com uma implantação de qualidade de dados de exemplo realista — tabelas de amostra, regras em todas as dimensões de qualidade e várias semanas de histórico de execuções.",
+    "demoBody": "Preenche este workspace com tabelas, regras e resultados de execuções de exemplo para você explorar o Studio com dados realistas.",
     "demoButton": "Implantar conteúdo de demonstração",
     "demoAdminOnly": "Apenas administradores podem implantar conteúdo de demonstração.",
     "demoDialogTitle": "Implantar conteúdo de demonstração?",

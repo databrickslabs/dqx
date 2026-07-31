@@ -31,7 +31,11 @@ export function formatTagLabel(value: string): string {
 const REGION_TIER: Record<string, number> = { global: 0, emea: 1, apac: 1, latam: 1, eu: 1 };
 const REGION_COUNTRY_TIER = 2;
 
-function regionTier(value: string): number {
+/** Region tier (0 = global, 1 = macro-region, 2 = country) for a tag value.
+ * Exported so the filter bar can draw a divider between tier groups. The
+ * synthetic "all" chip is tier -1 so it always leads. */
+export function regionTier(value: string): number {
+  if (value === "all") return -1;
   return REGION_TIER[value.toLowerCase()] ?? REGION_COUNTRY_TIER;
 }
 

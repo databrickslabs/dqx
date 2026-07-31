@@ -16,6 +16,7 @@ import {
   togglePack,
   selectedCheckDicts,
   formatTagLabel,
+  regionTier,
 } from "@/lib/marketplace-selection";
 import { importChecksAsRegistryDrafts } from "@/lib/import-registry-rules";
 import { Input } from "@/components/ui/input";
@@ -225,14 +226,21 @@ function MarketplaceContent() {
               <span className="text-xs font-medium text-muted-foreground">
                 {t("marketplace.regionLabel")}
               </span>
-              {regions.map((reg) => (
-                <FilterChip
-                  key={reg}
-                  label={reg === "all" ? t("marketplace.all") : formatTagLabel(reg)}
-                  active={filters.region === reg}
-                  onClick={() => setFilters((prev) => ({ ...prev, region: reg }))}
-                />
-              ))}
+              {regions.map((reg, i) => {
+                // A thin divider whenever the tier changes (global | macro | country),
+                // so the tiered grouping reads visually — never before the first chip.
+                const showDivider = i > 0 && regionTier(reg) !== regionTier(regions[i - 1]);
+                return (
+                  <div key={reg} className="flex shrink-0 items-center gap-2">
+                    {showDivider && <div className="h-5 w-px bg-border" aria-hidden />}
+                    <FilterChip
+                      label={reg === "all" ? t("marketplace.all") : formatTagLabel(reg)}
+                      active={filters.region === reg}
+                      onClick={() => setFilters((prev) => ({ ...prev, region: reg }))}
+                    />
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
